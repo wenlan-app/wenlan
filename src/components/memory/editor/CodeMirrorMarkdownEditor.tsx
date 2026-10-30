@@ -12,6 +12,7 @@ import {
   redoDepth,
   undoDepth,
 } from "@codemirror/commands";
+import { closeSearchPanel, findNext, findPrevious, openSearchPanel, search } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorState } from "@codemirror/state";
@@ -21,6 +22,7 @@ import {
   EditorView,
   highlightSpecialChars,
   keymap,
+  placeholder,
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { useTranslation } from "react-i18next";
@@ -65,6 +67,17 @@ const sourcePreservingDefaultKeymap = defaultKeymap.filter(
   (binding) => binding.key !== "Mod-Enter" && binding.key !== "Escape",
 );
 
+// Only the find and replace keys from @codemirror/search: its go-to-line,
+// select-next-occurrence and select-all-matches bindings are left out.
+// Escape is handled with the editor's own Escape below, so an open panel
+// closes before the editor is left.
+const findKeymap = [
+  { key: "Mod-f", run: openSearchPanel, scope: "editor search-panel" },
+  { key: "F3", run: findNext, shift: findPrevious, scope: "editor search-panel", preventDefault: true },
+  { key: "Mod-g", run: findNext, shift: findPrevious, scope: "editor search-panel", preventDefault: true },
+  { key: "Escape", run: closeSearchPanel, scope: "search-panel" },
+];
+
 export interface CodeMirrorMarkdownEditorProps extends MarkdownEditorProps {
   onConstructionFailure?(): void;
 }
@@ -74,6 +87,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
   CodeMirrorMarkdownEditorProps
 >(function CodeMirrorMarkdownEditor(props, ref) {
   const { t } = useTranslation();
+  const minHeight = props.minHeight ?? 300;
   const slashLabelsRef = useRef<SlashLabels>({ label: t("slashEditing.label"), ...Object.fromEntries(slashItems.map((item) => [item.id, t(`slashEditing.${item.id}`)])) } as SlashLabels);
   const linkLabelsRef = useRef<LinkCompletionLabels>(linkCompletionLabels(t));
   const linkNotesRef = useRef<readonly LinkCompletionNote[]>(props.linkNotes ?? []);
@@ -83,6 +97,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
   const focusRequestedRef = useRef(false);
   const disabledCompartmentRef = useRef(new Compartment());
   const attributesCompartmentRef = useRef(new Compartment());
+  const searchPhrasesCompartmentRef = useRef(new Compartment());
   const compositionActiveRef = useRef(false);
   const lastStatusRef = useRef<{
     callback: ((status: MarkdownEditorStatus) => void) | undefined;
@@ -158,6 +173,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
       runCommand(command): boolean {
         const view = viewRef.current;
         if (!view || actionsBlocked(view)) return false;
+        if (command === "find") return openSearchPanel(view);
         const applied = runMarkdownCommand(view, command);
         publishStatus(view);
         return applied;
@@ -172,7 +188,11 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     slashLabelsRef.current = { label: t("slashEditing.label"), ...Object.fromEntries(slashItems.map((item) => [item.id, t(`slashEditing.${item.id}`)])) } as SlashLabels;
     linkLabelsRef.current = linkCompletionLabels(t);
     sourcePasteLabelsRef.current = sourcePasteLabels(t);
-    viewRef.current?.dispatch({ effects: [refreshSlashLabels.of(null), refreshLinkCompletion.of(null)] });
+    viewRef.current?.dispatch({ effects: [
+      refreshSlashLabels.of(null),
+      refreshLinkCompletion.of(null),
+      searchPhrasesCompartmentRef.current.reconfigure(EditorState.phrases.of(searchPhrases(t))),
+    ] });
   }, [t]);
 
   useLayoutEffect(() => {
@@ -240,6 +260,8 @@ export const CodeMirrorMarkdownEditor = forwardRef<
           },
           extensions: [
             history(),
+            search({ top: true }),
+            searchPhrasesCompartmentRef.current.of(EditorState.phrases.of(searchPhrases(t))),
             drawSelection(),
             dropCursor(),
             highlightSpecialChars(),
@@ -265,8 +287,11 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               "&.cm-editor": {
                 boxSizing: "border-box",
                 width: "100%",
-                minHeight: "300px",
-                overflow: "hidden",
+                minHeight: `${minHeight}px`,
+                // Clip, not hidden: a hidden overflow makes the editor its own
+                // scroll container, which pins the sticky find panel to the
+                // top of the document instead of the visible pane.
+                overflow: "clip",
                 color: "var(--mem-text)",
                 backgroundColor: props.seamless ? "transparent" : "var(--mem-detail-surface)",
                 border: props.seamless ? "none" : "1px solid var(--mem-border)",
@@ -278,14 +303,14 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 borderColor: props.seamless ? "transparent" : "var(--mem-accent-page)",
               },
               ".cm-scroller": {
-                minHeight: "300px",
+                minHeight: `${minHeight}px`,
                 height: "auto",
                 overflow: "visible",
                 fontFamily:
                   "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
               },
               ".cm-content": {
-                minHeight: "300px",
+                minHeight: `${minHeight}px`,
                 padding: props.seamless ? "0" : "0.75rem",
                 caretColor: "var(--mem-accent-indigo)",
               },
@@ -322,6 +347,85 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               },
               ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
                 backgroundColor: "var(--mem-indigo-bg)",
+              },
+              // Find and replace panel, drawn in the app's colours instead of
+              // the package's light grey. "&.cm-editor" outranks its base theme.
+              "&.cm-editor .cm-panels": {
+                backgroundColor: "var(--mem-detail-surface)",
+                color: "var(--mem-text)",
+              },
+              "&.cm-editor .cm-panels-top": {
+                borderBottom: "1px solid var(--mem-border)",
+                marginBottom: "12px",
+              },
+              "&.cm-editor .cm-panel.cm-search": {
+                padding: "6px 28px 6px 0",
+                fontFamily: "var(--mem-font-body)",
+                fontSize: "var(--mem-text-sm)",
+              },
+              "&.cm-editor .cm-search input, &.cm-editor .cm-search button, &.cm-editor .cm-search label": {
+                margin: "2px 6px 2px 0",
+              },
+              "&.cm-editor .cm-search .cm-textfield": {
+                width: "12em",
+                maxWidth: "100%",
+                fontSize: "var(--mem-text-sm)",
+                padding: "3px 8px",
+                color: "var(--mem-text)",
+                backgroundColor: "var(--mem-surface)",
+                border: "1px solid var(--mem-control-border)",
+                borderRadius: "var(--mem-radius-sm)",
+              },
+              "&.cm-editor .cm-search .cm-textfield:focus": {
+                outline: "2px solid var(--mem-focus-ring)",
+                outlineOffset: "-1px",
+              },
+              "&.cm-editor .cm-search .cm-button": {
+                whiteSpace: "nowrap",
+                fontSize: "var(--mem-text-sm)",
+                padding: "3px 10px",
+                color: "var(--mem-text)",
+                backgroundImage: "none",
+                backgroundColor: "var(--mem-hover)",
+                border: "1px solid var(--mem-control-border)",
+                borderRadius: "var(--mem-radius-sm)",
+                cursor: "pointer",
+              },
+              "&.cm-editor .cm-search .cm-button:hover": {
+                backgroundColor: "var(--mem-hover-strong)",
+              },
+              "&.cm-editor .cm-search label": {
+                marginInlineEnd: "10px",
+                fontSize: "var(--mem-text-sm)",
+                color: "var(--mem-text-secondary)",
+                whiteSpace: "nowrap",
+              },
+              "&.cm-editor .cm-search input[type=checkbox]": {
+                accentColor: "var(--mem-accent-indigo)",
+                verticalAlign: "middle",
+              },
+              "&.cm-editor .cm-search [name=close]": {
+                top: "6px",
+                right: "4px",
+                width: "22px",
+                height: "22px",
+                fontSize: "18px",
+                lineHeight: "20px",
+                color: "var(--mem-text-secondary)",
+                cursor: "pointer",
+                borderRadius: "var(--mem-radius-sm)",
+              },
+              "&.cm-editor .cm-search [name=close]:hover": {
+                color: "var(--mem-text)",
+                backgroundColor: "var(--mem-hover)",
+              },
+              "&.cm-editor .cm-searchMatch": {
+                backgroundColor: "color-mix(in srgb, var(--mem-accent-amber) 28%, transparent)",
+                borderRadius: "2px",
+              },
+              "&.cm-editor .cm-searchMatch-selected": {
+                backgroundColor: "color-mix(in srgb, var(--mem-accent-amber) 60%, transparent)",
+                outline: "1px solid var(--mem-accent-amber)",
               },
             }),
             writingPresentation(),
@@ -384,6 +488,17 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 });
                 return false;
               },
+              // Focus loss ends a composition in WebView2 and WebKit, even
+              // when compositionend is not delivered; keep the preedit as text.
+              blur: (_event, currentView) => {
+                if (viewRef.current !== currentView || !compositionActiveRef.current) return false;
+                compositionActiveRef.current = false;
+                currentView.dispatch({
+                  effects: setWritingCompositionActive.of(false),
+                });
+                publishStatus(currentView);
+                return false;
+              },
             }),
             keymap.of([
               ...([ ["Mod-b", "bold"], ["Mod-i", "italic"] ] as const).map(([key, command]) => ({
@@ -406,8 +521,10 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               {
                 key: "Escape",
                 run: (currentView) => {
+                  if (compositionActiveRef.current || currentView.compositionStarted) return false;
+                  // An open find panel closes first; the next Escape leaves.
+                  if (closeSearchPanel(currentView)) return true;
                   if (currentView.state.readOnly) return true;
-                  if (actionsBlocked(currentView)) return false;
                   requestCancel();
                   return true;
                 },
@@ -415,6 +532,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             ]),
             keymap.of(sourcePreservingDefaultKeymap),
             keymap.of(historyKeymap),
+            keymap.of(findKeymap),
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {
                 callbacksRef.current.onDocumentChange(update.state.doc.toString());
@@ -469,13 +587,13 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     view.dispatch({
       effects: attributesCompartmentRef.current.reconfigure(contentAttributes(props)),
     });
-  }, [props.ariaLabel, props.describedBy, props.disabled, props.sessionId]);
+  }, [props.ariaLabel, props.describedBy, props.disabled, props.placeholder, props.sessionId]);
 
   return (
     <div
       ref={mountRef}
       data-markdown-editor-engine="codemirror"
-      style={{ width: "100%", minHeight: "300px" }}
+      style={{ width: "100%", minHeight: `${minHeight}px` }}
       onKeyDownCapture={(event) => {
         if (
           (compositionActiveRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
@@ -502,13 +620,16 @@ function disabledExtensions(disabled: boolean) {
   return [EditorState.readOnly.of(disabled), EditorView.editable.of(!disabled)];
 }
 
-function contentAttributes(props: Pick<MarkdownEditorProps, "ariaLabel" | "describedBy" | "disabled">) {
-  return EditorView.contentAttributes.of({
-    "aria-label": props.ariaLabel,
-    "aria-multiline": "true",
-    "aria-disabled": String(props.disabled),
-    ...(props.describedBy ? { "aria-describedby": props.describedBy } : {}),
-  });
+function contentAttributes(props: Pick<MarkdownEditorProps, "ariaLabel" | "describedBy" | "disabled" | "placeholder">) {
+  return [
+    EditorView.contentAttributes.of({
+      "aria-label": props.ariaLabel,
+      "aria-multiline": "true",
+      "aria-disabled": String(props.disabled),
+      ...(props.describedBy ? { "aria-describedby": props.describedBy } : {}),
+    }),
+    props.placeholder ? placeholder(props.placeholder) : [],
+  ];
 }
 
 function linkCompletionLabels(t: TFunction): LinkCompletionLabels {
@@ -517,6 +638,27 @@ function linkCompletionLabels(t: TFunction): LinkCompletionLabels {
     empty: t("linkCompletion.empty"),
     useAsSource: t("noteBasis.useAsSource"),
     useAsSourceHint: t("noteBasis.useAsSourceHint"),
+  };
+}
+
+/** @codemirror/search reads its labels and screen-reader announcements as phrases. */
+function searchPhrases(t: TFunction): Record<string, string> {
+  return {
+    Find: t("editorSearch.find"),
+    Replace: t("editorSearch.replace"),
+    next: t("editorSearch.next"),
+    previous: t("editorSearch.previous"),
+    all: t("editorSearch.selectAll"),
+    "match case": t("editorSearch.matchCase"),
+    regexp: t("editorSearch.regexp"),
+    "by word": t("editorSearch.wholeWord"),
+    replace: t("editorSearch.replace"),
+    "replace all": t("editorSearch.replaceAll"),
+    close: t("common.close"),
+    "current match": t("editorSearch.currentMatch"),
+    "on line": t("editorSearch.onLine"),
+    "replaced match on line $": t("editorSearch.replacedOne"),
+    "replaced $ matches": t("editorSearch.replacedMany"),
   };
 }
 

@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { knowledgeFolderCreate, type Page, type KnowledgeFolder } from "../../../lib/tauri";
 import { deleteWikiPage } from "./deleteWikiPage";
 import { archivePageFromList, canArchivePage } from "./archiveWikiPage";
-import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
+import { exampleWikiActive, useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { confirmAction } from "../../../lib/confirmAction";
 import { listAllActivePages, listAllDraftPages, listAllActivePagesExplicitBrowse, listAllDraftPagesExplicitBrowse, EXPLICIT_BROWSE_QUERY_POLICY } from "./listAllPages";
 import { pageSpaceContext } from "./pagePresentation";
@@ -48,8 +48,9 @@ type FolderContextMenuState = {
 };
 
 export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fileTree = false, inventoryScope = "all", browsing = false, filter: controlledFilter, onFilterChange, onBrowse, onCreatePage, onOpenDraft, onOpenPage, onDeletePage, onArchiveOpenPage, onNoteCountChange }: PageInventoryPanelProps) {
-  const exampleWiki = useExampleWikiActive();
   const { i18n, t } = useTranslation();
+  // The example wiki is read-only: no page, draft or folder is created or deleted in it.
+  const exampleWiki = useExampleWikiActive();
   const id = useId();
   const queryClient = useQueryClient();
   const [localFilter, setLocalFilter] = useState("");
@@ -101,7 +102,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     });
   }, [selectedPath]);
   const hasFilter = !fileTree && !!filter.trim();
-  const canCreate = !!folders.data && !folders.data.truncated;
+  const canCreate = !exampleWiki && !!folders.data && !folders.data.truncated;
   const folderUnavailable = folders.isError || !!folders.data?.truncated;
   const createStateRef = useRef({ canCreate, createPending, creating });
   const requestedCreatePath = (fileTree ? creationPath : selectedPath) ?? "";
@@ -159,13 +160,14 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   };
   const deleteNote = async (noteId: string) => {
     const note = pages.find(candidate => candidate.id === noteId);
-    if (!note || deletingRef.current) return;
+    if (!note || deletingRef.current || exampleWikiActive()) return;
     deletingRef.current = true;
     const confirmed = await confirmAction(t("pageDetail.deleteConfirm"), {
       confirm: t("pageDetail.deletePage"),
       cancel: t("common.cancel"),
     });
-    if (!confirmed) { deletingRef.current = false; return; }
+    // The example may have opened while the question was up.
+    if (!confirmed || exampleWikiActive()) { deletingRef.current = false; return; }
     try {
       await deleteWikiPage(queryClient, note);
       onDeletePage?.(noteId);
@@ -264,7 +266,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     </li>;
   };
   const create = async (event: React.FormEvent) => {
-    event.preventDefault(); if (!name.trim() || createPending || !canCreate) return;
+    event.preventDefault(); if (exampleWikiActive() || !name.trim() || createPending || !canCreate) return;
     setCreatePending(true); setCreateError(false);
     try {
       const parentPath = folderFormParentPath;
@@ -290,7 +292,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   </form>;
   return <section aria-label={fileTree ? undefined : t("sidebar.notes")} className={`notes-list-panel notes-inventory-panel${fileTree ? " notes-inventory-panel--file-tree" : ""}`}>
     {fileTree ? <h2 className="sr-only">{t("pages.folders.title")}</h2> : <div className="notes-list-header"><h2>{t("sidebar.notes")}</h2><div className="flex items-center gap-1">
-      {onCreatePage && <button type="button" className="notes-list-create" aria-label={t("sidebar.newNote")} title={t("sidebar.newNote")} onClick={() => { if (selectedPath === null) onCreatePage(); else onCreatePage(selectedPath); }}><Plus aria-hidden="true" size={16}/></button>}
+      {!exampleWiki && onCreatePage && <button type="button" className="notes-list-create" aria-label={t("sidebar.newNote")} title={t("sidebar.newNote")} onClick={() => { if (selectedPath === null) onCreatePage(); else onCreatePage(selectedPath); }}><Plus aria-hidden="true" size={16}/></button>}
       <button type="button" className="notes-list-create" aria-label={t("pages.folders.newFolder")} title={t("pages.folders.newFolder")} disabled={!canCreate || createPending} onClick={event => { if (creating) closeFolderForm(false); else openCreateFolderFormAt(selectedPath ?? "", event.currentTarget); }}><FolderPlus aria-hidden="true" size={16}/></button>
     </div></div>}
     {!fileTree && folderCreateForm}
@@ -325,7 +327,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
       {contextMenu.noteId ? <>
         <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!contextNote || (contextNote.status === "draft" ? !onOpenDraft : !onOpenPage)} onClick={openContextNote}>{t("pages.folders.openNote")}</button>
         {!exampleWiki && canArchivePage(contextNote) && <button type="button" role="menuitem" onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; const { invoker } = contextMenu; setContextMenu(null); void archiveNote(noteId, invoker); }}>{t("pageDetail.archivePage")}</button>}
-        <button type="button" role="menuitem" className="is-danger" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>
+        {!exampleWiki && <button type="button" role="menuitem" className="is-danger" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>}
       </> : <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!canCreate || createPending || creating} onClick={() => { if (!canCreate || createPending || creating) return; const { path, invoker } = contextMenu; setContextMenu(null); openCreateFolderFormAt(path, invoker); }}>{t("pages.folders.newFolderIn", { name: contextMenu.path || t("pages.folders.root") })}</button>}
     </div>, document.body)}
   </section>;

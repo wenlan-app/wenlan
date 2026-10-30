@@ -7,8 +7,9 @@ use std::str::FromStr;
 impl MemoryDB {
     /// Record a milestone. Returns `Some(record)` if newly fired, `None` if
     /// already fired. Race-safe against concurrent callers via
-    /// `ON CONFLICT ... DO NOTHING RETURNING` — two simultaneous
-    /// evaluator checks cannot both fire the same milestone.
+    /// `ON CONFLICT ... RETURNING` — two simultaneous evaluator checks cannot
+    /// both fire the same milestone. Only a legacy setup-probe first-memory
+    /// can be replaced: it never represented user progress.
     pub async fn record_milestone(
         &self,
         id: crate::onboarding::MilestoneId,
@@ -27,9 +28,19 @@ impl MemoryDB {
             .query(
                 "INSERT INTO onboarding_milestones (id, first_triggered_at, payload) \
                  VALUES (?1, ?2, ?3) \
-                 ON CONFLICT(id) DO NOTHING \
+                 ON CONFLICT(id) DO UPDATE SET \
+                   first_triggered_at = excluded.first_triggered_at, \
+                   acknowledged_at = NULL, payload = excluded.payload \
+                 WHERE onboarding_milestones.id = 'first-memory' \
+                   AND json_extract(onboarding_milestones.payload, '$.source') = ?4 \
+                   AND COALESCE(json_extract(excluded.payload, '$.source'), '') != ?4 \
                  RETURNING id, first_triggered_at, acknowledged_at, payload",
-                libsql::params![id.as_str(), now, payload_str],
+                libsql::params![
+                    id.as_str(),
+                    now,
+                    payload_str,
+                    crate::onboarding::SETUP_PROBE_AGENT
+                ],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("record_milestone insert: {}", e)))?;
@@ -109,7 +120,20 @@ impl MemoryDB {
             let payload_str: Option<String> = row.get(3).map_err(|e| {
                 WenlanError::VectorDb(format!("list_milestones row.payload: {}", e))
             })?;
-            let payload_val = payload_str.and_then(|s| serde_json::from_str(&s).ok());
+            let payload_val: Option<serde_json::Value> =
+                payload_str.and_then(|s| serde_json::from_str(&s).ok());
+            // Older builds persisted the setup self-check as first-memory.
+            // Hide that internal preview; record_milestone lets the next real
+            // memory claim this slot atomically without resetting other progress.
+            if parsed_id == crate::onboarding::MilestoneId::FirstMemory
+                && payload_val
+                    .as_ref()
+                    .and_then(|p| p.get("source"))
+                    .and_then(|v| v.as_str())
+                    == Some(crate::onboarding::SETUP_PROBE_AGENT)
+            {
+                continue;
+            }
             out.push(crate::onboarding::MilestoneRecord {
                 id: parsed_id,
                 first_triggered_at,

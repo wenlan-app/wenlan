@@ -4,6 +4,16 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { quickCapture } from "../lib/tauri";
 import { isInputCompositionActive } from "../lib/inputComposition";
+import { confirmAction } from "../lib/confirmAction";
+import { primaryShortcutModifier } from "../lib/windowChrome";
+import { MarkdownEditor, type MarkdownEditorHandle } from "./memory/editor/MarkdownEditor";
+import { useEditorLinkNotes } from "./memory/editor/useEditorLinkNotes";
+import {
+  clearQuickCaptureDraft,
+  quickCaptureDraftKey,
+  readQuickCaptureDraft,
+  writeQuickCaptureDraft,
+} from "./quickCaptureDraftRecovery";
 
 interface QuickCaptureProps {
   isOpen: boolean;
@@ -11,62 +21,139 @@ interface QuickCaptureProps {
   standalone?: boolean;
 }
 
+/** Thrown when the daemon answers but stored nothing; keeps the draft. */
+class NothingSavedError extends Error {}
+
 export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptureProps) {
   const { t } = useTranslation();
-  const [content, setContent] = useState("");
+  const [draftKey] = useState(() => quickCaptureDraftKey(standalone));
+  // Text left from before a restart, crash or reload comes back as typed.
+  const [recovered] = useState(() => readQuickCaptureDraft(draftKey));
+  const [content, setContent] = useState(recovered.content);
+  // True while this device cannot keep a copy of the text.
+  const [backupFailed, setBackupFailed] = useState(recovered.failed);
   const [saved, setSaved] = useState(false);
   const [tooShort, setTooShort] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [composing, setComposing] = useState(false);
+  const [fallback, setFallback] = useState(false);
+  // A new editor session starts empty after a save or a discard.
+  const [session, setSession] = useState(0);
+  const editorRef = useRef<MarkdownEditorHandle>(null);
+  // The editor reports every change; the refs answer key handlers at once,
+  // before React re-renders.
+  const documentRef = useRef(recovered.content);
+  const savingRef = useRef(false);
+  const savedRef = useRef(false);
+  const composingRef = useRef(false);
+  const confirmingRef = useRef(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queryClient = useQueryClient();
+  // Page names load only once someone types [[.
+  const linkNotes = useEditorLinkNotes(null, "", isOpen && content.includes("[["));
+
+  useEffect(() => () => {
+    if (closeTimerRef.current !== null) clearTimeout(closeTimerRef.current);
+  }, []);
+
+  const startNewSession = () => {
+    if (closeTimerRef.current !== null) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+    savedRef.current = false;
+    setSaved(false);
+    documentRef.current = "";
+    setContent("");
+    setTooShort(false);
+    setSession((value) => value + 1);
+  };
 
   const captureMutation = useMutation({
-    mutationFn: quickCapture,
+    mutationFn: async (request: Parameters<typeof quickCapture>[0]) => {
+      const chunks = await quickCapture(request);
+      if (!(chunks > 0)) throw new NothingSavedError();
+      return chunks;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
       queryClient.invalidateQueries({ queryKey: ["memories"] });
       setSaved(true);
-      setTimeout(() => {
-        setSaved(false);
-        setContent("");
+      savedRef.current = true;
+      // The memory is saved. A copy that cannot be removed means storage is
+      // blocked, so it cannot come back either; closing goes ahead.
+      clearQuickCaptureDraft(draftKey);
+      closeTimerRef.current = setTimeout(() => {
+        startNewSession();
         onClose();
       }, 500);
     },
+    onSettled: () => {
+      savingRef.current = false;
+    },
   });
 
-  // Surfaced verbatim below the textarea on rejection -- same policy other
-  // inline mutation errors in the app use. The draft stays in `content`
-  // either way: nothing here clears it, so a rejected capture (e.g. the
-  // quality gate's "too short" floor) keeps the user's text for a retry.
-  const errorMessage = captureMutation.isError
-    ? captureMutation.error instanceof Error
-      ? captureMutation.error.message
-      : String(captureMutation.error)
+  // The daemon's own words follow, as other inline save errors in the app
+  // show them. Nothing here clears the text, so a failed save keeps it in the
+  // editor and in this device's copy for another try.
+  const saveFailure = captureMutation.isError
+    ? captureMutation.error instanceof NothingSavedError
+      ? t("quickCapture.nothingSaved")
+      : t("quickCapture.saveError", {
+          message: captureMutation.error instanceof Error
+            ? captureMutation.error.message
+            : String(captureMutation.error),
+        })
     : null;
 
-  const handleSubmit = () => {
-    if (!content.trim() || captureMutation.isPending) return;
-    if (Array.from(content.trim()).length < 10) {
+  const handleSubmit = (body = documentRef.current) => {
+    if (savingRef.current || savedRef.current || composingRef.current || confirmingRef.current) return;
+    if (!body.trim()) return;
+    if (Array.from(body.trim()).length < 10) {
       setTooShort(true);
       return;
     }
+    savingRef.current = true;
     // Send the body exactly as typed: leading and trailing whitespace can be
     // Markdown (an indented code block, a hard line break).
-    captureMutation.mutate({ content });
+    captureMutation.mutate({ content: body });
   };
 
-  // Document-level keydown so Esc / Cmd+Enter work regardless of focus target.
-  // The textarea's onKeyDown used to own this, which broke after the window was
-  // hidden and re-shown: the textarea lost focus and never regained it (because
-  // `isOpen` is constant-true in standalone mode, so the auto-focus effect
-  // never re-ran), leaving Esc unhandled.
+  const requestClose = async () => {
+    if (savingRef.current || composingRef.current || confirmingRef.current) return;
+    if (!savedRef.current && documentRef.current.trim()) {
+      confirmingRef.current = true;
+      let discard = false;
+      try {
+        discard = await confirmAction(t("quickCapture.discardConfirm"), {
+          confirm: t("quickCapture.discard"),
+          cancel: t("quickCapture.keepWriting"),
+        });
+      } finally {
+        confirmingRef.current = false;
+      }
+      if (!discard) {
+        editorRef.current?.focus();
+        return;
+      }
+      // A save or an IME composition may have started while the question was open.
+      if (savingRef.current || composingRef.current) return;
+    }
+    clearQuickCaptureDraft(draftKey);
+    startNewSession();
+    onClose();
+  };
+
+  // Document-level keydown so Esc / Cmd+Enter also work when focus has left
+  // the editor (the close button, or a window shown again after hiding). The
+  // editor handles both keys itself, so its own events are skipped here.
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       // Escape and Enter while the IME composes pick or drop its candidate.
-      if (e.isComposing || e.keyCode === 229 || isInputCompositionActive()) return;
+      if (e.isComposing || e.keyCode === 229 || composingRef.current || isInputCompositionActive()) return;
+      if (e.target instanceof Element && e.target.closest("[data-markdown-editor-engine], .page-editor-native-surface")) return;
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        void requestClose();
       } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSubmit();
@@ -74,12 +161,11 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-    // handleSubmit closes over content/captureMutation; re-bind on change so the
-    // ⌘↵ submit path sees the latest draft.
+    // Both handlers read refs; re-binding on content keeps their closures fresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, onClose, content]);
 
-  // Re-focus the textarea whenever the window becomes visible.
+  // Re-focus the editor whenever the window becomes visible.
   // In standalone (Tauri window) mode, hiding the window doesn't unmount the
   // component — it just hides the webview. When it comes back via
   // `WebviewWindow.show()` the document fires `visibilitychange`; we use that
@@ -87,8 +173,8 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
   useEffect(() => {
     if (!isOpen) return;
     const refocus = () => {
-      if (!document.hidden && textareaRef.current) {
-        textareaRef.current.focus();
+      if (!document.hidden && !confirmingRef.current && editorRef.current) {
+        editorRef.current.focus();
       }
     };
     refocus(); // initial mount + any state toggle
@@ -106,7 +192,7 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
   const isEmpty = charCount === 0;
   const isPending = captureMutation.isPending;
 
-  // Left border accent shifts with state — mirrors MemoryCard pattern
+  // The whole border takes the state colour.
   const borderAccent = saved
     ? "var(--mem-accent-warm)"
     : isPending
@@ -165,7 +251,8 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
           </span>
         </div>
         <button
-          onClick={onClose}
+          onClick={() => void requestClose()}
+          disabled={isPending || composing}
           className="p-0.5 rounded transition-colors duration-150 hover:bg-[var(--mem-hover-strong)]"
           style={{ color: "var(--mem-text-tertiary)" }}
           title={t("quickCapture.closeTitle")}
@@ -178,43 +265,48 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
 
       {/* Writing surface */}
       <div className="flex-1 flex flex-col px-4 pb-3 min-h-0">
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onChange={(e) => {
-            setContent(e.target.value);
-            setTooShort(false);
-          }}
-          placeholder={t("quickCapture.placeholder")}
-          rows={standalone ? undefined : 7}
-          className={`w-full bg-transparent focus:outline-none resize-none pt-3 ${standalone ? "flex-1" : ""}`}
-          style={{
-            fontFamily: "var(--mem-font-body)",
-            fontSize: "14px",
-            lineHeight: "1.6",
-            color: "var(--mem-text)",
-            caretColor: "var(--mem-accent-indigo)",
-          }}
-          autoFocus
-          disabled={isPending || saved}
-        />
-
-        {(errorMessage || tooShort) && (
-          <p
-            role="alert"
-            style={{
-              fontFamily: "var(--mem-font-body)",
-              fontSize: "11px",
-              lineHeight: "1.4",
-              color: "var(--mem-status-danger-text)",
-              marginTop: 4,
-              overflowWrap: "anywhere",
+        <div className="quick-capture-editor flex-1 min-h-0 overflow-y-auto pt-2">
+          {fallback && (
+            <p role="status" className="quick-capture-note">{t("pageDetail.editor.fallbackTitle")}</p>
+          )}
+          <MarkdownEditor
+            key={session}
+            ref={editorRef}
+            sessionId={`quick-capture:${session}`}
+            initialDocument={content}
+            seamless
+            minHeight={120}
+            disabled={isPending || saved}
+            ariaLabel={t("quickCapture.title")}
+            placeholder={t("quickCapture.placeholder")}
+            linkNotes={linkNotes}
+            onDocumentChange={(next) => {
+              documentRef.current = next;
+              setContent(next);
+              setBackupFailed(!writeQuickCaptureDraft(draftKey, next));
+              setTooShort(false);
+              if (captureMutation.isError) captureMutation.reset();
             }}
-          >
-            {tooShort
-              ? t("quickCapture.tooShort")
-              : t("quickCapture.saveError", { message: errorMessage })}
-          </p>
+            onSave={handleSubmit}
+            onCancel={() => void requestClose()}
+            onFallback={() => setFallback(true)}
+            onStatusChange={(status) => {
+              composingRef.current = status.compositionActive;
+              setComposing(status.compositionActive);
+            }}
+          />
+        </div>
+
+        {(saveFailure || tooShort || backupFailed) && (
+          <div role="alert" className="quick-capture-alert shrink-0">
+            {tooShort && <p>{t("quickCapture.tooShort")}</p>}
+            {saveFailure && <p>{saveFailure}</p>}
+            {backupFailed ? (
+              <p>{t("quickCapture.backupFailed")}</p>
+            ) : saveFailure ? (
+              <p className="quick-capture-alert-note">{t("quickCapture.draftKept")}</p>
+            ) : null}
+          </div>
         )}
 
         {/* Bottom bar */}
@@ -235,7 +327,7 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
           </span>
           <div className="flex items-center gap-3">
             <span
-              className="select-none"
+              className="select-none whitespace-nowrap"
               style={{
                 fontFamily: "var(--mem-font-mono)",
                 fontSize: "10px",
@@ -243,12 +335,14 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
                 opacity: 0.5,
               }}
             >
-              {standalone ? t("quickCapture.standaloneShortcut") : t("quickCapture.saveShortcut")}
+              {t(standalone ? "quickCapture.standaloneShortcut" : "quickCapture.saveShortcut", {
+                modifier: primaryShortcutModifier(),
+              })}
             </span>
             <button
-              onClick={handleSubmit}
-              disabled={isEmpty || isPending || saved}
-              className="transition-all duration-200"
+              onClick={() => handleSubmit()}
+              disabled={isEmpty || isPending || saved || composing}
+              className="whitespace-nowrap transition-all duration-200"
               style={{
                 fontFamily: "var(--mem-font-body)",
                 fontSize: "12px",
@@ -297,7 +391,7 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
   return (
     <div
       className="fixed inset-0 flex items-center justify-center z-50"
-      onClick={onClose}
+      onClick={() => void requestClose()}
       style={{
         backgroundColor: "rgba(0,0,0,0.5)",
         backdropFilter: "blur(4px)",
@@ -306,7 +400,7 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
       }}
     >
       <div
-        className="w-[500px] max-h-[55vh] flex flex-col"
+        className="w-[560px] max-w-[calc(100vw-2rem)] h-[360px] max-h-[80vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
         style={{ animation: "mem-fade-up 0.2s cubic-bezier(0.16, 1, 0.3, 1)" }}
       >

@@ -1289,32 +1289,35 @@ function SettingUpStep({
               nonce: crypto.randomUUID(),
             });
             storeMemory({ content: probeContent, source_agent: "wenlan-setup" })
-              .then((stored) =>
-                getMemoryDetail(stored.source_id).then((detail) => {
-                  if (!detail || detail.source_id !== stored.source_id) {
-                    throw new Error(t("setup.settingUp.daemonReadBackFailed"));
-                  }
-                  return stored.source_id;
-                }),
-              )
-              .then(
-                (sourceId) => {
-                  setStatuses((prev) => ({ ...prev, [row.id]: "done" }));
-                  // Cleanup: the round trip above already proved the pipeline
-                  // works, so a failed delete must never fail the row — but
-                  // silently swallowing it (the old `.catch(() => {})`)
-                  // strands a Wenlan-authored memory in the user's knowledge
-                  // base while the row's own copy says the test memory "is
-                  // removed right after". One retry, then a non-fatal warning
-                  // that tells the user how to find and delete it.
-                  void deleteMemory(sourceId).catch(() =>
-                    deleteMemory(sourceId).catch(() => {
+              .then((stored) => {
+                // Cleanup runs once the store has succeeded, whether or not
+                // the read-back finds the probe: a read can fail while the
+                // write is durable, and that probe must not stay in the
+                // user's memories (where it used to become their "first
+                // memory"). A failed delete never fails the row, but it is
+                // not swallowed either: one retry, then a non-fatal warning
+                // that tells the user how to find and delete it.
+                const cleanUp = () => {
+                  void deleteMemory(stored.source_id).catch(() =>
+                    deleteMemory(stored.source_id).catch(() => {
                       setWarnings((prev) => ({
                         ...prev,
                         [row.id]: t("setup.settingUp.daemonCleanupWarning"),
                       }));
                     }),
                   );
+                };
+                return getMemoryDetail(stored.source_id)
+                  .then((detail) => {
+                    if (!detail || detail.source_id !== stored.source_id) {
+                      throw new Error(t("setup.settingUp.daemonReadBackFailed"));
+                    }
+                  })
+                  .finally(cleanUp);
+              })
+              .then(
+                () => {
+                  setStatuses((prev) => ({ ...prev, [row.id]: "done" }));
                 },
                 (err) => {
                   setStatuses((prev) => ({ ...prev, [row.id]: "failed" }));

@@ -1,12 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { invoke } from "@tauri-apps/api/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setConfirmPresenter } from "../lib/confirmAction";
 import QuickCapture from "./QuickCapture";
 
+// The plain-text fallback stands in for the lazily loaded CodeMirror engine:
+// both report through the same props, and jsdom cannot lay CodeMirror out.
+vi.mock("./memory/editor/MarkdownEditor", async () => ({
+  MarkdownEditor: (await import("./memory/editor/NativeMarkdownEditor")).NativeMarkdownEditor,
+}));
+
 const mockedInvoke = vi.mocked(invoke);
+
+beforeEach(() => {
+  localStorage.clear();
+  setConfirmPresenter(async () => true);
+});
+afterEach(() => {
+  setConfirmPresenter();
+});
 
 // The standalone window draws no exterior shadow on any platform, so the user
 // agents below only prove the absence holds everywhere rather than scoping it.
@@ -86,14 +101,14 @@ describe("QuickCapture leaves Escape and Cmd/Ctrl+Enter to the IME while it comp
     mockedInvoke.mockReset();
   });
 
-  it("neither closes nor saves on a composing keydown, then works once the candidate is chosen", () => {
+  it("neither closes nor saves on a composing keydown, then works once the candidate is chosen", async () => {
     const onClose = vi.fn();
     render(
       <QueryClientProvider client={new QueryClient()}>
         <QuickCapture isOpen onClose={onClose} standalone />
       </QueryClientProvider>,
     );
-    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    const textarea = screen.getByRole("textbox", { name: "Quick capture" });
     fireEvent.change(textarea, { target: { value: "今天天氣非常晴朗好熱" } });
     fireEvent.keyDown(textarea, { key: "Escape", isComposing: true });
     fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true, keyCode: 229 });
@@ -101,7 +116,7 @@ describe("QuickCapture leaves Escape and Cmd/Ctrl+Enter to the IME while it comp
     expect(mockedInvoke).not.toHaveBeenCalled();
 
     fireEvent.keyDown(textarea, { key: "Escape" });
-    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 });
 
@@ -154,7 +169,7 @@ describe("QuickCapture standalone window has no exterior shadow or inset", () =>
   it.each(platforms)("saved state on %s: no shadow or glow, no inset", async (_name, ua) => {
     setPlatform(ua);
     mockedInvoke.mockReset();
-    mockedInvoke.mockResolvedValueOnce({ ok: true });
+    mockedInvoke.mockResolvedValueOnce(1);
     const { container, wrapper } = renderCapture(true);
 
     const { textarea, saveButton } = queryTextareaAndSave(container);
@@ -201,14 +216,18 @@ describe("QuickCapture surfaces a save error instead of swallowing it", () => {
     );
     renderCapture(false);
 
-    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    const textarea = screen.getByRole("textbox", { name: "Quick capture" });
     fireEvent.change(textarea, { target: { value: "long enough to save" } });
     fireEvent.click(screen.getByText("Save"));
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe(
-      "Couldn't save: Memory content must be at least 10 characters",
+    expect(alert).toHaveTextContent(
+      "Couldn't save to memory: Memory content must be at least 10 characters",
     );
+    // The text is backed up on this device, so the error says so rather than
+    // asking the person to keep the window open.
+    expect(alert).toHaveTextContent("Your text is kept on this device.");
+    expect(alert).not.toHaveTextContent(/keep this window open/i);
     // The draft is not cleared on a rejected capture -- only onSuccess clears it.
     expect((textarea as HTMLTextAreaElement).value).toBe("long enough to save");
   });
@@ -216,7 +235,7 @@ describe("QuickCapture surfaces a save error instead of swallowing it", () => {
   it("blocks a too-short draft client-side without invoking", async () => {
     renderCapture(false);
 
-    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    const textarea = screen.getByRole("textbox", { name: "Quick capture" });
     fireEvent.change(textarea, { target: { value: "今天天氣非常晴朗好" } });
     fireEvent.click(screen.getByText("Save"));
 
@@ -237,7 +256,7 @@ describe("QuickCapture sends the body exactly as typed", () => {
     renderCapture(false);
 
     const body = "    indented code\n\n| a | b |\n| - | - |\nline with a hard break  \n";
-    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    const textarea = screen.getByRole("textbox", { name: "Quick capture" });
     fireEvent.change(textarea, { target: { value: body } });
     fireEvent.click(screen.getByText("Save"));
 

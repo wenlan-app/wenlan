@@ -321,7 +321,10 @@ export function usePageDraftAutosave({
     }
   }, [enabled, folderPath, invalidateInventories, onDraftIdentity, onSpaceReconciled, updateState]);
 
-  const flush = useCallback(async (): Promise<boolean> => {
+  /** Save now. `latest` is what the fields hold when it is newer than the
+   *  last render (an editor change and a tab switch in the same task). */
+  const flush = useCallback(async (latest?: PageDraftSnapshot): Promise<boolean> => {
+    if (latest) latestRef.current = latest;
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;

@@ -4,7 +4,6 @@ import { useCallback, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { setExampleWikiActive, useExampleWikiActive } from "../../lib/exampleWiki/mode";
-import { setStartIntent } from "./startIntent";
 import { useAreaCentre } from "./TabIntro";
 import "../memory/askAi/turnIntoPages.css";
 import "./exampleWikiBanner.css";
@@ -31,20 +30,15 @@ export function useExampleWikiSwitch() {
  * it): what it is, a way back, and the one main action, starting your own.
  */
 export function ExampleWikiBanner({ onLeave, areaRef }: {
-  readonly onLeave: () => void;
+  /** Leaves the example. The workspace owns the switch: it saves both editor
+   *  groups first, and `startOwn` opens "Add your material" on the way back. */
+  readonly onLeave: (startOwn: boolean) => void;
   readonly areaRef: RefObject<HTMLElement | null>;
 }) {
   const { t } = useTranslation();
   const active = useExampleWikiActive();
-  const { close } = useExampleWikiSwitch();
   const centre = useAreaCentre(areaRef, active);
   if (!active) return null;
-  const leave = (startOwn: boolean) => {
-    // Starting your own opens "Add your material" on the way back.
-    if (startOwn) setStartIntent("material");
-    close();
-    onLeave();
-  };
   return createPortal(
     <div className="example-wiki-anchor" style={centre === null ? undefined : { left: centre }}>
     <div className="example-wiki-banner" role="region" aria-label={t("exampleWiki.label")} data-testid="example-wiki-banner">
@@ -53,10 +47,10 @@ export function ExampleWikiBanner({ onLeave, areaRef }: {
         <span>{t("exampleWiki.line")}</span>
       </p>
       <div className="example-wiki-banner-actions">
-        <button type="button" className="getting-started-link" data-testid="example-wiki-back" onClick={() => leave(false)}>
+        <button type="button" className="getting-started-link" data-testid="example-wiki-back" onClick={() => onLeave(false)}>
           {t("exampleWiki.back")}
         </button>
-        <button type="button" className="turn-pages-primary" data-testid="example-wiki-start" onClick={() => leave(true)}>
+        <button type="button" className="turn-pages-primary" data-testid="example-wiki-start" onClick={() => onLeave(true)}>
           {t("exampleWiki.startOwn")}
         </button>
       </div>

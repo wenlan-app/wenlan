@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from "@playwright/test";
 import { showWikiFolders } from "./helpers/wikiWorkspace";
+import { expectEditorSource } from "./helpers/markdownEditor";
 import { createReviewDecisionFixture } from "./fixtures/reviewDecisions";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 const labels = {
@@ -69,7 +70,7 @@ test("an existing folder-and-Space draft survives reload, then auto-finalizes an
  await page.reload();await showWikiFolders(page);await openDirectory();await sidebar.getByRole("button",{name:"Work",exact:true}).click();
  await sidebar.getByRole("button",{name:"Open Folder draft",exact:true}).click();
  await expect(page.getByRole("textbox",{name:"Title",exact:true})).toHaveValue("Folder draft");
- await expect(page.getByRole("textbox",{name:"Content",exact:true})).toHaveValue("Initial saved draft content.");
+ await expectEditorSource(page.getByRole("textbox",{name:"Content",exact:true}),"Initial saved draft content.");
  await page.getByRole("textbox",{name:"Title",exact:true}).fill("Folder draft after reload");
  await page.getByRole("textbox",{name:"Content",exact:true}).fill("Updated content survives reload and move.");
  await expect.poll(()=>runtime.calls().filter(call=>call.command==="update_page_draft").length).toBe(1);
@@ -77,7 +78,7 @@ test("an existing folder-and-Space draft survives reload, then auto-finalizes an
  await page.reload();await showWikiFolders(page);await openDirectory();await sidebar.getByRole("button",{name:"Work",exact:true}).click();
  await sidebar.getByRole("button",{name:"Open Folder draft after reload",exact:true}).click();
  await expect(page.getByRole("textbox",{name:"Title",exact:true})).toHaveValue("Folder draft after reload");
- await expect(page.getByRole("textbox",{name:"Content",exact:true})).toHaveValue("Updated content survives reload and move.");
+ await expectEditorSource(page.getByRole("textbox",{name:"Content",exact:true}),"Updated content survives reload and move.");
  await sidebar.getByRole("button",{name:"Open Fixture architecture",exact:true}).click();
  await expect(page.getByRole("tab",{name:"Fixture architecture",exact:true})).toHaveAttribute("aria-selected","true");
  await page.getByRole("tab",{name:"Folder draft after reload",exact:true}).click();

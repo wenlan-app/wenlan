@@ -11,6 +11,7 @@ import type { View } from "../navigation/viewState";
 import type { MarkdownEditorSelection } from "../editor/MarkdownEditor";
 import { ReferenceNavigationProvider } from "../links/ReferenceNavigationContext";
 import { useViewScroll } from "../navigation/useViewScroll";
+import { exampleWikiActive, useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { recordRecentPageVisit } from "../../../lib/recentPages";
 
 export interface SecondaryNoteGroupHandle {
@@ -41,6 +42,7 @@ interface Props {
 /** An independent editor owner; moving its portal never recreates its draft. */
 export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(function SecondaryNoteGroup({ host, onPresenceChange, onFocus, onNavigationIntent, onNavigate, onOpenNote, onMove, onPageDeleted, movingNote = false, allocateDraftSession, readingPositions, selections: sharedSelections }, ref) {
   const { t } = useTranslation();
+  const exampleWiki = useExampleWikiActive();
   const [mount] = useState(() => document.createElement("div"));
   mount.className = "secondary-note-group-mount";
   const root = useRef<HTMLDivElement>(null);
@@ -131,6 +133,8 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
     } catch { return false; }
   };
   const open = async (next: NoteView, incoming?: NoteTab, commit?: () => boolean, beforeKey?: string | null) => {
+    // The example wiki is read-only: no draft opens inside it.
+    if (exampleWikiActive() && next.kind === "page-draft") return false;
     onNavigationIntent();
     const token = Symbol("secondary-navigation"); intent.current = token;
     const existing = findTab(next);
@@ -249,7 +253,7 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
         tabs={tabs} activeKey={tabs.find(tab => matchesNote(tab, view))?.key} contentId="wiki-secondary-note-content"
         groupId="secondary" tabListLabel={t("pages.groups.right")} moveLabel={t("pages.groups.moveToCentral")}
         onMoveToOtherGroup={tab => { if (!movingNote) void transfer(tab); }} onSelect={tab => { if (!movingNote) void open(tab.view); }} onClose={tab => void close(tab)}
-        onCreate={() => { if (!movingNote) void open({ kind: "page-draft", space: null }); }} />}>
+        onCreate={exampleWiki ? undefined : () => { if (!movingNote) void open({ kind: "page-draft", space: null }); }} />}>
         {view.kind === "page" ? <PageDetail onRegisterArchive={registerArchive} pageId={view.pageId} projectionIssue={view.projectionIssue}
           onDeleted={pageId => onPageDeleted ? onPageDeleted(pageId) : removePage(pageId)}
           onProjectionResolved={() => replace({ ...view, projectionIssue: undefined })}
