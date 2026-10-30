@@ -328,8 +328,10 @@ async fn migration_143_adds_the_recheck_columns_to_a_table_that_lacks_them_and_i
         .unwrap();
     }
     assert!(columns(&db).await.is_empty());
+    // Stop at 143 so the version check below is about this migration, not
+    // whichever migration happens to be the newest.
     for _ in 0..2 {
-        db.run_migrations(&crate::events::NoopEmitter)
+        db.run_migrations_up_to(&crate::events::NoopEmitter, 143)
             .await
             .unwrap();
         assert_eq!(
@@ -367,7 +369,6 @@ async fn migration_143_adds_the_recheck_columns_to_a_table_that_lacks_them_and_i
     assert_eq!(row.get::<Option<String>>(4).unwrap(), None);
     let mut version = conn.query("PRAGMA user_version", ()).await.unwrap();
     let user_version: i64 = version.next().await.unwrap().unwrap().get(0).unwrap();
-    assert_eq!(user_version, i64::from(crate::db::SCHEMA_VERSION));
     assert_eq!(user_version, 143);
 }
 
