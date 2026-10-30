@@ -23,13 +23,18 @@ export const closeLinkCompletion = StateEffect.define<null>();
 /** Re-render the open menu after the host's notes or labels changed. */
 export const refreshLinkCompletion = StateEffect.define<null>();
 const selectLinkItem = StateEffect.define<number>();
-interface LinkMenu { from: number; to: number; active: number }
+/**
+ * `closers`: how many closing brackets the editor put after the caret when
+ * `[[` was typed (`[[|]]`); accepting a page replaces them too.
+ */
+interface LinkMenu { from: number; to: number; active: number; closers: number }
 interface LinkState { menu: LinkMenu | null; revision: number }
 const MAX_ROWS = 8;
 const MAX_QUERY = 100;
 /** `[` and what Chinese and Japanese input methods type for it. */
 const OPENERS = new Set(["[", "\u3010", "\u300c", "\uff3b"]);
 const QUERY_STOP = /[[\]|#\n\r\u3010\u3011\u300c\u300d\uff3b\uff3d]/;
+const CLOSERS: Record<string, string> = { "[": "]", "\u3010": "\u3011", "\u300c": "\u300d", "\uff3b": "\uff3d" };
 let nextMenuId = 0;
 
 /**
@@ -98,7 +103,8 @@ function permittedContext(state: EditorState, position: number): boolean {
 
 /**
  * The `[[` a writer just finished typing, or null. `「「` and `【【` from a Chinese
- * input method count too. An embed `![[` and a third bracket do not.
+ * input method count too. An embed `![[` and a third bracket do not. The second
+ * bracket may come with its closer (`[[|]]`) when brackets close themselves.
  */
 export function typedLinkRange(transaction: Transaction): Omit<LinkMenu, "active"> | null {
   if (!transaction.isUserEvent("input.type")) return null;
@@ -111,13 +117,19 @@ export function typedLinkRange(transaction: Transaction): Omit<LinkMenu, "active
   if (!permittedContext(previous, range.head)) return null;
   let changes = 0;
   let valid = false;
+  let closers = 0;
   transaction.changes.iterChanges((from, to, _fromNew, _toNew, inserted) => {
     changes++;
-    valid = from === range.head && to === from && inserted.toString() === opener;
+    const text = inserted.toString();
+    valid = from === range.head && to === from && (text === opener || text === opener + CLOSERS[opener]);
+    if (valid && text !== opener) {
+      // The first bracket's own closer usually follows: `[` then `[` makes `[[]]`.
+      closers = previous.sliceDoc(range.head, range.head + 1) === CLOSERS[opener] ? 2 : 1;
+    }
   });
   const next = transaction.state.selection;
   if (changes !== 1 || !valid || next.ranges.length !== 1 || !next.main.empty || next.main.head !== range.head + 1) return null;
-  return { from: range.head - 1, to: range.head + 1 };
+  return { from: range.head - 1, to: range.head + 1, closers };
 }
 
 function menuQuery(state: EditorState, menu: LinkMenu): string | null {
@@ -151,7 +163,7 @@ export function createLinkCompletion(options: {
       // including an input method composing a Chinese title; anything else
       // (a click, an arrow key, an edit elsewhere) closes it.
       if (menu && transaction.docChanged) {
-        menu = { from: transaction.changes.mapPos(menu.from, 1), to: transaction.changes.mapPos(menu.to, 1), active: 0 };
+        menu = { from: transaction.changes.mapPos(menu.from, 1), to: transaction.changes.mapPos(menu.to, 1), active: 0, closers: menu.closers };
       }
       if (menu && menuQuery(transaction.state, menu) === null) menu = null;
       if (!menu && !explicitlyClosed && !transaction.state.readOnly) {
@@ -181,8 +193,10 @@ export function createLinkCompletion(options: {
     const note = clicked ? matches.find((match) => match.id === clicked.id) : matches[activeIndex(menu, matches.length)];
     if (!note) return false;
     const insert = `[[${linkCompletionText(note)}]]`;
+    const closer = CLOSERS[view.state.sliceDoc(menu.from, menu.from + 1)] ?? "]";
+    const closers = view.state.sliceDoc(menu.to, menu.to + menu.closers) === closer.repeat(menu.closers) ? menu.closers : 0;
     view.dispatch({
-      changes: { from: menu.from, to: menu.to, insert },
+      changes: { from: menu.from, to: menu.to + closers, insert },
       selection: EditorSelection.cursor(menu.from + insert.length),
       effects: closeLinkCompletion.of(null),
       annotations: isolateHistory.of("full"),
@@ -309,7 +323,8 @@ export function createLinkCompletion(options: {
         { key: "Enter", run: (view) => accept(view, false) },
         { key: "Shift-Enter", run: (view) => accept(view, true) },
         { key: "Escape", run: (view) => options.blocked(view) ? false : close(view) },
-        { key: "Tab", run: (view) => { if (!options.blocked(view)) close(view); return false; } },
+        // Tab only closes the menu; it must not also indent the line.
+        { key: "Tab", run: (view) => !options.blocked(view) && close(view) },
       ])),
       EditorView.domEventHandlers({ blur: (_event, view) => { close(view); return false; } }),
       EditorView.theme({

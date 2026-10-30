@@ -774,3 +774,39 @@ test("confirms a remotely deleted page before offering guarded local draft disca
   await expect(page.locator(".page-detail")).toHaveCount(0);
   expect(updateCalls(controller)).toHaveLength(1);
 });
+
+test("nests list items with Tab, closes brackets, and wraps a selection while typing", async ({ page }) => {
+  const source = "- first\n- second";
+  const controller = await openPage(page, pageFixture(source));
+  const editor = await openedEditor(page, source);
+
+  await editor.locator(".cm-line").nth(1).click();
+  await editor.press("End");
+  await editor.press("Tab");
+  await expect(editor).toBeFocused();
+  await expect.poll(() => editorSource(editor)).toBe("- first\n  - second");
+
+  await editor.press("Enter");
+  await editor.pressSequentially("third (note");
+  await expect.poll(() => editorSource(editor)).toBe("- first\n  - second\n  - third (note)");
+  await editor.press(")");
+  await editor.press("Shift+Tab");
+  await expect.poll(() => editorSource(editor)).toBe("- first\n  - second\n- third (note)");
+
+  // Select "second" and wrap it: one * then another makes it bold.
+  await editor.locator(".cm-line").nth(1).click();
+  await editor.press("End");
+  for (let i = 0; i < "second".length; i++) await editor.press("Shift+ArrowLeft");
+  await editor.press("*");
+  await editor.press("*");
+  const typed = "- first\n  - **second**\n- third (note)";
+  await expect.poll(() => editorSource(editor)).toBe(typed);
+
+  await expect.poll(() => updateCalls(controller).at(-1)?.content, AUTOSAVE_TIMEOUT).toBe(typed);
+
+  // Tab no longer leaves the editor; Escape (then Tab) still does.
+  await editor.press("Escape");
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".cm-content:focus")).toHaveCount(0);
+  expect(updateCalls(controller).at(-1)?.content).toBe(typed);
+});

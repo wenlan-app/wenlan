@@ -182,7 +182,8 @@ export function createSlashEditing(options: {
         { key: "ArrowUp", run: (view) => move(view, -1) },
         { key: "Enter", run: accept },
         { key: "Escape", run: (view) => options.blocked(view) ? false : close(view) },
-        { key: "Tab", run: (view) => { if (!options.blocked(view)) close(view); return false; } },
+        // Tab only closes the menu; it must not also indent the line.
+        { key: "Tab", run: (view) => !options.blocked(view) && close(view) },
       ])),
       EditorView.domEventHandlers({ blur: (_event, view) => { close(view); return false; } }),
       EditorView.theme({
