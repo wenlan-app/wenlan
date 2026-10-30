@@ -2,6 +2,7 @@
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { SearchModal } from "./SearchModal";
+import { isInputCompositionActive } from "../../lib/inputComposition";
 import { RecentlyOpened, type RecentSearchItem } from "./RecentlyOpened";
 import { ArrowLeft, ArrowRight, X } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1171,7 +1172,7 @@ export default function Main({
   // Cmd/Ctrl+K is delivered by App.tsx and opens the shared search dialog.
   useEffect(() => {
     const unlisten = listen("focus-search", () => {
-      if (pageSavePending) return;
+      if (pageSavePending || isInputCompositionActive()) return;
       if (searchDialogOpenRef.current) {
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
@@ -1192,7 +1193,10 @@ export default function Main({
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing) return;
+      // keyCode 229 is the IME's own keydown (WebView2 reports it before
+      // compositionstart); the observer covers keys pressed while a candidate
+      // window is open in any field.
+      if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || isInputCompositionActive()) return;
       // Cmd/Ctrl+R reloads the window, like other desktop apps built on a web
       // view. It works from inside an editor too, and saves the open note first.
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "r") {

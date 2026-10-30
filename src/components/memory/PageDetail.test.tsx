@@ -253,6 +253,31 @@ describe("PageDetail", () => {
     expect(screen.getByText(/libSQL is the core database layer powering Origin/)).toBeInTheDocument();
   });
 
+  it("lets the IME own Enter and Escape while the rename field composes", async () => {
+    const { renamePage } = await import("../../lib/tauri");
+    (renamePage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: "concept_abc", title: "架構筆記", version: 4 });
+    const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
+
+    await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    const titleInput = screen.getByRole("textbox", { name: "Page title" });
+    fireEvent.compositionStart(titleInput);
+    fireEvent.change(titleInput, { target: { value: "架構筆記" } });
+    // Ready to save, so only the composition can be what holds it back.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save title" })).toBeEnabled());
+    // Enter picks the candidate; Escape drops the preedit. Neither leaves rename.
+    expect(fireEvent.keyDown(titleInput, { key: "Enter" })).toBe(false);
+    fireEvent.submit(titleInput.closest("form")!);
+    fireEvent.keyDown(titleInput, { key: "Escape" });
+    expect(renamePage).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Page title" })).toHaveValue("架構筆記");
+
+    fireEvent.compositionEnd(titleInput, { data: "架構筆記" });
+    await user.click(screen.getByRole("button", { name: "Save title" }));
+    expect(renamePage).toHaveBeenCalledWith("concept_abc", "架構筆記", 3);
+  });
+
   it("cancels a page rename without changing the title", async () => {
     const { renamePage } = await import("../../lib/tauri");
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);

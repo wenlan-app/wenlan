@@ -1260,6 +1260,7 @@ export const DEFAULTS: Record<string, unknown> = {
   // wrong keys where the Rust command returns a struct doesn't just render empty —
   // it white-screens the step (RemoteAccessPanel reads status.status unguarded).
   set_traffic_lights_visible: null,
+  set_editor_composing: null,
   // No wenlan://pair link can reach a browser preview.
   take_remote_pairing_link: null,
   // Web access never runs in a browser preview, so it cannot stop on its own.

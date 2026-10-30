@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
 import App from "./App";
+import { isInputCompositionActive } from "./lib/inputComposition";
 
 const eventListeners = vi.hoisted(
   () => new Map<string, (event: { payload: unknown }) => void>(),
@@ -30,6 +31,7 @@ const getWireStateMock = vi.hoisted(
   () => vi.fn<() => Promise<{ daemon: { reachable: boolean; error: string | null } }>>(),
 );
 const getStartupPreflightStatusMock = vi.hoisted(() => vi.fn());
+const setEditorComposingMock = vi.hoisted(() => vi.fn<(active: boolean) => Promise<void>>());
 
 vi.mock("@tauri-apps/api/event", () => ({
   emit: emitMock,
@@ -48,6 +50,7 @@ vi.mock("./lib/tauri", () => ({
   getStartupPreflightStatus: getStartupPreflightStatusMock,
   setSetupCompleted: vi.fn().mockResolvedValue(undefined),
   setTrafficLightsVisible: vi.fn().mockResolvedValue(undefined),
+  setEditorComposing: setEditorComposingMock,
   startDaemonSidecar: startDaemonSidecarMock,
   getWireState: getWireStateMock,
 }));
@@ -851,5 +854,77 @@ describe("App - opening before the daemon answers", () => {
 
     await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ predicate: expect.any(Function) }));
+  });
+});
+
+describe("App during an IME composition", () => {
+  beforeEach(() => {
+    eventListeners.clear();
+    emitMock.mockReset().mockResolvedValue(undefined);
+    focusWindowMock.mockReset().mockResolvedValue(undefined);
+    hideWindowMock.mockReset().mockResolvedValue(undefined);
+    showWindowMock.mockReset().mockResolvedValue(undefined);
+    acknowledgeGuardedQuitRequestMock.mockReset().mockResolvedValue(true);
+    cancelGuardedQuitRequestMock.mockReset().mockResolvedValue(true);
+    quitWenlanFullMock.mockReset().mockResolvedValue(undefined);
+    setEditorComposingMock.mockReset().mockResolvedValue(undefined);
+    // Like the real editors, the flush refuses to save a live composition.
+    quitGuardMock.mockReset().mockImplementation(async () => !isInputCompositionActive());
+    vi.mocked(localSetupCompleted).mockResolvedValue(true);
+    vi.mocked(shouldShowWizard).mockResolvedValue(false);
+    setDaemonStartupPhase("ready");
+  });
+
+  it("reports the composition to the native hotkey guard", async () => {
+    renderApp();
+    const input = await screen.findByRole("textbox", { name: "Draft title" });
+    fireEvent.compositionStart(input);
+    fireEvent.compositionEnd(input, { data: "你好" });
+    await waitFor(() => expect(setEditorComposingMock.mock.calls).toEqual([[false], [true], [false]]));
+  });
+
+  it("does not steal the composing field's focus through the search hotkey", async () => {
+    renderApp();
+    const input = await screen.findByRole("textbox", { name: "Draft title" });
+    input.focus();
+    fireEvent.compositionStart(input);
+    await act(async () => { await eventListeners.get("toggle-spotlight")?.({ payload: null }); });
+    expect(showWindowMock).not.toHaveBeenCalled();
+    expect(focusWindowMock).not.toHaveBeenCalled();
+    expect(emitMock).not.toHaveBeenCalledWith("focus-search");
+    expect(input).toHaveFocus();
+
+    fireEvent.compositionEnd(input, { data: "你好" });
+    await act(async () => { await eventListeners.get("toggle-spotlight")?.({ payload: null }); });
+    expect(emitMock).toHaveBeenCalledWith("focus-search");
+  });
+
+  it("commits the composition and quits instead of refusing and re-showing the window", async () => {
+    renderApp();
+    const input = await screen.findByRole("textbox", { name: "Draft title" });
+    // jsdom has no IME; Chromium and WebKit end the composition on blur.
+    input.addEventListener("blur", () => fireEvent.compositionEnd(input, { data: "你好" }));
+    input.focus();
+    fireEvent.compositionStart(input);
+
+    await act(async () => { dispatchQuit(); });
+    await waitFor(() => expect(quitWenlanFullMock).toHaveBeenCalledTimes(1));
+    expect(quitGuardMock).toHaveBeenCalledTimes(1);
+    expect(cancelGuardedQuitRequestMock).not.toHaveBeenCalled();
+    expect(showWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("still quits when the browser never ends the composition after the blur", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderApp();
+    const input = await screen.findByRole("textbox", { name: "Draft title" });
+    input.focus();
+    fireEvent.compositionStart(input);
+
+    await act(async () => { dispatchQuit(); });
+    await waitFor(() => expect(quitWenlanFullMock).toHaveBeenCalledTimes(1), { timeout: 2000 });
+    expect(cancelGuardedQuitRequestMock).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("without compositionend"));
+    warn.mockRestore();
   });
 });

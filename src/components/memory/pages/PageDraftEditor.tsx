@@ -93,6 +93,17 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
     const [title, setTitle] = useState(initialPage?.title ?? "");
     useEffect(() => { onTitleChange?.(title); }, [title, onTitleChange]);
     const [content, setContent] = useState(initialPage?.content ?? "");
+    // IME composition in the title or the body: autosave, finalize and Escape
+    // wait for the committed text instead of saving or leaving mid-preedit.
+    const [composing, setComposing] = useState(false);
+    const composingRef = useRef(false);
+    const titleComposingRef = useRef(false);
+    const bodyComposingRef = useRef(false);
+    const setComposition = (part: "title" | "body", active: boolean) => {
+      (part === "title" ? titleComposingRef : bodyComposingRef).current = active;
+      composingRef.current = titleComposingRef.current || bodyComposingRef.current;
+      setComposing(composingRef.current);
+    };
     const [space, setSpace] = useState(initialPage?.space ?? initialSpace ?? "");
     const [operationKind, setOperationKind] = useState<"idle" | "finalizing" | "uncertain" | "finalized">("idle");
     const [publishError, setPublishError] = useState<Error | null>(null);
@@ -127,6 +138,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
       onDraftIdentity,
       onSpaceReconciled: reconcileSpace,
       snapshot,
+      composing,
     });
 
     const finishPublished = useCallback(async (published: Page) => {
@@ -145,6 +157,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
     }, [queryClient]);
 
     const finalize = useCallback((): Promise<boolean> => {
+      if (composingRef.current) return Promise.resolve(false);
       if (publishedPageRef.current) return Promise.resolve(true);
       if (finalizePromiseRef.current) return finalizePromiseRef.current;
 
@@ -283,7 +296,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
 
     useEffect(() => {
       const handleEscape = (event: KeyboardEvent) => {
-        if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+        if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229 || composingRef.current) return;
         if (noteGroup && !noteGroup.element?.contains(event.target as Node)) return;
         // Let an open sidebar popup consume Escape before draft navigation or
         // the narrow drawer's close guard sees it.
@@ -438,6 +451,11 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
               setPublishVersionConflict(false);
             }}
             placeholder={t("pages.editor.titlePlaceholder")}
+            onCompositionStart={() => setComposition("title", true)}
+            onCompositionEnd={() => setComposition("title", false)}
+            // Focus loss ends a composition in WebView2 and WebKit, even when
+            // compositionend is not delivered; keep the text as typed.
+            onBlur={() => { if (titleComposingRef.current) setComposition("title", false); }}
             ref={titleRef}
             value={title}
           />
@@ -453,6 +471,9 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
               setPublishVersionConflict(false);
             }}
             placeholder={t("pages.editor.contentPlaceholder")}
+            onCompositionStart={() => setComposition("body", true)}
+            onCompositionEnd={() => setComposition("body", false)}
+            onBlur={() => { if (bodyComposingRef.current) setComposition("body", false); }}
             value={content}
           />
         </div>

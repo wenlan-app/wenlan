@@ -42,6 +42,8 @@ type UsePageDraftAutosaveOptions = {
   readonly draftId?: string;
   readonly folderPath?: string;
   readonly enabled?: boolean;
+  /** An IME composition is in progress: hold autosave until its text is committed. */
+  readonly composing?: boolean;
   readonly initial: PageDraftSnapshot;
   readonly initialVersion?: number;
   readonly onDraftIdentity?: (draftId: string) => void;
@@ -92,6 +94,7 @@ export function usePageDraftAutosave({
   draftId: initialDraftId,
   folderPath,
   enabled = true,
+  composing = false,
   initial,
   initialVersion,
   onDraftIdentity,
@@ -108,6 +111,8 @@ export function usePageDraftAutosave({
 
   const mountedRef = useRef(true);
   const latestRef = useRef(snapshot);
+  const composingRef = useRef(composing);
+  composingRef.current = composing;
   const persistedRef = useRef(initial);
   const draftIdRef = useRef<string | null>(initialDraftId ?? null);
   const clientDraftIdRef = useRef<string | null>(null);
@@ -144,12 +149,13 @@ export function usePageDraftAutosave({
   }, [queryClient]);
 
   const saveLatest = useCallback(async (): Promise<boolean> => {
-    if (conflictRef.current) return false;
+    if (conflictRef.current || composingRef.current) return false;
     if (loopRef.current) return loopRef.current;
 
     const loop = (async () => {
       let idCollisionRetries = 0;
       while (enabled) {
+        if (composingRef.current) return false;
         const next = latestRef.current;
         const currentId = draftIdRef.current;
         const pendingCreate = pendingCreateRef.current;
@@ -355,6 +361,7 @@ export function usePageDraftAutosave({
   useEffect(() => {
     if (
       !enabled
+      || composing
       || conflictRef.current
       || (
         sameSnapshot(snapshot, persistedRef.current)
@@ -373,7 +380,7 @@ export function usePageDraftAutosave({
         timerRef.current = null;
       }
     };
-  }, [enabled, saveLatest, snapshot.content, snapshot.space, snapshot.title]);
+  }, [enabled, composing, saveLatest, snapshot.content, snapshot.space, snapshot.title]);
 
   useEffect(() => {
     mountedRef.current = true;

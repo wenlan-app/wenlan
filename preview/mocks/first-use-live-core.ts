@@ -264,6 +264,8 @@ export async function invoke<T>(
 ): Promise<T> {
   // Passive window-chrome stub: presentation only, claims nothing.
   if (command === "set_traffic_lights_visible") return null as T;
+  // Passive native-window state only; grants no live-daemon write capability.
+  if (command === "set_editor_composing") return null as T;
   // No wenlan://pair link can reach a browser preview.
   if (command === "take_remote_pairing_link") return null as T;
   // Nor can Web access stop on its own here, so no notice is ever waiting.
