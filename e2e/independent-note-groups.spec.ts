@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test, type Page, type Locator } from "@playwright/test";
 import { showWikiFolders } from "./helpers/wikiWorkspace";
+import { expectEditorSource } from "./helpers/markdownEditor";
 import { createReviewDecisionFixture } from "./fixtures/reviewDecisions";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 const group = (page: Page, id: string) => page.locator(`[data-note-group-id="${id}"]`);
@@ -163,7 +164,7 @@ test("Escape in a right draft cannot close or navigate a central draft", async (
  await expect(right.getByRole("tab",{name:"Right draft on Escape",exact:true})).toHaveCount(0);
  await expect(right.getByRole("tab",{name:"Next experiment",exact:true})).toHaveAttribute("aria-selected","true");
  await expect(title).toHaveValue("Central draft stays");
- await expect(left.getByRole("textbox",{name:"Content",exact:true})).toHaveValue("");
+ await expectEditorSource(left.getByRole("textbox",{name:"Content",exact:true}),"");
 });
 
 test("opening a page owned by the other group requires an explicit action", async ({page}) => {

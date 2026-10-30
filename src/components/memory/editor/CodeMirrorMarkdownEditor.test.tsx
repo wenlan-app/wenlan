@@ -4,6 +4,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { EditorView } from "@codemirror/view";
 import { undo, undoDepth } from "@codemirror/commands";
+import { SearchQuery, replaceAll, setSearchQuery } from "@codemirror/search";
+import { i18n } from "../../../i18n";
 import { CodeMirrorMarkdownEditor } from "./CodeMirrorMarkdownEditor";
 import type {
   MarkdownEditorHandle,
@@ -635,6 +637,83 @@ describe("CodeMirrorMarkdownEditor", () => {
     act(() => pressKey(textbox, "Enter"));
 
     expect(view.state.doc.toString()).toBe(expected);
+  });
+
+  it("opens find and replace, and one undo reverts a replace-all", () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "alpha beta alpha" })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    act(() => { expect(ref.current?.runCommand("find")).toBe(true); });
+    expect(screen.getByRole("textbox", { name: "Find" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Replace" })).toBeInTheDocument();
+    for (const name of ["Next", "Previous", "Select all", "Replace", "Replace all", "Close"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    for (const name of ["Match case", "Regex", "Whole word"]) {
+      expect(screen.getByRole("checkbox", { name })).toBeInTheDocument();
+    }
+    act(() => {
+      view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "alpha", replace: "中文" })) });
+      replaceAll(view);
+    });
+    expect(view.state.doc.toString()).toBe("中文 beta 中文");
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("alpha beta alpha");
+  });
+
+  it("labels the find panel in the interface language", async () => {
+    await act(async () => { await i18n.changeLanguage("zh-Hant"); });
+    try {
+      const ref = createRef<MarkdownEditorHandle>();
+      render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps()} />);
+      act(() => { ref.current?.runCommand("find"); });
+      expect(screen.getByRole("textbox", { name: "尋找" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "全部取代" })).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "區分大小寫" })).toBeInTheDocument();
+    } finally {
+      await act(async () => { await i18n.changeLanguage("en"); });
+    }
+  });
+
+  it("shows the placeholder only while the document is empty", () => {
+    render(<CodeMirrorMarkdownEditor {...baseProps({ initialDocument: "", placeholder: "Start writing…" })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    expect(document.querySelector(".cm-placeholder")).toHaveTextContent("Start writing…");
+    act(() => replaceDocument(view, "text"));
+    expect(document.querySelector(".cm-placeholder")).toBeNull();
+  });
+
+  it("closes find on Escape before it cancels the editor", () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    const props = baseProps();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...props} />);
+    const textbox = screen.getByRole("textbox", { name: "Page source" });
+    const view = editorViewFromTextbox(textbox);
+    act(() => { ref.current?.runCommand("find"); view.focus(); pressKey(textbox, "Escape"); });
+    expect(screen.queryByRole("textbox", { name: "Find" })).not.toBeInTheDocument();
+    expect(props.onCancel).not.toHaveBeenCalled();
+    act(() => { pressKey(textbox, "Escape"); });
+    expect(props.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves Cmd/Ctrl+K to the app's search", () => {
+    render(<CodeMirrorMarkdownEditor {...baseProps({ initialDocument: "alpha" })} />);
+    const textbox = screen.getByRole("textbox");
+    const view = editorViewFromTextbox(textbox);
+    act(() => { selectRange(view, 0, 5); });
+    const event = pressKey(textbox, "k", { ctrlKey: true });
+    expect(event.defaultPrevented).toBe(false);
+    expect(view.state.doc.toString()).toBe("alpha");
+  });
+
+  it("releases its composition status when it loses focus without compositionend", () => {
+    const onStatusChange = vi.fn();
+    render(<CodeMirrorMarkdownEditor {...baseProps({ onStatusChange })} />);
+    const textbox = screen.getByRole("textbox");
+    fireEvent.compositionStart(textbox);
+    expect(lastStatus(onStatusChange).compositionActive).toBe(true);
+    fireEvent.blur(textbox);
+    expect(lastStatus(onStatusChange).compositionActive).toBe(false);
   });
 
   it("removes an empty Markdown marker with markup-aware Backspace", () => {

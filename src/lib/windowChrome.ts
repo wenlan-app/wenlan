@@ -132,3 +132,18 @@ export function dragStripHeight(ua?: string): number {
   if (platform === "unknown") return UNKNOWN_PLATFORM_DRAG_STRIP_HEIGHT;
   return platform === "macos" ? MACOS_DRAG_STRIP_HEIGHT : NATIVE_DRAG_STRIP_HEIGHT;
 }
+
+/**
+ * The modifier a shortcut hint names: ⌘ on macOS, Ctrl on Windows and Linux,
+ * both when the platform could not be read, since either may be right.
+ */
+export function primaryShortcutModifier(ua?: string): string {
+  switch (hostPlatform(ua)) {
+    case "macos":
+      return "⌘";
+    case "other":
+      return "Ctrl";
+    case "unknown":
+      return "Ctrl/⌘";
+  }
+}

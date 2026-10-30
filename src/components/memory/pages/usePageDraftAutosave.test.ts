@@ -82,6 +82,16 @@ describe("usePageDraftAutosave", () => {
     expect(createPageDraft).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: "輸入完成" }));
   });
 
+  it("flushes the snapshot it is given before React has rendered the latest content", async () => {
+    vi.mocked(createPageDraft).mockImplementation(async (input) =>
+      page({ id: input.clientDraftId, title: input.title, content: input.content, version: 1 }));
+    const { result } = renderHook(() => usePageDraftAutosave({ initial: EMPTY, snapshot: EMPTY }), { wrapper });
+    await act(async () => {
+      expect(await result.current.flush({ title: "Latest", content: "same-task text", space: null })).toBe(true);
+    });
+    expect(createPageDraft).toHaveBeenCalledWith(expect.objectContaining({ title: "Latest", content: "same-task text" }));
+  });
+
   it("does not write an untouched or Space-only draft", async () => {
     const { result, rerender } = renderHook(
       ({ snapshot }) => usePageDraftAutosave({ initial: EMPTY, snapshot }),

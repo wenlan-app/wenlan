@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { getMemoryDetail, updateMemory, type MemoryItem } from "../../../lib/tauri";
@@ -7,6 +7,7 @@ import { confirmAction } from "../../../lib/confirmAction";
 import { useReferenceNavigation } from "../links/ReferenceNavigationContext";
 import { ReferencePreview } from "../links/ReferencePreview";
 import type { ReferencePreviewRequest, ReferenceTarget } from "../links/referenceTypes";
+import { useEditorLinkNotes } from "./useEditorLinkNotes";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { MemoryAutosave, type MemoryAutosaveSnapshot } from "./memoryAutosave";
 
@@ -25,6 +26,9 @@ export function MemoryDocumentEditor({ memory, canonical, disabled, onRegisterFl
   const [snapshot, setSnapshot] = useState<MemoryAutosaveSnapshot | null>(null);
   const [referencePreview, setReferencePreview] = useState<ReferencePreviewRequest | null>(null);
   const [showLatest, setShowLatest] = useState(false);
+  const [linkInput, setLinkInput] = useState(memory.content.includes("[["));
+  const linkNotes = useEditorLinkNotes(memory.space ?? memory.domain ?? null, memory.source_id, linkInput);
+  const wikiLinkTargets = useMemo(() => new Map(linkNotes.map(note => [(note.linkText ?? note.title).trim().toLowerCase(), note.id])), [linkNotes]);
   const disabledRef = useRef(disabled); disabledRef.current = disabled;
   const busyObserver = useRef(onBusyChange); busyObserver.current = onBusyChange;
   const initial = useRef(memory);
@@ -39,6 +43,7 @@ export function MemoryDocumentEditor({ memory, canonical, disabled, onRegisterFl
         setSnapshot(next);
         if (!next.dirty && next.source !== latestEditorText.current) {
           latestEditorText.current = next.source;
+          setLinkInput(next.source.includes("[["));
           setDocument(previous => ({ text: next.source, revision: previous.revision + 1 }));
         }
       },
@@ -68,6 +73,7 @@ export function MemoryDocumentEditor({ memory, canonical, disabled, onRegisterFl
   }, []);
   const change = useCallback((source: string) => {
     latestEditorText.current = source;
+    setLinkInput(source.includes("[["));
     controller.current?.setSource(source);
   }, []);
   const dismissReferencePreview = useCallback(() => {
@@ -108,7 +114,10 @@ export function MemoryDocumentEditor({ memory, canonical, disabled, onRegisterFl
   return <div className="memory-document-editor page-document-editor" onBlurCapture={event => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) flush();
   }}>
-    <MarkdownEditor initialDocument={document.text} sessionId={`${memory.source_id}:${document.revision}`} seamless
+    <MarkdownEditor wikiLinkTargets={wikiLinkTargets} linkNotes={linkNotes}
+      onWikiPageActivate={(id, anchor) => activateReference({ kind: "page", id }, anchor)}
+      onWikiLinkPreview={(id, anchor, keyboard) => showReferencePreview({ kind: "page", id }, anchor, keyboard)}
+      onWikiLinkPreviewLeave={leaveReferencePreview} initialDocument={document.text} sessionId={`${memory.source_id}:${document.revision}`} seamless
       disabled={disabled || (snapshot !== null && snapshot.baseline === null)} ariaLabel={t("memoryDetail.readingLabel")}
       onDocumentChange={change} onStatusChange={status => controller.current?.setComposing(status.compositionActive)}
       onSave={source => { change(source); flush(); }} onCancel={flush} onFallback={() => {}}

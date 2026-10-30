@@ -5,6 +5,7 @@ import type { MilestoneRecord, Page } from "../src/lib/tauri";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 import { openWikiNote } from "./helpers/wikiWorkspace";
+import { expectEditorSource } from "./helpers/markdownEditor";
 
 const title = (page: BrowserPage) => page.getByRole("textbox", { name: "Title", exact: true });
 const content = (page: BrowserPage) => page.getByRole("textbox", { name: "Content", exact: true });
@@ -65,7 +66,7 @@ for (const persisted of [false, true]) {
     }
     await page.getByRole("button", { name: "New page", exact: true }).click();
     await expect(title(page)).toHaveValue("");
-    await expect(content(page)).toHaveValue("");
+    await expectEditorSource(content(page), "");
     await expect(title(page)).toBeFocused();
     const oldCreate = controller.calls().find(call => call.command === "create_page_draft");
     const oldId = persisted ? originalId : (oldCreate!.args as { clientDraftId: string }).clientDraftId;
@@ -115,7 +116,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 
     await expect(more).toBeFocused();
     await expect(sidebar(page)).toHaveAttribute("aria-hidden", "false");
     await expect(title(page)).toHaveValue("Popup Escape synthetic draft");
-    await expect(content(page)).toHaveValue("The writing session stays here.");
+    await expectEditorSource(content(page), "The writing session stays here.");
     await page.screenshot({ path: test.info().outputPath(`more-escape-${viewport.width}.png`) });
 
     const account = sidebar(page).getByRole("button", { name: "Account menu", exact: true });
@@ -126,7 +127,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 
     await expect(account).toBeFocused();
     await expect(sidebar(page)).toHaveAttribute("aria-hidden", "false");
     await expect(title(page)).toHaveValue("Popup Escape synthetic draft");
-    await expect(content(page)).toHaveValue("The writing session stays here.");
+    await expectEditorSource(content(page), "The writing session stays here.");
     await expect(page.locator("vite-error-overlay")).toHaveCount(0);
     await page.screenshot({ path: test.info().outputPath(`account-escape-${viewport.width}.png`) });
     await writeFile(test.info().outputPath(`popup-${viewport.width}.json`), JSON.stringify({ viewport, calls: controller.calls(), errors }, null, 2));

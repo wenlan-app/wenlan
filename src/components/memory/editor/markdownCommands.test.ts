@@ -110,8 +110,7 @@ describe("runMarkdownCommand", () => {
     ["link", "a]b"],
     ["link", "a\\b"],
     ["link", "a\nb"],
-    ["bold", " alpha"],
-    ["bold", "alpha "],
+    ["bold", "   "],
     ["italic", "a\nb"],
   ] as const)("%s is an exact no-op for unsafe selection %j", (command, source) => {
     const view = makeView(source, [[0, source.length]]);
@@ -122,6 +121,19 @@ describe("runMarkdownCommand", () => {
     expect(view.state.doc.toString()).toBe(source);
     expect(view.state.selection.eq(before)).toBe(true);
     expect(undoDepth(view.state)).toBe(0);
+  });
+
+  it.each([
+    ["bold", " alpha ", " **alpha** "],
+    ["italic", " alpha ", " *alpha* "],
+  ] as const)("%s formats selected text while keeping boundary whitespace outside the markers", (command, source, expected) => {
+    const view = makeView(source, [[0, source.length]]);
+    expect(runMarkdownCommand(view, command)).toBe(true);
+    expect(view.state.doc.toString()).toBe(expected);
+    expect(runMarkdownCommand(view, command)).toBe(true);
+    expect(view.state.doc.toString()).toBe(source);
+    expect(runMarkdownCommand(view, "undo")).toBe(true);
+    expect(view.state.doc.toString()).toBe(expected);
   });
 
   it.each([
@@ -176,6 +188,17 @@ describe("runMarkdownCommand", () => {
     expect(view.state.selection.mainIndex).toBe(1);
   });
 
+  it.each([
+    ["bulletList", "1. alpha\n2. beta", "- alpha\n- beta"],
+    ["numberedList", "- alpha\n- beta", "1. alpha\n2. beta"],
+  ] as const)("switches to %s without nesting the old markers", (command, initial, expected) => {
+    const view = makeView(initial, [[0, initial.length]]);
+    expect(runMarkdownCommand(view, command)).toBe(true);
+    expect(view.state.doc.toString()).toBe(expected);
+    expect(runMarkdownCommand(view, "undo")).toBe(true);
+    expect(view.state.doc.toString()).toBe(initial);
+  });
+
   it("does not change blank selected lines or neighboring list items", () => {
     const source = "- neighbor\n\nchild\n- neighbor two";
     const childFrom = source.indexOf("child");
@@ -186,12 +209,14 @@ describe("runMarkdownCommand", () => {
     expect(view.state.doc.toString()).toBe("- neighbor\n\n- child\n- neighbor two");
   });
 
-  it("returns false for a line command over an empty document", () => {
+  it.each([ ["heading1", "# "], ["bulletList", "- "], ["numberedList", "1. "], ["blockquote", "> "] ] as const)("starts %s on an empty line and supports undo", (command, expected) => {
     const view = makeView("", [[0, 0]]);
 
-    expect(runMarkdownCommand(view, "heading1")).toBe(false);
+    expect(runMarkdownCommand(view, command)).toBe(true);
+    expect(view.state.doc.toString()).toBe(expected);
+    expect(view.state.selection.main.head).toBe(expected.length);
+    expect(runMarkdownCommand(view, "undo")).toBe(true);
     expect(view.state.doc.toString()).toBe("");
-    expect(undoDepth(view.state)).toBe(0);
   });
 
   it("rejects every command while the state is read-only", () => {
