@@ -15,9 +15,15 @@ import { editorViewFromTextbox, installCodeMirrorDomPolyfills, replaceDocument }
 
 beforeAll(() => installCodeMirrorDomPolyfills());
 
+// Tests that mount the real draft editor run CodeMirror in jsdom. A loaded CI
+// runner can take well over a second to swap a draft session, so their waits
+// get a budget sized for that instead of the one-second default.
+const REAL_EDITOR_WAIT = { timeout: 5_000 };
+const REAL_EDITOR_TEST_TIMEOUT = 20_000;
+
 /** The draft body is a CodeMirror editor; set its whole Markdown source. */
 async function setDraftBody(value: string): Promise<void> {
-  const textbox = await screen.findByRole("textbox", { name: "Content" });
+  const textbox = await screen.findByRole("textbox", { name: "Content" }, REAL_EDITOR_WAIT);
   act(() => replaceDocument(editorViewFromTextbox(textbox), value));
 }
 import ActivityStatus from "./activity/ActivityStatus";
@@ -1143,59 +1149,78 @@ describe("Main search", () => {
 
   it("saves sidebar New page into a distinct draft without changing the old page", async () => {
     realDraftEditor.enabled = true;
+    // Each create is one draft; `latest` holds what each draft holds now. On a
+    // slow runner the 700 ms autosave can fire mid-typing, so a session may
+    // create its draft early and then update that same draft.
     const saved: Page[] = [];
+    const latest = new Map<string, Page>();
     vi.mocked(createPageDraft).mockImplementation(async (request) => {
       const draft = draftPage(request.clientDraftId, request.title, request.content);
       saved.push(draft);
+      latest.set(draft.id, draft);
+      return draft;
+    });
+    vi.mocked(updatePageDraft).mockImplementation(async (request) => {
+      if (!latest.has(request.id)) throw new Error(`Missing saved draft ${request.id}`);
+      const draft = { ...draftPage(request.id, request.title, request.content), version: request.expectedVersion + 1 };
+      latest.set(draft.id, draft);
       return draft;
     });
     vi.mocked(publishPageDraft).mockImplementation(async (request) => {
-      const draft = saved.find((candidate) => candidate.id === request.id);
+      const draft = latest.get(request.id);
       if (!draft) throw new Error(`Missing saved draft ${request.id}`);
       return activePage(draft, request.expectedVersion + 1);
     });
     const user = userEvent.setup();
     const { rerenderMain } = renderMain();
     await user.click(screen.getByRole("button", { name: "New context page" }));
-    await user.type(await screen.findByRole("textbox", { name: "Title" }), "Original");
+    await user.type(await screen.findByRole("textbox", { name: "Title" }, REAL_EDITOR_WAIT), "Original");
     await setDraftBody("Keep this body");
     rerenderMain();
     expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Original");
 
     await user.click(screen.getByRole("button", { name: "New context page" }));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(""));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(""), REAL_EDITOR_WAIT);
     expect(saved).toHaveLength(1);
     await user.type(screen.getByRole("textbox", { name: "Title" }), "Second");
     await setDraftBody("Separate body");
     await user.click(screen.getByRole("button", { name: "Open graph" }));
-    await screen.findByTestId("atlas-view");
+    await screen.findByTestId("atlas-view", {}, REAL_EDITOR_WAIT);
 
     expect(saved).toHaveLength(2);
-    expect(saved[0]).toMatchObject({ title: "Original", content: "Keep this body" });
-    expect(saved[1]).toMatchObject({ title: "Second", content: "Separate body" });
-    expect(saved[0].id).not.toBe(saved[1].id);
-    expect(updatePageDraft).not.toHaveBeenCalled();
+    const [first, second] = saved.map((draft) => latest.get(draft.id)!);
+    expect(first).toMatchObject({ title: "Original", content: "Keep this body" });
+    expect(second).toMatchObject({ title: "Second", content: "Separate body" });
+    expect(first.id).not.toBe(second.id);
+    // Any early update writes part of its own session's text, never the other's.
+    const typed = new Map([[first.id, first], [second.id, second]]);
+    for (const [request] of vi.mocked(updatePageDraft).mock.calls) {
+      const own = typed.get(request.id);
+      expect(own).toBeDefined();
+      expect(own!.title.startsWith(request.title)).toBe(true);
+      expect(own!.content.startsWith(request.content)).toBe(true);
+    }
     expect(publishPageDraft).toHaveBeenCalledTimes(2);
     expect(publishPageDraft).toHaveBeenNthCalledWith(1, {
-      id: saved[0]!.id,
-      expectedVersion: saved[0]!.version,
+      id: first.id,
+      expectedVersion: first.version,
     });
     expect(publishPageDraft).toHaveBeenNthCalledWith(2, {
-      id: saved[1]!.id,
-      expectedVersion: saved[1]!.version,
+      id: second.id,
+      expectedVersion: second.version,
     });
-  });
+  }, REAL_EDITOR_TEST_TIMEOUT);
 
   it("starts a distinct session even when both old and new drafts have no persisted id", async () => {
     realDraftEditor.enabled = true;
     const user = userEvent.setup();
     renderMain();
     await user.click(screen.getByRole("button", { name: "New context page" }));
-    const oldTitle = await screen.findByRole("textbox", { name: "Title" });
+    const oldTitle = await screen.findByRole("textbox", { name: "Title" }, REAL_EDITOR_WAIT);
     await user.click(screen.getByRole("button", { name: "New context page" }));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).not.toBe(oldTitle));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).not.toBe(oldTitle), REAL_EDITOR_WAIT);
     expect(createPageDraft).not.toHaveBeenCalled();
-  });
+  }, REAL_EDITOR_TEST_TIMEOUT);
 
   it("keeps the autosaved page mounted while typing, then finalizes it once on quit", async () => {
     realDraftEditor.enabled = true;
@@ -1222,7 +1247,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     const { rerenderMain } = renderMain(props);
     await user.click(screen.getByRole("button", { name: "New context page" }));
-    const title = await screen.findByRole("textbox", { name: "Title" });
+    const title = await screen.findByRole("textbox", { name: "Title" }, REAL_EDITOR_WAIT);
     await user.type(title, "Stable page");
     await waitFor(() => expect(createPageDraft).toHaveBeenCalledTimes(1), { timeout: 2_000 });
     rerenderMain(props);
@@ -1249,7 +1274,7 @@ describe("Main search", () => {
       version: 3,
     });
     expect(saved.get(draftId)).toMatchObject({ title: "Stable page", content: "More content", version: 2 });
-  });
+  }, REAL_EDITOR_TEST_TIMEOUT);
 
   it("remounts an existing draft A to cached draft B instead of retaining A's autosave identity", async () => {
     realDraftEditor.enabled = true;
@@ -1274,15 +1299,15 @@ describe("Main search", () => {
     const { queryClient } = renderMain();
     queryClient.setQueryData(["page-draft", "draft-b"], draftPage("draft-b", "B title", "B body"));
     await user.click(screen.getByRole("button", { name: "Select draft A" }));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("A title"));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("A title"), REAL_EDITOR_WAIT);
     await user.click(screen.getByRole("button", { name: "Select draft B" }));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("B title"));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("B title"), REAL_EDITOR_WAIT);
     await setDraftBody("B body changed");
     await user.click(screen.getByRole("button", { name: "Open graph" }));
-    await screen.findByTestId("atlas-view");
+    await screen.findByTestId("atlas-view", {}, REAL_EDITOR_WAIT);
     expect(updatePageDraft).toHaveBeenCalledWith(expect.objectContaining({ id: "draft-b", content: "B body changed" }));
     expect(updatePageDraft).not.toHaveBeenCalledWith(expect.objectContaining({ id: "draft-a" }));
-  });
+  }, REAL_EDITOR_TEST_TIMEOUT);
 
   it("keeps the same editor and content when New page cannot flush", async () => {
     realDraftEditor.enabled = true;
@@ -1290,13 +1315,13 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
     await user.click(screen.getByRole("button", { name: "New page" }));
-    const oldTitle = await screen.findByRole("textbox", { name: "Title" });
+    const oldTitle = await screen.findByRole("textbox", { name: "Title" }, REAL_EDITOR_WAIT);
     await user.type(oldTitle, "Unsaved original");
     await user.click(screen.getByRole("button", { name: "New page" }));
-    await screen.findByRole("alert");
+    await screen.findByRole("alert", {}, REAL_EDITOR_WAIT);
     expect(screen.getByRole("textbox", { name: "Title" })).toBe(oldTitle);
     expect(oldTitle).toHaveValue("Unsaved original");
-  });
+  }, REAL_EDITOR_TEST_TIMEOUT);
 
   it("waits for an in-flight New page flush before allocating the next editor session", async () => {
     realDraftEditor.enabled = true;
@@ -1308,7 +1333,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
     await user.click(screen.getByRole("button", { name: "New page" }));
-    const oldTitle = await screen.findByRole("textbox", { name: "Title" });
+    const oldTitle = await screen.findByRole("textbox", { name: "Title" }, REAL_EDITOR_WAIT);
     await user.type(oldTitle, "Pending original");
     await user.click(screen.getByRole("button", { name: "New page" }));
     await user.click(screen.getByRole("button", { name: "New page" }));
@@ -1316,9 +1341,9 @@ describe("Main search", () => {
     expect(oldTitle).toHaveValue("Pending original");
     expect(createPageDraft).toHaveBeenCalledTimes(1);
     await act(async () => saving.resolve(draftPage("draft-original", "Pending original", "")));
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(""));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(""), REAL_EDITOR_WAIT);
     expect(screen.getByRole("textbox", { name: "Title" })).not.toBe(oldTitle);
-  });
+  }, REAL_EDITOR_TEST_TIMEOUT);
 
   it("keeps the editor mounted until a sidebar destination passes the draft flush gate", async () => {
     const flush = deferred<boolean>();
