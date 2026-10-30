@@ -6,7 +6,8 @@ import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { deletePage, discardPageDraft, getPage, knowledgeFolderCreate, type Page, type KnowledgeFolder } from "../../../lib/tauri";
+import { knowledgeFolderCreate, type Page, type KnowledgeFolder } from "../../../lib/tauri";
+import { deleteWikiPage } from "./deleteWikiPage";
 import { confirmAction } from "../../../lib/confirmAction";
 import { listAllActivePages, listAllDraftPages, listAllActivePagesExplicitBrowse, listAllDraftPagesExplicitBrowse, EXPLICIT_BROWSE_QUERY_POLICY } from "./listAllPages";
 import { pageSpaceContext } from "./pagePresentation";
@@ -161,27 +162,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     });
     if (!confirmed) { deletingRef.current = false; return; }
     try {
-      if (note.status === "draft") {
-        // delete_page rejects drafts; a draft is discarded at its latest version.
-        // An open editor can autosave between the read and the discard, so a
-        // version conflict reads the version again once.
-        for (let attempt = 0; ; attempt++) {
-          const latest = await getPage(noteId);
-          if (!latest) break;
-          try { await discardPageDraft({ id: noteId, expectedVersion: latest.version }); break; }
-          catch (cause) {
-            const code = cause && typeof cause === "object" && "code" in cause ? (cause as { code?: unknown }).code : null;
-            if (code === "page_draft_not_found") break;
-            if (code !== "draft_version_conflict" || attempt > 0) throw cause;
-          }
-        }
-      } else await deletePage(noteId);
-      void queryClient.invalidateQueries({ queryKey: ["page", noteId], refetchType: "none" });
-      void queryClient.invalidateQueries({ queryKey: ["pages"] });
-      void queryClient.invalidateQueries({ queryKey: ["knowledge-graph"] });
-      void queryClient.invalidateQueries({ queryKey: ["page-links", noteId], refetchType: "none" });
-      void queryClient.invalidateQueries({ queryKey: ["page-revisions", noteId], refetchType: "none" });
-      void queryClient.invalidateQueries({ queryKey: ["page-sources", noteId], refetchType: "none" });
+      await deleteWikiPage(queryClient, note);
       onDeletePage?.(noteId);
       requestAnimationFrame(() => {
         const focused = document.activeElement;
@@ -327,7 +308,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     }}>
       {contextMenu.noteId ? <>
         <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!contextNote || (contextNote.status === "draft" ? !onOpenDraft : !onOpenPage)} onClick={openContextNote}>{t("pages.folders.openNote")}</button>
-        <button type="button" role="menuitem" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>
+        <button type="button" role="menuitem" className="is-danger" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>
       </> : <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!canCreate || createPending || creating} onClick={() => { if (!canCreate || createPending || creating) return; const { path, invoker } = contextMenu; setContextMenu(null); openCreateFolderFormAt(path, invoker); }}>{t("pages.folders.newFolderIn", { name: contextMenu.path || t("pages.folders.root") })}</button>}
     </div>, document.body)}
   </section>;

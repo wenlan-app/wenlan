@@ -536,7 +536,7 @@ const en = {
   },
   pages: {
     groups: { central: "Central pages", right: "Right pages", moveToRight: "Move to right group", moveToCentral: "Move to central group", openBeside: "Open beside", moveBack: "Move back", openInRight: "This page is open on the right.", openInCentral: "This page is open in the central group.", showNote: "Show page", dismiss: "Dismiss" },
-    recent: { title: "Recently used", custom: "Manual order", dragNote: "Drag to reorder {{title}}", reorderHint: "Use arrow keys to reorder.", customHint: "Drag pages to set your order. Opening a page keeps its place.", modeLabel: "Browse pages", empty: "Pages you open appear here.", browseFolders: "Browse folders" },
+    recent: { title: "Recently used", remove: "Remove from Recently used", custom: "Manual order", dragNote: "Drag to reorder {{title}}", reorderHint: "Use arrow keys to reorder.", customHint: "Drag pages to set your order. Opening a page keeps its place.", modeLabel: "Browse pages", empty: "Pages you open appear here.", browseFolders: "Browse folders" },
     tabs: { label: "Open pages", close: "Close {{title}}", home: "Wiki home" },
     folders: {
       title: "Folders", root: "Folders", rootDestination: "Top level", emptyDirectory: "Create a folder to organize your pages.", locationPending: "Your page is saved, but its file could not be saved in the chosen folder.", retryLocation: "Retry saving the file", retryLocationError: "The file still could not be saved. Check that the folder is available, then retry.", newFolder: "New folder", newFolderIn: "New folder in {{name}}", openNote: "Open", deleteNote: "Delete page", folderName: "Folder name", createIn: "Create in {{name}}", create: "Create", cancel: "Cancel", createError: "The folder couldn't be created. Try again.", unavailable: "Folder browsing is unavailable. All pages are still accessible.", searchAll: "Search all pages", view: "Page view", cards: "Cards", list: "List", empty: "This folder has no pages yet.", move: "Move to folder", destination: "Destination folder", moveError: "The page couldn't be moved. Try again.", moving: "Moving…", moveConfirm: "Move", close: "Close", currentFolder: "Current folder: {{name}}", noteCount_one: "{{count}} page", noteCount_other: "{{count}} pages",
@@ -3591,7 +3591,7 @@ const zhHans = {
   },
   pages: {
     groups: { central: "中央笔记", right: "右侧笔记", moveToRight: "移至右侧分组", moveToCentral: "移至中央分组", openBeside: "并排打开", moveBack: "移回中央", openInRight: "这篇笔记已在右侧打开。", openInCentral: "这篇笔记已在中央打开。", showNote: "查看笔记", dismiss: "关闭提示" },
-    recent: { title: "最近使用", custom: "手动排序", dragNote: "拖动调整「{{title}}」的位置", reorderHint: "使用方向键调整顺序。", customHint: "拖动笔记调整顺序，打开笔记时位置保持不变。", modeLabel: "浏览笔记", empty: "打开过的笔记会出现在这里。", browseFolders: "按文件夹浏览" },
+    recent: { title: "最近使用", remove: "从最近使用中移除", custom: "手动排序", dragNote: "拖动调整「{{title}}」的位置", reorderHint: "使用方向键调整顺序。", customHint: "拖动笔记调整顺序，打开笔记时位置保持不变。", modeLabel: "浏览笔记", empty: "打开过的笔记会出现在这里。", browseFolders: "按文件夹浏览" },
     tabs: { label: "已打开的笔记", close: "关闭 {{title}}", home: "Wiki 首页" },
     folders: {
       title: "文件夹", root: "文件夹", rootDestination: "最外层", emptyDirectory: "创建文件夹，让笔记更好查找。", locationPending: "笔记已保存，但未能将文件保存到所选文件夹。", retryLocation: "重试保存文件", retryLocationError: "仍无法保存文件。请确认文件夹可用后重试。", newFolder: "新建文件夹", newFolderIn: "在 {{name}} 中新建文件夹", openNote: "打开", deleteNote: "删除笔记", folderName: "文件夹名称", createIn: "创建于 {{name}}", create: "创建", cancel: "取消", createError: "未能创建文件夹，请重试。", unavailable: "暂时无法浏览文件夹。仍可访问所有笔记。", searchAll: "搜索所有笔记", view: "笔记视图", cards: "卡片", list: "列表", empty: "这个文件夹还没有笔记。", move: "移至文件夹", destination: "目标文件夹", moveError: "未能移动笔记，请重试。", moving: "正在移动…", moveConfirm: "移动", close: "关闭", currentFolder: "当前文件夹：{{name}}", noteCount_one: "{{count}} 篇笔记", noteCount_other: "{{count}} 篇笔记",
@@ -6602,7 +6602,7 @@ const zhHant = {
   },
   pages: {
     groups: { central: "中央筆記", right: "右側筆記", moveToRight: "移至右側分組", moveToCentral: "移至中央分組", openBeside: "並排開啟", moveBack: "移回中央", openInRight: "這篇筆記已在右側開啟。", openInCentral: "這篇筆記已在中央開啟。", showNote: "查看筆記", dismiss: "關閉提示" },
-    recent: { title: "最近使用", custom: "手動排序", dragNote: "拖曳調整「{{title}}」的位置", reorderHint: "使用方向鍵調整順序。", customHint: "拖曳筆記調整順序，開啟筆記時位置保持不變。", modeLabel: "瀏覽筆記", empty: "開啟過的筆記會出現在這裡。", browseFolders: "按資料夾瀏覽" },
+    recent: { title: "最近使用", remove: "從最近使用中移除", custom: "手動排序", dragNote: "拖曳調整「{{title}}」的位置", reorderHint: "使用方向鍵調整順序。", customHint: "拖曳筆記調整順序，開啟筆記時位置保持不變。", modeLabel: "瀏覽筆記", empty: "開啟過的筆記會出現在這裡。", browseFolders: "按資料夾瀏覽" },
     tabs: { label: "已開啟的筆記", close: "關閉 {{title}}", home: "Wiki 首頁" },
     folders: {
       title: "資料夾", root: "資料夾", rootDestination: "最外層", emptyDirectory: "建立資料夾，讓筆記更好找。", locationPending: "筆記已儲存，但無法將檔案儲存到所選資料夾。", retryLocation: "重試儲存檔案", retryLocationError: "仍無法儲存檔案。請確認資料夾可用後重試。", newFolder: "新增資料夾", newFolderIn: "在 {{name}} 中新增資料夾", openNote: "開啟", deleteNote: "刪除筆記", folderName: "資料夾名稱", createIn: "建立於 {{name}}", create: "建立", cancel: "取消", createError: "無法建立資料夾，請重試。", unavailable: "暫時無法瀏覽資料夾。仍可存取所有筆記。", searchAll: "搜尋所有筆記", view: "筆記檢視", cards: "卡片", list: "清單", empty: "這個資料夾還沒有筆記。", move: "移至資料夾", destination: "目標資料夾", moveError: "無法移動筆記，請重試。", moving: "移動中…", moveConfirm: "移動", close: "關閉", currentFolder: "目前資料夾：{{name}}", noteCount_one: "{{count}} 篇筆記", noteCount_other: "{{count}} 篇筆記",
