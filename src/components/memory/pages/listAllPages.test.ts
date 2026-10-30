@@ -4,6 +4,7 @@ import {
   isKnowledgePage,
   listAllActivePages,
   listAllActivePagesExplicitBrowse,
+  listAllArchivedPagesExplicitBrowse,
   listAllDraftPages,
 } from "./listAllPages";
 
@@ -121,5 +122,18 @@ describe("isKnowledgePage", () => {
     }
     expect(isKnowledgePage(page("no-kind"))).toBe(true);
     expect(isKnowledgePage({ ...page("null-kind"), creation_kind: null })).toBe(true);
+  });
+});
+
+
+describe("archived explicit browse paging", () => {
+  it("loads archived notes beyond the first batch through the explicit route", async () => {
+    vi.mocked(listPagesExplicitBrowse).mockReset();
+    vi.mocked(listPagesExplicitBrowse).mockResolvedValueOnce(Array.from({ length: 500 }, (_, index) => ({ ...page("archive-" + index), status: "archived" }))).mockResolvedValueOnce([{ ...page("last-archive"), status: "archived" }]);
+    const pages = await listAllArchivedPagesExplicitBrowse();
+    expect(pages).toHaveLength(501);
+    expect(pages[pages.length - 1]?.id).toBe("last-archive");
+    expect(listPagesExplicitBrowse).toHaveBeenNthCalledWith(1, "archived", undefined, 500, 0);
+    expect(listPagesExplicitBrowse).toHaveBeenNthCalledWith(2, "archived", undefined, 500, 500);
   });
 });

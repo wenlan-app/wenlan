@@ -40,7 +40,6 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "acknowledge_guarded_quit_request",
   "add_source",
   "add_watch_path",
-  "archive_page",
   "approve_remote_pairing",
   "attach_bytes_to_page",
   "attach_file_to_page",

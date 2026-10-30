@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { confirmAction } from "../../../lib/confirmAction";
 import { getPage, type Page } from "../../../lib/tauri";
 import { deleteWikiPage } from "./deleteWikiPage";
+import { archivePageFromList, canArchivePage } from "./archiveWikiPage";
+import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { EXPLICIT_BROWSE_QUERY_POLICY } from "./listAllPages";
 import { inventoryPageFilename } from "./pageInventory";
 import "./pageInventory.css";
@@ -28,7 +30,7 @@ export function canRenameFromList(page: Page): boolean {
 // cannot live in its state.
 let deleting = false;
 
-export function RecentNoteMenu({ target, onDismiss, onOpen, onRename, onMove, onRemove, onDeleted }: {
+export function RecentNoteMenu({ target, onDismiss, onOpen, onRename, onMove, onRemove, onDeleted, onArchiveOpenPage, onArchived }: {
   readonly target: RecentNoteMenuTarget;
   readonly onDismiss: (restoreFocus: boolean) => void;
   readonly onOpen: () => void;
@@ -36,7 +38,11 @@ export function RecentNoteMenu({ target, onDismiss, onOpen, onRename, onMove, on
   readonly onMove: (page: Page) => void;
   readonly onRemove: () => void;
   readonly onDeleted: (id: string) => void;
+  /** Hand an archive request to the editor that has this page open; see WikiWorkspace. */
+  readonly onArchiveOpenPage?: (id: string) => Promise<boolean>;
+  readonly onArchived?: (id: string) => void;
 }) {
+  const exampleWiki = useExampleWikiActive();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -89,6 +95,12 @@ export function RecentNoteMenu({ target, onDismiss, onOpen, onRename, onMove, on
     } finally { deleting = false; }
   };
 
+  const archiveFromList = async (page: Page) => {
+    onDismiss(true);
+    if (deleting) return;
+    await archivePageFromList(queryClient, page, { t, onArchiveOpenPage, onArchived });
+  };
+
   const item = (label: string, enabled: boolean, run: () => void, danger = false) => (
     <button
       type="button"
@@ -124,6 +136,8 @@ export function RecentNoteMenu({ target, onDismiss, onOpen, onRename, onMove, on
       {item(t("pageDetail.renamePage"), renameReady, () => { if (loaded) onRename(loaded); })}
       {item(t("pages.folders.move"), moveReady, () => { if (loaded) onMove(loaded); })}
       {item(t("pages.recent.remove"), true, onRemove)}
+      {!exampleWiki && loaded !== null && canArchivePage(loaded) &&
+        item(t("pageDetail.archivePage"), true, () => void archiveFromList(loaded))}
       {item(t("pages.folders.deleteNote"), loaded !== null, () => { if (loaded) void deleteFromList(loaded); }, true)}
     </div>,
     document.body,

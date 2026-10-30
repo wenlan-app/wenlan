@@ -21,6 +21,8 @@ export interface SecondaryNoteGroupHandle {
   reorder: (key: string, beforeKey: string | null) => void;
   move: (key: string, beforeKey: string | null) => Promise<void>;
   removePage: (pageId: string) => void;
+  /** Archive a page this group shows, through its editor. "not-open" when it shows something else. */
+  archiveOpenPage: (pageId: string) => Promise<"handled" | "busy" | "not-open">;
 }
 interface Props {
   host: HTMLElement | null;
@@ -50,6 +52,11 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
   const viewRef = useRef(view);
   const [ready, setReady] = useState<NoteView | null>(null);
   const pageFlush = useRef<(() => Promise<boolean>) | null>(null);
+  const pageArchive = useRef<{ pageId: string; archive: () => Promise<boolean> } | null>(null);
+  const registerArchive = useCallback((pageId: string, archive: (() => Promise<boolean>) | null) => {
+    if (archive) pageArchive.current = { pageId, archive };
+    else if (pageArchive.current?.pageId === pageId) pageArchive.current = null;
+  }, []);
   const draft = useRef<PageDraftEditorHandle>(null);
   const draftIdentityByTab = useRef(new Map<string, string>());
   const dirty = useRef(false);
@@ -168,6 +175,12 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
     reorder: (key, beforeKey) => updateTabs(reorderNoteTab(tabsRef.current, key, beforeKey)),
     move: async (key, beforeKey) => { const tab = tabsRef.current.find(item => item.key === key); if (tab) await transfer(tab, beforeKey); },
     removePage,
+    archiveOpenPage: async pageId => {
+      if (viewRef.current?.kind !== "page" || viewRef.current.pageId !== pageId) return "not-open";
+      const owner = pageArchive.current;
+      if (movingNote || owner?.pageId !== pageId) return "busy";
+      return await owner.archive() ? "handled" : "busy";
+    },
   }));
   useViewScroll(root, view ? noteReadingKey(view) : "empty", view?.kind !== "page" || ready === view, ".wiki-workspace-content", readingPositions);
   const close = async (tab: NoteTab) => {
@@ -241,7 +254,7 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
         groupId="secondary" tabListLabel={t("pages.groups.right")} moveLabel={t("pages.groups.moveToCentral")}
         onMoveToOtherGroup={tab => { if (!movingNote) void transfer(tab); }} onSelect={tab => { if (!movingNote) void open(tab.view); }} onClose={tab => void close(tab)}
         onCreate={exampleWiki ? undefined : () => { if (!movingNote) void open({ kind: "page-draft", space: null }); }} />}>
-        {view.kind === "page" ? <PageDetail pageId={view.pageId} projectionIssue={view.projectionIssue}
+        {view.kind === "page" ? <PageDetail onRegisterArchive={registerArchive} pageId={view.pageId} projectionIssue={view.projectionIssue}
           onDeleted={pageId => onPageDeleted ? onPageDeleted(pageId) : removePage(pageId)}
           onProjectionResolved={() => replace({ ...view, projectionIssue: undefined })}
           initialSelection={selections.current.get(view.pageId)} onSelectionChange={selection => selections.current.set(view.pageId, selection)}

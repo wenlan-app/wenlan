@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { RecentPageEntry } from "./recentPages";
 
-export type WikiInventoryMode = "recent" | "custom" | "folders";
+/** "archived" is a browse mode for this session only: the app never reopens in it. */
+export type WikiInventoryMode = "recent" | "custom" | "folders" | "archived";
 export type WikiNotesStorage = {
   readonly getItem: (key: string) => string | null;
   readonly setItem: (key: string, value: string) => void;
@@ -10,6 +11,7 @@ export type WikiNotesStorage = {
 const STORAGE_KEY = "wenlan:wiki-inventory:v1";
 const VERSION = 1 as const;
 const LIMIT = 50;
+// Modes remembered across restarts. Archived pages is deliberately not one.
 const MODES = new Set<WikiInventoryMode>(["recent", "custom", "folders"]);
 type StoredPreferences = { readonly version: 1; readonly mode: WikiInventoryMode; readonly customOrder: readonly string[] };
 

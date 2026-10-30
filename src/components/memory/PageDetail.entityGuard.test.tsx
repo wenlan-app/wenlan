@@ -29,6 +29,7 @@ vi.mock("../../lib/tauri", async (importOriginal) => ({
   pageReviewSupported: vi.fn().mockResolvedValue("daemon_unsupported"),
   reviewPage: vi.fn(),
   deletePage: vi.fn(),
+  archivePage: vi.fn(),
 }));
 
 class ResizeObserverStub {
@@ -60,8 +61,8 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => cleanup());
 
 describe("PageDetail entity-guard delete error", () => {
-  it("renders the daemon's guard message with a link to the entity dossier", async () => {
-    const { deletePage } = await import("../../lib/tauri");
+  it.each(["deletePage", "archivePage"] as const)("renders the daemon guard message for %s with a link to the entity dossier", async (command) => {
+    const { [command]: deletePage } = await import("../../lib/tauri");
     (deletePage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error(
         'invoke failed: {"error":"This page belongs to the entity \'Ada Lovelace\'. Archive or delete it from Entities","entity_id":"entity-ada"}',
@@ -73,7 +74,7 @@ describe("PageDetail entity-guard delete error", () => {
     try {
       await screen.findByText("libSQL Architecture");
       await user.click(screen.getByRole("button", { name: "Page actions" }));
-      await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
+      await user.click(screen.getByRole("menuitem", { name: command === "archivePage" ? "Archive page" : "Delete page" }));
 
       const alert = await screen.findByRole("alert");
       expect(alert).toHaveTextContent("This page belongs to the entity 'Ada Lovelace'");

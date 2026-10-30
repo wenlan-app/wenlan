@@ -52,6 +52,7 @@ function renderOverview({
   onSelectPage = vi.fn(),
   onSelectSpace = vi.fn(),
   onBrowseAll = undefined as (() => void) | undefined,
+  onBrowseArchived = undefined as (() => void) | undefined,
   inventoryScope = "all" as WikiInventoryScope,
   checklist = false,
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -61,6 +62,7 @@ function renderOverview({
       <PagesOverview
         inventoryScope={inventoryScope}
         onBrowseAll={onBrowseAll}
+        onBrowseArchived={onBrowseArchived}
         onCreatePage={onCreatePage}
         onSelectDraft={onSelectDraft}
         onSelectPage={onSelectPage}
@@ -237,6 +239,27 @@ describe("PagesOverview reading workspace", () => {
       expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
     });
   });
+  it("offers Archived pages on the home only while at least one page is archived", async () => {
+    const onBrowseArchived = vi.fn();
+    const { container } = renderOverview({ onBrowseArchived });
+    await waitFor(() => expect(listPagesExplicitBrowse).toHaveBeenCalledWith("archived", undefined, 500, 0));
+    await waitFor(() => expect(container.querySelector(".wiki-overview")).toHaveAttribute("data-library-empty", "true"));
+    expect(screen.queryByRole("button", { name: /Archived pages/ })).toBeNull();
+  });
+
+  it("keeps the way back to archived pages when no active pages or drafts remain", async () => {
+    vi.mocked(listPagesExplicitBrowse).mockImplementation(async status => status === "archived"
+      ? [{ id: "gone", title: "Put away", status: "archived", creation_kind: "authored" } as Page]
+      : []);
+    const onBrowseArchived = vi.fn();
+    const { container } = renderOverview({ onBrowseArchived });
+    await waitFor(() => expect(container.querySelector(".wiki-overview")).toHaveAttribute("data-library-empty", "true"));
+    const entry = await screen.findByRole("button", { name: "Archived pages" });
+    expect(entry).toHaveTextContent("Archived pages1");
+    fireEvent.click(entry);
+    expect(onBrowseArchived).toHaveBeenCalledOnce();
+  });
+
 });
 
 describe("PagesOverview arriving from the welcome", () => {

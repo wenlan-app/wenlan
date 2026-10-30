@@ -51,3 +51,15 @@ describe("wiki notes preferences", () => {
     expect(orderWikiRecentEntries(refreshed, ["c", "a"])).toEqual([entries[2], refreshed[0], entries[1]]);
   });
 });
+
+describe("Archived pages browse mode", () => {
+  it("is never remembered, so the app never reopens in it", () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } };
+    writeWikiInventoryMode("folders", storage);
+    writeWikiInventoryMode("archived", storage);
+    expect(readWikiInventoryMode(storage)).toBe("folders");
+    store.set("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "archived", customOrder: [] }));
+    expect(readWikiInventoryMode(storage)).toBe("recent");
+  });
+});

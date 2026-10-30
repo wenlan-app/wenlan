@@ -35,6 +35,73 @@ function setup() {
 afterEach(() => vi.useRealTimers());
 
 describe("PageAutosave", () => {
+  it("archived canonical locks dirty text until explicit recovery at the restored CAS version", async () => {
+    vi.useFakeTimers();
+    const { saver, write, read } = setup();
+    saver.setSource("Keep local draft");
+    saver.observeCanonical({ ...page(undefined, 4), status: "archived" });
+    saver.setComposing(false);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(write).not.toHaveBeenCalled();
+    expect(await saver.flush()).toBe(false);
+    expect(await saver.retry()).toBe(false);
+    expect(saver.snapshot()).toMatchObject({ readOnly: true, dirty: true, latest: { status: "archived" }, state: { phase: "conflict", pending: { content: "Keep local draft" } } });
+    saver.observeCanonical(page(undefined, 3));
+    expect(saver.snapshot()).toMatchObject({ readOnly: true });
+    const restored = page(undefined, 5);
+    saver.observeCanonical(restored);
+    expect(saver.snapshot()).toMatchObject({ readOnly: false, dirty: true, state: { phase: "conflict" }, latest: { version: 5, status: "active" } });
+    expect(await saver.flush()).toBe(false);
+    saver.reset(restored);
+    saver.setSource("Keep local draft");
+    read.mockResolvedValueOnce(page("Keep local draft", 6));
+    expect(await saver.flush()).toBe(true);
+    expect(write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: "Keep local draft", expectedVersion: 5 }));
+    saver.dispose();
+  });
+
+  it("archived clean canonical stays unwritable and restores the new CAS baseline", async () => {
+    const { saver, write } = setup();
+    expect(saver.observeCanonical({ ...page(undefined, 4), status: "archived" })).toBeUndefined();
+    expect(saver.snapshot()).toMatchObject({ readOnly: true, dirty: false });
+    expect(await saver.flush()).toBe(true);
+    expect(write).not.toHaveBeenCalled();
+    saver.observeCanonical(page(undefined, 5));
+    saver.setSource("After restore");
+    expect(await saver.flush()).toBe(true);
+    expect(write).toHaveBeenCalledWith(expect.objectContaining({ expectedVersion: 5 }));
+    saver.observeCanonical({ ...page(undefined, 4), status: "archived" });
+    expect(saver.snapshot()).toMatchObject({ readOnly: false, baseline: { version: 6 } });
+    saver.dispose();
+  });
+
+  it("archived observation invalidates an older in-flight write without dropping its newer local draft", async () => {
+    const { saver, write, confirmed } = setup();
+    const pending = deferred<UpdatePageOutcome>();
+    write.mockReturnValueOnce(pending.promise);
+    saver.setSource("Old write");
+    const flushing = saver.flush();
+    saver.setSource("Newer local document");
+    saver.observeCanonical({ ...page(undefined, 5), status: "archived" });
+    pending.resolve({ outcome: "saved" });
+    expect(await flushing).toBe(false);
+    expect(confirmed).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(saver.snapshot()).toMatchObject({ readOnly: true, dirty: true, latest: { status: "archived", version: 5 } });
+    expect(await saver.retry()).toBe(false);
+    saver.dispose();
+  });
+
+  it("archived canonical returned by successful-write readback cannot become a writable baseline", async () => {
+    const { saver, read, confirmed } = setup();
+    saver.setSource("A saved body");
+    read.mockResolvedValueOnce({ ...page("A saved body", 5), status: "archived" });
+    expect(await saver.flush()).toBe(false);
+    expect(saver.snapshot()).toMatchObject({ readOnly: true, dirty: true, state: { phase: "conflict" } });
+    expect(confirmed).toHaveBeenCalledWith(expect.objectContaining({ status: "archived" }));
+    saver.dispose();
+  });
+
   it("writes only user changes after the debounce and confirms exact source/version", async () => {
     vi.useFakeTimers();
     const { saver, write } = setup();

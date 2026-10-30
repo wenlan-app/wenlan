@@ -27,7 +27,7 @@ import { daemonMeetsFloor } from "../../src/lib/daemonVersion";
 import type { SpacesNavigationFixture } from "../fixtures/spacesNavigation";
 import { baseResponse } from "./baseResponses";
 import { ConfiguredTauriFailureError, TauriMockArgumentError } from "./errors";
-import { restoreFixturePage } from "./pageRestore";
+import { archiveFixturePage, restoreFixturePage } from "./pageRestore";
 import { PageBasisStore } from "./pageBasis";
 import { PageCodeBasisStore } from "./pageCodeBasis";
 import { PageMapStore } from "./pageMap";
@@ -409,6 +409,12 @@ export class TauriMockRuntime {
           requiredNumber(command, args, "expectedVersion"), optionalValue(args, "title"));
         this.pages[index] = restored.page;
         return restored.response;
+      }
+      case "archive_page": {
+        const id = requiredString(command, args, "id");
+        const index = this.pages.findIndex((page) => page.id === id);
+        this.pages[index] = archiveFixturePage(this.pages[index]);
+        return null;
       }
       case "rename_page": return this.renamePage(args);
       case "update_page": return this.updatePage(args);

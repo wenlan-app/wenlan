@@ -1,17 +1,18 @@
+import { setExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
-import { deletePage, discardPageDraft, getPage, knowledgeFoldersList, knowledgeFolderCreate, type Page } from "../../../lib/tauri";
+import { archivePage, deletePage, discardPageDraft, getPage, knowledgeFoldersList, knowledgeFolderCreate, type Page } from "../../../lib/tauri";
 import { PageInventoryPanel } from "./PageInventoryPanel";
 import { WikiWorkspace } from "./WikiWorkspace";
 const { active, drafts } = vi.hoisted(() => ({ active:vi.fn(), drafts:vi.fn() }));
 vi.mock("./listAllPages", () => ({ EXPLICIT_BROWSE_QUERY_POLICY:{},listAllActivePages:active,listAllDraftPages:drafts,listAllActivePagesExplicitBrowse:active,listAllDraftPagesExplicitBrowse:drafts }));
-vi.mock("../../../lib/tauri", async original => ({...await original<typeof import("../../../lib/tauri")>(),knowledgeFoldersList:vi.fn(),knowledgeFolderCreate:vi.fn(),deletePage:vi.fn(),discardPageDraft:vi.fn(),getPage:vi.fn()}));
+vi.mock("../../../lib/tauri", async original => ({...await original<typeof import("../../../lib/tauri")>(),knowledgeFoldersList:vi.fn(),knowledgeFolderCreate:vi.fn(),archivePage:vi.fn(),deletePage:vi.fn(),discardPageDraft:vi.fn(),getPage:vi.fn()}));
 const page = (id:string, overrides:Partial<Page>={}):Page => ({id,title:id,summary:null,content:"",entity_id:null,domain:null,source_memory_ids:[],version:1,status:"active",created_at:"2026-07-16",last_modified:"2026-07-16",last_compiled:"2026-07-16",...overrides});
 function setup(props:Partial<React.ComponentProps<typeof PageInventoryPanel>>={}) { const client=new QueryClient({defaultOptions:{queries:{retry:false}}});return render(<QueryClientProvider client={client}><PageInventoryPanel onBrowse={vi.fn()} onOpenPage={vi.fn()} onOpenDraft={vi.fn()} {...props}/></QueryClientProvider>); }
-beforeEach(async () => { await i18n.changeLanguage("en");active.mockReset().mockResolvedValue([page("Direct",{storage_path:"Work/direct.md"}),page("Nested",{storage_path:"Work/Research/nested.md"}),page("Legacy")]);drafts.mockReset().mockResolvedValue([]);vi.mocked(knowledgeFoldersList).mockReset().mockResolvedValue({folders:[{path:"Work",name:"Work",parent_path:""},{path:"Work/Research",name:"Research",parent_path:"Work"},{path:"Empty",name:"Empty",parent_path:""}],truncated:false});vi.mocked(knowledgeFolderCreate).mockReset();vi.mocked(deletePage).mockReset().mockResolvedValue();vi.mocked(discardPageDraft).mockReset().mockResolvedValue();vi.mocked(getPage).mockReset();});
+beforeEach(async () => { await i18n.changeLanguage("en");active.mockReset().mockResolvedValue([page("Direct",{storage_path:"Work/direct.md"}),page("Nested",{storage_path:"Work/Research/nested.md"}),page("Legacy")]);drafts.mockReset().mockResolvedValue([]);vi.mocked(knowledgeFoldersList).mockReset().mockResolvedValue({folders:[{path:"Work",name:"Work",parent_path:""},{path:"Work/Research",name:"Research",parent_path:"Work"},{path:"Empty",name:"Empty",parent_path:""}],truncated:false});vi.mocked(knowledgeFolderCreate).mockReset();vi.mocked(archivePage).mockReset().mockResolvedValue();vi.mocked(deletePage).mockReset().mockResolvedValue();vi.mocked(discardPageDraft).mockReset().mockResolvedValue();vi.mocked(getPage).mockReset();});
 describe("folder tree",()=>{
  it("expands files from folder names without navigating the reading pane",async()=>{const onBrowse=vi.fn(),onOpenPage=vi.fn();setup({fileTree:true,browsing:true,onBrowse,onOpenPage});const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Work"}));expect(screen.getByRole("button",{name:"Open Direct"})).toBeInTheDocument();expect(screen.queryByRole("button",{name:"Open Nested"})).not.toBeInTheDocument();expect(screen.queryByRole("button",{name:"All pages"})).not.toBeInTheDocument();await user.click(screen.getByRole("button",{name:"Open Direct"}));expect(onOpenPage).toHaveBeenCalledWith(expect.objectContaining({id:"Direct"}));expect(onBrowse).not.toHaveBeenCalled();});
  it("collapses the selected folder without clearing the open page",async()=>{const onBrowse=vi.fn();setup({fileTree:true,currentPageId:"Direct",onBrowse});const user=userEvent.setup();const note=await screen.findByRole("button",{name:"Open Direct"});expect(note).toHaveAttribute("aria-current","page");await user.click(screen.getByRole("button",{name:"Work"}));expect(screen.queryByRole("button",{name:"Open Direct"})).not.toBeInTheDocument();expect(onBrowse).not.toHaveBeenCalled();});
@@ -67,16 +68,65 @@ describe("folder tree",()=>{
 });
 describe("page deletion",()=>{
  const openDirect=async()=>{const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Work"}));return {user,row:screen.getByRole("button",{name:"Open Direct"})};};
- it("right-clicking a page opens the page menu instead of the folder menu",async()=>{setup({fileTree:true});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["Open","Delete page"]);expect(within(menu).queryByRole("menuitem",{name:/New folder in/})).not.toBeInTheDocument();expect(within(menu).getByRole("menuitem",{name:"Open"})).toHaveFocus();});
+ it("right-clicking a page opens the page menu instead of the folder menu",async()=>{setup({fileTree:true});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["Open","Archive page","Delete page"]);expect(within(menu).queryByRole("menuitem",{name:/New folder in/})).not.toBeInTheDocument();expect(within(menu).getByRole("menuitem",{name:"Open"})).toHaveFocus();});
+ it("archive takes an active page out of the directory without deleting it",async()=>{
+  const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);
+  const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();
+  await user.pointer({keys:"[MouseRight]",target:row});
+  await user.click(await screen.findByRole("menuitem",{name:"Archive page"}));
+  await waitFor(()=>expect(archivePage).toHaveBeenCalledWith("Direct"));
+  // Archive is not a delete: the host's delete bookkeeping (tab close, Recently used) never runs.
+  expect(onDeletePage).not.toHaveBeenCalled();expect(deletePage).not.toHaveBeenCalled();expect(discardPageDraft).not.toHaveBeenCalled();
+  expect(confirmSpy).toHaveBeenCalledWith("Archive this page? You can restore it from Archived pages.");
+  confirmSpy.mockRestore();
+ });
+ it("archive is not offered for a draft",async()=>{
+  drafts.mockResolvedValue([page("Draft",{status:"draft",folder_path:"Work"})]);setup({fileTree:true});const {user}=await openDirect();
+  await user.pointer({keys:"[MouseRight]",target:screen.getByRole("button",{name:"Open Draft"})});
+  expect(screen.queryByRole("menuitem",{name:"Archive page"})).not.toBeInTheDocument();
+  expect(screen.getByRole("menuitem",{name:"Delete page"})).toBeInTheDocument();
+ });
+ it("archive delegates an open note to its editor and never bypasses its refusal",async()=>{
+  const onArchiveOpenPage=vi.fn().mockResolvedValue(true),onDeletePage=vi.fn();
+  const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);
+  setup({fileTree:true,onArchiveOpenPage,onDeletePage});const {user,row}=await openDirect();
+  await user.pointer({keys:"[MouseRight]",target:row});await user.click(screen.getByRole("menuitem",{name:"Archive page"}));
+  await waitFor(()=>expect(onArchiveOpenPage).toHaveBeenCalledWith("Direct"));
+  expect(archivePage).not.toHaveBeenCalled();expect(deletePage).not.toHaveBeenCalled();expect(onDeletePage).not.toHaveBeenCalled();expect(confirmSpy).not.toHaveBeenCalled();
+  confirmSpy.mockRestore();
+ });
+ it("archive cancellation restores the invoking row without changing the note",async()=>{
+  const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(false);
+  setup({fileTree:true});const {user,row}=await openDirect();
+  await user.pointer({keys:"[MouseRight]",target:row});await user.click(screen.getByRole("menuitem",{name:"Archive page"}));
+  await waitFor(()=>expect(row).toHaveFocus());expect(archivePage).not.toHaveBeenCalled();confirmSpy.mockRestore();
+ });
+ it("archive transport failure retains the row and does not close its tab",async()=>{
+  const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);vi.mocked(archivePage).mockRejectedValueOnce(new Error("offline"));
+  const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();
+  await user.pointer({keys:"[MouseRight]",target:row});await user.click(screen.getByRole("menuitem",{name:"Archive page"}));
+  await waitFor(()=>expect(row).toHaveFocus());expect(archivePage).toHaveBeenCalledWith("Direct");expect(onDeletePage).not.toHaveBeenCalled();confirmSpy.mockRestore();
+ });
  it("Open in the page menu opens the page like a click",async()=>{const onOpenPage=vi.fn();setup({fileTree:true,onOpenPage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Open"}));expect(onOpenPage).toHaveBeenCalledWith(expect.objectContaining({id:"Direct"}));expect(screen.queryByRole("menu")).not.toBeInTheDocument();});
- it("Delete page confirms, deletes through the page command and tells the host",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));expect(confirmSpy).toHaveBeenCalledWith("Delete this page?");await waitFor(()=>expect(onDeletePage).toHaveBeenCalledWith("Direct"));expect(deletePage).toHaveBeenCalledWith("Direct");expect(discardPageDraft).not.toHaveBeenCalled();expect(screen.queryByRole("menu")).not.toBeInTheDocument();confirmSpy.mockRestore();});
+ it("Delete page confirms, deletes through the page command and tells the host",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));expect(confirmSpy).toHaveBeenCalledWith("Permanently delete this page? This cannot be undone.");await waitFor(()=>expect(onDeletePage).toHaveBeenCalledWith("Direct"));expect(deletePage).toHaveBeenCalledWith("Direct");expect(discardPageDraft).not.toHaveBeenCalled();expect(screen.queryByRole("menu")).not.toBeInTheDocument();confirmSpy.mockRestore();});
  it("keeps the page when the confirmation is declined",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(false);const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();await user.pointer({keys:"[MouseRight]",target:row});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));expect(confirmSpy).toHaveBeenCalled();expect(deletePage).not.toHaveBeenCalled();expect(onDeletePage).not.toHaveBeenCalled();confirmSpy.mockRestore();});
  it("does not tell the host when the delete fails",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);vi.mocked(deletePage).mockRejectedValueOnce(new Error("boom"));const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();row.focus();await user.keyboard("{Delete}");await waitFor(()=>expect(deletePage).toHaveBeenCalledWith("Direct"));expect(onDeletePage).not.toHaveBeenCalled();expect(screen.getByRole("button",{name:"Open Direct"})).toBeInTheDocument();confirmSpy.mockRestore();});
- it.each(["{Delete}","{Backspace}"])("%s on a focused page runs the same confirmed delete",async key=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();row.focus();await user.keyboard(key);expect(confirmSpy).toHaveBeenCalledWith("Delete this page?");await waitFor(()=>expect(onDeletePage).toHaveBeenCalledWith("Direct"));expect(deletePage).toHaveBeenCalledTimes(1);confirmSpy.mockRestore();});
+ it.each(["{Delete}","{Backspace}"])("%s on a focused page runs the same confirmed delete",async key=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user,row}=await openDirect();row.focus();await user.keyboard(key);expect(confirmSpy).toHaveBeenCalledWith("Permanently delete this page? This cannot be undone.");await waitFor(()=>expect(onDeletePage).toHaveBeenCalledWith("Direct"));expect(deletePage).toHaveBeenCalledTimes(1);confirmSpy.mockRestore();});
  it("ignores Delete with a modifier and on folder rows",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);setup({fileTree:true});const {user,row}=await openDirect();row.focus();await user.keyboard("{Shift>}{Delete}{/Shift}");screen.getByRole("button",{name:"Work"}).focus();await user.keyboard("{Delete}");expect(confirmSpy).not.toHaveBeenCalled();expect(deletePage).not.toHaveBeenCalled();confirmSpy.mockRestore();});
  it("reads the draft version again when an autosave lands before the discard",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);drafts.mockResolvedValue([page("Draft",{status:"draft",folder_path:"Work",version:2})]);vi.mocked(getPage).mockResolvedValueOnce(page("Draft",{status:"draft",version:5})).mockResolvedValueOnce(page("Draft",{status:"draft",version:6}));vi.mocked(discardPageDraft).mockRejectedValueOnce({code:"draft_version_conflict"});const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user}=await openDirect();await user.pointer({keys:"[MouseRight]",target:screen.getByRole("button",{name:"Open Draft"})});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));await waitFor(()=>expect(onDeletePage).toHaveBeenCalledWith("Draft"));expect(discardPageDraft).toHaveBeenLastCalledWith({id:"Draft",expectedVersion:6});expect(discardPageDraft).toHaveBeenCalledTimes(2);confirmSpy.mockRestore();});
  it("discards a draft at its latest version instead of deleting a page",async()=>{const confirmSpy=vi.spyOn(window,"confirm").mockReturnValue(true);drafts.mockResolvedValue([page("Draft",{status:"draft",folder_path:"Work",version:2})]);vi.mocked(getPage).mockResolvedValue(page("Draft",{status:"draft",version:5}));const onDeletePage=vi.fn();setup({fileTree:true,onDeletePage});const {user}=await openDirect();await user.pointer({keys:"[MouseRight]",target:screen.getByRole("button",{name:"Open Draft"})});await user.click(await screen.findByRole("menuitem",{name:"Delete page"}));await waitFor(()=>expect(onDeletePage).toHaveBeenCalledWith("Draft"));expect(discardPageDraft).toHaveBeenCalledWith({id:"Draft",expectedVersion:5});expect(deletePage).not.toHaveBeenCalled();confirmSpy.mockRestore();});
  it("right-clicking a folder still shows the folder menu",async()=>{setup({fileTree:true});const user=userEvent.setup();await user.pointer({keys:"[MouseRight]",target:await screen.findByRole("button",{name:"Work"})});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["New folder in Work"]);});
  it("right-clicking empty space still shows the root folder menu",async()=>{setup({fileTree:true});const user=userEvent.setup();await screen.findByRole("button",{name:"Work"});await user.pointer({keys:"[MouseRight]",target:screen.getByRole("group",{name:"Folders"})});const menu=await screen.findByRole("menu");expect(within(menu).getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["New folder in Folders"]);});
  it("opens the page menu from the keyboard on a focused page",async()=>{setup({fileTree:true});const {user,row}=await openDirect();row.focus();await user.keyboard("{ContextMenu}");const menu=await screen.findByRole("menu");expect(within(menu).getByRole("menuitem",{name:"Delete page"})).toBeInTheDocument();await user.keyboard("{Escape}");await waitFor(()=>expect(row).toHaveFocus());});
+});
+
+it("the example wiki does not offer Archive page",async()=>{
+ setExampleWikiActive(true);
+ try {
+  setup({fileTree:true});
+  const user=userEvent.setup();await user.click(await screen.findByRole("button",{name:"Work"}));
+  await user.pointer({keys:"[MouseRight]",target:screen.getByRole("button",{name:"Open Direct"})});
+  const menu=await screen.findByRole("menu");
+  expect(within(menu).queryByRole("menuitem",{name:"Archive page"})).toBeNull();
+ } finally {setExampleWikiActive(false);}
 });

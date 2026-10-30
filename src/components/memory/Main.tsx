@@ -249,6 +249,13 @@ export default function Main({
     inFlight: null,
   });
   const pageFlushRef = useRef<(() => Promise<boolean>) | null>(null);
+  // The open primary page's own archive action, so a list row archives it
+  // through its editor (save first, same lock) instead of around it.
+  const pageArchiveRef = useRef<{ pageId: string; archive: () => Promise<boolean> } | null>(null);
+  const registerPageArchive = useCallback((pageId: string, archive: (() => Promise<boolean>) | null) => {
+    if (archive) pageArchiveRef.current = { pageId, archive };
+    else if (pageArchiveRef.current?.pageId === pageId) pageArchiveRef.current = null;
+  }, []);
   const memoryFlushRef = useRef<(() => Promise<boolean>) | null>(null);
   const registerMemoryFlush = useCallback((flush: (() => Promise<boolean>) | null) => {
     memoryFlushRef.current = flush;
@@ -286,6 +293,7 @@ export default function Main({
   const [wikiCreationFolderPath, setWikiCreationFolderPath] = useState<string | null>(null);
   const [wikiInventoryMode, setWikiInventoryMode] = useState<WikiInventoryMode>(readWikiInventoryMode);
   const [recentPageRevision, setRecentPageRevision] = useState(0);
+  const [wikiDirectoryOpenRequest, setWikiDirectoryOpenRequest] = useState(0);
   const updateNoteTabs = (next: NoteTab[]) => { noteTabsRef.current = next; setNoteTabs(next); };
   const findPrimaryNoteTab = (next: NoteView) => noteTabsRef.current.find(tab =>
     matchesNote(tab, next)
@@ -983,7 +991,8 @@ export default function Main({
     kind: "page-draft", draftId, space, inventoryScope: retainWikiScope ? view.inventoryScope : undefined,
   });
   const openWikiPage = (page: Page) => openWikiNote({
-    kind: "page", pageId: page.id, inventoryScope: retainWikiScope ? view.inventoryScope : undefined,
+    kind: "page", pageId: page.id, mode: page.status === "archived" ? "read" : undefined,
+    inventoryScope: retainWikiScope ? view.inventoryScope : undefined,
   });
   // The menu bar panel hands over here once it has shown this window: a page
   // from its recent list, or the review list for an AI edit waiting on the
@@ -1088,6 +1097,7 @@ export default function Main({
   }, [mobileSearchOpen, spaces]);
 
   const handlePageLoaded = useCallback((page: Pick<Page, "id" | "status" | "title">) => {
+    if (page.status === "active") deletedPageIdsRef.current.delete(page.id);
     recordRecentPageVisit(page);
     setRecentPageRevision(revision => revision + 1);
     const next = noteTabsRef.current.map(tab => noteId(tab.view) === page.id ? { ...tab, title: page.title } : tab);
@@ -1112,6 +1122,28 @@ export default function Main({
       setPageEditDirty(false);
       setReadyEditorView(null);
     }
+  }, []);
+  // A list row asks to archive a page. When an editor has the page open, that
+  // editor archives it (it saves first and holds the action lock), and the
+  // list must not. Archive never runs the delete bookkeeping above: the page
+  // keeps its tabs, its back history and its place in Recently used.
+  const archiveOpenPage = async (pageId: string): Promise<boolean> => {
+    const busy = () => { toast(t("pages.archive.busy")); return true; };
+    if (movingNoteRef.current) return busy();
+    const current = viewRef.current;
+    if (current.kind === "page" && current.pageId === pageId) {
+      const owner = pageArchiveRef.current;
+      if (owner?.pageId !== pageId || !await owner.archive()) return busy();
+      return true;
+    }
+    const secondary = await secondaryGroupRef.current?.archiveOpenPage(pageId);
+    if (secondary === "busy") return busy();
+    return secondary === "handled";
+  };
+  // Restored from Archived pages: it exists again for back and forward.
+  const handlePageRestored = useCallback((pageId: string) => {
+    deletedPageIdsRef.current.delete(pageId);
+    setRecentPageRevision(revision => revision + 1);
   }, []);
   // A note deleted from the Wiki directory (published page or draft) may have a
   // tab here. Drop it, and when it was on screen show its neighbour or the Wiki
@@ -1498,6 +1530,7 @@ export default function Main({
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
+              directoryOpenRequest={wikiDirectoryOpenRequest}
               onInventoryModeChange={setWikiInventoryMode}
               recentRevision={recentPageRevision}
               onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
@@ -1511,8 +1544,15 @@ export default function Main({
               onOpenDraft={openWikiDraft}
               onOpenPage={openWikiPage}
               onDeletePage={handleDirectoryNoteDeleted}
+              onArchiveOpenPage={archiveOpenPage}
+              onRestorePage={handlePageRestored}
             >
               <PagesOverview
+                onBrowseArchived={() => {
+                  // A browse mode for now only: the app never reopens in it.
+                  setWikiInventoryMode("archived");
+                  setWikiDirectoryOpenRequest(request => request + 1);
+                }}
                 inventoryScope={view.kind === "pages" ? view.inventoryScope : undefined}
                 onBrowseAll={() => {
                   // The home lists only the newest pages; every page is in the
@@ -1597,6 +1637,7 @@ export default function Main({
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
+              directoryOpenRequest={wikiDirectoryOpenRequest}
               onInventoryModeChange={setWikiInventoryMode}
               recentRevision={recentPageRevision}
               onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
@@ -1611,6 +1652,8 @@ export default function Main({
               onOpenDraft={openWikiDraft}
               onOpenPage={openWikiPage}
               onDeletePage={handleDirectoryNoteDeleted}
+              onArchiveOpenPage={archiveOpenPage}
+              onRestorePage={handlePageRestored}
             >
             <PageDraftEditor
               key={view.sessionKey ?? view.draftId ?? "new"}
@@ -1649,6 +1692,7 @@ export default function Main({
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
+              directoryOpenRequest={wikiDirectoryOpenRequest}
               onInventoryModeChange={setWikiInventoryMode}
               recentRevision={recentPageRevision}
               onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
@@ -1663,6 +1707,8 @@ export default function Main({
               onOpenDraft={openWikiDraft}
               onOpenPage={openWikiPage}
               onDeletePage={handleDirectoryNoteDeleted}
+              onArchiveOpenPage={archiveOpenPage}
+              onRestorePage={handlePageRestored}
             >
             <PageDetail
               pageId={view.pageId}
@@ -1676,6 +1722,8 @@ export default function Main({
               initialMode={view.mode ?? "edit"}
               onBack={navigateBackFromPageDetail}
               onRegisterFlush={registerPageFlush}
+              onRegisterArchive={registerPageArchive}
+              onRestored={handlePageRestored}
               onEditDirtyChange={reportPageDirty}
               onMemoryClick={(sid) => navigateTo({ kind: "memory", sourceId: sid })}
               onOpenGraph={(pageId) => navigateTo({ kind: "graph", focusPageId: pageId })}
