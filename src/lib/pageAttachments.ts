@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
-import { attachBytesToPage, pageAttachmentsDir, type AttachedFile } from "./tauri";
+import { attachBytesToPage, attachImageUrlToPage, pageAttachmentsDir, type AttachedFile } from "./tauri";
 
 /**
  * Images and videos placed in pages live in the pages folder's
@@ -134,4 +134,9 @@ export function uploadName(file: File): string {
 export async function uploadAttachment(file: File): Promise<AttachedFile> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   return attachBytesToPage(uploadName(file), bytes);
+}
+
+/** Download an image a paste names only by its web address into the pages folder. */
+export function uploadImageUrl(url: string): Promise<AttachedFile> {
+  return attachImageUrlToPage(url);
 }

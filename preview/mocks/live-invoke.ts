@@ -692,6 +692,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_session_detail: (a) => get(`/api/sessions/${enc(a.sessionId)}`),
   set_page_review_required: (a) =>
     put(`/api/pages/${enc(a.pageId)}/review-required`, { required: a.required }),
+  get_page_sentences: (a) => get(`/api/pages/${enc(a.pageId)}/sentences`),
+  accept_sentence_proposal: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/accept`, {}),
+  reject_sentence_proposal: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/reject`, {}),
   get_source_annotation: (a) => get(`/api/source-annotations${qs({
     source: a?.source,
     source_id: a?.sourceId,
@@ -999,6 +1004,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   attach_bytes_to_page: async (): Promise<never> => {
     throw new Error("Pasting images and videos requires the native Wenlan app.");
   },
+  attach_image_url_to_page: async (): Promise<never> => {
+    throw new Error("Pasting web images requires the native Wenlan app.");
+  },
 
   // Saving a pasted link as a source (PageDetail). Mirrors app/src/api.rs:
   // a create-only ingest fails closed on 409 instead of replacing the page.
@@ -1280,6 +1288,8 @@ export const DEFAULTS: Record<string, unknown> = {
   set_editor_composing: null,
   // No wenlan://pair link can reach a browser preview.
   take_remote_pairing_link: null,
+  // Nor a wenlan://page or wenlan://memory link.
+  take_open_link: null,
   // Web access never runs in a browser preview, so it cannot stop on its own.
   take_remote_access_notice: null,
   set_setup_completed: null,

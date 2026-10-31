@@ -176,7 +176,7 @@ Compile these memories into a wiki-style knowledge page.\n\
 \n\
 Format:\n\
 Do NOT start with a title heading (# Title) -- the title is displayed separately by the UI.\n\
-Start directly with a one-sentence summary of the topic, with no label in front of it.\n\
+Start directly with one plain paragraph, in everyday words, that states the point of the page, with no label in front of it. This first paragraph is what a person reads first.\n\
 \n\
 Then write the body organized with short topical headers (## Header) and prose paragraphs under each, \
 like a Wikipedia article with sections. \
@@ -238,7 +238,8 @@ Do not remove existing content unless it is explicitly superseded.\n\
 Do NOT include a title heading (# Title) -- the title is displayed separately by the UI.\n\
 Cite each factual claim by appending [N] immediately after it, where N is the number of the supporting source in the numbered source list. Attach the marker to the exact sentence that states the fact — never at the end of a paragraph, and never on a sentence that only explains or elaborates. A claim drawing on several sources may carry several markers, like [1][3]. Use only numbers that appear in the list. Do NOT add a sources or citations section — the system renders citations from the markers.\n\
 Do not write HTML comments (the <!-- ... --> form) anywhere in the page.\n\
-Output the complete updated page in the same format (opening summary sentence, prose paragraphs, Open Questions).";
+Keep the page opening with one plain paragraph, in everyday words, that states the point of the page. If the page does not open that way yet, rewrite its opening so it does.\n\
+Output the complete updated page in the same format (opening paragraph that states the point, prose paragraphs, Open Questions).";
 
 pub(crate) const ANNOTATE_CITATIONS: &str = "\
 You annotate an existing wiki page with citations. You are given the page body \
@@ -370,6 +371,17 @@ mod tests {
             assert!(!upper.contains("TLDR"));
             assert!(!upper.contains("TL;DR"));
         }
+    }
+
+    #[test]
+    fn page_prompts_open_with_one_paragraph_that_states_the_point() {
+        // UX-VIEW-2/5: a page opens with one plain paragraph that states its
+        // point; that paragraph is the short view. Updates fix older openings.
+        for prompt in [DISTILL_PAGE, UPDATE_PAGE] {
+            assert!(prompt.contains("one plain paragraph"), "{prompt}");
+            assert!(prompt.contains("the point of the page"), "{prompt}");
+        }
+        assert!(UPDATE_PAGE.contains("rewrite its opening"));
     }
 
     #[test]

@@ -2106,6 +2106,57 @@ export async function getConceptSources(
   return getPageSources(conceptId);
 }
 
+/** The AI's staged change to one of the person's sentences (UX-WHO-2). */
+export interface SentenceProposal {
+  id: string;
+  page_id: string;
+  version: number;
+  sentence_hash: string;
+  /** The sentence as it read when proposed. */
+  before: string;
+  /** The proposed text; empty proposes deleting the sentence. */
+  after: string;
+  why?: string | null;
+  actor: { kind: string; name: string; agent?: string | null };
+  ts: number;
+  status: "pending" | "accepted" | "rejected";
+}
+
+export interface PageSentence {
+  idx: number;
+  text: string;
+  hash: string;
+  author: "person" | "ai" | "unknown" | "original";
+  protected: boolean;
+  proposals?: string[];
+}
+
+export interface PageSentencesResponse {
+  page_id: string;
+  version: number;
+  ai_edits: "propose" | "locked";
+  sentences: PageSentence[];
+  proposals: SentenceProposal[];
+}
+
+export async function getPageSentences(pageId: string): Promise<PageSentencesResponse> {
+  return invoke("get_page_sentences", { pageId });
+}
+
+export async function acceptSentenceProposal(
+  pageId: string,
+  proposalId: string,
+): Promise<{ proposal: SentenceProposal; version: number }> {
+  return invoke("accept_sentence_proposal", { pageId, proposalId });
+}
+
+export async function rejectSentenceProposal(
+  pageId: string,
+  proposalId: string,
+): Promise<{ proposal: SentenceProposal }> {
+  return invoke("reject_sentence_proposal", { pageId, proposalId });
+}
+
 export async function getPageLinks(pageId: string): Promise<PageLinksResponse> {
   return invoke("get_page_links", { pageId });
 }
@@ -3468,6 +3519,11 @@ export async function attachBytesToPage(name: string, bytes: Uint8Array): Promis
   });
 }
 
+/** Download an image by its web address and copy it into the pages folder. */
+export async function attachImageUrlToPage(url: string): Promise<AttachedFile> {
+  return invoke("attach_image_url_to_page", { url });
+}
+
 // ===== Profile =====
 
 export async function getProfile(): Promise<Profile | null> {
@@ -4223,6 +4279,19 @@ export async function revokeRemoteGrant(expectedRevision: string, grantId: strin
 /** Takes the pairing code from the last `wenlan://pair` link, if one is waiting. */
 export async function takeRemotePairingLink(): Promise<string | null> {
   return invoke("take_remote_pairing_link");
+}
+
+/** What a wenlan://page/{id} or wenlan://memory/{id} link asked to open. */
+export type OpenLinkTarget =
+  | { kind: "page"; pageId: string }
+  | { kind: "memory"; memoryId: string };
+
+/**
+ * The page or memory link that opened the app or arrived since, handed out
+ * once. AI tools print these links next to an in-chat reminder or a page.
+ */
+export async function takeOpenLink(): Promise<OpenLinkTarget | null> {
+  return invoke("take_open_link");
 }
 
 /**

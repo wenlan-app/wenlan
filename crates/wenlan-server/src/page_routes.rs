@@ -319,10 +319,12 @@ pub async fn handle_get_page(
                     version,
                 })
                 .collect();
+            let body = Some(wenlan_core::page_body::body_parts(&page.content));
             Ok(Json(PageReadResponse {
                 code_basis: db.list_page_code_basis(&id).await?,
                 basis,
                 linked_changed,
+                body,
                 // The full list is the top-level `basis`; the entry's own
                 // non-ok list is for inventories.
                 page: PageInventoryEntry {

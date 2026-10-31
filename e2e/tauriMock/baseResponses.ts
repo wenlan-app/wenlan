@@ -86,6 +86,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_repo_wiki_github": return { gh_ready: false, workflow: "missing" };
     // The main shell asks on every launch whether a wenlan://pair link is waiting.
     case "take_remote_pairing_link": return null;
+    // Nor is a wenlan://page or wenlan://memory link.
+    case "take_open_link": return null;
     // Web access stopped on its own: the fixture never stops, so no notice waits.
     case "take_remote_access_notice": return null;
     // A short code finds the one synthetic request. The fixture knows no relay,
@@ -110,6 +112,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_memory_revisions": return { current_source_id: optionalString(args, "sourceId") ?? "", chain_depth: 0, entries: [] };
     case "list_all_tags": return { tags: [], document_tags: {}, categories: [], document_categories: {} };
     case "get_page_links": return { outbound: [], inbound: [] };
+    // The fixture stages no sentence proposals.
+    case "get_page_sentences": return { page_id: optionalString(args, "pageId") ?? "", version: 1, ai_edits: "propose", sentences: [], proposals: [] };
     case "get_page_sources": case "list_registered_sources": case "list_note_proposals": return [];
     // The fixture has no AI conversations: no note lists one, no id resolves.
     case "get_page_sessions": return { sessions: [] };

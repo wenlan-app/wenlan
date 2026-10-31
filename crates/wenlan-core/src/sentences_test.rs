@@ -714,7 +714,7 @@ async fn migration_145_is_idempotent_on_an_upgraded_database() {
                   + (SELECT user_version FROM pragma_user_version)",
             )
             .await;
-        assert_eq!(found, 1 + 145);
+        assert_eq!(found, 1 + i64::from(crate::db::SCHEMA_VERSION));
     }
 }
 

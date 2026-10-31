@@ -104,6 +104,13 @@ pub struct Config {
     /// `page_map_auto_suggest: true` in config.json (or via `PUT /api/config`).
     #[serde(default)]
     pub page_map_auto_suggest: bool,
+    /// "Remind me in chat when an AI reply goes against an earlier
+    /// decision" (the in-chat check, `POST /api/check` and
+    /// `/api/check/context`). A Beta setting: the need is not confirmed yet,
+    /// so it is off unless the person turns it on, for existing and new
+    /// installs alike, and any screen offering it labels it Beta.
+    #[serde(default)]
+    pub chat_check_enabled: bool,
     /// A pages folder the person picked, moved into at the next daemon start
     /// by `pages_folder::apply_pending_move`, which then sets
     /// `knowledge_path` and clears this.

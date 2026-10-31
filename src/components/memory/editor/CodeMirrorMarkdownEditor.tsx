@@ -45,6 +45,7 @@ import {
   writingPresentation,
 } from "./writingPresentation";
 import { pageLayersEditing, setPageLayers } from "./pageLayersEditing";
+import { sentenceProposals, setSentenceProposals } from "./sentenceProposals";
 
 // The writer's last choice between a saved link and its preview card, for the next paste.
 const SOURCE_LINK_PREVIEW_KEY = "wenlan-source-link-preview";
@@ -206,6 +207,10 @@ export const CodeMirrorMarkdownEditor = forwardRef<
   }, [props.pageLayers]);
 
   useLayoutEffect(() => {
+    viewRef.current?.dispatch({ effects: setSentenceProposals.of(props.sentenceProposals ?? null) });
+  }, [props.sentenceProposals]);
+
+  useLayoutEffect(() => {
     linkNotesRef.current = props.linkNotes ?? [];
     viewRef.current?.dispatch({ effects: refreshLinkCompletion.of(null) });
   }, [props.linkNotes]);
@@ -268,6 +273,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             history(),
             search({ top: true }),
             pageLayersEditing(props.pageLayers ?? null),
+            sentenceProposals(props.sentenceProposals ?? null),
             searchPhrasesCompartmentRef.current.of(EditorState.phrases.of(searchPhrases(t))),
             drawSelection(),
             dropCursor(),
@@ -439,8 +445,10 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             createSlashEditing({ labels: () => slashLabelsRef.current, blocked: actionsBlocked }).extension,
             mediaPaste({
               blocked: actionsBlocked,
-              onError: (file) => toast.error(t("pageAttachments.failed", { name: file.name || "file" })),
-              pendingLabel: (file) => t("pageAttachments.adding", { name: file.name || "file" }),
+              onError: (name) => toast.error(name
+                ? t("pageAttachments.failed", { name })
+                : t("pageAttachments.imageFailed")),
+              pendingLabel: (name) => name ? t("pageAttachments.adding", { name }) : t("pageAttachments.addingImage"),
             }),
             sourceLinkUrls.init(() => props.sourceLinks ?? new Map()),
             sourceIconMount.of((container, url, place) => callbacksRef.current.mountSourceIcon?.(container, url, place) ?? (() => undefined)),
