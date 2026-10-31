@@ -40,9 +40,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-HOME-2** `planned` Home shows no counts: no number of sources, pages,
   archived pages or conversations.
   原文：首頁沒有任何計數：來源數、頁數、封存數、幾段對話都不放。
-- **UX-HOME-3** `planned` The lower half is a thumbnail of the big map.
-  Clicking a spot opens the big map at that same spot.
-  原文：下半是大圖縮圖，點了進大圖，點的位置跟大圖裡一樣。
+- **UX-HOME-3** `planned` Below "what you're working on" are the pages you
+  edited last. Home has no thumbnail of the mind map or the big map; maps stay
+  inside pages. "What you're working on" shows only when there is something.
+  原文（2026-10-31 選擇卡）：正在做的事 + 最近編輯，不放小圖。
 - **UX-HOME-4** `planned` Check results and source updates are not on home.
   原文：檢查結果和來源更新不放首頁。
 
