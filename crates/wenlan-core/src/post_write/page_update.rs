@@ -375,9 +375,10 @@ async fn stage_page_revision_card_inner(
     );
     // Why this write needed review, so the card can say so: the review lock
     // first, then Wenlan's own background lanes, else the page has the
-    // person's edits. A locked page the person wrote is `authored`: that is
-    // the lock "Lock pages I've written" sets, and the card says they wrote
-    // it rather than that they asked to review every change. A pipeline write
+    // person's edits. A locked page the person wrote is `authored` (pages
+    // auto-locked before "Lock pages I've written" was removed are such
+    // pages), and the card says they wrote it rather than that they asked to
+    // review every change. A pipeline write
     // an AI tool made on demand (steep) names that tool, so it is not called
     // background.
     let review_reason = if page.review_required && page.user_edited {
@@ -1669,12 +1670,6 @@ async fn update_page_db_impl(
         .await;
     };
 
-    // "Lock pages I've written": this human write made the page user-edited,
-    // so lock it for review. Decided from the row the CAS wrote over, so only
-    // the edit that flips `user_edited` locks; a page the user unlocked by
-    // hand is not re-locked by later edits. The page is human-owned from this
-    // write on, so machine writers are already gated while the flag lands.
-    // The save itself has committed: a failed lock is logged, not raised.
     // A forced rebuild released `user_edited` with the body it landed; when
     // that body still holds the person's sentences, the page stays theirs.
     if user_forced && was_user_edited && keeps_person_text {
@@ -1715,12 +1710,6 @@ async fn update_page_db_impl(
         },
         None => Vec::new(),
     };
-
-    if basis.lock_on_first_human_edit && !writer.is_machine() && !was_user_edited {
-        if let Err(error) = db.set_page_review_required(page_id, true).await {
-            log::warn!("[update_page] {page_id}: saved, but locking it for review failed: {error}");
-        }
-    }
 
     Ok(WriteResult {
         id: page_id.to_string(),

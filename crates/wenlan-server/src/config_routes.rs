@@ -54,7 +54,6 @@ fn config_to_response(cfg: &config::Config) -> ConfigResponse {
         synthesis_source: cfg.synthesis_source.clone(),
         background_ai_enabled: Some(cfg.background_ai_enabled()),
         page_map_auto_suggest: cfg.page_map_auto_suggest,
-        lock_my_pages: cfg.lock_my_pages,
     }
 }
 
@@ -155,9 +154,6 @@ pub async fn handle_update_config(
         }
         if let Some(v) = req.page_map_auto_suggest {
             cfg.page_map_auto_suggest = v;
-        }
-        if let Some(v) = req.lock_my_pages {
-            cfg.lock_my_pages = v;
         }
         if let Some(enabled) = req.background_ai_enabled {
             cfg.background_ai_enabled = Some(enabled);
@@ -1424,15 +1420,16 @@ mod config_model_fields_tests {
         assert!(!config::load_config().page_map_auto_suggest);
     }
 
-    /// "Lock pages I've written": on for a new install, off for a config
-    /// written before the setting existed, and toggled by PUT.
+    /// "Lock pages I've written" is gone (per-sentence protection replaced
+    /// it): the config route no longer reports it, and an older app that
+    /// still sends it gets an ordinary save with the field ignored.
     #[tokio::test(flavor = "current_thread")]
-    async fn lock_my_pages_is_on_for_new_installs_and_off_for_existing_configs() {
+    async fn lock_my_pages_is_no_longer_a_setting() {
         let _lock = crate::TEST_DATA_DIR_LOCK
             .get_or_init(|| tokio::sync::Mutex::new(()))
             .lock()
             .await;
-        let env = DataDirGuard::new();
+        let _env = DataDirGuard::new();
         let state = std::sync::Arc::new(RwLock::new(ServerState::default()));
         let app = crate::router::build_router(state);
 
@@ -1453,52 +1450,14 @@ mod config_model_fields_tests {
             response_json(resp).await
         }
 
-        // No config file yet: a new install starts with it on, and an
-        // unrelated save keeps it on.
-        assert_eq!(send(&app, "GET", None).await["lock_my_pages"], true);
+        assert!(send(&app, "GET", None).await.get("lock_my_pages").is_none());
         let body = send(
             &app,
             "PUT",
-            Some(serde_json::json!({"clipboard_enabled": true})),
+            Some(serde_json::json!({"lock_my_pages": true, "clipboard_enabled": true})),
         )
         .await;
-        assert_eq!(body["lock_my_pages"], true);
-        assert!(config::load_config().lock_my_pages);
-
-        // A config from before the setting existed reads off.
-        std::fs::write(
-            env._tmp.path().join("config.json"),
-            r#"{"setup_completed": true}"#,
-        )
-        .unwrap();
-        assert_eq!(send(&app, "GET", None).await["lock_my_pages"], false);
-        let body = send(
-            &app,
-            "PUT",
-            Some(serde_json::json!({"clipboard_enabled": true})),
-        )
-        .await;
-        assert_eq!(
-            body["lock_my_pages"], false,
-            "an omitted field is preserved"
-        );
-
-        let body = send(
-            &app,
-            "PUT",
-            Some(serde_json::json!({"lock_my_pages": true})),
-        )
-        .await;
-        assert_eq!(body["lock_my_pages"], true);
-        assert!(config::load_config().lock_my_pages);
-        let body = send(
-            &app,
-            "PUT",
-            Some(serde_json::json!({"lock_my_pages": false})),
-        )
-        .await;
-        assert_eq!(body["lock_my_pages"], false);
-        assert!(!config::load_config().lock_my_pages);
+        assert!(body.get("lock_my_pages").is_none(), "{body}");
     }
 }
 
