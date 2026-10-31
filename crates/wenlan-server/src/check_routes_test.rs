@@ -27,6 +27,44 @@ async fn state_with_db() -> (Arc<RwLock<ServerState>>, Arc<MemoryDB>, tempfile::
     (Arc::new(RwLock::new(state)), db, tmp)
 }
 
+/// The in-chat check is opt-in. Holds the shared data-dir lock and points
+/// `WENLAN_DATA_DIR` at a fresh folder whose config has the check set to
+/// `enabled`, until dropped.
+struct CheckSetting {
+    previous: Option<std::ffi::OsString>,
+    _tmp: tempfile::TempDir,
+    _lock: tokio::sync::MutexGuard<'static, ()>,
+}
+
+async fn check_setting(enabled: bool) -> CheckSetting {
+    let lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let previous = std::env::var_os("WENLAN_DATA_DIR");
+    std::env::set_var("WENLAN_DATA_DIR", tmp.path());
+    let config = wenlan_core::config::Config {
+        chat_check_enabled: enabled,
+        ..Default::default()
+    };
+    wenlan_core::config::save_config(&config).unwrap();
+    CheckSetting {
+        previous,
+        _tmp: tmp,
+        _lock: lock,
+    }
+}
+
+impl Drop for CheckSetting {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var("WENLAN_DATA_DIR", value),
+            None => std::env::remove_var("WENLAN_DATA_DIR"),
+        }
+    }
+}
+
 async fn store(db: &MemoryDB, source_id: &str, memory_type: &str, content: &str) {
     db.upsert_documents(vec![wenlan_types::sources::RawDocument {
         source: "memory".to_string(),
@@ -69,7 +107,45 @@ async fn call(
 }
 
 #[tokio::test]
+async fn check_and_context_stay_off_until_the_person_turns_them_on() {
+    let _off = check_setting(false).await;
+    let (state, db, _tmp) = state_with_db().await;
+    store(
+        &db,
+        "mem_storage",
+        "decision",
+        "Use libSQL instead of a dedicated graph database.",
+    )
+    .await;
+    let (status, json) = call(
+        &state,
+        "POST",
+        "/api/check",
+        Some(serde_json::json!({"reply": "Let's switch to a dedicated graph database."})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let response: ChatCheckResponse = serde_json::from_value(json.clone()).unwrap();
+    assert!(response.reminders.is_empty(), "{json}");
+    assert_eq!(response.skipped, Some(ChatCheckSkipped::Off));
+    assert!(db.list_chat_reminder_entries().await.unwrap().is_empty());
+
+    let (status, json) = call(
+        &state,
+        "POST",
+        "/api/check/context",
+        Some(serde_json::json!({"prompt": "Should we use a graph database?"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    let context: ChatContextResponse = serde_json::from_value(json.clone()).unwrap();
+    assert!(context.decisions.is_empty(), "{json}");
+    assert_eq!(context.skipped, Some(ChatCheckSkipped::Off));
+}
+
+#[tokio::test]
 async fn check_returns_a_reminder_with_date_and_source_and_logs_it() {
+    let _on = check_setting(true).await;
     let (state, db, _tmp) = state_with_db().await;
     store(
         &db,
@@ -105,6 +181,7 @@ async fn check_returns_a_reminder_with_date_and_source_and_logs_it() {
 
 #[tokio::test]
 async fn check_is_silent_when_nothing_conflicts() {
+    let _on = check_setting(true).await;
     let (state, db, _tmp) = state_with_db().await;
     store(
         &db,
@@ -130,6 +207,7 @@ async fn check_is_silent_when_nothing_conflicts() {
 
 #[tokio::test]
 async fn check_rejects_an_unknown_space() {
+    let _on = check_setting(true).await;
     let (state, _db, _tmp) = state_with_db().await;
     let (status, _) = call(
         &state,
@@ -143,6 +221,7 @@ async fn check_rejects_an_unknown_space() {
 
 #[tokio::test]
 async fn check_context_hands_back_relevant_decisions() {
+    let _on = check_setting(true).await;
     let (state, db, _tmp) = state_with_db().await;
     store(
         &db,

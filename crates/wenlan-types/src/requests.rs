@@ -759,6 +759,9 @@ pub struct UpdateConfigRequest {
     /// it off leaves existing locks in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock_my_pages: Option<bool>,
+    /// The in-chat check (opt-in). Omitted = preserve; present = set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_check_enabled: Option<bool>,
     /// Scopes `everyday_source` and `synthesis_source` in this same request to
     /// jobs that are currently unpinned. No other field is affected. Omitted or
     /// `false` = overwrite, which is what every caller did before this field

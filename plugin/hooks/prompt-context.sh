@@ -7,8 +7,9 @@
 # The daemon picks the decisions and writes the text; this hook only carries
 # the prompt there and the block back.
 #
-# Silent (no output, exit 0) when the daemon is not running, does not answer
-# within one second, finds nothing, or python3 is missing. Never blocks the
+# Silent (no output, exit 0) when the person has not turned the check on
+# (it is opt-in), the daemon is not running or does not answer within one
+# second, it finds nothing, or python3 is missing. Never blocks the
 # prompt.
 set -u
 

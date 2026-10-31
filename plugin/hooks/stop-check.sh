@@ -6,8 +6,9 @@
 # The daemon owns every rule (what counts as a conflict, five a day, no repeat
 # in one session); this hook only carries the reply there and the text back.
 #
-# Silent (no output, exit 0) when the daemon is not running, does not answer
-# within one second, finds nothing, or python3 is missing. Never blocks the
+# Silent (no output, exit 0) when the person has not turned the check on
+# (it is opt-in), the daemon is not running or does not answer within one
+# second, it finds nothing, or python3 is missing. Never blocks the
 # stop.
 set -u
 

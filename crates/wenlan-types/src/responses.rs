@@ -775,6 +775,10 @@ pub struct ConfigResponse {
     /// "Lock pages I've written". Missing on an older daemon reads false.
     #[serde(default)]
     pub lock_my_pages: bool,
+    /// The in-chat check (opt-in, off by default). Missing on an older daemon
+    /// reads false.
+    #[serde(default)]
+    pub chat_check_enabled: bool,
 }
 
 // ===== On-device model =====

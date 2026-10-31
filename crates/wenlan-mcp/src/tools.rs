@@ -1688,6 +1688,9 @@ fn format_check_reply(response: &wenlan_types::chat_check::ChatCheckResponse) ->
             Some(ChatCheckSkipped::Timeout) => {
                 "No reminder: Wenlan did not answer in time; go on.".to_string()
             }
+            Some(ChatCheckSkipped::Off) => {
+                "Not checked: the person has not turned on in-chat reminders in Wenlan. Do not call this again unless they ask.".to_string()
+            }
             _ => "Nothing in this reply goes against an earlier decision.".to_string(),
         };
     }

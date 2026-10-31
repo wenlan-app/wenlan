@@ -111,6 +111,13 @@ pub struct Config {
     /// their behavior; a new install starts with it on.
     #[serde(default)]
     pub lock_my_pages: bool,
+    /// "Remind me in chat when an AI reply goes against an earlier
+    /// decision" (the in-chat check, `POST /api/check` and
+    /// `/api/check/context`). A Beta setting: the need is not confirmed yet,
+    /// so it is off unless the person turns it on, for existing and new
+    /// installs alike, and any screen offering it labels it Beta.
+    #[serde(default)]
+    pub chat_check_enabled: bool,
     /// A pages folder the person picked, moved into at the next daemon start
     /// by `pages_folder::apply_pending_move`, which then sets
     /// `knowledge_path` and clears this.

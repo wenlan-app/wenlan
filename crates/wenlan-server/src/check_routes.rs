@@ -31,6 +31,12 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/pages/instructions", get(handle_instructions_page))
 }
 
+/// The in-chat check is opt-in: it runs only after the person turns it on
+/// (`chat_check_enabled` in the config, `PUT /api/config`).
+fn chat_check_enabled() -> bool {
+    wenlan_core::config::load_config().chat_check_enabled
+}
+
 /// The session the check runs for: the body's, else the session header's.
 /// A value that is not `<tool>:<id>` is ignored, like the header.
 fn session_of(body: Option<&str>, headers: &HeaderMap) -> Option<String> {
@@ -95,6 +101,12 @@ pub async fn handle_check(
     view: crate::truth_guard::TruthView,
     Json(req): Json<ChatCheckRequest>,
 ) -> Result<Json<ChatCheckResponse>, ServerError> {
+    if !chat_check_enabled() {
+        return Ok(Json(ChatCheckResponse {
+            skipped: Some(ChatCheckSkipped::Off),
+            ..Default::default()
+        }));
+    }
     let db = db_of(&state).await?;
     let session = session_of(req.session.as_deref(), &headers);
     let work = async {
@@ -139,6 +151,12 @@ pub async fn handle_check_context(
     view: crate::truth_guard::TruthView,
     Json(req): Json<ChatContextRequest>,
 ) -> Result<Json<ChatContextResponse>, ServerError> {
+    if !chat_check_enabled() {
+        return Ok(Json(ChatContextResponse {
+            skipped: Some(ChatCheckSkipped::Off),
+            ..Default::default()
+        }));
+    }
     let db = db_of(&state).await?;
     if req.prompt.trim().is_empty() {
         return Ok(Json(ChatContextResponse {

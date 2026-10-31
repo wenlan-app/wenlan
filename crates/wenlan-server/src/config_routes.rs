@@ -55,6 +55,7 @@ fn config_to_response(cfg: &config::Config) -> ConfigResponse {
         background_ai_enabled: Some(cfg.background_ai_enabled()),
         page_map_auto_suggest: cfg.page_map_auto_suggest,
         lock_my_pages: cfg.lock_my_pages,
+        chat_check_enabled: cfg.chat_check_enabled,
     }
 }
 
@@ -158,6 +159,9 @@ pub async fn handle_update_config(
         }
         if let Some(v) = req.lock_my_pages {
             cfg.lock_my_pages = v;
+        }
+        if let Some(v) = req.chat_check_enabled {
+            cfg.chat_check_enabled = v;
         }
         if let Some(enabled) = req.background_ai_enabled {
             cfg.background_ai_enabled = Some(enabled);

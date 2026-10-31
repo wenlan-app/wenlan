@@ -38,6 +38,8 @@ pub enum ChatCheckSkipped {
     DailyCap,
     /// Nothing to check (empty text).
     Empty,
+    /// The person has not turned the in-chat check on (it is opt-in).
+    Off,
 }
 
 /// `POST /api/check` response. `reminders` is empty when nothing conflicts.

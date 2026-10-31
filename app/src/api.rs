@@ -2310,6 +2310,7 @@ fn empty_update() -> wenlan_types::requests::UpdateConfigRequest {
         background_ai_enabled: None,
         page_map_auto_suggest: None,
         lock_my_pages: None,
+        chat_check_enabled: None,
         only_if_unset: None,
         // Tri-state (Option<Option<_>>): outer None = omit from JSON =
         // preserve the stored key. Note sparse_update_config strips nulls,
