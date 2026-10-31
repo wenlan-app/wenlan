@@ -20,6 +20,9 @@ is specifically about the Qwen GGUF inference path.
 - `cargo-nextest` 0.9.x for the repository's impacted-test planner. The
   official Windows package is signed; install it through winget so local
   planner tests exercise the same `cargo nextest list/run` boundary as CI.
+- 7-Zip, used to extract the app-local Microsoft C++ runtime from Microsoft's
+  signed redistributable without running it; see
+  [Microsoft runtime on Windows](cross-platform.md#microsoft-runtime-on-windows).
 - LunarG Vulkan SDK 1.4.350.0. The repository setup script downloads the
   pinned official installer, verifies SHA-256, and uses LunarG's `copy_only=1`
   mode so it does not require Administrator access or write registry state.
@@ -32,6 +35,7 @@ winget install --id Kitware.CMake --exact
 winget install --id LLVM.LLVM --exact
 winget install --id StrawberryPerl.StrawberryPerl --exact
 winget install --id nextest.cargo-nextest --exact
+winget install --id 7zip.7zip --exact
 
 git clone --depth 1 --branch 2026.06.24 https://github.com/microsoft/vcpkg.git "$env:LOCALAPPDATA\wenlan-build\vcpkg"
 & "$env:LOCALAPPDATA\wenlan-build\vcpkg\bootstrap-vcpkg.bat" -disableMetrics

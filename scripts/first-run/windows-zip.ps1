@@ -61,7 +61,7 @@ $preDataDir = $null
 # in this block is: `finally` reads them and `try` may never reach them.
 $InstallDirMark = $null
 $DataDirMark = $null
-$ExpectedMembers = @("wenlan.exe", "wenlan-server.exe", "wenlan-mcp.exe", "onnxruntime.dll", "vulkan-1.dll", "VulkanRT-License.txt")
+$ExpectedMembers = @("wenlan.exe", "wenlan-server.exe", "wenlan-mcp.exe", "onnxruntime.dll", "vulkan-1.dll", "VulkanRT-License.txt", "concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll", "vccorlib140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll", "MSVC-Runtime-License.rtf", "MSVC-Runtime-Source.txt")
 if (-not $env:GAUNTLET_CHANNEL) { $env:GAUNTLET_CHANNEL = $script:GauntletChannel }
 # Recovery is the behaviour under test; a harness-wide opt-out would hide it.
 Remove-Item Env:\WENLAN_NO_AUTOSTART -ErrorAction SilentlyContinue
