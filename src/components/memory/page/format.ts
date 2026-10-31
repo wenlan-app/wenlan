@@ -16,6 +16,7 @@ const WRITER_LABEL_KEYS = {
   refinery_merge: "revisionLabel.writer.refineryMerge",
   revision_accept: "revisionLabel.writer.revisionAccept",
   citation_backfill: "revisionLabel.writer.citationBackfill",
+  link_rename: "revisionLabel.writer.linkRename",
 } as const;
 
 /** Who made a page revision, in words the reader can use. Never the raw

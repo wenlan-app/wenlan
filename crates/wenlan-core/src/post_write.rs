@@ -16,6 +16,7 @@ use wenlan_types::{
 mod entity_graph;
 mod page_create;
 mod page_dispatch;
+mod page_link_rename;
 mod page_revision;
 mod page_update;
 
@@ -45,6 +46,12 @@ pub use self::page_update::{
 /// This preserves its identity and source metadata while applying the same
 /// scope, cutover, version, history, and projection protections as other
 /// durable page writes.
+///
+/// Then updates the `[[links]]` other pages in the same Space make to it, so
+/// the app, the CLI and MCP all get the same rename. The title change has
+/// committed by then: a link that could not be updated is reported in the
+/// response counts, never turned into a failed rename. See
+/// `page_link_rename` for what is rewritten and how.
 pub async fn rename_page(
     db: &MemoryDB,
     id: &str,
@@ -53,8 +60,29 @@ pub async fn rename_page(
     scope: &crate::read_scope::ReadScope,
     knowledge_path: Option<&Path>,
 ) -> Result<wenlan_types::responses::RenamePageResponse, WenlanError> {
-    db.rename_page(id, title, expected_version, scope, knowledge_path)
-        .await
+    let renamed = db
+        .commit_page_title_rename(id, title, expected_version, scope, knowledge_path)
+        .await?;
+    let mut response = renamed.response;
+    match page_link_rename::update_links_to_renamed_page(
+        db,
+        id,
+        renamed.previous_title.as_deref(),
+        scope,
+        knowledge_path,
+    )
+    .await
+    {
+        Ok(counts) => {
+            response.links_updated = counts.updated;
+            response.links_pending_review = counts.pending_review;
+            response.links_not_updated = counts.not_updated;
+        }
+        Err(error) => {
+            log::warn!("[page_rename] {id} renamed; updating links to it failed: {error}");
+        }
+    }
+    Ok(response)
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -1042,8 +1042,12 @@ async fn renamed_target_identity_survives_source_reindex_and_old_title_reuse() {
     let fixture = fixture().await;
     {
         let conn = fixture.db.conn.lock().await;
+        // Locked for review, so the rename leaves its `[[Old title]]` as
+        // written (the link update waits as a revision card) and the link
+        // keeps its identity by page id.
         conn.execute(
-            "UPDATE pages SET content='Read [[Old title]]' WHERE id='page-collision'",
+            "UPDATE pages SET content='Read [[Old title]]',review_required=1
+              WHERE id='page-collision'",
             (),
         )
         .await

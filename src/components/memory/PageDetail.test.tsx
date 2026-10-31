@@ -22,6 +22,9 @@ vi.mock("./PageCanvas", () => ({
   ),
 }));
 
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("sonner", () => ({ toast }));
+
 vi.mock("../../lib/tauri", () => ({
   getKnowledgeGraph: vi.fn().mockResolvedValue({entities:[],relations:[],memories:[],memory_links:[],pages:[],page_links:[]}),
   // Fails closed, which is what an older or unreachable daemon looks like:
@@ -281,6 +284,35 @@ describe("PageDetail", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Renamed architecture" })).toBeInTheDocument();
     expect(client.getQueryState(["page-links", "referencing-note"])?.isInvalidated).toBe(true);
     expect(screen.getByText(/libSQL is the core database layer powering Origin/)).toBeInTheDocument();
+  });
+
+  it("tells the person how many other pages had their links updated", async () => {
+    const { getPage, renamePage } = await import("../../lib/tauri");
+    toast.mockClear();
+    (renamePage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "concept_abc",
+      title: "Renamed architecture",
+      version: 4,
+      links_updated: 2,
+      links_pending_review: 0,
+      links_not_updated: 0,
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["page", "referencing-note"], { id: "referencing-note", version: 5 });
+    const { user } = renderWithQuery(<PageDetail {...defaultProps} />, client);
+
+    await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
+    const currentPage = await getPage("concept_abc");
+    (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...currentPage, title: "Renamed architecture", version: 4 });
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    const titleInput = screen.getByRole("textbox", { name: "Page title" });
+    await user.clear(titleInput);
+    await user.type(titleInput, "Renamed architecture");
+    await user.click(screen.getByRole("button", { name: "Save title" }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Updated links in 2 pages."));
+    expect(client.getQueryState(["page", "referencing-note"])?.isInvalidated).toBe(true);
   });
 
   it("lets the IME own Enter and Escape while the rename field composes", async () => {

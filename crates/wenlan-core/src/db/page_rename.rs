@@ -35,11 +35,38 @@ fn fail_after_projection_write() -> Result<(), WenlanError> {
     }
 }
 
+/// A committed title change, plus the title it replaced. `previous_title` is
+/// `None` when the page already had the requested title and nothing was
+/// written.
+pub(crate) struct PageTitleRename {
+    pub(crate) response: RenamePageResponse,
+    pub(crate) previous_title: Option<String>,
+}
+
+/// One page whose body links to a renamed page, read from the active `links`
+/// edges: the link identity the backlinks panel shows, resolved by page id at
+/// the time the linking page was last saved, not by title text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RenameLinkSource {
+    pub(crate) page_id: String,
+    /// The link labels (as written, trimmed) that resolve to the renamed page.
+    pub(crate) labels: Vec<String>,
+    /// Same Space and same workspace as the renamed page.
+    pub(crate) same_space: bool,
+    pub(crate) workspace: Option<String>,
+    /// An ordinary knowledge page whose body Wenlan may edit (not a topic, a
+    /// source copy, or an imported page).
+    pub(crate) rewritable: bool,
+}
+
 impl MemoryDB {
     /// Rename an ordinary active page with a version fence. If its Markdown
     /// projection already exists, update that same pinned filename atomically
     /// with the database write. Embeddings use only an already-loaded model;
     /// this operation never initializes or downloads one.
+    ///
+    /// This changes the title only. `post_write::rename_page` is the
+    /// capability every interface calls; it also updates other pages' links.
     pub async fn rename_page(
         &self,
         id: &str,
@@ -48,6 +75,86 @@ impl MemoryDB {
         scope: &ReadScope,
         knowledge_path: Option<&Path>,
     ) -> Result<RenamePageResponse, WenlanError> {
+        self.commit_page_title_rename(id, title, expected_version, scope, knowledge_path)
+            .await
+            .map(|renamed| renamed.response)
+    }
+
+    /// Every active page with a live `links` edge to `target_id`, other than
+    /// the page itself, with the labels those edges carry. Ordered by page id.
+    pub(crate) async fn rename_link_sources(
+        &self,
+        target_id: &str,
+    ) -> Result<Vec<RenameLinkSource>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT source.id,
+                        CASE WHEN json_valid(e.payload)
+                             THEN json_extract(e.payload,'$.label') END,
+                        (source.space IS target.space AND source.workspace IS target.workspace),
+                        source.workspace,
+                        (COALESCE(source.kind,'concept')!='entity'
+                         AND COALESCE(source.creation_kind,'distilled')
+                             NOT IN ('entity','source','imported'))
+                   FROM edges e
+                   JOIN pages source ON source.id=e.src_id AND source.status='active'
+                   JOIN pages target ON target.id=e.dst_id
+                  WHERE e.dst_id=?1 AND e.edge_type='links' AND e.src_kind='page'
+                    AND e.dst_kind='page' AND e.valid_until IS NULL
+                    AND source.id<>target.id
+                  ORDER BY source.id",
+                libsql::params![target_id],
+            )
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("rename link sources: {error}")))?;
+        let mut sources: Vec<RenameLinkSource> = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("rename link source row: {error}")))?
+        {
+            let page_id = row.get::<String>(0).map_err(|error| {
+                WenlanError::VectorDb(format!("rename link source id: {error}"))
+            })?;
+            let label = row
+                .get::<Option<String>>(1)
+                .unwrap_or(None)
+                .map(|label| label.trim().to_string())
+                .filter(|label| !label.is_empty());
+            let same_space = row.get::<Option<i64>>(2).unwrap_or(None) == Some(1);
+            let workspace = row.get::<Option<String>>(3).unwrap_or(None);
+            let rewritable = row.get::<Option<i64>>(4).unwrap_or(None) == Some(1);
+            let source = match sources.last_mut() {
+                Some(last) if last.page_id == page_id => last,
+                _ => {
+                    sources.push(RenameLinkSource {
+                        page_id,
+                        labels: Vec::new(),
+                        same_space,
+                        workspace,
+                        rewritable,
+                    });
+                    sources.last_mut().expect("just pushed")
+                }
+            };
+            if let Some(label) = label {
+                if !source.labels.contains(&label) {
+                    source.labels.push(label);
+                }
+            }
+        }
+        Ok(sources)
+    }
+
+    pub(crate) async fn commit_page_title_rename(
+        &self,
+        id: &str,
+        title: &str,
+        expected_version: i64,
+        scope: &ReadScope,
+        knowledge_path: Option<&Path>,
+    ) -> Result<PageTitleRename, WenlanError> {
         let title = validate_page_title(title)?;
         if expected_version < 1 {
             return Err(WenlanError::Validation(
@@ -214,10 +321,14 @@ impl MemoryDB {
                 return Err(WenlanError::Conflict("page version conflict".to_string()));
             }
             if current_title == title {
-                return Ok(RenamePageResponse {
-                    id: id.to_string(),
-                    title: current_title,
-                    version: current_version,
+                return Ok(PageTitleRename {
+                    response: RenamePageResponse {
+                        id: id.to_string(),
+                        title: current_title,
+                        version: current_version,
+                        ..RenamePageResponse::default()
+                    },
+                    previous_title: None,
                 });
             }
 
@@ -375,10 +486,14 @@ impl MemoryDB {
                 #[cfg(test)]
                 fail_after_projection_write()?;
             }
-            Ok(RenamePageResponse {
-                id: id.to_string(),
-                title,
-                version: new_version,
+            Ok(PageTitleRename {
+                response: RenamePageResponse {
+                    id: id.to_string(),
+                    title,
+                    version: new_version,
+                    ..RenamePageResponse::default()
+                },
+                previous_title: Some(current_title),
             })
         }
         .await;

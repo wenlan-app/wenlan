@@ -1063,8 +1063,8 @@ carrying the authority of agreement.
 | `core/db/page_basis.rs::load_facts` | `private` | no | no | — | — |
 | `core/db/page_drafts.rs::publish_page_draft` | `pub` | no | **yes** | `server/page_routes.rs::handle_publish_page_draft` | — |
 | `core/db/page_map_independent.rs::migrate_134_page_map_ideas` | `pub(crate)` | no | no | — | — |
+| `core/db/page_rename.rs::commit_page_title_rename` | `pub(crate)` | no | no | — | — |
 | `core/db/page_rename.rs::page_for_title_rename_on_connection` | `private` | no | no | — | — |
-| `core/db/page_rename.rs::rename_page` | `pub` | yes | no | — | — |
 | `core/db/page_restore.rs::archived_row` | `private` | no | no | — | — |
 | `core/db/page_restore.rs::restore_page_in_transaction` | `private` | no | no | — | — |
 | `core/db/page_summary_backfill.rs::backfill_page_summaries` | `pub` | no | **yes** | `server/main/startup.rs::prepare_startup_state` | — |
@@ -1172,6 +1172,7 @@ carrying the authority of agreement.
 | `core/db/page_basis.rs::mark_page_basis_on_conn` | `pub(super)` | no | no | — | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::prepare_staged_basis_marks` | `pub` | no | **yes** | `server/page_routes.rs::handle_refresh_page_inner` | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::refresh_rows` | `private` | no | no | — | `core/db/page_basis.rs::load_facts` |
+| `core/db/page_rename.rs::rename_page` | `pub` | yes | no | — | `core/db/page_rename.rs::commit_page_title_rename` |
 | `core/db/page_restore.rs::restore_page` | `pub` | no | **yes** | `server/page_routes.rs::handle_restore_page` | `core/db/page_restore.rs::restore_page_in_transaction` |
 | `core/db/presence_review.rs::review_in_txn` | `private` | no | no | — | `core/db/presence_review.rs::page_binding` |
 | `core/db/repair_page_rename.rs::rename_page_projection_matches_post` | `private` | no | no | — | `core/db/repair_page_rename.rs::page_on_connection` |
@@ -1197,6 +1198,7 @@ carrying the authority of agreement.
 | `core/page_map_improve.rs::source_suggestions` | `private` | no | no | — | `core/db.rs::find_active_page_id_by_title` |
 | `core/page_titles.rs::strict_same_title_note` | `pub` | no | no | — | `core/db/steep_new.rs::notes_titled`, `core/db/steep_new.rs::recent_notes` |
 | `core/post_ingest.rs::run_post_ingest_enrichment` | `pub` | no | no | — | `core/db.rs::get_entity_detail` |
+| `core/post_write.rs::rename_page` | `pub` | yes | no | — | `core/db/page_rename.rs::commit_page_title_rename` |
 | `core/post_write.rs::rename_page_title_cas` | `pub(crate)` | no | no | — | `core/db/repair_page_rename.rs::rename_page_title_cas_inner` |
 | `core/refinery/mod.rs::run_redistill_page_slice` | `pub` | no | no | — | `core/db.rs::get_stale_page_after` |
 | `core/repair.rs::apply_repair_with_pages_inner` | `private` | no | no | — | `core/db/repair_deterministic.rs::apply_deterministic_repair_cas` |
@@ -1360,6 +1362,7 @@ carrying the authority of agreement.
 | `core/post_write/page_create.rs::create_page_impl` | `pub(super)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::insert_page_with_basis`, `core/db.rs::resolve_orphan_page_links`, `core/page_titles.rs::strict_same_title_note` |
 | `core/post_write/page_create.rs::replace_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_create.rs::write_document_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::insert_document_source_page_at_hash` |
+| `core/post_write/page_link_rename.rs::update_links_to_renamed_page` | `pub(crate)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_revision.rs::accept_page_revision_card` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_revision.rs::resolve_page_revision_card` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_update.rs::project_latest_page` | `private` | no | no | — | `core/db.rs::get_page` |
