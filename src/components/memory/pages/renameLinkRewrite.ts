@@ -17,6 +17,9 @@ const WIKILINK = /(!?)\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
 /** Characters that end or split a wikilink target (`WIKILINK_TARGET_BREAKERS`). */
 const TARGET_BREAKERS = /[[\]|#]/;
 
+/** A blank line starting here: LF or CRLF line endings. */
+const BLANK_LINE = /^(?:\n\n|\r\n\r\n)/;
+
 type Range = readonly [start: number, end: number];
 
 /** Fenced code blocks, as `sources::obsidian::code_block_ranges` finds them. */
@@ -58,7 +61,9 @@ function inlineCodeRanges(content: string, fenced: readonly Range[]): Range[] {
     let scan = at;
     let close: number | null = null;
     while (scan < content.length) {
-      if (inside(fenced, scan) || content.startsWith("\n\n", scan)) break;
+      // A blank line ends a span, whether the text uses LF or CRLF, so the
+      // stored source and the editor's LF document read the same spans.
+      if (inside(fenced, scan) || BLANK_LINE.test(content.slice(scan, scan + 4))) break;
       if (content[scan] !== "`") { scan += 1; continue; }
       const runStart = scan;
       while (scan < content.length && content[scan] === "`") scan += 1;
@@ -149,7 +154,11 @@ export function renameRewriteExplaining(
   // Newest first: the rename the person just made is the likeliest cause.
   for (const rename of [...recent].reverse()) {
     if (now - rename.at > RENAME_WINDOW_MS) continue;
-    const rewrite: LinkRewrite = (content) => renamedLinkEdits(content, rename.oldTitle, rename.newTitle);
+    // The rewrite keeps answering for the rest of the window (an editor
+    // replays it after undo), then stops: an old rename changes nothing.
+    const deadline = Date.now() + (rename.at + RENAME_WINDOW_MS - now);
+    const rewrite: LinkRewrite = (content) =>
+      Date.now() > deadline ? [] : renamedLinkEdits(content, rename.oldTitle, rename.newTitle);
     const edits = rewrite(baseline);
     if (edits.length > 0 && applyTextEdits(baseline, edits) === canonical) return rewrite;
   }
