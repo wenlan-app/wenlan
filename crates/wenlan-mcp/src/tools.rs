@@ -1361,6 +1361,11 @@ pub struct ReadPageParams {
     )]
     #[serde(default)]
     pub session: Option<String>,
+    #[schemars(
+        description = "true adds the page's mind map as a small text tree and a link that opens it in Wenlan. Set it only when the user wants to see the map."
+    )]
+    #[serde(default)]
+    pub map: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -4226,7 +4231,7 @@ impl WenlanMcpServer {
     }
 
     pub async fn read_page_impl(&self, page_id: &str) -> Result<CallToolResult, McpError> {
-        self.read_page_for_session(page_id, None).await
+        self.read_page_for_session(page_id, None, false).await
     }
 
     /// `read_page`, naming the AI session that is reading so the note shows on
@@ -4235,6 +4240,7 @@ impl WenlanMcpServer {
         &self,
         page_id: &str,
         session: Option<&str>,
+        with_map: bool,
     ) -> Result<CallToolResult, McpError> {
         if !is_opaque_page_id(page_id) {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
@@ -4312,8 +4318,14 @@ impl WenlanMcpServer {
                 object.insert("attachments".into(), attachments.into());
             }
             // The mind map as a text tree with a link into the app, for tools
-            // that can't show a window (UX-CHAT-4). Absent when unmapped.
-            if let Some(tree) = self.page_map_tree(&page.page.page, &visible).await {
+            // that can't show a window (UX-CHAT-4). Only when asked for, and
+            // absent when unmapped.
+            let tree = if with_map {
+                self.page_map_tree(&page.page.page, &visible).await
+            } else {
+                None
+            };
+            if let Some(tree) = tree {
                 object.insert(
                     "map".into(),
                     serde_json::json!({
@@ -5377,7 +5389,7 @@ impl WenlanMcpServer {
         &self,
         Parameters(params): Parameters<ReadPageParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.read_page_for_session(&params.page_id, params.session.as_deref())
+        self.read_page_for_session(&params.page_id, params.session.as_deref(), params.map)
             .await
     }
 
