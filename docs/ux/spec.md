@@ -115,11 +115,11 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## While you chat (in your own AI tool)
 
-- **UX-CHAT-1** `planned` When the AI says something that contradicts an
-  earlier decision, a one-line reminder appears in the same turn, with the date
-  and the source, and it can be opened.
-  It is a Beta setting, off by default.
-  原文：AI 說了跟以前定的相反的話，同一輪就出現一句提醒，帶日期和出處，點得開。「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31；檢查改成要你打開才有）
+- **UX-CHAT-1** `planned` When you or the AI say something that contradicts an
+  earlier decision or the record, a one-line reminder appears in the same turn,
+  with the date and the source, and it can be opened. Both your words and the
+  AI's are checked. It is a Beta setting, off by default.
+  原文：AI 說了跟以前定的相反的話，同一輪就出現一句提醒，帶日期和出處，點得開。「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31；檢查改成要你打開才有）；選擇卡「你和 AI 说的都看」（2026-10-31 16:51）
 - **UX-CHAT-2** `planned` Nothing is said when the reply has nothing to do with
   earlier decisions. If Wenlan is closed or does not answer within one second,
   the check is skipped and the chat is not held up. At most five reminders a
