@@ -479,15 +479,19 @@ pub async fn handle_archive_page(
     // entity id as a field. The core fence still stands behind it for every
     // caller that does not come through this route.
     reject_entity_page_mutation(&db, &id).await?;
-    db.archive_page(&id).await.map_err(ServerError::from)?;
+    let archived_version = db
+        .archive_page_versioned(&id)
+        .await
+        .map_err(ServerError::from)?;
     let mut body = serde_json::json!({"status": "archived"});
-    // No status check needed: after `archive_page` the page is not active
-    // (archived now, already, or never an active page), and a page that is not
-    // active has no business keeping a file in the pages folder. A page with
-    // no file is a no-op.
-    if let Some(root) = page_root {
+    // Only the call that archived the page moves its file, and only files no
+    // newer than the version this archive produced: a restore that commits
+    // and projects in between writes a newer stamp, and the move (decided
+    // under the projection lock that restore's write also takes) leaves it.
+    // A page that was already archived keeps whatever the startup sweep does.
+    if let Some((root, version)) = page_root.zip(archived_version) {
         let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
-        match projection.archive_pages(std::slice::from_ref(&id)) {
+        match projection.archive_pages(&[(id.clone(), version)]) {
             Ok(_) => body["projection_status"] = serde_json::json!(PageProjectionStatus::Synced),
             Err(error) => {
                 tracing::warn!(

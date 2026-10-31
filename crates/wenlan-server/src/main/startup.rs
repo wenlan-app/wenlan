@@ -467,9 +467,11 @@ pub(super) async fn prepare_startup_state(
                     // Moving it keeps its bytes, edits included.
                     match db_arc.list_pages("archived", 10_000, 0).await {
                         Ok(archived) if !archived.is_empty() => {
-                            let ids: Vec<String> =
-                                archived.into_iter().map(|page| page.id).collect();
-                            match projection.archive_pages(&ids) {
+                            let pages: Vec<(String, i64)> = archived
+                                .into_iter()
+                                .map(|page| (page.id, page.version))
+                                .collect();
+                            match projection.archive_pages(&pages) {
                                 Ok(0) => {}
                                 Ok(moved) => tracing::info!(
                                     "[reconcile] moved {moved} archived page file(s) into archive/"
