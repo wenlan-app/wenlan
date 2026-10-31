@@ -15,7 +15,7 @@ import {
 import { closeSearchPanel, findNext, findPrevious, openSearchPanel, search } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Compartment, EditorState } from "@codemirror/state";
+import { Compartment, EditorState, Transaction } from "@codemirror/state";
 import {
   drawSelection,
   dropCursor,
@@ -179,6 +179,19 @@ export const CodeMirrorMarkdownEditor = forwardRef<
         const applied = runMarkdownCommand(view, command);
         publishStatus(view);
         return applied;
+      },
+      applyExternalEdits(edits): boolean {
+        const view = viewRef.current;
+        if (!view || actionsBlocked(view)) return false;
+        const changes = edits(view.state.doc.toString());
+        if (changes.length === 0) return true;
+        // Not the person's own step: undo leaves it in place.
+        view.dispatch({
+          changes: changes.map(({ from, to, insert }) => ({ from, to, insert })),
+          annotations: [Transaction.addToHistory.of(false), Transaction.remote.of(true)],
+        });
+        publishStatus(view);
+        return true;
       },
       requestSave,
       requestCancel,

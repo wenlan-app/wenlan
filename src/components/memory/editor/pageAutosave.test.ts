@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Page, UpdatePageInput, UpdatePageOutcome } from "../../../lib/tauri";
 import { PageAutosave } from "./pageAutosave";
+import { applyTextEdits, clearRenamedLinks, recordRenamedLinks, renameRewriteExplaining } from "../pages/renameLinkRewrite";
 
 const page = (content = "Original\r\nsource", version = 3): Page => ({
   id: "page-a", title: "Page A", content, version, status: "active",
@@ -32,7 +33,7 @@ function setup() {
   return { saver, write, read, changed, confirmed, missing };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); clearRenamedLinks(); });
 
 describe("PageAutosave", () => {
   it("archived canonical locks dirty text until explicit recovery at the restored CAS version", async () => {
@@ -276,6 +277,64 @@ describe("PageAutosave", () => {
     saver.setSource("Local draft");
     expect(saver.observeCanonical(page("Edited in Obsidian", 4))).toBeUndefined();
     expect(saver.snapshot()).toMatchObject({ state: { phase: "conflict" }, latest: { content: "Edited in Obsidian" } });
+    saver.dispose();
+  });
+
+  it("keeps an unsaved draft when a rename made here rewrote this page's links", async () => {
+    vi.useFakeTimers();
+    const { saver, write } = setup();
+    saver.reset(page("Read [[Old]] and [[old|the old one]].\nBody", 3));
+    saver.setSource("Read [[Old]] and [[old|the old one]].\nBody, typed here");
+    // Page A was renamed from Old to New; the daemon rewrote this page.
+    recordRenamedLinks("Old", "New");
+    const rewritten = page("Read [[New]] and [[New|the old one]].\nBody", 4);
+    const rewrite = renameRewriteExplaining(saver.snapshot().baseline!.content, rewritten.content);
+    expect(rewrite).not.toBeNull();
+    const editor = vi.fn(() => true);
+    expect(saver.rebaseOnto(rewritten, (text) => applyTextEdits(text, rewrite!(text)), editor)).toBe(true);
+    expect(editor).toHaveBeenCalledOnce();
+    expect(saver.snapshot()).toMatchObject({
+      state: { phase: "idle" }, dirty: true, latest: null,
+      baseline: { version: 4, content: rewritten.content },
+    });
+    // The same page arriving again is nothing new.
+    expect(saver.observeCanonical(rewritten)).toBeUndefined();
+    expect(saver.snapshot().state.phase).toBe("idle");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      content: "Read [[New]] and [[New|the old one]].\nBody, typed here",
+      expectedVersion: 4,
+    }));
+    saver.dispose();
+  });
+
+  it("still reports a conflict when a rename and a real edit elsewhere both changed the page", () => {
+    const { saver } = setup();
+    saver.reset(page("Read [[Old]].\nBody", 3));
+    saver.setSource("Read [[Old]].\nBody, typed here");
+    recordRenamedLinks("Old", "New");
+    const edited = page("Read [[New]].\nBody, edited in Obsidian", 4);
+    expect(renameRewriteExplaining(saver.snapshot().baseline!.content, edited.content)).toBeNull();
+    // Even a caller holding the rename's rewrite cannot rebase onto it.
+    const editor = vi.fn(() => true);
+    const rewrite = (text: string) => text.replace("[[Old]]", "[[New]]");
+    expect(saver.rebaseOnto(edited, rewrite, editor)).toBe(false);
+    expect(editor).not.toHaveBeenCalled();
+    expect(saver.observeCanonical(edited)).toBeUndefined();
+    expect(saver.snapshot()).toMatchObject({ state: { phase: "conflict", pending: { content: "Read [[Old]].\nBody, typed here" } } });
+    saver.dispose();
+  });
+
+  it("falls back to the conflict when the editor cannot take the rewrite", () => {
+    const { saver } = setup();
+    saver.reset(page("Read [[Old]].", 3));
+    saver.setSource("Read [[Old]]. Typed");
+    const rewritten = page("Read [[New]].", 4);
+    const rewrite = (text: string) => text.replace("[[Old]]", "[[New]]");
+    expect(saver.rebaseOnto(rewritten, rewrite, () => false)).toBe(false);
+    expect(saver.snapshot().baseline).toMatchObject({ version: 3 });
+    expect(saver.observeCanonical(rewritten)).toBeUndefined();
+    expect(saver.snapshot().state.phase).toBe("conflict");
     saver.dispose();
   });
 
