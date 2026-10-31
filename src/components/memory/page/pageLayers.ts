@@ -34,6 +34,26 @@ function firstSectionStart(markdown: string): number {
   return -1;
 }
 
+/** Where the layers start in the raw text, for views that keep the text
+ *  whole (the editor folds these ranges instead of cutting them out). */
+export interface PageLayerOffsets {
+  /** Start of the first section of the human part; `null` when the short and
+   *  full lengths are the same. */
+  readonly sectionStart: number | null;
+  /** Start of the marker heading line; `null` without a part for AI. */
+  readonly aiStart: number | null;
+}
+
+export function pageLayerOffsets(markdown: string): PageLayerOffsets {
+  const marker = AI_DETAILS_HEADING.exec(markdown);
+  const aiStart = marker ? marker.index : null;
+  const humanRaw = aiStart === null ? markdown : markdown.slice(0, aiStart);
+  const section = firstSectionStart(humanRaw);
+  const hasLede = section > 0 && humanRaw.slice(0, section).trim() !== "";
+  const hasSection = section >= 0 && humanRaw.slice(section).trim() !== "";
+  return { sectionStart: hasLede && hasSection ? section : null, aiStart };
+}
+
 export function splitPageLayers(markdown: string): PageLayers {
   const marker = AI_DETAILS_HEADING.exec(markdown);
   const human = (marker ? markdown.slice(0, marker.index) : markdown).trim();

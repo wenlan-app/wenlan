@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { splitPageLayers } from "./pageLayers";
+import { pageLayerOffsets, splitPageLayers } from "./pageLayers";
 
 const PAGE = [
   "Wenlan is a place to think with AI.",
@@ -36,5 +36,19 @@ describe("splitPageLayers", () => {
     expect(splitPageLayers("Top\n\n## 给 AI 的细节\n\nx").aiDetails).toBe("x");
     const fenced = splitPageLayers("Intro\n\n```md\n## not a section\n```\n\nMore");
     expect(fenced.short).toBe(fenced.human);
+  });
+});
+
+describe("pageLayerOffsets", () => {
+  it("UX-VIEW-3 finds where the short length ends and the part for AI starts", () => {
+    const offsets = pageLayerOffsets(PAGE);
+    expect(PAGE.slice(offsets.sectionStart ?? 0)).toMatch(/^## Three views/);
+    expect(PAGE.slice(offsets.aiStart ?? 0)).toMatch(/^## 給 AI 的細節/);
+  });
+
+  it("UX-VIEW-2 reports one length when there is nothing to cut", () => {
+    expect(pageLayerOffsets("Just one paragraph.")).toEqual({ sectionStart: null, aiStart: null });
+    expect(pageLayerOffsets("## Only a section\n\nText").sectionStart).toBeNull();
+    expect(pageLayerOffsets("Lede\n\n## Details for AI\n\nx").sectionStart).toBeNull();
   });
 });
