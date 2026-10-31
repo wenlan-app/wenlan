@@ -70,6 +70,8 @@ export async function archivePageFromList(
     if (!await confirmAction(t("pageDetail.archiveConfirm"), {
       confirm: t("pageDetail.archivePage"),
       cancel: t("common.cancel"),
+      // Archive can be undone from Archived pages, so its button is not red.
+      tone: "neutral",
     })) return false;
     await archiveWikiPage(queryClient, page);
     onArchived?.(page.id);

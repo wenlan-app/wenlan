@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "./PageDetail";
 import { i18n } from "../../i18n";
+import { setConfirmPresenter, type ConfirmActionLabels } from "../../lib/confirmAction";
 import {
   editorViewFromTextbox,
   installCodeMirrorDomPolyfills,
@@ -324,6 +325,21 @@ describe("PageDetail stored actions in seamless editing", () => {
   renderWithQuery(<PageDetail pageId="page-1" onBack={vi.fn()} onMemoryClick={vi.fn()} onOpenReview={vi.fn()}/>);
   expect(await screen.findByText('1 item needs review')).toBeVisible();
   expect(screen.queryByText('This page is archived. Restore it to edit.')).toBeNull();
+ });
+ it('Archive asks with a neutral confirm button while Delete page stays red',async()=>{
+  const asked:ConfirmActionLabels[]=[];
+  setConfirmPresenter(async(_message,labels)=>{asked.push(labels);return false;});
+  try {
+   const {user}=await start();
+   await user.click(await action(user,'Archive page'));
+   await waitFor(()=>expect(asked).toHaveLength(1));
+   expect(asked[0]).toMatchObject({confirm:'Archive page',tone:'neutral'});
+   await user.click(await action(user,'Delete page'));
+   await waitFor(()=>expect(asked).toHaveLength(2));
+   expect(asked[1].confirm).toBe('Delete page');
+   expect(asked[1].tone ?? 'danger').toBe('danger');
+   expect(tauriMocks.archivePage).not.toHaveBeenCalled();expect(tauriMocks.deletePage).not.toHaveBeenCalled();
+  } finally { setConfirmPresenter((message)=>Promise.resolve(window.confirm(message))); }
  });
  it('autosave never writes an archived page, but a cache miss is left to the daemon',async()=>{
   const {editor,client}=await start();

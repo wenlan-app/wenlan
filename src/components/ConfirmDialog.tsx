@@ -3,10 +3,17 @@ import { useEffect, useId, useRef } from "react";
 import { Button } from "./memory/settings/primitives";
 import "./confirmDialog.css";
 
+/**
+ * How the confirm button looks. `danger` (the default) is for an action that
+ * cannot be undone; `neutral` is for one the person can take back later.
+ */
+export type ConfirmTone = "danger" | "neutral";
+
 export interface ConfirmDialogProps {
   message: string;
   confirmLabel: string;
   cancelLabel: string;
+  tone?: ConfirmTone;
   onAnswer: (confirmed: boolean) => void;
 }
 
@@ -20,7 +27,7 @@ if (typeof window !== "undefined") window.addEventListener("keydown", (event) =>
  * and starts focused, as a native alert's default button does; Escape, the
  * backdrop and Cancel all answer no.
  */
-export function ConfirmDialog({ message, confirmLabel, cancelLabel, onAnswer }: ConfirmDialogProps) {
+export function ConfirmDialog({ message, confirmLabel, cancelLabel, tone = "danger", onAnswer }: ConfirmDialogProps) {
   const messageId = useId();
   const panel = useRef<HTMLDivElement>(null);
   const answer = useRef(onAnswer);
@@ -66,7 +73,8 @@ export function ConfirmDialog({ message, confirmLabel, cancelLabel, onAnswer }: 
         <p id={messageId} className="confirm-dialog-message">{message}</p>
         <div className="confirm-dialog-actions">
           <Button variant="ghost" onClick={() => onAnswer(false)}>{cancelLabel}</Button>
-          <Button data-confirm-action variant="danger" onClick={() => onAnswer(true)}>{confirmLabel}</Button>
+          <Button data-confirm-action data-tone={tone} variant={tone === "neutral" ? "primary" : "danger"}
+            onClick={() => onAnswer(true)}>{confirmLabel}</Button>
         </div>
       </div>
     </div>

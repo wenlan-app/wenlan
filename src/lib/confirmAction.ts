@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ConfirmDialog, type ConfirmTone } from "../components/ConfirmDialog";
 
 export interface ConfirmActionLabels {
   /** The button that goes ahead, named for the action ("Delete page"). */
   confirm: string;
   cancel: string;
+  /** Leave out for an action that cannot be undone; the button is then red. */
+  tone?: ConfirmTone;
 }
 
 type ConfirmPresenter = (message: string, labels: ConfirmActionLabels) => Promise<boolean>;
@@ -35,6 +37,7 @@ const showConfirmDialog: ConfirmPresenter = (message, labels) => new Promise((re
     message,
     confirmLabel: labels.confirm,
     cancelLabel: labels.cancel,
+    tone: labels.tone,
     onAnswer: answer,
   }));
 });
