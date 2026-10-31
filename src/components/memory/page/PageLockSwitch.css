@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.page-lock { margin: 22px 0 0; }
+.page-lock-row { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+.page-lock-title { margin: 0; }
+.page-lock-hint { color: var(--mem-text-secondary); font-size: 12px; line-height: 1.6; margin: 6px 0 0; text-wrap: balance; }

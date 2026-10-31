@@ -29,7 +29,7 @@ const openAiDetails = StateEffect.define<null>();
 class FoldLineWidget extends WidgetType {
   constructor(
     private readonly label: string,
-    private readonly kind: "short" | "ai",
+    readonly kind: "short" | "ai",
     private readonly onOpen: (view: EditorView) => void,
   ) {
     super();
@@ -84,7 +84,7 @@ function buildDecorations(state: EditorState, settings: PageLayersSettings | nul
   return Decoration.set(ranges);
 }
 
-const pageLayersField = StateField.define<LayersState>({
+export const pageLayersField = StateField.define<LayersState>({
   create: () => ({ settings: null, aiOpen: false, decorations: Decoration.none }),
   update(value, transaction) {
     let { settings, aiOpen } = value;
@@ -106,6 +106,19 @@ const pageLayersField = StateField.define<LayersState>({
     EditorView.atomicRanges.of((view) => view.state.field(field).decorations),
   ],
 });
+
+/** The ranges the page layers fold away right now, for other decorations
+ *  that must not draw inside a fold (sentence proposals). */
+export function foldedPageLayers(state: EditorState): { from: number; to: number; kind: "short" | "ai" }[] {
+  const value = state.field(pageLayersField, false);
+  if (!value) return [];
+  const out: { from: number; to: number; kind: "short" | "ai" }[] = [];
+  value.decorations.between(0, state.doc.length, (from, to, decoration) => {
+    const widget = decoration.spec.widget;
+    out.push({ from, to, kind: widget instanceof FoldLineWidget ? widget.kind : "short" });
+  });
+  return out;
+}
 
 export function pageLayersEditing(initial: PageLayersSettings | null): Extension {
   return [

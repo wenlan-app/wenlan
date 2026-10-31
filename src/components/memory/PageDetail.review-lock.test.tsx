@@ -21,6 +21,9 @@ const tauriMocks = vi.hoisted(() => ({
   getTruthStatus: vi.fn(),
   pageReviewSupported: vi.fn(),
   setPageReviewRequired: vi.fn(),
+  getPageSentences: vi.fn(),
+  acceptSentenceProposal: vi.fn(),
+  rejectSentenceProposal: vi.fn(),
   redistillPage: vi.fn(),
   updatePage: vi.fn(),
   deletePage: vi.fn(),
@@ -84,6 +87,7 @@ describe("PageDetail review lock", () => {
     tauriMocks.recordPageEditorDiagnostic.mockResolvedValue(undefined);
     tauriMocks.getTruthStatus.mockResolvedValue(null);
     tauriMocks.pageReviewSupported.mockResolvedValue("ready");
+    tauriMocks.getPageSentences.mockResolvedValue({ page_id: "page-1", version: 1, ai_edits: "propose", sentences: [], proposals: [] });
     tauriMocks.setPageReviewRequired.mockImplementation(async (_id: string, required: boolean) => {
       current = required ? { ...current, review_required: true } : { ...PAGE };
       return { page_id: "page-1", review_required: required };
@@ -93,62 +97,57 @@ describe("PageDetail review lock", () => {
   async function openInfo(user: ReturnType<typeof userEvent.setup>) {
     await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.open") }));
     await user.click(screen.getByRole("tab", { name: i18n.t("pageInspector.info") }));
-    return screen.getByRole("radiogroup", { name: i18n.t("pageDetail.aiChanges") });
+    return lock();
   }
-  const allowed = () => screen.getByRole("radio", { name: new RegExp(`^${i18n.t("pageDetail.aiAllowed")}`) });
-  const askFirst = () => screen.getByRole("radio", { name: new RegExp(`^${i18n.t("pageDetail.aiAskFirst")}`) });
+  const lock = () => screen.getByRole("button", { name: i18n.t("pageLock.title") });
 
-  it("shows Allowed on an AI-written page, with no lock left in the menu", async () => {
+  it("UX-WHO-2 offers one Lock switch, off by default, with no direct-edit mode and no lock in the menu", async () => {
     const { user } = renderPage();
     await openInfo(user);
-    expect(allowed()).toBeChecked();
-    expect(screen.getByText(i18n.t("pageDetail.aiFromAi"))).toBeInTheDocument();
+    expect(lock()).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText(i18n.t("pageLock.offHint"))).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
     await user.click(screen.getByRole("button", { name: i18n.t("pageDetail.actions") }));
     expect(screen.queryByRole("menuitemcheckbox")).toBeNull();
   });
 
-  it("shows Ask me first on a locked page, and says why when the person wrote it", async () => {
+  it("shows the switch on for a locked page", async () => {
     current = { ...PAGE, review_required: true, user_edited: true } as typeof current;
     const { user } = renderPage();
     await openInfo(user);
-    expect(askFirst()).toBeChecked();
-    expect(screen.getByText(i18n.t("pageDetail.aiFromWrote"))).toBeInTheDocument();
+    expect(lock()).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText(i18n.t("pageLock.onHint"))).toBeInTheDocument();
   });
 
-  it("never calls a page written here AI-written, even before anyone edits it", async () => {
-    current = { ...PAGE, creation_kind: "authored" } as typeof current;
+  it("keeps a page the person wrote unlocked until they lock it", async () => {
+    current = { ...PAGE, creation_kind: "authored", user_edited: true } as typeof current;
     const { user } = renderPage();
     await openInfo(user);
-    expect(allowed()).toBeChecked();
-    expect(screen.queryByText(i18n.t("pageDetail.aiFromAi"))).toBeNull();
-    await user.click(askFirst());
-    await waitFor(() => expect(askFirst()).toBeChecked());
-    expect(screen.getByText(i18n.t("pageDetail.aiFromWrote"))).toBeInTheDocument();
+    expect(lock()).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("locks the page on Ask me first, then unlocks it on Allowed", async () => {
+  it("locks the page, then unlocks it", async () => {
     const { user } = renderPage();
     await openInfo(user);
-    await user.click(askFirst());
+    await user.click(lock());
     await waitFor(() => expect(tauriMocks.setPageReviewRequired).toHaveBeenLastCalledWith("page-1", true));
-    await waitFor(() => expect(askFirst()).toBeChecked());
-    expect(screen.getByText(i18n.t("pageDetail.aiFromPage"))).toBeInTheDocument();
+    await waitFor(() => expect(lock()).toHaveAttribute("aria-pressed", "true"));
 
-    await user.click(allowed());
+    await user.click(lock());
     await waitFor(() => expect(tauriMocks.setPageReviewRequired).toHaveBeenLastCalledWith("page-1", false));
-    await waitFor(() => expect(allowed()).toBeChecked());
+    await waitFor(() => expect(lock()).toHaveAttribute("aria-pressed", "false"));
   });
 
-  it("offers no setting on an entity shadow page", async () => {
+  it("offers no switch on an entity shadow page", async () => {
     current = { ...PAGE, creation_kind: "entity" } as typeof current;
     const { user } = renderPage();
     await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.open") }));
     await user.click(screen.getByRole("tab", { name: i18n.t("pageInspector.info") }));
     await screen.findByText(i18n.t("detailInfo.details"));
-    expect(screen.queryByRole("radiogroup", { name: i18n.t("pageDetail.aiChanges") })).toBeNull();
+    expect(screen.queryByRole("button", { name: i18n.t("pageLock.title") })).toBeNull();
   });
 
-  it("keeps the choice enabled on a page opened while another page's request is in flight", async () => {
+  it("keeps the switch usable on a page opened while another page's request is in flight", async () => {
     tauriMocks.getPage.mockImplementation(async (id: string) => ({ ...current, id }));
     tauriMocks.setPageReviewRequired.mockImplementation(() => new Promise(() => {}));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -160,21 +159,21 @@ describe("PageDetail review lock", () => {
     );
     const { rerender } = render(view("page-1"));
     await openInfo(user);
-    await user.click(askFirst());
+    await user.click(lock());
     expect(tauriMocks.setPageReviewRequired).toHaveBeenCalledWith("page-1", true);
-    expect(askFirst()).toBeDisabled();
+    expect(lock()).toHaveAttribute("aria-busy", "true");
 
     rerender(view("page-2"));
     await waitFor(() => expect(tauriMocks.getPage).toHaveBeenCalledWith("page-2", "explicit"));
-    await waitFor(() => expect(askFirst()).toBeEnabled());
+    await waitFor(() => expect(lock()).not.toHaveAttribute("aria-busy"));
   });
 
-  it("reports a failure and leaves the page on Allowed", async () => {
+  it("reports a failure and leaves the page unlocked", async () => {
     tauriMocks.setPageReviewRequired.mockRejectedValue(new Error("offline"));
     const { user } = renderPage();
     await openInfo(user);
-    await user.click(askFirst());
+    await user.click(lock());
     expect(await screen.findByText(i18n.t("pageDetail.aiSaveFailed"))).toBeInTheDocument();
-    await waitFor(() => expect(allowed()).toBeChecked());
+    await waitFor(() => expect(lock()).toHaveAttribute("aria-pressed", "false"));
   });
 });

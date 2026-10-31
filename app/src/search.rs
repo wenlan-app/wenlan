@@ -5422,6 +5422,39 @@ pub async fn set_page_review_required(
 }
 
 #[tauri::command]
+pub async fn get_page_sentences(
+    state: tauri::State<'_, State>,
+    page_id: String,
+) -> Result<wenlan_types::authorship::PageSentencesResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_page_sentences(&page_id).await
+}
+
+#[tauri::command]
+pub async fn accept_sentence_proposal(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    proposal_id: String,
+) -> Result<wenlan_types::authorship::SentenceAcceptResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client
+        .accept_sentence_proposal(&page_id, &proposal_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn reject_sentence_proposal(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    proposal_id: String,
+) -> Result<wenlan_types::authorship::SentenceProposalResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client
+        .reject_sentence_proposal(&page_id, &proposal_id)
+        .await
+}
+
+#[tauri::command]
 pub async fn mark_page_basis(
     state: tauri::State<'_, State>,
     page_id: String,
