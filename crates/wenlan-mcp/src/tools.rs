@@ -1008,7 +1008,7 @@ pub struct WritePageParams {
     )]
     pub title: Option<String>,
     #[schemars(
-        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Open with one or two plain sentences a person can read at a glance. Detail only an AI needs (commands, paths, edge cases) may go last under the heading '## Details for AI' (or '## 給 AI 的細節' on a Chinese page). Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
+        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Open with one plain paragraph that states the page's point; a person reads it first. Detail only an AI needs (commands, paths, edge cases) may go last under the heading '## Details for AI' (or '## 給 AI 的細節' on a Chinese page). Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
     )]
     pub content: String,
     #[schemars(

@@ -5,7 +5,7 @@
 //! marker heading then starts the details meant for AI tools:
 //!
 //! ```text
-//! One or two plain sentences for a person.
+//! One plain paragraph that states the point, for a person.
 //!
 //! <!-- wenlan:details -->
 //! ## 給 AI 的細節
