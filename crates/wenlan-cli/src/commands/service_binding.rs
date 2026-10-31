@@ -42,6 +42,67 @@ pub fn verify_systemd_stopped(properties: &str) -> Result<(), OwnershipRefusal> 
     }
 }
 
+/// The fields of a `launchctl print` job that ownership checks read.
+#[cfg(any(target_os = "macos", test))]
+struct LaunchdJob {
+    state: Option<String>,
+    pids: Vec<String>,
+    args: Vec<String>,
+    environment: Vec<(String, String)>,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_launchd_job(output: &str) -> Option<LaunchdJob> {
+    let mut job = LaunchdJob {
+        state: None,
+        pids: Vec::new(),
+        args: Vec::new(),
+        environment: Vec::new(),
+    };
+    let mut section = "";
+    // A running job nests coalition blocks with their own `state = active`;
+    // only the job's own (outermost) keys describe the job.
+    let mut depth = 0usize;
+    for line in output.lines().map(str::trim) {
+        let top_level = depth <= 1;
+        if line.ends_with(" = {") {
+            depth += 1;
+        } else if line == "}" {
+            depth = depth.saturating_sub(1);
+        }
+        if let Some(value) = line.strip_prefix("pid = ").filter(|_| top_level) {
+            job.pids.push(value.to_owned());
+        }
+        if let Some(value) = line.strip_prefix("state = ").filter(|_| top_level) {
+            if job.state.replace(value.to_owned()).is_some() {
+                return None;
+            }
+        }
+        if top_level && line == "arguments = {" {
+            section = "args";
+            continue;
+        }
+        if top_level && line == "environment = {" {
+            section = "env";
+            continue;
+        }
+        if line == "}" {
+            section = "";
+            continue;
+        }
+        match section {
+            "args" => job.args.push(line.to_owned()),
+            "env" => {
+                if let Some((key, value)) = line.split_once(" => ") {
+                    job.environment.push((key.to_owned(), value.to_owned()));
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(job)
+}
+
 /// launchctl's loaded configuration is independent of the plist on disk.
 /// Only an explicit inactive state, no PID, and a matching effective launch
 /// root can authorize starting that loaded job without replacing it.
@@ -52,45 +113,36 @@ pub fn verify_launchd_stopped(output: &str, selected: &Path) -> Result<(), Owner
             "loaded launchd job is running or its effective ownership is unknown".into(),
         )
     };
-    let mut state = None;
-    let mut section = "";
-    let mut args = Vec::new();
-    let mut environment = Vec::new();
-    for line in output.lines().map(str::trim) {
-        if line.starts_with("pid =") {
-            return Err(refuse());
-        }
-        if let Some(value) = line.strip_prefix("state = ") {
-            if state.replace(value).is_some() {
-                return Err(refuse());
-            }
-        }
-        if line == "arguments = {" {
-            section = "args";
-            continue;
-        }
-        if line == "environment = {" {
-            section = "env";
-            continue;
-        }
-        if line == "}" {
-            section = "";
-            continue;
-        }
-        match section {
-            "args" => args.push(line.to_owned()),
-            "env" => {
-                if let Some((key, value)) = line.split_once(" => ") {
-                    environment.push((key.to_owned(), value.to_owned()));
-                }
-            }
-            _ => {}
-        }
-    }
-    if !matches!(state, Some("not running" | "exited")) || args.is_empty() {
+    let job = parse_launchd_job(output).ok_or_else(refuse)?;
+    if !job.pids.is_empty()
+        || !matches!(job.state.as_deref(), Some("not running" | "exited"))
+        || job.args.is_empty()
+    {
         return Err(refuse());
     }
-    verify_launch_root(selected, &args, &environment)
+    verify_launch_root(selected, &job.args, &job.environment)
+}
+
+/// A daemon older than the data-root identity field can still be proven by
+/// its supervisor: a running loaded job with exactly one PID whose effective
+/// launch root is the selected one. Returns that PID.
+#[cfg(any(target_os = "macos", test))]
+pub fn verify_launchd_running_root(output: &str, selected: &Path) -> Result<u32, OwnershipRefusal> {
+    let refuse = || {
+        OwnershipRefusal(
+            "legacy daemon does not report its data root and its launchd job could not prove it; stop the verified old instance manually before upgrading".into(),
+        )
+    };
+    let job = parse_launchd_job(output).ok_or_else(refuse)?;
+    let [pid] = job.pids.as_slice() else {
+        return Err(refuse());
+    };
+    let pid: u32 = pid.parse().map_err(|_| refuse())?;
+    if job.state.as_deref() != Some("running") || job.args.is_empty() {
+        return Err(refuse());
+    }
+    verify_launch_root(selected, &job.args, &job.environment)?;
+    Ok(pid)
 }
 
 /// Command-line data-dir takes precedence over both environment spellings.
@@ -187,6 +239,44 @@ mod tests {
         )
         .is_err());
         assert!(verify_launchd_stopped("unreadable", selected.path()).is_err());
+    }
+    #[test]
+    fn running_legacy_launchd_job_proves_its_root_and_pid() {
+        let selected = tempfile::tempdir().unwrap();
+        let old = tempfile::tempdir().unwrap();
+        let fixture = |root: &Path| {
+            format!("service = {{\nstate = running\narguments = {{\n/Applications/Wenlan.app/Contents/MacOS/wenlan-server\n}}\nenvironment = {{\nWENLAN_DATA_DIR => {}\n}}\npid = 3451\n}}\n", root.display())
+        };
+        assert_eq!(
+            verify_launchd_running_root(&fixture(selected.path()), selected.path()).unwrap(),
+            3451
+        );
+        // Real `launchctl print` output nests coalitions with their own state.
+        let coalitions = fixture(selected.path()).replace(
+            "pid = 3451\n",
+            "pid = 3451\nresource coalition = {\nstate = active\n}\njetsam coalition = {\nstate = active\n}\n",
+        );
+        assert_eq!(
+            verify_launchd_running_root(&coalitions, selected.path()).unwrap(),
+            3451
+        );
+        assert!(verify_launchd_running_root(&fixture(old.path()), selected.path()).is_err());
+        assert!(verify_launchd_running_root(
+            &fixture(selected.path()).replace("pid = 3451\n", ""),
+            selected.path()
+        )
+        .is_err());
+        assert!(verify_launchd_running_root(
+            &(fixture(selected.path()) + "pid = 9999\n"),
+            selected.path()
+        )
+        .is_err());
+        assert!(verify_launchd_running_root(
+            &fixture(selected.path()).replace("state = running", "state = exited"),
+            selected.path()
+        )
+        .is_err());
+        assert!(verify_launchd_running_root("unreadable", selected.path()).is_err());
     }
     #[test]
     fn registration_requires_proof_and_honors_argument_precedence() {
