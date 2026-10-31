@@ -558,33 +558,6 @@ html[data-theme="light"] {
   --kg-page: #5E9C98;
 }
 
-.wiki-home {
-  color: var(--mem-text);
-}
-
-.wiki-daily-desk {
-  display: grid;
-  align-items: start;
-  gap: 12px;
-  padding-bottom: 4px;
-}
-
-.wiki-today-heading,
-.wiki-context-rail,
-.wiki-content-grid {
-  min-width: 0;
-}
-
-.wiki-context-rail {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
-.wiki-context-rail > section {
-  padding: 0;
-}
-
 .wiki-index-bar {
   display: block;
   padding-block: 0;
@@ -1631,14 +1604,6 @@ html[data-theme="light"] {
     padding-left: 0;
     padding-top: 20px;
   }
-}
-
-@media (max-width: 860px) {
-  .wiki-daily-desk {
-    align-items: start;
-    gap: 12px;
-  }
-
 }
 
 @media (max-width: 640px) {

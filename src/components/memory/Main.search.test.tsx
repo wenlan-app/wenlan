@@ -144,13 +144,6 @@ vi.mock("./MemorySearchResult", () => ({
   ),
 }));
 vi.mock("./MemoryDetail", () => ({ default: () => <div data-testid="memory-detail" /> }));
-vi.mock("./RecapsList", () => ({
-  RecapsList: (props: { onBack: () => void }) => (
-    <section data-testid="recaps-list">
-      <button onClick={props.onBack} type="button">Recaps back</button>
-    </section>
-  ),
-}));
 vi.mock("./PageDetail", () => ({
   default: (props: {
     onBack?: () => void;

@@ -16,10 +16,10 @@ export function GhostPagesRow() {
         {t("onboarding.ghostPages")}
       </p>
       {/*
-        All three ghosts must fit the column they sit in — the `minmax(0, 1fr)`
-        half of HomePage's `.wiki-content-grid`, 508px at the app's default
-        1280x720 window. The tracks below are what guarantee that; fixed card
-        widths overflowed it and sliced the second card in half.
+        All three ghosts must fit the column they sit in, about 508px at the
+        app's default 1280x720 window. The tracks below are what guarantee
+        that; fixed card widths overflowed it and sliced the second card in
+        half.
       */}
       <div
         style={{
