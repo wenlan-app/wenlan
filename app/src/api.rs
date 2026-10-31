@@ -1724,10 +1724,7 @@ impl WenlanClient {
         );
         self.put_json(
             &path,
-            &wenlan_types::requests::SetPageReviewRequiredRequest {
-                required,
-                ai_direct_edit: None,
-            },
+            &wenlan_types::requests::SetPageReviewRequiredRequest { required },
         )
         .await
     }
@@ -2313,7 +2310,6 @@ fn empty_update() -> wenlan_types::requests::UpdateConfigRequest {
         background_ai_enabled: None,
         page_map_auto_suggest: None,
         lock_my_pages: None,
-        ai_direct_edit: None,
         only_if_unset: None,
         // Tri-state (Option<Option<_>>): outer None = omit from JSON =
         // preserve the stored key. Note sparse_update_config strips nulls,

@@ -9,9 +9,9 @@
 //!   it keeps every sentence that is the person's (or of unknown origin on a
 //!   human-owned or review-locked page, or imported original text) and plans
 //!   one `sentence.propose` entry for each such sentence the write changed or
-//!   dropped. The page's 允許／先問我 setting decides when it applies: 先問我
-//!   (the review lock) stages a whole-page card before this gate is reached,
-//!   "AI may edit directly" (for the page, or globally in config) skips it.
+//!   dropped. It applies to every page: there is no "AI may edit directly"
+//!   mode. A locked page (`review_required`) stages a whole-page card before
+//!   this gate is reached.
 //! - [`propose_sentence`], [`accept_sentence_proposal`],
 //!   [`reject_sentence_proposal`] and [`flag_sentence`] are the per-sentence
 //!   decisions, each one history entry. They sit beside the whole-page
@@ -64,17 +64,15 @@ fn str_field<'a>(entry: &'a HistoryEntry, key: &str) -> Option<&'a str> {
     entry.data.get(key).and_then(serde_json::Value::as_str)
 }
 
-/// The page's AI-change mode: the review lock first, then "AI may edit
-/// directly" for this page or for every page.
-pub async fn ai_edit_mode(db: &MemoryDB, page: &Page) -> Result<AiEditMode, WenlanError> {
+/// The page's AI-change mode. One rule for every page: the AI updates its
+/// own untouched sentences and proposes on the person's. The page's lock
+/// (`review_required`) makes every AI change wait for the person.
+pub fn ai_edit_mode(page: &Page) -> AiEditMode {
     if page.review_required {
-        return Ok(AiEditMode::AskFirst);
+        AiEditMode::Locked
+    } else {
+        AiEditMode::Propose
     }
-    let page_direct = db.page_ai_direct_edit(&page.id).await?.unwrap_or(false);
-    if page_direct || crate::config::load_config().ai_direct_edit {
-        return Ok(AiEditMode::Direct);
-    }
-    Ok(AiEditMode::Propose)
 }
 
 /// A page whose unknown-origin sentences are protected like the person's.
@@ -146,17 +144,13 @@ pub async fn page_authorship(
 }
 
 /// The machine-write gate. The plan is `None` when the write lands as
-/// written: nothing the person owns is touched, or the person allowed direct
-/// AI edits. The flag says the page holds protected sentences at all, which a
+/// written: nothing the person owns is touched. The flag says the page holds protected sentences at all, which a
 /// forced rebuild uses to keep the page marked as the person's.
 pub(crate) async fn sentence_gate(
     db: &MemoryDB,
     page: &Page,
     new_content: &str,
 ) -> Result<(Option<GatePlan>, bool), WenlanError> {
-    if ai_edit_mode(db, page).await? == AiEditMode::Direct {
-        return Ok((None, false));
-    }
     let rows = page_authorship(db, page).await?;
     let guard = guarded(page);
     let protected: HashSet<usize> = rows
@@ -442,9 +436,12 @@ pub async fn accept_sentence_proposal(
             },
             edited_by: "manual_edit",
             knowledge_path,
+            // Accepting one sentence protects that sentence (it is the
+            // person's from now on); it does not lock the whole page, so
+            // "Lock pages I've written" is not triggered by it.
             basis: crate::db::BasisWrite {
                 actor: "human".to_string(),
-                lock_on_first_human_edit: crate::config::load_config().lock_my_pages,
+                lock_on_first_human_edit: false,
                 ..crate::db::BasisWrite::default()
             },
         },
@@ -609,7 +606,7 @@ pub async fn page_sentences(
     page_id: &str,
 ) -> Result<PageSentencesResponse, WenlanError> {
     let page = load_page(db, page_id).await?;
-    let mode = ai_edit_mode(db, &page).await?;
+    let mode = ai_edit_mode(&page);
     let rows = page_authorship(db, &page).await?;
     let units = authorship::sentence_units(&page.content);
     let entries = db.list_sentence_history("page", page_id).await?;

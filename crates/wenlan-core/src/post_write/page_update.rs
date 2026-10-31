@@ -1208,9 +1208,8 @@ async fn update_page_db_impl(
             // or dropped is kept as it is and staged as a `sentence.propose`
             // entry instead. This is what replaced the version-checked agent
             // write landing outright on a human-owned page, and a forced
-            // rebuild wiping the person's prose. The page's or the global
-            // "AI may edit directly" setting skips it; the AI's text then
-            // lands, recorded as AI-written in page history. A link rewrite
+            // rebuild wiping the person's prose. It applies on every page;
+            // there is no "AI may edit directly" setting. A link rewrite
             // after a rename changes link targets only and keeps authors.
             let (gate, keeps_person_text) = if writer.is_machine()
                 && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))

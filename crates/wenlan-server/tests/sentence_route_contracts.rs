@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! HTTP contract for who wrote each sentence of a page (UX-WHO-1..5):
 //! the sentences view, sentence proposals the person accepts or rejects one
-//! by one, the person's 「不對」, rechecking one sentence, and the AI-change
-//! setting's third value (`ai_direct_edit`).
+//! by one, the person's 「不對」, rechecking one sentence, and the page lock
+//! as the only per-page AI-change setting (no "edit directly" mode).
 
 mod common;
 
@@ -454,7 +454,7 @@ async fn the_persons_flag_and_a_one_sentence_recheck() {
 }
 
 #[tokio::test]
-async fn the_ai_change_setting_gains_direct_edits_per_page_and_globally() {
+async fn the_page_lock_is_the_only_ai_change_setting() {
     let _guard = data_dir_lock().lock().await;
     let _vault = ScratchVault::new();
     let (router, _tmp, db) = common::test_app_no_gate().await;
@@ -466,16 +466,15 @@ async fn the_ai_change_setting_gains_direct_edits_per_page_and_globally() {
         &router,
         Method::PUT,
         &uri,
-        Some(json!({ "required": false, "ai_direct_edit": true })),
+        Some(json!({ "required": true })),
         Caller::Person,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
-        json!({ "page_id": id, "review_required": false, "ai_direct_edit": true, "ai_edits": "direct" })
+        json!({ "page_id": id, "review_required": true, "ai_edits": "locked" })
     );
-    // Omitting ai_direct_edit keeps it, as older callers send only `required`.
     let (_, body) = call(
         &router,
         Method::PUT,
@@ -484,50 +483,19 @@ async fn the_ai_change_setting_gains_direct_edits_per_page_and_globally() {
         Caller::Person,
     )
     .await;
-    assert_eq!(body["ai_direct_edit"], json!(true), "{body}");
-    // The lock wins and clears direct edits; both at once is refused.
+    assert_eq!(body["ai_edits"], json!("propose"), "{body}");
+
+    // There is no "AI may edit directly" mode, per page or globally.
     let (status, _) = call(
         &router,
         Method::PUT,
         &uri,
-        Some(json!({ "required": true, "ai_direct_edit": true })),
+        Some(json!({ "required": false, "ai_direct_edit": true })),
         Caller::Person,
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    let (_, body) = call(
-        &router,
-        Method::PUT,
-        &uri,
-        Some(json!({ "required": true })),
-        Caller::Person,
-    )
-    .await;
-    assert_eq!(body["ai_edits"], json!("ask_first"), "{body}");
-    assert_eq!(body["ai_direct_edit"], json!(false), "{body}");
-
-    // The global setting, through the config route.
     let (status, body) = call(&router, Method::GET, "/api/config", None, Caller::Person).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["ai_direct_edit"], json!(false), "{body}");
-    let (status, body) = call(
-        &router,
-        Method::PUT,
-        "/api/config",
-        Some(json!({ "ai_direct_edit": true })),
-        Caller::Person,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (_, body) = call(&router, Method::GET, "/api/config", None, Caller::Person).await;
-    assert_eq!(body["ai_direct_edit"], json!(true), "{body}");
-    let (_, body) = call(
-        &router,
-        Method::PUT,
-        &uri,
-        Some(json!({ "required": false })),
-        Caller::Person,
-    )
-    .await;
-    assert_eq!(body["ai_edits"], json!("direct"), "{body}");
+    assert!(body.get("ai_direct_edit").is_none(), "{body}");
 }

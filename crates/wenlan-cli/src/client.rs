@@ -600,10 +600,7 @@ impl WenlanClient {
     ) -> Result<wenlan_types::responses::PageReviewRequiredResponse> {
         self.put_json(
             &format!("/api/pages/{page_id}/review-required"),
-            &wenlan_types::requests::SetPageReviewRequiredRequest {
-                required,
-                ai_direct_edit: None,
-            },
+            &wenlan_types::requests::SetPageReviewRequiredRequest { required },
         )
         .await
     }

@@ -7,10 +7,6 @@
 //! section 4): `{seq, ts, tx, actor, op, target, version, why, text,
 //! digest_before, digest_after, data}`. Rows are append-only; a proposal's
 //! state is read from the entries that follow it, never updated in place.
-//!
-//! Migration 145 also adds `pages.ai_direct_edit`, the per-page "AI may edit
-//! directly" value of the page's AI-change setting. The review lock
-//! (`review_required`) still wins over it.
 
 use super::MemoryDB;
 use crate::error::WenlanError;
@@ -57,9 +53,8 @@ fn db_error(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
 }
 
 impl MemoryDB {
-    /// Migration 145: the sentence history table and `pages.ai_direct_edit`.
-    /// The column add is guarded, so a fresh schema and a replay after a
-    /// crash between the ALTER and the version bump are both no-ops.
+    /// Migration 145: the sentence history table. `CREATE TABLE IF NOT
+    /// EXISTS`, so a replay after a crash before the version bump is a no-op.
     pub(super) async fn migrate_145_sentence_history(
         &self,
         prior_version: i64,
@@ -69,31 +64,10 @@ impl MemoryDB {
         conn.execute_batch(SENTENCE_HISTORY_DDL)
             .await
             .map_err(db_error("m145 sentence_history"))?;
-        let has_column = {
-            let mut rows = conn
-                .query(
-                    "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'ai_direct_edit'",
-                    (),
-                )
-                .await
-                .map_err(db_error("m145 column check"))?;
-            match rows.next().await.map_err(db_error("m145 column row"))? {
-                Some(row) => row.get::<i64>(0).unwrap_or(0) > 0,
-                None => false,
-            }
-        };
-        if !has_column {
-            conn.execute(
-                "ALTER TABLE pages ADD COLUMN ai_direct_edit INTEGER NOT NULL DEFAULT 0",
-                (),
-            )
-            .await
-            .map_err(db_error("m145 add pages.ai_direct_edit"))?;
-        }
         conn.execute("PRAGMA user_version = 145", ())
             .await
             .map_err(db_error("m145 bump"))?;
-        log::info!("[migration] Migration 145 applied: sentence_history, pages.ai_direct_edit");
+        log::info!("[migration] Migration 145 applied: sentence_history");
         Ok(())
     }
 
@@ -183,72 +157,6 @@ impl MemoryDB {
             });
         }
         Ok(out)
-    }
-
-    /// The page's own "AI may edit directly" value. `None` when no non-entity
-    /// page has `page_id`.
-    pub async fn page_ai_direct_edit(&self, page_id: &str) -> Result<Option<bool>, WenlanError> {
-        let conn = self.conn.lock().await;
-        let mut rows = conn
-            .query(
-                "SELECT COALESCE(ai_direct_edit, 0) FROM pages
-                 WHERE id = ?1 AND COALESCE(kind, 'concept') != 'entity'",
-                libsql::params![page_id],
-            )
-            .await
-            .map_err(db_error("page_ai_direct_edit"))?;
-        Ok(rows
-            .next()
-            .await
-            .map_err(db_error("page_ai_direct_edit row"))?
-            .map(|row| row.get::<i64>(0).unwrap_or(0) != 0))
-    }
-
-    /// Set a page's AI-change setting in one statement: the review lock, and
-    /// optionally "AI may edit directly". Turning the lock on clears direct
-    /// edits. Metadata only, like the lock: no version bump. Returns the
-    /// stored `(review_required, ai_direct_edit)`, or `None` when no
-    /// non-entity page has `page_id`.
-    pub async fn set_page_ai_changes(
-        &self,
-        page_id: &str,
-        review_required: bool,
-        ai_direct_edit: Option<bool>,
-    ) -> Result<Option<(bool, bool)>, WenlanError> {
-        if review_required && ai_direct_edit == Some(true) {
-            return Err(WenlanError::Validation(
-                "a page cannot both ask first and let the AI edit directly".into(),
-            ));
-        }
-        let conn = self.conn.lock().await;
-        let mut rows = conn
-            .query(
-                "UPDATE pages SET
-                     review_required = ?1,
-                     ai_direct_edit = CASE
-                         WHEN ?1 = 1 THEN 0
-                         WHEN ?2 IS NULL THEN COALESCE(ai_direct_edit, 0)
-                         ELSE ?2 END
-                 WHERE id = ?3 AND COALESCE(kind, 'concept') != 'entity'
-                 RETURNING review_required, ai_direct_edit",
-                libsql::params![
-                    i64::from(review_required),
-                    ai_direct_edit.map(i64::from),
-                    page_id
-                ],
-            )
-            .await
-            .map_err(db_error("set_page_ai_changes"))?;
-        Ok(rows
-            .next()
-            .await
-            .map_err(db_error("set_page_ai_changes row"))?
-            .map(|row| {
-                (
-                    row.get::<i64>(0).unwrap_or(0) != 0,
-                    row.get::<i64>(1).unwrap_or(0) != 0,
-                )
-            }))
     }
 
     /// A forced rebuild releases `user_edited` with the body it lands. When

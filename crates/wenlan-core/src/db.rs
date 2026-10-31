@@ -10715,8 +10715,8 @@ impl MemoryDB {
                 self.migrate_144_legacy_quick_captures(version).await?;
             }
             // Migration 145 adds `sentence_history` (sentence proposals,
-            // accepts, rejects and flags in the history-entry shape) and
-            // `pages.ai_direct_edit`. See migrate_145_sentence_history.
+            // accepts, rejects and flags in the history-entry shape). See
+            // migrate_145_sentence_history.
             if ceiling < 145 {
                 return Ok(());
             }

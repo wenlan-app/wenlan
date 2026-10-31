@@ -75,20 +75,19 @@ pub struct SentenceAuthorship {
     pub accepted: bool,
 }
 
-/// What an AI may do to the person's sentences on a page. The page's existing
-/// 允許／先問我 setting (`review_required`) extended with a third value.
+/// What an AI may change on a page. One rule for every page, plus the page's
+/// lock (`review_required`); there is no "edit directly" mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AiEditMode {
-    /// 先問我: every AI change to the page is a whole-page revision card.
-    AskFirst,
-    /// The default: the AI rewrites its own sentences; a change to the
-    /// person's sentences is staged as a sentence proposal.
+    /// The default: the AI updates the sentences it wrote that the person
+    /// has not touched (recorded, revertible); a change to a sentence the
+    /// person wrote, edited or accepted is staged as a sentence proposal.
     #[default]
     Propose,
-    /// The person allowed direct edits (for this page or for all pages): the
-    /// AI's text lands, marked AI-written, recorded in history, revertible.
-    Direct,
+    /// The page is locked: every AI change waits for the person. Today that
+    /// is the whole-page revision card the lock already stages.
+    Locked,
 }
 
 /// Why a sentence is weakly backed.
@@ -374,9 +373,6 @@ mod tests {
     #[test]
     fn ai_edit_mode_defaults_to_propose() {
         assert_eq!(AiEditMode::default(), AiEditMode::Propose);
-        assert_eq!(
-            serde_json::to_value(AiEditMode::AskFirst).unwrap(),
-            "ask_first"
-        );
+        assert_eq!(serde_json::to_value(AiEditMode::Locked).unwrap(), "locked");
     }
 }

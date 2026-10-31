@@ -767,11 +767,6 @@ pub struct ConfigResponse {
     /// "Lock pages I've written". Missing on an older daemon reads false.
     #[serde(default)]
     pub lock_my_pages: bool,
-    /// "AI may edit my sentences directly" for every page. Off by default: an
-    /// AI change to the person's sentences is staged as a sentence proposal.
-    /// Missing on an older daemon reads false.
-    #[serde(default)]
-    pub ai_direct_edit: bool,
 }
 
 // ===== On-device model =====
@@ -862,12 +857,8 @@ pub struct PageWriteResponse {
 pub struct PageReviewRequiredResponse {
     pub page_id: String,
     pub review_required: bool,
-    /// The page's "AI may edit directly" setting after this call.
-    #[serde(default)]
-    pub ai_direct_edit: bool,
-    /// The page's AI-change mode after this call: `ask_first` while the
-    /// review lock is on, else `direct` when the page or the global setting
-    /// allows direct edits, else `propose`.
+    /// The page's AI-change mode after this call: `locked` while the lock is
+    /// on, else `propose`.
     #[serde(default)]
     pub ai_edits: crate::authorship::AiEditMode,
 }

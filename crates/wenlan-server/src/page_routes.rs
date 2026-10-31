@@ -433,10 +433,6 @@ async fn reject_entity_page_mutation(
 /// (an agent refresh with or without `expected_version`, and every pipeline
 /// stage) stages a revision card instead of landing; human edits are never
 /// gated by it. The flag is metadata: it does not bump the page version.
-///
-/// The same setting's third value, `ai_direct_edit`, lets the AI change the
-/// person's sentences directly on this page instead of proposing; its text is
-/// still recorded as AI-written. Turning the lock on clears it.
 pub async fn handle_set_page_review_required(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
@@ -447,23 +443,17 @@ pub async fn handle_set_page_review_required(
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
     reject_entity_page_mutation(&db, &id).await?;
-    let Some((review_required, ai_direct_edit)) = db
-        .set_page_ai_changes(&id, req.required, req.ai_direct_edit)
-        .await?
-    else {
+    if !db.set_page_review_required(&id, req.required).await? {
         return Err(ServerError::NotFound(format!("page {id} not found")));
-    };
-    let ai_edits = if review_required {
-        wenlan_types::authorship::AiEditMode::AskFirst
-    } else if ai_direct_edit || wenlan_core::config::load_config().ai_direct_edit {
-        wenlan_types::authorship::AiEditMode::Direct
+    }
+    let ai_edits = if req.required {
+        wenlan_types::authorship::AiEditMode::Locked
     } else {
         wenlan_types::authorship::AiEditMode::Propose
     };
     Ok(Json(wenlan_types::responses::PageReviewRequiredResponse {
         page_id: id,
-        review_required,
-        ai_direct_edit,
+        review_required: req.required,
         ai_edits,
     }))
 }
@@ -3395,8 +3385,7 @@ mod create_page_endpoint_tests {
             json!({
                 "page_id": page_id,
                 "review_required": true,
-                "ai_direct_edit": false,
-                "ai_edits": "ask_first",
+                "ai_edits": "locked",
             })
         );
         assert!(

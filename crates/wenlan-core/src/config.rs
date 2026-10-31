@@ -111,14 +111,6 @@ pub struct Config {
     /// their behavior; a new install starts with it on.
     #[serde(default)]
     pub lock_my_pages: bool,
-    /// "AI may edit my sentences directly" on every page. Off by default: a
-    /// machine write that changes the person's sentences lands only on the
-    /// AI's sentences and stages a sentence proposal for each of the person's
-    /// (`post_write::sentence_gate`). A page can allow it on its own through
-    /// `pages.ai_direct_edit`. Either way the AI's text is recorded as
-    /// AI-written in page history and can be reverted.
-    #[serde(default)]
-    pub ai_direct_edit: bool,
     /// A pages folder the person picked, moved into at the next daemon start
     /// by `pages_folder::apply_pending_move`, which then sets
     /// `knowledge_path` and clears this.

@@ -359,38 +359,60 @@ async fn a_flag_marks_the_sentence_until_it_changes() {
 }
 
 #[tokio::test]
-async fn direct_edits_land_marked_ai_written_and_the_lock_still_wins() {
+async fn an_accepted_sentence_waits_for_the_person_and_the_lock_makes_everything_wait() {
+    // One rule on every page, no "edit directly" mode: the AI updates the
+    // sentences it wrote that nobody touched, and a sentence the person
+    // accepted from a proposal is theirs from then on.
     let (db, _dir) = test_db().await;
-    let before = page_with_my_line(&db, "p").await;
-    assert_eq!(
-        db.set_page_ai_changes("p", false, Some(true))
-            .await
-            .unwrap(),
-        Some((false, true))
-    );
-    assert_eq!(
-        ai_edit_mode(&db, &before).await.unwrap(),
-        AiEditMode::Direct
-    );
-    let rewrite = "Tokio runs async tasks. Workers steal queued tasks. \
-                   The multi-thread runtime is better for everyone.";
-    let result = write(&db, "p", rewrite, "agent_refresh", Some(before.version)).await;
-    assert!(result.wrote && result.sentence_proposals.is_empty());
-    let view = page_sentences(&db, "p").await.unwrap();
-    assert_eq!(view.sentences[2].author, SentenceAuthor::Ai);
-    assert_eq!(view.ai_edits, AiEditMode::Direct);
+    let page = ai_page(&db, "p", None).await;
+    assert_eq!(ai_edit_mode(&page), AiEditMode::Propose);
+    let first = crate::authorship::sentence_units(&page.content)[0]
+        .hash
+        .clone();
+    let proposal = propose_sentence(
+        &db,
+        "p",
+        &SentenceProposeRequest {
+            sentence_hash: first,
+            text: "Tokio runs async tasks on a work-stealing pool.".into(),
+            why: None,
+            expected_version: Some(page.version),
+        },
+        "claude-code",
+    )
+    .await
+    .unwrap();
+    accept_sentence_proposal(&db, "p", &proposal.id, None, None)
+        .await
+        .unwrap();
+    let accepted = db.get_page("p").await.unwrap().unwrap();
 
-    // Turning the lock on clears direct edits; both at once is refused.
+    let rewrite = "Tokio runs async tasks. Workers steal tasks from each other.";
+    let result = write(&db, "p", rewrite, "agent_refresh", Some(accepted.version)).await;
+    assert!(result.wrote, "the AI's untouched sentence updates");
     assert_eq!(
-        db.set_page_ai_changes("p", true, None).await.unwrap(),
-        Some((true, false))
+        result.sentence_proposals.len(),
+        1,
+        "the accepted one becomes a proposal"
     );
-    assert!(db.set_page_ai_changes("p", true, Some(true)).await.is_err());
+    let after = db.get_page("p").await.unwrap().unwrap();
     assert_eq!(
-        db.set_page_ai_changes("missing", false, None)
-            .await
-            .unwrap(),
-        None
+        after.content,
+        "Tokio runs async tasks on a work-stealing pool. Workers steal tasks from each other."
+    );
+
+    // The lock makes every AI change wait; unlocking returns to the rule.
+    assert!(db.set_page_review_required("p", true).await.unwrap());
+    let locked = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(ai_edit_mode(&locked), AiEditMode::Locked);
+    assert_eq!(
+        page_sentences(&db, "p").await.unwrap().ai_edits,
+        AiEditMode::Locked
+    );
+    assert!(db.set_page_review_required("p", false).await.unwrap());
+    assert_eq!(
+        page_sentences(&db, "p").await.unwrap().ai_edits,
+        AiEditMode::Propose
     );
 }
 
@@ -606,11 +628,10 @@ async fn migration_145_is_idempotent_on_an_upgraded_database() {
             .scalar_for_test(
                 "SELECT
                     (SELECT COUNT(*) FROM sqlite_master WHERE name = 'sentence_history')
-                  + (SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'ai_direct_edit')
                   + (SELECT user_version FROM pragma_user_version)",
             )
             .await;
-        assert_eq!(found, 2 + 145);
+        assert_eq!(found, 1 + 145);
     }
 }
 
