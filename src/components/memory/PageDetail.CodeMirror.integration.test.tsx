@@ -1029,6 +1029,8 @@ it("refreshes an open context graph after a page autosave persists new links", a
     return result;
   });
   act(() => replaceDocument(editorViewFromTextbox(textbox), "Body with [[New linked page]].\n"));
-  expect(await screen.findByRole("button", { name: "Open page: New linked page" })).toBeVisible();
+  // The autosave waits 650 ms before saving, then the graph refetches, so the
+  // default 1 s wait leaves almost no slack on a busy CI runner.
+  expect(await screen.findByRole("button", { name: "Open page: New linked page" }, { timeout: 5_000 })).toBeVisible();
   expect(screen.queryByText("No direct connections in the currently visible knowledge.")).toBeNull();
 });
