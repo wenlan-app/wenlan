@@ -2357,7 +2357,7 @@ class NativePlatformContractTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         job = workflow.split("  native-platform-contracts:\n", 1)[1].split("  conclusion:\n", 1)[0]
-        for host in ("ubuntu-24.04", "macos-14", "windows-2022"):
+        for host in ("ubuntu-24.04", "macos-15", "windows-2022"):
             self.assertIn(host, job)
         self.assertIn("cargo test --manifest-path scripts/platform-contracts/Cargo.toml --locked", job)
         conclusion = workflow.split("  conclusion:\n", 1)[1]
