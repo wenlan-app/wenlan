@@ -52,8 +52,8 @@ export function askAiCommand(
   return `${FRONT_DOOR[tool]} ${text}`;
 }
 
-/** Codex calls a plugin skill with `$`; a leading `/` there is Codex's own
- *  built-in command and would do nothing. */
+/** `$` explicitly invokes a Codex skill in both the CLI and desktop composer.
+ *  Desktop also lists enabled skills in its slash menu. */
 function skillCall(text: string, tool: Exclude<AskAiTool, "other">): string {
   return tool === "codex" ? `$${text.slice(1)}` : text;
 }

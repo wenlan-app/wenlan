@@ -155,7 +155,7 @@ describe("TrayPanel", () => {
     renderPanel();
 
     expect((await screen.findByTestId("tray-panel-steep")).textContent).toBe(
-      "Steeping: On demand, 4 ready, run /wenlan steep",
+      "Steeping: On demand, 4 ready. Claude Code: /wenlan steep; Codex: $wenlan steep",
     );
   });
 

@@ -4,7 +4,7 @@ import { fillUnsetPinsWithRetry } from "./routingPins";
 import { getBackgroundAiEnabled, setBackgroundAiEnabled } from "./tauri";
 
 /** What the user types in their AI tool to finish all pending steeping. */
-export const STEEP_COMMAND = "/wenlan steep";
+export const STEEP_COMMANDS = { claude: "/wenlan steep", codex: "$wenlan steep" } as const;
 
 /**
  * Steeping has two modes, stored in `background_ai_enabled`: Automatic

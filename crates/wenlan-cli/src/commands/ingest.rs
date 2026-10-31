@@ -228,7 +228,7 @@ fn next_step_line(background: bool, waiting: Option<u32>) -> Option<&'static str
     Some(if background {
         "Wenlan is turning them into pages in the background."
     } else {
-        "To turn them into pages, run /wenlan steep in your AI tool."
+        "To write pages, run /wenlan steep in Claude Code or $wenlan steep in Codex."
     })
 }
 
@@ -289,7 +289,7 @@ mod tests {
     fn after_an_import_the_next_step_follows_the_mode() {
         assert_eq!(
             next_step_line(false, Some(3)),
-            Some("To turn them into pages, run /wenlan steep in your AI tool.")
+            Some("To write pages, run /wenlan steep in Claude Code or $wenlan steep in Codex.")
         );
         assert_eq!(
             next_step_line(true, Some(3)),

@@ -106,7 +106,7 @@ describe("IntelligenceSection", () => {
     await waitFor(() => expect(onDemand).toBeChecked());
     expect(within(group).getByRole("radio", { name: "Automatic" })).not.toBeChecked();
     expect(screen.queryByRole("button", { name: "Steeping" })).not.toBeInTheDocument();
-    expect(screen.getByText(/run \/wenlan steep/)).toBeInTheDocument();
+    expect(screen.getByText(/\/wenlan steep in Claude Code or \$wenlan steep in Codex/)).toBeInTheDocument();
     // On demand needs no model, so the task rows stay out of the way.
     expect(screen.queryByText("Everyday work")).not.toBeInTheDocument();
   });
@@ -448,12 +448,11 @@ describe("IntelligenceSection", () => {
     expect(within(select).getByRole("option", { name: "On-device (set up in AI services)" })).toBeDisabled();
   });
 
-  it("Synthesis Beta help explains plugin/MCP even without a model", async () => {
+  it("explains background synthesis Beta even without a model", async () => {
     renderSection();
     await userEvent.click(await screen.findByRole("button", { name: "Details: Beta" }));
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent("Background synthesis is in Beta");
-    expect(tooltip).toHaveTextContent("Your AI tool can also create and update pages through Wenlan's plugin or MCP");
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Details: Beta" })).toHaveFocus();
