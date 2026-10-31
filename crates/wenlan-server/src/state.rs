@@ -148,6 +148,9 @@ pub struct ServerState {
     /// presence cannot be checked, which refuses every presence-requiring
     /// mutation rather than waving it through (threat model §5).
     pub presence_root: Option<PathBuf>,
+    /// Folder of the memory palace layout (`palace.json`). `None` means
+    /// `<data root>/layout`; tests point it at a scratch folder.
+    pub palace_root: Option<PathBuf>,
     /// True only while startup recovery intentionally suppresses optional
     /// providers, rerankers, and background runtime workers.
     pub optional_runtime_workers_suspended: bool,
@@ -207,6 +210,7 @@ impl Default for ServerState {
             ingest_batcher: None,
             repair_root: None,
             presence_root: None,
+            palace_root: None,
             optional_runtime_workers_suspended: false,
             lint_config: LintServerConfig::default(),
             lint_observer: Arc::new(NoopLintRunObserver),

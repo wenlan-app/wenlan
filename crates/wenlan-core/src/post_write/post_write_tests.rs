@@ -7460,8 +7460,12 @@ async fn create_page_without_kind_at_floor_lands_as_distilled() {
     assert_eq!(page.creation_kind, "distilled");
 }
 
+/// A version-checked agent refresh used to land outright on a human-owned
+/// page. Under per-sentence ownership it lands only on the AI's sentences: the
+/// one sentence here is the person's (their touch-up of the AI's line), so it
+/// is kept and the agent's text becomes a sentence proposal, not a card.
 #[tokio::test]
-async fn agent_refresh_with_matching_expected_version_writes_over_user_edit() {
+async fn agent_refresh_with_matching_expected_version_proposes_on_the_persons_sentence() {
     let (db, _dir) = test_db().await;
     let before = ownership_user_edited_page(&db, "page_agent_cas", "mem-agent-cas").await;
     let content = "Tokio runtimes schedule async tasks across worker threads, refreshed by agent";
@@ -7475,11 +7479,17 @@ async fn agent_refresh_with_matching_expected_version_writes_over_user_edit() {
     )
     .await
     .unwrap();
-    assert!(result.wrote, "a version-checked agent refresh must land");
-    assert!(!result.gated);
+    assert_eq!(result.outcome, WriteOutcome::Unchanged);
+    assert!(!result.gated, "no whole-page card");
+    assert_eq!(result.sentence_proposals.len(), 1);
     let after = db.get_page("page_agent_cas").await.unwrap().unwrap();
-    assert_eq!(after.content, content);
+    assert_eq!(after.content, before.content);
     assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+    let view = crate::sentences::page_sentences(&db, "page_agent_cas")
+        .await
+        .unwrap();
+    assert_eq!(view.proposals.len(), 1);
+    assert_eq!(view.proposals[0].after, content);
 }
 
 #[tokio::test]

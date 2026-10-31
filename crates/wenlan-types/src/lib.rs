@@ -7,6 +7,7 @@
 
 pub mod activity;
 pub mod attachments;
+pub mod authorship;
 pub mod brand;
 pub mod brief;
 pub mod briefing;
@@ -24,6 +25,7 @@ pub mod outbox;
 pub mod page_basis;
 pub mod page_map;
 pub mod pages;
+pub mod palace;
 pub mod repair;
 pub mod repair_current;
 pub mod repair_operation;

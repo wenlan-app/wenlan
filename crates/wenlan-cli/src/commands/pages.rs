@@ -669,6 +669,9 @@ mod tests {
                 score: 0.9,
                 status: "verified".into(),
                 scope: "sentence".into(),
+                cited_version: None,
+                cited_digest: None,
+                disproven: false,
             },
             PageCitation {
                 occurrence: 2,
@@ -678,6 +681,9 @@ mod tests {
                 score: 0.2,
                 status: "unverified".into(),
                 scope: "paragraph".into(),
+                cited_version: None,
+                cited_digest: None,
+                disproven: false,
             },
         ];
         let out = render_citations(&cites);

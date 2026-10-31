@@ -39,6 +39,7 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Get,"/api/memory/pending-revisions","memory_revisions",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/memory/pending-revision/{source_id}","memory_revision",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/snapshots","snapshot_list",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
+    row!(Get,"/api/palace/layout","palace_layout",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/snapshots/{id}/captures","snapshot_captures",HeaderOnly,UnauthenticatedLocal,MemorySpace,ParentCollectionFiltered,Rejected,Forbidden),
     row!(Get,"/api/snapshots/{id}/captures-with-content","snapshot_content",HeaderOnly,UnauthenticatedLocal,MemorySpace,ParentCollectionFiltered,Rejected,Forbidden),
 ];
