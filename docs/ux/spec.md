@@ -209,10 +209,3 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   原文：一頁一本歷史，三種變動在同一個列表。選擇卡「你改的、AI 改的、来源变了」（2026-10-31 17:34）
 - **UX-HIST-2** `planned` Every entry opens to show what changed.
   原文：每筆都能打開看改了什麼。
-
-## How you want AI to work with you
-
-- **UX-HOW-1** `planned` Every AI tool reads this page before it starts. When
-  you change it, the next session follows the new version. The AI can only
-  propose additions or changes.
-  原文：每個 AI 工具開工前都帶這一頁；你改了，下一次開工就照新的；AI 只能提議加或改。
