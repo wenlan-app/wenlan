@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { ComponentType, RefAttributes } from "react";
 import { NativeMarkdownEditor } from "./NativeMarkdownEditor";
+import type { PageLayersSettings } from "./pageLayersEditing";
 import { loadCodeMirrorEditor } from "./loadCodeMirrorEditor";
 
 import type { EditorReferenceContext } from "./wikiLinkEditing";
@@ -91,6 +92,9 @@ export interface MarkdownEditorProps {
   mountSourceIcon?: SourceIconMount;
   /** Draws a saved link as its source's preview card. */
   mountSourceCard?: SourceCardMount;
+  /** Short or full and the folded part for AI (UX-VIEW-2, UX-VIEW-3). The
+   *  plain-text fallback editor shows the whole text. */
+  pageLayers?: PageLayersSettings;
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(

@@ -15,7 +15,8 @@ sources, settings, remote access, imports, profile, and review surfaces.
 | Sources UI | `SourcesView.tsx`, `sources/` | add/list/sync source workflows |
 | Memory rendering | `MemoryCard.tsx`, `ContentRenderer.tsx`, `MemoryDetail.tsx` | classifier/rendering invariants |
 | Remote access UI | `RemoteAccessPanel.tsx`, `RemoteAccessApps.tsx`, `PairingApprovalDialog.tsx`, `RemoteAccessNotifier.tsx`, `useRemoteAccess.ts` | Settings panel, connected-apps list, global approval dialog (opened by `wenlan://pair` or "Have a code?"), stopped/expired notifications; talk to Rust remote-access commands. App identity comes from `lib/remoteClient.ts` (host allowlist), never the relay's name; errors from `lib/remoteErrors.ts` |
-| Review lanes | `DistillReviewPanel.tsx`, `HomePage.tsx` needs-review rail | pending/refinement flows |
+| Home | `pages/PagesOverview.tsx` (route kind `pages`/`home` in `Main.tsx`) | its shape is set by the `UX-HOME-*` rules in `docs/ux/spec.md` |
+| Review lanes | `DistillReviewPanel.tsx` | pending/refinement flows |
 
 ## CONVENTIONS
 
@@ -33,25 +34,22 @@ sources, settings, remote access, imports, profile, and review surfaces.
 - Do not add navigation state that depends on localized placeholder text.
 - Do not weaken `PageDetail.*.test.tsx` or `page/PageInfo.test.tsx` to make UI
   changes pass.
-- Do not reintroduce a second home layout. `HomePage.tsx` always renders
-  `WikiHome`; a library with no pages gets the empty state inside the page
-  slot, never a separate greeting screen.
-- Do not gate that empty state on the `intelligence-ready` milestone. It is a
+- Do not add a second home. Home is `pages/PagesOverview.tsx`; a library
+  with no pages gets its empty state there, never a separate greeting screen.
+  What home shows and leaves out is decided by the `UX-HOME-*` rules in
+  `docs/ux/spec.md`; change the rule (Qi-Xuan's call) before the screen.
+- Do not gate home copy on the `intelligence-ready` milestone. It is a
   permanent latch, so it keeps claiming a provider that has since been removed
   and denies one that was configured a minute ago. Read the live provider
   through `useProviderConfigured`.
-- Do not hoist that read above the empty state. The three commands are settings
-  IPC and Home also renders in the fixture-only Review flavor, whose command
-  contract (`review/commandCapabilities.ts`) fails closed on them — so calling
-  the hook in `HomePage` rejects three commands on every Review home and breaks
-  `e2e/review-flavor.review.spec.ts`. Same rule for any other settings read: ask
-  from the component whose copy branches on the answer.
-- Do not put a retrieval list ("Where AI looked") back on the home surface.
-  Agents reading from the library are the Activity view's subject
-  (`ActivityFeed.tsx`, route kind `activity`); home stays the library's own
-  surface. `HomePage.redesign.test.tsx` asserts the section is absent even when
-  the daemon has retrieval events. Recaps remain reachable from Memories; do
-  not make their entry point depend on a retrieval surface.
+- Ask settings IPC from the component whose copy branches on the answer, never
+  higher. Home also renders in the fixture-only Review flavor, whose command
+  contract (`review/commandCapabilities.ts`) fails closed on settings commands,
+  so a hoisted read rejects on every Review home and breaks
+  `e2e/review-flavor.review.spec.ts`.
+- Do not put a retrieval list ("Where AI looked") on home. Agents reading from
+  the library are the Activity view's subject (`ActivityFeed.tsx`, route kind
+  `activity`); home stays the library's own surface.
 - Do not promise pages will compile when no provider is configured. Page
   synthesis is LLM-gated, so that copy is a lie without a local model or an
   API key.

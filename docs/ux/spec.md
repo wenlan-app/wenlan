@@ -1,0 +1,189 @@
+# Wenlan UX spec
+
+This file is the agreed user experience. Each rule has an id. A rule marked
+`shipped` is enforced by at least one test whose name contains the id
+(`UX-HOME-1` in a TypeScript test name, `ux_home_1` in a Rust test name).
+`src/uxSpec.test.ts` fails when a shipped rule has no test, when a test names an
+id this file does not define, or when an id appears twice.
+
+How to change it:
+
+- Only Qi-Xuan changes what a rule says. An agent may flip `planned` to
+  `shipped` in the same change that adds the rule's test.
+- The text wins over the design boards. Boards illustrate; they do not decide.
+- A change that alters what the app shows needs real screenshots and Qi-Xuan's
+  OK before merge.
+- When code and a shipped rule disagree, fix the code or ask; never reword the
+  rule to match the code.
+
+Each rule keeps the original Traditional Chinese line it was agreed in. Source
+documents: the spec doc (claude.ai artifact G5qFLYM31zsH8iKHXBQPHW) and the
+design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
+2026-10-31.
+
+## Words
+
+- **A thing (一件事)**: one line of work, such as "the new tagline" or "the
+  Product Hunt launch". It is smaller than a Space: a Space is a project and
+  follows a folder or repository, and one Space holds several things. A thing
+  can span Spaces. Until things have their own record, each active item of a
+  Space Brief stands for one thing.
+- **Yours**: a sentence you wrote or approved. Only yours counts as decided.
+- **Proposal**: a change the AI suggests. It lands only when you accept it,
+  unless you set a page, or all pages, to "the AI may edit directly".
+
+## Home
+
+- **UX-HOME-1** `planned` The first screen is "what you're working on". Each
+  thing gets one line saying where it stands; opening it goes to that thing.
+  原文：打開 app 的第一屏是「正在做的事」，每件一句做到哪，點進去就是那件事。
+- **UX-HOME-2** `planned` Home shows no counts: no number of sources, pages,
+  archived pages or conversations.
+  原文：首頁沒有任何計數：來源數、頁數、封存數、幾段對話都不放。
+- **UX-HOME-3** `planned` The lower half is a thumbnail of the big map.
+  Clicking a spot opens the big map at that same spot.
+  原文：下半是大圖縮圖，點了進大圖，點的位置跟大圖裡一樣。
+- **UX-HOME-4** `planned` Check results and source updates are not on home.
+  原文：檢查結果和來源更新不放首頁。
+
+## Sorting conversations into things
+
+- **UX-THING-1** `planned` Every conversation belongs to at least one thing.
+  You can see which, and change it in one step.
+  原文：每段對話都歸到至少一件事，看得到歸到哪，一步就能改。
+- **UX-THING-2** `planned` After you correct it once, the same case is not
+  sorted wrong again.
+  原文：改過一次，同樣的情況下次不再分錯。
+- **UX-THING-3** `planned` Merging two things is only ever a proposal; they
+  merge when you press it.
+  原文：合併只會是提議，你按了才合。
+
+## A thing's page: short text, mind map, any shape you want
+
+- **UX-VIEW-1** `planned` Short text, mind map and any other rendering you
+  want are three views of the same thing. Switching does not change pages, and
+  the last view you used is remembered. The third view may be free HTML drawn
+  from the short text and the mind map; every sentence in it keeps its source.
+  原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。
+- **UX-VIEW-2** `shipped` While reading you can pick short or full text. It is
+  one page, not two copies.
+  原文：讀的時候能選短或全文，是同一頁，不是兩份。
+- **UX-VIEW-3** `shipped` The first screen is only for people; the details for
+  AI are one collapsed section.
+  原文：第一屏只有給人看的，給 AI 的細節是一個收起來的展開。
+- **UX-VIEW-4** `shipped` The mind map keeps today's rule: the AI proposes,
+  and nothing counts until you accept it.
+  原文：心智圖現在「AI 提議、你收下才算」的做法留著。
+
+## Who said each sentence
+
+- **UX-WHO-1** `planned` Every sentence shows whether it is yours (including
+  ones you approved) or the AI's: visible, but quiet.
+  原文：每一句都分得出是你的（含你點頭的）還是 AI 的，看得出來但不吵。
+- **UX-WHO-2** `planned` By default the AI cannot change your sentences; it
+  can only propose, and proposals can be accepted one sentence at a time. If
+  you set a page, or all pages, to "the AI may edit directly", it edits; the
+  edit is still marked as the AI's, recorded in history and can be undone.
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（10/31：預設提議；你設成可以直接改，它就自己更新。）
+- **UX-WHO-3** `planned` Every sentence has "not right": fix it yourself or ask
+  the AI; the AI's fix is still a proposal.
+  原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
+- **UX-WHO-4** `planned` A sentence that can't be backed up is marked next to
+  that sentence, not in a banner at the top. One press asks the AI to recheck
+  only that sentence.
+  原文：靠不住的句子標在那一句旁邊，不是頁頂橫幅；按一下，AI 只重查那一句。
+- **UX-WHO-5** `shipped` An unverified source can't be hidden and can't look
+  verified.
+  原文：現有規則不變：沒驗證的出處不能藏，也不能看起來像驗證過。
+
+## While you chat (in your own AI tool)
+
+- **UX-CHAT-1** `planned` When the AI says something that contradicts an
+  earlier decision, a one-line reminder appears in the same turn, with the date
+  and the source, and it can be opened.
+  原文：AI 說了跟以前定的相反的話，同一輪就出現一句提醒，帶日期和出處，點得開。
+- **UX-CHAT-2** `planned` Nothing is said when the reply has nothing to do with
+  earlier decisions. If Wenlan is closed or does not answer within one second,
+  the check is skipped and the chat is not held up. At most five reminders a
+  day.
+  原文：跟以前無關的話不出聲；文瀾沒開或一秒內沒回就跳過，不卡對話；一天最多 5 條。
+- **UX-CHAT-3** `planned` In tools that can show a small window, the thing's
+  mind map is visible and follows the conversation within 30 seconds; every
+  point opens that page in Wenlan.
+  原文：能顯示小視窗的工具裡，看得到這件事的心智圖，30 秒內跟著對話變；每個點都能點回文瀾那一頁。
+- **UX-CHAT-4** `shipped` Tools that can't show a window (for example the
+  Claude Code terminal) get a small text tree of the mind map and an "open in
+  Wenlan" link.
+  原文：不能顯示小視窗的工具（例如 Claude Code 命令列）給一個小的文字樹，加「在文瀾打開」。
+- **UX-CHAT-5** `planned` "Wrap up?" is asked once per thing, and only points
+  you approve join the big map.
+  原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。
+- **UX-CHAT-6** `planned` The check's rules live in Wenlan itself, not in each
+  tool's plugin, so every AI tool gets the same result.
+  原文：檢查的規則寫在文瀾本身，不寫在各家外掛裡；換哪個 AI 工具結果都一樣。
+
+## The big map
+
+- **UX-GRAPH-1** `planned` The same point is in the same place every time you
+  open it. Rearranging asks you first and can be undone.
+  原文：同一個點，兩次打開位置一樣；要重排先問你，能退回。
+- **UX-GRAPH-2** `planned` Three zoom levels (this thing, nearby, everything)
+  with continuous motion; points do not jump.
+  原文：拉遠三段：這件事 → 附近 → 全部，畫面連續，點不跳位置。
+- **UX-GRAPH-3** `planned` Drag, delete, add points, connect and lasso, and it
+  is all still there after reopening. What the AI adds is dashed until you
+  accept it.
+  原文：拖、刪、加點、連線、圈選都可以，重開還在；AI 加的是虛線，你收下才變實線。
+- **UX-GRAPH-4** `planned` Lasso three points and press "take to chat": the AI
+  tool receives a summary with sources, including the lines you drew.
+  原文：圈 3 個點按「帶去對話」，AI 工具收到摘要和出處，連你連的線一起帶上。
+
+## Finding things
+
+- **UX-FIND-1** `planned` One box; results include pages, points on the map and
+  original words from conversations.
+  原文：一個框，結果包含頁、圖上的點和對話裡的原話。
+- **UX-FIND-2** `planned` Opening a source shows only that sentence and where
+  it is used. Wenlan never shows a whole conversation.
+  原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。
+- **UX-FIND-3** `planned` There is "open in the original AI tool".
+  原文：有「在原本的 AI 工具打開」。
+
+## What AI tools made (HTML, images)
+
+- **UX-ART-1** `planned` Saved HTML opens in Wenlan looking exactly like the
+  original.
+  原文：存進來的 HTML 在文瀾打開，跟原本一樣。
+- **UX-ART-2** `planned` It is a page with its source: which conversation, and
+  when.
+  原文：它是一頁，帶出處：哪段對話、什麼時候。
+- **UX-ART-3** `planned` The AI never rewrites it. If the facts change later, it
+  only adds a note.
+  原文：AI 不改寫它；後來事實變了，只加註記。
+
+## Adding to Wenlan
+
+- **UX-ADD-1** `planned` There is one "Add to Wenlan" in the app; the shortcut,
+  the menu bar and Settings all open the same one.
+  原文：app 裡只有一個「加進文瀾」，其他地方（快捷鍵、選單列、設定）都打開同一個。
+- **UX-ADD-2** `planned` Files, folders, chat exports and links can all be
+  dropped in without first asking what kind they are.
+  原文：檔案、資料夾、對話匯出、連結拖進去都收，不先問你是哪一類。
+- **UX-ADD-3** `planned` An Obsidian folder that has never used Wenlan works
+  when connected, without installing a plugin.
+  原文：接上一個沒用過文瀾的 Obsidian 資料夾，不裝外掛就能用。
+
+## History
+
+- **UX-HIST-1** `planned` One history per page, with all three kinds of change
+  in one list.
+  原文：一頁一本歷史，三種變動在同一個列表。
+- **UX-HIST-2** `planned` Every entry opens to show what changed.
+  原文：每筆都能打開看改了什麼。
+
+## How you want AI to work with you
+
+- **UX-HOW-1** `planned` Every AI tool reads this page before it starts. When
+  you change it, the next session follows the new version. The AI can only
+  propose additions or changes.
+  原文：每個 AI 工具開工前都帶這一頁；你改了，下一次開工就照新的；AI 只能提議加或改。

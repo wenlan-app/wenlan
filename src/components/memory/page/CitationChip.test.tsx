@@ -103,7 +103,7 @@ describe("CitationChip", () => {
     expect(popover).not.toHaveTextContent("Technical details");
   });
 
-  it("marks unverified citations", () => {
+  it("UX-WHO-5 marks unverified citations so they never look verified", () => {
     renderChip({ citation: cite({ status: "unverified" }) });
     expect(screen.getByRole("button", { name: /Memory/ })).toHaveAttribute(
       "data-status",

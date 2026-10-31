@@ -179,6 +179,7 @@ const en = {
     reviewSaveFailed: "Your edits could not be saved. Return to the page and resolve the save issue before marking it reviewed.",
     saveError: "Couldn’t save this change. Try again.",
   },
+  pageLayers: {"length": "Length", "short": "Short", "full": "Full", "aiDetails": "Details for AI", "showFull": "Show the full page"},
   pageInspector: {"label": "Page views", "info": "Info", "open": "Open page sidebar", "close": "Close page sidebar"},
   knowledgeContext: {
     "noteKind": "Page",
@@ -610,6 +611,7 @@ const en = {
       createOptions: "New",
       readingStartTitle: "Open a page",
       readingStartDescription: "Use Search to find a page, or select + to start writing.",
+      workingOnTitle: "What you're working on",
       newPagesTitle: "New pages",
       seeAllPages: "See all pages",
       justWritten: "Just written",
@@ -3269,6 +3271,7 @@ const zhHans = {
     reviewSaveFailed: "编辑内容尚未保存。请回到笔记解决保存问题，再标记已审阅。",
     saveError: "未能保存这项更改，请重试。",
   },
+  pageLayers: {"length": "长度", "short": "短", "full": "全文", "aiDetails": "往下是给 AI 读的细节", "showFull": "展开全文"},
   pageInspector: {"label": "笔记检视", "info": "信息", "open": "打开笔记侧栏", "close": "关闭笔记侧栏"},
   knowledgeContext: {
     "noteKind": "笔记",
@@ -3683,6 +3686,7 @@ const zhHans = {
       createOptions: "新建",
       readingStartTitle: "打开笔记",
       readingStartDescription: "用搜索找到笔记，或点击“+”开始写作。",
+      workingOnTitle: "正在做的事",
       newPagesTitle: "新笔记",
       seeAllPages: "查看全部笔记",
       justWritten: "刚写好",
@@ -6298,6 +6302,7 @@ const zhHant = {
     reviewSaveFailed: "編輯內容尚未儲存。請回到筆記解決儲存問題，再標記已審閱。",
     saveError: "未能儲存這項變更，請重試。",
   },
+  pageLayers: {"length": "長度", "short": "短", "full": "全文", "aiDetails": "往下是給 AI 讀的細節", "showFull": "展開全文"},
   pageInspector: {"label": "筆記檢視", "info": "資訊", "open": "開啟筆記側欄", "close": "關閉筆記側欄"},
   knowledgeContext: {
     "noteKind": "筆記",
@@ -6712,6 +6717,7 @@ const zhHant = {
       createOptions: "新增",
       readingStartTitle: "開啟筆記",
       readingStartDescription: "用搜尋找到筆記，或點選「+」開始撰寫。",
+      workingOnTitle: "正在做的事",
       newPagesTitle: "新筆記",
       seeAllPages: "看全部筆記",
       justWritten: "剛寫好",
