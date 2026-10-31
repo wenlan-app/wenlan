@@ -52,6 +52,7 @@ const draftIdentityMock = vi.hoisted(
 const realDraftEditor = vi.hoisted(() => ({ enabled: false }));
 const setSearchQueryMock = vi.hoisted(() => vi.fn());
 const takeRemotePairingLinkMock = vi.hoisted(() => vi.fn<() => Promise<string | null>>());
+const takePageLinkMock = vi.hoisted(() => vi.fn<() => Promise<string | null>>());
 const useSearchMock = vi.hoisted(() => vi.fn((): {
   query: string;
   setQuery: typeof setSearchQueryMock;
@@ -95,6 +96,7 @@ vi.mock("../../lib/tauri", () => ({
   openSearchResult: openSearchResultMock,
   deleteFileChunks: vi.fn().mockResolvedValue(undefined),
   takeRemotePairingLink: takeRemotePairingLinkMock,
+  takePageLink: takePageLinkMock,
   // Never settles, so the toolbar Activity button stays the plain navigation
   // button these routing tests click.
   getActivity: vi.fn(() => new Promise(() => {})),
@@ -528,6 +530,8 @@ describe("Main search", () => {
     vi.mocked(searchPages).mockResolvedValue([]);
     takeRemotePairingLinkMock.mockReset();
     takeRemotePairingLinkMock.mockResolvedValue(null);
+    takePageLinkMock.mockReset();
+    takePageLinkMock.mockResolvedValue(null);
     clearPendingPairingCode();
     draftRequestBackMock.mockReset();
     draftRequestBackMock.mockImplementation(async (onBack) => onBack());
@@ -790,6 +794,15 @@ describe("Main search", () => {
     expect(await screen.findByTestId("pairing-dialog")).toBeVisible();
     expect(screen.getByTestId("pages-overview")).toBeVisible();
     expect(screen.queryByTestId("settings-page")).not.toBeInTheDocument();
+  });
+
+  it("UX-CHAT-4 opens the page a wenlan://page link names, at launch and while open", async () => {
+    takePageLinkMock.mockResolvedValueOnce("page-1");
+    renderMain();
+    expect(await screen.findByTestId("page-detail")).toHaveAttribute("data-page-id", "page-1");
+    takePageLinkMock.mockResolvedValueOnce("page-2");
+    await act(async () => { eventListeners.get("page-link")?.(); });
+    expect(await screen.findByTestId("page-detail")).toHaveAttribute("data-page-id", "page-2");
   });
 
   it("listens for Web access notices from the app shell, whichever screen is open", async () => {

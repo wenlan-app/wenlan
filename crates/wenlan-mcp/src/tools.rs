@@ -4311,8 +4311,76 @@ impl WenlanMcpServer {
             if !attachments.is_empty() {
                 object.insert("attachments".into(), attachments.into());
             }
+            // The mind map as a text tree with a link into the app, for tools
+            // that can't show a window (UX-CHAT-4). Absent when unmapped.
+            if let Some(tree) = self.page_map_tree(&page.page.page, &visible).await {
+                object.insert(
+                    "map".into(),
+                    serde_json::json!({
+                        "tree": tree,
+                        "open": crate::map_tree::open_link(page_id),
+                        "show": "Show tree as is in a code block, then the open link.",
+                    }),
+                );
+            }
         }
         Ok(CallToolResult::structured(value))
+    }
+
+    /// The page's mind map drawn by [`crate::map_tree::render`]. Names come from
+    /// what `read_page` already holds; entity names are looked up on the plain
+    /// client so they are not listed as reads of this session. Best effort: a
+    /// map that can't be read leaves the page result as it was.
+    async fn page_map_tree(
+        &self,
+        page: &wenlan_types::pages::Page,
+        sources: &[&PageSourceWithMemory],
+    ) -> Option<String> {
+        let map: wenlan_types::page_map::PageMapResponse = self
+            .client
+            .get(&format!("/api/pages/{}/map", page.id))
+            .await
+            .ok()?;
+        let mut names = std::collections::HashMap::new();
+        names.insert(format!("page:{}", page.id), page.title.clone());
+        for source in sources {
+            let Some(memory) = &source.memory else {
+                continue;
+            };
+            let text = [
+                Some(memory.title.as_str()),
+                memory.summary.as_deref(),
+                Some(memory.content.as_str()),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|text| !text.is_empty());
+            if let Some(text) = text {
+                let short: String = text.chars().take(64).collect();
+                let short = if short.len() < text.len() {
+                    format!("{}…", short.trim_end())
+                } else {
+                    short
+                };
+                names.insert(format!("memory:{}", memory.source_id), short);
+            }
+        }
+        let entities = map
+            .nodes
+            .iter()
+            .filter(|node| node.ref_kind == "entity" && node.label.is_none())
+            .take(crate::map_tree::MAX_TREE_LINES);
+        for node in entities {
+            let detail: Result<wenlan_types::entities::EntityDetail, _> = self
+                .client
+                .get(&format!("/api/memory/entities/{}", node.ref_id))
+                .await;
+            if let Ok(detail) = detail {
+                names.insert(format!("entity:{}", node.ref_id), detail.entity.name);
+            }
+        }
+        crate::map_tree::render(&map, &names)
     }
 
     async fn page_attachments(

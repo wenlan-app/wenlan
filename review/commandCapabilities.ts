@@ -51,6 +51,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // The main shell asks once per launch whether a wenlan://pair link
     // opened the app. Shared chrome, so it belongs in the contract.
     "take_remote_pairing_link",
+    // And whether a wenlan://page link from an AI tool opened it.
+    "take_page_link",
     // The same shell listens for "Web access stopped on its own" and asks for
     // the one pending notice. Shared chrome, so it belongs in the contract.
     "take_remote_access_notice",

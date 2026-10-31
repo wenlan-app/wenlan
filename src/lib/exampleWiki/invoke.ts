@@ -20,7 +20,7 @@ const APP_COMMANDS = new Set([
   "get_remote_access_status", "get_resolved_routing", "get_setup_completed", "get_startup_preflight_status",
   "get_system_info", "get_telemetry_status", "get_wenlan_mcp_entry", "is_run_at_login_enabled", "list_agents",
   "list_external_models", "list_remote_grants", "local_setup_completed", "should_show_wizard",
-  "take_remote_access_notice", "take_remote_pairing_link", "warnings", "wire_state", "get_activity",
+  "take_remote_access_notice", "take_remote_pairing_link", "take_page_link", "warnings", "wire_state", "get_activity",
   "get_enrichment_status", "get_index_status", "open_tool_with_prompt", "save_temp_file", "quick_capture",
   "set_api_key", "set_avatar", "remove_avatar", "set_background_ai_enabled", "set_external_llm", "set_lock_my_pages",
   "set_model_choice", "set_run_at_login", "set_setup_completed", "set_telemetry_enabled", "set_traffic_lights_visible", "set_editor_composing",

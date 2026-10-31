@@ -1290,6 +1290,7 @@ export const DEFAULTS: Record<string, unknown> = {
   set_editor_composing: null,
   // No wenlan://pair link can reach a browser preview.
   take_remote_pairing_link: null,
+  take_page_link: null,
   // Web access never runs in a browser preview, so it cannot stop on its own.
   take_remote_access_notice: null,
   set_setup_completed: null,

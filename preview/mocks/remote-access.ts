@@ -152,7 +152,7 @@ export async function invokeRemoteFixture(command: string, args?: Record<string,
     case "get_remote_access_status": return { ...status };
     case "get_remote_access_profile": return profile && { ...profile };
     // No wenlan://pair link reaches a browser, and the fixture never stops on its own.
-    case "take_remote_pairing_link": case "take_remote_access_notice": return null;
+    case "take_remote_pairing_link": case "take_page_link": case "take_remote_access_notice": return null;
     case "reconnect_remote_access": {
       if (!profile?.enabled || profile.disconnect_pending || args?.expectedRevision !== profile.revision) throw new Error("Stale fixture revision");
       const profileSpace = profile.space;

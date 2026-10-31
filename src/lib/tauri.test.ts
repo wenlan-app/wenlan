@@ -103,6 +103,12 @@ describe('remote access consent bridge', () => {
     expect(mockInvoke).toHaveBeenCalledWith('take_remote_pairing_link');
   });
 
+  it('UX-CHAT-4 takes a waiting page link without forwarding arguments', async () => {
+    mockInvoke.mockResolvedValueOnce('page_a');
+    await expect(tauri.takePageLink()).resolves.toBe('page_a');
+    expect(mockInvoke).toHaveBeenCalledWith('take_page_link');
+  });
+
   it('looks a request up by the short code under the current revision', async () => {
     await tauri.lookupRemotePairing('revision-3', 'K7MQ-4WXZ');
     expect(mockInvoke).toHaveBeenCalledWith('lookup_remote_pairing', {

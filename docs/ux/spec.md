@@ -111,7 +111,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   mind map is visible and follows the conversation within 30 seconds; every
   point opens that page in Wenlan.
   原文：能顯示小視窗的工具裡，看得到這件事的心智圖，30 秒內跟著對話變；每個點都能點回文瀾那一頁。
-- **UX-CHAT-4** `planned` Tools that can't show a window (for example the
+- **UX-CHAT-4** `shipped` Tools that can't show a window (for example the
   Claude Code terminal) get a small text tree of the mind map and an "open in
   Wenlan" link.
   原文：不能顯示小視窗的工具（例如 Claude Code 命令列）給一個小的文字樹，加「在文瀾打開」。
