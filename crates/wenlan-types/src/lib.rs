@@ -7,6 +7,7 @@
 
 pub mod activity;
 pub mod attachments;
+pub mod authorship;
 pub mod brand;
 pub mod brief;
 pub mod briefing;
