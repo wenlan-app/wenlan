@@ -1244,16 +1244,6 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       throw new Error("The daemon does not support the background AI setting yet");
     }
   },
-  get_lock_my_pages: async () => (await get("/api/config")).lock_my_pages === true,
-  set_lock_my_pages: async (a) => {
-    if (typeof a?.enabled !== "boolean") throw new Error("Invalid lock setting");
-    const updated = await put("/api/config", { lock_my_pages: a.enabled });
-    if (updated?.lock_my_pages !== a.enabled) {
-      throw new Error("The daemon does not support locking pages you wrote yet");
-    }
-    if (!a.enabled) return null;
-    return (await post("/api/pages/lock-edited", {})).locked;
-  },
 };
 
 // App-local commands (no daemon route) → static defaults that route the UI

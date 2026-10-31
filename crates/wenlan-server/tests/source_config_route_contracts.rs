@@ -185,7 +185,6 @@ fn update_config_request(
         synthesis_source: None,
         background_ai_enabled: None,
         page_map_auto_suggest: None,
-        lock_my_pages: None,
         chat_check_enabled: None,
         only_if_unset: None,
     }

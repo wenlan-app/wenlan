@@ -437,11 +437,9 @@ pub async fn accept_sentence_proposal(
             edited_by: "manual_edit",
             knowledge_path,
             // Accepting one sentence protects that sentence (it is the
-            // person's from now on); it does not lock the whole page, so
-            // "Lock pages I've written" is not triggered by it.
+            // person's from now on); it does not lock the whole page.
             basis: crate::db::BasisWrite {
                 actor: "human".to_string(),
-                lock_on_first_human_edit: false,
                 ..crate::db::BasisWrite::default()
             },
         },

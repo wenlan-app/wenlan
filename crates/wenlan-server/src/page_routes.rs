@@ -63,7 +63,6 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/pages/{id}/review-required",
             put(handle_set_page_review_required),
         )
-        .route("/api/pages/lock-edited", post(handle_lock_edited_pages))
 }
 
 pub(crate) fn register_manual_edit(
@@ -457,25 +456,6 @@ pub async fn handle_set_page_review_required(
         page_id: id,
         review_required: req.required,
         ai_edits,
-    }))
-}
-
-/// POST /api/pages/lock-edited
-///
-/// Turn on the review lock for every page a person wrote or edited. The app
-/// calls it when "Lock pages I've written" is switched on, so pages edited
-/// before the switch are covered too; later edits lock as they happen. The
-/// receipt counts the published pages this call locked.
-pub async fn handle_lock_edited_pages(
-    State(state): State<Arc<RwLock<ServerState>>>,
-) -> Result<Json<wenlan_types::responses::LockEditedPagesResponse>, ServerError> {
-    let db = {
-        let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
-    };
-    let locked = db.lock_user_edited_pages().await?;
-    Ok(Json(wenlan_types::responses::LockEditedPagesResponse {
-        locked,
     }))
 }
 
@@ -1070,7 +1050,7 @@ pub async fn handle_create_page_draft(
     } else {
         header_space
     };
-    let mut page = db
+    let page = db
         .create_page_draft_with_id_in_registered_space_and_folder(
             &req.draft_id,
             &req.title,
@@ -1080,14 +1060,6 @@ pub async fn handle_create_page_draft(
         )
         .await
         .map_err(page_draft_error)?;
-    // "Lock pages I've written": a page the person starts in the app is
-    // theirs from its first draft, and keeps the lock once published.
-    if !page.review_required
-        && wenlan_core::config::load_config().lock_my_pages
-        && db.set_page_review_required(&page.id, true).await?
-    {
-        page.review_required = true;
-    }
     let page = filter_draft_echo(&db, &view, page).await?;
     Ok(Json(draft_response(&db, page).await?))
 }
@@ -1719,7 +1691,6 @@ pub async fn handle_update_page(
                 card_marks: Vec::new(),
                 code_basis: Vec::new(),
                 space_guard: None,
-                lock_on_first_human_edit: wenlan_core::config::load_config().lock_my_pages,
             },
         },
     )
@@ -2133,7 +2104,6 @@ async fn handle_refresh_page_inner(
                 card_marks: Vec::new(),
                 code_basis: prepared_code_basis.clone(),
                 space_guard: space_guard.clone(),
-                lock_on_first_human_edit: false,
             },
             page_id: &id,
             req: wenlan_types::requests::UpdatePageRequest {
@@ -3458,23 +3428,24 @@ mod create_page_endpoint_tests {
         );
     }
 
-    /// "Lock pages I've written": with the setting on, the editor's first
-    /// save locks the page and a new app draft starts locked; the backfill
-    /// route locks pages edited before the switch and reports the count.
+    /// "Lock pages I've written" is gone: per-sentence protection replaced
+    /// it. A config that still carries `lock_my_pages: true` neither locks a
+    /// page on the editor's first save nor locks a new app draft, and the
+    /// backfill route no longer exists.
     #[tokio::test]
-    async fn lock_my_pages_locks_human_pages_and_backfills() {
+    async fn a_human_save_and_a_new_draft_no_longer_lock_the_page() {
         let _lock = crate::TEST_DATA_DIR_LOCK
             .get_or_init(|| tokio::sync::Mutex::new(()))
             .lock()
             .await;
         let _env = DataDirGuard::new();
-        wenlan_core::config::save_config(&wenlan_core::config::Config {
-            lock_my_pages: false,
-            ..Default::default()
-        })
-        .unwrap();
+        let path = std::path::PathBuf::from(std::env::var_os("WENLAN_DATA_DIR").unwrap())
+            .join("config.json");
+        let mut legacy: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        legacy["lock_my_pages"] = json!(true);
+        std::fs::write(&path, legacy.to_string()).unwrap();
         let (db, app, _tmp) = state_db_app().await;
-        let edited_before = seed_user_edited_page(&db).await;
         let ai_page = seed_distilled_page(
             &db,
             "Rust AI Only",
@@ -3488,48 +3459,13 @@ mod create_page_endpoint_tests {
         let (status, body) = send_json(
             &app,
             "POST",
-            "/api/pages/lock-edited".to_string(),
-            json!({}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body, json!({ "locked": 1 }));
-        assert!(
-            db.get_page(&edited_before.id)
-                .await
-                .unwrap()
-                .unwrap()
-                .review_required
-        );
-        assert!(
-            !db.get_page(&ai_page)
-                .await
-                .unwrap()
-                .unwrap()
-                .review_required
-        );
-
-        // Switch on; the editor's first save of the AI page now locks it.
-        wenlan_core::config::save_config(&wenlan_core::config::Config {
-            lock_my_pages: true,
-            ..Default::default()
-        })
-        .unwrap();
-        let (status, body) = send_json(
-            &app,
-            "POST",
             format!("/api/memory/{ai_page}/update-page"),
             json!({ "content": format!("{REFRESH_BODY}, with my own notes") }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert!(
-            db.get_page(&ai_page)
-                .await
-                .unwrap()
-                .unwrap()
-                .review_required
-        );
+        let after = db.get_page(&ai_page).await.unwrap().unwrap();
+        assert!(after.user_edited && !after.review_required);
 
         let draft_id = "page_00000000-0000-4000-8000-0000000000ab";
         let (status, body) = send_json(
@@ -3540,14 +3476,23 @@ mod create_page_endpoint_tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["page"]["review_required"], json!(true), "{body}");
+        assert_ne!(body["page"]["review_required"], json!(true), "{body}");
         assert!(
-            db.get_page(draft_id)
+            !db.get_page(draft_id)
                 .await
                 .unwrap()
                 .unwrap()
                 .review_required
         );
+
+        let (status, _) = send_json(
+            &app,
+            "POST",
+            "/api/pages/lock-edited".to_string(),
+            json!({}),
+        )
+        .await;
+        assert!(status.is_client_error(), "{status}");
     }
 
     #[tokio::test]
