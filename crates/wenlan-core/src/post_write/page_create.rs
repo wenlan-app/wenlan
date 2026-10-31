@@ -6,8 +6,14 @@ use crate::{
 use std::{collections::HashSet, path::Path};
 use wenlan_types::requests::CreateConceptRequest;
 
-const VALID_PAGE_CREATION_KINDS: [&str; 5] =
-    ["distilled", "authored", "research", "imported", "source"];
+const VALID_PAGE_CREATION_KINDS: [&str; 6] = [
+    "distilled",
+    "authored",
+    "research",
+    "imported",
+    "source",
+    "original",
+];
 
 const PAGE_BIRTH_REVIEW_STATUS: &str = "unconfirmed";
 
@@ -335,7 +341,7 @@ pub(super) async fn create_page_impl(
     }
     if !VALID_PAGE_CREATION_KINDS.contains(&creation_kind.as_str()) {
         return Err(WenlanError::Validation(format!(
-            "invalid creation_kind '{creation_kind}' (expected one of: distilled, authored, research, imported, source)"
+            "invalid creation_kind '{creation_kind}' (expected one of: distilled, authored, research, imported, source, original)"
         )));
     }
     if creation_kind == "source" && page_id.is_none() {
@@ -425,8 +431,10 @@ pub(super) async fn create_page_impl(
             });
         }
     }
-    // Hallucination guard (only when sources are present)
-    if !req.source_memory_ids.is_empty() {
+    // Hallucination guard (only when sources are present). An original is
+    // the AI's own output kept verbatim from the chat it cites, not prose
+    // synthesized from it, so it is not held to similarity with that chat.
+    if !req.source_memory_ids.is_empty() && creation_kind != "original" {
         let passed =
             crate::kg_quality::hallucination_guard(db, &req.content, &req.source_memory_ids)
                 .await?;

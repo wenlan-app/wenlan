@@ -129,6 +129,20 @@ impl<'a> Writer<'a> {
 /// How many recent versions are read to find the lines a person wrote.
 const USER_LINE_HISTORY: i64 = 200;
 
+/// The refusal code for a machine write to an original's page.
+const ORIGINAL_PAGE_READ_ONLY: &str = "original_page_is_read_only";
+
+/// A page made from an original (`creation_kind = "original"`: an artifact
+/// or canvas kept from an imported chat) is never rewritten by a machine.
+/// Later facts can only annotate it. A person may still edit it, and the
+/// mechanical `[[link]]` rewrite after a rename still lands, as it changes
+/// link targets only; the kept file under `originals/` is never touched.
+fn refuses_machine_rewrite(writer: Writer<'_>, page: &crate::pages::Page) -> bool {
+    page.creation_kind == "original"
+        && writer.is_machine()
+        && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
+}
+
 pub fn page_is_human_owned(page: &crate::pages::Page) -> bool {
     page.user_edited || page.creation_kind == "authored"
 }
@@ -994,6 +1008,12 @@ async fn update_page_db_impl(
             })?;
             if !in_space_guard(basis, &current) {
                 return Err(page_not_in_space(page_id));
+            }
+            if refuses_machine_rewrite(writer, &current) {
+                return Err(WenlanError::Validation(format!(
+                    "{ORIGINAL_PAGE_READ_ONLY}: page '{page_id}' keeps an original the AI made \
+                     in a chat; it is not rewritten. Add an annotation instead."
+                )));
             }
             if machine_empty_sources && !current.source_memory_ids.is_empty() {
                 return Err(WenlanError::Validation(

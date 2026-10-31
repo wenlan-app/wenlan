@@ -389,9 +389,10 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // sessions reads two, the steep worklist and claim two, and steep's new
     // material list, claim and organize tasks three. The vault note setting
     // and the note proposal list and detail add three Global readers. Page
-    // restore adds one PageWorkspace-scoped single-id route. The palace
+    // restore adds one PageWorkspace-scoped single-id route, and a kept
+    // original's provenance (`/api/pages/{id}/original`) one more. The palace
     // layout read adds one Global reader.
-    assert_eq!(rows.len(), 90);
+    assert_eq!(rows.len(), 91);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -402,7 +403,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        66
+        67
     );
     assert_eq!(
         rows.iter()

@@ -31,6 +31,37 @@ impl Vendor {
         }
     }
 
+    /// The vendor's name as the person knows it.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Vendor::ChatGpt => "ChatGPT",
+            Vendor::Claude => "Claude",
+        }
+    }
+
+    /// Where the conversation opens in the vendor's own app, so "open in the
+    /// original AI tool" works. Both vendors key the web URL by the export's
+    /// conversation id.
+    pub fn conversation_url(&self, external_id: &str) -> String {
+        match self {
+            Vendor::ChatGpt => format!("https://chatgpt.com/c/{external_id}"),
+            Vendor::Claude => format!("https://claude.ai/chat/{external_id}"),
+        }
+    }
+
+    /// The vendor and conversation id behind an import `source_id`
+    /// (`import_claude_{id}` / `import_chatgpt_{id}`).
+    pub fn from_source_id(source_id: &str) -> Option<(Self, &str)> {
+        [Vendor::Claude, Vendor::ChatGpt]
+            .into_iter()
+            .find_map(|vendor| {
+                source_id
+                    .strip_prefix(vendor.source_id_prefix())
+                    .filter(|rest| !rest.is_empty())
+                    .map(|rest| (vendor, rest))
+            })
+    }
+
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
@@ -68,6 +99,78 @@ pub struct ParsedConversation {
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub summary: Option<String>,
     pub messages: Vec<ParsedMessage>,
+    /// Things the AI made in the conversation that are not chat text: Claude
+    /// artifacts and ChatGPT canvases, each in its final state on the
+    /// conversation's current branch.
+    #[serde(default)]
+    pub artifacts: Vec<ParsedArtifact>,
+}
+
+/// One artifact (Claude) or canvas (ChatGPT) from a conversation, kept as the
+/// export holds it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParsedArtifact {
+    /// The vendor's id for it within the conversation.
+    pub id: String,
+    pub title: Option<String>,
+    /// The export's own type: a MIME-like type for Claude (`text/html`,
+    /// `image/svg+xml`, `application/vnd.ant.react`, `text/markdown`, ...),
+    /// the canvas type for ChatGPT (`document`, `code/html`, `code/python`, ...).
+    pub kind: String,
+    /// The code language, when the export names one.
+    pub language: Option<String>,
+    pub content: String,
+    /// When the AI last wrote it.
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl ParsedArtifact {
+    /// File extension for the kept file.
+    pub fn extension(&self) -> &'static str {
+        let kind = self.kind.to_ascii_lowercase();
+        let lang = self.language.as_deref().unwrap_or("").to_ascii_lowercase();
+        match (kind.as_str(), lang.as_str()) {
+            ("text/html" | "code/html", _) | (_, "html") => "html",
+            ("image/svg+xml", _) | (_, "svg") => "svg",
+            ("application/vnd.ant.react" | "code/react", _) | (_, "jsx" | "tsx" | "react") => "jsx",
+            ("application/vnd.ant.mermaid", _) | (_, "mermaid") => "mmd",
+            ("text/markdown" | "document", _) => "md",
+            (_, "python") => "py",
+            (_, "javascript" | "js") => "js",
+            (_, "typescript" | "ts") => "ts",
+            (_, "rust") => "rs",
+            (_, "css") => "css",
+            (_, "json") => "json",
+            (_, "sql") => "sql",
+            (_, "bash" | "shell" | "sh") => "sh",
+            _ if kind.starts_with("code/") => "txt",
+            _ => "txt",
+        }
+    }
+
+    /// Whether the content is Markdown prose the page can show as-is.
+    pub fn is_markdown(&self) -> bool {
+        self.extension() == "md"
+    }
+
+    /// The fence language for showing it on its page.
+    pub fn fence_language(&self) -> &'static str {
+        match self.extension() {
+            "html" => "html",
+            "svg" => "svg",
+            "jsx" => "jsx",
+            "mmd" => "mermaid",
+            "py" => "python",
+            "js" => "javascript",
+            "ts" => "typescript",
+            "rs" => "rust",
+            "css" => "css",
+            "json" => "json",
+            "sql" => "sql",
+            "sh" => "bash",
+            _ => "text",
+        }
+    }
 }
 
 /// Errors emitted by the chat import subsystem.
@@ -148,11 +251,63 @@ mod tests {
             created_at: None,
             summary: None,
             messages: vec![],
+            artifacts: vec![],
         };
         let json = serde_json::to_string(&conv).unwrap();
         let back: ParsedConversation = serde_json::from_str(&json).unwrap();
         assert_eq!(back.external_id, "conv-1");
         assert_eq!(back.vendor, Vendor::Claude);
+    }
+
+    #[test]
+    fn conversation_urls_and_source_ids_round_trip() {
+        assert_eq!(
+            Vendor::Claude.conversation_url("abc"),
+            "https://claude.ai/chat/abc"
+        );
+        assert_eq!(
+            Vendor::ChatGpt.conversation_url("abc"),
+            "https://chatgpt.com/c/abc"
+        );
+        assert_eq!(
+            Vendor::from_source_id("import_chatgpt_abc"),
+            Some((Vendor::ChatGpt, "abc"))
+        );
+        assert_eq!(Vendor::from_source_id("import_claude_"), None);
+        assert_eq!(Vendor::from_source_id("mem_1"), None);
+    }
+
+    #[test]
+    fn artifact_files_take_the_extension_of_their_kind() {
+        let a = |kind: &str, language: Option<&str>| ParsedArtifact {
+            id: "a".into(),
+            title: None,
+            kind: kind.into(),
+            language: language.map(str::to_string),
+            content: String::new(),
+            created_at: None,
+        };
+        assert_eq!(a("text/html", None).extension(), "html");
+        assert_eq!(a("code/html", None).extension(), "html");
+        assert_eq!(a("image/svg+xml", None).extension(), "svg");
+        assert_eq!(a("application/vnd.ant.react", None).extension(), "jsx");
+        assert_eq!(a("document", None).extension(), "md");
+        assert!(a("text/markdown", None).is_markdown());
+        assert_eq!(
+            a("application/vnd.ant.code", Some("python")).extension(),
+            "py"
+        );
+        assert_eq!(a("code/python", Some("python")).extension(), "py");
+        assert_eq!(a("something/else", None).extension(), "txt");
+    }
+
+    #[test]
+    fn a_conversation_without_artifacts_still_deserializes() {
+        let back: ParsedConversation = serde_json::from_str(
+            r#"{"external_id":"c","vendor":"claude","title":null,"created_at":null,"summary":null,"messages":[]}"#,
+        )
+        .unwrap();
+        assert!(back.artifacts.is_empty());
     }
 
     #[test]
