@@ -1131,6 +1131,10 @@ pub struct PageChangelogEntry {
     pub sources_added: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sources_removed: Option<i64>,
+    /// The whole page text at this version, with `?include=text` (UX-HIST-2).
+    /// None without it, or when that version's text was not kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 /// Response envelope for `/api/pages/{id}/revisions`.
@@ -1142,6 +1146,64 @@ pub struct ListPageRevisionsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_reason: Option<String>,
     pub entries: Vec<PageChangelogEntry>,
+    /// The page's one history (UX-HIST-1), newest first: the person's edits,
+    /// AI edits, and "a page this one relies on got a new version" in one
+    /// list. Empty (absent) when the page's changelog is not served.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<PageHistoryItem>,
+}
+
+/// What kind of change a [`PageHistoryItem`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageHistoryKind {
+    /// The person changed the page (editor, file edit, restore).
+    PersonEdit,
+    /// An AI tool or Wenlan's own model changed the page.
+    AiEdit,
+    /// A page this one relies on (its basis) got a new version. Derived from
+    /// that page's own writes; this page did not change.
+    SourceUpdate,
+}
+
+/// The page a [`PageHistoryKind::SourceUpdate`] is about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageHistorySource {
+    pub page_id: String,
+    pub title: String,
+    /// The version the source got.
+    pub version: i64,
+    /// The source version this page was last checked against.
+    pub relied_on_version: i64,
+    /// True while this page has not been checked against `version` yet.
+    pub pending: bool,
+    /// The source's text at `version`, with `?include=text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// One entry of a page's history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageHistoryItem {
+    pub kind: PageHistoryKind,
+    /// Unix seconds.
+    pub at: i64,
+    /// This page's version written by an edit; for a source update, this
+    /// page's version at the time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<i64>,
+    /// The changelog's `edited_by` of an edit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_summary: Option<String>,
+    /// The page text after an edit, with `?include=text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<PageHistorySource>,
 }
 
 // ===== Sources =====

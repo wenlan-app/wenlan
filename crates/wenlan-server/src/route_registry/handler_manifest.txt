@@ -57,6 +57,7 @@ main|get|/api/pages/{id}/basis/{basis_id}/diff|wenlan_server::page_basis_routes:
 main|get|/api/pages/{id}/links|wenlan_server::page_routes::handle_get_page_links
 main|get|/api/pages/{id}/map|wenlan_server::page_map_routes::handle_get_page_map
 main|get|/api/pages/{id}/revisions|wenlan_server::page_routes::handle_get_page_revisions
+main|get|/api/palace/layout|wenlan_server::palace_routes::handle_get_palace_layout
 main|get|/api/pages/{id}/sessions|wenlan_server::session_routes::handle_get_page_sessions
 main|get|/api/pages/{id}/sources|wenlan_server::page_routes::handle_get_page_sources
 main|get|/api/profile|wenlan_server::profile_agents_routes::handle_get_profile
@@ -148,6 +149,7 @@ main|post|/api/steep/new/tasks|wenlan_server::steep_new_routes::handle_steep_new
 main|post|/api/steep/new/commit|wenlan_server::steep_new_routes::handle_steep_new_commit
 main|post|/api/pages/{id}/code-basis/confirm|wenlan_server::code_basis_routes::handle_confirm_code_basis
 main|post|/api/pages/{id}/export|wenlan_server::page_routes::handle_export_page
+main|post|/api/palace/layout/revert|wenlan_server::palace_routes::handle_revert_palace_layout
 main|post|/api/pages/{id}/map/edges|wenlan_server::page_map_routes::handle_create_map_edge
 main|post|/api/pages/{id}/map/improve|wenlan_server::page_map_routes::handle_improve_page_map
 main|post|/api/pages/{id}/map/nodes|wenlan_server::page_map_routes::handle_create_map_node
@@ -192,6 +194,7 @@ main|post|/api/agents|wenlan_server::profile_agents_routes::handle_register_agen
 main|put|/api/agents/{name}|wenlan_server::profile_agents_routes::handle_update_agent
 main|put|/api/chunks/{id}/update|wenlan_server::indexed_files_routes::handle_update_chunk
 main|put|/api/config|wenlan_server::config_routes::handle_update_config
+main|put|/api/palace/layout|wenlan_server::palace_routes::handle_put_palace_layout
 main|put|/api/documents/{source_id}/tags|wenlan_server::activity_tag_routes::handle_set_document_tags
 main|put|/api/memory/entities/{id}/confirm|wenlan_server::entity_graph_routes::handle_confirm_entity
 main|put|/api/memory/entities/{id}/type|wenlan_server::entity_graph_routes::handle_change_entity_type

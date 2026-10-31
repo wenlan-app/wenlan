@@ -2264,7 +2264,13 @@ pub async fn handle_get_page_revisions(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<Json<wenlan_types::responses::ListPageRevisionsResponse>, ServerError> {
+    // `?include=text` (comma list) puts each version's whole text on its
+    // entry, so every change can be opened (UX-HIST-2).
+    let include_text = params
+        .get("include")
+        .is_some_and(|include| include.split(',').any(|part| part.trim() == "text"));
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
@@ -2292,10 +2298,39 @@ pub async fn handle_get_page_revisions(
     )
     .await?
     .is_empty();
-    let entries: Vec<wenlan_types::responses::PageChangelogEntry> = if full {
+    let mut entries: Vec<wenlan_types::responses::PageChangelogEntry> = if full {
         let changelog_str = db.get_page_changelog_scoped(&id, &scope).await?;
         serde_json::from_str(&changelog_str)
             .map_err(|e| ServerError::Internal(format!("parse changelog: {e}")))?
+    } else {
+        Vec::new()
+    };
+    // UX-HIST-1: the one history merges the person's edits, AI edits and the
+    // new versions of the pages this one relies on. A relied-on page this
+    // caller may not read in full, or outside its Space, is left out.
+    let history = if full {
+        if include_text {
+            wenlan_core::page_history::attach_texts(&db, &id, &mut entries).await?;
+        }
+        let mut bases = Vec::new();
+        for basis_id in wenlan_core::page_history::basis_page_ids(&db, &id).await? {
+            if db
+                .get_page_scoped_browse(&basis_id, &scope)
+                .await?
+                .is_some()
+            {
+                bases.push(basis_id);
+            }
+        }
+        let visible: std::collections::HashSet<String> =
+            wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, bases, |page_id| {
+                page_id.as_str()
+            })
+            .await?
+            .into_iter()
+            .collect();
+        wenlan_core::page_history::build_page_history(&db, &id, &entries, &visible, include_text)
+            .await?
     } else {
         Vec::new()
     };
@@ -2305,6 +2340,7 @@ pub async fn handle_get_page_revisions(
         user_edited: page.user_edited,
         stale_reason: page.stale_reason.clone(),
         entries,
+        history,
     }))
 }
 /// POST /api/pages/{id}/review
@@ -2377,6 +2413,10 @@ fn refusal_response(refusal: wenlan_core::presence::PresenceRefusal) -> axum::re
 #[cfg(test)]
 #[path = "page_routes/page_routes_test.rs"]
 mod page_inventory_tests;
+
+#[cfg(test)]
+#[path = "page_routes/revisions_history_test.rs"]
+mod revisions_history_tests;
 
 #[cfg(test)]
 mod create_page_endpoint_tests {

@@ -37,6 +37,7 @@ pub mod outbox_routes;
 pub mod page_basis_routes;
 pub mod page_map_routes;
 pub mod page_routes;
+pub mod palace_routes;
 pub mod pinned_memory_routes;
 pub mod profile_agents_routes;
 pub mod profile_narrative_routes;

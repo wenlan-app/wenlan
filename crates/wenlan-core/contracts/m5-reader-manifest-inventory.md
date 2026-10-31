@@ -710,6 +710,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `PUT` | `/api/pages/{id}/review-required` | main | no | not_applicable | `none` | — | flag receipt only: page id and review_required — no prose |
 | `GET` | `/api/pages/{id}/revisions` | main | yes | automatic | **`named_page`** | `handle_get_page_revisions` | PageChangelogEntry.citations_summary, PageChangelogEntry.delta_sum |
 | `GET` | `/api/pages/{id}/sources` | main | yes | automatic | **`named_page`** | `handle_get_page_sources` | MemoryItem.content, MemoryItem.source_text, MemoryItem.summary, Me |
+| `GET` | `/api/palace/layout` | main | no | not_applicable | `none` | — | layout positions and the person's own labels and notes; no page prose |
+| `PUT` | `/api/palace/layout` | main | no | not_applicable | `none` | — | layout positions and the person's own labels and notes; no page prose |
+| `POST` | `/api/palace/layout/revert` | main | no | not_applicable | `none` | — | layout positions and the person's own labels and notes; no page prose |
 | `GET` | `/api/profile` | main | no | not_applicable | `none` | — | no prose fields |
 | `PUT` | `/api/profile` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/profile/narrative` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |

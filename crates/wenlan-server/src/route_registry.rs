@@ -413,7 +413,7 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // Copies one named media file into the pages folder; returns its path only.
     "/api/attachments",
     "/api/onboarding/milestones/{id}/acknowledge", "/api/onboarding/reset", "/ws/updates",
-    "/api/pages/{id}/map/layout", "/api/pages/{id}/map/nodes", "/api/pages/{id}/map/edges",
+    "/api/palace/layout/revert", "/api/pages/{id}/map/layout", "/api/pages/{id}/map/nodes", "/api/pages/{id}/map/edges",
     "/api/pages/{id}/map/nodes/{node_id}", "/api/pages/{id}/map/edges/{edge_id}",
     "/api/pages/{id}/map/improve",
     // A basis mark, unmark and confirm return a state receipt only; the two
@@ -449,6 +449,8 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
+    // The palace layout write; its read is the catalog's global row.
+    (RegisteredMethod::Put, "/api/palace/layout"),
     (RegisteredMethod::Put, "/api/sources/{id}/ai-changes"),
     (RegisteredMethod::Post, "/api/notes/proposals"),
     (RegisteredMethod::Delete, "/api/notes/proposals/{id}"),
