@@ -110,6 +110,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_memory_revisions": return { current_source_id: optionalString(args, "sourceId") ?? "", chain_depth: 0, entries: [] };
     case "list_all_tags": return { tags: [], document_tags: {}, categories: [], document_categories: {} };
     case "get_page_links": return { outbound: [], inbound: [] };
+    // The fixture stages no sentence proposals.
+    case "get_page_sentences": return { page_id: optionalString(args, "pageId") ?? "", version: 1, ai_edits: "propose", sentences: [], proposals: [] };
     case "get_page_sources": case "list_registered_sources": case "list_note_proposals": return [];
     // The fixture has no AI conversations: no note lists one, no id resolves.
     case "get_page_sessions": return { sessions: [] };

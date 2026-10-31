@@ -88,6 +88,9 @@ function answer(command: string, args: Record<string, unknown> | undefined): unk
       return (id && wiki.pageSources.get(id)) ?? [];
     case "get_page_links":
       return (id && wiki.pageLinks.get(id)) ?? { outbound: [], inbound: [] };
+    // The example wiki is read-only and stages no sentence proposals.
+    case "get_page_sentences":
+      return { page_id: id ?? "", version: 1, ai_edits: "propose", sentences: [], proposals: [] };
     case "list_spaces":
       return wiki.spaces;
     case "get_space":

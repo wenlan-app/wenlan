@@ -94,6 +94,10 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "page_review_supported",
     "get_page_links",
     "set_page_review_required",
+    // The AI's proposals for the person's sentences (UX-WHO-2).
+    "get_page_sentences",
+    "accept_sentence_proposal",
+    "reject_sentence_proposal",
     "mark_page_basis",
     "unmark_page_basis",
     "confirm_page_basis",
