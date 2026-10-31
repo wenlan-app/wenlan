@@ -37132,7 +37132,7 @@ async fn ambient_dedup_delete_retracts_the_losing_edge() {
 /// entailment backlog on every launch).
 #[tokio::test]
 async fn migration_111_repairs_ambient_parity_and_resets_the_grounding_cursor_once() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     db.create_space("work", None, false).await.unwrap();
     let alice = db
         .store_entity("Alice", "person", Some("work"), Some("post_ingest"), None)
@@ -37277,7 +37277,7 @@ async fn migration_111_repairs_ambient_parity_and_resets_the_grounding_cursor_on
         let conn = db.conn.lock().await;
         conn.execute("PRAGMA user_version = 110", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .expect("migration 111 must apply");
 
@@ -37348,7 +37348,7 @@ async fn migration_111_repairs_ambient_parity_and_resets_the_grounding_cursor_on
     )
     .await
     .unwrap();
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .expect("a second startup is a no-op");
     let cursor_after = db
@@ -37509,7 +37509,7 @@ async fn migration_111_reactivates_a_retracted_edge_and_settles_parity_at_zero()
 /// clean parity watermark for a repair that had nothing to repair.
 #[tokio::test]
 async fn migration_111_is_a_no_op_on_an_undamaged_database() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     db.create_space("work", None, false).await.unwrap();
     let src = db
         .store_entity("Healthy Src", "concept", Some("work"), Some("test"), None)
@@ -37593,7 +37593,7 @@ async fn migration_111_is_a_no_op_on_an_undamaged_database() {
         conn.execute("PRAGMA user_version = 110", ()).await.unwrap();
     }
 
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .expect("migration 111 must apply");
 
@@ -46222,7 +46222,7 @@ async fn migration_80_fresh_and_upgraded_schema_agree() {
 
 #[tokio::test]
 async fn migration_80_backfill_precedence_workspace_wins_over_differing_space() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     db.create_space("wenlan", None, false).await.unwrap();
     db.create_space("origin-website", None, false)
         .await
@@ -46239,7 +46239,7 @@ async fn migration_80_backfill_precedence_workspace_wins_over_differing_space() 
         .await;
         conn.execute("PRAGMA user_version = 79", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .unwrap();
 
@@ -46278,7 +46278,7 @@ async fn migration_80_backfill_precedence_workspace_wins_over_differing_space() 
 
 #[tokio::test]
 async fn migration_80_backfill_precedence_space_residue_when_workspace_null() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     db.create_space("engineering", None, false).await.unwrap();
     {
         let conn = db.conn.lock().await;
@@ -46286,7 +46286,7 @@ async fn migration_80_backfill_precedence_space_residue_when_workspace_null() {
         insert_raw_page_for_m80_test(&conn, "page_residue", Some("engineering"), None).await;
         conn.execute("PRAGMA user_version = 79", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .unwrap();
 
@@ -46317,14 +46317,14 @@ async fn migration_80_backfill_precedence_space_residue_when_workspace_null() {
 
 #[tokio::test]
 async fn migration_80_backfill_precedence_unfiled_when_both_null() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     {
         let conn = db.conn.lock().await;
         relax_pages_scope_columns_to_nullable(&conn).await;
         insert_raw_page_for_m80_test(&conn, "page_unfiled", None, None).await;
         conn.execute("PRAGMA user_version = 79", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .unwrap();
 
@@ -46355,14 +46355,14 @@ async fn migration_80_backfill_precedence_unfiled_when_both_null() {
 
 #[tokio::test]
 async fn migration_80_unregistered_space_routes_to_unfiled_with_ledger_record() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     {
         let conn = db.conn.lock().await;
         relax_pages_scope_columns_to_nullable(&conn).await;
         insert_raw_page_for_m80_test(&conn, "page_bogus", Some("not-a-real-space"), None).await;
         conn.execute("PRAGMA user_version = 79", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .unwrap();
 
@@ -46611,7 +46611,7 @@ async fn migration_80_raw_insert_omitting_scope_columns_lands_unfiled() {
 
 #[tokio::test]
 async fn migration_80_replay_after_partial_backfill_converges_without_ledger_drift() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     db.create_space("engineering", None, false).await.unwrap();
 
     // First (real) fold of this row.
@@ -46621,7 +46621,7 @@ async fn migration_80_replay_after_partial_backfill_converges_without_ledger_dri
         insert_raw_page_for_m80_test(&conn, "page_replay", Some("engineering"), None).await;
         conn.execute("PRAGMA user_version = 79", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .unwrap();
 
@@ -46666,7 +46666,7 @@ async fn migration_80_replay_after_partial_backfill_converges_without_ledger_dri
         .unwrap();
         conn.execute("PRAGMA user_version = 79", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .expect("replay after a simulated partial backfill must converge");
 
@@ -46735,7 +46735,7 @@ async fn migration_80_replay_after_partial_backfill_converges_without_ledger_dri
         let conn = db.conn.lock().await;
         conn.execute("PRAGMA user_version = 79", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .expect("replay against an already-NOT-NULL table must be a no-op, not an error");
 
@@ -46863,7 +46863,7 @@ async fn rerun_migration_81(db: &MemoryDB) {
         let conn = db.conn.lock().await;
         conn.execute("PRAGMA user_version = 80", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .expect("migration 81 re-fires");
 }
@@ -46956,7 +46956,7 @@ async fn rerun_migration_89(db: &MemoryDB) {
         let conn = db.conn.lock().await;
         conn.execute("PRAGMA user_version = 88", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .expect("migration 89 re-fires");
 }
@@ -47073,7 +47073,7 @@ async fn migration_89_kind_backfill_classifies_by_creation_kind_and_overview_tit
 
 #[tokio::test]
 async fn migration_89_kind_fold_ledger_records_assignment_rule() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     {
         let conn = db.conn.lock().await;
         conn.execute(
@@ -47200,7 +47200,7 @@ async fn rerun_migration_107(db: &MemoryDB) {
         let conn = db.conn.lock().await;
         conn.execute("PRAGMA user_version = 106", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .expect("migration 107 re-fires");
 }
@@ -47245,7 +47245,7 @@ async fn seed_kind_fold_ledger(conn: &libsql::Connection, id: &str, creation_kin
 /// stamped kind, alone.
 #[tokio::test]
 async fn migration_107_repairs_kind_for_pages_the_89_fold_never_saw() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     {
         let conn = db.conn.lock().await;
         for (id, title, creation_kind, status) in [
@@ -47933,7 +47933,7 @@ async fn rerun_migration_92(db: &MemoryDB) {
         let conn = db.conn.lock().await;
         conn.execute("PRAGMA user_version = 91", ()).await.unwrap();
     }
-    db.run_migrations(&crate::events::NoopEmitter)
+    db.run_migrations_up_to(&crate::events::NoopEmitter, 144)
         .await
         .expect("migration 92 re-fires");
 }
@@ -48027,7 +48027,7 @@ async fn migration_92_widens_creation_kind_check_to_admit_entity() {
 
 #[tokio::test]
 async fn migration_92_creates_entity_page_migration_state_backfilled() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     let conn = db.conn.lock().await;
     let mut rows = conn
         .query(
@@ -48124,7 +48124,7 @@ async fn migration_92_backfills_preexisting_entities_into_shadow_pages() {
 
 #[tokio::test]
 async fn migration_92_backfill_report_records_created_count() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     {
         let conn = db.conn.lock().await;
         insert_raw_entity_for_m92_test(
@@ -48197,7 +48197,7 @@ async fn migration_92_resume_reads_stored_cursor_and_skips_below_range() {
     // let the migration wrongly succeed. The tail entity above the cursor
     // is backfilled either way. (Integration of resume + the
     // `assert_entities_have_shadow_pages` guard.)
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     let (r_below, r_tail) = {
         let conn = db.conn.lock().await;
         insert_raw_entity_for_m92_test(
@@ -48263,7 +48263,9 @@ async fn migration_92_resume_reads_stored_cursor_and_skips_below_range() {
         conn.execute("PRAGMA user_version = 91", ()).await.unwrap();
     }
 
-    let result = db.run_migrations(&crate::events::NoopEmitter).await;
+    let result = db
+        .run_migrations_up_to(&crate::events::NoopEmitter, 144)
+        .await;
     assert!(
         result.is_err(),
         "resume must honor the stored cursor: e_below sits at/under it and is never \
@@ -50824,35 +50826,6 @@ async fn apply_memory_update_explicit_clear_folds_to_unfiled() {
 // out of its expected set (`compute_edges_parity_report`'s drift/extra
 // fields), no oracle-independent replacement needed yet.
 
-// G6 Stage 2 PR 2a retired `epoch_bump_retires_watermark_and_reblocks_reader`,
-// `nonzero_drift_keeps_reader_on_legacy`, and
-// `missing_migration_state_closes_reader_gate`: all three drove
-// `set_reader_cutover`/`reader_uses_edges`, the manual cutover-lever gate that
-// retires alongside the sweep in this PR. `bump_dual_write_epoch` itself is
-// NOT retiring (epoch bookkeeping persists until Stage 3), so its own
-// coverage stays -- see `bump_epoch_fails_loud_when_state_row_missing`
-// immediately below, which tests only that function and calls no retiring
-// surface.
-
-/// Epoch bump must FAIL LOUD on a zero-row UPDATE: with no state row there
-/// is no epoch to bump, and the old `Ok(1)` fallback would silently "retire"
-/// nothing while leaving a stale watermark looking current.
-#[tokio::test]
-async fn bump_epoch_fails_loud_when_state_row_missing() {
-    let (db, _dir) = test_db().await;
-    {
-        let conn = db.conn.lock().await;
-        conn.execute("DELETE FROM edges_migration_state", ())
-            .await
-            .unwrap();
-    }
-    let err = db.bump_dual_write_epoch().await.unwrap_err();
-    assert!(
-        format!("{err}").contains("no edges_migration_state row"),
-        "bump must fail loud on a zero-row UPDATE, got: {err}"
-    );
-}
-
 // G6 Stage 2 PR 2b: `reconcile_fresh_backfill_drift_zero_across_all_stores`,
 // `reconcile_detects_missing_edge`, `reconcile_detects_extra_edge`, and
 // `reconcile_detects_corrupt_endpoint` retired -- each test's entire subject
@@ -51963,7 +51936,7 @@ async fn count_grounded_relates(db: &MemoryDB) -> i64 {
 
 #[tokio::test]
 async fn migration_81_creates_edges_and_provenance_schema() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     let conn = db.conn.lock().await;
     for table in [
         "edges",
@@ -51995,7 +51968,8 @@ async fn migration_81_creates_edges_and_provenance_schema() {
         let mut rows = conn.query("PRAGMA user_version", ()).await.unwrap();
         rows.next().await.unwrap().unwrap().get(0).unwrap()
     };
-    assert_eq!(uv as u32, crate::db::SCHEMA_VERSION);
+    // Stopped before migration 145, which drops `edges_migration_state`.
+    assert_eq!(uv, 144);
 }
 
 /// G6 Stage 2 PR 2c item 1: `edges_space_fence`'s `entity` arm now reads the
@@ -52172,7 +52146,7 @@ async fn edges_space_fence_update_trigger_aborts_on_missing_shadow_page() {
 
 #[tokio::test]
 async fn migration_81_migration_state_row_records_report() {
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     let conn = db.conn.lock().await;
     let mut rows = conn
         .query(
@@ -52208,7 +52182,7 @@ async fn migration_81_page_evidence_backfill_counts_multichunk_memory_once() {
     // `LEFT JOIN memories` fan-out that inflated the migration report's
     // classifiable count N-fold for an N-chunk memory (the edge itself was
     // always deduped by `ON CONFLICT DO NOTHING`; only the count lied).
-    let (db, _dir) = test_db().await;
+    let (db, _dir) = test_db_at(144).await;
     seed_memory_with_source_id_and_space(&db, "mem_multi", "chunk zero", "space_a").await;
     {
         let conn = db.conn.lock().await;
