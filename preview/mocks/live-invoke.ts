@@ -1000,6 +1000,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // pasted bytes go through a temp file only the native app can write.
   page_attachments_dir: () =>
     get("/api/knowledge/path").then((r) => (r?.path ? `${String(r.path).replace(/\/+$/, "")}/_attachments` : null)),
+  // An `![[name]]` embed: the daemon finds the file anywhere in the pages folder.
+  resolve_page_embed: (a) =>
+    get(`/api/attachments/resolve?name=${enc(String(a?.name ?? ""))}`)
+      .then((r) => (typeof r?.path === "string" && r.path ? r.path : null))
+      .catch(() => null),
   attach_file_to_page: (a) => post("/api/attachments", { source_path: a?.path, alt: a?.alt ?? null }),
   attach_bytes_to_page: async (): Promise<never> => {
     throw new Error("Pasting images and videos requires the native Wenlan app.");
