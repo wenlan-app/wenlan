@@ -55,6 +55,7 @@ import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
 import ContentRenderer from "./ContentRenderer";
+import { PageReadingLayers } from "./page/PageReadingLayers";
 import RelatedPages from "./page/RelatedPages";
 import PageInfo from "./page/PageInfo";
 import { PageSessionSources } from "./sessions/SessionSourceSection";
@@ -2990,12 +2991,17 @@ export default function PageDetail({
                   )}
                 </div>
               )}
-              <ContentRenderer
+              <PageReadingLayers
                 content={displayContent}
-                variant="detail"
-                preserveMarkdown={authoredBody}
-                resolveWikilink={authoredBody ? resolveReadingWikilink : undefined}
-                renderCitation={renderCitation}
+                renderBody={(markdown) => (
+                  <ContentRenderer
+                    content={markdown}
+                    variant="detail"
+                    preserveMarkdown={authoredBody}
+                    resolveWikilink={authoredBody ? resolveReadingWikilink : undefined}
+                    renderCitation={renderCitation}
+                  />
+                )}
               />
             </div>
             </ReferenceNavigationProvider>

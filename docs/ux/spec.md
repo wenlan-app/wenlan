@@ -65,10 +65,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   the last view you used is remembered. The third view may be free HTML drawn
   from the short text and the mind map; every sentence in it keeps its source.
   原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。
-- **UX-VIEW-2** `planned` While reading you can pick short or full text. It is
+- **UX-VIEW-2** `shipped` While reading you can pick short or full text. It is
   one page, not two copies.
   原文：讀的時候能選短或全文，是同一頁，不是兩份。
-- **UX-VIEW-3** `planned` The first screen is only for people; the details for
+- **UX-VIEW-3** `shipped` The first screen is only for people; the details for
   AI are one collapsed section.
   原文：第一屏只有給人看的，給 AI 的細節是一個收起來的展開。
 - **UX-VIEW-4** `shipped` The mind map keeps today's rule: the AI proposes,
