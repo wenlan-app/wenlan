@@ -80,9 +80,11 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 - **UX-VIEW-1** `planned` Short text, mind map and any other rendering you
   want are three views of the same thing. Switching does not change pages, and
-  the last view you used is remembered. The third view may be free HTML drawn
-  from the short text and the mind map; every sentence in it keeps its source.
-  原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。
+  the last view you used is remembered. The third view is a page the AI draws
+  freely as HTML in the shape you ask for (a timeline, a one-page brief);
+  every sentence in it keeps its source, and it is redrawn when the content
+  changes. The third view is marked Beta.
+  原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。選擇卡「AI 自由画一页（Beta）」（2026-10-31 18:44）
 - **UX-VIEW-2** `shipped` While reading you can pick short or full text. It is
   one page, not two copies. The switch is marked Beta.
   原文：讀的時候能選短或全文，是同一頁，不是兩份。「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31）
@@ -138,9 +140,11 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   page's own map comes only when you ask for that page.
   原文：不能顯示小視窗的工具（例如 Claude Code 命令列）給一個小的文字樹，加「在文瀾打開」。
   「我是认为是读的是一个工作状态上面的一个心智图，因为这跟这个对话有关嘛」「笔记的那个心智图…除非是有必要想去看」「把不同的就是来源笔记啊啥的，然后把它读到这个就是 working memory 里面的一个心智图」（2026-10-31）
-- **UX-CHAT-5** `planned` "Wrap up?" is asked once per thing, and only points
-  you approve join the big map.
-  原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。
+- **UX-CHAT-5** `planned` "Wrap up?" is asked once per thing, after the thing
+  has been quiet for a few days; the AI never guesses that it is done. The
+  question counts toward the five reminders a day. Only points you approve
+  join the big map.
+  原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。（2026-10-30 17:19 PT 定了：安靜幾天後問一次「收尾？」，算在一天 5 條裡，不猜。）
 - **UX-CHAT-6** `planned` The check's rules live in Wenlan itself, not in each
   tool's plugin, so every AI tool gets the same result.
   原文：檢查的規則寫在文瀾本身，不寫在各家外掛裡；換哪個 AI 工具結果都一樣。
