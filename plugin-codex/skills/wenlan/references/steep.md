@@ -99,8 +99,8 @@ items, sources or tasks to a helper.
       small model write it. Title: a short heading that names the topic, in
       the sources' language; in English, in title case, every main word
       capitalized ("Household Finances", not "Household finances"), with
-      proper names kept as written. Open with one or two plain sentences, in
-      everyday words, that tell a person what the page is about, then short
+      proper names kept as written. Open with one plain paragraph, in everyday
+      words, that states the point of the page, then short
       paragraphs or lists. Detail only an AI needs (commands, paths, edge
       cases) may go last under the heading `## Details for AI` (`## 給 AI 的細節`
       when the sources are in Chinese). Use only what
