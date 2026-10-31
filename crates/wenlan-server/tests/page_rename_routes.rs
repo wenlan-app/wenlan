@@ -240,3 +240,62 @@ async fn page_rename_updates_links_in_the_same_space_and_reports_the_rest() {
         .iter()
         .any(|link| link.source_page_id == linker && link.label == "Wenlan positioning"));
 }
+
+#[tokio::test]
+async fn restoring_under_a_new_title_updates_links_and_reports_them() {
+    let (app, _tmp, db) = common::test_app().await;
+    db.create_space("work", None, false).await.unwrap();
+    let target = common::create_page_fixture(
+        &db,
+        "Origin positioning",
+        "Target body.",
+        Some("work"),
+        &[],
+        "authored",
+    )
+    .await;
+    let linker = common::create_page_fixture(
+        &db,
+        "Strategy",
+        "See [[Origin positioning]].",
+        Some("work"),
+        &[],
+        "authored",
+    )
+    .await;
+    db.archive_page(&target).await.unwrap();
+    let archived = db.get_page(&target).await.unwrap().unwrap();
+    let linker_before = db.get_page(&linker).await.unwrap().unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/pages/{target}/restore"))
+                .header("content-type", "application/json")
+                .header("x-wenlan-truth-contract", "1")
+                .header("x-wenlan-reader-intent", "explicit")
+                .body(Body::from(
+                    serde_json::json!({
+                        "title": "Wenlan positioning", "expected_version": archived.version,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let reply: wenlan_types::responses::RestorePageResponse =
+        serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(reply.title, "Wenlan positioning");
+    assert_eq!(reply.links_updated, 1);
+    assert_eq!(reply.links_pending_review, 0);
+    assert_eq!(reply.links_not_updated, 0);
+
+    let linker_after = db.get_page(&linker).await.unwrap().unwrap();
+    assert_eq!(linker_after.content, "See [[Wenlan positioning]].");
+    assert_eq!(linker_after.version, linker_before.version + 1);
+}

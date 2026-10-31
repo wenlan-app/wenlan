@@ -3,7 +3,9 @@
 
 use super::tests::test_db;
 use crate::{
-    export::knowledge::KnowledgeProjectionWrite, post_write::rename_page, read_scope::ReadScope,
+    export::knowledge::KnowledgeProjectionWrite,
+    post_write::{rename_page, restore_page},
+    read_scope::ReadScope,
 };
 use std::{path::Path, sync::Arc};
 
@@ -429,4 +431,145 @@ async fn a_caller_held_to_one_space_changes_no_page_outside_it() {
         db.get_page("page-b").await.unwrap().unwrap().content,
         "See [[Old]]."
     );
+}
+
+#[tokio::test]
+async fn restoring_under_a_new_title_updates_links_as_a_rename_does() {
+    let fixture = fixture(&[
+        (
+            "page-a",
+            "Old",
+            "work",
+            "The archived page.",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-b",
+            "Linker",
+            "work",
+            "See [[Old]].",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-locked",
+            "Locked",
+            "work",
+            "Locked [[Old]].",
+            1,
+            1,
+            "authored",
+        ),
+        (
+            "page-c",
+            "Elsewhere",
+            "home",
+            "From home: [[Old]].",
+            0,
+            0,
+            "distilled",
+        ),
+    ])
+    .await;
+    let db = &fixture.db;
+    db.archive_page("page-a").await.unwrap();
+    let archived = db.get_page("page-a").await.unwrap().unwrap();
+
+    let response = restore_page(
+        db,
+        "page-a",
+        Some("New"),
+        archived.version,
+        &ReadScope::Global,
+        Some(fixture.page_root.path()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.title, "New");
+    assert_eq!(response.status, "active");
+    assert_eq!(
+        (
+            response.links_updated,
+            response.links_pending_review,
+            response.links_not_updated
+        ),
+        (1, 1, 1)
+    );
+
+    let linker = db.get_page("page-b").await.unwrap().unwrap();
+    assert_eq!(linker.content, "See [[New]].");
+    assert_eq!(linker.version, 4);
+    let changelog: Vec<wenlan_types::responses::PageChangelogEntry> =
+        serde_json::from_str(linker.changelog.as_deref().unwrap()).unwrap();
+    assert_eq!(changelog.last().unwrap().edited_by, "link_rename");
+    assert!(projected_markdown(fixture.page_root.path(), "page-b").contains("[[New]]"));
+
+    // A locked page keeps its text; the update waits as a card.
+    let locked = db.get_page("page-locked").await.unwrap().unwrap();
+    assert_eq!(locked.content, "Locked [[Old]].");
+    let cards = db.list_pending_revisions(50).await.unwrap();
+    let card = cards
+        .iter()
+        .find(|card| card.target_source_id == "page-locked")
+        .expect("a revision card for the locked page");
+    assert_eq!(card.revision_content, "Locked [[New]].");
+
+    // Another Space keeps its link.
+    let elsewhere = db.get_page("page-c").await.unwrap().unwrap();
+    assert_eq!(elsewhere.content, "From home: [[Old]].");
+    assert_eq!(elsewhere.version, 3);
+}
+
+#[tokio::test]
+async fn restoring_under_the_same_title_leaves_links_alone() {
+    let fixture = fixture(&[
+        (
+            "page-a",
+            "Old",
+            "work",
+            "The archived page.",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-b",
+            "Linker",
+            "work",
+            "See [[Old]].",
+            0,
+            0,
+            "distilled",
+        ),
+    ])
+    .await;
+    let db = &fixture.db;
+    db.archive_page("page-a").await.unwrap();
+    let archived = db.get_page("page-a").await.unwrap().unwrap();
+    for title in [Some("Old"), None] {
+        let version = db.get_page("page-a").await.unwrap().unwrap().version;
+        let response = restore_page(db, "page-a", title, version, &ReadScope::Global, None)
+            .await
+            .unwrap();
+        assert_eq!(response.title, "Old");
+        assert_eq!(
+            (
+                response.links_updated,
+                response.links_pending_review,
+                response.links_not_updated
+            ),
+            (0, 0, 0)
+        );
+    }
+    // The second call was a replay of the first restore.
+    assert_eq!(
+        db.get_page("page-a").await.unwrap().unwrap().version,
+        archived.version + 1
+    );
+    let linker = db.get_page("page-b").await.unwrap().unwrap();
+    assert_eq!(linker.content, "See [[Old]].");
+    assert_eq!(linker.version, 3);
 }

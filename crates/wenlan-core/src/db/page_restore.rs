@@ -57,6 +57,14 @@ struct ArchivedRow {
     changelog: String,
 }
 
+/// A committed restore, plus the title the page had while archived when the
+/// restore gave it a new one. `previous_title` is `None` when the title did
+/// not change (or the restore was a replay that wrote nothing).
+pub(crate) struct PageRestore {
+    pub(crate) response: RestorePageResponse,
+    pub(crate) previous_title: Option<String>,
+}
+
 impl MemoryDB {
     /// Restore the same archived page. Sources, body, embedding, scope and
     /// existing links are not rewritten; this does not undo an earlier merge.
@@ -65,6 +73,10 @@ impl MemoryDB {
     /// appends an `archive` history row; search, links, maps and the page list
     /// all read `status = 'active'`. Setting the row active again is therefore
     /// the whole reversal. The projected Markdown file is the route's job.
+    ///
+    /// This restores the page only. `post_write::restore_page` is the
+    /// capability the route calls; under a new title it also updates other
+    /// pages' links, as a rename does.
     pub async fn restore_page(
         &self,
         id: &str,
@@ -72,6 +84,18 @@ impl MemoryDB {
         expected_version: i64,
         scope: &ReadScope,
     ) -> Result<RestorePageResponse, RestorePageError> {
+        self.commit_page_restore(id, title, expected_version, scope)
+            .await
+            .map(|restored| restored.response)
+    }
+
+    pub(crate) async fn commit_page_restore(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        expected_version: i64,
+        scope: &ReadScope,
+    ) -> Result<PageRestore, RestorePageError> {
         if expected_version < 1 {
             return Err(
                 WenlanError::Validation("expected_version must be at least 1".into()).into(),
@@ -94,11 +118,11 @@ impl MemoryDB {
         )
         .await;
         match result {
-            Ok(response) => {
+            Ok(restored) => {
                 super::commit_or_rollback(&conn).await.map_err(|error| {
                     WenlanError::VectorDb(format!("restore page commit: {error}"))
                 })?;
-                Ok(response)
+                Ok(restored)
             }
             Err(error) => {
                 conn.execute("ROLLBACK", ()).await.map_err(|rollback| {
@@ -117,7 +141,7 @@ impl MemoryDB {
         requested_title: Option<&str>,
         expected_version: i64,
         scope: &ReadScope,
-    ) -> Result<RestorePageResponse, RestorePageError> {
+    ) -> Result<PageRestore, RestorePageError> {
         // Read the durable fence under the same write transaction so an
         // intervening cutover cannot be missed between a check and write.
         let raw_fence = conn
@@ -163,13 +187,19 @@ impl MemoryDB {
         let title = requested_title.unwrap_or(&row.title).to_string();
         if row.status == "active" && title == row.title {
             // A replay of a restore that already landed: same answer, no write.
-            return Ok(RestorePageResponse {
-                id: id.into(),
-                title: row.title,
-                version: row.version,
-                status: row.status,
-                projection_status: PageProjectionStatus::NotConfigured,
-                projection_error: None,
+            return Ok(PageRestore {
+                response: RestorePageResponse {
+                    id: id.into(),
+                    title: row.title,
+                    version: row.version,
+                    status: row.status,
+                    projection_status: PageProjectionStatus::NotConfigured,
+                    projection_error: None,
+                    links_updated: 0,
+                    links_pending_review: 0,
+                    links_not_updated: 0,
+                },
+                previous_title: None,
             });
         }
         if row.status != "archived" {
@@ -235,13 +265,20 @@ impl MemoryDB {
         Self::append_page_history(conn, id, "restore", now.timestamp())
             .await
             .map_err(storage)?;
-        Ok(RestorePageResponse {
-            id: id.into(),
-            title,
-            version: next_version,
-            status: "active".into(),
-            projection_status: PageProjectionStatus::NotConfigured,
-            projection_error: None,
+        let previous_title = (title != row.title).then_some(row.title);
+        Ok(PageRestore {
+            response: RestorePageResponse {
+                id: id.into(),
+                title,
+                version: next_version,
+                status: "active".into(),
+                projection_status: PageProjectionStatus::NotConfigured,
+                projection_error: None,
+                links_updated: 0,
+                links_pending_review: 0,
+                links_not_updated: 0,
+            },
+            previous_title,
         })
     }
 
