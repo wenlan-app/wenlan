@@ -39,8 +39,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 
 /// What the claim tells the caller to do with the sources.
 pub const NEW_PAGE_NOTE: &str = "Write one note from these sources with your main model. \
-Give it a short title that names the topic. Open with one plain sentence that says what \
-the note is about, then a few short paragraphs or lists. Use only what the numbered \
+Give it a short title that names the topic. Open with one or two plain sentences, in \
+everyday words, that tell a person what the note is about, then a few short paragraphs or \
+lists. Detail only an AI needs (commands, paths, edge cases) may go last under the heading \
+\"## Details for AI\" (\"## 給 AI 的細節\" when the sources are in Chinese). Use only what the numbered \
 sources say and cite every claim with its number, like [2]. Write in the language of the \
 sources. Then commit with action \"write\", the token, the title and the body. If the \
 sources do not belong together, commit with action \"release\" instead.";
