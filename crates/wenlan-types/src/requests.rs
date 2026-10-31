@@ -759,6 +759,9 @@ pub struct UpdateConfigRequest {
     /// it off leaves existing locks in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock_my_pages: Option<bool>,
+    /// "AI may edit my sentences directly" on every page. Omitted = preserve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_direct_edit: Option<bool>,
     /// Scopes `everyday_source` and `synthesis_source` in this same request to
     /// jobs that are currently unpinned. No other field is affected. Omitted or
     /// `false` = overwrite, which is what every caller did before this field
@@ -989,6 +992,11 @@ pub struct CreatePageWithBasisRequest {
 #[serde(deny_unknown_fields)]
 pub struct SetPageReviewRequiredRequest {
     pub required: bool,
+    /// The page's "AI may edit directly" setting, the third value of the same
+    /// 允許／先問我 control. Omitted = preserve, except that turning the review
+    /// lock on clears it. `true` together with `required: true` is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_direct_edit: Option<bool>,
 }
 
 /// Explicit metadata edit, separate from content refresh. A caller must have
