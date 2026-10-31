@@ -999,6 +999,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   attach_bytes_to_page: async (): Promise<never> => {
     throw new Error("Pasting images and videos requires the native Wenlan app.");
   },
+  attach_image_url_to_page: async (): Promise<never> => {
+    throw new Error("Pasting web images requires the native Wenlan app.");
+  },
 
   // Saving a pasted link as a source (PageDetail). Mirrors app/src/api.rs:
   // a create-only ingest fails closed on 409 instead of replacing the page.

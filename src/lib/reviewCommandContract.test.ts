@@ -43,6 +43,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "approve_remote_pairing",
   "attach_bytes_to_page",
   "attach_file_to_page",
+  "attach_image_url_to_page",
   "bind_repo_wiki",
   "cancel_guarded_quit_request",
   "connect_source",

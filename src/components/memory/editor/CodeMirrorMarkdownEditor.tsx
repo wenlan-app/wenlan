@@ -439,8 +439,10 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             createSlashEditing({ labels: () => slashLabelsRef.current, blocked: actionsBlocked }).extension,
             mediaPaste({
               blocked: actionsBlocked,
-              onError: (file) => toast.error(t("pageAttachments.failed", { name: file.name || "file" })),
-              pendingLabel: (file) => t("pageAttachments.adding", { name: file.name || "file" }),
+              onError: (name) => toast.error(name
+                ? t("pageAttachments.failed", { name })
+                : t("pageAttachments.imageFailed")),
+              pendingLabel: (name) => name ? t("pageAttachments.adding", { name }) : t("pageAttachments.addingImage"),
             }),
             sourceLinkUrls.init(() => props.sourceLinks ?? new Map()),
             sourceIconMount.of((container, url, place) => callbacksRef.current.mountSourceIcon?.(container, url, place) ?? (() => undefined)),

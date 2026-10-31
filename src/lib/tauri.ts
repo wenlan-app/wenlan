@@ -3468,6 +3468,11 @@ export async function attachBytesToPage(name: string, bytes: Uint8Array): Promis
   });
 }
 
+/** Download an image by its web address and copy it into the pages folder. */
+export async function attachImageUrlToPage(url: string): Promise<AttachedFile> {
+  return invoke("attach_image_url_to_page", { url });
+}
+
 // ===== Profile =====
 
 export async function getProfile(): Promise<Profile | null> {
