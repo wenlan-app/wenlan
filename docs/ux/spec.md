@@ -28,9 +28,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   follows a folder or repository, and one Space holds several things. A thing
   can span Spaces. Until things have their own record, each active item of a
   Space Brief stands for one thing.
-- **Yours**: a sentence you wrote or approved. Only yours counts as decided.
-- **Proposal**: a change the AI suggests. It lands only when you accept it,
-  unless you set a page, or all pages, to "the AI may edit directly".
+- **Yours**: a sentence you wrote, edited or accepted. Having seen it does not
+  make it yours. Only yours counts as decided.
+- **Proposal**: a change the AI suggests to one of your sentences. It lands
+  only when you accept it.
 
 ## Home
 
@@ -81,11 +82,12 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-WHO-1** `planned` Every sentence shows whether it is yours (including
   ones you approved) or the AI's: visible, but quiet.
   原文：每一句都分得出是你的（含你點頭的）還是 AI 的，看得出來但不吵。
-- **UX-WHO-2** `planned` By default the AI cannot change your sentences; it
-  can only propose, and proposals can be accepted one sentence at a time. If
-  you set a page, or all pages, to "the AI may edit directly", it edits; the
-  edit is still marked as the AI's, recorded in history and can be undone.
-  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（10/31：預設提議；你設成可以直接改，它就自己更新。）
+- **UX-WHO-2** `planned` The AI updates the sentences it wrote that nobody has
+  touched; each update is recorded and can be undone. It cannot change your
+  sentences: it proposes, one sentence at a time, with accept or no under that
+  sentence, never a whole-page card. Each page has one Lock switch, off by
+  default; there is no "may edit directly" mode.
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）
 - **UX-WHO-3** `planned` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
@@ -112,12 +114,13 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   mind map is visible and follows the conversation within 30 seconds; every
   point opens that page in Wenlan.
   原文：能顯示小視窗的工具裡，看得到這件事的心智圖，30 秒內跟著對話變；每個點都能點回文瀾那一頁。
-- **UX-CHAT-4** `shipped` Tools that can't show a window (for example the
-  Claude Code terminal) get a small text tree of the mind map and an "open in
-  Wenlan" link. It is a Beta setting, off by default: on, it comes with every
-  page read; off, it still comes when you ask for it.
+- **UX-CHAT-4** `planned` Tools that can't show a window (for example the
+  Claude Code terminal) get the same mind map as UX-CHAT-3, this
+  conversation's working memory built from the conversation and the source
+  pages it uses, as a small text tree with an "open in Wenlan" link. A single
+  page's own map comes only when you ask for that page.
   原文：不能顯示小視窗的工具（例如 Claude Code 命令列）給一個小的文字樹，加「在文瀾打開」。
-  「可以是設定打開就可以一直看。沒有就關掉」「也可以選關掉，平常主動問也有小圖」「默認先不開」「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31）
+  「我是认为是读的是一个工作状态上面的一个心智图，因为这跟这个对话有关嘛」「笔记的那个心智图…除非是有必要想去看」「把不同的就是来源笔记啊啥的，然后把它读到这个就是 working memory 里面的一个心智图」（2026-10-31）
 - **UX-CHAT-5** `planned` "Wrap up?" is asked once per thing, and only points
   you approve join the big map.
   原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。
