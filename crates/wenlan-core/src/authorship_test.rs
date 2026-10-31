@@ -45,6 +45,41 @@ fn units_split_lines_then_sentences_and_ignore_markers_and_wrapping() {
     );
 }
 
+fn texts(body: &str) -> Vec<String> {
+    sentence_units(body).into_iter().map(|u| u.text).collect()
+}
+
+#[test]
+fn chinese_sentences_split_on_their_own_punctuation() {
+    assert_eq!(
+        texts("週二的訪客比週一多。我們有一整天可以回留言。"),
+        ["週二的訪客比週一多。", "我們有一整天可以回留言。"]
+    );
+    assert_eq!(
+        texts("真的嗎？「好！」他說。[1]然後走了。"),
+        ["真的嗎？", "「好！」", "他說。[1]", "然後走了。"]
+    );
+    assert_eq!(
+        texts("混合 English. 中文句子。"),
+        ["混合 English.", "中文句子。"]
+    );
+}
+
+#[test]
+fn an_abbreviation_does_not_end_the_sentence() {
+    assert_eq!(
+        texts("The sale starts on Tuesday at 12:01 a.m. Pacific. Doors open early."),
+        [
+            "The sale starts on Tuesday at 12:01 a.m. Pacific.",
+            "Doors open early."
+        ]
+    );
+    assert_eq!(
+        texts("Ask Dr. Lee, e.g. about dosing. Then rest."),
+        ["Ask Dr. Lee, e.g. about dosing.", "Then rest."]
+    );
+}
+
 #[test]
 fn a_person_touch_up_makes_the_sentence_theirs_but_keeps_its_ai_origin() {
     let rows = derive(
