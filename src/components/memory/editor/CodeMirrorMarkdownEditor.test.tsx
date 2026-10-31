@@ -3,7 +3,7 @@ import { StrictMode, createRef } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { EditorView } from "@codemirror/view";
-import { redo, undo, undoDepth } from "@codemirror/commands";
+import { isolateHistory, redo, undo, undoDepth } from "@codemirror/commands";
 import { SearchQuery, replaceAll, setSearchQuery } from "@codemirror/search";
 import { i18n } from "../../../i18n";
 import { CodeMirrorMarkdownEditor } from "./CodeMirrorMarkdownEditor";
@@ -88,6 +88,26 @@ describe("CodeMirrorMarkdownEditor", () => {
     expect(undoDepth(view.state)).toBe(0);
     act(() => { redo(view); });
     await waitFor(() => expect(view.state.doc.toString()).toBe("Keep."));
+  });
+
+  it("keeps an old-title link typed after the rename when undo restores other text", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "Intro.\nKeep." })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    const rewrite = (doc: string) => [...doc.matchAll(/\[\[Old\]\]/g)]
+      .map((match) => ({ from: match.index + 2, to: match.index + 5, insert: "New" }));
+    act(() => { expect(ref.current?.applyExternalEdits(rewrite)).toBe(true); });
+    // A new page now carries the old title; the person links to it on purpose.
+    act(() => { view.dispatch({ changes: { from: view.state.doc.length, insert: " See [[Old]]." }, userEvent: "input.type", annotations: isolateHistory.of("full") }); });
+    // Then deletes an unrelated line, and takes that back.
+    act(() => { view.dispatch({ changes: { from: 0, to: 7 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("Intro.\nKeep. See [[Old]].");
+    // Negative control: text the undo itself restores is still rewritten.
+    act(() => { view.dispatch({ changes: { from: 0, to: 7, insert: "[[Old]] " }, userEvent: "input.type", annotations: isolateHistory.of("full") }); });
+    act(() => { view.dispatch({ changes: { from: 0, to: 8 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("[[New]] Keep. See [[Old]].");
   });
 
   it("leaves text undo brings back as it was when no outside rewrite applies", async () => {

@@ -164,13 +164,22 @@ export const CodeMirrorMarkdownEditor = forwardRef<
   const withExternalEditsReplayed = (tr: Transaction): Transaction => {
     if (!tr.docChanged || externalEditsRef.current.length === 0 ||
         !(tr.isUserEvent("undo") || tr.isUserEvent("redo"))) return tr;
+    // Only the text this undo or redo put back can predate the edit. Links
+    // typed since then stay as typed, even one that names the old title.
+    let restored: Array<[number, number]> = [];
+    tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+      if (toB > fromB) restored.push([fromB, toB]);
+    });
     let doc = tr.newDoc;
     const specs: TransactionSpec[] = [];
     for (const edits of externalEditsRef.current) {
-      const changes = edits(doc.toString());
+      if (restored.length === 0) break;
+      const changes = edits(doc.toString()).filter(({ from, to }) =>
+        restored.some(([start, end]) => from >= start && to <= end));
       if (changes.length === 0) continue;
       const set = ChangeSet.of(changes.map(({ from, to, insert }) => ({ from, to, insert })), doc.length);
       specs.push({ changes: set, sequential: true });
+      restored = restored.map(([start, end]) => [set.mapPos(start, -1), set.mapPos(end, 1)]);
       doc = set.apply(doc);
     }
     if (specs.length === 0) return tr;
