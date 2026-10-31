@@ -111,8 +111,11 @@ items, sources or tasks to a helper.
       small model write it. Title: a short heading that names the topic, in
       the sources' language; in English, in title case, every main word
       capitalized ("Household Finances", not "Household finances"), with
-      proper names kept as written. Open with one plain sentence that says
-      what the page is about, then short paragraphs or lists. Use only what
+      proper names kept as written. Open with one or two plain sentences, in
+      everyday words, that tell a person what the page is about, then short
+      paragraphs or lists. Detail only an AI needs (commands, paths, edge
+      cases) may go last under the heading `## Details for AI` (`## 給 AI 的細節`
+      when the sources are in Chinese). Use only what
       the sources say and cite every claim with its number, like `[2]`. Link
       every page in `link_targets` that the text talks about, each as
       `[[Title]]` at its first mention, with the title exactly as given.

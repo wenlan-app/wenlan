@@ -93,6 +93,11 @@ pub struct BriefReadResponse {
     /// the library is established or the user has asked about their notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub getting_started: Option<GettingStarted>,
+    /// The page that says how the person wants AI tools to work with them
+    /// (`role: instructions`), read before starting work. Library-wide.
+    /// Absent until it exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<crate::chat_check::InstructionsPage>,
 }
 
 /// The next thing a new user does, in the same order as the app's

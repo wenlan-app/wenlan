@@ -10,6 +10,7 @@ pub mod attachments;
 pub mod brand;
 pub mod brief;
 pub mod briefing;
+pub mod chat_check;
 pub mod code_basis;
 pub mod communities;
 pub mod entities;

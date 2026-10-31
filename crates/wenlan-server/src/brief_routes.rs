@@ -120,6 +120,18 @@ pub async fn handle_read_brief(
             None
         }
     };
+    // How the person wants AI tools to work (UX-HOW-1), on every answer so a
+    // tool starting work reads it first. Read only: a Brief read never
+    // creates it (`GET /api/pages/instructions` seeds it).
+    let instructions = match wenlan_core::instructions_page::find_instructions_page(&db).await {
+        Ok(page) => page
+            .as_ref()
+            .map(wenlan_core::instructions_page::instructions_payload),
+        Err(error) => {
+            tracing::warn!("[brief] instructions page: {error}");
+            None
+        }
+    };
     let Some(space) = resolve_space(&db, request.space.as_deref(), header_space.as_deref()).await?
     else {
         return Ok(Json(BriefReadResponse {
@@ -130,6 +142,7 @@ pub async fn handle_read_brief(
             code_basis_pending: None,
             code_basis_pending_explained: false,
             getting_started,
+            instructions,
         }));
     };
     let Some(brief) = db.get_brief_by_space_name(&space).await? else {
@@ -143,6 +156,7 @@ pub async fn handle_read_brief(
             code_basis_pending,
             code_basis_pending_explained,
             getting_started,
+            instructions,
         }));
     };
 
@@ -245,6 +259,7 @@ pub async fn handle_read_brief(
         code_basis_pending,
         code_basis_pending_explained,
         getting_started,
+        instructions,
     }))
 }
 

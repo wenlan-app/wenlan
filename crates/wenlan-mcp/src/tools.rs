@@ -153,9 +153,10 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// characters under the old ceiling, so any new tool needs room), then by the
 /// length of `save_source`'s description when that tool was added, then by
 /// the length of `steep`'s, then by the length of `doc_fix`'s, then by the
-/// length of `attach_file`'s, then by the length of `propose_note_change`'s.
+/// length of `attach_file`'s, then by the length of `propose_note_change`'s,
+/// then by the length of `check_reply`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 17_396;
+const DESCRIPTION_BUDGET_CHARS: usize = 17_637;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1007,7 +1008,7 @@ pub struct WritePageParams {
     )]
     pub title: Option<String>,
     #[schemars(
-        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
+        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Open with one or two plain sentences a person can read at a glance. Detail only an AI needs (commands, paths, edge cases) may go last under the heading '## Details for AI' (or '## 給 AI 的細節' on a Chinese page). Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
     )]
     pub content: String,
     #[schemars(
@@ -1320,6 +1321,22 @@ pub struct GetPageSourcesParams {
         description = "Opaque page id (e.g. 'page_abc' or legacy 'concept_abc'), using ASCII letters, digits, underscores, and hyphens only; not a URL or file path. Returns the source memories that distilled into this page, each enriched with the memory's metadata for display."
     )]
     pub page_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CheckReplyParams {
+    #[schemars(description = "The reply you are about to give or just gave, as plain text.")]
+    pub reply: String,
+    #[schemars(
+        description = "Space (project) whose decisions to check against. Uses the locked or configured default Space when omitted."
+    )]
+    #[serde(default, alias = "domain")]
+    pub space: Option<String>,
+    #[schemars(
+        description = "Your AI session as tool:id, e.g. claude-code:<session id>; the same decision is not repeated in one session on one day."
+    )]
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1657,6 +1674,29 @@ fn attach_file_refusal(code: &str) -> String {
         _ => "the pages folder already has a different file with that name",
     };
     format!("Not attached: {reason}. Nothing was changed.")
+}
+
+/// The `check_reply` answer: the reminders as the daemon wrote them, one per
+/// line, or one line saying there is nothing to remind.
+fn format_check_reply(response: &wenlan_types::chat_check::ChatCheckResponse) -> String {
+    use wenlan_types::chat_check::ChatCheckSkipped;
+    if response.reminders.is_empty() {
+        return match response.skipped {
+            Some(ChatCheckSkipped::DailyCap) => {
+                "No reminder: today's reminders are used up.".to_string()
+            }
+            Some(ChatCheckSkipped::Timeout) => {
+                "No reminder: Wenlan did not answer in time; go on.".to_string()
+            }
+            _ => "Nothing in this reply goes against an earlier decision.".to_string(),
+        };
+    }
+    response
+        .reminders
+        .iter()
+        .map(|reminder| reminder.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn propose_note_change_refusal(code: &str) -> String {
@@ -2252,6 +2292,18 @@ fn getting_started_lines(getting_started: &wenlan_types::GettingStarted) -> Stri
     format!("Getting started (whole library): {pages}, {waiting}.\nNext step for the user: {next}.")
 }
 
+/// The person's page on how AI tools should work with them (UX-HOW-1), read
+/// before anything else in the Brief. Changes to it are proposals only.
+fn instructions_page_lines(page: &wenlan_types::chat_check::InstructionsPage) -> String {
+    format!(
+        "How the person wants AI to work with them: {} (v{}, {})\nFollow it. To change it, propose an edit with write_page; the person accepts or dismisses it.\n\n{}",
+        page.title,
+        page.version,
+        page.link,
+        page.content.trim()
+    )
+}
+
 /// One Brief item list as text, keeping the stable item ids and versions the
 /// handoff skill reconciles against.
 fn render_brief_items(output: &mut String, label: &str, items: &[wenlan_types::BriefItem]) {
@@ -2521,6 +2573,24 @@ impl WenlanMcpServer {
         )]))
     }
 
+    pub async fn check_reply_impl(
+        &self,
+        params: CheckReplyParams,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.session_client(params.session.as_deref()).await;
+        let request = wenlan_types::chat_check::ChatCheckRequest {
+            reply: params.reply,
+            session: None,
+            space: effective_space(&params.space),
+            workspace: None,
+        };
+        let response: wenlan_types::chat_check::ChatCheckResponse =
+            try_call!(client.post("/api/check", &request), "reply check");
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            format_check_reply(&response),
+        )]))
+    }
+
     pub async fn propose_note_change_impl(
         &self,
         params: ProposeNoteChangeParams,
@@ -2697,6 +2767,9 @@ impl WenlanMcpServer {
         };
         if let Some(getting_started) = response.getting_started.as_ref() {
             output.push_str(&format!("\n\n{}\n", getting_started_lines(getting_started)));
+        }
+        if let Some(instructions) = response.instructions.as_ref() {
+            output = format!("{}\n\n{output}", instructions_page_lines(instructions));
         }
 
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
@@ -4872,6 +4945,23 @@ impl WenlanMcpServer {
         Parameters(params): Parameters<SaveSourceParams>,
     ) -> Result<CallToolResult, McpError> {
         self.save_source_impl(params).await
+    }
+
+    #[tool(
+        description = "Check a reply against what the person decided earlier, for tools without hooks. Returns a reminder with the date and a wenlan:// link for each decision the reply goes against, or says nothing conflicts. Show reminders to the person as given.",
+        annotations(
+            title = "Check reply",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn check_reply(
+        &self,
+        Parameters(params): Parameters<CheckReplyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.check_reply_impl(params).await
     }
 
     #[tool(
@@ -9132,6 +9222,72 @@ mod tests {
         )
     }
 
+    /// UX-CHAT-1/2 for tools without hooks: `check_reply` posts the reply to
+    /// `/api/check` and shows each reminder as the daemon wrote it, or says
+    /// nothing conflicts.
+    #[tokio::test]
+    async fn check_reply_shows_the_daemon_reminders_or_says_nothing_conflicts() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _pin = pin_space(None).await;
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/check"))
+            .and(body_partial_json(serde_json::json!({"reply": "switch to Neo4j"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "reminders": [{
+                    "seq": 1,
+                    "text": "Earlier decision (2026-10-01): Use libSQL instead of Neo4j. wenlan://memory/mem_1",
+                    "decided": "Use libSQL instead of Neo4j.",
+                    "decided_on": "2026-10-01",
+                    "reply_excerpt": "switch to Neo4j",
+                    "option": "Neo4j",
+                    "source": {"memory_id": "mem_1", "memory_version": 1, "link": "wenlan://memory/mem_1"}
+                }],
+                "remaining_today": 4
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/check"))
+            .and(body_partial_json(
+                serde_json::json!({"reply": "renamed a helper"}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"reminders": [], "remaining_today": 5})),
+            )
+            .mount(&mock)
+            .await;
+        let server = stdio_server(mock.uri());
+
+        let hit = server
+            .check_reply_impl(CheckReplyParams {
+                reply: "switch to Neo4j".into(),
+                space: None,
+                session: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            text_of(&hit),
+            "Earlier decision (2026-10-01): Use libSQL instead of Neo4j. wenlan://memory/mem_1"
+        );
+        let quiet = server
+            .check_reply_impl(CheckReplyParams {
+                reply: "renamed a helper".into(),
+                space: None,
+                session: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            text_of(&quiet),
+            "Nothing in this reply goes against an earlier decision."
+        );
+    }
+
     fn write_params(page_id: Option<&str>) -> WritePageParams {
         WritePageParams {
             page_id: page_id.map(String::from),
@@ -11877,6 +12033,7 @@ mod tests {
             ("page_basis", (false, false, false)),
             ("page_code_basis", (false, false, false)),
             ("propose_note_change", (false, false, false)),
+            ("check_reply", (false, false, false)),
             ("read_page", (true, false, false)),
             ("recall", (false, false, false)),
             ("rename_page", (false, true, false)),
@@ -12252,6 +12409,7 @@ mod tests {
             "accept_revision",
             "attach_file",
             "capture",
+            "check_reply",
             "confirm_memory",
             "brief",
             "create_entity",

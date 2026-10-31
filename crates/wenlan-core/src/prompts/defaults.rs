@@ -176,7 +176,7 @@ Compile these memories into a wiki-style knowledge page.\n\
 \n\
 Format:\n\
 Do NOT start with a title heading (# Title) -- the title is displayed separately by the UI.\n\
-Start directly with a one-sentence summary of the topic, with no label in front of it.\n\
+Start directly with one or two plain sentences, in everyday words, that tell a person what the topic is, with no label in front of them.\n\
 \n\
 Then write the body organized with short topical headers (## Header) and prose paragraphs under each, \
 like a Wikipedia article with sections. \
@@ -238,7 +238,8 @@ Do not remove existing content unless it is explicitly superseded.\n\
 Do NOT include a title heading (# Title) -- the title is displayed separately by the UI.\n\
 Cite each factual claim by appending [N] immediately after it, where N is the number of the supporting source in the numbered source list. Attach the marker to the exact sentence that states the fact — never at the end of a paragraph, and never on a sentence that only explains or elaborates. A claim drawing on several sources may carry several markers, like [1][3]. Use only numbers that appear in the list. Do NOT add a sources or citations section — the system renders citations from the markers.\n\
 Do not write HTML comments (the <!-- ... --> form) anywhere in the page.\n\
-Output the complete updated page in the same format (opening summary sentence, prose paragraphs, Open Questions).";
+Keep the page opening with one or two plain sentences, in everyday words, that tell a person what the topic is.\n\
+Output the complete updated page in the same format (opening plain sentences, prose paragraphs, Open Questions).";
 
 pub(crate) const ANNOTATE_CITATIONS: &str = "\
 You annotate an existing wiki page with citations. You are given the page body \
@@ -369,6 +370,15 @@ mod tests {
             let upper = prompt.to_ascii_uppercase();
             assert!(!upper.contains("TLDR"));
             assert!(!upper.contains("TL;DR"));
+        }
+    }
+
+    #[test]
+    fn page_prompts_open_with_plain_sentences_for_people() {
+        // UX-VIEW-2: a page opens with one or two plain sentences a person
+        // reads first; the rest is the full text.
+        for prompt in [DISTILL_PAGE, UPDATE_PAGE] {
+            assert!(prompt.contains("one or two plain sentences"), "{prompt}");
         }
     }
 
