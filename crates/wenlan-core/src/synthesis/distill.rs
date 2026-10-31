@@ -5087,7 +5087,10 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
     }
 
     #[tokio::test]
-    async fn force_redistill_lands_body_and_releases_edit_protection_in_one_write() {
+    async fn force_redistill_keeps_the_persons_prose_and_proposes_the_rebuild() {
+        // The page's whole body is the person's own prose. A forced rebuild
+        // regenerates only the AI's sentences; a change to the person's
+        // sentence is staged as a sentence proposal, and the page stays theirs.
         let (db, _db_dir) = crate::db::tests::test_db().await;
         let db = Arc::new(db);
         seed_protected_page(&db, "page_forced").await;
@@ -5105,7 +5108,6 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         .await
         .unwrap();
 
-        assert!(outcome.wrote, "a verified forced rebuild lands in place");
         assert!(!outcome.gated, "user_edited alone must not stage a card");
         assert_eq!(
             *provider.observed.lock().await,
@@ -5113,21 +5115,25 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             "edit protection must hold while generation is in flight"
         );
         let after = db.get_page("page_forced").await.unwrap().unwrap();
-        assert_eq!(after.content, FORCED_REBUILT_BODY);
-        assert_eq!(after.version, before.version + 1, "exactly one write");
-        assert!(!after.user_edited, "the landing write releases user_edited");
-        assert_eq!(
-            after.stale_reason, None,
-            "the landing write consumes staleness"
+        assert!(
+            after.content.contains(FORCED_USER_PROSE),
+            "the person's sentence is kept: {}",
+            after.content
         );
-        assert_eq!(after.refresh_blocked_reason, None);
-        let changelog: Vec<serde_json::Value> =
-            serde_json::from_str(&db.get_page_changelog("page_forced").await.unwrap()).unwrap();
-        let last_entry = changelog
-            .last()
-            .expect("the write appends a changelog entry");
-        assert_eq!(last_entry["version"], after.version);
-        assert_eq!(last_entry["edited_by"], "distill");
+        assert!(after.user_edited, "the page is still the person's");
+        assert!(after.version <= before.version + 1, "at most one write");
+        assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+        let view = crate::sentences::page_sentences(&db, "page_forced")
+            .await
+            .unwrap();
+        assert!(
+            view.proposals
+                .iter()
+                .any(|p| p.before.trim() == FORCED_USER_PROSE
+                    && p.after.contains("Tokio is an async runtime")),
+            "the rebuild of the person's sentence waits as a proposal: {:?}",
+            view.proposals
+        );
     }
 
     #[tokio::test]

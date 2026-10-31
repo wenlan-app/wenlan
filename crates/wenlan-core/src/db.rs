@@ -90,6 +90,7 @@ pub use activity_counts::{
 };
 mod scoped_entities;
 mod scoped_pages;
+pub mod sentence_history;
 pub mod sessions;
 pub mod source_annotations;
 mod source_sync;
@@ -1548,7 +1549,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 145;
+pub const SCHEMA_VERSION: u32 = 146;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -5762,7 +5763,7 @@ impl MemoryDB {
         // that one guarantee, and it lives here rather than in the constructors
         // because the chain replay is what needs it.
         ensure_legacy_entities_table(&conn).await?;
-        // Same for the tables migration 145 drops. See db/table_classes.rs.
+        // Same for the tables migration 146 drops. See db/table_classes.rs.
         table_classes::ensure_dropped_tables_for_replay(&conn, version).await?;
 
         if version < 1 {
@@ -10716,14 +10717,23 @@ impl MemoryDB {
             if version < 144 {
                 self.migrate_144_legacy_quick_captures(version).await?;
             }
-            // Migration 145 drops tables no live code reads any more, the
-            // first step of the move to Markdown files. See
-            // db/table_classes.rs.
+            // Migration 145 adds `sentence_history` (sentence proposals,
+            // accepts, rejects and flags in the history-entry shape). See
+            // migrate_145_sentence_history.
             if ceiling < 145 {
                 return Ok(());
             }
             if version < 145 {
-                self.migrate_145_drop_retired_tables(version).await?;
+                self.migrate_145_sentence_history(version).await?;
+            }
+            // Migration 146 drops tables no live code reads any more, the
+            // first step of the move to Markdown files. See
+            // db/table_classes.rs.
+            if ceiling < 146 {
+                return Ok(());
+            }
+            if version < 146 {
+                self.migrate_146_drop_retired_tables(version).await?;
             }
         }
 
@@ -52329,6 +52339,16 @@ impl MemoryDB {
         // page-insert path reaches, so stamping here is what makes `kind`
         // truthful corpus-wide. Both arms below write `status='active'`.
         let kind = crate::pages::page_kind_for(title, creation_kind, "active");
+        // Each citation records the source version it was checked against.
+        let stamped_citations =
+            match sentence_history::stamp_cited_versions(&conn, citations_json).await {
+                Ok(stamped) => stamped,
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!("insert_page citations: {e}")));
+                }
+            };
+        let citations_json = stamped_citations.as_deref();
 
         let concept_result = match &embedding_sql {
             Some(emb) => {
@@ -53923,6 +53943,19 @@ impl MemoryDB {
         // parity drift. Reconcile edges against the old-vs-new citation sets
         // BEFORE the column changes (same helper as `set_page_citations`);
         // rolled back together with the UPDATE if a CAS guard fails below.
+        // Each citation records the source version it was checked against,
+        // in the transaction of the body it was computed for.
+        let stamped_citations =
+            match sentence_history::stamp_cited_versions(&conn, citations_bind).await {
+                Ok(stamped) => stamped,
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "update_page_content citation versions: {e}"
+                    )));
+                }
+            };
+        let citations_bind = stamped_citations.as_deref();
         if let Err(e) = Self::dual_write_page_citations(&conn, id, citations_bind).await {
             let _ = conn.execute("ROLLBACK", ()).await;
             return Err(WenlanError::VectorDb(format!(
@@ -57813,6 +57846,8 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("set_page_citations begin: {e}")))?;
         let exec = async {
+            let stamped = sentence_history::stamp_cited_versions(&conn, citations_json).await?;
+            let citations_json = stamped.as_deref();
             Self::dual_write_page_citations(&conn, page_id, citations_json).await?;
             conn.execute(
                 "UPDATE pages SET citations = ?1 WHERE id = ?2",
@@ -57855,6 +57890,8 @@ impl MemoryDB {
             WenlanError::VectorDb(format!("set_page_citations_with_changelog begin: {e}"))
         })?;
         let exec = async {
+            let stamped = sentence_history::stamp_cited_versions(&conn, citations_json).await?;
+            let citations_json = stamped.as_deref();
             Self::dual_write_page_citations(&conn, page_id, citations_json).await?;
             conn.execute(
                 "UPDATE pages SET citations = ?1, changelog = ?2 WHERE id = ?3",
@@ -57915,6 +57952,8 @@ impl MemoryDB {
             ))
         })?;
         let exec = async {
+            let stamped = sentence_history::stamp_cited_versions(&conn, citations_json).await?;
+            let citations_json = stamped.as_deref();
             let affected = conn
                 .execute(
                     "UPDATE pages SET citations = ?1, changelog = ?2

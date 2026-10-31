@@ -41,13 +41,13 @@ async fn every_table_in_a_fresh_database_has_a_class() {
 }
 
 #[tokio::test]
-async fn migration_145_drops_the_retired_tables_and_nothing_else() {
-    let (db, _dir) = test_db_at(144).await;
+async fn migration_146_drops_the_retired_tables_and_nothing_else() {
+    let (db, _dir) = test_db_at(145).await;
     let before = table_names(&db).await;
     for table in DROPPED_TABLES {
         assert!(
             before.contains(*table),
-            "{table} exists before migration 145"
+            "{table} exists before migration 146"
         );
         assert_eq!(
             table_class(table),
@@ -70,11 +70,11 @@ async fn migration_145_drops_the_retired_tables_and_nothing_else() {
 }
 
 #[tokio::test]
-async fn migration_145_runs_again_without_error() {
+async fn migration_146_runs_again_without_error() {
     let (db, _dir) = test_db().await;
     {
         let conn = db.conn.lock().await;
-        conn.execute("PRAGMA user_version = 144", ()).await.unwrap();
+        conn.execute("PRAGMA user_version = 145", ()).await.unwrap();
     }
     db.run_migrations(&crate::events::NoopEmitter)
         .await

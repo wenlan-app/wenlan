@@ -46,7 +46,7 @@ CODEX_REQUIRED_GUARDRAILS = {
     "distill": [
         "rebuild <page-id>",
         "force=true",
-        "user-edited page prose is wiped",
+        "changes to your sentences come back as proposals",
     ],
     "curate": [
         "revision_source_id",
