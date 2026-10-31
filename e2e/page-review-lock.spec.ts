@@ -11,10 +11,10 @@ const recentChanges = [{
   changed_at_ms: Date.parse("2026-07-10T12:00:00Z"),
 }];
 
-const COPY: Record<AppLocale, { actions: string; sidebar: string; heading: string; allowed: string; askFirst: string; fromAi: string; fromPage: string }> = {
-  en: { actions: "Page actions", sidebar: "Open page sidebar", heading: "AI changes", allowed: "Allowed", askFirst: "Ask me first", fromAi: "AI wrote this page.", fromPage: "You chose this for this page." },
-  "zh-Hant": { actions: "筆記操作", sidebar: "開啟筆記側欄", heading: "AI 修改", allowed: "直接改", askFirst: "先問我", fromAi: "這篇筆記是 AI 寫的。", fromPage: "這是你為這篇筆記選的。" },
-  "zh-Hans": { actions: "笔记操作", sidebar: "打开笔记侧栏", heading: "AI 修改", allowed: "直接改", askFirst: "先问我", fromAi: "这篇笔记是 AI 写的。", fromPage: "这是你为这篇笔记选的。" },
+const COPY: Record<AppLocale, { actions: string; sidebar: string; lock: string; off: string; on: string }> = {
+  en: { actions: "Page actions", sidebar: "Open page sidebar", lock: "Lock this page", off: "AI keeps the sentences it wrote up to date. Changes to yours wait for you.", on: "Every AI change waits for your OK." },
+  "zh-Hant": { actions: "筆記操作", sidebar: "開啟筆記側欄", lock: "鎖定這篇筆記", off: "AI 會更新它自己寫的句子；要改你的句子，會先問你。", on: "AI 的每個修改都等你點頭。" },
+  "zh-Hans": { actions: "笔记操作", sidebar: "打开笔记侧栏", lock: "锁定这篇笔记", off: "AI 会更新它自己写的句子；要改你的句子，会先问你。", on: "AI 的每个修改都等你点头。" },
 };
 
 async function openFixturePage(page: Page, actionsLabel: string): Promise<void> {
@@ -33,41 +33,40 @@ async function lineCount(page: Page, text: string): Promise<number> {
 }
 
 for (const locale of ["en", "zh-Hant", "zh-Hans"] as const) {
-  test(`sets AI changes on a page from its Info panel (${locale})`, async ({ page }, testInfo) => {
+  test(`UX-WHO-2 locks a page from its Info panel with one switch (${locale})`, async ({ page }, testInfo) => {
     const copy = COPY[locale];
     const errors = collectBrowserErrors(page);
     const controller = await installTauriMock(page, { locale, rawActions: [], pageScenario: { recentChanges } });
     await openFixturePage(page, copy.actions);
 
-    // The page menu no longer carries a lock.
+    // The page menu carries no lock.
     await page.getByRole("button", { name: copy.actions, exact: true }).click();
     await expect(page.getByRole("menu", { name: copy.actions, exact: true })).toBeVisible();
     await expect(page.getByRole("menuitemcheckbox")).toHaveCount(0);
     await page.keyboard.press("Escape");
 
-    // The sidebar opens on Info.
+    // The sidebar opens on Info. One switch, off by default; no radio choice.
     await page.getByRole("button", { name: copy.sidebar, exact: true }).click();
-    const group = page.getByRole("radiogroup", { name: copy.heading, exact: true });
-    const allowed = group.getByRole("radio", { name: new RegExp(`^${copy.allowed}`) });
-    const askFirst = group.getByRole("radio", { name: new RegExp(`^${copy.askFirst}`) });
-    await expect(allowed).toBeChecked();
-    await expect(page.getByText(copy.fromAi, { exact: true })).toBeVisible();
-    // Each option's name stays on one line in every locale.
-    expect(await lineCount(page, copy.allowed)).toBe(1);
-    expect(await lineCount(page, copy.askFirst)).toBe(1);
-    await group.screenshot({ path: testInfo.outputPath(`allowed-${locale}.png`) });
+    const lock = page.getByRole("button", { name: copy.lock, exact: true });
+    const section = page.locator(".page-lock");
+    await expect(lock).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByText(copy.off, { exact: true })).toBeVisible();
+    await expect(page.getByRole("radiogroup")).toHaveCount(0);
+    // The switch's name stays on one line in every locale.
+    expect(await lineCount(page, copy.lock)).toBe(1);
+    await section.screenshot({ path: testInfo.outputPath(`unlocked-${locale}.png`) });
 
-    await askFirst.click();
-    await expect(askFirst).toBeChecked();
-    await expect(page.getByText(copy.fromPage, { exact: true })).toBeVisible();
-    await group.screenshot({ path: testInfo.outputPath(`ask-first-${locale}.png`) });
+    await lock.click();
+    await expect(lock).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByText(copy.on, { exact: true })).toBeVisible();
+    await section.screenshot({ path: testInfo.outputPath(`locked-${locale}.png`) });
     expect(controller.calls().filter((call) => call.command === "set_page_review_required").map((call) => call.args))
       .toEqual([{ pageId: "page-architecture", required: true }]);
     const locked = await page.evaluate(async () => window.__TAURI_INTERNALS__!.invoke("get_page", { id: "page-architecture" })) as { review_required?: boolean };
     expect(locked.review_required).toBe(true);
 
-    await allowed.click();
-    await expect(allowed).toBeChecked();
+    await lock.click();
+    await expect(lock).toHaveAttribute("aria-pressed", "false");
     const unlocked = await page.evaluate(async () => window.__TAURI_INTERNALS__!.invoke("get_page", { id: "page-architecture" })) as { review_required?: boolean };
     expect(unlocked.review_required).toBeUndefined();
 

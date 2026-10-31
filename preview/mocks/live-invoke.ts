@@ -692,6 +692,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_session_detail: (a) => get(`/api/sessions/${enc(a.sessionId)}`),
   set_page_review_required: (a) =>
     put(`/api/pages/${enc(a.pageId)}/review-required`, { required: a.required }),
+  get_page_sentences: (a) => get(`/api/pages/${enc(a.pageId)}/sentences`),
+  accept_sentence_proposal: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/accept`, {}),
+  reject_sentence_proposal: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/reject`, {}),
   get_source_annotation: (a) => get(`/api/source-annotations${qs({
     source: a?.source,
     source_id: a?.sourceId,

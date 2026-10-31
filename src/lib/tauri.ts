@@ -2106,6 +2106,57 @@ export async function getConceptSources(
   return getPageSources(conceptId);
 }
 
+/** The AI's staged change to one of the person's sentences (UX-WHO-2). */
+export interface SentenceProposal {
+  id: string;
+  page_id: string;
+  version: number;
+  sentence_hash: string;
+  /** The sentence as it read when proposed. */
+  before: string;
+  /** The proposed text; empty proposes deleting the sentence. */
+  after: string;
+  why?: string | null;
+  actor: { kind: string; name: string; agent?: string | null };
+  ts: number;
+  status: "pending" | "accepted" | "rejected";
+}
+
+export interface PageSentence {
+  idx: number;
+  text: string;
+  hash: string;
+  author: "person" | "ai" | "unknown" | "original";
+  protected: boolean;
+  proposals?: string[];
+}
+
+export interface PageSentencesResponse {
+  page_id: string;
+  version: number;
+  ai_edits: "propose" | "locked";
+  sentences: PageSentence[];
+  proposals: SentenceProposal[];
+}
+
+export async function getPageSentences(pageId: string): Promise<PageSentencesResponse> {
+  return invoke("get_page_sentences", { pageId });
+}
+
+export async function acceptSentenceProposal(
+  pageId: string,
+  proposalId: string,
+): Promise<{ proposal: SentenceProposal; version: number }> {
+  return invoke("accept_sentence_proposal", { pageId, proposalId });
+}
+
+export async function rejectSentenceProposal(
+  pageId: string,
+  proposalId: string,
+): Promise<{ proposal: SentenceProposal }> {
+  return invoke("reject_sentence_proposal", { pageId, proposalId });
+}
+
 export async function getPageLinks(pageId: string): Promise<PageLinksResponse> {
   return invoke("get_page_links", { pageId });
 }
