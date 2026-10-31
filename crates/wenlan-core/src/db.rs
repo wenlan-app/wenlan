@@ -1553,7 +1553,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 146;
+pub const SCHEMA_VERSION: u32 = 148;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10735,6 +10735,16 @@ impl MemoryDB {
             }
             if version < 146 {
                 self.migrate_146_chat_reminders(version).await?;
+            }
+            // Migration 148 lets `sentence_history` record the person's Undo
+            // of an AI write (`sentence.revert`). See
+            // migrate_148_sentence_revert. Migration 147 is the originals
+            // table (#1055), which lands first.
+            if ceiling < 148 {
+                return Ok(());
+            }
+            if version < 148 {
+                self.migrate_148_sentence_revert(version).await?;
             }
         }
 
@@ -57298,6 +57308,7 @@ impl MemoryDB {
         let changelog_str = row.get::<String>(15).unwrap_or_else(|_| "[]".to_string());
         let (last_edited_by, last_edited_at, last_delta_summary) =
             Self::parse_changelog_tail(&changelog_str);
+        let human_edited_at = Self::parse_changelog_person_edit(&changelog_str);
         let stale_reason = row.get::<Option<String>>(13).unwrap_or(None);
         let citations: Vec<wenlan_types::pages::PageCitation> = row
             .get::<Option<String>>(19)
@@ -57348,6 +57359,7 @@ impl MemoryDB {
             relevance_score: 0.0, // populated by search_pages after RRF fusion
             last_edited_by,
             last_edited_at,
+            human_edited_at,
             last_delta_summary,
             changelog: Some(changelog_str),
             creation_kind: row
@@ -57384,6 +57396,25 @@ impl MemoryDB {
 
     /// Extract the last changelog entry's (edited_by, at, delta_summary) fields.
     /// Returns (None, None, None) when the JSON is empty or unparseable.
+    /// When the newest of the changelog's entries that the person wrote was
+    /// written (`page_history::kind_of_edit`). The changelog keeps the most
+    /// recent entries only, so an older edit of theirs reads as `None`.
+    fn parse_changelog_person_edit(json: &str) -> Option<i64> {
+        let arr: Vec<serde_json::Value> = serde_json::from_str(json).unwrap_or_default();
+        arr.iter()
+            .rev()
+            .find(|entry| {
+                entry
+                    .get("edited_by")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|by| {
+                        crate::page_history::kind_of_edit(by)
+                            == wenlan_types::responses::PageHistoryKind::PersonEdit
+                    })
+            })
+            .and_then(|entry| entry.get("at").and_then(|v| v.as_i64()))
+    }
+
     fn parse_changelog_tail(json: &str) -> (Option<String>, Option<i64>, Option<String>) {
         let arr: Vec<serde_json::Value> = serde_json::from_str(json).unwrap_or_default();
         arr.last()

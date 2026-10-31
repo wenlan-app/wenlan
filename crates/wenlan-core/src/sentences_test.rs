@@ -762,3 +762,129 @@ async fn an_authored_note_no_person_touched_is_the_ais() {
         .iter()
         .all(|s| s.author == SentenceAuthor::Person && s.protected));
 }
+
+#[tokio::test]
+async fn undoing_an_ai_write_puts_back_only_its_untouched_sentences_as_the_ais() {
+    let (db, _dir) = test_db().await;
+    let mine = page_with_my_line(&db, "p").await;
+    assert!(
+        mine.human_edited_at.is_some(),
+        "the person's save counts as their edit"
+    );
+    // The AI rewrites its first sentence, drops its second, and adds one.
+    let rewrite = "Tokio runs async tasks on a pool. I prefer the current-thread runtime. \
+                   Tokio has timers.";
+    let result = write(&db, "p", rewrite, "agent_refresh", Some(mine.version)).await;
+    assert!(result.wrote);
+    let ai = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(ai.content, rewrite);
+    assert_eq!(
+        ai.human_edited_at, mine.human_edited_at,
+        "an AI write is not the person's edit"
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    let last = view.last_ai_update.expect("the AI wrote last");
+    assert_eq!(last.version, ai.version);
+    assert_eq!(
+        last.changed_sentences, 3,
+        "changed one, removed one, added one"
+    );
+    let rows = db.list_page_history("p", 10).await.unwrap();
+    assert_eq!(
+        crate::page_history::changed_sentences_at(&rows, ai.version),
+        Some(3)
+    );
+
+    // The person touches the AI's new sentence; the undo leaves it alone.
+    let touched = "Tokio runs async tasks on a pool. I prefer the current-thread runtime. \
+                   Tokio has timers and intervals.";
+    assert!(write(&db, "p", touched, "manual_edit", None).await.wrote);
+    let person_version = db.get_page("p").await.unwrap().unwrap().version;
+
+    let undone = revert_ai_write(&db, "p", ai.version, None).await.unwrap();
+    assert_eq!((undone.reverted, undone.skipped), (2, 1));
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(undone.version, after.version);
+    assert_eq!(
+        after.content,
+        "Tokio runs async tasks. Workers steal queued tasks. I prefer the current-thread runtime. \
+         Tokio has timers and intervals."
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    assert_eq!(
+        authors(&view),
+        [
+            SentenceAuthor::Ai,
+            SentenceAuthor::Ai,
+            SentenceAuthor::Person,
+            SentenceAuthor::Person
+        ],
+        "what the undo put back stays the AI's; undoing never makes text yours"
+    );
+    let ops: Vec<String> = db
+        .list_sentence_history("page", "p")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.op)
+        .collect();
+    assert!(ops.iter().any(|op| op == "sentence.revert"));
+
+    assert!(matches!(
+        revert_ai_write(&db, "p", person_version, None).await,
+        Err(WenlanError::Conflict(m)) if m.starts_with("not_an_ai_write")
+    ));
+    assert!(matches!(
+        revert_ai_write(&db, "p", 9_999, None).await,
+        Err(WenlanError::NotFound(_))
+    ));
+    assert!(matches!(
+        revert_ai_write(&db, "nope", 1, None).await,
+        Err(WenlanError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn a_page_only_the_ai_wrote_has_no_person_edit_time() {
+    let (db, _dir) = test_db().await;
+    let page = ai_page(&db, "p", None).await;
+    assert_eq!(page.human_edited_at, None);
+    let view = page_sentences(&db, "p").await.unwrap();
+    let last = view.last_ai_update.expect("the AI wrote the page");
+    assert_eq!(last.version, page.version);
+    assert_eq!(last.changed_sentences, 2, "both sentences are new");
+}
+
+#[tokio::test]
+async fn migration_148_keeps_every_sentence_history_row_and_admits_revert() {
+    let (db, dir) = crate::db::tests::test_db_at(146).await;
+    let page = ai_page(&db, "p", None).await;
+    let hash = crate::authorship::sentence_units(&page.content)[0]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &hash, Some("不對")).await.unwrap();
+    drop(db);
+    for _ in 0..2 {
+        let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+            .await
+            .unwrap();
+        let entries = db.list_sentence_history("page", "p").await.unwrap();
+        assert_eq!(entries.len(), 1, "the flag survives the rebuild");
+        assert_eq!(entries[0].op, "sentence.flag");
+        db.append_sentence_history(NewHistoryEntry {
+            ts: 1,
+            tx: "tx_m148",
+            actor: &person(),
+            op: OP_SENTENCE_REVERT,
+            target: &page_target("q"),
+            version: Some(1),
+            why: None,
+            text: None,
+            digest_before: None,
+            digest_after: None,
+            data: &serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    }
+}

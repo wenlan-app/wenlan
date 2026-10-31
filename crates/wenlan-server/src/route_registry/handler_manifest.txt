@@ -145,6 +145,7 @@ main|post|/api/pages/{id}/sentences/propose|wenlan_server::sentence_routes::hand
 main|post|/api/pages/{id}/sentences/proposals/{proposal_id}/accept|wenlan_server::sentence_routes::handle_accept_sentence_proposal
 main|post|/api/pages/{id}/sentences/proposals/{proposal_id}/reject|wenlan_server::sentence_routes::handle_reject_sentence_proposal
 main|post|/api/pages/{id}/sentences/flag|wenlan_server::sentence_routes::handle_flag_sentence
+main|post|/api/pages/{id}/sentences/revert|wenlan_server::sentence_routes::handle_revert_sentences
 main|post|/api/pages/{id}/sentences/recheck|wenlan_server::sentence_routes::handle_recheck_sentence
 main|post|/api/pages/{id}/code-basis/cited|wenlan_server::code_basis_routes::handle_code_basis_cited
 main|post|/api/steep/claim|wenlan_server::steep_routes::handle_steep_claim

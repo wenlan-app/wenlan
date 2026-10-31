@@ -423,6 +423,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // version, history seq); the sentence reads and proposals are in the
     // sensitive catalog instead.
     "/api/pages/{id}/sentences/flag",
+    // Undoing one AI write's sentence changes returns counts and the new
+    // version only; re-reading the page is a sensitive read.
+    "/api/pages/{id}/sentences/revert",
     // A code basis confirm and remove return a state receipt only; the recheck
     // (it reports note titles) is in the sensitive catalog instead.
     "/api/pages/{id}/code-basis/confirm", "/api/pages/{id}/code-basis",

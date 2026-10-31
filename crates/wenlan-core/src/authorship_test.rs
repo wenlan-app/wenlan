@@ -17,7 +17,7 @@ fn authors(rows: &[SentenceAuthorship]) -> Vec<SentenceAuthor> {
 }
 
 fn derive(kind: &str, versions: &[VersionText<'_>]) -> Vec<SentenceAuthorship> {
-    derive_authorship("p", kind, versions, &HashMap::new(), false)
+    derive_authorship("p", kind, versions, &HashMap::new(), &HashMap::new(), false)
 }
 
 #[test]
@@ -190,6 +190,7 @@ fn accepted_proposals_are_the_persons_with_ai_origin_and_unknown_writers_are_unc
             v(3, "someone_new", "The AI suggested this. Mystery line."),
         ],
         &accepted,
+        &HashMap::new(),
         false,
     );
     assert_eq!(authors(&rows), [Person, Unknown]);
@@ -207,6 +208,7 @@ fn a_truncated_history_starts_from_unknown() {
             v(40, "distill", "Old line."),
             v(41, "distill", "Old line. New line."),
         ],
+        &HashMap::new(),
         &HashMap::new(),
         true,
     );

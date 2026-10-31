@@ -72,6 +72,59 @@ impl MemoryDB {
     }
 
     /// Append one sentence history entry and return its `seq`.
+    /// Migration 148: `sentence_history.op` also admits `sentence.revert`
+    /// (the person's Undo of one AI write). SQLite cannot widen a CHECK in
+    /// place, so the table is rebuilt with every row and its index, in one
+    /// transaction.
+    pub(super) async fn migrate_148_sentence_revert(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(148, prior_version).await?;
+        let conn = self.conn.lock().await;
+        let rebuild = "
+            BEGIN;
+            CREATE TABLE sentence_history_m148 (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                tx TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                op TEXT NOT NULL CHECK(op IN (
+                    'sentence.propose','sentence.accept','sentence.reject','sentence.flag',
+                    'sentence.revert')),
+                target_type TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                version INTEGER,
+                why TEXT,
+                text TEXT,
+                digest_before TEXT,
+                digest_after TEXT,
+                data TEXT NOT NULL DEFAULT '{}'
+            );
+            INSERT INTO sentence_history_m148 (
+                seq, ts, tx, actor, op, target_type, target_id, version, why, text,
+                digest_before, digest_after, data)
+            SELECT seq, ts, tx, actor, op, target_type, target_id, version, why, text,
+                   digest_before, digest_after, data
+              FROM sentence_history;
+            DROP TABLE sentence_history;
+            ALTER TABLE sentence_history_m148 RENAME TO sentence_history;
+            CREATE INDEX IF NOT EXISTS sentence_history_target
+                ON sentence_history(target_type, target_id, seq);
+            COMMIT;";
+        if let Err(error) = conn.execute_batch(rebuild).await {
+            let _ = conn.execute("ROLLBACK", ()).await;
+            return Err(WenlanError::VectorDb(format!(
+                "m148 sentence_history rebuild: {error}"
+            )));
+        }
+        conn.execute("PRAGMA user_version = 148", ())
+            .await
+            .map_err(db_error("m148 bump"))?;
+        log::info!("[migration] Migration 148 applied: sentence_history admits sentence.revert");
+        Ok(())
+    }
+
     pub async fn append_sentence_history(
         &self,
         entry: NewHistoryEntry<'_>,

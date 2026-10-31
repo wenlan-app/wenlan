@@ -512,6 +512,7 @@ pub(super) async fn create_page_impl(
         relevance_score: 0.0,
         last_edited_by: None,
         last_edited_at: None,
+        human_edited_at: None,
         last_delta_summary: None,
         changelog: None,
         creation_kind: creation_kind.clone(),

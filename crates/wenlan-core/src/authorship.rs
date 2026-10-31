@@ -457,18 +457,37 @@ fn similar(a: &str, b: &str) -> bool {
     all > 0 && a.intersection(&b).count() as f64 / all as f64 >= EDIT_SIMILARITY
 }
 
+/// How many sentence units `after` added, changed or removed against
+/// `before`.
+pub fn changed_sentence_count(before: &str, after: &str) -> u32 {
+    let old = sentence_units(before);
+    let new = sentence_units(after);
+    let old_norms: Vec<&str> = old.iter().map(|u| u.norm.as_str()).collect();
+    let new_norms: Vec<&str> = new.iter().map(|u| u.norm.as_str()).collect();
+    let changed = align(&old_norms, &new_norms)
+        .into_iter()
+        .filter(|op| !matches!(op, AlignOp::Equal(..)))
+        .count();
+    u32::try_from(changed).unwrap_or(u32::MAX)
+}
+
 /// Replay `versions` (oldest first) into the authorship of the last one.
 /// `accepted` maps a version to the sentence hashes that version accepted
-/// from a proposal. `truncated` says the oldest version given is not the
-/// page's first: its sentences are then of unknown origin.
+/// from a proposal; `restored` to the hashes an undo of an AI write put back
+/// in that version, which keep the attribution they last had. `truncated`
+/// says the oldest version given is not the page's first: its sentences are
+/// then of unknown origin.
 pub fn derive_authorship(
     page_id: &str,
     creation_kind: &str,
     versions: &[VersionText<'_>],
     accepted: &HashMap<i64, HashSet<String>>,
+    restored: &HashMap<i64, HashSet<String>>,
     truncated: bool,
 ) -> Vec<SentenceAuthorship> {
     let mut previous: Vec<(SentenceUnit, Attribution)> = Vec::new();
+    // The attribution each sentence text last had, for an undo's put-back.
+    let mut last_seen: HashMap<String, Attribution> = HashMap::new();
     let mut last_version = 0;
     for (position, version) in versions.iter().enumerate() {
         last_version = version.version;
@@ -489,6 +508,7 @@ pub fn derive_authorship(
             }
         }
         let accepted_here = accepted.get(&version.version);
+        let restored_here = restored.get(&version.version);
         let mut next: Vec<Option<Attribution>> = vec![None; units.len()];
         for op in &ops {
             let (n, replaced) = match *op {
@@ -523,6 +543,11 @@ pub fn derive_authorship(
                 confidence: AuthorshipConfidence::Uncertain,
                 accepted: false,
             });
+            if restored_here.is_some_and(|hashes| hashes.contains(&unit.hash)) {
+                if let Some(before) = last_seen.get(&unit.norm) {
+                    attribution = *before;
+                }
+            }
             if accepted_here.is_some_and(|hashes| hashes.contains(&unit.hash)) {
                 attribution = Attribution {
                     author: SentenceAuthor::Person,
@@ -533,6 +558,9 @@ pub fn derive_authorship(
                 };
             }
             current.push((unit, attribution));
+        }
+        for (unit, attribution) in &current {
+            last_seen.insert(unit.norm.clone(), *attribution);
         }
         previous = current;
     }
