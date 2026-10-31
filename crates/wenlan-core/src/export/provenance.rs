@@ -57,7 +57,7 @@ pub(crate) fn page_body_from_projection(raw: &str) -> String {
 /// whitespace after the last visible character (an added or trimmed final
 /// newline, a trimmed trailing space). Neither changes what the Markdown
 /// renders, and treating them as edits would version the page and flip
-/// `user_edited` (locking it for review under `lock_my_pages`) because a
+/// `user_edited` because a
 /// file was merely opened and saved.
 ///
 /// Every other whitespace difference is an edit: leading blank lines,

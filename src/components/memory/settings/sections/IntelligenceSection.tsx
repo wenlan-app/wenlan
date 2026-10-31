@@ -5,10 +5,8 @@ import { useTranslation } from "react-i18next";
 import {
   getBackgroundAiEnabled,
   getExternalLlm,
-  getLockMyPages,
   getOnDeviceModel,
   getResolvedRouting,
-  setLockMyPages,
   setSourcePin,
 } from "../../../../lib/tauri";
 import AnyProviderCard from "../../../intelligence/AnyProviderCard";
@@ -20,7 +18,7 @@ import {
 } from "../../../intelligence/IntelligenceSetup";
 import { presetForEndpoint, type PresetGroup } from "../../../intelligence/providerPresets";
 import { chooseSteepMode } from "../../../../lib/steepMode";
-import { Button, Card, Select, SectionHeader, SegmentedControl, SettingRow } from "../primitives";
+import { Button, Card, Select, SectionHeader, SegmentedControl } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
 import { SettingsHelp } from "../SettingsHelp";
 
@@ -200,55 +198,6 @@ function SteepModeRow({ automatic, loading, saving, readiness, error, onChoose }
   );
 }
 
-/** "Ask me first on pages I wrote": AI changes to pages the user wrote or edited
- * wait for review. Switching it on also locks the pages they already wrote and
- * says how many in one grey line; switching it off unlocks nothing, and says that. */
-function LockMyPagesRow() {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: ["lockMyPages"], queryFn: getLockMyPages });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(false);
-  // What the last switch did: how many pages it set to Ask me first, or "off"
-  // (which leaves those pages as they are, so the line says so).
-  const [changed, setChanged] = useState<number | "off" | null>(null);
-  return (
-    <div data-testid="lock-my-pages">
-      <SettingRow
-        title={t("intelligence.lockMyPages")}
-        description={t("intelligence.lockMyPagesHint")}
-        enabled={query.data === true}
-        valueUnknown={!query.isSuccess || saving}
-        unknownState={saving ? "saving" : query.isPending ? "loading" : "unavailable"}
-        toggleHitArea
-        error={error ? t("intelligence.backgroundAiSaveError") : null}
-        statusLine={changed !== null
-          ? <p role="status" style={metaLineStyle}>{changed === "off"
-            ? t("intelligence.lockMyPagesOff")
-            : changed === 0 ? t("intelligence.lockMyPagesNone") : t("intelligence.lockMyPagesLocked", { count: changed })}</p>
-          : undefined}
-        onToggle={async () => {
-          if (!query.isSuccess || saving) return;
-          const next = !query.data;
-          setSaving(true);
-          setError(false);
-          try {
-            const count = await setLockMyPages(next);
-            setChanged(next ? count ?? 0 : "off");
-            queryClient.setQueryData(["lockMyPages"], next);
-            queryClient.invalidateQueries({ queryKey: ["page"] });
-            queryClient.invalidateQueries({ queryKey: ["pages"] });
-          } catch {
-            setError(true);
-          } finally {
-            setSaving(false);
-          }
-        }}
-      />
-    </div>
-  );
-}
-
 export default function IntelligenceSection({ delay }: { delay: number }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -400,7 +349,6 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
               }
             }}
           />
-          <LockMyPagesRow />
           {backgroundAiValue === true && (
             <>
               <TaskRow
