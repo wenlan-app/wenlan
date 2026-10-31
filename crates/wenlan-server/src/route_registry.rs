@@ -387,7 +387,7 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/memory/revision/{id}/dismiss", "/api/memory/contradiction/{source_id}/dismiss", "/api/memory/entities",
     "/api/memory/relations", "/api/memory/observations", "/api/memory/link-entity", "/api/spaces/{name}",
     "/api/spaces/{from}/move-to/{to}", "/api/pages/{id}/archive", "/api/pages/{id}/review",
-    "/api/pages/{id}/review-required", "/api/pages/lock-edited",
+    "/api/pages/{id}/review-required",
     "/api/pages/drafts", "/api/pages/drafts/{id}", "/api/pages/drafts/{id}/publish",
     // Records which agent session wrote; metadata only, no user data read.
     "/api/sessions",
@@ -419,6 +419,10 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // A basis mark, unmark and confirm return a state receipt only; the two
     // reads (`basis-pending`, `diff`) are in the sensitive catalog instead.
     "/api/pages/{id}/basis/{basis_id}", "/api/pages/{id}/basis/{basis_id}/confirm",
+    // The person's 「不對」 on one sentence returns a receipt only (hash,
+    // version, history seq); the sentence reads and proposals are in the
+    // sensitive catalog instead.
+    "/api/pages/{id}/sentences/flag",
     // A code basis confirm and remove return a state receipt only; the recheck
     // (it reports note titles) is in the sensitive catalog instead.
     "/api/pages/{id}/code-basis/confirm", "/api/pages/{id}/code-basis",

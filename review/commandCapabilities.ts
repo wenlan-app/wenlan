@@ -20,6 +20,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "search_pages",
     "search_entities_cmd",
     "list_spaces",
+    // Home's "what you're working on": active Brief items across Spaces.
+    "list_working_on",
     "list_memories_cmd",
     "list_memories_by_ids",
     "get_memory_stats_cmd",
@@ -49,6 +51,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // The main shell asks once per launch whether a wenlan://pair link
     // opened the app. Shared chrome, so it belongs in the contract.
     "take_remote_pairing_link",
+    // It also asks whether a wenlan://page or wenlan://memory link is waiting.
+    "take_open_link",
     // The same shell listens for "Web access stopped on its own" and asks for
     // the one pending notice. Shared chrome, so it belongs in the contract.
     "take_remote_access_notice",
@@ -68,9 +72,6 @@ export const REVIEW_COMMAND_CAPABILITIES = {
   backgroundAi: [
     // Fixture-only preference state; this never starts a background service.
     "set_background_ai_enabled",
-    // Fixture-only too: the switch locks fixture pages in memory.
-    "get_lock_my_pages",
-    "set_lock_my_pages",
   ],
   wikiAndPages: [
     // Isolated in-memory folders; these never touch a native knowledge root.

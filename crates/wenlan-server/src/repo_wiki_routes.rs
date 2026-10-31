@@ -428,7 +428,6 @@ async fn take_back_edits(
     pages: &[wenlan_core::pages::Page],
     page_root: Option<&std::path::Path>,
 ) -> Result<TakenBack, ServerError> {
-    let lock = wenlan_core::config::load_config().lock_my_pages;
     let pending: std::collections::HashSet<String> = db
         .list_pending_revisions(1000)
         .await
@@ -459,7 +458,7 @@ async fn take_back_edits(
         let owned = page.review_required || page.user_edited;
         let caught_up = edit.origin_version >= page.version;
         if !edit.by_refresh && caught_up {
-            if take_back_person_edit(db, page, content, lock, page_root).await {
+            if take_back_person_edit(db, page, content, page_root).await {
                 tracing::info!(
                     "[repo_wiki] took back the repository edit of {} ({})",
                     page.id,
@@ -530,7 +529,6 @@ async fn take_back_person_edit(
     db: &MemoryDB,
     page: &wenlan_core::pages::Page,
     content: String,
-    lock: bool,
     page_root: Option<&std::path::Path>,
 ) -> bool {
     let written = wenlan_core::post_write::page_write(
@@ -546,10 +544,7 @@ async fn take_back_person_edit(
             },
             edited_by: "fs_edit",
             knowledge_path: page_root,
-            basis: wenlan_core::db::BasisWrite {
-                lock_on_first_human_edit: lock,
-                ..wenlan_core::db::BasisWrite::default()
-            },
+            basis: wenlan_core::db::BasisWrite::default(),
         },
     )
     .await;

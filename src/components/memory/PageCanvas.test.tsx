@@ -614,7 +614,7 @@ describe("PageCanvas", () => {
     expect(screen.getByTestId("react-flow").getAttribute("data-nodes-draggable")).toBe("false");
   });
 
-  it("accepts a suggestion against the map's current revision", async () => {
+  it("UX-VIEW-4 accepts a suggestion against the map's current revision", async () => {
     const { getPageMap, patchPageMapNode } = await tauri();
     (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(makeMap({ independent_ideas: true }));
     (patchPageMapNode as ReturnType<typeof vi.fn>).mockResolvedValue({});

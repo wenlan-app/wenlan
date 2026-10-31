@@ -17,6 +17,8 @@ import {
   searchEntities,
   searchPages,
   takeRemotePairingLink,
+  takeOpenLink,
+  type OpenLinkTarget,
   type Page,
   type SearchResult,
   type Space,
@@ -1232,6 +1234,25 @@ export default function Main({
     };
     pull();
     const unlisten = listen("remote-pairing-link", pull);
+    return () => { unlisten.then((f) => f()); };
+  }, []);
+
+  // wenlan://page/{id} and wenlan://memory/{id} links (an AI tool prints them
+  // next to an in-chat reminder) open that page or memory. As with pairing,
+  // the native side holds the link until asked, so a cold start keeps it.
+  const openLinkNavigateRef = useRef<(target: OpenLinkTarget) => void>(() => {});
+  openLinkNavigateRef.current = (target) => {
+    if (target.kind === "page") navigateTo({ kind: "page", pageId: target.pageId });
+    else if (target.kind === "memory") navigateTo({ kind: "memory", sourceId: target.memoryId });
+  };
+  useEffect(() => {
+    const pull = () => {
+      takeOpenLink()
+        .then((target) => { if (target) openLinkNavigateRef.current(target); })
+        .catch(() => {});
+    };
+    pull();
+    const unlisten = listen("wenlan-open-link", pull);
     return () => { unlisten.then((f) => f()); };
   }, []);
 

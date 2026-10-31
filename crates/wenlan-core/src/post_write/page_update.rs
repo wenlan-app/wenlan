@@ -389,9 +389,10 @@ async fn stage_page_revision_card_inner(
     );
     // Why this write needed review, so the card can say so: the review lock
     // first, then Wenlan's own background lanes, else the page has the
-    // person's edits. A locked page the person wrote is `authored`: that is
-    // the lock "Lock pages I've written" sets, and the card says they wrote
-    // it rather than that they asked to review every change. A pipeline write
+    // person's edits. A locked page the person wrote is `authored` (pages
+    // auto-locked before "Lock pages I've written" was removed are such
+    // pages), and the card says they wrote it rather than that they asked to
+    // review every change. A pipeline write
     // an AI tool made on demand (steep) names that tool, so it is not called
     // background.
     let review_reason = if page.review_required && page.user_edited {
@@ -458,6 +459,7 @@ async fn stage_page_revision_card_inner(
         gated: true,
         outcome: WriteOutcome::Gated,
         acknowledged: false,
+        sentence_proposals: Vec::new(),
     };
     let response = match retry {
         Some(_) => Some(serde_json::to_string(&result)?),
@@ -999,9 +1001,18 @@ async fn update_page_db_impl(
         outcome,
         acknowledged: false,
         basis_confirm: None,
+        sentence_proposals: Vec::new(),
     };
 
-    let (delta_summary, current_version, new_version, basis_outcome, was_user_edited) = 'cas: {
+    let (
+        delta_summary,
+        current_version,
+        new_version,
+        basis_outcome,
+        was_user_edited,
+        gate,
+        keeps_person_text,
+    ) = 'cas: {
         for attempt in 1..=MAX_CAS_ATTEMPTS {
             let current = db.get_page(page_id).await?.ok_or_else(|| {
                 WenlanError::Validation(format!("page '{page_id}' does not exist"))
@@ -1211,6 +1222,45 @@ async fn update_page_db_impl(
                 return Ok(result);
             }
 
+            // Sentence gate. A machine write that reaches this point would
+            // land, so it lands only on the AI's sentences: every sentence
+            // that is the person's (and, on a human-owned or review-locked
+            // page, every sentence of unknown origin) that the write changed
+            // or dropped is kept as it is and staged as a `sentence.propose`
+            // entry instead. This is what replaced the version-checked agent
+            // write landing outright on a human-owned page, and a forced
+            // rebuild wiping the person's prose. It applies on every page;
+            // there is no "AI may edit directly" setting. A link rewrite
+            // after a rename changes link targets only and keeps authors.
+            let (gate, keeps_person_text) = if writer.is_machine()
+                && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
+            {
+                crate::sentences::sentence_gate(db, &current, &req.content).await?
+            } else {
+                (None, false)
+            };
+            let landing_content: &str = gate
+                .as_ref()
+                .map_or(req.content.as_str(), |plan| plan.content.as_str());
+            // The landing body keeps the person's sentences with their
+            // markers, so their citation records come along from the current
+            // page and every record is renumbered to its marker's place.
+            let citations: Option<(String, String)> = match &gate {
+                Some(plan) => crate::authorship::merge_gate_citations(
+                    citations.as_ref().map(|(json, _)| json.as_str()),
+                    &current.citations,
+                    &plan.markers,
+                )
+                .map(|json| {
+                    let summary = citations
+                        .as_ref()
+                        .map(|(_, summary)| summary.clone())
+                        .unwrap_or_else(|| "citations kept on your sentences".to_string());
+                    (json, summary)
+                }),
+                None => citations.clone(),
+            };
+
             // Shrink-guard (T17): opt-in via WENLAN_MERGE_SHRINK_GUARD=<f64>.
             // OFF by default: unset/unparseable = None = zero regression.
             // Only fires for LLM-rewrite edited_by; human edits are never blocked.
@@ -1220,12 +1270,12 @@ async fn update_page_db_impl(
                 if let Some(threshold) = merge_shrink_threshold() {
                     if !crate::retrieval::integrity::body_shrink_ok(
                         &current.content,
-                        &req.content,
+                        landing_content,
                         threshold,
                     ) {
                         log::warn!(
                             "[update_page] shrink-guard rejected {edited_by} on {page_id}: new body ({} chars) < {}% of old ({} chars)",
-                            req.content.chars().count(),
+                            landing_content.chars().count(),
                             (threshold * 100.0) as u32,
                             current.content.chars().count(),
                         );
@@ -1241,7 +1291,7 @@ async fn update_page_db_impl(
             let delta_summary = crate::db::compute_page_delta_summary(
                 &current.content,
                 &current.source_memory_ids,
-                &req.content,
+                landing_content,
                 &source_refs,
                 edited_by,
             );
@@ -1259,6 +1309,22 @@ async fn update_page_db_impl(
             // compile done, so acknowledge it; otherwise the sweep re-dispatches the
             // same no-op work forever.
             if delta_summary.is_none() && old_set == new_set {
+                // Nothing lands, but the changes the write wanted to make to
+                // the person's sentences are still proposals.
+                let sentence_proposals = match &gate {
+                    Some(plan) => {
+                        crate::sentences::stage_gate_proposals(
+                            db,
+                            page_id,
+                            current_version,
+                            plan,
+                            edited_by,
+                            agent,
+                        )
+                        .await?
+                    }
+                    None => Vec::new(),
+                };
                 // No page write for the marks to ride on, so the notes and
                 // lines of code this write relied on (and reconfirms of ones it
                 // already had) are recorded on their own, in one transaction. A
@@ -1297,6 +1363,7 @@ async fn update_page_db_impl(
                     if let Some((caller, operation, digest)) = retry.as_ref() {
                         let acknowledged_result = WriteResult {
                             acknowledged: true,
+                            sentence_proposals: sentence_proposals.clone(),
                             ..no_op(WriteOutcome::Unchanged, vec![])
                         };
                         let response = serde_json::to_string(&acknowledged_result)?;
@@ -1359,6 +1426,7 @@ async fn update_page_db_impl(
                     retry.as_ref(),
                     WriteResult {
                         acknowledged,
+                        sentence_proposals,
                         ..no_op(WriteOutcome::Unchanged, vec![])
                     },
                 )
@@ -1385,7 +1453,7 @@ async fn update_page_db_impl(
                 &mut entry,
                 &current.content,
                 &current.source_memory_ids,
-                &req.content,
+                landing_content,
                 &source_refs,
             );
             if let Some(agent) = agent {
@@ -1440,6 +1508,7 @@ async fn update_page_db_impl(
                     outcome: WriteOutcome::Wrote,
                     acknowledged: false,
                     basis_confirm: None,
+                    sentence_proposals: Vec::new(),
                 })?),
                 None => None,
             };
@@ -1468,7 +1537,7 @@ async fn update_page_db_impl(
             let landed: Option<BasisWriteOutcome> = if let Some(guard) = page_growth {
                 db.try_update_page_growth_at_versions(
                     page_id,
-                    &req.content,
+                    landing_content,
                     &source_refs,
                     &new_changelog,
                     citations.as_ref().map(|(json, _)| json.as_str()),
@@ -1482,7 +1551,7 @@ async fn update_page_db_impl(
             } else if let (true, Some(fence)) = (user_forced, page_fence) {
                 db.try_user_forced_page_content_at_source_revision(
                     page_id,
-                    &req.content,
+                    landing_content,
                     &source_refs,
                     edited_by,
                     &new_changelog,
@@ -1496,7 +1565,7 @@ async fn update_page_db_impl(
             } else if let Some(source_revision) = expected_source_revision {
                 db.try_update_page_content_with_changelog_at_source_revision_and_basis(
                     page_id,
-                    &req.content,
+                    landing_content,
                     &source_refs,
                     edited_by,
                     require_stale,
@@ -1520,7 +1589,7 @@ async fn update_page_db_impl(
             } else if require_stale {
                 db.try_update_page_content_with_changelog(
                     page_id,
-                    &req.content,
+                    landing_content,
                     &source_refs,
                     edited_by,
                     true,
@@ -1534,7 +1603,7 @@ async fn update_page_db_impl(
             } else {
                 db.try_update_page_content_with_changelog_at_version_and_basis(
                     page_id,
-                    &req.content,
+                    landing_content,
                     &source_refs,
                     edited_by,
                     &new_changelog,
@@ -1553,6 +1622,8 @@ async fn update_page_db_impl(
                     new_version,
                     outcome,
                     current.user_edited,
+                    gate,
+                    keeps_person_text,
                 );
             }
 
@@ -1619,27 +1690,57 @@ async fn update_page_db_impl(
         .await;
     };
 
-    // "Lock pages I've written": this human write made the page user-edited,
-    // so lock it for review. Decided from the row the CAS wrote over, so only
-    // the edit that flips `user_edited` locks; a page the user unlocked by
-    // hand is not re-locked by later edits. The page is human-owned from this
-    // write on, so machine writers are already gated while the flag lands.
-    // The save itself has committed: a failed lock is logged, not raised.
-    if basis.lock_on_first_human_edit && !writer.is_machine() && !was_user_edited {
-        if let Err(error) = db.set_page_review_required(page_id, true).await {
-            log::warn!("[update_page] {page_id}: saved, but locking it for review failed: {error}");
+    // A forced rebuild released `user_edited` with the body it landed; when
+    // that body still holds the person's sentences, the page stays theirs.
+    if user_forced && was_user_edited && keeps_person_text {
+        if let Err(error) = db.keep_user_edited_at_version(page_id, new_version).await {
+            log::warn!(
+                "[update_page] {page_id}: rebuilt, but keeping it user-edited failed: {error}"
+            );
         }
     }
+    let mut warnings = write_warnings(&delta_summary, current_version, new_version);
+    let sentence_proposals = match &gate {
+        Some(plan) => match crate::sentences::stage_gate_proposals(
+            db,
+            page_id,
+            new_version,
+            plan,
+            edited_by,
+            agent,
+        )
+        .await
+        {
+            Ok(ids) => {
+                if !ids.is_empty() {
+                    warnings.push(format!(
+                        "{} change(s) to the person's sentences were staged as proposals",
+                        ids.len()
+                    ));
+                }
+                ids
+            }
+            Err(error) => {
+                // The write has committed with the person's sentences kept;
+                // only the proposals for them were lost.
+                log::warn!("[update_page] {page_id}: staging sentence proposals failed: {error}");
+                warnings.push("the AI's changes to the person's sentences were not kept".into());
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
 
     Ok(WriteResult {
         id: page_id.to_string(),
         attached_to: None,
-        warnings: write_warnings(&delta_summary, current_version, new_version),
+        warnings,
         wrote: true,
         revision_card_id: None,
         gated: false,
         outcome: WriteOutcome::Wrote,
         acknowledged: false,
         basis_confirm: basis_outcome.confirm,
+        sentence_proposals,
     })
 }

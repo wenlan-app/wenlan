@@ -7,6 +7,8 @@ const READ_POSTS = new Set([
   "/api/memory/entities/list",
   "/api/memory/entities/search",
   "/api/memory/entities/query",
+  // A Brief read: the POST carries the Space name; it never writes a Brief.
+  "/api/brief",
 ]);
 
 export function allowsDevLiveRequest(method: string, path: string): boolean {

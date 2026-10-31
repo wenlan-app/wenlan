@@ -20,6 +20,7 @@ use std::sync::Arc;
 static ONLINE_BACKUP_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 mod brief;
+mod chat_check;
 pub use brief::LegacyBriefItem;
 mod claim_derivation;
 pub use claim_derivation::{
@@ -90,6 +91,7 @@ pub use activity_counts::{
 };
 mod scoped_entities;
 mod scoped_pages;
+pub mod sentence_history;
 pub mod sessions;
 pub mod source_annotations;
 mod source_sync;
@@ -1541,6 +1543,10 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 143 adds `page_code_basis.recheck_note`, `recheck_verdict`,
 /// `recheck_digest` and `recheck_attempts` (what the background model recheck
 /// concluded about a changed row).
+/// Migration 144 adds `memories.authored_content` and moves legacy desktop
+/// quick captures into the `memory` namespace.
+/// Migration 145 adds `chat_reminders` (one `chat.reminder` history entry per
+/// in-chat reminder).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1548,7 +1554,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 145;
+pub const SCHEMA_VERSION: u32 = 147;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10714,14 +10720,31 @@ impl MemoryDB {
             if version < 144 {
                 self.migrate_144_legacy_quick_captures(version).await?;
             }
-            // Migration 145 records the originals kept from imported chats
-            // (artifacts and canvases) and admits `creation_kind =
-            // 'original'` for their pages. See migrate_145_originals.
+            // Migration 145 adds `sentence_history` (sentence proposals,
+            // accepts, rejects and flags in the history-entry shape). See
+            // migrate_145_sentence_history.
             if ceiling < 145 {
                 return Ok(());
             }
             if version < 145 {
-                self.migrate_145_originals(version).await?;
+                self.migrate_145_sentence_history(version).await?;
+            }
+            // Migration 146 adds `chat_reminders` (the in-chat check's
+            // `chat.reminder` log). See migrate_146_chat_reminders.
+            if ceiling < 146 {
+                return Ok(());
+            }
+            if version < 146 {
+                self.migrate_146_chat_reminders(version).await?;
+            }
+            // Migration 147 records the originals kept from imported chats
+            // (artifacts and canvases) and admits `creation_kind =
+            // 'original'` for their pages. See migrate_147_originals.
+            if ceiling < 147 {
+                return Ok(());
+            }
+            if version < 147 {
+                self.migrate_147_originals(version).await?;
             }
         }
 
@@ -52406,6 +52429,16 @@ impl MemoryDB {
         // page-insert path reaches, so stamping here is what makes `kind`
         // truthful corpus-wide. Both arms below write `status='active'`.
         let kind = crate::pages::page_kind_for(title, creation_kind, "active");
+        // Each citation records the source version it was checked against.
+        let stamped_citations =
+            match sentence_history::stamp_cited_versions(&conn, citations_json).await {
+                Ok(stamped) => stamped,
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!("insert_page citations: {e}")));
+                }
+            };
+        let citations_json = stamped_citations.as_deref();
 
         let concept_result = match &embedding_sql {
             Some(emb) => {
@@ -54000,6 +54033,19 @@ impl MemoryDB {
         // parity drift. Reconcile edges against the old-vs-new citation sets
         // BEFORE the column changes (same helper as `set_page_citations`);
         // rolled back together with the UPDATE if a CAS guard fails below.
+        // Each citation records the source version it was checked against,
+        // in the transaction of the body it was computed for.
+        let stamped_citations =
+            match sentence_history::stamp_cited_versions(&conn, citations_bind).await {
+                Ok(stamped) => stamped,
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "update_page_content citation versions: {e}"
+                    )));
+                }
+            };
+        let citations_bind = stamped_citations.as_deref();
         if let Err(e) = Self::dual_write_page_citations(&conn, id, citations_bind).await {
             let _ = conn.execute("ROLLBACK", ()).await;
             return Err(WenlanError::VectorDb(format!(
@@ -57890,6 +57936,8 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("set_page_citations begin: {e}")))?;
         let exec = async {
+            let stamped = sentence_history::stamp_cited_versions(&conn, citations_json).await?;
+            let citations_json = stamped.as_deref();
             Self::dual_write_page_citations(&conn, page_id, citations_json).await?;
             conn.execute(
                 "UPDATE pages SET citations = ?1 WHERE id = ?2",
@@ -57932,6 +57980,8 @@ impl MemoryDB {
             WenlanError::VectorDb(format!("set_page_citations_with_changelog begin: {e}"))
         })?;
         let exec = async {
+            let stamped = sentence_history::stamp_cited_versions(&conn, citations_json).await?;
+            let citations_json = stamped.as_deref();
             Self::dual_write_page_citations(&conn, page_id, citations_json).await?;
             conn.execute(
                 "UPDATE pages SET citations = ?1, changelog = ?2 WHERE id = ?3",
@@ -57992,6 +58042,8 @@ impl MemoryDB {
             ))
         })?;
         let exec = async {
+            let stamped = sentence_history::stamp_cited_versions(&conn, citations_json).await?;
+            let citations_json = stamped.as_deref();
             let affected = conn
                 .execute(
                     "UPDATE pages SET citations = ?1, changelog = ?2
@@ -58992,34 +59044,6 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("set_page_review_required: {e}")))?;
         Ok(changed > 0)
-    }
-
-    /// Turn on the review lock for every page a person wrote or edited
-    /// (`user_edited = 1`, which also covers a page made in the app), for
-    /// "Lock pages I've written" being switched on. Unpublished drafts are
-    /// locked too, so they keep the lock once published. Entity shadow rows
-    /// and archived pages are skipped. Returns how many published pages this
-    /// call locked; pages already locked and drafts are not counted. Like a
-    /// single lock toggle, it does not bump any page's version.
-    pub async fn lock_user_edited_pages(&self) -> Result<u64, WenlanError> {
-        let conn = self.conn.lock().await;
-        let lock = |status: &'static str| {
-            format!(
-                "UPDATE pages SET review_required = 1 \
-                 WHERE COALESCE(user_edited, 0) = 1 \
-                   AND COALESCE(review_required, 0) = 0 \
-                   AND status = '{status}' \
-                   AND COALESCE(kind, 'concept') != 'entity'"
-            )
-        };
-        let locked = conn
-            .execute(&lock("active"), ())
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("lock_user_edited_pages: {e}")))?;
-        conn.execute(&lock("draft"), ())
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("lock_user_edited_pages drafts: {e}")))?;
-        Ok(locked)
     }
 
     /// [`Self::set_page_refresh_blocked_reason`] fenced to the compile input

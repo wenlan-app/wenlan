@@ -55,6 +55,9 @@ import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
 import ContentRenderer from "./ContentRenderer";
+import { PageLengthSwitch, PageReadingLayers, usePageLength } from "./page/PageReadingLayers";
+import { pageLayerOffsets } from "./page/pageLayers";
+import type { PageLayersSettings } from "./editor/pageLayersEditing";
 import RelatedPages from "./page/RelatedPages";
 import PageInfo from "./page/PageInfo";
 import { PageSessionSources } from "./sessions/SessionSourceSection";
@@ -738,6 +741,15 @@ export default function PageDetail({
     // the stable stand-in that actually tracks its content.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageId, page?.title, pageSources, entitySignature]);
+
+  // The editor folds the same layers the reading view cuts (UX-VIEW-2/3).
+  const [pageLength, choosePageLength] = usePageLength();
+  const editorPageLayers = useMemo<PageLayersSettings>(() => ({
+    length: pageLength,
+    labels: { aiDetails: t("pageLayers.aiDetails"), showFull: t("pageLayers.showFull") },
+    onShowFull: () => choosePageLength("full"),
+  }), [pageLength, choosePageLength, t]);
+  const pageHasTwoLengths = pageLayerOffsets(page?.content ?? "").sectionStart !== null;
 
   useEffect(() => {
     renameAttemptRef.current += 1;
@@ -2901,8 +2913,10 @@ export default function PageDetail({
               {editorSessionId && (
                 <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}>
                 {hideOuterTitleWhileEditing && <><h1 className="sr-only">{page.title}</h1>{documentTools}</>}
+                {pageHasTwoLengths && <PageLengthSwitch length={pageLength} onChoose={choosePageLength} />}
                 <MarkdownEditor
                   ref={editorRef}
+                  pageLayers={editorPageLayers}
                   initialDocument={editInitialDocument}
                   initialSelection={initialSelection}
                   onSelectionChange={onSelectionChange}
@@ -2990,12 +3004,17 @@ export default function PageDetail({
                   )}
                 </div>
               )}
-              <ContentRenderer
+              <PageReadingLayers
                 content={displayContent}
-                variant="detail"
-                preserveMarkdown={authoredBody}
-                resolveWikilink={authoredBody ? resolveReadingWikilink : undefined}
-                renderCitation={renderCitation}
+                renderBody={(markdown) => (
+                  <ContentRenderer
+                    content={markdown}
+                    variant="detail"
+                    preserveMarkdown={authoredBody}
+                    resolveWikilink={authoredBody ? resolveReadingWikilink : undefined}
+                    renderCitation={renderCitation}
+                  />
+                )}
               />
             </div>
             </ReferenceNavigationProvider>
@@ -3075,8 +3094,7 @@ export default function PageDetail({
           </div>
           </div>
           {/* The daemon refuses to lock an entity shadow page. "Ask me first"
-              is the page's review lock; a locked page someone edited is the
-              one "Ask me first on pages I wrote" locks. */}
+              is the page's review lock. */}
           {page.creation_kind !== "entity" && <AiChangesOptions
             heading={t("pageDetail.aiChanges")}
             name={`page-ai-${page.id}`}

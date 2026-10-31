@@ -650,17 +650,6 @@ export async function setBackgroundAiEnabled(enabled: boolean): Promise<void> {
   return invoke("set_background_ai_enabled", { enabled });
 }
 
-/** "Lock pages I've written". An older daemon without the setting reads off. */
-export async function getLockMyPages(): Promise<boolean> {
-  return invoke("get_lock_my_pages");
-}
-
-/** Turning it on also locks the pages the user already wrote or edited and
- * resolves to how many; turning it off resolves to null and unlocks nothing. */
-export async function setLockMyPages(enabled: boolean): Promise<number | null> {
-  return invoke("set_lock_my_pages", { enabled });
-}
-
 export interface SystemInfo {
   total_ram_gb: number;
   available_ram_gb: number;
@@ -926,6 +915,21 @@ export async function suggestTags(
 
 export async function listSpaces(): Promise<Space[]> {
   return invoke("list_spaces");
+}
+
+/** One active item of a Space Brief: a line of work home lists under "what
+ *  you're working on" until things have a record of their own. `added_at` is
+ *  in seconds. */
+export interface WorkingOnItem {
+  space: string;
+  id: string;
+  text: string;
+  added_at: number;
+}
+
+/** Active Brief items across the Spaces the person kept, newest first. */
+export async function listWorkingOn(): Promise<WorkingOnItem[]> {
+  return invoke("list_working_on");
 }
 
 export async function getSpace(name: string): Promise<Space | null> {
@@ -3464,6 +3468,11 @@ export async function attachBytesToPage(name: string, bytes: Uint8Array): Promis
   });
 }
 
+/** Download an image by its web address and copy it into the pages folder. */
+export async function attachImageUrlToPage(url: string): Promise<AttachedFile> {
+  return invoke("attach_image_url_to_page", { url });
+}
+
 // ===== Profile =====
 
 export async function getProfile(): Promise<Profile | null> {
@@ -4219,6 +4228,19 @@ export async function revokeRemoteGrant(expectedRevision: string, grantId: strin
 /** Takes the pairing code from the last `wenlan://pair` link, if one is waiting. */
 export async function takeRemotePairingLink(): Promise<string | null> {
   return invoke("take_remote_pairing_link");
+}
+
+/** What a wenlan://page/{id} or wenlan://memory/{id} link asked to open. */
+export type OpenLinkTarget =
+  | { kind: "page"; pageId: string }
+  | { kind: "memory"; memoryId: string };
+
+/**
+ * The page or memory link that opened the app or arrived since, handed out
+ * once. AI tools print these links next to an in-chat reminder or a page.
+ */
+export async function takeOpenLink(): Promise<OpenLinkTarget | null> {
+  return invoke("take_open_link");
 }
 
 /**

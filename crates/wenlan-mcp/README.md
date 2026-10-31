@@ -59,14 +59,14 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 37 tools. The table below calls
+The local stdio surface is locked at exactly 38 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
 | Tool | Purpose |
 | --- | --- |
 | `list_pages` | List wiki pages (id, title, summary, Space, status, last modified, creation kind, source count, review lock) to browse what exists. |
-| `read_page` | Read one wiki page in full, including its version and review lock, together with the source memories it cites, the notes it relies on (`basis`), the code it relies on (`code_basis`), and plain links that changed (`linked_changed`). |
+| `read_page` | Read one wiki page in full, including its version and review lock, together with the source memories it cites, the notes it relies on (`basis`), the code it relies on (`code_basis`), plain links that changed (`linked_changed`), and, with `map: true`, its mind map as a small text tree with a link that opens it in Wenlan. |
 | `write_page` | Create or update a wiki page; sources are optional. Pass `expected_version` from `read_page` on a refresh; a stale version is refused, and a locked page or an unversioned refresh of an edited page goes through a revision card. Pass `basis` (`{page_id, version}` per note read) when the page was written from other notes; the reply lists the page's bases. Pass `code_basis` (`{repo_root, path, line_start, line_end}`) for lines of code the page relies on; Wenlan reads the file when you write and tells you when the lines change. |
 | `page_basis` | Mark, diff, confirm or remove what one page relies on another page for. `mark` and `confirm` take the basis note's `version` and are refused if it moved on. Changes are local stdio only. |
 | `page_code_basis` | Confirm or remove a line span of code a page relies on. `confirm` re-reads the file and re-anchors the row as `ok` after you have looked at the change. Pass the row's `repo_root`, `path`, `line_start` and `line_end` as `read_page` shows them. Local stdio only. |
@@ -78,6 +78,7 @@ queue.
 | `save_source` | Save a document read in another app or on the web (email, Notion or Drive page, Slack thread, article) with its link, so notes cite the original. Saving the same link again replaces the copy. |
 | `attach_file` | Copy an image or video on this computer into the pages folder's `_attachments/` and return the Markdown line (`![alt](_attachments/name.png)`) to place in a page. `read_page` lists the files a page shows under `attachments`. Local stdio only. |
 | `propose_note_change` | Propose a change to one of the person's own Obsidian notes. Nothing is written until the person accepts it in Wenlan; a note set to Never takes no proposal. Local stdio only. |
+| `check_reply` | Check a reply against the person's earlier decisions, for AI tools without hooks. Returns a dated reminder with a `wenlan://` link for each decision the reply goes against (at most five a day), or says nothing conflicts. |
 | `recall` | Search memories and pages by natural-language query. |
 | `distill` | Trigger page distillation for new clusters or a specific `page_id`. |
 | `list_pending` | List pending captures waiting for review. |

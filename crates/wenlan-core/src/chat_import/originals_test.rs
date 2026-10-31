@@ -345,8 +345,8 @@ fn export_ids_become_safe_path_segments() {
 }
 
 #[tokio::test]
-async fn migration_145_is_idempotent_on_an_upgraded_database() {
-    let (db, dir) = crate::db::tests::test_db_at(144).await;
+async fn migration_147_is_idempotent_on_an_upgraded_database() {
+    let (db, dir) = crate::db::tests::test_db_at(146).await;
     drop(db);
     for _ in 0..2 {
         let db = crate::db::MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
@@ -361,7 +361,7 @@ async fn migration_145_is_idempotent_on_an_upgraded_database() {
                   + (SELECT user_version FROM pragma_user_version)",
             )
             .await;
-        assert_eq!(found, 2 + 145);
+        assert_eq!(found, 2 + i64::from(crate::db::SCHEMA_VERSION));
     }
 }
 

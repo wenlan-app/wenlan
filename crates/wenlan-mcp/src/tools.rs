@@ -153,9 +153,10 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// characters under the old ceiling, so any new tool needs room), then by the
 /// length of `save_source`'s description when that tool was added, then by
 /// the length of `steep`'s, then by the length of `doc_fix`'s, then by the
-/// length of `attach_file`'s, then by the length of `propose_note_change`'s.
+/// length of `attach_file`'s, then by the length of `propose_note_change`'s,
+/// then by the length of `check_reply`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 17_396;
+const DESCRIPTION_BUDGET_CHARS: usize = 17_637;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1007,7 +1008,7 @@ pub struct WritePageParams {
     )]
     pub title: Option<String>,
     #[schemars(
-        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
+        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Open with one plain paragraph that states the page's point; a person reads it first. Detail only an AI needs (commands, paths, edge cases) may go last under the heading '## Details for AI' (or '## 給 AI 的細節' on a Chinese page). Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
     )]
     pub content: String,
     #[schemars(
@@ -1323,6 +1324,22 @@ pub struct GetPageSourcesParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CheckReplyParams {
+    #[schemars(description = "The reply you are about to give or just gave, as plain text.")]
+    pub reply: String,
+    #[schemars(
+        description = "Space (project) whose decisions to check against. Uses the locked or configured default Space when omitted."
+    )]
+    #[serde(default, alias = "domain")]
+    pub space: Option<String>,
+    #[schemars(
+        description = "Your AI session as tool:id, e.g. claude-code:<session id>; the same decision is not repeated in one session on one day."
+    )]
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ProposeNoteChangeParams {
     #[schemars(
         description = "The note: its absolute path on this computer, or the id of a memory read from it (`<source>::<path>::<n>`)."
@@ -1361,6 +1378,11 @@ pub struct ReadPageParams {
     )]
     #[serde(default)]
     pub session: Option<String>,
+    #[schemars(
+        description = "true adds the page's mind map as a small text tree and a link that opens it in Wenlan. Set it only when the user wants to see the map."
+    )]
+    #[serde(default)]
+    pub map: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1657,6 +1679,32 @@ fn attach_file_refusal(code: &str) -> String {
         _ => "the pages folder already has a different file with that name",
     };
     format!("Not attached: {reason}. Nothing was changed.")
+}
+
+/// The `check_reply` answer: the reminders as the daemon wrote them, one per
+/// line, or one line saying there is nothing to remind.
+fn format_check_reply(response: &wenlan_types::chat_check::ChatCheckResponse) -> String {
+    use wenlan_types::chat_check::ChatCheckSkipped;
+    if response.reminders.is_empty() {
+        return match response.skipped {
+            Some(ChatCheckSkipped::DailyCap) => {
+                "No reminder: today's reminders are used up.".to_string()
+            }
+            Some(ChatCheckSkipped::Timeout) => {
+                "No reminder: Wenlan did not answer in time; go on.".to_string()
+            }
+            Some(ChatCheckSkipped::Off) => {
+                "Not checked: the person has not turned on in-chat reminders in Wenlan. Do not call this again unless they ask.".to_string()
+            }
+            _ => "Nothing in this reply goes against an earlier decision.".to_string(),
+        };
+    }
+    response
+        .reminders
+        .iter()
+        .map(|reminder| reminder.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn propose_note_change_refusal(code: &str) -> String {
@@ -2518,6 +2566,24 @@ impl WenlanMcpServer {
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(
             format_save_source_success(&resp),
+        )]))
+    }
+
+    pub async fn check_reply_impl(
+        &self,
+        params: CheckReplyParams,
+    ) -> Result<CallToolResult, McpError> {
+        let client = self.session_client(params.session.as_deref()).await;
+        let request = wenlan_types::chat_check::ChatCheckRequest {
+            reply: params.reply,
+            session: None,
+            space: effective_space(&params.space),
+            workspace: None,
+        };
+        let response: wenlan_types::chat_check::ChatCheckResponse =
+            try_call!(client.post("/api/check", &request), "reply check");
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            format_check_reply(&response),
         )]))
     }
 
@@ -4226,7 +4292,7 @@ impl WenlanMcpServer {
     }
 
     pub async fn read_page_impl(&self, page_id: &str) -> Result<CallToolResult, McpError> {
-        self.read_page_for_session(page_id, None).await
+        self.read_page_for_session(page_id, None, false).await
     }
 
     /// `read_page`, naming the AI session that is reading so the note shows on
@@ -4235,6 +4301,7 @@ impl WenlanMcpServer {
         &self,
         page_id: &str,
         session: Option<&str>,
+        with_map: bool,
     ) -> Result<CallToolResult, McpError> {
         if !is_opaque_page_id(page_id) {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
@@ -4311,8 +4378,82 @@ impl WenlanMcpServer {
             if !attachments.is_empty() {
                 object.insert("attachments".into(), attachments.into());
             }
+            // This page's own mind map as a text tree with a link into the app,
+            // only when the person asks to see it, and absent when unmapped.
+            // The conversation's working-memory map (UX-CHAT-4) is separate.
+            let tree = if with_map {
+                self.page_map_tree(&page.page.page, &visible).await
+            } else {
+                None
+            };
+            if let Some(tree) = tree {
+                object.insert(
+                    "map".into(),
+                    serde_json::json!({
+                        "tree": tree,
+                        "open": crate::map_tree::open_link(page_id),
+                        "show": "Show tree as is in a code block, then the open link.",
+                    }),
+                );
+            }
         }
         Ok(CallToolResult::structured(value))
+    }
+
+    /// The page's mind map drawn by [`crate::map_tree::render`]. Names come from
+    /// what `read_page` already holds; entity names are looked up on the plain
+    /// client so they are not listed as reads of this session. Best effort: a
+    /// map that can't be read leaves the page result as it was.
+    async fn page_map_tree(
+        &self,
+        page: &wenlan_types::pages::Page,
+        sources: &[&PageSourceWithMemory],
+    ) -> Option<String> {
+        let map: wenlan_types::page_map::PageMapResponse = self
+            .client
+            .get(&format!("/api/pages/{}/map", page.id))
+            .await
+            .ok()?;
+        let mut names = std::collections::HashMap::new();
+        names.insert(format!("page:{}", page.id), page.title.clone());
+        for source in sources {
+            let Some(memory) = &source.memory else {
+                continue;
+            };
+            let text = [
+                Some(memory.title.as_str()),
+                memory.summary.as_deref(),
+                Some(memory.content.as_str()),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|text| !text.is_empty());
+            if let Some(text) = text {
+                let short: String = text.chars().take(64).collect();
+                let short = if short.len() < text.len() {
+                    format!("{}…", short.trim_end())
+                } else {
+                    short
+                };
+                names.insert(format!("memory:{}", memory.source_id), short);
+            }
+        }
+        let entities = map
+            .nodes
+            .iter()
+            .filter(|node| node.ref_kind == "entity" && node.label.is_none())
+            .take(crate::map_tree::MAX_TREE_LINES);
+        for node in entities {
+            let detail: Result<wenlan_types::entities::EntityDetail, _> = self
+                .client
+                .get(&format!("/api/memory/entities/{}", node.ref_id))
+                .await;
+            if let Ok(detail) = detail {
+                names.insert(format!("entity:{}", node.ref_id), detail.entity.name);
+            }
+        }
+        crate::map_tree::render(&map, &names)
     }
 
     async fn page_attachments(
@@ -4647,6 +4788,12 @@ fn format_update_page_response(
     append_basis(&mut text, &resp.basis);
     append_code_basis(&mut text, &resp.code_basis);
     append_link_targets(&mut text, &resp.link_targets);
+    if !resp.sentence_proposals.is_empty() {
+        text.push_str(&format!(
+            "\nsentence_proposals: {} (the person's sentences were kept; your changes to them wait for the person)",
+            resp.sentence_proposals.len()
+        ));
+    }
     if !resp.next_step.is_empty() {
         text.push_str("\nnext_step: ");
         text.push_str(&resp.next_step);
@@ -4875,6 +5022,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Check a reply against what the person decided earlier, for tools without hooks. Returns a reminder with the date and a wenlan:// link for each decision the reply goes against, or says nothing conflicts. Show reminders to the person as given.",
+        annotations(
+            title = "Check reply",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn check_reply(
+        &self,
+        Parameters(params): Parameters<CheckReplyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.check_reply_impl(params).await
+    }
+
+    #[tool(
         description = "Propose a change to one of the person's own Obsidian notes (Wenlan pages use write_page). Nothing is written until the person accepts it in Wenlan. A note they set to Never is cited only; the reply says so. Keep the rest of the note as it is.",
         annotations(
             title = "Propose note change",
@@ -5025,7 +5189,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the wiki view. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, clears the user-edited guard and can replace the page prose during rebuild. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. With a model source chosen the daemon also distills in the background, so don't trigger redundantly; without one, nothing distills in the background.",
+        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the wiki view. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, regenerates the AI's sentences; changes to the person's become proposals. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. With a model source chosen the daemon also distills in the background, so don't trigger redundantly; without one, nothing distills in the background.",
         annotations(
             title = "Distill",
             read_only_hint = false,
@@ -5309,7 +5473,7 @@ impl WenlanMcpServer {
         &self,
         Parameters(params): Parameters<ReadPageParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.read_page_for_session(&params.page_id, params.session.as_deref())
+        self.read_page_for_session(&params.page_id, params.session.as_deref(), params.map)
             .await
     }
 
@@ -9132,6 +9296,72 @@ mod tests {
         )
     }
 
+    /// UX-CHAT-1/2 for tools without hooks: `check_reply` posts the reply to
+    /// `/api/check` and shows each reminder as the daemon wrote it, or says
+    /// nothing conflicts.
+    #[tokio::test]
+    async fn check_reply_shows_the_daemon_reminders_or_says_nothing_conflicts() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _pin = pin_space(None).await;
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/check"))
+            .and(body_partial_json(serde_json::json!({"reply": "switch to Neo4j"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "reminders": [{
+                    "seq": 1,
+                    "text": "Earlier decision (2026-10-01): Use libSQL instead of Neo4j. wenlan://memory/mem_1",
+                    "decided": "Use libSQL instead of Neo4j.",
+                    "decided_on": "2026-10-01",
+                    "reply_excerpt": "switch to Neo4j",
+                    "option": "Neo4j",
+                    "source": {"memory_id": "mem_1", "memory_version": 1, "link": "wenlan://memory/mem_1"}
+                }],
+                "remaining_today": 4
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/check"))
+            .and(body_partial_json(
+                serde_json::json!({"reply": "renamed a helper"}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"reminders": [], "remaining_today": 5})),
+            )
+            .mount(&mock)
+            .await;
+        let server = stdio_server(mock.uri());
+
+        let hit = server
+            .check_reply_impl(CheckReplyParams {
+                reply: "switch to Neo4j".into(),
+                space: None,
+                session: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            text_of(&hit),
+            "Earlier decision (2026-10-01): Use libSQL instead of Neo4j. wenlan://memory/mem_1"
+        );
+        let quiet = server
+            .check_reply_impl(CheckReplyParams {
+                reply: "renamed a helper".into(),
+                space: None,
+                session: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            text_of(&quiet),
+            "Nothing in this reply goes against an earlier decision."
+        );
+    }
+
     fn write_params(page_id: Option<&str>) -> WritePageParams {
         WritePageParams {
             page_id: page_id.map(String::from),
@@ -10099,6 +10329,26 @@ mod tests {
         assert!(description.contains("expected_version"), "{description}");
     }
 
+    #[test]
+    fn write_page_refresh_says_when_the_persons_sentences_were_kept() {
+        let text = format_update_page_response(
+            "page_x",
+            wenlan_types::responses::PageWriteResponse {
+                basis: Vec::new(),
+                code_basis: Vec::new(),
+                warnings: Vec::new(),
+                ok: true,
+                gated: false,
+                revision_card_id: None,
+                citations: None,
+                link_targets: Vec::new(),
+                next_step: String::new(),
+                sentence_proposals: vec!["sp_1".into(), "sp_2".into()],
+            },
+        );
+        assert!(text.contains("sentence_proposals: 2"), "{text}");
+    }
+
     #[tokio::test]
     async fn test_write_page_refresh_surfaces_gated_revision_card_fields() {
         let text = format_update_page_response(
@@ -10113,6 +10363,7 @@ mod tests {
                 citations: None,
                 link_targets: Vec::new(),
                 next_step: "Wait for review.".into(),
+                sentence_proposals: Vec::new(),
             },
         );
         assert!(
@@ -11877,6 +12128,7 @@ mod tests {
             ("page_basis", (false, false, false)),
             ("page_code_basis", (false, false, false)),
             ("propose_note_change", (false, false, false)),
+            ("check_reply", (false, false, false)),
             ("read_page", (true, false, false)),
             ("recall", (false, false, false)),
             ("rename_page", (false, true, false)),
@@ -12252,6 +12504,7 @@ mod tests {
             "accept_revision",
             "attach_file",
             "capture",
+            "check_reply",
             "confirm_memory",
             "brief",
             "create_entity",

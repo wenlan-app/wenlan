@@ -9,8 +9,10 @@
 pub use wenlan_types;
 
 pub mod attachments;
+pub mod authorship;
 pub mod briefing;
 pub mod cache;
+pub mod chat_check;
 pub mod chat_import;
 pub mod chunker;
 pub mod citations;
@@ -56,6 +58,7 @@ pub mod narrative;
 pub mod on_device_models;
 pub mod onboarding;
 pub mod origin;
+pub mod page_body;
 pub mod page_history;
 pub mod page_map_improve;
 pub mod page_projection_tracker;
@@ -82,6 +85,7 @@ pub mod reranker;
 pub(crate) mod retrieval;
 pub mod router;
 pub mod schema;
+pub mod sentences;
 pub mod sources;
 pub mod space_context;
 pub mod steep;

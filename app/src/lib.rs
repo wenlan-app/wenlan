@@ -25,6 +25,7 @@ mod identity_paths;
 mod indexer;
 mod lifecycle;
 pub mod mcp_config;
+mod open_link;
 mod page_attachments;
 mod page_review;
 mod pairing_link;
@@ -860,6 +861,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Arc::new(RwLock::new(app_state)))
         .manage(pairing_link::PendingPairingLink::default())
+        .manage(open_link::PendingOpenLink::default())
         .manage(global_shortcuts::EditorCompositionGuard::default())
         .manage(Arc::new(tokio::sync::Mutex::new(
             None::<indexer::FileWatcher>,
@@ -884,16 +886,22 @@ pub fn run() {
                 app.set_activation_policy(activation_policy_for_main_window_visible(false));
             }
 
-            // wenlan://pair?code= links from the relay pairing page. A link
-            // that launched the app is in get_current; later ones arrive here.
+            // wenlan://page/{id} and wenlan://memory/{id} open that item;
+            // wenlan://pair?code= links come from the relay pairing page. A
+            // link that launched the app is in get_current; later ones arrive
+            // here.
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 let link_handle = handle.clone();
                 app.deep_link().on_open_url(move |event| {
-                    pairing_link::accept_urls(&link_handle, &event.urls());
+                    let rest = open_link::accept_urls(&link_handle, &event.urls());
+                    pairing_link::accept_urls(&link_handle, &rest);
                 });
                 match app.deep_link().get_current() {
-                    Ok(Some(urls)) => pairing_link::accept_urls(&handle, &urls),
+                    Ok(Some(urls)) => {
+                        let rest = open_link::accept_urls(&handle, &urls);
+                        pairing_link::accept_urls(&handle, &rest);
+                    }
                     Ok(None) => {}
                     Err(error) => log::warn!("[pairing-link] could not read launch links: {error}"),
                 }
@@ -1673,6 +1681,7 @@ pub fn run() {
             search::get_snapshot_captures_with_content,
             search::delete_snapshot,
             search::list_spaces,
+            search::list_working_on,
             search::get_space,
             search::create_space,
             search::update_space,
@@ -1768,8 +1777,6 @@ pub fn run() {
             search::set_setup_completed,
             search::get_background_ai_enabled,
             search::set_background_ai_enabled,
-            search::get_lock_my_pages,
-            search::set_lock_my_pages,
             search::should_show_wizard,
             search::local_setup_completed,
             daemon_start::get_startup_preflight_status,
@@ -1796,6 +1803,7 @@ pub fn run() {
             search::list_remote_grants,
             search::revoke_remote_grant,
             pairing_link::take_remote_pairing_link,
+            open_link::take_open_link,
             search::get_remote_access_status,
             search::test_remote_mcp_connection,
             // Memory nurture commands
@@ -1894,6 +1902,7 @@ pub fn run() {
             page_attachments::page_attachments_dir,
             page_attachments::attach_file_to_page,
             page_attachments::attach_bytes_to_page,
+            page_attachments::attach_image_url_to_page,
             // Decision log commands
             search::list_decisions_cmd,
             search::list_decision_domains_cmd,

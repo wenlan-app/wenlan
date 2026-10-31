@@ -432,7 +432,8 @@ fn source_line(source: &wenlan_types::PageSourceWithMemory) -> String {
     format!("  {id}  {text}")
 }
 
-/// `--print`: fetch the page and its sources and write them to stdout.
+/// `--print`: fetch the page and its sources and write them to stdout, with
+/// the `wenlan://page/{id}` link that opens the page in the app.
 async fn print_page(
     client: &WenlanClient,
     format: ResolvedFormat,
@@ -444,13 +445,16 @@ async fn print_page(
     if quiet {
         return Ok(());
     }
+    let link = wenlan_types::chat_check::page_link(&read.page.page.id);
     match format {
-        ResolvedFormat::Json => {
-            print_json(&serde_json::json!({ "page": read.page, "sources": sources }))?
-        }
+        ResolvedFormat::Json => print_json(&serde_json::json!({
+            "page": read.page,
+            "sources": sources,
+            "link": link,
+        }))?,
         ResolvedFormat::Table => {
             let page = &read.page.page;
-            println!("{}\n", page.title);
+            println!("{}\n{link}\n", page.title);
             println!("{}", page.content.trim_end());
             print!("{}", render_citations(&page.citations));
             if !sources.is_empty() {
@@ -669,6 +673,9 @@ mod tests {
                 score: 0.9,
                 status: "verified".into(),
                 scope: "sentence".into(),
+                cited_version: None,
+                cited_digest: None,
+                disproven: false,
             },
             PageCitation {
                 occurrence: 2,
@@ -678,6 +685,9 @@ mod tests {
                 score: 0.2,
                 status: "unverified".into(),
                 scope: "paragraph".into(),
+                cited_version: None,
+                cited_digest: None,
+                disproven: false,
             },
         ];
         let out = render_citations(&cites);

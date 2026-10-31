@@ -258,7 +258,6 @@ vi.mock("./sources/SourceDocumentReader", async () => {
     return <div data-testid="source-document" />;
   } };
 });
-vi.mock("./RecapsList", () => ({ RecapsList: () => <div /> }));
 vi.mock("./ImportView", () => ({
   ImportView: () => <div data-testid="import-view" />,
 }));

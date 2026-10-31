@@ -1,0 +1,12 @@
+/* Short or full (UX-VIEW-2): a quiet two-option switch above the body. */
+.page-length-row { display:flex;align-items:center;gap:8px;margin:0 0 14px; }
+.page-length-beta { font:var(--mem-text-2xs)/1.4 var(--mem-font-body);color:var(--mem-text-tertiary); }
+.page-length-switch { display:inline-flex;gap:2px;padding:2px;border-radius:8px;background:var(--mem-hover); }
+.page-length-switch button { border:0;border-radius:6px;background:none;color:var(--mem-text-secondary);padding:4px 12px;font:13px/1.4 var(--mem-font-body);cursor:pointer; }
+.page-length-switch button[aria-pressed="true"] { background:var(--mem-surface);color:var(--mem-text); }
+.page-length-switch button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+/* The part for AI (UX-VIEW-3): one folded section after the human part. */
+.page-ai-details { margin-top:32px;border-radius:10px;background:var(--mem-hover);padding:12px 16px; }
+.page-ai-details > summary { cursor:pointer;color:var(--mem-text-secondary);font:13px/1.5 var(--mem-font-body); }
+.page-ai-details[open] > summary { margin-bottom:8px; }
+.page-ai-details > summary:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }

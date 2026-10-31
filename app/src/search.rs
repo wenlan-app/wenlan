@@ -266,27 +266,6 @@ pub async fn set_background_ai_enabled(
 }
 
 #[tauri::command]
-pub async fn get_lock_my_pages(state: tauri::State<'_, State>) -> Result<bool, String> {
-    let client = { state.read().await.client.clone() };
-    client.lock_my_pages().await
-}
-
-/// Turning it on also locks the pages the user already wrote or edited and
-/// returns that count; turning it off leaves existing locks alone.
-#[tauri::command]
-pub async fn set_lock_my_pages(
-    state: tauri::State<'_, State>,
-    enabled: bool,
-) -> Result<Option<u64>, String> {
-    let client = { state.read().await.client.clone() };
-    client.set_lock_my_pages(enabled).await?;
-    if !enabled {
-        return Ok(None);
-    }
-    Ok(Some(client.lock_edited_pages().await?.locked))
-}
-
-#[tauri::command]
 pub async fn set_setup_completed(
     state: tauri::State<'_, State>,
     completed: bool,
@@ -3642,6 +3621,58 @@ pub async fn list_agent_activity(
 pub async fn list_spaces(state: tauri::State<'_, State>) -> Result<Vec<Space>, String> {
     let client = daemon_client(&state).await;
     client.get_json("/api/spaces").await
+}
+
+/// One active item of a Space Brief. Home lists these under "what you're
+/// working on" until things have a record of their own (docs/ux/spec.md,
+/// UX-HOME-1). `added_at` is in seconds.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct WorkingOnItem {
+    pub space: String,
+    pub id: String,
+    pub text: String,
+    pub added_at: i64,
+}
+
+/// Active Brief items across every Space the person kept, newest first. A
+/// Space whose Brief cannot be read is skipped so one bad Space does not empty
+/// the home; AI-suggested Spaces nobody accepted are left out.
+#[tauri::command]
+pub async fn list_working_on(state: tauri::State<'_, State>) -> Result<Vec<WorkingOnItem>, String> {
+    let client = daemon_client(&state).await;
+    let spaces: Vec<Space> = client.get_json("/api/spaces").await?;
+    let mut briefs = Vec::new();
+    for space in spaces.into_iter().filter(|space| !space.suggested) {
+        let request = BriefReadRequest {
+            space: Some(space.name.clone()),
+            ..Default::default()
+        };
+        match client
+            .post_json::<_, BriefReadResponse>("/api/brief", &request)
+            .await
+        {
+            Ok(response) => briefs.extend(response.brief),
+            Err(error) => log::warn!("[home] Brief for {}: {error}", space.name),
+        }
+    }
+    Ok(working_on_items(briefs))
+}
+
+fn working_on_items(briefs: Vec<Brief>) -> Vec<WorkingOnItem> {
+    let mut items: Vec<WorkingOnItem> = briefs
+        .into_iter()
+        .flat_map(|brief| {
+            let space = brief.space;
+            brief.active.into_iter().map(move |item| WorkingOnItem {
+                space: space.clone(),
+                id: item.id,
+                text: item.text,
+                added_at: item.added_at,
+            })
+        })
+        .collect();
+    items.sort_by(|a, b| b.added_at.cmp(&a.added_at).then_with(|| a.id.cmp(&b.id)));
+    items
 }
 
 #[tauri::command]
@@ -7261,5 +7292,56 @@ mod register_connected_agent_tests {
         assert!(!registered);
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         held.abort();
+    }
+}
+
+#[cfg(test)]
+mod working_on_tests {
+    use super::*;
+
+    fn item(id: &str, text: &str, added_at: i64) -> BriefItem {
+        BriefItem {
+            id: id.to_string(),
+            text: text.to_string(),
+            state: BriefItemState::Active,
+            added_at,
+            gate: None,
+            version: 1,
+        }
+    }
+
+    fn brief(space: &str, active: Vec<BriefItem>) -> Brief {
+        Brief {
+            space_id: format!("{space}-id"),
+            space: space.to_string(),
+            last_session_summary: String::new(),
+            last_handoff_at: None,
+            version: 1,
+            active,
+            backlog: vec![item("later", "not now", 999)],
+        }
+    }
+
+    #[test]
+    fn ux_home_1_lists_active_items_across_spaces_newest_first() {
+        let items = working_on_items(vec![
+            brief(
+                "wenlan",
+                vec![item("a", "New tagline", 10), item("b", "Storage", 30)],
+            ),
+            brief("wenlan-site", vec![item("c", "Launch page", 20)]),
+        ]);
+        let order: Vec<(&str, &str)> = items
+            .iter()
+            .map(|item| (item.space.as_str(), item.text.as_str()))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                ("wenlan", "Storage"),
+                ("wenlan-site", "Launch page"),
+                ("wenlan", "New tagline"),
+            ]
+        );
     }
 }

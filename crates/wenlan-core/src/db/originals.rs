@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Originals kept from imported chats (migration 145).
+//! Originals kept from imported chats (migration 147).
 //!
 //! A chat export carries more than text: Claude artifacts and ChatGPT
 //! canvases. The importer keeps each as a file under
@@ -9,7 +9,7 @@
 //! and URL, the artifact's own id) and where its file is, so the page can
 //! open the conversation in the original AI tool.
 //!
-//! Migration 145 also widens `pages.creation_kind`'s CHECK to admit
+//! Migration 147 also widens `pages.creation_kind`'s CHECK to admit
 //! `'original'`, with the same `writable_schema` text patch migration 92 used
 //! to admit `'entity'`.
 
@@ -60,17 +60,17 @@ fn db_error(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
 }
 
 impl MemoryDB {
-    /// Migration 145: the `originals` table and `'original'` in
+    /// Migration 147: the `originals` table and `'original'` in
     /// `pages.creation_kind`'s CHECK. Both steps are idempotent.
-    pub(super) async fn migrate_145_originals(
+    pub(super) async fn migrate_147_originals(
         &self,
         prior_version: i64,
     ) -> Result<(), WenlanError> {
-        self.backup_before_migration(145, prior_version).await?;
+        self.backup_before_migration(147, prior_version).await?;
         let conn = self.conn.lock().await;
         conn.execute_batch(ORIGINALS_DDL)
             .await
-            .map_err(db_error("m145 originals"))?;
+            .map_err(db_error("m147 originals"))?;
         let current_sql: Option<String> = {
             let mut rows = conn
                 .query(
@@ -78,11 +78,11 @@ impl MemoryDB {
                     (),
                 )
                 .await
-                .map_err(db_error("m145 read pages sql"))?;
-            match rows.next().await.map_err(db_error("m145 pages sql row"))? {
+                .map_err(db_error("m147 read pages sql"))?;
+            match rows.next().await.map_err(db_error("m147 pages sql row"))? {
                 Some(row) => Some(
                     row.get::<String>(0)
-                        .map_err(db_error("m145 pages sql col"))?,
+                        .map_err(db_error("m147 pages sql col"))?,
                 ),
                 None => None,
             }
@@ -92,7 +92,7 @@ impl MemoryDB {
             if patched != sql {
                 conn.execute("PRAGMA writable_schema=ON", ())
                     .await
-                    .map_err(db_error("m145 writable on"))?;
+                    .map_err(db_error("m147 writable on"))?;
                 // Always turn writable_schema back off, even if the patch
                 // fails, as migration 92 does.
                 let patch = conn
@@ -101,22 +101,22 @@ impl MemoryDB {
                         libsql::params![patched],
                     )
                     .await
-                    .map_err(db_error("m145 patch schema"));
+                    .map_err(db_error("m147 patch schema"));
                 conn.execute("PRAGMA writable_schema=RESET", ())
                     .await
-                    .map_err(db_error("m145 writable reset"))?;
+                    .map_err(db_error("m147 writable reset"))?;
                 patch?;
             } else if !sql.contains(CREATION_KIND_CHECK_AFTER) && sql.contains("creation_kind IN") {
                 log::warn!(
-                    "[migration] m145: pages.creation_kind CHECK has an unexpected form; \
+                    "[migration] m147: pages.creation_kind CHECK has an unexpected form; \
                      'original' pages cannot be created until it is widened"
                 );
             }
         }
-        conn.execute("PRAGMA user_version = 145", ())
+        conn.execute("PRAGMA user_version = 147", ())
             .await
-            .map_err(db_error("m145 bump"))?;
-        log::info!("[migration] Migration 145 applied: originals, creation_kind 'original'");
+            .map_err(db_error("m147 bump"))?;
+        log::info!("[migration] Migration 147 applied: originals, creation_kind 'original'");
         Ok(())
     }
 

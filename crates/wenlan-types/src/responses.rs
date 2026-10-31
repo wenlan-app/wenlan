@@ -637,6 +637,11 @@ pub struct PageReadResponse {
     /// modified. Computed on read, never stored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_changed: Vec<crate::page_basis::LinkedChanged>,
+    /// The body in its three layers (short, the part for people, the details
+    /// for AI), so a reader need not parse `page.content`. Older daemons omit
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<crate::chat_check::PageBodyParts>,
 }
 
 /// Wikilink graph centered on a single page. Outbound = labels parsed
@@ -764,9 +769,10 @@ pub struct ConfigResponse {
     /// Whether the proactive Page-Map suggestion phase is enabled. Default true.
     #[serde(default)]
     pub page_map_auto_suggest: bool,
-    /// "Lock pages I've written". Missing on an older daemon reads false.
+    /// The in-chat check (opt-in, off by default). Missing on an older daemon
+    /// reads false.
     #[serde(default)]
-    pub lock_my_pages: bool,
+    pub chat_check_enabled: bool,
 }
 
 // ===== On-device model =====
@@ -845,6 +851,11 @@ pub struct PageWriteResponse {
     /// The next action, in plain words for hosts with no Wenlan skill.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub next_step: String,
+    /// Sentence proposals this write staged for the person's sentences it
+    /// would have changed; the write landed only on the AI's sentences.
+    /// Their ids are listed by `GET /api/pages/{id}/sentences`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sentence_proposals: Vec<String>,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.
@@ -852,14 +863,10 @@ pub struct PageWriteResponse {
 pub struct PageReviewRequiredResponse {
     pub page_id: String,
     pub review_required: bool,
-}
-
-/// Receipt for `POST /api/pages/lock-edited`: how many pages a person wrote
-/// or edited were locked for review by this call. Pages already locked are
-/// not counted.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LockEditedPagesResponse {
-    pub locked: u64,
+    /// The page's AI-change mode after this call: `locked` while the lock is
+    /// on, else `propose`.
+    #[serde(default)]
+    pub ai_edits: crate::authorship::AiEditMode,
 }
 
 /// DB save and Markdown projection are separate completion boundaries.

@@ -33,6 +33,16 @@ export const MOCK_RESOLVED_ROUTING_KEY = "__WENLAN_MOCK_RESOLVED_ROUTING__";
  *  A spec that needs a real routing state, such as the unpinned everyday job
  *  that makes Home offer "Choose a model", sets the override above instead of
  *  changing this default for every other spec. */
+/** Set this global before the app boots to give one spec home's "what you're
+ *  working on" items: `window.__WENLAN_MOCK_WORKING_ON__ = [...]`. The shape is
+ *  `WorkingOnItem[]` from src/lib/tauri.ts. The default is no active work. */
+export const MOCK_WORKING_ON_KEY = "__WENLAN_MOCK_WORKING_ON__";
+
+function workingOn(): unknown {
+  const override = Reflect.get(globalThis, MOCK_WORKING_ON_KEY);
+  return Array.isArray(override) ? override : [];
+}
+
 function resolvedRouting(): unknown {
   const override = Reflect.get(globalThis, MOCK_RESOLVED_ROUTING_KEY);
   return override === undefined ? null : override;
@@ -76,6 +86,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_repo_wiki_github": return { gh_ready: false, workflow: "missing" };
     // The main shell asks on every launch whether a wenlan://pair link is waiting.
     case "take_remote_pairing_link": return null;
+    // Nor is a wenlan://page or wenlan://memory link.
+    case "take_open_link": return null;
     // Web access stopped on its own: the fixture never stops, so no notice waits.
     case "take_remote_access_notice": return null;
     // A short code finds the one synthetic request. The fixture knows no relay,
@@ -93,6 +105,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "deny_remote_pairing": return null;
     case "renew_remote_access": return { status: "off" };
     case "get_profile": case "get_pending_revision": return null;
+    case "list_working_on": return workingOn();
     case "get_briefing": return { content: "", new_today: 0, primary_agent: null, generated_at: 1_783_728_000, is_stale: false };
     case "get_enrichment_status": return { source_id: optionalString(args, "sourceId") ?? "", summary: "", steps: [] };
     case "get_version_chain_cmd": return [];
