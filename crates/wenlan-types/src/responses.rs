@@ -764,9 +764,6 @@ pub struct ConfigResponse {
     /// Whether the proactive Page-Map suggestion phase is enabled. Default true.
     #[serde(default)]
     pub page_map_auto_suggest: bool,
-    /// "Lock pages I've written". Missing on an older daemon reads false.
-    #[serde(default)]
-    pub lock_my_pages: bool,
 }
 
 // ===== On-device model =====
@@ -861,14 +858,6 @@ pub struct PageReviewRequiredResponse {
     /// on, else `propose`.
     #[serde(default)]
     pub ai_edits: crate::authorship::AiEditMode,
-}
-
-/// Receipt for `POST /api/pages/lock-edited`: how many pages a person wrote
-/// or edited were locked for review by this call. Pages already locked are
-/// not counted.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LockEditedPagesResponse {
-    pub locked: u64,
 }
 
 /// DB save and Markdown projection are separate completion boundaries.

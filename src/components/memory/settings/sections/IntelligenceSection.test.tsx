@@ -23,8 +23,6 @@ const mocks = vi.hoisted(() => ({
   setSourcePin: vi.fn(),
   getBackgroundAiEnabled: vi.fn(),
   setBackgroundAiEnabled: vi.fn(),
-  getLockMyPages: vi.fn(),
-  setLockMyPages: vi.fn(),
 }));
 vi.mock("../../../../lib/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../../lib/tauri")>();
@@ -90,8 +88,6 @@ describe("IntelligenceSection", () => {
     // Default to LEGACY mode — the live 0.13.2 daemon has no routing endpoint.
     mocks.getResolvedRouting.mockResolvedValue(null);
     mocks.setSourcePin.mockResolvedValue(undefined);
-    mocks.getLockMyPages.mockResolvedValue(false);
-    mocks.setLockMyPages.mockResolvedValue(null);
     // Automatic by default, so the task rows under it render.
     mocks.getBackgroundAiEnabled.mockResolvedValue(true);
     mocks.setBackgroundAiEnabled.mockResolvedValue(undefined);
@@ -459,52 +455,11 @@ describe("IntelligenceSection", () => {
     expect(screen.getByRole("button", { name: "Details: Beta" })).toHaveFocus();
   });
 
-  describe("Ask me first on pages I wrote", () => {
-    it("switching it on locks the user's pages and says how many in one line", async () => {
-      mocks.getBackgroundAiEnabled.mockResolvedValue(false);
-      mocks.setLockMyPages.mockResolvedValue(12);
-      renderSection();
-      const row = await screen.findByTestId("lock-my-pages");
-      expect(within(row).getByText("AI changes to pages you wrote or edited wait for you to accept. Pages AI wrote keep updating.")).toBeInTheDocument();
-      const toggle = await within(row).findByRole("button", { name: "Ask me first on pages I wrote" });
-      expect(toggle).toHaveAttribute("aria-pressed", "false");
-      await userEvent.click(toggle);
-      expect(mocks.setLockMyPages).toHaveBeenCalledWith(true);
-      expect(await within(row).findByText("Set 12 pages to Ask me first.")).toBeInTheDocument();
-      expect(within(row).getByRole("button", { name: "Ask me first on pages I wrote" })).toHaveAttribute("aria-pressed", "true");
-    });
-
-    it("switching it off unlocks nothing, and says so instead of a count", async () => {
-      mocks.getBackgroundAiEnabled.mockResolvedValue(false);
-      mocks.getLockMyPages.mockResolvedValue(true);
-      renderSection();
-      const row = await screen.findByTestId("lock-my-pages");
-      const toggle = await within(row).findByRole("button", { name: "Ask me first on pages I wrote" });
-      await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
-      await userEvent.click(toggle);
-      expect(mocks.setLockMyPages).toHaveBeenCalledWith(false);
-      await waitFor(() => expect(within(row).getByRole("button", { name: "Ask me first on pages I wrote" })).toHaveAttribute("aria-pressed", "false"));
-      expect(within(row).queryByText(/Set \d+ pages? to Ask me first/)).toBeNull();
-      expect(within(row).getByText("Pages already set stay on Ask me first.")).toBeInTheDocument();
-    });
-
-    it("says nothing needed changing when no page was set", async () => {
-      mocks.getBackgroundAiEnabled.mockResolvedValue(false);
-      mocks.setLockMyPages.mockResolvedValue(0);
-      renderSection();
-      const row = await screen.findByTestId("lock-my-pages");
-      await userEvent.click(await within(row).findByRole("button", { name: "Ask me first on pages I wrote" }));
-      expect(await within(row).findByText("No pages needed changing.")).toBeInTheDocument();
-    });
-
-    it("a failed save says so and keeps the switch where it was", async () => {
-      mocks.getBackgroundAiEnabled.mockResolvedValue(false);
-      mocks.setLockMyPages.mockRejectedValue(new Error("daemon down"));
-      renderSection();
-      const row = await screen.findByTestId("lock-my-pages");
-      await userEvent.click(await within(row).findByRole("button", { name: "Ask me first on pages I wrote" }));
-      expect(await within(row).findByText("Could not save this setting. Try again.")).toBeInTheDocument();
-      expect(within(row).getByRole("button", { name: "Ask me first on pages I wrote" })).toHaveAttribute("aria-pressed", "false");
-    });
+  it("no longer offers \"Ask me first on pages I wrote\"", async () => {
+    mocks.getBackgroundAiEnabled.mockResolvedValue(false);
+    renderSection();
+    await screen.findByRole("radio", { name: "Automatic" });
+    expect(screen.queryByTestId("lock-my-pages")).toBeNull();
+    expect(screen.queryByText("Ask me first on pages I wrote")).toBeNull();
   });
 });

@@ -3075,8 +3075,7 @@ export default function PageDetail({
           </div>
           </div>
           {/* The daemon refuses to lock an entity shadow page. "Ask me first"
-              is the page's review lock; a locked page someone edited is the
-              one "Ask me first on pages I wrote" locks. */}
+              is the page's review lock. */}
           {page.creation_kind !== "entity" && <AiChangesOptions
             heading={t("pageDetail.aiChanges")}
             name={`page-ai-${page.id}`}

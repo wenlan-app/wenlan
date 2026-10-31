@@ -104,13 +104,6 @@ pub struct Config {
     /// `page_map_auto_suggest: true` in config.json (or via `PUT /api/config`).
     #[serde(default)]
     pub page_map_auto_suggest: bool,
-    /// "Lock pages I've written": when a person first writes or edits a page
-    /// (app editor, vault edit, or a new page made in the app), that page's
-    /// review lock is turned on, so later AI changes wait as revision cards.
-    /// A config without the field reads false, so existing installs keep
-    /// their behavior; a new install starts with it on.
-    #[serde(default)]
-    pub lock_my_pages: bool,
     /// A pages folder the person picked, moved into at the next daemon start
     /// by `pages_folder::apply_pending_move`, which then sets
     /// `knowledge_path` and clears this.
@@ -434,7 +427,6 @@ pub fn load_config() -> Config {
 fn new_install_config() -> Config {
     Config {
         background_ai_enabled: Some(false),
-        lock_my_pages: true,
         ..Config::default()
     }
 }
