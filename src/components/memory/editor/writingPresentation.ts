@@ -372,6 +372,9 @@ const writingTheme = EditorView.theme({
     textAlign: "right",
     userSelect: "none",
   },
+  ".cm-writing-list-indent": {
+    letterSpacing: "0.4em",
+  },
   '.cm-writing-list-marker[data-writing-list-marker="bullet"]': {
     textAlign: "center",
   },
@@ -649,7 +652,13 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           const list = parent.parent;
           const markerTo = markerWithSeparatorEnd(state, node.to, parent.to);
           const task = directChildrenNamed(parent, "Task")[0];
-          addLineClass(state.doc.lineAt(node.from).from, "cm-writing-list-item");
+          const itemLine = state.doc.lineAt(node.from);
+          addLineClass(itemLine.from, "cm-writing-list-item");
+          // A nested item's leading spaces are a few pixels wide in a
+          // proportional font; widen them so each level is visible.
+          if (/^[ \t]+$/.test(state.sliceDoc(itemLine.from, node.from))) {
+            addMarkClass(itemLine.from, node.from, "cm-writing-list-indent");
+          }
           if (lineConstructIsRevealed(state, node.from, parent.from, parent.to, contentFocused)) {
             return;
           }

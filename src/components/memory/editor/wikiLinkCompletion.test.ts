@@ -289,7 +289,7 @@ describe("[[ link completion", () => {
     expect(undoDepth(escape.view.state)).toBe(depth);
     expect(escape.onChange).not.toHaveBeenCalled();
     escape.type("ro"); expect(escape.menu()).toBeNull();
-    const tab = make(); tab.type("[["); expect(pressKey(tab.view.contentDOM, "Tab").defaultPrevented).toBe(false); expect(tab.menu()).toBeNull();
+    const tab = make(); tab.type("[["); expect(pressKey(tab.view.contentDOM, "Tab").defaultPrevented).toBe(true); expect(tab.menu()).toBeNull();
     const blocked = make(); blocked.type("[["); blocked.block(true);
     expect(pressKey(blocked.view.contentDOM, "Enter").defaultPrevented).toBe(false);
     expect(blocked.view.state.doc.toString()).toBe("[[");

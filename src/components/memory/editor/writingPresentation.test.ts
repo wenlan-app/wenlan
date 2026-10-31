@@ -191,6 +191,15 @@ describe("writingPresentation", () => {
       .toHaveTextContent("strike");
   });
 
+  it("widens a nested list item's leading spaces without changing the source", () => {
+    const source = "- top\n  - nested\n\t1. tabbed\n> - quoted";
+    const view = makeView(source, { selection: EditorSelection.single(0) });
+
+    const indents = [...view.contentDOM.querySelectorAll(".cm-writing-list-indent")];
+    expect(indents.map((node) => node.textContent)).toEqual(["  ", "\t"]);
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
   it("marks only browser-bound links, labelled or bare, as external", () => {
     const source = [
       "See [docs](https://wenlan.app/docs) and [[Wiki]].",

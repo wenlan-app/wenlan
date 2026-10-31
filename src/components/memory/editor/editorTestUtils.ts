@@ -57,3 +57,20 @@ export function pasteText(target: HTMLElement, text: string): ClipboardEvent {
   target.dispatchEvent(event);
   return event;
 }
+
+/**
+ * Types `text` one character at a time the way the browser's input path does:
+ * input handlers (bracket closing, selection wrapping) first, then a plain insert.
+ */
+export function typeText(view: EditorView, text: string): void {
+  for (const char of text) {
+    const { from, to } = view.state.selection.main;
+    const insert = () => view.state.update({
+      changes: { from, to, insert: char },
+      selection: EditorSelection.cursor(from + char.length),
+      userEvent: "input.type",
+    });
+    const handled = view.state.facet(EditorView.inputHandler).some((handler) => handler(view, from, to, char, insert));
+    if (!handled) view.dispatch(insert());
+  }
+}
