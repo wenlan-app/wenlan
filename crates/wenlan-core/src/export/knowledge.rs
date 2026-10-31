@@ -66,6 +66,14 @@ struct KnowledgeState {
     /// regeneration is retried by the next write rather than forgotten.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     index_regeneration_pending: bool,
+    /// Where an archived page's file lived (page id -> its path in the pages
+    /// folder) before [`KnowledgeWriter::archive_pages`] moved it into
+    /// `archive/`. A restore puts the page back in that folder rather than
+    /// wherever it was first created; the entry is dropped once the page is
+    /// projected again or deleted. Absent from state files written before
+    /// this field existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    archived_from: BTreeMap<String, String>,
 }
 
 impl Default for KnowledgeState {
@@ -75,6 +83,7 @@ impl Default for KnowledgeState {
             pages: HashMap::new(),
             pending_archives: BTreeMap::new(),
             index_regeneration_pending: false,
+            archived_from: BTreeMap::new(),
         }
     }
 }
@@ -177,6 +186,7 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
             "pages",
             "pending_archives",
             "index_regeneration_pending",
+            "archived_from",
         ]
         .contains(&key.as_str())
     }) {
@@ -507,9 +517,16 @@ impl KnowledgeWriter {
                 "page_projection_identity_ambiguous".into(),
             ));
         }
+        // A restored page goes back to the folder it was archived from, when
+        // that folder is still there; otherwise to its creation folder.
+        let archived_folder = state
+            .archived_from
+            .get(&page.id)
+            .map(|path| path.rsplit_once('/').map_or("", |(folder, _)| folder))
+            .filter(|folder| folders::open_existing_folder(&capabilities.root, folder).is_ok());
         let folder = match mapped {
             Some(path) => path.rsplit_once('/').map_or("", |(folder, _)| folder),
-            None => initial_folder.unwrap_or(""),
+            None => archived_folder.unwrap_or(initial_folder.unwrap_or("")),
         };
         let directory = if mapped.is_some() {
             folders::open_existing_folder(&capabilities.root, folder)?
@@ -619,6 +636,7 @@ impl KnowledgeWriter {
             state.pending_archives.insert(page.id.clone(), old);
             state.index_regeneration_pending = true;
         }
+        state.archived_from.remove(&page.id);
         self.save_state_cap(&capabilities.wenlan, &state)?;
         // Also retries a copy an earlier write could not archive, whichever
         // page that write was for.
@@ -929,6 +947,11 @@ impl KnowledgeWriter {
         self.validate_guard(guard)?;
         KnowledgeProjectionWrite::with_projection_capabilities(&self.path, |capabilities| {
             let mut state = folders::read_state_strict(&capabilities.wenlan)?;
+            // A deleted page is never restored, so where it was archived from
+            // stops mattering.
+            if state.archived_from.remove(page_id).is_some() && !state.pages.contains_key(page_id) {
+                self.save_state_cap(&capabilities.wenlan, &state)?;
+            }
 
             if let Some(entry) = state.pages.remove(page_id) {
                 // Delete the file *before* persisting state. If the file remove
@@ -1285,23 +1308,93 @@ impl KnowledgeWriter {
         guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
         page_ids: &[String],
     ) -> Result<usize, WenlanError> {
+        let (evicted, stuck) = self.move_projected_pages_to_archive(guard, page_ids, false)?;
+        if !stuck.is_empty() {
+            // Loud at the caller too, not only in the per-page log lines:
+            // the count is what a health check can act on.
+            //
+            // Both lists, because the caller aborts the ceremony on this
+            // error and leaves the generation unchanged. The pages named in
+            // `evicted` are already in archive/ and already gone from
+            // `state.json`, and at generation 0 nothing re-projects them --
+            // so an error that reported only `stuck` would say the ceremony
+            // did nothing while some of the vault had already moved.
+            let moved = if evicted.is_empty() {
+                "none".to_string()
+            } else {
+                evicted.join(", ")
+            };
+            return Err(WenlanError::Conflict(format!(
+                "projection invariant evicted {} page(s) but {} could not be removed \
+                 and remain readable on disk: {}. Already moved into archive/ (the \
+                 generation did NOT advance, so these do not come back on their own): {moved}",
+                evicted.len(),
+                stuck.len(),
+                stuck.join(", ")
+            )));
+        }
+        Ok(evicted.len())
+    }
+
+    /// Move the files of pages that were archived out of the pages folder and
+    /// into `archive/`, exactly as they are on disk.
+    ///
+    /// An archived page's file left in place still looks like a live page:
+    /// its `origin_version` trails the database (archiving bumps the
+    /// version), so the watcher skips any edit made to it, and a restore
+    /// finds unrecognized bytes there and refuses to rewrite them. Moving it
+    /// out keeps whatever the person typed, synced or not, in `archive/`, and
+    /// leaves the pages folder holding active pages only. The folder each
+    /// page lived in is remembered, so a restore projects it back there as a
+    /// fresh file of the restored version.
+    ///
+    /// Returns how many pages had a file moved. Pages with no file are a
+    /// no-op. A page whose file could not be moved keeps its state entry, so
+    /// a later pass (the startup sweep) tries again; the call then fails
+    /// naming those pages, after recording the ones that did move.
+    pub fn archive_pages(
+        &self,
+        guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
+        page_ids: &[String],
+    ) -> Result<usize, WenlanError> {
+        let (archived, stuck) = self.move_projected_pages_to_archive(guard, page_ids, true)?;
+        if !stuck.is_empty() {
+            return Err(WenlanError::Conflict(format!(
+                "could not move the file of archived page(s) {} into archive/; it stays in the \
+                 pages folder until the next start retries",
+                stuck.join(", ")
+            )));
+        }
+        Ok(archived.len())
+    }
+
+    /// Shared body of [`Self::evict_projected_pages`] and
+    /// [`Self::archive_pages`]: every file claiming each page moves into
+    /// `archive/`, and only a page whose files all moved leaves `state.json`.
+    /// `remember_place` records where an archived page lived, for restore.
+    /// Returns the pages moved and the pages that could not be.
+    fn move_projected_pages_to_archive(
+        &self,
+        guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
+        page_ids: &[String],
+        remember_place: bool,
+    ) -> Result<(Vec<String>, Vec<String>), WenlanError> {
         self.validate_guard(guard)?;
         let projected = self.projected_files()?;
         KnowledgeProjectionWrite::with_projection_capabilities(&self.path, |capabilities| {
             let mut state = folders::read_state_strict(&capabilities.wenlan)?;
             let mut manifest =
                 crate::export::provenance::StubManifest::load_from(&capabilities.root);
-            let mut removed = 0usize;
-            let mut stuck: Vec<&str> = Vec::new();
+            let mut stuck: Vec<String> = Vec::new();
             // Named in the error too. A partial eviction saves state and moves
             // files for the pages that succeeded, but the caller aborts the
             // ceremony and leaves the generation where it was -- so "it failed"
             // is true and "nothing moved" is not. An operator who is only told
             // which pages STAYED cannot find the ones that left.
-            let mut evicted: Vec<&str> = Vec::new();
+            let mut evicted: Vec<String> = Vec::new();
 
-            // Tracked apart from `removed` because a page can need the state
-            // written without any file moving. Gating the save on `removed`
+            // Tracked apart from `evicted` because a page can need the state
+            // written without any file moving. Gating the save on `evicted`
             // alone discarded the stale-entry cleanup below whenever EVERY
             // evicted page was file-less -- the one case that branch exists for.
             let mut state_dirty = false;
@@ -1310,7 +1403,10 @@ impl KnowledgeWriter {
                 if files.is_empty() {
                     // Known to `state.json` a moment ago and to nothing now, or
                     // an entry with no file. Nothing on disk to evict.
-                    if state.pages.remove(page_id).is_some() {
+                    if let Some(entry) = state.pages.remove(page_id) {
+                        if remember_place {
+                            state.archived_from.insert(page_id.clone(), entry.file);
+                        }
                         state_dirty = true;
                     }
                     manifest.forget_page(page_id);
@@ -1328,9 +1424,8 @@ impl KnowledgeWriter {
                             // one keeps a file `wenlan pages` can read -- so
                             // maximum removal beats a clean exit.
                             log::error!(
-                                "[truth] projection invariant could not archive page {page_id} \
-                                 ({filename}), its file is still readable by `wenlan pages`: \
-                                 {error}"
+                                "[knowledge] could not move page {page_id} ({filename}) into \
+                                 archive/, its file is still readable by `wenlan pages`: {error}"
                             );
                         }
                     }
@@ -1338,13 +1433,19 @@ impl KnowledgeWriter {
                 if moved == files.len() {
                     // Only forget the page once its files are actually gone.
                     // A retained entry is what makes the next pass retry.
-                    state.pages.remove(page_id);
+                    let place = state
+                        .pages
+                        .remove(page_id)
+                        .map(|entry| entry.file)
+                        .or_else(|| files.first().cloned());
+                    if let Some(place) = place.filter(|_| remember_place) {
+                        state.archived_from.insert(page_id.clone(), place);
+                    }
                     manifest.forget_page(page_id);
                     state_dirty = true;
-                    removed += 1;
-                    evicted.push(page_id);
+                    evicted.push(page_id.clone());
                 } else {
-                    stuck.push(page_id);
+                    stuck.push(page_id.clone());
                 }
             }
 
@@ -1357,30 +1458,7 @@ impl KnowledgeWriter {
                     log::warn!("[knowledge] index.md regeneration failed: {e}");
                 }
             }
-            if !stuck.is_empty() {
-                // Loud at the caller too, not only in the per-page log lines:
-                // the count is what a health check can act on.
-                //
-                // Both lists, because the caller aborts the ceremony on this
-                // error and leaves the generation unchanged. The pages named in
-                // `evicted` are already in archive/ and already gone from
-                // `state.json`, and at generation 0 nothing re-projects them --
-                // so an error that reported only `stuck` would say the ceremony
-                // did nothing while some of the vault had already moved.
-                let moved = if evicted.is_empty() {
-                    "none".to_string()
-                } else {
-                    evicted.join(", ")
-                };
-                return Err(WenlanError::Conflict(format!(
-                    "projection invariant evicted {removed} page(s) but {} could not be removed \
-                     and remain readable on disk: {}. Already moved into archive/ (the \
-                     generation did NOT advance, so these do not come back on their own): {moved}",
-                    stuck.len(),
-                    stuck.join(", ")
-                )));
-            }
-            Ok(removed)
+            Ok((evicted, stuck))
         })
     }
 
@@ -5157,6 +5235,12 @@ impl KnowledgeProjectionWrite {
         self.writer.remove_page(&self.guard, page_id)
     }
 
+    /// See [`KnowledgeWriter::archive_pages`]. Not truth-gated: moving a file
+    /// out of the pages folder never discloses anything.
+    pub fn archive_pages(&self, page_ids: &[String]) -> Result<usize, WenlanError> {
+        self.writer.archive_pages(&self.guard, page_ids)
+    }
+
     /// Repair the projection from the DB.
     ///
     /// Deliberately NOT truth-gated. It rewrites files for pages already on
@@ -8092,5 +8176,144 @@ mod tests {
         assert!(writer.write_page_for_test(&older).is_err());
         assert_eq!(std::fs::read(&file).unwrap(), saved);
         assert_eq!(writer.load_state().pages[&older.id].version, newer.version);
+    }
+
+    /// Archiving moves the page's file into `archive/` byte for byte, an
+    /// edit nobody synced included, and leaves no live file or state entry
+    /// behind for the watcher or the index to treat as an active page.
+    #[test]
+    fn archiving_a_page_moves_its_file_with_unsynced_edits_into_archive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        let live = writer.write_page_for_test(&page).unwrap();
+        let typed = format!(
+            "{}\nA line typed in the vault, not synced yet.\n",
+            std::fs::read_to_string(&live).unwrap()
+        );
+        std::fs::write(&live, &typed).unwrap();
+
+        let guard = writer.begin_test_write();
+        let moved = writer
+            .archive_pages(&guard, std::slice::from_ref(&page.id))
+            .unwrap();
+        assert_eq!(moved, 1);
+        assert!(
+            !std::path::Path::new(&live).exists(),
+            "no live copy remains"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("archive/rust-ownership.md")).unwrap(),
+            typed,
+            "the archived file keeps exactly what was on disk"
+        );
+        let state = writer.load_state();
+        assert!(!state.pages.contains_key(&page.id));
+        assert_eq!(
+            state.archived_from.get(&page.id).map(String::as_str),
+            Some("rust-ownership.md")
+        );
+        assert!(!std::fs::read_to_string(dir.path().join(INDEX_FILE))
+            .unwrap()
+            .contains("rust-ownership"));
+
+        // Reconcile, handed the archived page anyway, has no entry to repair
+        // and so does not put a file back in the pages folder.
+        let stats = writer
+            .reconcile_for_test(std::slice::from_ref(&page))
+            .unwrap();
+        assert_eq!((stats.checked, stats.rewritten), (0, 0));
+        assert!(!std::path::Path::new(&live).exists());
+
+        // A second archive pass has nothing left to move.
+        let guard = writer.begin_test_write();
+        assert_eq!(
+            writer
+                .archive_pages(&guard, std::slice::from_ref(&page.id))
+                .unwrap(),
+            0
+        );
+    }
+
+    /// Restore projects the page fresh, in the folder it was archived from,
+    /// and leaves the archived copy (with any edit made to it) in `archive/`.
+    #[test]
+    fn a_restored_page_is_projected_back_into_the_folder_it_was_archived_from() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        std::fs::create_dir(dir.path().join("Projects")).unwrap();
+        let page = test_concept();
+        let guard = writer.begin_test_write();
+        let live = writer
+            .write_page_in_folder(&guard, &page, Some("Projects"))
+            .unwrap();
+        assert!(live.ends_with("Projects/rust-ownership.md"), "{live}");
+        let before = std::fs::read_to_string(&live).unwrap();
+        writer
+            .archive_pages(&guard, std::slice::from_ref(&page.id))
+            .unwrap();
+        let archived_path = dir.path().join("archive/rust-ownership.md");
+        assert_eq!(std::fs::read_to_string(&archived_path).unwrap(), before);
+        let edited = format!("{before}\nEdited while archived.\n");
+        std::fs::write(&archived_path, &edited).unwrap();
+
+        let mut restored = page.clone();
+        restored.version += 2;
+        let path = writer.write_page_for_test(&restored).unwrap();
+        assert_eq!(path, live, "back in the folder it was archived from");
+        let projected = std::fs::read_to_string(&path).unwrap();
+        assert!(projected.contains(&format!("origin_version: {}", restored.version)));
+        assert_eq!(
+            crate::export::provenance::page_body_from_projection(&projected),
+            crate::export::provenance::page_body_from_projection(&before),
+            "the restored file carries the same page text"
+        );
+        assert_eq!(std::fs::read_to_string(&archived_path).unwrap(), edited);
+        let state = writer.load_state();
+        assert!(state.archived_from.is_empty());
+        assert_eq!(state.pages[&page.id].file, "Projects/rust-ownership.md");
+    }
+
+    /// A folder removed while its page was archived is not recreated; the
+    /// page comes back where a new page would go.
+    #[test]
+    fn a_restored_page_whose_folder_is_gone_falls_back_to_the_root() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        std::fs::create_dir(dir.path().join("Gone")).unwrap();
+        let page = test_concept();
+        let guard = writer.begin_test_write();
+        writer
+            .write_page_in_folder(&guard, &page, Some("Gone"))
+            .unwrap();
+        writer
+            .archive_pages(&guard, std::slice::from_ref(&page.id))
+            .unwrap();
+        std::fs::remove_dir(dir.path().join("Gone")).unwrap();
+        let mut restored = page.clone();
+        restored.version += 2;
+        let path = writer.write_page_for_test(&restored).unwrap();
+        assert!(
+            path.ends_with("/rust-ownership.md") && !path.contains("Gone"),
+            "{path}"
+        );
+        assert!(!dir.path().join("Gone").exists());
+    }
+
+    /// Deleting an archived page forgets where it was archived from.
+    #[test]
+    fn deleting_an_archived_page_drops_its_archived_place() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        writer.write_page_for_test(&page).unwrap();
+        let guard = writer.begin_test_write();
+        writer
+            .archive_pages(&guard, std::slice::from_ref(&page.id))
+            .unwrap();
+        assert!(writer.load_state().archived_from.contains_key(&page.id));
+        writer.remove_page_for_test(&page.id).unwrap();
+        assert!(writer.load_state().archived_from.is_empty());
+        assert!(dir.path().join("archive/rust-ownership.md").exists());
     }
 }

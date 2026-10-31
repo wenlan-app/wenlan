@@ -459,6 +459,28 @@ pub(super) async fn prepare_startup_state(
                         Err(e) => tracing::warn!("[reconcile] pass failed: {e}"),
                     }
 
+                    // Reconcile repairs active pages only. An archived page's
+                    // file belongs in `archive/`, not the pages folder: one
+                    // left there (archived before archive moved files, by a
+                    // path that does not project, or whose move failed) looks
+                    // like a live page whose edits the watcher then ignores.
+                    // Moving it keeps its bytes, edits included.
+                    match db_arc.list_pages("archived", 10_000, 0).await {
+                        Ok(archived) if !archived.is_empty() => {
+                            let ids: Vec<String> =
+                                archived.into_iter().map(|page| page.id).collect();
+                            match projection.archive_pages(&ids) {
+                                Ok(0) => {}
+                                Ok(moved) => tracing::info!(
+                                    "[reconcile] moved {moved} archived page file(s) into archive/"
+                                ),
+                                Err(e) => tracing::warn!("[reconcile] archived page files: {e}"),
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("[reconcile] list archived pages failed: {e}"),
+                    }
+
                     // A cutover ceremony that was killed mid-flight left the
                     // fence at `preparing`, and `preparing` refuses every page
                     // write. The ceremony cannot run while this daemon is up

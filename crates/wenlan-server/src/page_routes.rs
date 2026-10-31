@@ -458,20 +458,47 @@ pub async fn handle_set_page_review_required(
 }
 
 /// POST /api/pages/{id}/archive
+///
+/// Archives the database row, then moves the page's projected Markdown file
+/// out of the pages folder into `archive/`, bytes untouched, so no file there
+/// keeps posing as an active page. A failed move does not undo the archive:
+/// the response reports `projection_status: pending` and the next daemon start
+/// retries the move.
 pub async fn handle_archive_page(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ServerError> {
-    let db = {
+    let (db, page_root) = {
         let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.lint_config.page_root().map(std::path::Path::to_path_buf),
+        )
     };
     // Checked here, not left to the core fence, so the refusal can carry the
     // entity id as a field. The core fence still stands behind it for every
     // caller that does not come through this route.
     reject_entity_page_mutation(&db, &id).await?;
     db.archive_page(&id).await.map_err(ServerError::from)?;
-    Ok(Json(serde_json::json!({"status": "archived"})))
+    let mut body = serde_json::json!({"status": "archived"});
+    // No status check needed: after `archive_page` the page is not active
+    // (archived now, already, or never an active page), and a page that is not
+    // active has no business keeping a file in the pages folder. A page with
+    // no file is a no-op.
+    if let Some(root) = page_root {
+        let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
+        match projection.archive_pages(std::slice::from_ref(&id)) {
+            Ok(_) => body["projection_status"] = serde_json::json!(PageProjectionStatus::Synced),
+            Err(error) => {
+                tracing::warn!(
+                    "[page] archived {id} but its file stays in the pages folder: {error}"
+                );
+                body["projection_status"] = serde_json::json!(PageProjectionStatus::Pending);
+                body["projection_error"] = serde_json::json!(error.to_string());
+            }
+        }
+    }
+    Ok(Json(body))
 }
 
 /// POST /api/pages/{id}/restore
