@@ -103,6 +103,20 @@ async fn page_with_my_line(db: &MemoryDB, id: &str) -> Page {
     db.get_page(id).await.unwrap().unwrap()
 }
 
+/// The AI page after the person added a cited sentence whose citation was
+/// checked and found unsupported: its facts changed.
+async fn page_with_my_unsupported_line(db: &MemoryDB, id: &str) -> Page {
+    ai_page(db, id, None).await;
+    let mine = format!("{AI_BODY} I prefer the current-thread runtime.[1]");
+    assert!(write(db, id, &mine, "manual_edit", None).await.wrote);
+    let page = db.get_page(id).await.unwrap().unwrap();
+    assert!(db
+        .set_page_citations_at_page_version(id, &citation("mem-tokio", "unverified"), page.version)
+        .await
+        .unwrap());
+    db.get_page(id).await.unwrap().unwrap()
+}
+
 fn authors(view: &PageSentencesResponse) -> Vec<SentenceAuthor> {
     view.sentences.iter().map(|s| s.author).collect()
 }
@@ -136,9 +150,29 @@ async fn sentences_view_tells_the_persons_sentences_from_the_ais() {
 }
 
 #[tokio::test]
-async fn a_version_checked_agent_write_lands_only_on_the_ais_sentences() {
+async fn a_rewording_of_the_persons_sentence_is_dropped_not_proposed() {
+    // 只在事实变了时: the person's sentence has no citation problem, so the
+    // AI's rewording of it is not a proposal; the sentence stays as written.
     let (db, _dir) = test_db().await;
     let before = page_with_my_line(&db, "p").await;
+    let rewrite = "Tokio runs async tasks on a pool. Workers steal queued tasks. \
+                   The multi-thread runtime is better for everyone.";
+    let result = write(&db, "p", rewrite, "agent_refresh", Some(before.version)).await;
+    assert!(result.wrote, "the AI's own sentence change lands");
+    assert!(result.sentence_proposals.is_empty());
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(
+        after.content,
+        "Tokio runs async tasks on a pool. Workers steal queued tasks. \
+         I prefer the current-thread runtime."
+    );
+    assert!(page_sentences(&db, "p").await.unwrap().proposals.is_empty());
+}
+
+#[tokio::test]
+async fn a_version_checked_agent_write_lands_only_on_the_ais_sentences() {
+    let (db, _dir) = test_db().await;
+    let before = page_with_my_unsupported_line(&db, "p").await;
     let rewrite = "Tokio runs async tasks on a pool. Workers steal queued tasks. \
                    The multi-thread runtime is better for everyone.";
     let result = write(&db, "p", rewrite, "agent_refresh", Some(before.version)).await;
@@ -148,14 +182,19 @@ async fn a_version_checked_agent_write_lands_only_on_the_ais_sentences() {
     assert_eq!(
         after.content,
         "Tokio runs async tasks on a pool. Workers steal queued tasks. \
-         I prefer the current-thread runtime."
+         I prefer the current-thread runtime.[1]"
     );
     assert!(after.user_edited, "the page is still the person's");
 
     let view = page_sentences(&db, "p").await.unwrap();
     assert_eq!(view.proposals.len(), 1);
     let proposal = &view.proposals[0];
-    assert_eq!(proposal.before, "I prefer the current-thread runtime.");
+    assert_eq!(proposal.before, "I prefer the current-thread runtime.[1]");
+    assert_eq!(
+        proposal.reason,
+        Some(WeakReason::Unsupported),
+        "the facts changed: its source does not back it"
+    );
     assert_eq!(
         proposal.after,
         "The multi-thread runtime is better for everyone."
@@ -188,7 +227,7 @@ async fn a_machine_rewrite_keeps_the_citations_on_the_persons_sentence() {
     assert!(write(&db, "p", &mine, "manual_edit", None).await.wrote);
     let before = db.get_page("p").await.unwrap().unwrap();
     assert!(db
-        .set_page_citations_at_page_version("p", &citation("mem-x", "verified"), before.version)
+        .set_page_citations_at_page_version("p", &citation("mem-x", "unverified"), before.version)
         .await
         .unwrap());
 
@@ -252,9 +291,32 @@ async fn a_machine_rewrite_keeps_the_citations_on_the_persons_sentence() {
 #[tokio::test]
 async fn proposals_are_accepted_or_rejected_one_by_one() {
     let (db, _dir) = test_db().await;
-    let before = page_with_my_line(&db, "p").await;
+    let before = page_with_my_unsupported_line(&db, "p").await;
     let units = crate::authorship::sentence_units(&before.content);
     let mine = units[2].hash.clone();
+    for (reason, refused) in [
+        (None, "reason_required"),
+        (Some(WeakReason::Stale), "reason_not_current"),
+        (Some(WeakReason::NoCitation), "reason_not_current"),
+    ] {
+        let result = propose_sentence(
+            &db,
+            "p",
+            &SentenceProposeRequest {
+                sentence_hash: mine.clone(),
+                text: "I prefer the multi-thread runtime now.".into(),
+                why: None,
+                reason,
+                expected_version: None,
+            },
+            "claude-code",
+        )
+        .await;
+        assert!(
+            matches!(&result, Err(WenlanError::Validation(m)) if m.starts_with(refused)),
+            "{reason:?}: {result:?}"
+        );
+    }
     let first = propose_sentence(
         &db,
         "p",
@@ -262,6 +324,7 @@ async fn proposals_are_accepted_or_rejected_one_by_one() {
             sentence_hash: mine.clone(),
             text: "I prefer the multi-thread runtime now.".into(),
             why: Some("you said so yesterday".into()),
+            reason: Some(WeakReason::Unsupported),
             expected_version: Some(before.version),
         },
         "claude-code",
@@ -275,6 +338,7 @@ async fn proposals_are_accepted_or_rejected_one_by_one() {
             sentence_hash: mine.clone(),
             text: String::new(),
             why: None,
+            reason: Some(WeakReason::Unsupported),
             expected_version: None,
         },
         "claude-code",
@@ -288,6 +352,7 @@ async fn proposals_are_accepted_or_rejected_one_by_one() {
             sentence_hash: mine.clone(),
             text: "x".into(),
             why: None,
+            reason: Some(WeakReason::Unsupported),
             expected_version: Some(before.version - 1),
         },
         "claude-code",
@@ -376,6 +441,7 @@ async fn an_accepted_sentence_waits_for_the_person_and_the_lock_makes_everything
             sentence_hash: first,
             text: "Tokio runs async tasks on a work-stealing pool.".into(),
             why: None,
+            reason: None,
             expected_version: Some(page.version),
         },
         "claude-code",
@@ -390,10 +456,9 @@ async fn an_accepted_sentence_waits_for_the_person_and_the_lock_makes_everything
     let rewrite = "Tokio runs async tasks. Workers steal tasks from each other.";
     let result = write(&db, "p", rewrite, "agent_refresh", Some(accepted.version)).await;
     assert!(result.wrote, "the AI's untouched sentence updates");
-    assert_eq!(
-        result.sentence_proposals.len(),
-        1,
-        "the accepted one becomes a proposal"
+    assert!(
+        result.sentence_proposals.is_empty(),
+        "the accepted one is protected, and a rewording of it is not proposed"
     );
     let after = db.get_page("p").await.unwrap().unwrap();
     assert_eq!(
@@ -405,6 +470,24 @@ async fn an_accepted_sentence_waits_for_the_person_and_the_lock_makes_everything
     assert!(db.set_page_review_required("p", true).await.unwrap());
     let locked = db.get_page("p").await.unwrap().unwrap();
     assert_eq!(ai_edit_mode(&locked), AiEditMode::Locked);
+    // A change to a sentence the page has: no whole-page card, nothing
+    // lands, and with no facts-changed reason nothing is proposed either.
+    let reworded = "Tokio runs async tasks on a work-stealing pool. Workers trade tasks.";
+    let result = write(&db, "p", reworded, "agent_refresh", Some(locked.version)).await;
+    assert_eq!(result.outcome, WriteOutcome::Unchanged);
+    assert!(result.revision_card_id.is_none() && result.sentence_proposals.is_empty());
+    assert_eq!(
+        db.get_page("p").await.unwrap().unwrap().content,
+        after.content
+    );
+    // A write that adds a sentence still waits as a whole-page card.
+    let grown = format!("{} Tokio has timers.", after.content);
+    let result = write(&db, "p", &grown, "agent_refresh", Some(locked.version)).await;
+    assert!(result.revision_card_id.is_some(), "{result:?}");
+    assert_eq!(
+        db.get_page("p").await.unwrap().unwrap().content,
+        after.content
+    );
     assert_eq!(
         page_sentences(&db, "p").await.unwrap().ai_edits,
         AiEditMode::Locked
@@ -444,7 +527,10 @@ async fn unknown_origin_is_protected_only_on_a_human_owned_page() {
         .all(|s| s.author == SentenceAuthor::Unknown && s.protected));
     let result = write(&db, "q", rewrite, "agent_refresh", Some(page.version)).await;
     assert_eq!(result.outcome, WriteOutcome::Unchanged);
-    assert_eq!(result.sentence_proposals.len(), 1);
+    assert!(
+        result.sentence_proposals.is_empty(),
+        "protected, and a rewording is not proposed"
+    );
     assert_eq!(db.get_page("q").await.unwrap().unwrap().content, AI_BODY);
 }
 
@@ -473,10 +559,9 @@ async fn a_forced_rebuild_regenerates_the_ais_sentences_and_keeps_the_persons() 
     .await
     .unwrap();
     assert!(result.wrote);
-    assert_eq!(
-        result.sentence_proposals.len(),
-        1,
-        "deleting my line is a proposal"
+    assert!(
+        result.sentence_proposals.is_empty(),
+        "my line is kept, and with no facts-changed reason dropping it is not proposed"
     );
     let after = db.get_page("p").await.unwrap().unwrap();
     assert_eq!(
@@ -488,8 +573,6 @@ async fn a_forced_rebuild_regenerates_the_ais_sentences_and_keeps_the_persons() 
         after.user_edited,
         "the rebuild kept the person's text, so it stays theirs"
     );
-    let view = page_sentences(&db, "p").await.unwrap();
-    assert_eq!(view.proposals[0].after, "", "the AI proposed removing it");
 }
 
 fn citation(locator: &str, status: &str) -> String {

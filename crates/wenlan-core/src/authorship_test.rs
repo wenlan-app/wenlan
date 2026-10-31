@@ -208,6 +208,7 @@ fn the_gate_keeps_a_rewritten_person_sentence_and_lands_the_ai_change() {
             sentence_hash: sentence_hash("Mine stays."),
             before: "Mine stays.[1]".into(),
             after: "Mine rewritten by AI.".into(),
+            reason: None,
         }]
     );
     assert_eq!(

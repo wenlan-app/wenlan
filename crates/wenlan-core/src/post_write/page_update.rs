@@ -1095,12 +1095,29 @@ async fn update_page_db_impl(
             // authored page or the review lock, which still get a revision
             // card. An agent whose `expected_version` matched above may land
             // on a human-owned page; see `machine_write_requires_review`.
-            if machine_write_requires_review(
-                writer,
-                &current,
-                req.expected_version.is_some(),
-                user_forced,
-            ) {
+            // Under the page lock, a write that only changes sentences the
+            // page already has goes through the sentence gate instead of a
+            // whole-page card: every sentence is protected, so each change is
+            // a sentence proposal (when its facts changed) and nothing lands.
+            // A forced rebuild and a rename's link rewrite keep the card.
+            let lock_proposes = writer.is_machine()
+                && current.review_required
+                && !user_forced
+                && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
+                && crate::sentences::locked_write_only_changes_sentences(
+                    db,
+                    &current,
+                    &req.content,
+                )
+                .await?;
+            if !lock_proposes
+                && machine_write_requires_review(
+                    writer,
+                    &current,
+                    req.expected_version.is_some(),
+                    user_forced,
+                )
+            {
                 // `expected_source_revision` is the caller's compile fence
                 // when it supplied one. A caller with none (e.g. the generic
                 // `update_page` wrapper) gets an acceptance-time staging
@@ -1288,9 +1305,10 @@ async fn update_page_db_impl(
             // A stale page that recompiles to the byte-identical body still had its
             // compile done, so acknowledge it; otherwise the sweep re-dispatches the
             // same no-op work forever.
-            if delta_summary.is_none() && old_set == new_set {
+            if (delta_summary.is_none() && old_set == new_set) || lock_proposes {
                 // Nothing lands, but the changes the write wanted to make to
-                // the person's sentences are still proposals.
+                // the person's sentences are still proposals. On a locked
+                // page nothing lands by design, sources included.
                 let sentence_proposals = match &gate {
                     Some(plan) => {
                         crate::sentences::stage_gate_proposals(

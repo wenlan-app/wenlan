@@ -235,7 +235,7 @@ async fn the_sentences_view_tells_the_persons_sentences_from_the_ais() {
 }
 
 #[tokio::test]
-async fn an_agent_refresh_lands_on_the_ais_sentences_and_proposes_for_the_persons() {
+async fn an_agent_refresh_lands_on_the_ais_sentences_and_drops_a_rewording_of_the_persons() {
     let _guard = data_dir_lock().lock().await;
     let _vault = ScratchVault::new();
     let (router, _tmp, db) = common::test_app_no_gate().await;
@@ -265,11 +265,24 @@ async fn an_agent_refresh_lands_on_the_ais_sentences_and_proposes_for_the_person
         "the person's line is kept: {landed}"
     );
 
+    // The person's line has no citation problem, so the facts behind it did
+    // not change: a rewording of it is not a proposal.
     let view = sentences(&router, &id).await;
-    assert_eq!(view.proposals.len(), 1, "{view:?}");
-    let staged = &view.proposals[0];
-    assert_eq!(staged.before.trim(), MY_LINE);
-    assert_eq!(staged.after.trim(), "I prefer the multi-thread runtime.");
+    assert!(view.proposals.is_empty(), "{view:?}");
+
+    // A proposal on one of the AI's own sentences, to reject.
+    let ai = hash_of(&view, "Tokio runs async tasks on a runtime.");
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &format!("/api/pages/{id}/sentences/propose"),
+        Some(json!({ "sentence_hash": ai, "text": "Tokio runs tasks." })),
+        Caller::Agent("proposer"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let staged: SentenceProposalResponse = typed(body);
+    let staged = staged.proposal;
     assert_eq!(staged.status, SentenceProposalStatus::Pending);
 
     // Only the person rejects it; an agent is refused.
@@ -297,7 +310,19 @@ async fn proposals_are_made_by_the_ai_and_accepted_by_the_person() {
     let (router, _tmp, db) = common::test_app_no_gate().await;
     let id = page_with_my_line(&router, &db).await;
     let view = sentences(&router, &id).await;
-    let mine = hash_of(&view, MY_LINE);
+    // The person's sentence takes a proposal only with a facts-changed
+    // reason it has now; it has none.
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &format!("/api/pages/{id}/sentences/propose"),
+        Some(json!({ "sentence_hash": hash_of(&view, MY_LINE), "text": "Mine, reworded." })),
+        Caller::Agent("proposer"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.to_string().contains("reason_required"), "{body}");
+    let mine = hash_of(&view, "Tokio runs async tasks on a runtime.");
 
     let (status, body) = call(
         &router,
@@ -322,7 +347,7 @@ async fn proposals_are_made_by_the_ai_and_accepted_by_the_person() {
         .unwrap()
         .unwrap()
         .content
-        .contains(MY_LINE));
+        .contains("Tokio runs async tasks on a runtime."));
 
     // A stale expected_version conflicts; unknown fields are refused.
     let (status, _) = call(
