@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.6](https://github.com/wenlan-app/wenlan/compare/v0.20.5...v0.20.6) (2026-10-31)
+
+
+### Features
+
+* persisted palace layout and one merged page history ([#1054](https://github.com/wenlan-app/wenlan/issues/1054)) ([17842c4](https://github.com/wenlan-app/wenlan/commit/17842c45b7a42eceb55763323077a987fcd9b04e))
+
 ## [0.20.5](https://github.com/wenlan-app/wenlan/compare/v0.20.4...v0.20.5) (2026-10-31)
 
 
