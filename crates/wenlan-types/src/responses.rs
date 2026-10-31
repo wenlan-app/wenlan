@@ -767,6 +767,11 @@ pub struct ConfigResponse {
     /// "Lock pages I've written". Missing on an older daemon reads false.
     #[serde(default)]
     pub lock_my_pages: bool,
+    /// "AI may edit my sentences directly" for every page. Off by default: an
+    /// AI change to the person's sentences is staged as a sentence proposal.
+    /// Missing on an older daemon reads false.
+    #[serde(default)]
+    pub ai_direct_edit: bool,
 }
 
 // ===== On-device model =====
@@ -845,6 +850,11 @@ pub struct PageWriteResponse {
     /// The next action, in plain words for hosts with no Wenlan skill.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub next_step: String,
+    /// Sentence proposals this write staged for the person's sentences it
+    /// would have changed; the write landed only on the AI's sentences.
+    /// Their ids are listed by `GET /api/pages/{id}/sentences`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sentence_proposals: Vec<String>,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.
@@ -852,6 +862,14 @@ pub struct PageWriteResponse {
 pub struct PageReviewRequiredResponse {
     pub page_id: String,
     pub review_required: bool,
+    /// The page's "AI may edit directly" setting after this call.
+    #[serde(default)]
+    pub ai_direct_edit: bool,
+    /// The page's AI-change mode after this call: `ask_first` while the
+    /// review lock is on, else `direct` when the page or the global setting
+    /// allows direct edits, else `propose`.
+    #[serde(default)]
+    pub ai_edits: crate::authorship::AiEditMode,
 }
 
 /// Receipt for `POST /api/pages/lock-edited`: how many pages a person wrote
