@@ -917,6 +917,21 @@ export async function listSpaces(): Promise<Space[]> {
   return invoke("list_spaces");
 }
 
+/** One active item of a Space Brief: a line of work home lists under "what
+ *  you're working on" until things have a record of their own. `added_at` is
+ *  in seconds. */
+export interface WorkingOnItem {
+  space: string;
+  id: string;
+  text: string;
+  added_at: number;
+}
+
+/** Active Brief items across the Spaces the person kept, newest first. */
+export async function listWorkingOn(): Promise<WorkingOnItem[]> {
+  return invoke("list_working_on");
+}
+
 export async function getSpace(name: string): Promise<Space | null> {
   return invoke("get_space", { name });
 }

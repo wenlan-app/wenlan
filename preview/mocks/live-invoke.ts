@@ -1026,6 +1026,19 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_profile: () => get("/api/profile"),
   get_profile_narrative: () => get("/api/profile/narrative"),
   list_spaces: () => listPreviewSpaces(),
+  // Mirrors the app's list_working_on: active Brief items across kept Spaces.
+  list_working_on: async () => {
+    const spaces = (await listPreviewSpaces()).filter((space) => space.suggested !== true);
+    const items: Record<string, unknown>[] = [];
+    for (const space of spaces) {
+      const response = await post("/api/brief", { space: space.name }).catch(() => null);
+      const brief = response?.brief;
+      for (const item of Array.isArray(brief?.active) ? brief.active : []) {
+        items.push({ space: brief.space, id: item.id, text: item.text, added_at: item.added_at });
+      }
+    }
+    return items.sort((a, b) => Number(b.added_at) - Number(a.added_at) || String(a.id).localeCompare(String(b.id)));
+  },
   // A Space bound to a git repository. The daemon runs git and gh itself, so
   // the preview passes these straight through.
   get_repo_wiki: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`),

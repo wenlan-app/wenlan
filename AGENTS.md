@@ -14,6 +14,7 @@ are read only when the task needs them.
 | Business logic, storage, retrieval, enrichment | `crates/wenlan-core/AGENTS.md` |
 | HTTP daemon and runtime workers | `crates/wenlan-server/AGENTS.md` |
 | Desktop app and frontend | `app/AGENTS.md` or the closest nested `AGENTS.md` |
+| Anything that changes what a person sees or how an AI tool behaves for them | `docs/ux/spec.md` (agreed UX rules, each with an id and a test) |
 | React frontend (Tauri UI) | `src/AGENTS.md` |
 | Browser e2e tests | `e2e/AGENTS.md` |
 | Browser-only preview harness | `preview/AGENTS.md` |

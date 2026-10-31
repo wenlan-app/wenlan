@@ -16,6 +16,30 @@ export function newestPages(pages: readonly Page[], limit = NEW_PAGES_LISTED): P
     .slice(0, limit);
 }
 
+/** A row of the home's recent list: whether the AI wrote the page, so the
+ *  row can say so quietly. */
+export interface RecentPage {
+  readonly page: Page;
+  readonly byAi: boolean;
+}
+
+/**
+ * The home's recent list (UX-HOME-3): pages you edited, by when they last
+ * changed, and pages the AI newly wrote, by when it wrote them. The AI's
+ * small edits to its older pages don't bring them back up. A page counts as
+ * yours once you wrote or edited it.
+ */
+export function recentPages(pages: readonly Page[], limit = NEW_PAGES_LISTED): RecentPage[] {
+  return askablePages(pages)
+    .map((page) => {
+      const yours = page.user_edited === true || page.creation_kind === "authored";
+      return { page, byAi: !yours, at: Date.parse(yours ? page.last_modified : page.created_at) || 0 };
+    })
+    .sort((a, b) => b.at - a.at)
+    .slice(0, limit)
+    .map(({ page, byAi }) => ({ page, byAi }));
+}
+
 /**
  * The Wiki home's way into the library: the newest pages, one click each.
  * Before this the home had no page list at all, so pages an AI tool wrote
@@ -37,12 +61,12 @@ export function NewPagesList({
   readonly justWritten?: ReadonlySet<string>;
 }) {
   const { t } = useTranslation();
-  const rows = newestPages(pages);
+  const rows = recentPages(pages);
   if (rows.length === 0) return null;
   return (
     <section className="wiki-new-pages" data-testid="wiki-new-pages" aria-labelledby="wiki-new-pages-title">
       <header className="wiki-new-pages-header">
-        <h2 id="wiki-new-pages-title">{t("pages.overview.newPagesTitle")}</h2>
+        <h2 id="wiki-new-pages-title">{t("pages.overview.recentTitle")}</h2>
         {onBrowseAll ? (
           <button type="button" className="wiki-new-pages-all" onClick={onBrowseAll}>
             {t("pages.overview.seeAllPages")}
@@ -50,11 +74,8 @@ export function NewPagesList({
         ) : null}
       </header>
       <ul>
-        {rows.map((page) => {
+        {rows.map(({ page, byAi }) => {
           const fresh = justWritten?.has(page.id) === true;
-          const sources = page.source_memory_ids.length > 0
-            ? t("askAi.writePages.sources", { count: page.source_memory_ids.length })
-            : null;
           return (
             <li key={page.id}>
               <button
@@ -69,11 +90,9 @@ export function NewPagesList({
                   <PageIcon className="wiki-new-pages-icon" size={16} />
                 )}
                 <span className="wiki-new-pages-title">{page.title}</span>
-                {fresh || sources ? (
-                  <span className="wiki-new-pages-meta">
-                    {[fresh ? t("pages.overview.justWritten") : null, sources].filter(Boolean).join(" · ")}
-                  </span>
-                ) : null}
+                {byAi && !fresh ? <span className="wiki-new-pages-by">{t("pages.overview.aiWrote")}</span> : null}
+                {/* Home counts nothing, sources included (UX-HOME-2). */}
+                {fresh ? <span className="wiki-new-pages-meta">{t("pages.overview.justWritten")}</span> : null}
               </button>
             </li>
           );

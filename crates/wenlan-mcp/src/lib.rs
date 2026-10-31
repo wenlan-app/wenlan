@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod client;
 pub mod lock_state;
+mod map_tree;
 mod query_output;
 pub mod self_update_check;
 pub mod serve;

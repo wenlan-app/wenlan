@@ -1361,6 +1361,11 @@ pub struct ReadPageParams {
     )]
     #[serde(default)]
     pub session: Option<String>,
+    #[schemars(
+        description = "true adds the page's mind map as a small text tree and a link that opens it in Wenlan. Set it only when the user wants to see the map."
+    )]
+    #[serde(default)]
+    pub map: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -4226,7 +4231,7 @@ impl WenlanMcpServer {
     }
 
     pub async fn read_page_impl(&self, page_id: &str) -> Result<CallToolResult, McpError> {
-        self.read_page_for_session(page_id, None).await
+        self.read_page_for_session(page_id, None, false).await
     }
 
     /// `read_page`, naming the AI session that is reading so the note shows on
@@ -4235,6 +4240,7 @@ impl WenlanMcpServer {
         &self,
         page_id: &str,
         session: Option<&str>,
+        with_map: bool,
     ) -> Result<CallToolResult, McpError> {
         if !is_opaque_page_id(page_id) {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
@@ -4311,8 +4317,82 @@ impl WenlanMcpServer {
             if !attachments.is_empty() {
                 object.insert("attachments".into(), attachments.into());
             }
+            // This page's own mind map as a text tree with a link into the app,
+            // only when the person asks to see it, and absent when unmapped.
+            // The conversation's working-memory map (UX-CHAT-4) is separate.
+            let tree = if with_map {
+                self.page_map_tree(&page.page.page, &visible).await
+            } else {
+                None
+            };
+            if let Some(tree) = tree {
+                object.insert(
+                    "map".into(),
+                    serde_json::json!({
+                        "tree": tree,
+                        "open": crate::map_tree::open_link(page_id),
+                        "show": "Show tree as is in a code block, then the open link.",
+                    }),
+                );
+            }
         }
         Ok(CallToolResult::structured(value))
+    }
+
+    /// The page's mind map drawn by [`crate::map_tree::render`]. Names come from
+    /// what `read_page` already holds; entity names are looked up on the plain
+    /// client so they are not listed as reads of this session. Best effort: a
+    /// map that can't be read leaves the page result as it was.
+    async fn page_map_tree(
+        &self,
+        page: &wenlan_types::pages::Page,
+        sources: &[&PageSourceWithMemory],
+    ) -> Option<String> {
+        let map: wenlan_types::page_map::PageMapResponse = self
+            .client
+            .get(&format!("/api/pages/{}/map", page.id))
+            .await
+            .ok()?;
+        let mut names = std::collections::HashMap::new();
+        names.insert(format!("page:{}", page.id), page.title.clone());
+        for source in sources {
+            let Some(memory) = &source.memory else {
+                continue;
+            };
+            let text = [
+                Some(memory.title.as_str()),
+                memory.summary.as_deref(),
+                Some(memory.content.as_str()),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|text| !text.is_empty());
+            if let Some(text) = text {
+                let short: String = text.chars().take(64).collect();
+                let short = if short.len() < text.len() {
+                    format!("{}…", short.trim_end())
+                } else {
+                    short
+                };
+                names.insert(format!("memory:{}", memory.source_id), short);
+            }
+        }
+        let entities = map
+            .nodes
+            .iter()
+            .filter(|node| node.ref_kind == "entity" && node.label.is_none())
+            .take(crate::map_tree::MAX_TREE_LINES);
+        for node in entities {
+            let detail: Result<wenlan_types::entities::EntityDetail, _> = self
+                .client
+                .get(&format!("/api/memory/entities/{}", node.ref_id))
+                .await;
+            if let Ok(detail) = detail {
+                names.insert(format!("entity:{}", node.ref_id), detail.entity.name);
+            }
+        }
+        crate::map_tree::render(&map, &names)
     }
 
     async fn page_attachments(
@@ -5315,7 +5395,7 @@ impl WenlanMcpServer {
         &self,
         Parameters(params): Parameters<ReadPageParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.read_page_for_session(&params.page_id, params.session.as_deref())
+        self.read_page_for_session(&params.page_id, params.session.as_deref(), params.map)
             .await
     }
 
