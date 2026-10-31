@@ -1711,7 +1711,6 @@ async fn update_page_db_impl(
         None => Vec::new(),
     };
 
-
     Ok(WriteResult {
         id: page_id.to_string(),
         attached_to: None,
