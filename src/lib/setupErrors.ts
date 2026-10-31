@@ -75,7 +75,7 @@ const PATTERNS: [SetupErrorKind, RegExp][] = [
   ],
   [
     "connection",
-    /connection refused|\beconnrefused\b|\beconnreset\b|connection reset|unreachable|isn't reachable|is not reachable|could not connect|couldn't connect|failed to connect|connect error|no route to host|\benotfound\b|network error/i,
+    /connection refused|\beconnrefused\b|\beconnreset\b|connection reset|error sending request|unreachable|isn't reachable|is not reachable|could not connect|couldn't connect|failed to connect|connect error|no route to host|\benotfound\b|network error/i,
   ],
 ];
 
@@ -91,6 +91,15 @@ export function describeSetupError(err: unknown): DescribedSetupError {
     if (pattern.test(detail)) return { kind, detail };
   }
   return { kind: "unknown", detail };
+}
+
+/**
+ * True when a request failed because the daemon did not answer at all
+ * (refused, reset, never sent), as opposed to answering with an error.
+ * A timeout is not this: the socket was reachable.
+ */
+export function isDaemonUnreachableError(err: unknown): boolean {
+  return describeSetupError(err).kind === "connection";
 }
 
 /** i18n key for a class's heading. One place, so a new class cannot ship

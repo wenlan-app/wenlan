@@ -18,6 +18,7 @@ describe("describeSetupError", () => {
     ["HTTP GET /api/health: connection refused (os error 61)", "connection"],
     ["The Wenlan daemon isn't reachable.", "connection"],
     ["error sending request for url (http://127.0.0.1:7878): tcp connect error", "connection"],
+    ["HTTP POST /api/ingest/memory: error sending request for url (http://127.0.0.1:7878/api/ingest/memory)", "connection"],
     ["operation timed out", "timeout"],
     ["error sending request: operation timed out (ETIMEDOUT)", "timeout"],
     ["deadline has elapsed", "timeout"],
