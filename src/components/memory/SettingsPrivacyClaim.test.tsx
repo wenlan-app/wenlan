@@ -38,6 +38,7 @@ vi.mock("../../lib/tauri", () => ({
   getKnowledgePath: vi.fn(() => Promise.resolve("/Users/test/Wenlan/pages")),
   getBackgroundAiEnabled: vi.fn(() => Promise.resolve(false)),
   getLockMyPages: vi.fn(() => Promise.resolve(false)),
+  getChatMindMap: vi.fn(() => Promise.resolve(false)),
   getExternalLlm: vi.fn(() => Promise.resolve([null, null])),
   getExternalLlmKeyConfigured: vi.fn(() => Promise.resolve(false)),
   getModelChoice: vi.fn(() => Promise.resolve([null, null])),

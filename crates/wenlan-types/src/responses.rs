@@ -767,6 +767,10 @@ pub struct ConfigResponse {
     /// "Lock pages I've written". Missing on an older daemon reads false.
     #[serde(default)]
     pub lock_my_pages: bool,
+    /// Whether AI tools get the mind map text tree on every page read.
+    /// Missing on an older daemon reads off.
+    #[serde(default)]
+    pub chat_mind_map: bool,
 }
 
 // ===== On-device model =====

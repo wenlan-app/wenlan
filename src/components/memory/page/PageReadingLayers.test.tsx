@@ -26,6 +26,11 @@ describe("PageReadingLayers", () => {
     expect(screen.getByRole("button", { name: "Short" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("UX-VIEW-2 marks the length switch as Beta", () => {
+    renderLayers();
+    expect(screen.getByRole("group", { name: "Length" }).parentElement).toHaveTextContent("Beta");
+  });
+
   it("UX-VIEW-2 offers no switch when both lengths are the same", () => {
     renderLayers("One paragraph only.");
     expect(screen.queryByRole("group", { name: "Length" })).toBeNull();

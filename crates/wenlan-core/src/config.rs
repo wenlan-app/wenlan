@@ -111,6 +111,11 @@ pub struct Config {
     /// their behavior; a new install starts with it on.
     #[serde(default)]
     pub lock_my_pages: bool,
+    /// Whether an AI tool reading a page also gets its mind map as a small
+    /// text tree (docs/ux/spec.md, UX-CHAT-4). Off by default; off still
+    /// gives the tree when the tool asks for it.
+    #[serde(default)]
+    pub chat_mind_map: bool,
     /// A pages folder the person picked, moved into at the next daemon start
     /// by `pages_folder::apply_pending_move`, which then sets
     /// `knowledge_path` and clears this.

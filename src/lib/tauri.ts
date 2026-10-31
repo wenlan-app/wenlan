@@ -661,6 +661,16 @@ export async function setLockMyPages(enabled: boolean): Promise<number | null> {
   return invoke("set_lock_my_pages", { enabled });
 }
 
+/** "Mind map in AI tools" (UX-CHAT-4): when on, every page an AI tool reads
+ * carries its mind map as a text tree. Off by default; an older daemon reads off. */
+export async function getChatMindMap(): Promise<boolean> {
+  return invoke("get_chat_mind_map");
+}
+
+export async function setChatMindMap(enabled: boolean): Promise<void> {
+  return invoke("set_chat_mind_map", { enabled });
+}
+
 export interface SystemInfo {
   total_ram_gb: number;
   available_ram_gb: number;

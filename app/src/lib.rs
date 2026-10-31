@@ -1771,6 +1771,8 @@ pub fn run() {
             search::set_background_ai_enabled,
             search::get_lock_my_pages,
             search::set_lock_my_pages,
+            search::get_chat_mind_map,
+            search::set_chat_mind_map,
             search::should_show_wizard,
             search::local_setup_completed,
             daemon_start::get_startup_preflight_status,

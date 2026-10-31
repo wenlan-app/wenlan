@@ -287,6 +287,21 @@ pub async fn set_lock_my_pages(
 }
 
 #[tauri::command]
+pub async fn get_chat_mind_map(state: tauri::State<'_, State>) -> Result<bool, String> {
+    let client = { state.read().await.client.clone() };
+    client.chat_mind_map().await
+}
+
+#[tauri::command]
+pub async fn set_chat_mind_map(
+    state: tauri::State<'_, State>,
+    enabled: bool,
+) -> Result<(), String> {
+    let client = { state.read().await.client.clone() };
+    client.set_chat_mind_map(enabled).await
+}
+
+#[tauri::command]
 pub async fn set_setup_completed(
     state: tauri::State<'_, State>,
     completed: bool,

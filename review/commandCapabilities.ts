@@ -73,6 +73,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // Fixture-only too: the switch locks fixture pages in memory.
     "get_lock_my_pages",
     "set_lock_my_pages",
+    "get_chat_mind_map",
+    "set_chat_mind_map",
   ],
   wikiAndPages: [
     // Isolated in-memory folders; these never touch a native knowledge root.

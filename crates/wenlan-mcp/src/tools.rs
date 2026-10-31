@@ -1362,7 +1362,7 @@ pub struct ReadPageParams {
     #[serde(default)]
     pub session: Option<String>,
     #[schemars(
-        description = "true adds the page's mind map as a small text tree and a link that opens it in Wenlan. Set it only when the user wants to see the map."
+        description = "true adds the page's mind map as a small text tree and a link that opens it in Wenlan. Set it when the user asks to see the map; their setting may already add it."
     )]
     #[serde(default)]
     pub map: bool,
@@ -4318,9 +4318,9 @@ impl WenlanMcpServer {
                 object.insert("attachments".into(), attachments.into());
             }
             // The mind map as a text tree with a link into the app, for tools
-            // that can't show a window (UX-CHAT-4). Only when asked for, and
-            // absent when unmapped.
-            let tree = if with_map {
+            // that can't show a window (UX-CHAT-4): when the tool asks, or on
+            // every read once the person turns it on. Absent when unmapped.
+            let tree = if with_map || self.chat_mind_map_on().await {
                 self.page_map_tree(&page.page.page, &visible).await
             } else {
                 None
@@ -4337,6 +4337,16 @@ impl WenlanMcpServer {
             }
         }
         Ok(CallToolResult::structured(value))
+    }
+
+    /// The person's "show the mind map in AI tools" setting; off when the
+    /// daemon can't say.
+    async fn chat_mind_map_on(&self) -> bool {
+        self.client
+            .get::<wenlan_types::responses::ConfigResponse>("/api/config")
+            .await
+            .map(|config| config.chat_mind_map)
+            .unwrap_or(false)
     }
 
     /// The page's mind map drawn by [`crate::map_tree::render`]. Names come from

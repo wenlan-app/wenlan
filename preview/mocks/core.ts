@@ -60,6 +60,7 @@ import { invokeRemoteFixture } from "./remote-access";
 let graphObsSeq = 0;
 let fixtureBackgroundAiEnabled = false;
 let fixtureLockMyPages = false;
+let fixtureChatMindMap = false;
 type PreviewPageUpdateRequest = {
   readonly id: string;
   readonly content: string;
@@ -114,6 +115,12 @@ export async function invoke(
     if (typeof args?.enabled !== "boolean") throw new Error("Invalid lock setting");
     fixtureLockMyPages = args.enabled;
     return args.enabled ? 0 : null;
+  }
+  if (cmd === "get_chat_mind_map") return fixtureChatMindMap;
+  if (cmd === "set_chat_mind_map") {
+    if (typeof args?.enabled !== "boolean") throw new Error("Invalid mind map setting");
+    fixtureChatMindMap = args.enabled;
+    return;
   }
   if (new URLSearchParams(window.location.search).get("mode") === "remote-access") {
     return invokeRemoteFixture(cmd, args);

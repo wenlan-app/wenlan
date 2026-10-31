@@ -67,8 +67,8 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   from the short text and the mind map; every sentence in it keeps its source.
   原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。
 - **UX-VIEW-2** `shipped` While reading you can pick short or full text. It is
-  one page, not two copies.
-  原文：讀的時候能選短或全文，是同一頁，不是兩份。
+  one page, not two copies. The switch is marked Beta.
+  原文：讀的時候能選短或全文，是同一頁，不是兩份。「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31）
 - **UX-VIEW-3** `shipped` The first screen is only for people; the details for
   AI are one collapsed section.
   原文：第一屏只有給人看的，給 AI 的細節是一個收起來的展開。
@@ -114,8 +114,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   原文：能顯示小視窗的工具裡，看得到這件事的心智圖，30 秒內跟著對話變；每個點都能點回文瀾那一頁。
 - **UX-CHAT-4** `shipped` Tools that can't show a window (for example the
   Claude Code terminal) get a small text tree of the mind map and an "open in
-  Wenlan" link.
+  Wenlan" link. It is a Beta setting, off by default: on, it comes with every
+  page read; off, it still comes when you ask for it.
   原文：不能顯示小視窗的工具（例如 Claude Code 命令列）給一個小的文字樹，加「在文瀾打開」。
+  「可以是設定打開就可以一直看。沒有就關掉」「也可以選關掉，平常主動問也有小圖」「默認先不開」「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31）
 - **UX-CHAT-5** `planned` "Wrap up?" is asked once per thing, and only points
   you approve join the big map.
   原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。

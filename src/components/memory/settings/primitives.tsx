@@ -92,6 +92,8 @@ export function WarningTriangleIcon({ className }: { className?: string }) {
 
 type SettingRowBaseProps = {
   title: string;
+  /** A small tag beside the title, such as "Beta" for a setting still being tried. */
+  titleBadge?: string;
   description: string;
   details?: string;
   detailsSummary?: string;
@@ -112,7 +114,12 @@ type SettingRowProps = SettingRowBaseProps &
   );
 
 export function SettingRow(props: SettingRowProps) {
-  const { title, description, details, detailsSummary, statusLine, warning, error } = props;
+  const { title, titleBadge, description, details, detailsSummary, statusLine, warning, error } = props;
+  const badge = titleBadge ? (
+    <span className="ml-2 rounded px-1.5 py-0.5" style={{ fontSize: "var(--mem-text-2xs)", fontWeight: 400, color: "var(--mem-text-secondary)", backgroundColor: "var(--mem-hover)" }}>
+      {titleBadge}
+    </span>
+  ) : null;
   const rowId = useId();
   const descriptionId = `${rowId}-description`;
   const detailsId = `${rowId}-details`;
@@ -135,12 +142,14 @@ export function SettingRow(props: SettingRowProps) {
             <div className="settings-row-title-line">
               <div className="settings-row-title" style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 500, color: "var(--mem-text)" }}>
                 {title}
+                {badge}
               </div>
               <SettingsHelp title={title} details={details!} id={detailsId} />
             </div>
           ) : (
             <div style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 500, color: "var(--mem-text)" }}>
               {title}
+              {badge}
             </div>
           )}
           {hasDescription && (

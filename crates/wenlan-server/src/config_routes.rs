@@ -55,6 +55,7 @@ fn config_to_response(cfg: &config::Config) -> ConfigResponse {
         background_ai_enabled: Some(cfg.background_ai_enabled()),
         page_map_auto_suggest: cfg.page_map_auto_suggest,
         lock_my_pages: cfg.lock_my_pages,
+        chat_mind_map: cfg.chat_mind_map,
     }
 }
 
@@ -158,6 +159,9 @@ pub async fn handle_update_config(
         }
         if let Some(v) = req.lock_my_pages {
             cfg.lock_my_pages = v;
+        }
+        if let Some(v) = req.chat_mind_map {
+            cfg.chat_mind_map = v;
         }
         if let Some(enabled) = req.background_ai_enabled {
             cfg.background_ai_enabled = Some(enabled);
@@ -1422,6 +1426,45 @@ mod config_model_fields_tests {
         let body = put(&app, serde_json::json!({"page_map_auto_suggest": false})).await;
         assert_eq!(body["page_map_auto_suggest"], false);
         assert!(!config::load_config().page_map_auto_suggest);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ux_chat_4_mind_map_in_ai_tools_is_off_until_turned_on() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let state = std::sync::Arc::new(RwLock::new(ServerState::default()));
+        let app = crate::router::build_router(state);
+        let send = |method: &'static str, body: Option<serde_json::Value>| {
+            let app = app.clone();
+            async move {
+                let mut request = Request::builder().method(method).uri("/api/config");
+                if body.is_some() {
+                    request = request.header("content-type", "application/json");
+                }
+                let resp = app
+                    .oneshot(
+                        request
+                            .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), StatusCode::OK);
+                response_json(resp).await
+            }
+        };
+
+        assert_eq!(send("GET", None).await["chat_mind_map"], false);
+        let body = send("PUT", Some(serde_json::json!({"chat_mind_map": true}))).await;
+        assert_eq!(body["chat_mind_map"], true);
+        assert!(config::load_config().chat_mind_map);
+        let body = send("PUT", Some(serde_json::json!({"clipboard_enabled": true}))).await;
+        assert_eq!(body["chat_mind_map"], true);
+        let body = send("PUT", Some(serde_json::json!({"chat_mind_map": false}))).await;
+        assert_eq!(body["chat_mind_map"], false);
     }
 
     /// "Lock pages I've written": on for a new install, off for a config

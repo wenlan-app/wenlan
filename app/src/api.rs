@@ -2083,6 +2083,22 @@ impl WenlanClient {
         Ok(())
     }
 
+    /// Mind map text tree on every page an AI tool reads (UX-CHAT-4). An
+    /// older daemon without the field reads off.
+    pub async fn chat_mind_map(&self) -> Result<bool, String> {
+        Ok(self.get_config().await?.chat_mind_map)
+    }
+
+    pub async fn set_chat_mind_map(&self, enabled: bool) -> Result<(), String> {
+        let mut req = empty_update();
+        req.chat_mind_map = Some(enabled);
+        let updated = self.update_config(req).await?;
+        if updated.chat_mind_map != enabled {
+            return Err("The daemon does not support the mind map setting yet".into());
+        }
+        Ok(())
+    }
+
     /// POST /api/pages/lock-edited — lock every page the user wrote or
     /// edited; returns how many were newly locked.
     pub async fn lock_edited_pages(
@@ -2310,6 +2326,7 @@ fn empty_update() -> wenlan_types::requests::UpdateConfigRequest {
         background_ai_enabled: None,
         page_map_auto_suggest: None,
         lock_my_pages: None,
+        chat_mind_map: None,
         only_if_unset: None,
         // Tri-state (Option<Option<_>>): outer None = omit from JSON =
         // preserve the stored key. Note sparse_update_config strips nulls,

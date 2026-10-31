@@ -4,10 +4,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   getBackgroundAiEnabled,
+  getChatMindMap,
   getExternalLlm,
   getLockMyPages,
   getOnDeviceModel,
   getResolvedRouting,
+  setChatMindMap,
   setLockMyPages,
   setSourcePin,
 } from "../../../../lib/tauri";
@@ -249,6 +251,45 @@ function LockMyPagesRow() {
   );
 }
 
+/** "Mind map in AI tools" (UX-CHAT-4), marked Beta: off by default. On, every
+ * page an AI tool reads carries its mind map as a small text tree; off, the
+ * tree still comes when the person asks for it. */
+function ChatMindMapRow() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ["chatMindMap"], queryFn: getChatMindMap });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(false);
+  return (
+    <div data-testid="chat-mind-map">
+      <SettingRow
+        title={t("intelligence.chatMindMap")}
+        titleBadge={t("intelligence.synthesisBeta")}
+        description={t("intelligence.chatMindMapHint")}
+        enabled={query.data === true}
+        valueUnknown={!query.isSuccess || saving}
+        unknownState={saving ? "saving" : query.isPending ? "loading" : "unavailable"}
+        toggleHitArea
+        error={error ? t("intelligence.backgroundAiSaveError") : null}
+        onToggle={async () => {
+          if (!query.isSuccess || saving) return;
+          const next = !query.data;
+          setSaving(true);
+          setError(false);
+          try {
+            await setChatMindMap(next);
+            queryClient.setQueryData(["chatMindMap"], next);
+          } catch {
+            setError(true);
+          } finally {
+            setSaving(false);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 export default function IntelligenceSection({ delay }: { delay: number }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -401,6 +442,7 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
             }}
           />
           <LockMyPagesRow />
+          <ChatMindMapRow />
           {backgroundAiValue === true && (
             <>
               <TaskRow

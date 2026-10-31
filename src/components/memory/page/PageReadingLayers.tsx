@@ -34,7 +34,8 @@ export function usePageLength(): readonly [PageLength, (next: PageLength) => voi
   return [length, choose] as const;
 }
 
-/** Short or full, for a page whose two lengths differ (UX-VIEW-2). */
+/** Short or full, for a page whose two lengths differ (UX-VIEW-2). Marked
+ *  Beta while how the two lengths should work is still being learned. */
 export function PageLengthSwitch({
   length,
   onChoose,
@@ -44,17 +45,20 @@ export function PageLengthSwitch({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="page-length-switch" role="group" aria-label={t("pageLayers.length")}>
-      {(["short", "full"] as const).map((option) => (
-        <button
-          key={option}
-          type="button"
-          aria-pressed={length === option}
-          onClick={() => onChoose(option)}
-        >
-          {t(`pageLayers.${option}`)}
-        </button>
-      ))}
+    <div className="page-length-row">
+      <div className="page-length-switch" role="group" aria-label={t("pageLayers.length")}>
+        {(["short", "full"] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            aria-pressed={length === option}
+            onClick={() => onChoose(option)}
+          >
+            {t(`pageLayers.${option}`)}
+          </button>
+        ))}
+      </div>
+      <span className="page-length-beta">{t("pageLayers.beta")}</span>
     </div>
   );
 }
