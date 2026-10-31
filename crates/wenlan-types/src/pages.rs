@@ -214,6 +214,20 @@ pub struct PageCitation {
     /// renderers. Unverified records carry "paragraph" (both tiers tried).
     #[serde(default = "default_citation_scope")]
     pub scope: String,
+    /// The version of the cited source this citation was made against
+    /// (`locator@cited_version`). `None` on citations stored before versions
+    /// were recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_version: Option<i64>,
+    /// Digest of the cited source's text at `cited_version`. A newer source
+    /// version with the same digest still supports the citation, so only a
+    /// changed text makes it stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_digest: Option<String>,
+    /// A one-sentence recheck against the source's current version found no
+    /// support for a citation that had support at the version it cited.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub disproven: bool,
 }
 
 fn default_citation_scope() -> String {
@@ -243,8 +257,12 @@ mod citation_tests {
             score: 0.31,
             status: "unverified".into(),
             scope: "paragraph".into(),
+            cited_version: Some(4),
+            cited_digest: Some("d".into()),
+            disproven: false,
         };
         let s = serde_json::to_string(&vec![c]).unwrap();
+        assert!(!s.contains("disproven"), "a false flag stays off the wire");
         let back: Vec<PageCitation> = serde_json::from_str(&s).unwrap();
         assert_eq!(back[0].occurrence, 2);
         assert_eq!(back[0].status, "unverified");
@@ -255,6 +273,11 @@ mod citation_tests {
         )
         .unwrap();
         assert_eq!(legacy.scope, "sentence");
+        assert_eq!(
+            legacy.cited_version, None,
+            "pre-version citations read as unversioned"
+        );
+        assert_eq!(back[0].cited_version, Some(4));
     }
 
     /// `refresh_blocked_reason` is additive: absent from the serialized wire

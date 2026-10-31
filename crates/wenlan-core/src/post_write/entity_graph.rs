@@ -62,6 +62,7 @@ pub async fn create_entity(
             gated: false,
             outcome: WriteOutcome::Unchanged,
             acknowledged: false,
+            sentence_proposals: Vec::new(),
         });
     }
 
@@ -141,6 +142,7 @@ pub async fn create_entity(
         gated: false,
         outcome: WriteOutcome::Wrote,
         acknowledged: false,
+        sentence_proposals: Vec::new(),
     })
 }
 
@@ -206,6 +208,7 @@ pub async fn create_relation_with_span(
                     gated: false,
                     outcome: WriteOutcome::Unchanged,
                     acknowledged: false,
+                    sentence_proposals: Vec::new(),
                 });
             }
         }
@@ -316,6 +319,7 @@ pub async fn create_relation_with_span(
         gated: false,
         outcome: WriteOutcome::Wrote,
         acknowledged: false,
+        sentence_proposals: Vec::new(),
     })
 }
 
@@ -400,6 +404,7 @@ pub async fn add_observation(
             WriteOutcome::Unchanged
         },
         acknowledged: false,
+        sentence_proposals: Vec::new(),
     })
 }
 

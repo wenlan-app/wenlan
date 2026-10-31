@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Storage for the in-chat check (phase A, A6).
 //!
-//! Migration 145 adds `chat_reminders`, in the shape phase B exports
+//! Migration 146 adds `chat_reminders`, in the shape phase B exports
 //! mechanically: one row per reminder handed out. `entry` is the exact
 //! history entry (`op: chat.reminder`, spec section 4) with `seq` equal to
 //! the row's `seq`; the other columns only index it for the daily cap.
@@ -24,21 +24,21 @@ fn db_err(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
 }
 
 impl MemoryDB {
-    /// Migration 145: `chat_reminders`. The table is `IF NOT EXISTS`, so a
+    /// Migration 146: `chat_reminders`. The table is `IF NOT EXISTS`, so a
     /// crash before the version bump replays cleanly.
-    pub(super) async fn migrate_145_chat_reminders(
+    pub(super) async fn migrate_146_chat_reminders(
         &self,
         prior_version: i64,
     ) -> Result<(), WenlanError> {
-        self.backup_before_migration(145, prior_version).await?;
+        self.backup_before_migration(146, prior_version).await?;
         let conn = self.conn.lock().await;
         conn.execute_batch(CHAT_REMINDERS_DDL)
             .await
-            .map_err(db_err("m145 chat_reminders DDL"))?;
-        conn.execute("PRAGMA user_version = 145", ())
+            .map_err(db_err("m146 chat_reminders DDL"))?;
+        conn.execute("PRAGMA user_version = 146", ())
             .await
-            .map_err(db_err("m145 bump"))?;
-        log::info!("[migration] Migration 145 applied: chat_reminders");
+            .map_err(db_err("m146 bump"))?;
+        log::info!("[migration] Migration 146 applied: chat_reminders");
         Ok(())
     }
 

@@ -242,12 +242,14 @@ fn manifest_counts_match_the_spec() {
     // `/api/pages/{id}/restore` (puts an archived page back; names one page).
     // Then 249 after the three palace layout routes (GET/PUT
     // `/api/palace/layout`, POST `/api/palace/layout/revert`; positions and
-    // the person's own labels, not page-bearing), and 251 after POST
-    // `/api/check` and `/api/check/context` (the in-chat check; cited page
-    // titles).
+    // the person's own labels, not page-bearing). Then 255 after the six
+    // `/api/pages/{id}/sentences` routes (who wrote each sentence, sentence
+    // proposals, the person's flag, one-sentence recheck; the flag is a
+    // receipt, not page-bearing). Then 257 after POST `/api/check` and
+    // `/api/check/context` (the in-chat check; cited page titles).
     assert_eq!(
         HTTP_READERS.len(),
-        251,
+        257,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 38, "#[tool( declarations");
@@ -258,7 +260,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        263,
+        269,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -266,7 +268,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        246,
+        252,
         "main builder entries"
     );
     assert_eq!(
@@ -283,7 +285,7 @@ fn manifest_counts_match_the_spec() {
         .filter(|r| r.page_bearing == PageBearing::Yes)
         .count();
     // +2: the in-chat check (two routes).
-    assert_eq!(bearing, 88, "page-bearing HTTP routes");
+    assert_eq!(bearing, 93, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -448,7 +450,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        243 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited, +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +3: in-chat check and instructions page)
+        249 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited, +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +6: sentences, +2: in-chat check)
     );
 }
 

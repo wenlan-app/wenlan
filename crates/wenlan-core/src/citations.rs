@@ -122,6 +122,15 @@ pub(crate) fn build_numbered_block_full(sources: &[NumberedSource]) -> String {
     block
 }
 
+/// Byte spans of every `[N]` marker in `body`, in order. The k-th span is
+/// citation occurrence k of a body stored with its citation map.
+pub(crate) fn marker_spans(body: &str) -> Vec<(usize, usize)> {
+    RE_MARKER
+        .find_iter(body)
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
 /// Remove every `[N]` marker from body prose, collapsing the resulting
 /// doubled whitespace.
 pub fn strip_markers(body: &str) -> String {
@@ -166,6 +175,32 @@ fn bidirectional_support(span: &str, source: &str) -> f64 {
     }
     crate::faithfulness::overlap_fraction(span, source)
         .max(crate::faithfulness::overlap_fraction(source, span))
+}
+
+/// Recheck one claim against its cited sources' current text, with the same
+/// two tiers and floor [`process_citation_output`] uses: the sentence first,
+/// then its paragraph. Returns whether the union supports it, the scope that
+/// decided, and each source's audit score at that scope.
+pub(crate) fn claim_support(
+    sentence: &str,
+    paragraph: &str,
+    sources: &[&str],
+) -> (bool, &'static str, Vec<f64>) {
+    let union = sources.join("\n");
+    let (verified, scope, claim) = if bidirectional_support(sentence, &union) >= 0.5 {
+        (true, "sentence", sentence)
+    } else {
+        (
+            bidirectional_support(paragraph, &union) >= 0.5,
+            "paragraph",
+            paragraph,
+        )
+    };
+    let scores = sources
+        .iter()
+        .map(|source| bidirectional_support(claim, source))
+        .collect();
+    (verified, scope, scores)
 }
 
 /// Normalize raw LLM marker output: `[ 1 ]` -> `[1]`, `[1,3]` -> `[1][3]`.
@@ -328,6 +363,13 @@ pub fn process_citation_output(
                     }
                     .to_string(),
                     scope: scope.to_string(),
+                    // Stamped with the source's version and text digest
+                    // where the citations are stored, in the same
+                    // transaction as the body they belong to
+                    // (`MemoryDB::stamp_cited_versions`).
+                    cited_version: None,
+                    cited_digest: None,
+                    disproven: false,
                 });
             }
         }

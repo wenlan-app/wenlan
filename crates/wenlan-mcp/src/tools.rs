@@ -4708,6 +4708,12 @@ fn format_update_page_response(
     append_basis(&mut text, &resp.basis);
     append_code_basis(&mut text, &resp.code_basis);
     append_link_targets(&mut text, &resp.link_targets);
+    if !resp.sentence_proposals.is_empty() {
+        text.push_str(&format!(
+            "\nsentence_proposals: {} (the person's sentences were kept; your changes to them wait for the person)",
+            resp.sentence_proposals.len()
+        ));
+    }
     if !resp.next_step.is_empty() {
         text.push_str("\nnext_step: ");
         text.push_str(&resp.next_step);
@@ -5103,7 +5109,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the wiki view. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, clears the user-edited guard and can replace the page prose during rebuild. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. With a model source chosen the daemon also distills in the background, so don't trigger redundantly; without one, nothing distills in the background.",
+        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the wiki view. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, regenerates the AI's sentences; changes to the person's become proposals. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. With a model source chosen the daemon also distills in the background, so don't trigger redundantly; without one, nothing distills in the background.",
         annotations(
             title = "Distill",
             read_only_hint = false,
@@ -10243,6 +10249,26 @@ mod tests {
         assert!(description.contains("expected_version"), "{description}");
     }
 
+    #[test]
+    fn write_page_refresh_says_when_the_persons_sentences_were_kept() {
+        let text = format_update_page_response(
+            "page_x",
+            wenlan_types::responses::PageWriteResponse {
+                basis: Vec::new(),
+                code_basis: Vec::new(),
+                warnings: Vec::new(),
+                ok: true,
+                gated: false,
+                revision_card_id: None,
+                citations: None,
+                link_targets: Vec::new(),
+                next_step: String::new(),
+                sentence_proposals: vec!["sp_1".into(), "sp_2".into()],
+            },
+        );
+        assert!(text.contains("sentence_proposals: 2"), "{text}");
+    }
+
     #[tokio::test]
     async fn test_write_page_refresh_surfaces_gated_revision_card_fields() {
         let text = format_update_page_response(
@@ -10257,6 +10283,7 @@ mod tests {
                 citations: None,
                 link_targets: Vec::new(),
                 next_step: "Wait for review.".into(),
+                sentence_proposals: Vec::new(),
             },
         );
         assert!(
