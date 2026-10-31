@@ -20,6 +20,7 @@ use std::sync::Arc;
 static ONLINE_BACKUP_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 mod brief;
+mod chat_check;
 pub use brief::LegacyBriefItem;
 mod claim_derivation;
 pub use claim_derivation::{
@@ -1541,6 +1542,10 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 143 adds `page_code_basis.recheck_note`, `recheck_verdict`,
 /// `recheck_digest` and `recheck_attempts` (what the background model recheck
 /// concluded about a changed row).
+/// Migration 144 adds `memories.authored_content` and moves legacy desktop
+/// quick captures into the `memory` namespace.
+/// Migration 145 adds `chat_reminders` (one `chat.reminder` history entry per
+/// in-chat reminder).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1548,7 +1553,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 145;
+pub const SCHEMA_VERSION: u32 = 146;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10722,6 +10727,14 @@ impl MemoryDB {
             }
             if version < 145 {
                 self.migrate_145_sentence_history(version).await?;
+            }
+            // Migration 146 adds `chat_reminders` (the in-chat check's
+            // `chat.reminder` log). See migrate_146_chat_reminders.
+            if ceiling < 146 {
+                return Ok(());
+            }
+            if version < 146 {
+                self.migrate_146_chat_reminders(version).await?;
             }
         }
 

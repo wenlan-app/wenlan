@@ -268,6 +268,7 @@ export async function invoke<T>(
   if (command === "set_editor_composing") return null as T;
   // No wenlan://pair link can reach a browser preview.
   if (command === "take_remote_pairing_link") return null as T;
+  if (command === "take_open_link") return null as T;
   // Nor can Web access stop on its own here, so no notice is ever waiting.
   if (command === "take_remote_access_notice") return null as T;
   // No keychain in the browser; the Anthropic-key flow is out of scope here.

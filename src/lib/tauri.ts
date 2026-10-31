@@ -4225,6 +4225,19 @@ export async function takeRemotePairingLink(): Promise<string | null> {
   return invoke("take_remote_pairing_link");
 }
 
+/** What a wenlan://page/{id} or wenlan://memory/{id} link asked to open. */
+export type OpenLinkTarget =
+  | { kind: "page"; pageId: string }
+  | { kind: "memory"; memoryId: string };
+
+/**
+ * The page or memory link that opened the app or arrived since, handed out
+ * once. AI tools print these links next to an in-chat reminder or a page.
+ */
+export async function takeOpenLink(): Promise<OpenLinkTarget | null> {
+  return invoke("take_open_link");
+}
+
 /**
  * Native check that the protected local backend answers and that the relay
  * reports this app's own connection as live.

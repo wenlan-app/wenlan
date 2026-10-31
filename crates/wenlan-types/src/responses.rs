@@ -637,6 +637,11 @@ pub struct PageReadResponse {
     /// modified. Computed on read, never stored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_changed: Vec<crate::page_basis::LinkedChanged>,
+    /// The body in its three layers (short, the part for people, the details
+    /// for AI), so a reader need not parse `page.content`. Older daemons omit
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<crate::chat_check::PageBodyParts>,
 }
 
 /// Wikilink graph centered on a single page. Outbound = labels parsed
@@ -764,6 +769,10 @@ pub struct ConfigResponse {
     /// Whether the proactive Page-Map suggestion phase is enabled. Default true.
     #[serde(default)]
     pub page_map_auto_suggest: bool,
+    /// The in-chat check (opt-in, off by default). Missing on an older daemon
+    /// reads false.
+    #[serde(default)]
+    pub chat_check_enabled: bool,
 }
 
 // ===== On-device model =====
