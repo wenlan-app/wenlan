@@ -26,7 +26,6 @@ mod indexer;
 mod lifecycle;
 pub mod mcp_config;
 mod page_attachments;
-mod page_link;
 mod page_review;
 mod pairing_link;
 pub mod plugin_install;
@@ -861,7 +860,6 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Arc::new(RwLock::new(app_state)))
         .manage(pairing_link::PendingPairingLink::default())
-        .manage(page_link::PendingPageLink::default())
         .manage(global_shortcuts::EditorCompositionGuard::default())
         .manage(Arc::new(tokio::sync::Mutex::new(
             None::<indexer::FileWatcher>,
@@ -886,21 +884,16 @@ pub fn run() {
                 app.set_activation_policy(activation_policy_for_main_window_visible(false));
             }
 
-            // wenlan://page/<id> links from AI tools and wenlan://pair?code=
-            // links from the relay pairing page. A link that launched the app
-            // is in get_current; later ones arrive here.
+            // wenlan://pair?code= links from the relay pairing page. A link
+            // that launched the app is in get_current; later ones arrive here.
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 let link_handle = handle.clone();
                 app.deep_link().on_open_url(move |event| {
-                    let rest = page_link::accept_urls(&link_handle, event.urls());
-                    pairing_link::accept_urls(&link_handle, &rest);
+                    pairing_link::accept_urls(&link_handle, &event.urls());
                 });
                 match app.deep_link().get_current() {
-                    Ok(Some(urls)) => {
-                        let rest = page_link::accept_urls(&handle, urls);
-                        pairing_link::accept_urls(&handle, &rest);
-                    }
+                    Ok(Some(urls)) => pairing_link::accept_urls(&handle, &urls),
                     Ok(None) => {}
                     Err(error) => log::warn!("[pairing-link] could not read launch links: {error}"),
                 }
@@ -1804,7 +1797,6 @@ pub fn run() {
             search::list_remote_grants,
             search::revoke_remote_grant,
             pairing_link::take_remote_pairing_link,
-            page_link::take_page_link,
             search::get_remote_access_status,
             search::test_remote_mcp_connection,
             // Memory nurture commands

@@ -4235,10 +4235,6 @@ export async function revokeRemoteGrant(expectedRevision: string, grantId: strin
 export async function takeRemotePairingLink(): Promise<string | null> {
   return invoke("take_remote_pairing_link");
 }
-/** Takes the page id from the last `wenlan://page/<id>` link, if one is waiting. */
-export async function takePageLink(): Promise<string | null> {
-  return invoke("take_page_link");
-}
 
 /**
  * Native check that the protected local backend answers and that the relay

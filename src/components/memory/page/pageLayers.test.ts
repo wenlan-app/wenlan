@@ -31,18 +31,34 @@ describe("splitPageLayers", () => {
     expect(layers.aiDetails).toBe("");
   });
 
+  it("UX-VIEW-3 splits at the anchor the app writes, whatever the heading under it says", () => {
+    const layers = splitPageLayers("Top\n\n<!-- wenlan:details -->\n## Notes\n\nx");
+    expect(layers.human).toBe("Top");
+    expect(layers.aiDetails).toBe("x");
+  });
+
+  it("UX-VIEW-2 skips leading headings and keeps the first paragraph as the short length", () => {
+    expect(splitPageLayers("# Title\n\nFirst line.\nSame paragraph.\n\nSecond paragraph.").short).toBe(
+      "# Title\n\nFirst line.\nSame paragraph.",
+    );
+  });
+
   it("recognises the marker in every interface language and ignores headings in code", () => {
     expect(splitPageLayers("Top\n\n## Details for AI\n\nx").aiDetails).toBe("x");
     expect(splitPageLayers("Top\n\n## 给 AI 的细节\n\nx").aiDetails).toBe("x");
-    const fenced = splitPageLayers("Intro\n\n```md\n## not a section\n```\n\nMore");
-    expect(fenced.short).toBe(fenced.human);
+    expect(splitPageLayers("Top\n\n## Detalles para la IA\n\nx").aiDetails).toBe("x");
+    expect(splitPageLayers("Top\n\n##  details  FOR ai\n\nx").aiDetails).toBe("x");
+    expect(splitPageLayers("Top\n\n### Details for AI\n\nx").aiDetails).toBe("");
+    const fenced = splitPageLayers("Intro\n\n```md\n## Details for AI\n```\n\nMore");
+    expect(fenced.aiDetails).toBe("");
+    expect(fenced.human).toContain("More");
   });
 });
 
 describe("pageLayerOffsets", () => {
   it("UX-VIEW-3 finds where the short length ends and the part for AI starts", () => {
     const offsets = pageLayerOffsets(PAGE);
-    expect(PAGE.slice(offsets.sectionStart ?? 0)).toMatch(/^## Three views/);
+    expect(PAGE.slice(offsets.sectionStart ?? 0).trimStart()).toMatch(/^## Three views/);
     expect(PAGE.slice(offsets.aiStart ?? 0)).toMatch(/^## 給 AI 的細節/);
   });
 

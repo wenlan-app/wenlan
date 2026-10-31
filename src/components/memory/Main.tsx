@@ -16,7 +16,6 @@ import {
   openSearchResult as openSearchResultTarget,
   searchEntities,
   searchPages,
-  takePageLink,
   takeRemotePairingLink,
   type Page,
   type SearchResult,
@@ -1233,19 +1232,6 @@ export default function Main({
     };
     pull();
     const unlisten = listen("remote-pairing-link", pull);
-    return () => { unlisten.then((f) => f()); };
-  }, []);
-
-  // A wenlan://page link from an AI tool that can't show the mind map opens
-  // that page (UX-CHAT-4). Pulled like the pairing link so a cold start keeps it.
-  useEffect(() => {
-    const pull = () => {
-      takePageLink()
-        .then((pageId) => { if (pageId) trayPanelNavigateRef.current({ kind: "page", pageId }); })
-        .catch(() => {});
-    };
-    pull();
-    const unlisten = listen("page-link", pull);
     return () => { unlisten.then((f) => f()); };
   }, []);
 
