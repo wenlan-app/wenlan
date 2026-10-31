@@ -15,11 +15,12 @@ const STATUSES: [&str; 2] = ["active", "archived"];
 // CHECK to admit 'entity'"). While 'entity' was missing here, every entity shadow
 // page counted as an unknown storage value and `pages.db.partitions` and
 // `pages.review_status_inventory` reported the whole graph as errors.
-const CREATION_KINDS: [&str; 6] = [
+const CREATION_KINDS: [&str; 7] = [
     "authored",
     "distilled",
     "entity",
     "imported",
+    "original",
     "research",
     "source",
 ];

@@ -675,6 +675,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `PUT` | `/api/pages/{id}/basis/{basis_id}` | main | yes | automatic | `none` | `handle_mark_basis` | BasisRef.title: visible_ids under the mutation grant |
 | `POST` | `/api/pages/{id}/basis/{basis_id}/confirm` | main | yes | automatic | `none` | `handle_confirm_basis` | BasisRef.title: visible_ids under the mutation grant |
 | `DELETE` | `/api/pages/{id}/basis/{basis_id}` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
+| `GET` | `/api/pages/{id}/original` | main | no | not_applicable | `none` | — | provenance only: vendor, conversation id and URL, artifact id, kind and title, kept file path; no page prose; visible_ids under the truth view before the read |
 | `POST` | `/api/pages/code-basis/recheck` | main | yes | automatic | `none` | `handle_code_basis_recheck` | CodeBasisRecheckEntry.title: visible_ids filter on the notes |
 | `POST` | `/api/pages/{id}/code-basis/cited` | main | no | not_applicable | `none` | — | git blob id of the cited file, read from the stored row: no note prose; require_page_visible before the read |
 | `GET` | `/api/steep/worklist` | main | yes | automatic | `none` | `handle_steep_worklist` | SteepWorkItem.title: visible_ids filter on the waiting notes before list and count |
@@ -1249,6 +1250,7 @@ carrying the authority of agreement.
 
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
+| `core/chat_import/originals.rs::unused_title` | `private` | no | no | — | `core/page_titles.rs::strict_same_title_note` |
 | `core/citations.rs::run_citation_backfill_with_page_limit` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/code_basis_recheck.rs::note_unchanged` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/code_basis_recheck.rs::prepare_recheck_input` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1437,6 +1439,7 @@ carrying the authority of agreement.
 
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
+| `core/chat_import/originals.rs::keep_conversation_originals` | `pub` | no | no | — | `core/chat_import/originals.rs::unused_title` |
 | `core/citations.rs::run_citation_backfill_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/citations.rs::run_citation_backfill_with_page_limit` |
 | `core/citations.rs::run_citation_backfill_tick` | `pub` | no | no | — | `core/citations.rs::run_citation_backfill_with_page_limit` |
 | `core/code_basis_recheck.rs::apply` | `private` | yes | no | — | `core/code_basis_recheck.rs::note_unchanged` |

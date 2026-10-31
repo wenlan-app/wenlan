@@ -302,29 +302,43 @@ async fn ingest_chat_export(
     // progress events to /ws/updates so the Tauri app can display live progress.
     let emitter: Arc<dyn wenlan_core::events::EventEmitter> =
         Arc::new(wenlan_core::events::NoopEmitter);
-    let result = match wenlan_core::chat_import::bulk_ingest::bulk_import_conversations(
-        db.clone(),
-        &batch.conversations,
-        emitter,
-        &import_id,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = format!("bulk ingest: {e}");
-            let _ = db
-                .update_import_state_stage_with_error(
-                    &import_id,
-                    wenlan_core::chat_import::bulk_ingest::ImportStage::Error,
-                    None,
-                    None,
-                    Some(&msg),
-                )
-                .await;
-            return Err(ServerError::ChatImport(msg));
-        }
-    };
+    // Artifacts and canvases are kept as originals under the data root,
+    // with their pages written to the pages folder like any other page.
+    let data_root = wenlan_core::config::data_root();
+    let page_root = state
+        .read()
+        .await
+        .lint_config
+        .page_root()
+        .map(std::path::Path::to_path_buf);
+    let result =
+        match wenlan_core::chat_import::bulk_ingest::bulk_import_conversations_keeping_originals(
+            db.clone(),
+            &batch.conversations,
+            emitter,
+            &import_id,
+            wenlan_core::chat_import::bulk_ingest::OriginalsTarget {
+                data_root: &data_root,
+                knowledge_path: page_root.as_deref(),
+            },
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("bulk ingest: {e}");
+                let _ = db
+                    .update_import_state_stage_with_error(
+                        &import_id,
+                        wenlan_core::chat_import::bulk_ingest::ImportStage::Error,
+                        None,
+                        None,
+                        Some(&msg),
+                    )
+                    .await;
+                return Err(ServerError::ChatImport(msg));
+            }
+        };
 
     // 7. The import is complete once every slice is committed and embedded, so
     //    it is keyword- and vector-searchable without a restart. Automatic
@@ -353,6 +367,7 @@ async fn ingest_chat_export(
         conversations_new: result.conversations_ingested,
         conversations_skipped_existing: result.conversations_skipped_existing,
         memories_stored: result.memories_stored,
+        originals_kept: result.originals_kept,
     }))
 }
 
@@ -623,6 +638,156 @@ mod chat_export_route_tests {
             "chat import must leave enrichment to the ambient scheduler"
         );
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// A Claude export whose one conversation made an HTML artifact.
+    fn write_claude_export_with_artifact(path: &std::path::Path) {
+        const CONVERSATIONS: &str = r#"[
+          {
+            "uuid": "route-conv-art",
+            "name": "Launch site",
+            "summary": "",
+            "created_at": "2026-04-01T10:00:00.000Z",
+            "updated_at": "2026-04-01T10:05:00.000Z",
+            "account": {"uuid": "acc-1"},
+            "chat_messages": [
+              {"uuid": "m1", "text": "make a landing page",
+               "content": [{"type": "text", "text": "make a landing page"}],
+               "sender": "human", "created_at": "2026-04-01T10:00:00.000Z",
+               "parent_message_uuid": "00000000-0000-4000-8000-000000000000"},
+              {"uuid": "m2", "text": "", "sender": "assistant", "created_at": "2026-04-01T10:00:05.000Z",
+               "content": [
+                 {"type": "text", "text": "Here it is."},
+                 {"type": "tool_use", "name": "artifacts",
+                  "input": {"id": "landing", "type": "text/html", "title": "Landing",
+                            "command": "create", "content": "<h1>Launch</h1>"}}
+               ],
+               "parent_message_uuid": "m1"}
+            ]
+          }
+        ]"#;
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options: zip::write::FileOptions<()> =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("users.json", options).unwrap();
+        zip.write_all(b"[]").unwrap();
+        zip.start_file("conversations.json", options).unwrap();
+        zip.write_all(CONVERSATIONS.as_bytes()).unwrap();
+        zip.finish().unwrap();
+    }
+
+    /// Restores `WENLAN_DATA_DIR` on drop.
+    struct ScratchDataDir(Option<std::ffi::OsString>);
+
+    impl Drop for ScratchDataDir {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(value) => std::env::set_var("WENLAN_DATA_DIR", value),
+                None => std::env::remove_var("WENLAN_DATA_DIR"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_import_keeps_artifacts_as_originals_and_the_page_names_its_chat() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let data_root = dir.path().join("data");
+        std::fs::create_dir_all(&data_root).unwrap();
+        let _env = ScratchDataDir(std::env::var_os("WENLAN_DATA_DIR"));
+        std::env::set_var("WENLAN_DATA_DIR", &data_root);
+
+        let archive_path = dir.path().join("claude-export.zip");
+        write_claude_export_with_artifact(&archive_path);
+        let db = Arc::new(
+            wenlan_core::db::MemoryDB::new(
+                &dir.path().join("db"),
+                Arc::new(wenlan_core::events::NoopEmitter),
+            )
+            .await
+            .unwrap(),
+        );
+        let state = Arc::new(RwLock::new(ServerState {
+            db: Some(db.clone()),
+            ..Default::default()
+        }));
+        state.read().await.maintenance_coordinator.finish_recovery();
+
+        let response = chat_export_request(&state, &archive_path).await.unwrap().0;
+        assert_eq!(response.memories_stored, 1);
+        assert_eq!(response.originals_kept, 1);
+        assert_eq!(
+            std::fs::read_to_string(data_root.join("originals/claude/route-conv-art/landing.html"))
+                .unwrap(),
+            "<h1>Launch</h1>"
+        );
+        let record = db
+            .originals_for_conversation("claude", "route-conv-art")
+            .await
+            .unwrap()
+            .remove(0);
+
+        let app = crate::router::build_router(state);
+        let request = |uri: String| {
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .header("x-agent-name", "original-route-contract")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let res = app
+            .clone()
+            .oneshot(request(format!("/api/pages/{}/original", record.page_id)))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let original: wenlan_types::originals::PageOriginalResponse =
+            serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(original.vendor, "claude");
+        assert_eq!(original.conversation_id, "route-conv-art");
+        assert_eq!(
+            original.conversation_url,
+            "https://claude.ai/chat/route-conv-art"
+        );
+        assert_eq!(
+            original.file_path,
+            "originals/claude/route-conv-art/landing.html"
+        );
+
+        // A page not made from an original, and a missing page, read as absent.
+        let plain = wenlan_core::post_write::create_page(
+            &db,
+            wenlan_types::requests::CreateConceptRequest {
+                title: "Plain".into(),
+                content: "A plain note.".into(),
+                summary: None,
+                entity_id: None,
+                space: Option::<String>::None.into(),
+                source_memory_ids: vec![],
+                creation_kind: Some("authored".into()),
+                workspace: None,
+            },
+            "test",
+            None,
+        )
+        .await
+        .unwrap();
+        for id in [plain.id.as_str(), "page_does_not_exist"] {
+            let res = app
+                .clone()
+                .oneshot(request(format!("/api/pages/{id}/original")))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), 404, "{id}");
+        }
     }
 
     async fn chat_export_state() -> (
