@@ -164,9 +164,11 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-FIND-1** `planned` One box; results include pages, points on the map and
   original words from conversations.
   原文：一個框，結果包含頁、圖上的點和對話裡的原話。
-- **UX-FIND-2** `planned` Opening a source shows only that sentence and where
-  it is used. Wenlan never shows a whole conversation.
-  原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。
+- **UX-FIND-2** `planned` Opening a source shows that sentence with a little
+  of what came before and after, and where it is used. You can expand it to
+  the whole original. Imported originals stay backstage: they are not in page
+  lists or on home.
+  原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）
 - **UX-FIND-3** `planned` There is "open in the original AI tool".
   原文：有「在原本的 AI 工具打開」。
 
