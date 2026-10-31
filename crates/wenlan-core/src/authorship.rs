@@ -541,9 +541,31 @@ pub struct GatePlan {
     /// put back as it was.
     pub content: String,
     pub proposals: Vec<PlannedProposal>,
-    /// The citation occurrences (1-based, in the machine's body) that survive
-    /// in `content`, in order. A citation inside a replaced span is dropped.
-    pub kept_occurrences: Vec<u32>,
+    /// Where each `[N]` marker of `content` came from, in body order: the
+    /// machine's body (its markers outside the spans the gate replaced) or a
+    /// protected sentence put back with its markers from the current body.
+    pub markers: Vec<MarkerOrigin>,
+}
+
+/// The citation occurrence (1-based) one marker of a gate plan's body had
+/// before the plan, in the body it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerOrigin {
+    /// Occurrence in the machine's body.
+    New(u32),
+    /// Occurrence in the current body: a protected sentence put back keeps
+    /// its markers, so the person's citations stay on it.
+    Current(u32),
+}
+
+/// 1-based occurrences of the markers inside `start..end` of `body`.
+fn occurrences_within(markers: &[(usize, usize)], start: usize, end: usize) -> Vec<u32> {
+    markers
+        .iter()
+        .enumerate()
+        .filter(|(_, (from, _))| *from >= start && *from < end)
+        .map(|(k, _)| u32::try_from(k + 1).unwrap_or(u32::MAX))
+        .collect()
 }
 
 /// Plan a machine write of `new` over `current` whose units at the indices in
@@ -559,6 +581,7 @@ pub fn plan_sentence_gate(
     }
     let old_units = sentence_units(current);
     let new_units = sentence_units(new);
+    let current_markers = crate::citations::marker_spans(current);
     let old_norms: Vec<&str> = old_units.iter().map(|u| u.norm.as_str()).collect();
     let new_norms: Vec<&str> = new_units.iter().map(|u| u.norm.as_str()).collect();
     let still_there: HashSet<&str> = new_norms.iter().copied().collect();
@@ -567,9 +590,10 @@ pub fn plan_sentence_gate(
     });
 
     // Replacements of a span of `new`, and insertions at a byte position of
-    // `new`, both applied at the end from the back.
-    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
-    let mut insertions: Vec<(usize, String)> = Vec::new();
+    // `new`, both applied at the end from the back. Each carries the current
+    // body's marker occurrences in the text it puts back.
+    let mut replacements: Vec<(usize, usize, String, Vec<u32>)> = Vec::new();
+    let mut insertions: Vec<(usize, String, Vec<u32>)> = Vec::new();
     let mut proposals = Vec::new();
     let mut anchor: Option<usize> = None;
     for op in &ops {
@@ -581,7 +605,8 @@ pub fn plan_sentence_gate(
                     replacements.push((
                         new_units[n].start,
                         new_units[n].end,
-                        crate::citations::strip_markers(&unit.text),
+                        unit.text.clone(),
+                        occurrences_within(&current_markers, unit.start, unit.end),
                     ));
                     proposals.push(PlannedProposal {
                         sentence_hash: unit.hash.clone(),
@@ -596,7 +621,7 @@ pub fn plan_sentence_gate(
                     continue;
                 }
                 let unit = &old_units[o];
-                let text = crate::citations::strip_markers(&unit.text);
+                let text = &unit.text;
                 let separator = if unit.blank_before { "\n\n" } else { "\n" };
                 let insertion = match (anchor, unit.whole_line) {
                     (Some(n), true) => {
@@ -608,7 +633,11 @@ pub fn plan_sentence_gate(
                     (None, true) => (0, format!("{text}{separator}")),
                     (None, false) => (0, format!("{text} ")),
                 };
-                insertions.push(insertion);
+                insertions.push((
+                    insertion.0,
+                    insertion.1,
+                    occurrences_within(&current_markers, unit.start, unit.end),
+                ));
                 proposals.push(PlannedProposal {
                     sentence_hash: unit.hash.clone(),
                     before: unit.text.clone(),
@@ -621,41 +650,57 @@ pub fn plan_sentence_gate(
         return None;
     }
 
-    let markers: Vec<(usize, usize)> = crate::citations::marker_spans(new);
-    let kept_occurrences = markers
-        .iter()
-        .enumerate()
-        .filter(|(_, (start, _))| {
-            !replacements
-                .iter()
-                .any(|(from, to, _)| start >= from && start < to)
-        })
-        .map(|(k, _)| u32::try_from(k + 1).unwrap_or(u32::MAX))
-        .collect();
-
     // Apply from the back so earlier offsets stay valid. Insertions at the
     // same position keep their order.
-    let mut edits: Vec<(usize, usize, String, usize)> = replacements
+    let mut edits: Vec<(usize, usize, String, usize, Vec<u32>)> = replacements
         .into_iter()
         .enumerate()
-        .map(|(i, (from, to, text))| (from, to, text, i))
+        .map(|(i, (from, to, text, occ))| (from, to, text, i, occ))
         .collect();
     let base = edits.len();
     edits.extend(
         insertions
             .into_iter()
             .enumerate()
-            .map(|(i, (at, text))| (at, at, text, base + i)),
+            .map(|(i, (at, text, occ))| (at, at, text, base + i, occ)),
     );
+
+    // The markers of the landing body in order: the machine's markers that
+    // no replacement covers, and each put-back sentence's own markers at the
+    // place it goes (before a machine marker at the same offset, as the text
+    // is inserted in front of it; edits at one offset in their order).
+    let mut placed: Vec<(usize, u8, usize, MarkerOrigin)> = Vec::new();
+    for (k, (start, _)) in crate::citations::marker_spans(new).iter().enumerate() {
+        if !edits
+            .iter()
+            .any(|(from, to, ..)| from != to && start >= from && start < to)
+        {
+            let occurrence = u32::try_from(k + 1).unwrap_or(u32::MAX);
+            placed.push((*start, 1, 0, MarkerOrigin::New(occurrence)));
+        }
+    }
+    for (from, _, _, order, occurrences) in &edits {
+        for (j, occurrence) in occurrences.iter().enumerate() {
+            placed.push((
+                *from,
+                0,
+                order * 1024 + j,
+                MarkerOrigin::Current(*occurrence),
+            ));
+        }
+    }
+    placed.sort_by_key(|(at, kind, order, _)| (*at, *kind, *order));
+    let markers = placed.into_iter().map(|(.., origin)| origin).collect();
+
     edits.sort_by(|a, b| b.0.cmp(&a.0).then(b.3.cmp(&a.3)));
     let mut content = new.to_string();
-    for (from, to, text, _) in edits {
+    for (from, to, text, ..) in edits {
         content.replace_range(from..to, &text);
     }
     Some(GatePlan {
         content,
         proposals,
-        kept_occurrences,
+        markers,
     })
 }
 
@@ -698,25 +743,43 @@ fn pair_protected_deletions(ops: Vec<AlignOp>, protected: impl Fn(usize) -> bool
     out
 }
 
-/// Keep only the citation records whose occurrence survived a gate plan, and
-/// renumber them in body order. Unparseable JSON is dropped (`None`), which
-/// stores the page as never annotated rather than with a wrong map.
-pub fn remap_citations(citations_json: &str, kept: &[u32]) -> Option<String> {
-    let records: Vec<wenlan_types::pages::PageCitation> =
-        serde_json::from_str(citations_json).ok()?;
-    let position: HashMap<u32, u32> = kept
+/// The citation records of a gate plan's landing body: for each marker, in
+/// body order, the machine's record for it (from `new_citations_json`) or the
+/// current page's record for a marker on a put-back sentence (from
+/// `current`), renumbered to its place in the landing body. A marker with no
+/// record stays unmapped. `None` when the machine sent no citation map and
+/// no put-back marker has a record, which stores the page as never
+/// annotated, as before; unparseable machine JSON counts as no machine
+/// records, so the person's citations are kept regardless.
+pub fn merge_gate_citations(
+    new_citations_json: Option<&str>,
+    current: &[wenlan_types::pages::PageCitation],
+    markers: &[MarkerOrigin],
+) -> Option<String> {
+    let new_records: Vec<wenlan_types::pages::PageCitation> = new_citations_json
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
+    let by_new: HashMap<u32, &wenlan_types::pages::PageCitation> =
+        new_records.iter().map(|c| (c.occurrence, c)).collect();
+    let by_current: HashMap<u32, &wenlan_types::pages::PageCitation> =
+        current.iter().map(|c| (c.occurrence, c)).collect();
+    let merged: Vec<_> = markers
         .iter()
         .enumerate()
-        .map(|(i, occurrence)| (*occurrence, u32::try_from(i + 1).unwrap_or(u32::MAX)))
-        .collect();
-    let remapped: Vec<_> = records
-        .into_iter()
-        .filter_map(|mut record| {
-            record.occurrence = *position.get(&record.occurrence)?;
+        .filter_map(|(i, origin)| {
+            let record = match origin {
+                MarkerOrigin::New(k) => by_new.get(k),
+                MarkerOrigin::Current(k) => by_current.get(k),
+            }?;
+            let mut record = (*record).clone();
+            record.occurrence = u32::try_from(i + 1).unwrap_or(u32::MAX);
             Some(record)
         })
         .collect();
-    serde_json::to_string(&remapped).ok()
+    if merged.is_empty() && new_citations_json.is_none() {
+        return None;
+    }
+    serde_json::to_string(&merged).ok()
 }
 
 #[cfg(test)]

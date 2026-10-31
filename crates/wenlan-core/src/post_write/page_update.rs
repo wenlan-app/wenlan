@@ -1222,12 +1222,23 @@ async fn update_page_db_impl(
             let landing_content: &str = gate
                 .as_ref()
                 .map_or(req.content.as_str(), |plan| plan.content.as_str());
-            let citations: Option<(String, String)> = match (&gate, &citations) {
-                (Some(plan), Some((json, summary))) => {
-                    crate::authorship::remap_citations(json, &plan.kept_occurrences)
-                        .map(|json| (json, summary.clone()))
-                }
-                _ => citations.clone(),
+            // The landing body keeps the person's sentences with their
+            // markers, so their citation records come along from the current
+            // page and every record is renumbered to its marker's place.
+            let citations: Option<(String, String)> = match &gate {
+                Some(plan) => crate::authorship::merge_gate_citations(
+                    citations.as_ref().map(|(json, _)| json.as_str()),
+                    &current.citations,
+                    &plan.markers,
+                )
+                .map(|json| {
+                    let summary = citations
+                        .as_ref()
+                        .map(|(_, summary)| summary.clone())
+                        .unwrap_or_else(|| "citations kept on your sentences".to_string());
+                    (json, summary)
+                }),
+                None => citations.clone(),
             };
 
             // Shrink-guard (T17): opt-in via WENLAN_MERGE_SHRINK_GUARD=<f64>.

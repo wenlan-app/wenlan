@@ -174,6 +174,82 @@ async fn a_version_checked_agent_write_lands_only_on_the_ais_sentences() {
 }
 
 #[tokio::test]
+async fn a_machine_rewrite_keeps_the_citations_on_the_persons_sentence() {
+    let (db, _dir) = test_db().await;
+    ai_page(&db, "p", None).await;
+    seed_memory(
+        &db,
+        "mem-x",
+        "The current-thread runtime suits small services",
+    )
+    .await;
+    seed_memory(&db, "mem-ai", "Tokio workers are cheap to spawn").await;
+    let mine = format!("{AI_BODY} I prefer the current-thread runtime.[1]");
+    assert!(write(&db, "p", &mine, "manual_edit", None).await.wrote);
+    let before = db.get_page("p").await.unwrap().unwrap();
+    assert!(db
+        .set_page_citations_at_page_version("p", &citation("mem-x", "verified"), before.version)
+        .await
+        .unwrap());
+
+    // The AI changes the person's cited sentence and adds a cited one of its
+    // own; its marker [1] is its own source, mem-ai.
+    let rewrite = "Tokio runs async tasks. Workers steal queued tasks. \
+                   The multi-thread runtime is better for everyone. \
+                   Workers are cheap to spawn.[1]";
+    let result = page_write(
+        &db,
+        PageWrite::Update {
+            page_id: "p",
+            req: UpdatePageRequest {
+                content: rewrite.to_string(),
+                source_memory_ids: vec!["mem-ai".to_string()],
+                expected_version: Some(before.version),
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "agent_refresh",
+            require_stale: false,
+            expected_source_revision: None,
+            knowledge_path: None,
+            citations: Some((citation("mem-ai", "verified"), "1 cited".to_string())),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(result.wrote);
+    assert_eq!(
+        result.sentence_proposals.len(),
+        1,
+        "the change is a proposal"
+    );
+
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(
+        after.content,
+        "Tokio runs async tasks. Workers steal queued tasks. \
+         I prefer the current-thread runtime.[1] Workers are cheap to spawn.[1]",
+        "the person's sentence keeps its marker"
+    );
+    let by_occurrence: Vec<(u32, &str)> = after
+        .citations
+        .iter()
+        .map(|c| (c.occurrence, c.locator.as_str()))
+        .collect();
+    assert_eq!(by_occurrence, [(1, "mem-x"), (2, "mem-ai")]);
+
+    let view = page_sentences(&db, "p").await.unwrap();
+    assert_eq!(view.sentences[2].author, SentenceAuthor::Person);
+    assert_eq!(view.sentences[2].citations[0].locator, "mem-x");
+    assert_eq!(view.sentences[3].citations[0].locator, "mem-ai");
+    assert_eq!(view.proposals.len(), 1);
+    assert_eq!(
+        view.proposals[0].after,
+        "The multi-thread runtime is better for everyone."
+    );
+}
+
+#[tokio::test]
 async fn proposals_are_accepted_or_rejected_one_by_one() {
     let (db, _dir) = test_db().await;
     let before = page_with_my_line(&db, "p").await;

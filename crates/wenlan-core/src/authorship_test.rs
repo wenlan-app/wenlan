@@ -201,7 +201,7 @@ fn the_gate_keeps_a_rewritten_person_sentence_and_lands_the_ai_change() {
     let new = "Mine rewritten by AI.[1] The AI line, better.[2]\n";
     let protected = HashSet::from([0]);
     let plan = plan_sentence_gate(current, new, &protected).expect("a protected change");
-    assert_eq!(plan.content, "Mine stays. The AI line, better.[2]\n");
+    assert_eq!(plan.content, "Mine stays.[1] The AI line, better.[2]\n");
     assert_eq!(
         plan.proposals,
         [PlannedProposal {
@@ -210,7 +210,31 @@ fn the_gate_keeps_a_rewritten_person_sentence_and_lands_the_ai_change() {
             after: "Mine rewritten by AI.".into(),
         }]
     );
-    assert_eq!(plan.kept_occurrences, [2]);
+    assert_eq!(
+        plan.markers,
+        [MarkerOrigin::Current(1), MarkerOrigin::New(2)]
+    );
+}
+
+#[test]
+fn a_put_back_person_line_keeps_its_markers_in_body_order() {
+    // The machine drops the person's cited line and rewrites around it.
+    let current = "AI intro.[1]\nMy cited line.[2][3]\nAI outro.[4]\n";
+    let new = "AI intro, new.[1]\nAI outro.[2]\n";
+    let plan = plan_sentence_gate(current, new, &HashSet::from([1])).expect("a deletion");
+    assert_eq!(
+        plan.content,
+        "AI intro, new.[1]\nMy cited line.[2][3]\nAI outro.[2]\n"
+    );
+    assert_eq!(
+        plan.markers,
+        [
+            MarkerOrigin::New(1),
+            MarkerOrigin::Current(2),
+            MarkerOrigin::Current(3),
+            MarkerOrigin::New(2),
+        ]
+    );
 }
 
 #[test]
@@ -238,19 +262,36 @@ fn the_gate_treats_a_moved_person_sentence_as_kept() {
     assert_eq!(plan_sentence_gate(current, new, &HashSet::from([0])), None);
 }
 
+fn cite(occurrence: u32, locator: &str) -> wenlan_types::pages::PageCitation {
+    serde_json::from_value(serde_json::json!({
+        "occurrence": occurrence, "marker": occurrence, "source_kind": "memory",
+        "locator": locator, "score": 1.0, "status": "verified"
+    }))
+    .unwrap()
+}
+
 #[test]
-fn remapped_citations_follow_the_markers_that_survived() {
-    let json = serde_json::json!([
-        {"occurrence":1,"marker":1,"source_kind":"memory","locator":"a","score":1.0,"status":"verified"},
-        {"occurrence":2,"marker":2,"source_kind":"memory","locator":"b","score":1.0,"status":"verified"}
-    ])
-    .to_string();
-    let remapped: Vec<wenlan_types::pages::PageCitation> =
-        serde_json::from_str(&remap_citations(&json, &[2]).unwrap()).unwrap();
-    assert_eq!(remapped.len(), 1);
-    assert_eq!(remapped[0].locator, "b");
-    assert_eq!(remapped[0].occurrence, 1);
-    assert_eq!(remap_citations("not json", &[1]), None);
+fn merged_citations_follow_the_landing_markers_from_both_bodies() {
+    let current = [cite(1, "person-src")];
+    let new_json = serde_json::to_string(&[cite(1, "ai-old"), cite(2, "ai-src")]).unwrap();
+    let markers = [MarkerOrigin::Current(1), MarkerOrigin::New(2)];
+    let merged: Vec<wenlan_types::pages::PageCitation> =
+        serde_json::from_str(&merge_gate_citations(Some(&new_json), &current, &markers).unwrap())
+            .unwrap();
+    let pairs: Vec<(u32, &str)> = merged
+        .iter()
+        .map(|c| (c.occurrence, c.locator.as_str()))
+        .collect();
+    assert_eq!(pairs, [(1, "person-src"), (2, "ai-src")]);
+
+    // No machine map: the person's records still land; nothing at all stays
+    // never annotated. Unparseable machine JSON keeps the person's.
+    let only_person = merge_gate_citations(None, &current, &markers).unwrap();
+    assert!(only_person.contains("person-src"));
+    assert_eq!(merge_gate_citations(None, &[], &markers), None);
+    assert!(merge_gate_citations(Some("not json"), &current, &markers)
+        .unwrap()
+        .contains("person-src"));
 }
 
 #[test]
