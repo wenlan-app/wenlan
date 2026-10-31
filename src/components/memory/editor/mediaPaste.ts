@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { StateEffect, StateField, type EditorState, type Extension } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
-import { attachImageUrlToPage, type AttachedFile } from "../../../lib/tauri";
-import { isAttachableFile, primeAttachmentsDir, uploadAttachment } from "../../../lib/pageAttachments";
+import type { AttachedFile } from "../../../lib/tauri";
+import { isAttachableFile, primeAttachmentsDir, uploadAttachment, uploadImageUrl } from "../../../lib/pageAttachments";
 
 export interface MediaPasteOptions {
   blocked(view: EditorView): boolean;
@@ -185,7 +185,7 @@ export function mediaInsertText(state: EditorState, at: number, markdown: string
  */
 export function mediaPaste(options: MediaPasteOptions): Extension {
   const upload = options.upload ?? uploadAttachment;
-  const uploadUrl = options.uploadUrl ?? attachImageUrlToPage;
+  const uploadUrl = options.uploadUrl ?? uploadImageUrl;
   const convertImage = options.convertImage ?? redrawAsPng;
   const fileJob = (file: File): MediaJob => ({
     name: file.name || PASTED_IMAGE_NAME,
