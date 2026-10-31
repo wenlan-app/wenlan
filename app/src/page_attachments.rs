@@ -35,6 +35,69 @@ pub async fn page_attachments_dir(
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// What `GET /api/attachments/resolve` answers.
+#[derive(serde::Deserialize)]
+struct ResolvedEmbed {
+    path: String,
+}
+
+/// Image and video extensions a page may show, the same set the webview
+/// accepts in `src/lib/pageAttachments.ts`.
+const MEDIA_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "heic", "mp4", "m4v", "mov", "webm",
+];
+
+/// Whether `path` is an image or video inside `root` and outside any hidden
+/// folder such as `.obsidian/`.
+fn is_showable_embed(path: &std::path::Path, root: &std::path::Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    if relative.components().any(|part| {
+        !matches!(part, std::path::Component::Normal(_))
+            || part.as_os_str().to_string_lossy().starts_with('.')
+    }) {
+        return false;
+    }
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| MEDIA_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Where an Obsidian embed (`![[name]]`) points: the daemon finds the file in
+/// the pages folder the way Obsidian does, and the webview may then load that
+/// one file. `None` when nothing matches or the daemon cannot say.
+#[tauri::command]
+pub async fn resolve_page_embed(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, State>,
+    name: String,
+) -> Result<Option<String>, String> {
+    let client = client(&state).await;
+    let root: KnowledgePathResponse = client.get_json("/api/knowledge/path").await?;
+    let path = format!(
+        "/api/attachments/resolve?name={}",
+        crate::api::percent_encode_path_segment(&name)
+    );
+    let Ok(resolved) = client.get_json::<ResolvedEmbed>(&path).await else {
+        return Ok(None);
+    };
+    let (Ok(file), Ok(root)) = (
+        std::fs::canonicalize(&resolved.path),
+        std::fs::canonicalize(&root.path),
+    ) else {
+        return Ok(None);
+    };
+    if !is_showable_embed(&file, &root) {
+        return Ok(None);
+    }
+    tauri::Manager::asset_protocol_scope(&app)
+        .allow_file(&file)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(file.to_string_lossy().into_owned()))
+}
+
 /// Copy a file picked or dropped by its path.
 #[tauri::command]
 pub async fn attach_file_to_page(
@@ -236,6 +299,27 @@ fn safe_file_name(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shows_only_media_inside_the_pages_folder() {
+        let root = std::path::Path::new("/vault");
+        assert!(is_showable_embed(
+            std::path::Path::new("/vault/img/a.PNG"),
+            root
+        ));
+        assert!(!is_showable_embed(
+            std::path::Path::new("/vault/.obsidian/a.png"),
+            root
+        ));
+        assert!(!is_showable_embed(
+            std::path::Path::new("/elsewhere/a.png"),
+            root
+        ));
+        assert!(!is_showable_embed(
+            std::path::Path::new("/vault/notes/a.md"),
+            root
+        ));
+    }
 
     #[test]
     fn decodes_percent_encoded_names() {

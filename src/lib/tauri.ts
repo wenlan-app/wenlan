@@ -3507,6 +3507,13 @@ export async function pageAttachmentsDir(): Promise<string> {
   return invoke("page_attachments_dir");
 }
 
+/** Where an Obsidian embed's file is, found anywhere in the pages folder;
+ *  null when no image or video by that name exists. The app lets the webview
+ *  load that one file. */
+export async function resolvePageEmbed(name: string): Promise<string | null> {
+  return invoke("resolve_page_embed", { name });
+}
+
 /** Copy a file on this computer into the pages folder. */
 export async function attachFileToPage(path: string, alt?: string): Promise<AttachedFile> {
   return invoke("attach_file_to_page", { path, alt: alt ?? null });

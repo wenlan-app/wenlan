@@ -1906,6 +1906,7 @@ pub fn run() {
             page_attachments::attach_file_to_page,
             page_attachments::attach_bytes_to_page,
             page_attachments::attach_image_url_to_page,
+            page_attachments::resolve_page_embed,
             // Decision log commands
             search::list_decisions_cmd,
             search::list_decision_domains_cmd,
