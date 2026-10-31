@@ -23,7 +23,9 @@
 //! card names the title the page had when it was staged, so a later rename
 //! of the same page (or a rename back) first removes the cards an earlier
 //! rename left for its links, then stages the one that is right now, if any,
-//! so only a correct card waits for review.
+//! so only a correct card waits for review. Each card records the renamed
+//! page and the digest of the body it staged; only a card that still holds
+//! exactly that body is removed, never one the person edited.
 
 use super::{page_dispatch::page_write, PageWrite, WriteOutcome};
 use crate::{db::MemoryDB, error::WenlanError, read_scope::ReadScope};
@@ -131,7 +133,8 @@ pub(crate) async fn update_links_to_renamed_page(
         };
         // A card an earlier rename staged here names a title this page no
         // longer has. Remove it before deciding what this page needs now.
-        if let Err(error) = dismiss_superseded_link_cards(db, &page, &source.labels).await {
+        if let Err(error) = dismiss_superseded_link_cards(db, page_id, &page, &source.labels).await
+        {
             log::warn!(
                 "[page_link_rename] {} kept an earlier link card for {page_id}: {error}",
                 page.id
@@ -153,6 +156,7 @@ pub(crate) async fn update_links_to_renamed_page(
             counts.not_updated += 1;
             continue;
         }
+        let staged_digest = crate::provenance::revision_content_digest(&content);
         let written = page_write(
             db,
             PageWrite::Update {
@@ -174,7 +178,22 @@ pub(crate) async fn update_links_to_renamed_page(
         .await;
         match written {
             Ok(result) if result.outcome == WriteOutcome::Wrote => counts.updated += 1,
-            Ok(result) if result.outcome == WriteOutcome::Gated => counts.pending_review += 1,
+            Ok(result) if result.outcome == WriteOutcome::Gated => {
+                counts.pending_review += 1;
+                // Untagged, the card is still found by its links (as a card
+                // from 0.20.5 is), just less surely.
+                if let Some(card_id) = result.revision_card_id.as_deref() {
+                    if let Err(error) = db
+                        .tag_link_rename_card(card_id, page_id, &staged_digest)
+                        .await
+                    {
+                        log::warn!(
+                            "[page_link_rename] link card {card_id} on {} left untagged: {error}",
+                            page.id
+                        );
+                    }
+                }
+            }
             Ok(result) => {
                 log::info!(
                     "[page_link_rename] {} kept its links to {page_id}: {:?}",
@@ -195,27 +214,41 @@ pub(crate) async fn update_links_to_renamed_page(
     Ok(counts)
 }
 
-/// Remove the pending link cards on `page` that a rename of the page its
-/// `labels` link to staged. Such a card proposes `page` as it is with only
-/// those links' targets changed, so it is found by comparing link targets in
-/// order: a card that changes a link whose target is one of `labels` is for
-/// this renamed page. A card for another renamed page changes other links and
-/// stays. A card staged before `page` changed shape is left for its own
-/// version check to refuse.
+/// Remove the pending link cards on `page` that an earlier rename of
+/// `renamed_page_id` staged and nobody has touched since.
+///
+/// A card staged by this version records the renamed page and the digest of
+/// the body it staged: it is removed only when both match, so a card for
+/// another renamed page, or one the person edited, stays. A card staged
+/// before cards were tagged (0.20.5) is matched by its body instead, and only
+/// when that is unambiguous: see [`untagged_card_is_for`].
 async fn dismiss_superseded_link_cards(
     db: &MemoryDB,
+    renamed_page_id: &str,
     page: &crate::pages::Page,
     labels: &[String],
 ) -> Result<(), WenlanError> {
     let cards = db
         .pending_page_cards_by_writer(&page.id, LINK_RENAME_WRITER)
         .await?;
-    if cards.is_empty() {
-        return Ok(());
-    }
-    let current = card_link_targets(&page.content);
-    for (card_id, proposed) in cards {
-        if card_changes_links_to(&current, &card_link_targets(&proposed), labels) {
+    for (card_id, fields) in cards {
+        // The body an accept would write: after an edit, the edited one.
+        let Some(payload) = db.pending_memory_revision_payload(&card_id).await? else {
+            continue;
+        };
+        if payload.revision_id != card_id {
+            continue;
+        }
+        let body = payload.full_body.unwrap_or(payload.content);
+        let superseded = match fields.get("link_rename_page").and_then(|v| v.as_str()) {
+            Some(tagged) => {
+                tagged == renamed_page_id
+                    && fields.get("link_rename_digest").and_then(|v| v.as_str())
+                        == Some(crate::provenance::revision_content_digest(&body).as_str())
+            }
+            None => untagged_card_is_for(&page.content, &body, labels),
+        };
+        if superseded {
             db.delete_by_source_id("memory", &card_id).await?;
         }
     }
@@ -233,20 +266,40 @@ fn card_link_targets(content: &str) -> Vec<String> {
     targets
 }
 
-fn card_changes_links_to(current: &[String], proposed: &[String], labels: &[String]) -> bool {
-    current.len() == proposed.len()
-        && current.iter().zip(proposed).any(|(now, card)| {
-            let key = MemoryDB::page_title_key(now);
-            key != MemoryDB::page_title_key(card)
-                && labels
-                    .iter()
-                    .any(|label| MemoryDB::page_title_key(label) == key)
-        })
+/// Whether an untagged link card proposes exactly `current` with only links
+/// to the renamed page (those whose target is one of `labels`) retargeted.
+/// Any other difference (text the person edited, a link to another page
+/// changed, links reordered) means it is not provably this rename's card,
+/// and it stays.
+fn untagged_card_is_for(current: &str, card: &str, labels: &[String]) -> bool {
+    let now = card_link_targets(current);
+    let proposed = card_link_targets(card);
+    if now.len() != proposed.len() {
+        return false;
+    }
+    let mut changed = false;
+    for (now, proposed) in now.iter().zip(&proposed) {
+        let key = MemoryDB::page_title_key(now);
+        if key == MemoryDB::page_title_key(proposed) {
+            continue;
+        }
+        if !labels
+            .iter()
+            .any(|label| MemoryDB::page_title_key(label) == key)
+        {
+            return false;
+        }
+        changed = true;
+    }
+    let mut next = proposed.into_iter();
+    let (rebuilt, _) =
+        crate::synthesis::wikilinks::rewrite_wikilink_targets(current, |_| next.next());
+    changed && rebuilt == card
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{card_changes_links_to, card_link_targets, renamed_label};
+    use super::{card_link_targets, renamed_label, untagged_card_is_for};
 
     #[test]
     fn bare_old_title_becomes_new_title() {
@@ -279,27 +332,37 @@ mod tests {
     }
 
     #[test]
-    fn a_card_is_matched_to_the_links_it_changes() {
+    fn an_untagged_card_is_matched_only_when_unambiguous() {
         let labels = vec!["Old".to_string()];
-        let current = card_link_targets("See [[Old]] and [[Other|x]]. `[[Old]]`");
-        assert_eq!(current, vec!["Old", "Other"]);
-        assert!(card_changes_links_to(
-            &current,
-            &card_link_targets("See [[Mid]] and [[Other|x]]. `[[Old]]`"),
+        let current = "See [[Old]] and [[Other|x]]. `[[Old]]`";
+        assert_eq!(card_link_targets(current), vec!["Old", "Other"]);
+        assert!(untagged_card_is_for(
+            current,
+            "See [[Mid]] and [[Other|x]]. `[[Old]]`",
             &labels
         ));
         // A card for another renamed page changes only that page's links.
-        assert!(!card_changes_links_to(
-            &current,
-            &card_link_targets("See [[Old]] and [[Renamed|x]]. `[[Old]]`"),
+        assert!(!untagged_card_is_for(
+            current,
+            "See [[Old]] and [[Renamed|x]]. `[[Old]]`",
+            &labels
+        ));
+        // A card the person edited is not this rename's card.
+        assert!(!untagged_card_is_for(
+            current,
+            "See [[Mid]] and [[Other|x]], edited. `[[Old]]`",
+            &labels
+        ));
+        // Links reordered since the card: another page's card stays.
+        assert!(!untagged_card_is_for(
+            "[[Old]] [[Other]]",
+            "[[Other two]] [[Old]]",
             &labels
         ));
         // A card from before the page changed shape is not matched.
-        assert!(!card_changes_links_to(
-            &current,
-            &card_link_targets("See [[Mid]]."),
-            &labels
-        ));
+        assert!(!untagged_card_is_for(current, "See [[Mid]].", &labels));
+        // A card that changes nothing is not a link card for this page.
+        assert!(!untagged_card_is_for(current, current, &labels));
     }
 
     #[test]

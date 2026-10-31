@@ -148,16 +148,18 @@ impl MemoryDB {
     }
 
     /// The pending page revision cards on `page_id` that `edited_by` staged,
-    /// as `(card id, proposed body)`, ordered by card id.
+    /// as `(card id, structured fields)`, ordered by card id. Read a card's
+    /// body with `pending_memory_revision_payload`: after a person edits a
+    /// card, only `content` holds what they wrote.
     pub(crate) async fn pending_page_cards_by_writer(
         &self,
         page_id: &str,
         edited_by: &str,
-    ) -> Result<Vec<(String, String)>, WenlanError> {
+    ) -> Result<Vec<(String, serde_json::Value)>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT source_id, COALESCE(source_text, content)
+                "SELECT source_id, structured_fields
                    FROM memories
                   WHERE source='memory' AND pending_revision=1 AND chunk_index=0
                     AND supersedes=?1 AND json_valid(structured_fields)
@@ -174,16 +176,41 @@ impl MemoryDB {
             .await
             .map_err(|error| WenlanError::VectorDb(format!("pending page card row: {error}")))?
         {
-            cards.push((
-                row.get::<String>(0).map_err(|error| {
-                    WenlanError::VectorDb(format!("pending page card id: {error}"))
-                })?,
-                row.get::<String>(1).map_err(|error| {
-                    WenlanError::VectorDb(format!("pending page card body: {error}"))
-                })?,
-            ));
+            let id = row
+                .get::<String>(0)
+                .map_err(|error| WenlanError::VectorDb(format!("pending page card id: {error}")))?;
+            let fields = row
+                .get::<String>(1)
+                .ok()
+                .and_then(|raw| serde_json::from_str(&raw).ok())
+                .unwrap_or(serde_json::Value::Null);
+            cards.push((id, fields));
         }
         Ok(cards)
+    }
+
+    /// Record on a pending page revision card which renamed page its link
+    /// update is for and the digest of the body it staged, so a later rename
+    /// can tell its own unedited card from a card the person changed. Merged
+    /// into the card's existing structured fields; nothing else moves.
+    pub(crate) async fn tag_link_rename_card(
+        &self,
+        card_id: &str,
+        renamed_page_id: &str,
+        staged_digest: &str,
+    ) -> Result<(), WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE memories
+                SET structured_fields=json_set(structured_fields,
+                        '$.link_rename_page',?2,'$.link_rename_digest',?3)
+              WHERE source='memory' AND source_id=?1 AND pending_revision=1
+                AND chunk_index=0 AND json_valid(structured_fields)",
+            libsql::params![card_id, renamed_page_id, staged_digest],
+        )
+        .await
+        .map_err(|error| WenlanError::VectorDb(format!("tag link card: {error}")))?;
+        Ok(())
     }
 
     pub(crate) async fn commit_page_title_rename(

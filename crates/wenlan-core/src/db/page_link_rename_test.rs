@@ -747,3 +747,167 @@ async fn renaming_back_to_the_old_title_removes_the_link_card() {
     assert_eq!(locked.content, "Locked [[Old]].");
     assert_eq!(locked.version, 3);
 }
+
+/// The ids of the link cards waiting on `page_id`, with their bodies.
+async fn link_card_ids(db: &super::MemoryDB, page_id: &str) -> Vec<(String, String)> {
+    db.list_pending_revisions(50)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|card| card.target_source_id == page_id)
+        .map(|card| (card.revision_source_id, card.revision_content))
+        .collect()
+}
+
+fn locked_pair() -> [PageRow<'static>; 2] {
+    [
+        (
+            "page-a",
+            "Old",
+            "work",
+            "The renamed page.",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-locked",
+            "Locked",
+            "work",
+            "Locked [[Old]].",
+            1,
+            1,
+            "authored",
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn a_link_card_the_person_edited_survives_the_next_rename() {
+    let fixture = fixture(&locked_pair()).await;
+    let db = &fixture.db;
+    let first = rename_page(db, "page-a", "Mid", 3, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    let cards = link_card_ids(db, "page-locked").await;
+    assert_eq!(cards.len(), 1);
+    // The person reworded the proposal before deciding on it.
+    db.update_memory(&cards[0].0, "Locked [[Mid]], reworded by me.")
+        .await
+        .unwrap();
+
+    rename_page(db, "page-a", "New", first.version, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    let mut bodies: Vec<String> = link_card_ids(db, "page-locked")
+        .await
+        .into_iter()
+        .map(|(_, body)| body)
+        .collect();
+    bodies.sort();
+    assert_eq!(
+        bodies,
+        vec![
+            "Locked [[Mid]], reworded by me.".to_string(),
+            "Locked [[New]].".to_string(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn reordered_links_never_cost_another_page_its_link_card() {
+    let fixture = fixture(&[
+        (
+            "page-a",
+            "Old",
+            "work",
+            "The renamed page.",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-other",
+            "Other",
+            "work",
+            "Another page.",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-locked",
+            "Locked",
+            "work",
+            "[[Other]] [[Old]].",
+            1,
+            1,
+            "authored",
+        ),
+    ])
+    .await;
+    let db = &fixture.db;
+    rename_page(db, "page-other", "Other two", 3, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    // The person swaps the two links on the locked page.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE pages SET content='[[Old]] [[Other]].',version=version+1 WHERE id='page-locked'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    db.refresh_page_wikilinks("page-locked", "[[Old]] [[Other]].")
+        .await
+        .unwrap();
+
+    rename_page(db, "page-a", "New", 3, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    let mut bodies: Vec<String> = link_card_ids(db, "page-locked")
+        .await
+        .into_iter()
+        .map(|(_, body)| body)
+        .collect();
+    bodies.sort();
+    assert_eq!(
+        bodies,
+        vec![
+            "[[New]] [[Other]].".to_string(),
+            "[[Other two]] [[Old]].".to_string(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_untagged_link_card_from_an_earlier_release_is_still_replaced() {
+    let fixture = fixture(&locked_pair()).await;
+    let db = &fixture.db;
+    let first = rename_page(db, "page-a", "Mid", 3, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    // A card as 0.20.5 staged it: no renamed-page tag.
+    {
+        let conn = db.conn.lock().await;
+        let changed = conn
+            .execute(
+                "UPDATE memories SET structured_fields=json_remove(structured_fields,
+                         '$.link_rename_page','$.link_rename_digest')
+                  WHERE supersedes='page-locked' AND pending_revision=1
+                    AND json_extract(structured_fields,'$.link_rename_page')='page-a'",
+                (),
+            )
+            .await
+            .unwrap();
+        assert_eq!(changed, 1, "the new card carries the tag");
+    }
+    rename_page(db, "page-a", "New", first.version, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    let cards = link_card_ids(db, "page-locked").await;
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].1, "Locked [[New]].");
+}
