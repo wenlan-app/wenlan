@@ -445,9 +445,15 @@ pub async fn handle_set_page_review_required(
     if !db.set_page_review_required(&id, req.required).await? {
         return Err(ServerError::NotFound(format!("page {id} not found")));
     }
+    let ai_edits = if req.required {
+        wenlan_types::authorship::AiEditMode::Locked
+    } else {
+        wenlan_types::authorship::AiEditMode::Propose
+    };
     Ok(Json(wenlan_types::responses::PageReviewRequiredResponse {
         page_id: id,
         review_required: req.required,
+        ai_edits,
     }))
 }
 
@@ -2068,6 +2074,7 @@ async fn handle_refresh_page_inner(
                 next_step:
                     "Wait for the revision card to be reviewed before writing this page again."
                         .to_string(),
+                sentence_proposals: Vec::new(),
             },
         ));
     }
@@ -2180,6 +2187,9 @@ async fn handle_refresh_page_inner(
     };
     let next_step = if result.gated {
         "Wait for the revision card to be reviewed before writing this page again."
+    } else if !result.sentence_proposals.is_empty() {
+        "Some sentences are the person's: your changes to them wait as sentence proposals \
+         for the person to accept. Do not rewrite them again."
     } else if link_targets.is_empty() {
         "Nothing else is needed for this page."
     } else {
@@ -2204,6 +2214,7 @@ async fn handle_refresh_page_inner(
             citations: citations_summary,
             link_targets,
             next_step: next_step.to_string(),
+            sentence_proposals: result.sentence_proposals,
         },
     ))
 }
@@ -3244,7 +3255,7 @@ mod create_page_endpoint_tests {
     }
 
     #[tokio::test]
-    async fn refresh_with_matching_expected_version_writes_a_human_owned_page() {
+    async fn refresh_with_matching_expected_version_proposes_on_the_persons_sentence() {
         let _lock = crate::TEST_DATA_DIR_LOCK
             .get_or_init(|| tokio::sync::Mutex::new(()))
             .lock()
@@ -3269,9 +3280,22 @@ mod create_page_endpoint_tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_ne!(body["gated"], json!(true), "{body}");
+        // The page's one sentence is the person's (their fs_edit wrote it):
+        // a version-checked agent write lands only on the AI's sentences, so
+        // this one becomes a sentence proposal and the page is unchanged.
+        assert_eq!(
+            body["sentence_proposals"].as_array().map(Vec::len),
+            Some(1),
+            "{body}"
+        );
         let after = db.get_page(&page.id).await.unwrap().unwrap();
-        assert_eq!(after.content, content);
+        assert_eq!(after.content, page.content);
         assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+        let view = wenlan_core::sentences::page_sentences(&db, &page.id)
+            .await
+            .unwrap();
+        assert_eq!(view.proposals.len(), 1);
+        assert_eq!(view.proposals[0].after, content);
 
         // Without expected_version the same page is refused: nothing is
         // written and no card is staged, and the agent is told to re-read.
@@ -3295,7 +3319,7 @@ mod create_page_endpoint_tests {
         assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
         assert_eq!(
             db.get_page(&page.id).await.unwrap().unwrap().content,
-            content
+            page.content
         );
     }
 
@@ -3326,7 +3350,14 @@ mod create_page_endpoint_tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body, json!({ "page_id": page_id, "review_required": true }));
+        assert_eq!(
+            body,
+            json!({
+                "page_id": page_id,
+                "review_required": true,
+                "ai_edits": "locked",
+            })
+        );
         assert!(
             db.get_page(&page_id)
                 .await

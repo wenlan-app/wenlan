@@ -61,10 +61,13 @@ supplied an explicit target.
 Use exactly one target rule:
 
 - Reserved keyword sequence `rebuild <page-id>` → call
-  `distill(target=<page-id>, force=true)`. This is destructive:
-  user-edited page prose is wiped and regenerated from source memories.
-  Confirms "Rebuild page <id>? Your edits will be wiped, page regenerates
-  from sources." before proceeding. Skip the rest of this skill — single-page rebuild does
+  `distill(target=<page-id>, force=true)`. The AI-written sentences are
+  regenerated from source memories; sentences the person wrote are kept and
+  any change to them is staged as a sentence proposal for the person to
+  accept or reject (unless the page or global setting lets the AI edit
+  directly). Confirms "Rebuild page <id>? The AI's sentences regenerate from
+  sources; changes to your sentences come back as proposals." before
+  proceeding. Skip the rest of this skill — single-page rebuild does
   not produce `pending` clusters; the daemon's response shape is
   `{"status": "ok", "force": true, "page_id": ..., "updated": true}`.
   Report verbatim.

@@ -242,11 +242,14 @@ fn manifest_counts_match_the_spec() {
     // `/api/pages/{id}/restore` (puts an archived page back; names one page).
     // Then 249 after the three palace layout routes (GET/PUT
     // `/api/palace/layout`, POST `/api/palace/layout/revert`; positions and
-    // the person's own labels, not page-bearing). Then 248 after POST
-    // `/api/pages/lock-edited` was removed with "Lock pages I've written".
+    // the person's own labels, not page-bearing). Then 255 after the six
+    // `/api/pages/{id}/sentences` routes (who wrote each sentence, sentence
+    // proposals, the person's flag, one-sentence recheck; the flag is a
+    // receipt, not page-bearing). Then 254 after POST `/api/pages/lock-edited`
+    // was removed with "Lock pages I've written".
     assert_eq!(
         HTTP_READERS.len(),
-        248,
+        254,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 37, "#[tool( declarations");
@@ -257,7 +260,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        260,
+        266,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -265,7 +268,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        243,
+        249,
         "main builder entries"
     );
     assert_eq!(
@@ -281,7 +284,7 @@ fn manifest_counts_match_the_spec() {
         .iter()
         .filter(|r| r.page_bearing == PageBearing::Yes)
         .count();
-    assert_eq!(bearing, 86, "page-bearing HTTP routes");
+    assert_eq!(bearing, 91, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -446,7 +449,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        240 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited (removed again: -1), +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout)
+        246 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited (removed again: -1), +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +6: sentences)
     );
 }
 

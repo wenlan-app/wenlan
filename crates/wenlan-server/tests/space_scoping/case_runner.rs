@@ -390,8 +390,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // material list, claim and organize tasks three. The vault note setting
     // and the note proposal list and detail add three Global readers. Page
     // restore adds one PageWorkspace-scoped single-id route. The palace
-    // layout read adds one Global reader.
-    assert_eq!(rows.len(), 90);
+    // layout read adds one Global reader. The sentence view, proposal,
+    // accept, reject and recheck routes add five more.
+    assert_eq!(rows.len(), 95);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -402,7 +403,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        66
+        71
     );
     assert_eq!(
         rows.iter()

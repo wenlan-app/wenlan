@@ -109,6 +109,11 @@ pub struct WriteResult {
     /// only when the request carried one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub basis_confirm: Option<wenlan_types::BasisConfirmOutcome>,
+    /// Sentence proposals a machine write staged instead of changing the
+    /// person's sentences (`sentence.propose` entries). The write itself
+    /// landed only on the AI's sentences. Absent when it staged none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sentence_proposals: Vec<String>,
 }
 
 /// The distinguishable ends of a page write.

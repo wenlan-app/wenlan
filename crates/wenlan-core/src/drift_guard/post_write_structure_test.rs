@@ -627,6 +627,7 @@ fn post_write_facade_contract_compiles_and_preserves_result_shape() {
         gated: false,
         acknowledged: false,
         outcome: crate::post_write::WriteOutcome::Unchanged,
+        sentence_proposals: Vec::new(),
     };
     let serialized = serde_json::to_value(result).expect("serialize stable WriteResult facade");
     assert_eq!(
