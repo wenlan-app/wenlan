@@ -391,14 +391,13 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // and the note proposal list and detail add three Global readers. Page
     // restore adds one PageWorkspace-scoped single-id route. The palace
     // layout read adds one Global reader. The in-chat decision check and its
-    // context read add two scoped readers, and the instructions page adds one
-    // Global reader.
-    assert_eq!(rows.len(), 93);
+    // context read add two scoped readers.
+    assert_eq!(rows.len(), 92);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        25
+        24
     );
     assert_eq!(
         rows.iter()
@@ -442,7 +441,7 @@ pub fn assert_global_executed_keys(executed: impl IntoIterator<Item = (Method, &
     let executed = executed.into_iter().collect::<Vec<_>>();
     let unique = executed.iter().copied().collect::<BTreeSet<_>>();
 
-    assert_eq!(expected.len(), 25, "Global route catalog count drifted");
+    assert_eq!(expected.len(), 24, "Global route catalog count drifted");
     assert_eq!(
         unique.len(),
         executed.len(),

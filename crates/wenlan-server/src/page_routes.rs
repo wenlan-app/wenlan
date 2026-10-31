@@ -321,13 +321,11 @@ pub async fn handle_get_page(
                 })
                 .collect();
             let body = Some(wenlan_core::page_body::body_parts(&page.content));
-            let role = db.page_role(&id).await?;
             Ok(Json(PageReadResponse {
                 code_basis: db.list_page_code_basis(&id).await?,
                 basis,
                 linked_changed,
                 body,
-                role,
                 // The full list is the top-level `basis`; the entry's own
                 // non-ok list is for inventories.
                 page: PageInventoryEntry {

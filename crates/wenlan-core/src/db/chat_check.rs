@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Storage for the in-chat check and the procedural page (phase A, A6/A8).
+//! Storage for the in-chat check (phase A, A6).
 //!
-//! Migration 145 adds two things, both in the shape phase B exports
-//! mechanically:
-//!
-//! - `chat_reminders`: one row per reminder handed out. `entry` is the exact
-//!   history entry (`op: chat.reminder`, spec section 4) with `seq` equal to
-//!   the row's `seq`; the other columns only index it for the daily cap.
-//! - `pages.role`: the page's role (`instructions` for the page that says how
-//!   the person wants AI tools to work). It becomes the `role:` frontmatter
-//!   key in phase B.
+//! Migration 145 adds `chat_reminders`, in the shape phase B exports
+//! mechanically: one row per reminder handed out. `entry` is the exact
+//! history entry (`op: chat.reminder`, spec section 4) with `seq` equal to
+//! the row's `seq`; the other columns only index it for the daily cap.
 use super::MemoryDB;
 use crate::error::WenlanError;
 
@@ -29,10 +24,9 @@ fn db_err(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
 }
 
 impl MemoryDB {
-    /// Migration 145: `chat_reminders` and `pages.role`. The table is `IF NOT
-    /// EXISTS` and the column add is guarded, so a crash before the version
-    /// bump replays cleanly.
-    pub(super) async fn migrate_145_chat_reminders_and_page_role(
+    /// Migration 145: `chat_reminders`. The table is `IF NOT EXISTS`, so a
+    /// crash before the version bump replays cleanly.
+    pub(super) async fn migrate_145_chat_reminders(
         &self,
         prior_version: i64,
     ) -> Result<(), WenlanError> {
@@ -41,28 +35,10 @@ impl MemoryDB {
         conn.execute_batch(CHAT_REMINDERS_DDL)
             .await
             .map_err(db_err("m145 chat_reminders DDL"))?;
-        let has_role: bool = {
-            let mut rows = conn
-                .query(
-                    "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'role'",
-                    (),
-                )
-                .await
-                .map_err(db_err("m145 role check"))?;
-            match rows.next().await {
-                Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0) > 0,
-                _ => false,
-            }
-        };
-        if !has_role {
-            conn.execute("ALTER TABLE pages ADD COLUMN role TEXT", ())
-                .await
-                .map_err(db_err("m145 add pages.role"))?;
-        }
         conn.execute("PRAGMA user_version = 145", ())
             .await
             .map_err(db_err("m145 bump"))?;
-        log::info!("[migration] Migration 145 applied: chat_reminders and pages.role");
+        log::info!("[migration] Migration 145 applied: chat_reminders");
         Ok(())
     }
 
@@ -177,59 +153,5 @@ impl MemoryDB {
             }
         }
         Ok(out)
-    }
-
-    /// The newest active, non-entity page with `role`, if any.
-    pub async fn find_page_id_by_role(&self, role: &str) -> Result<Option<String>, WenlanError> {
-        let conn = self.conn.lock().await;
-        let mut rows = conn
-            .query(
-                "SELECT id FROM pages \
-                 WHERE role = ?1 AND status = 'active' \
-                   AND COALESCE(kind, 'concept') != 'entity' \
-                 ORDER BY last_modified DESC, id LIMIT 1",
-                libsql::params![role],
-            )
-            .await
-            .map_err(db_err("find_page_id_by_role"))?;
-        Ok(match rows.next().await.map_err(db_err("role row"))? {
-            Some(row) => row.get::<Option<String>>(0).unwrap_or(None),
-            None => None,
-        })
-    }
-
-    /// Set a page's role. Page metadata, like the review lock: it does not
-    /// bump `version`. Returns `false` when no non-entity page has the id.
-    pub async fn set_page_role(
-        &self,
-        page_id: &str,
-        role: Option<&str>,
-    ) -> Result<bool, WenlanError> {
-        let conn = self.conn.lock().await;
-        let changed = conn
-            .execute(
-                "UPDATE pages SET role = ?1 \
-                 WHERE id = ?2 AND COALESCE(kind, 'concept') != 'entity'",
-                libsql::params![role.map(str::to_string), page_id],
-            )
-            .await
-            .map_err(db_err("set_page_role"))?;
-        Ok(changed > 0)
-    }
-
-    /// A page's role, `None` when it has none or does not exist.
-    pub async fn page_role(&self, page_id: &str) -> Result<Option<String>, WenlanError> {
-        let conn = self.conn.lock().await;
-        let mut rows = conn
-            .query(
-                "SELECT role FROM pages WHERE id = ?1",
-                libsql::params![page_id],
-            )
-            .await
-            .map_err(db_err("page_role"))?;
-        Ok(match rows.next().await.map_err(db_err("page_role row"))? {
-            Some(row) => row.get::<Option<String>>(0).unwrap_or(None),
-            None => None,
-        })
     }
 }

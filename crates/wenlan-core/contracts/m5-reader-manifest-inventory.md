@@ -664,7 +664,6 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/pages/drafts/{id}/publish` | main | yes | automatic | `none` | `handle_publish_page_draft` | PageDraftResponse.page — filter_page on the echoed page |
 | `POST` | `/api/pages/export` | main | yes | automatic | `none` | `handle_export_pages` | EFFECT: writes page prose to the requested vault |
 | `POST` | `/api/pages/lock-edited` | main | no | not_applicable | `none` | — | count receipt only: number of pages locked — no prose |
-| `GET` | `/api/pages/instructions` | main | yes | automatic | `none` | `handle_instructions_page` | InstructionsPage.title, InstructionsPage.content |
 | `GET` | `/api/pages/orphan-links` | main | yes | automatic | `none` | `handle_list_orphan_links` | OrphanLink.label, OrphanLinksResponse.orphan_labels |
 | `GET` | `/api/pages/recent` | main | yes | automatic | `none` | `handle_recent_pages` | RecentActivityItem.snippet, RecentActivityItem.title; NOT Collection — carries prose and no axes |
 | `GET` | `/api/pages/recent-changes` | main | yes | automatic | `none` | `handle_recent_page_changes` | PageChange.title; NOT Collection — carries no axes |
@@ -1356,8 +1355,6 @@ carrying the authority of agreement.
 | `core/export/knowledge.rs::plan_truth_cutover` | `pub` | no | **yes** | `server/cmd_cutover.rs::run` | `core/db/truth_exposure.rs::page_truth_states` |
 | `core/importer.rs::resolve_entity_bulk` | `pub(crate)` | no | no | — | `core/db.rs::resolve_or_create_entity` |
 | `core/ingest.rs::run_canonical_enrichment` | `pub` | no | no | — | `core/post_ingest.rs::run_post_ingest_enrichment` |
-| `core/instructions_page.rs::ensure_instructions_page` | `pub` | no | **yes** | `server/check_routes.rs::handle_instructions_page` | `core/db.rs::get_page` |
-| `core/instructions_page.rs::find_instructions_page` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief` | `core/db.rs::get_page` |
 | `core/kg/reweave.rs::reweave_entity_links` | `pub` | no | no | — | `core/db.rs::search_entities_by_vector` |
 | `core/kg_quality.rs::entity_self_retrieval` | `pub` | no | no | — | `core/db.rs::search_entities_by_vector` |
 | `core/kg_quality.rs::run_rethink` | `pub` | no | no | — | `core/kg_quality.rs::find_merge_candidates`, `core/kg_quality.rs::refresh_stale_entity_embeddings`, `core/kg_quality.rs::scan_contradictions` |
@@ -1541,7 +1538,6 @@ carrying the authority of agreement.
 | `core/truth_adapter.rs::page_write_permit` | `pub` | no | **yes** | `server/page_routes.rs::handle_export_page`, `server/page_routes.rs::handle_export_pages`, `server/repo_wiki_routes.rs::exportable_pages` | `core/db/truth_exposure.rs::page_visibility` |
 | `server/check_routes.rs::handle_check` | `pub` | no | no | — | `core/chat_check.rs::check_against_decisions` |
 | `server/check_routes.rs::handle_check_context` | `pub` | no | no | — | `core/chat_check.rs::decision_context` |
-| `server/check_routes.rs::handle_instructions_page` | `pub` | no | no | — | `core/instructions_page.rs::ensure_instructions_page` |
 | `server/cmd_cutover.rs::run` | `pub` | yes | no | — | `core/export/knowledge.rs::plan_truth_cutover` |
 | `server/lint_routes.rs::prepare_current_repair` | `pub(crate)` | no | no | `server/repair_routes.rs::handle_prepare_current` | `core/repair/current.rs::prepare_current_repair_with_pages` |
 | `server/main.rs::main` | `private` | yes | no | — | `server/main.rs::run_daemon` |

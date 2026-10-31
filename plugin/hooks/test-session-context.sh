@@ -7,14 +7,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$SCRIPT_DIR/session-context.sh"
 tmpbase="$(mktemp -d)"
-server_pid=""
-cleanup() {
-    [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null
-    rm -rf "$tmpbase"
-}
-trap cleanup EXIT
-# Never reach a real daemon on the default port: nothing listens on port 9.
-export WENLAN_HOST='http://127.0.0.1:9'
+trap 'rm -rf "$tmpbase"' EXIT
 
 pass=0
 fail=0
@@ -77,43 +70,6 @@ done
 # A TTY or closed stdin must not hang the hook.
 out=$(bash "$HOOK" </dev/null)
 check 'closed stdin prints nothing' "" "$out"
-
-# UX-HOW-1: with a daemon that has the instructions page, the page follows
-# the session line.
-if command -v python3 >/dev/null 2>&1; then
-    cat >"$tmpbase/server.py" <<'PY'
-import http.server, json, os, sys
-base = sys.argv[1]
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        data = json.dumps({"page": {"page_id": "page_how", "title": "How you want AI to work with you",
-            "version": 2, "content": "Answer briefly.\n", "role": "instructions",
-            "link": "wenlan://page/page_how"}}).encode() if self.path == "/api/pages/instructions" else b"{}"
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-    def log_message(self, *args):
-        pass
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-with open(os.path.join(base, "port"), "w") as f:
-    f.write(str(server.server_address[1]))
-server.serve_forever()
-PY
-    python3 -I "$tmpbase/server.py" "$tmpbase" &
-    server_pid=$!
-    for _ in $(seq 1 50); do [ -s "$tmpbase/port" ] && break; sleep 0.1; done
-    expected="$LINE
-
-How the person wants AI to work with them: How you want AI to work with you (v2, wenlan://page/page_how)
-Follow it. To change it, propose an edit with write_page; the person accepts or dismisses it.
-
-Answer briefly."
-    out=$(printf '{"session_id":"%s"}' "$ID" |
-        WENLAN_HOST="http://127.0.0.1:$(cat "$tmpbase/port")" env -u CLAUDE_ENV_FILE bash "$HOOK")
-    check 'prints the instructions page after the session line' "$expected" "$out"
-fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

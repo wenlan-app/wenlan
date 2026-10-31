@@ -45,7 +45,6 @@ pub mod faithfulness;
 pub mod housekeeping;
 pub mod importer;
 pub mod ingest;
-pub mod instructions_page;
 pub mod kg;
 pub mod kg_quality;
 pub mod lint;

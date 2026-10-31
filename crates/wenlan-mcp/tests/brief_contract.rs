@@ -64,7 +64,6 @@ fn ready_response(topic: Option<&str>) -> BriefReadResponse {
         code_basis_pending: None,
         code_basis_pending_explained: false,
         getting_started: None,
-        instructions: None,
     }
 }
 
@@ -192,7 +191,6 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
                 code_basis_pending: pending,
                 code_basis_pending_explained: false,
                 getting_started: None,
-                instructions: None,
             }))
             .mount(&mock)
             .await;
@@ -283,7 +281,6 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
             code_basis_pending: None,
             code_basis_pending_explained: false,
             getting_started: None,
-            instructions: None,
         }))
         .mount(&mock)
         .await;
@@ -335,7 +332,6 @@ async fn brief_tells_a_new_user_the_next_step_even_without_a_project() {
                 code_basis_pending: None,
                 code_basis_pending_explained: false,
                 getting_started: Some(getting_started),
-                instructions: None,
             }))
             .mount(&mock)
             .await;
@@ -353,47 +349,4 @@ async fn brief_tells_a_new_user_the_next_step_even_without_a_project() {
         assert!(text.contains("Next step for the user: "), "{text}");
         assert!(text.contains(next), "{text}");
     }
-}
-
-/// UX-HOW-1: the person's page on how AI should work with them comes first
-/// in the Brief, with its link, and says changes are proposals.
-#[tokio::test]
-async fn brief_opens_with_the_instructions_page() {
-    let mock = MockServer::start().await;
-    let mut response = ready_response(None);
-    response.instructions = Some(wenlan_types::chat_check::InstructionsPage {
-        page_id: "page_how".into(),
-        title: "How you want AI to work with you".into(),
-        version: 2,
-        content: "Answer briefly, conclusion first.\n".into(),
-        role: "instructions".into(),
-        link: "wenlan://page/page_how".into(),
-    });
-    Mock::given(method("POST"))
-        .and(path("/api/brief"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
-        .mount(&mock)
-        .await;
-
-    let result = make_server(&mock)
-        .brief_impl(BriefParams {
-            session: None,
-            topic: None,
-            space: Some("wenlan".into()),
-        })
-        .await
-        .expect("brief read succeeds");
-    let text = text_of(&result);
-
-    assert!(
-        text.starts_with(
-            "How the person wants AI to work with them: How you want AI to work with you (v2, wenlan://page/page_how)\n"
-        ),
-        "{text}"
-    );
-    assert!(text.contains("propose an edit"), "{text}");
-    assert!(
-        text.contains("Answer briefly, conclusion first.\n\nSpace Brief: wenlan (v7)"),
-        "{text}"
-    );
 }

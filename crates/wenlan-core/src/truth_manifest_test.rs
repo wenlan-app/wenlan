@@ -242,13 +242,12 @@ fn manifest_counts_match_the_spec() {
     // `/api/pages/{id}/restore` (puts an archived page back; names one page).
     // Then 249 after the three palace layout routes (GET/PUT
     // `/api/palace/layout`, POST `/api/palace/layout/revert`; positions and
-    // the person's own labels, not page-bearing), and 252 after POST
+    // the person's own labels, not page-bearing), and 251 after POST
     // `/api/check` and `/api/check/context` (the in-chat check; cited page
-    // titles) and GET `/api/pages/instructions` (the person's instructions
-    // page).
+    // titles).
     assert_eq!(
         HTTP_READERS.len(),
-        252,
+        251,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 38, "#[tool( declarations");
@@ -259,7 +258,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        264,
+        263,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -267,7 +266,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        247,
+        246,
         "main builder entries"
     );
     assert_eq!(
@@ -283,8 +282,8 @@ fn manifest_counts_match_the_spec() {
         .iter()
         .filter(|r| r.page_bearing == PageBearing::Yes)
         .count();
-    // +3: the in-chat check (two routes) and the instructions page.
-    assert_eq!(bearing, 89, "page-bearing HTTP routes");
+    // +2: the in-chat check (two routes).
+    assert_eq!(bearing, 88, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -449,7 +448,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        244 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited, +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +3: in-chat check and instructions page)
+        243 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited, +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +3: in-chat check and instructions page)
     );
 }
 

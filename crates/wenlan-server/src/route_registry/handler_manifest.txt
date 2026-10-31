@@ -20,7 +20,6 @@ main|get|/api/decisions|wenlan_server::decisions_routes::handle_list_decisions
 main|get|/api/decisions/domains|wenlan_server::decisions_routes::handle_list_decision_domains
 main|post|/api/check|wenlan_server::check_routes::handle_check
 main|post|/api/check/context|wenlan_server::check_routes::handle_check_context
-main|get|/api/pages/instructions|wenlan_server::check_routes::handle_instructions_page
 main|get|/api/health|wenlan_server::routes::handle_health
 main|get|/api/home-stats|wenlan_server::memory_routes::handle_get_home_stats
 main|get|/api/import/batches/active|wenlan_server::import_routes::handle_active_import_batches

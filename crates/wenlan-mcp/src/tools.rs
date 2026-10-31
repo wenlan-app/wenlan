@@ -2295,18 +2295,6 @@ fn getting_started_lines(getting_started: &wenlan_types::GettingStarted) -> Stri
     format!("Getting started (whole library): {pages}, {waiting}.\nNext step for the user: {next}.")
 }
 
-/// The person's page on how AI tools should work with them (UX-HOW-1), read
-/// before anything else in the Brief. Changes to it are proposals only.
-fn instructions_page_lines(page: &wenlan_types::chat_check::InstructionsPage) -> String {
-    format!(
-        "How the person wants AI to work with them: {} (v{}, {})\nFollow it. To change it, propose an edit with write_page; the person accepts or dismisses it.\n\n{}",
-        page.title,
-        page.version,
-        page.link,
-        page.content.trim()
-    )
-}
-
 /// One Brief item list as text, keeping the stable item ids and versions the
 /// handoff skill reconciles against.
 fn render_brief_items(output: &mut String, label: &str, items: &[wenlan_types::BriefItem]) {
@@ -2770,9 +2758,6 @@ impl WenlanMcpServer {
         };
         if let Some(getting_started) = response.getting_started.as_ref() {
             output.push_str(&format!("\n\n{}\n", getting_started_lines(getting_started)));
-        }
-        if let Some(instructions) = response.instructions.as_ref() {
-            output = format!("{}\n\n{output}", instructions_page_lines(instructions));
         }
 
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))

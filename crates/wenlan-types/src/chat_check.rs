@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Wire types for the in-chat check (UX-CHAT-1..6) and the procedural page
-//! every AI tool reads before starting work (UX-HOW-1).
+//! Wire types for the in-chat check (UX-CHAT-1..6) and the two-length page
+//! body (UX-VIEW-2/3).
 //!
 //! The rules live in the daemon. Hooks and MCP only carry text in and print
 //! what comes back, so every AI tool gets the same answer.
@@ -11,8 +11,6 @@ use serde::{Deserialize, Serialize};
 pub const CHAT_REMINDER_DAILY_CAP: u32 = 5;
 /// History op recorded for every reminder handed out.
 pub const CHAT_REMINDER_OP: &str = "chat.reminder";
-/// `role` of the page that says how the person wants AI tools to work.
-pub const INSTRUCTIONS_PAGE_ROLE: &str = "instructions";
 
 /// `POST /api/check`: the AI's latest reply, checked against what was
 /// decided earlier.
@@ -122,30 +120,6 @@ pub struct PastDecision {
     pub source: DecisionSource,
 }
 
-/// The page that says how the person wants AI tools to work with them
-/// (`type: page`, `role: instructions`). Found by role, never by title.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InstructionsPage {
-    pub page_id: String,
-    pub title: String,
-    pub version: i64,
-    /// The whole body.
-    pub content: String,
-    pub role: String,
-    /// `wenlan://page/{id}`.
-    pub link: String,
-}
-
-/// `GET /api/pages/instructions`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InstructionsPageResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub page: Option<InstructionsPage>,
-    /// True when this call created the page from the person's memories.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub seeded: bool,
-}
-
 /// `GET /api/pages/{id}` `body`: the page body in its three layers
 /// (UX-VIEW-2/3). `page.content` keeps the whole Markdown.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,10 +172,6 @@ mod tests {
             })
             .unwrap()["skipped"],
             json!("timeout")
-        );
-        assert_eq!(
-            serde_json::to_value(InstructionsPageResponse::default()).unwrap(),
-            json!({})
         );
     }
 

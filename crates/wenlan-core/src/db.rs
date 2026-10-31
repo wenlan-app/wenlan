@@ -1544,7 +1544,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 144 adds `memories.authored_content` and moves legacy desktop
 /// quick captures into the `memory` namespace.
 /// Migration 145 adds `chat_reminders` (one `chat.reminder` history entry per
-/// in-chat reminder) and `pages.role`.
+/// in-chat reminder).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -10719,14 +10719,12 @@ impl MemoryDB {
                 self.migrate_144_legacy_quick_captures(version).await?;
             }
             // Migration 145 adds `chat_reminders` (the in-chat check's
-            // `chat.reminder` log) and `pages.role`. See
-            // migrate_145_chat_reminders_and_page_role.
+            // `chat.reminder` log). See migrate_145_chat_reminders.
             if ceiling < 145 {
                 return Ok(());
             }
             if version < 145 {
-                self.migrate_145_chat_reminders_and_page_role(version)
-                    .await?;
+                self.migrate_145_chat_reminders(version).await?;
             }
         }
 

@@ -642,9 +642,6 @@ pub struct PageReadResponse {
     /// it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<crate::chat_check::PageBodyParts>,
-    /// The page's role, e.g. `instructions`; absent for ordinary pages.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
 }
 
 /// Wikilink graph centered on a single page. Outbound = labels parsed

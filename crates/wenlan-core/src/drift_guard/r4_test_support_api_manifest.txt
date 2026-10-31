@@ -1208,7 +1208,3 @@ crates/wenlan-core/src/page_history_test.rs|crate::page_history::tests::exec|Tes
 crates/wenlan-core/src/page_history_test.rs|crate::page_history::tests::exec|test_primary_session|1
 crates/wenlan-core/src/chat_check_test.rs|crate::chat_check::tests::insert_decision|TestDbSession::execute|1
 crates/wenlan-core/src/chat_check_test.rs|crate::chat_check::tests::insert_decision|test_primary_session|1
-crates/wenlan-core/src/instructions_page_test.rs|crate::instructions_page::tests::insert_memory|TestDbSession::execute|1
-crates/wenlan-core/src/instructions_page_test.rs|crate::instructions_page::tests::insert_memory|test_primary_session|1
-crates/wenlan-core/src/instructions_page_test.rs|crate::instructions_page::tests::seeds_once_from_the_persons_memories_and_is_found_by_role|TestDbSession::execute|1
-crates/wenlan-core/src/instructions_page_test.rs|crate::instructions_page::tests::seeds_once_from_the_persons_memories_and_is_found_by_role|test_primary_session|1

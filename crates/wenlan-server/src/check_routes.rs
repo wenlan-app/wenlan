@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The in-chat check (UX-CHAT-1/2/6) and the procedural page (UX-HOW-1).
+//! The in-chat check (UX-CHAT-1/2/6).
 //!
 //! `POST /api/check` is what the Claude Code Stop hook (and the MCP
 //! `check_reply` tool) send the AI's latest reply to; `POST /api/check/context`
@@ -9,18 +9,17 @@
 //! the caller skips and the chat is never held up.
 
 use crate::error::ServerError;
-use crate::route_registry::{get, post, TrackedRouter};
+use crate::route_registry::{post, TrackedRouter};
 use crate::state::{ServerState, SharedState};
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_core::chat_check::CHECK_BUDGET;
 use wenlan_types::chat_check::{
     ChatCheckRequest, ChatCheckResponse, ChatCheckSkipped, ChatContextRequest, ChatContextResponse,
-    DecisionSource, InstructionsPageResponse,
+    DecisionSource,
 };
 use wenlan_types::sessions::SessionRef;
 
@@ -28,7 +27,6 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
     router
         .route("/api/check", post(handle_check))
         .route("/api/check/context", post(handle_check_context))
-        .route("/api/pages/instructions", get(handle_instructions_page))
 }
 
 /// The in-chat check is opt-in: it runs only after the person turns it on
@@ -191,39 +189,6 @@ pub async fn handle_check_context(
             ..Default::default()
         })),
     }
-}
-
-/// GET /api/pages/instructions[?locale=zh-Hant]
-///
-/// The page every AI tool reads before starting work. The first read after
-/// install writes it once from the person's memories (see
-/// `wenlan_core::instructions_page`). It is meant for every tool, so it is
-/// returned whatever Space the caller is limited to.
-pub async fn handle_instructions_page(
-    State(state): State<Arc<RwLock<ServerState>>>,
-    view: crate::truth_guard::TruthView,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<InstructionsPageResponse>, ServerError> {
-    let (db, page_root) = {
-        let s = state.read().await;
-        (
-            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
-            s.lint_config.page_root().map(std::path::Path::to_path_buf),
-        )
-    };
-    let (page, seeded) = wenlan_core::instructions_page::ensure_instructions_page(
-        &db,
-        params.get("locale").map(String::as_str),
-        page_root.as_deref(),
-    )
-    .await?;
-    let page = wenlan_core::truth_adapter::filter_page(&db, &view.grant, page).await?;
-    Ok(Json(InstructionsPageResponse {
-        page: page
-            .as_ref()
-            .map(wenlan_core::instructions_page::instructions_payload),
-        seeded,
-    }))
 }
 
 #[cfg(test)]
