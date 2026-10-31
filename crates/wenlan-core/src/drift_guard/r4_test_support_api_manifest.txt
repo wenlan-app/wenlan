@@ -1204,3 +1204,5 @@ crates/wenlan-core/src/synthesis/distill.rs|crate::synthesis::distill::tests::re
 crates/wenlan-core/src/synthesis/distill.rs|crate::synthesis::distill::tests::refresh_page_blocks_a_source_needing_too_many_parts_without_writing|TestDbRows::next|1
 crates/wenlan-core/src/synthesis/distill.rs|crate::synthesis::distill::tests::refresh_page_blocks_a_source_needing_too_many_parts_without_writing|TestDbSession::query|1
 crates/wenlan-core/src/synthesis/distill.rs|crate::synthesis::distill::tests::refresh_page_blocks_a_source_needing_too_many_parts_without_writing|test_primary_session|1
+crates/wenlan-core/src/page_history_test.rs|crate::page_history::tests::exec|TestDbSession::execute|1
+crates/wenlan-core/src/page_history_test.rs|crate::page_history::tests::exec|test_primary_session|1
