@@ -259,7 +259,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        261,
+        264,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -267,7 +267,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        244,
+        247,
         "main builder entries"
     );
     assert_eq!(
