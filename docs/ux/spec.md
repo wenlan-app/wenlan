@@ -85,7 +85,12 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   people save such pages for their things often.
   原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。「因为我们还没有很明确的用户需求，这样的情境下做的选择会是哪一个就选哪一个」→ 先不做第三種（2026-10-31 19:10）
 - **UX-VIEW-2** `shipped` While reading you can pick short or full text. It is
-  one page, not two copies. The switch is marked Beta.
+  one page, not two copies: short is the page's first paragraph, never a
+  separately written summary. The switch is marked Beta.
+- **UX-VIEW-5** `planned` A page's first paragraph is its point. The AI writes
+  its pages that way and fixes its older pages when it next updates them. On
+  your pages it only proposes a first sentence, which counts once you accept it.
+  原文：「或著我們第一段全文就該是重點？」「這樣擷取第一段就不用重寫摘要」（2026-10-31 20:23–20:24）
   原文：讀的時候能選短或全文，是同一頁，不是兩份。「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31）
 - **UX-VIEW-3** `shipped` The first screen is only for people; the details for
   AI are one collapsed section.
