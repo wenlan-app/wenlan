@@ -28,6 +28,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   follows a folder or repository, and one Space holds several things. A thing
   can span Spaces. Until things have their own record, each active item of a
   Space Brief stands for one thing.
+- **Original (原文)**: text that came in from outside, such as an imported
+  chat, a web page or a PDF. It is an ordinary page whose author is 原文. The
+  AI can't edit it, and it is not yours, so it never counts as decided.
+  原文：（2026-10-31 04:04 定了）外面進來的原文是一般的頁，作者記成「原文」，AI 不能改。
 - **A thing's mind map**: one map per thing. It is the map you see beside a
   conversation (the working memory, built from the chat and the pages it
   uses) and the same map is that thing's part of the big map. Points not yet
@@ -112,7 +116,8 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-CHAT-1** `planned` When the AI says something that contradicts an
   earlier decision, a one-line reminder appears in the same turn, with the date
   and the source, and it can be opened.
-  原文：AI 說了跟以前定的相反的話，同一輪就出現一句提醒，帶日期和出處，點得開。
+  It is a Beta setting, off by default.
+  原文：AI 說了跟以前定的相反的話，同一輪就出現一句提醒，帶日期和出處，點得開。「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31；檢查改成要你打開才有）
 - **UX-CHAT-2** `planned` Nothing is said when the reply has nothing to do with
   earlier decisions. If Wenlan is closed or does not answer within one second,
   the check is skipped and the chat is not held up. At most five reminders a
