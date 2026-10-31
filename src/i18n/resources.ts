@@ -841,6 +841,8 @@ const en = {
   pageAttachments: {
     failed: "Couldn't add {{name}}. Only images and videos can go in a page.",
     adding: "Adding {{name}}…",
+    addingImage: "Adding image…",
+    imageFailed: "Couldn't add the image. Try copying it again, or save it and drag it in.",
   },
   slashEditing: {
     label: "Basic editing",
@@ -3914,6 +3916,8 @@ const zhHans = {
   pageAttachments: {
     failed: "无法加入 {{name}}。笔记里只能放图片和视频。",
     adding: "正在加入 {{name}}…",
+    addingImage: "正在加入图片…",
+    imageFailed: "无法加入这张图片。请再复制一次，或先存下来再拖进来。",
   },
   slashEditing: {
     label: "基本编辑",
@@ -6943,6 +6947,8 @@ const zhHant = {
   pageAttachments: {
     failed: "無法加入 {{name}}。筆記裡只能放圖片和影片。",
     adding: "正在加入 {{name}}…",
+    addingImage: "正在加入圖片…",
+    imageFailed: "無法加入這張圖片。請再複製一次，或先存下來再拖進來。",
   },
   slashEditing: {
     label: "基本編輯",
