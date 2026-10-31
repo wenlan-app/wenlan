@@ -78,13 +78,12 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## A thing's page: short text, mind map, any shape you want
 
-- **UX-VIEW-1** `planned` Short text, mind map and any other rendering you
-  want are three views of the same thing. Switching does not change pages, and
-  the last view you used is remembered. The third view is a page the AI draws
-  freely as HTML in the shape you ask for (a timeline, a one-page brief);
-  every sentence in it keeps its source, and it is redrawn when the content
-  changes. The third view is marked Beta.
-  原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。選擇卡「AI 自由画一页（Beta）」（2026-10-31 18:44）
+- **UX-VIEW-1** `planned` Short text and mind map are two views of the same
+  thing. Switching does not change pages, and the last view you used is
+  remembered. There is no third view for now: an HTML page an AI tool draws in
+  chat is saved as its own page (UX-ART-1 to 3). Add a third view only once
+  people save such pages for their things often.
+  原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。「因为我们还没有很明确的用户需求，这样的情境下做的选择会是哪一个就选哪一个」→ 先不做第三種（2026-10-31 19:10）
 - **UX-VIEW-2** `shipped` While reading you can pick short or full text. It is
   one page, not two copies. The switch is marked Beta.
   原文：讀的時候能選短或全文，是同一頁，不是兩份。「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31）
