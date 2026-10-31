@@ -20,6 +20,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "search_pages",
     "search_entities_cmd",
     "list_spaces",
+    // Home's "what you're working on": active Brief items across Spaces.
+    "list_working_on",
     "list_memories_cmd",
     "list_memories_by_ids",
     "get_memory_stats_cmd",

@@ -1673,6 +1673,7 @@ pub fn run() {
             search::get_snapshot_captures_with_content,
             search::delete_snapshot,
             search::list_spaces,
+            search::list_working_on,
             search::get_space,
             search::create_space,
             search::update_space,

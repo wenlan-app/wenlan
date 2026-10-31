@@ -52,9 +52,6 @@ export function NewPagesList({
       <ul>
         {rows.map((page) => {
           const fresh = justWritten?.has(page.id) === true;
-          const sources = page.source_memory_ids.length > 0
-            ? t("askAi.writePages.sources", { count: page.source_memory_ids.length })
-            : null;
           return (
             <li key={page.id}>
               <button
@@ -69,11 +66,8 @@ export function NewPagesList({
                   <PageIcon className="wiki-new-pages-icon" size={16} />
                 )}
                 <span className="wiki-new-pages-title">{page.title}</span>
-                {fresh || sources ? (
-                  <span className="wiki-new-pages-meta">
-                    {[fresh ? t("pages.overview.justWritten") : null, sources].filter(Boolean).join(" · ")}
-                  </span>
-                ) : null}
+                {/* Home counts nothing, sources included (UX-HOME-2). */}
+                {fresh ? <span className="wiki-new-pages-meta">{t("pages.overview.justWritten")}</span> : null}
               </button>
             </li>
           );

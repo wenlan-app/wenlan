@@ -16,6 +16,7 @@ import type { SourceContainerLocation } from "../sources/SourceContainer";
 import { NoteSuggestionsSummary } from "../sources/VaultNotes";
 import { pagesWrittenSince, useWritePages, WritePagesLine } from "../askAi/WritePages";
 import { NewPagesList, newestPages } from "./NewPagesList";
+import { WorkingOn } from "./WorkingOn";
 import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { useQuery } from "@tanstack/react-query";
 import { ARCHIVED_PAGES_QUERY_KEY, EXPLICIT_BROWSE_QUERY_POLICY, isKnowledgePage, listAllArchivedPagesExplicitBrowse } from "./listAllPages";
@@ -49,6 +50,7 @@ export function PagesOverview({
   onBrowseArchived,
   onCreatePage,
   onSelectPage,
+  onSelectSpace,
   onConnectTool,
   onSeeExample,
   onImportChatsQuick,
@@ -110,7 +112,7 @@ export function PagesOverview({
     ...EXPLICIT_BROWSE_QUERY_POLICY,
     enabled: !!onBrowseArchived && !example && daemonReady,
   });
-  const archivedCount = example ? 0 : (archived.data ?? []).filter(isKnowledgePage).length;
+  const hasArchived = !example && (archived.data ?? []).some(isKnowledgePage);
   const everyday = !example && gettingStarted !== null && checklist.loaded && checklist.newLibrary && !checklist.visible && writePages.tool
     ? <EverydayUse tool={writePages.tool} />
     : null;
@@ -138,6 +140,8 @@ export function PagesOverview({
       data-onboarding={onboarding ? "true" : undefined}
       data-lists-pages={listsPages ? "true" : undefined}
     >
+      {/* What you're working on leads the home (UX-HOME-1). */}
+      {example ? null : <WorkingOn onSelectSpace={onSelectSpace} />}
       {onOpenBasisUpdates && <BasisUpdatesSummary onOpen={onOpenBasisUpdates} />}
       {onOpenNoteSuggestion && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}
@@ -169,9 +173,10 @@ export function PagesOverview({
       {newPages}
       {gettingStarted}
       {everyday}
-      {onBrowseArchived && archivedCount > 0 && (
+      {/* No count beside it: home counts nothing (UX-HOME-2). */}
+      {onBrowseArchived && hasArchived && (
         <button className="wiki-archive-entry" type="button" onClick={onBrowseArchived}>
-          {t("pages.archive.title")}<span className="wiki-archive-entry-count" aria-hidden="true">{archivedCount}</span>
+          {t("pages.archive.title")}
         </button>
       )}
       {adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={closeAdding} /> : null}

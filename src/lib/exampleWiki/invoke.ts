@@ -40,6 +40,7 @@ const EMPTY: Record<string, unknown> = {
   list_pinned_memories: [], list_watch_paths: [], get_page_sessions: [], list_recent_retrievals: [],
   get_pending_contradictions: [], list_decisions_cmd: [], list_decision_domains_cmd: [], list_activities: [],
   list_agent_activity: [], list_sources: [], read_source_dir: [], get_nurture_cards_cmd: [], get_chunks: [],
+  list_working_on: [],
   active_import_batches_cmd: { batches: [] },
   list_refinements: { proposals: [] },
   list_communities: { schema_version: "1", communities: [], next_cursor: null },

@@ -29,4 +29,3 @@
 .wiki-archived-restore,.wiki-restore-actions button,.wiki-restore-reload,.wiki-archive-notice button { white-space:nowrap;flex-shrink:0; }
 .wiki-restore-reload { align-self:flex-start;border:0;border-radius:5px;background:var(--mem-hover);color:var(--mem-text);padding:7px 10px;font:inherit;cursor:pointer; }
 .wiki-archive-entry { display:inline-flex;align-items:center;gap:8px; }
-.wiki-archive-entry-count { color:var(--mem-text-tertiary);font-variant-numeric:tabular-nums; }
