@@ -35,8 +35,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **A thing's mind map**: one map per thing. It is the map you see beside a
   conversation (the working memory, built from the chat and the pages it
   uses) and the same map is that thing's part of the big map. Points not yet
-  tidied are dashed; only tidied points join long-term memory.
-  原文：「大图里面的那张小图，的这件事，它是同一张」「比较像是虚线，就是它还没有真的被接进那个 long term memory 里面」「它会经过整理什么的，才会存进长期记忆里的」（2026-10-31）
+  tidied are dashed; only tidied points join long-term memory. Beside a
+  conversation the whole map shows, and the points this conversation used or
+  added are lit; the rest are faded.
+  原文：「大图里面的那张小图，的这件事，它是同一张」「比较像是虚线，就是它还没有真的被接进那个 long term memory 里面」「它会经过整理什么的，才会存进长期记忆里的」（2026-10-31）；選擇卡「共用一张，这次的点亮起来」（2026-10-31 16:50）
 - **The big map**: everything connected. Pages are in it as topics, not as
   work in progress.
   原文：「graph 里面也会有笔记。笔记的话，它就不会是跟着一个事，它就会是一个主题或是一个事情，而不会是一个在进行中的东西」（2026-10-31）
