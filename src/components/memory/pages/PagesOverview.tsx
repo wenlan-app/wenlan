@@ -15,7 +15,7 @@ import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 import type { SourceContainerLocation } from "../sources/SourceContainer";
 import { NoteSuggestionsSummary } from "../sources/VaultNotes";
 import { pagesWrittenSince, useWritePages, WritePagesLine } from "../askAi/WritePages";
-import { NewPagesList, newestPages } from "./NewPagesList";
+import { NewPagesList, recentPages } from "./NewPagesList";
 import { WorkingOn } from "./WorkingOn";
 import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { useQuery } from "@tanstack/react-query";
@@ -131,7 +131,7 @@ export function PagesOverview({
       />
     );
   // With pages to list, "open a page" has nothing to add.
-  const listsPages = newPages !== null && newestPages(pages).length > 0;
+  const listsPages = newPages !== null && recentPages(pages).length > 0;
 
   return (
     <section

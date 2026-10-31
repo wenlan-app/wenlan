@@ -181,7 +181,7 @@ describe("PagesOverview reading workspace", () => {
     const { onSelectPage } = renderOverview({ onBrowseAll });
 
     const list = await screen.findByTestId("wiki-new-pages");
-    expect(screen.getByRole("heading", { level: 2, name: "New pages" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Recently edited" })).toBeInTheDocument();
     const titles = [...list.querySelectorAll(".wiki-new-pages-title")].map(node => node.textContent);
     expect(titles).toEqual(["v2 launch plan", "Older launch notes"]);
     expect(screen.queryByText("ISP Outage Runbook (section_h1)")).not.toBeInTheDocument();
@@ -223,6 +223,26 @@ describe("PagesOverview reading workspace", () => {
       renderOverview();
       await waitFor(() => expect(listWorkingOn).toHaveBeenCalled());
       expect(screen.queryByTestId("wiki-working-on")).toBeNull();
+    });
+
+    it("UX-HOME-3 lists pages you edited and pages the AI newly wrote, not the AI's small edits", async () => {
+      vi.mocked(listPagesExplicitBrowse).mockImplementation(async status => status === "draft"
+        ? []
+        : [
+          page({ id: "touched", title: "Old AI page, touched up", creation_kind: "distilled", created_at: "2026-06-01T00:00:00Z", last_modified: "2026-10-31T09:00:00Z" }),
+          page({ id: "mine", title: "New tagline", creation_kind: "distilled", user_edited: true, created_at: "2026-06-02T00:00:00Z", last_modified: "2026-10-31T08:00:00Z" }),
+          page({ id: "fresh", title: "Competitor OpenWiki", creation_kind: "distilled", created_at: "2026-10-30T00:00:00Z", last_modified: "2026-10-30T00:00:00Z" }),
+        ]);
+      renderOverview();
+      const list = await screen.findByTestId("wiki-new-pages");
+      const rows = [...list.querySelectorAll(".wiki-new-pages-row")];
+      expect(rows.map((row) => row.querySelector(".wiki-new-pages-title")?.textContent)).toEqual([
+        "New tagline",
+        "Competitor OpenWiki",
+        "Old AI page, touched up",
+      ]);
+      expect(rows[0]).not.toHaveTextContent("AI wrote");
+      expect(rows[1]).toHaveTextContent("AI wrote");
     });
 
     it("UX-HOME-2 lists new pages without counting their sources", async () => {

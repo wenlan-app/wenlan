@@ -65,6 +65,7 @@
 .wiki-new-pages-icon { flex:none;color:var(--mem-text-tertiary); }
 .wiki-new-pages-icon--fresh { color:var(--mem-status-success-text); }
 .wiki-new-pages-title { flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 15px/1.35 var(--mem-font-body); }
+.wiki-new-pages-by { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
 .wiki-new-pages-meta { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body);font-variant-numeric:tabular-nums; }
 
 .wiki-projection-notice { display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:9px 12px;border:1px solid var(--mem-border);border-radius:6px;color:var(--mem-text-secondary);font:12px/1.5 var(--mem-font-body); }
