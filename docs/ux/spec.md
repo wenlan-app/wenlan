@@ -200,9 +200,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## History
 
-- **UX-HIST-1** `planned` One history per page, with all three kinds of change
-  in one list.
-  原文：一頁一本歷史，三種變動在同一個列表。
+- **UX-HIST-1** `planned` One history per page, with three kinds of change in
+  one list: what you changed, what the AI changed, and a source it cites that
+  changed. Renames, moves and locking are not listed.
+  原文：一頁一本歷史，三種變動在同一個列表。選擇卡「你改的、AI 改的、来源变了」（2026-10-31 17:34）
 - **UX-HIST-2** `planned` Every entry opens to show what changed.
   原文：每筆都能打開看改了什麼。
 
