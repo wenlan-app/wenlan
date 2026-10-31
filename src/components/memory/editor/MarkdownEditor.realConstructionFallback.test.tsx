@@ -11,6 +11,7 @@ vi.mock("@codemirror/view", async (importOriginal) => {
   class ThrowingEditorView {
     static contentAttributes = actual.EditorView.contentAttributes;
     static editable = actual.EditorView.editable;
+    static inputHandler = actual.EditorView.inputHandler;
     static lineWrapping = actual.EditorView.lineWrapping;
     static theme = actual.EditorView.theme;
     static updateListener = actual.EditorView.updateListener;

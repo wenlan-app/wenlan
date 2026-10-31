@@ -135,7 +135,7 @@ describe("slash editing", () => {
   it("closes on text, caret, Tab, composition and readonly transitions", () => {
     const text = make(); text.type("/"); text.type("中"); expect(text.menu()).toBeNull();
     const caret = make(); caret.type("/"); caret.view.dispatch({ selection: EditorSelection.cursor(0) }); expect(caret.menu()).toBeNull();
-    const tab = make(); tab.type("/"); expect(pressKey(tab.view.contentDOM, "Tab").defaultPrevented).toBe(false); expect(tab.menu()).toBeNull();
+    const tab = make(); tab.type("/"); expect(pressKey(tab.view.contentDOM, "Tab").defaultPrevented).toBe(true); expect(tab.menu()).toBeNull();
     const ime = make(); ime.type("/"); ime.view.dispatch({ effects: setWritingCompositionActive.of(true) }); expect(ime.menu()).toBeNull(); ime.type("/", "input.type.compose"); ime.view.dispatch({ effects: setWritingCompositionActive.of(false) }); expect(ime.menu()).toBeNull();
     const readonly = make(); readonly.type("/"); readonly.view.dispatch({ effects: readonly.writable.reconfigure(EditorState.readOnly.of(true)) }); expect(readonly.menu()).toBeNull();
   });

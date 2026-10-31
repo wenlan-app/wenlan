@@ -37,6 +37,7 @@ import type {
   MarkdownEditorStatus,
 } from "./MarkdownEditor";
 import { runMarkdownCommand } from "./markdownCommands";
+import { indentMarkdown, markdownBrackets, outdentMarkdown } from "./markdownTyping";
 import { createWikiLinkEditing, setResolvedWikiLinkTargets, setEditorReferenceContext } from "./wikiLinkEditing";
 import { createLinkCompletion, refreshLinkCompletion, type LinkCompletionLabels, type LinkCompletionNote } from "./wikiLinkCompletion";
 import {
@@ -519,9 +520,26 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 },
               },
               {
+                // Tab nests a list item, Shift+Tab moves it out; on other
+                // lines Tab indents. Escape, then Tab, still leaves the editor.
+                key: "Tab",
+                run: (currentView) => {
+                  if (actionsBlocked(currentView)) return false;
+                  return indentMarkdown(currentView);
+                },
+                shift: (currentView) => {
+                  if (actionsBlocked(currentView)) return false;
+                  return outdentMarkdown(currentView);
+                },
+              },
+              {
                 key: "Escape",
                 run: (currentView) => {
                   if (compositionActiveRef.current || currentView.compositionStarted) return false;
+                  // CodeMirror's escape hatch: a Tab within two seconds of
+                  // Escape moves focus instead of indenting. Bound keys do not
+                  // reach the view's own Escape handler, so set it here.
+                  currentView.setTabFocusMode(2000);
                   // An open find panel closes first; the next Escape leaves.
                   if (closeSearchPanel(currentView)) return true;
                   if (currentView.state.readOnly) return true;
@@ -530,6 +548,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 },
               },
             ]),
+            markdownBrackets(),
             keymap.of(sourcePreservingDefaultKeymap),
             keymap.of(historyKeymap),
             keymap.of(findKeymap),
@@ -597,7 +616,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
       onKeyDownCapture={(event) => {
         if (
           (compositionActiveRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
-          && ["Enter", "Escape", "ArrowDown", "ArrowUp"].includes(event.key)
+          && ["Enter", "Escape", "ArrowDown", "ArrowUp", "Tab"].includes(event.key)
         ) {
           // Leave the browser's IME default intact while keeping candidate
           // keys away from CodeMirror's ordinary Enter/Escape keymaps.

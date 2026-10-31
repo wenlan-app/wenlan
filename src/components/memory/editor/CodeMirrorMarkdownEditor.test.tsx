@@ -19,6 +19,7 @@ import {
   pressKey,
   replaceDocument,
   selectRange,
+  typeText,
 } from "./editorTestUtils";
 
 beforeAll(() => {
@@ -597,15 +598,15 @@ describe("CodeMirrorMarkdownEditor", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it("cancels on Escape outside composition and leaves Tab unhandled", () => {
+  it("cancels on Escape outside composition and leaves the next Tab to move focus", () => {
     const onCancel = vi.fn();
     render(<CodeMirrorMarkdownEditor {...baseProps({ onCancel })} />);
     const textbox = screen.getByRole("textbox");
 
     let tab!: KeyboardEvent;
     act(() => {
-      pressKey(textbox, "Escape");
-      tab = pressKey(textbox, "Tab");
+      pressKey(textbox, "Escape", { keyCode: 27 } as KeyboardEventInit);
+      tab = pressKey(textbox, "Tab", { keyCode: 9 } as KeyboardEventInit);
     });
 
     expect(onCancel).toHaveBeenCalledOnce();
@@ -714,6 +715,92 @@ describe("CodeMirrorMarkdownEditor", () => {
     expect(lastStatus(onStatusChange).compositionActive).toBe(true);
     fireEvent.blur(textbox);
     expect(lastStatus(onStatusChange).compositionActive).toBe(false);
+  });
+
+  it("nests a bullet on Tab and moves it back out on Shift+Tab, one undo step each", () => {
+    render(<CodeMirrorMarkdownEditor {...baseProps({ initialDocument: "- a\n- b\n  - c" })} />);
+    const textbox = screen.getByRole("textbox");
+    const view = editorViewFromTextbox(textbox);
+    act(() => selectRange(view, 7));
+
+    let tab!: KeyboardEvent;
+    act(() => { tab = pressKey(textbox, "Tab"); });
+    expect(tab.defaultPrevented).toBe(true);
+    expect(view.state.doc.toString()).toBe("- a\n  - b\n    - c");
+
+    act(() => { pressKey(textbox, "Tab", { shiftKey: true }); });
+    expect(view.state.doc.toString()).toBe("- a\n- b\n  - c");
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("- a\n  - b\n    - c");
+  });
+
+  it("lets Tab leave the editor right after Escape, without indenting", () => {
+    const props = baseProps({ initialDocument: "- a\n- b" });
+    render(<CodeMirrorMarkdownEditor {...props} />);
+    const textbox = screen.getByRole("textbox");
+    const view = editorViewFromTextbox(textbox);
+    act(() => selectRange(view, 7));
+    let tab!: KeyboardEvent;
+    act(() => {
+      pressKey(textbox, "Escape", { keyCode: 27 } as KeyboardEventInit);
+      tab = pressKey(textbox, "Tab", { keyCode: 9 } as KeyboardEventInit);
+    });
+    expect(tab.defaultPrevented).toBe(false);
+    expect(view.state.doc.toString()).toBe("- a\n- b");
+  });
+
+  it("leaves Tab to the input method while composing", () => {
+    render(<CodeMirrorMarkdownEditor {...baseProps({ initialDocument: "- a\n- b" })} />);
+    const textbox = screen.getByRole("textbox");
+    const view = editorViewFromTextbox(textbox);
+    act(() => selectRange(view, 7));
+    fireEvent.compositionStart(textbox);
+    const tab = pressKey(textbox, "Tab", { isComposing: true, keyCode: 229 } as KeyboardEventInit);
+    expect(tab.defaultPrevented).toBe(false);
+    expect(view.state.doc.toString()).toBe("- a\n- b");
+  });
+
+  it("closes brackets as they are typed and wraps a selection", () => {
+    render(<CodeMirrorMarkdownEditor {...baseProps({ initialDocument: "word " })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    act(() => selectRange(view, 5));
+    act(() => typeText(view, "("));
+    expect(view.state.doc.toString()).toBe("word ()");
+    act(() => typeText(view, "x)"));
+    expect(view.state.doc.toString()).toBe("word (x)");
+    act(() => selectRange(view, 0, 4));
+    act(() => typeText(view, "**"));
+    expect(view.state.doc.toString()).toBe("**word** (x)");
+  });
+
+  it("completes a page link from `[[` with exactly two closing brackets", () => {
+    const onLinkPick = vi.fn();
+    const linkNotes = [{ id: "p-roadmap", title: "Roadmap", canUseAsSource: false }];
+    render(<CodeMirrorMarkdownEditor {...baseProps({ initialDocument: "see ", linkNotes, onLinkPick })} />);
+    const textbox = screen.getByRole("textbox");
+    const view = editorViewFromTextbox(textbox);
+    act(() => { view.focus(); selectRange(view, 4); });
+    act(() => typeText(view, "[["));
+    expect(view.state.doc.toString()).toBe("see [[]]");
+    act(() => typeText(view, "ro"));
+    expect(textbox).toHaveAttribute("aria-activedescendant");
+    act(() => { pressKey(textbox, "Enter"); });
+    expect(view.state.doc.toString()).toBe("see [[Roadmap]]");
+    expect(view.state.selection.main.head).toBe(view.state.doc.length);
+    expect(onLinkPick).toHaveBeenCalledOnce();
+  });
+
+  it("closes the page-link menu on Tab without indenting the line", () => {
+    const linkNotes = [{ id: "p-roadmap", title: "Roadmap", canUseAsSource: false }];
+    render(<CodeMirrorMarkdownEditor {...baseProps({ initialDocument: "- a\n- ", linkNotes })} />);
+    const textbox = screen.getByRole("textbox");
+    const view = editorViewFromTextbox(textbox);
+    act(() => { view.focus(); selectRange(view, 6); });
+    act(() => typeText(view, "[["));
+    expect(textbox).toHaveAttribute("aria-controls");
+    act(() => { pressKey(textbox, "Tab"); });
+    expect(textbox).not.toHaveAttribute("aria-controls");
+    expect(view.state.doc.toString()).toBe("- a\n- [[]]");
   });
 
   it("removes an empty Markdown marker with markup-aware Backspace", () => {

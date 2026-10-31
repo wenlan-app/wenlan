@@ -4842,6 +4842,8 @@ WINDOWS_BUILD_RECIPE_MARKERS = [
     # app/tauri.windows.conf.json bundles them from.
     "& scripts/stage-onnxruntime-windows.ps1 -DestinationDirectory $dllDir",
     "& scripts/stage-vulkan-loader-windows.ps1 -DestinationDirectory $dllDir",
+    # The MSVC C/C++ and OpenMP runtime every executable needs on a clean PC.
+    "& scripts/stage-msvc-runtime-windows.ps1 -DestinationDirectory $dllDir",
     "pnpm tauri build --target x86_64-pc-windows-msvc",
     # Both jobs unpack the installer they produce and look inside it, and both
     # refuse a hit in NSIS's scratch directory, which is deleted when the
@@ -4849,6 +4851,9 @@ WINDOWS_BUILD_RECIPE_MARKERS = [
     "onnxruntime.dll",
     "vulkan-1.dll",
     "VulkanRT-License.txt",
+    "vcruntime140.dll",
+    "MSVC-Runtime-License.rtf",
+    "MSVC-Runtime-Source.txt",
     "$PLUGINSDIR",
 ]
 
