@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! A page's mind map as a small text tree, for AI tools that can't show a
-//! window (docs/ux/spec.md, UX-CHAT-4). `read_page` carries it with a link that
-//! opens the page in the Wenlan app.
+//! A page's own mind map as a small text tree, for AI tools that can't show a
+//! window. `read_page` carries it, with a link that opens the page in the
+//! Wenlan app, only when the person asks to see that page's map. The
+//! conversation's working-memory map (docs/ux/spec.md, UX-CHAT-4) is separate
+//! and not built yet.
 
 use std::collections::HashMap;
 
@@ -173,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn ux_chat_4_draws_the_map_as_a_text_tree_without_ids() {
+    fn draws_the_map_as_a_text_tree_without_ids() {
         let mut suggested = node("c", Some("a"), 1.0, "idea", Some("Wikis are dead"));
         suggested.status = "suggested".to_string();
         let names = HashMap::from([
@@ -206,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn ux_chat_4_keeps_collapsed_branches_closed_and_stays_small() {
+    fn keeps_collapsed_branches_closed_and_stays_small() {
         let mut folded = node("a", Some("root"), 0.0, "idea", Some("Folded"));
         folded.collapsed = true;
         let mut nodes = vec![

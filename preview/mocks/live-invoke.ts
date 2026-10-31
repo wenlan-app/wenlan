@@ -1267,14 +1267,6 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     if (!a.enabled) return null;
     return (await post("/api/pages/lock-edited", {})).locked;
   },
-  get_chat_mind_map: async () => (await get("/api/config")).chat_mind_map === true,
-  set_chat_mind_map: async (a) => {
-    if (typeof a?.enabled !== "boolean") throw new Error("Invalid mind map setting");
-    const updated = await put("/api/config", { chat_mind_map: a.enabled });
-    if (updated?.chat_mind_map !== a.enabled) {
-      throw new Error("The daemon does not support the mind map setting yet");
-    }
-  },
 };
 
 // App-local commands (no daemon route) → static defaults that route the UI

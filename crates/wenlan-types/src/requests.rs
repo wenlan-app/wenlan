@@ -759,9 +759,6 @@ pub struct UpdateConfigRequest {
     /// it off leaves existing locks in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock_my_pages: Option<bool>,
-    /// Mind map text tree on every page read by AI tools. Omitted = preserve.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_mind_map: Option<bool>,
     /// Scopes `everyday_source` and `synthesis_source` in this same request to
     /// jobs that are currently unpinned. No other field is affected. Omitted or
     /// `false` = overwrite, which is what every caller did before this field

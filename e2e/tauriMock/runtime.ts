@@ -162,7 +162,6 @@ export class TauriMockRuntime {
   private pageSequence: number;
   private backgroundAiEnabled = false;
   private lockMyPages = false;
-  private chatMindMap = false;
   private projectionFailureIssued = false;
 
   constructor(
@@ -228,11 +227,6 @@ export class TauriMockRuntime {
       return null;
     }
     if (command === "get_lock_my_pages") return this.lockMyPages;
-    if (command === "get_chat_mind_map") return this.chatMindMap;
-    if (command === "set_chat_mind_map") {
-      this.chatMindMap = requiredBoolean(command, args, "enabled");
-      return null;
-    }
     if (command === "set_lock_my_pages") {
       this.lockMyPages = requiredBoolean(command, args, "enabled");
       if (!this.lockMyPages) return null;

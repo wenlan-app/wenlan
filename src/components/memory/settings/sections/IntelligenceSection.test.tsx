@@ -25,8 +25,6 @@ const mocks = vi.hoisted(() => ({
   setBackgroundAiEnabled: vi.fn(),
   getLockMyPages: vi.fn(),
   setLockMyPages: vi.fn(),
-  getChatMindMap: vi.fn(),
-  setChatMindMap: vi.fn(),
 }));
 vi.mock("../../../../lib/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../../lib/tauri")>();
@@ -94,8 +92,6 @@ describe("IntelligenceSection", () => {
     mocks.setSourcePin.mockResolvedValue(undefined);
     mocks.getLockMyPages.mockResolvedValue(false);
     mocks.setLockMyPages.mockResolvedValue(null);
-    mocks.getChatMindMap.mockResolvedValue(false);
-    mocks.setChatMindMap.mockResolvedValue(undefined);
     // Automatic by default, so the task rows under it render.
     mocks.getBackgroundAiEnabled.mockResolvedValue(true);
     mocks.setBackgroundAiEnabled.mockResolvedValue(undefined);
@@ -510,18 +506,5 @@ describe("IntelligenceSection", () => {
       expect(await within(row).findByText("Could not save this setting. Try again.")).toBeInTheDocument();
       expect(within(row).getByRole("button", { name: "Ask me first on pages I wrote" })).toHaveAttribute("aria-pressed", "false");
     });
-  });
-
-  it("UX-CHAT-4: the mind map in AI tools is a Beta setting, off until turned on", async () => {
-    mocks.getBackgroundAiEnabled.mockResolvedValue(false);
-    renderSection();
-    const row = await screen.findByTestId("chat-mind-map");
-    expect(within(row).getByText("Beta")).toBeInTheDocument();
-    expect(within(row).getByText(/Off: you still get it when you ask/)).toBeInTheDocument();
-    const toggle = await within(row).findByRole("button", { name: "Mind map in AI tools" });
-    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "false"));
-    await userEvent.click(toggle);
-    expect(mocks.setChatMindMap).toHaveBeenCalledWith(true);
-    await waitFor(() => expect(within(row).getByRole("button", { name: "Mind map in AI tools" })).toHaveAttribute("aria-pressed", "true"));
   });
 });
