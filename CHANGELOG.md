@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.20.5](https://github.com/wenlan-app/wenlan/compare/v0.20.4...v0.20.5) (2026-10-31)
+
+
+### Features
+
+* **editor:** Tab indents lists and brackets close themselves ([#1046](https://github.com/wenlan-app/wenlan/issues/1046)) ([f1f3aac](https://github.com/wenlan-app/wenlan/commit/f1f3aac50116bb28379673d6b3a8cbe3b7fff2e1))
+* **editor:** write new pages in the Markdown editor, with find and replace ([#1043](https://github.com/wenlan-app/wenlan/issues/1043)) ([a2ba8b1](https://github.com/wenlan-app/wenlan/commit/a2ba8b13355290184639f52f848d9d9b26a825a1))
+* **pages:** archive a page and restore it from Archived pages ([#1042](https://github.com/wenlan-app/wenlan/issues/1042)) ([9de0600](https://github.com/wenlan-app/wenlan/commit/9de06007a61c025bb44444580f01bbd6bf00db5e))
+* **pages:** ask before archiving with a neutral button ([#1049](https://github.com/wenlan-app/wenlan/issues/1049)) ([4ad143e](https://github.com/wenlan-app/wenlan/commit/4ad143eb9b847899f217a0f234fc400a6b1ee135))
+* **pages:** renaming a page updates links to it ([#1047](https://github.com/wenlan-app/wenlan/issues/1047)) ([fdba1b0](https://github.com/wenlan-app/wenlan/commit/fdba1b033066392a5dcab95885006ff899e8440d))
+* **pages:** restore an archived page through the daemon ([#1040](https://github.com/wenlan-app/wenlan/issues/1040)) ([d1f4c48](https://github.com/wenlan-app/wenlan/commit/d1f4c4816151ad4f9eacf53b5f95e1b8877ae608))
+* **pages:** show authored pages as written in reading mode ([#1045](https://github.com/wenlan-app/wenlan/issues/1045)) ([746baf4](https://github.com/wenlan-app/wenlan/commit/746baf45c093170d0bf4dadbe01bf171a63d237b))
+* **quick-capture:** a larger Markdown window that keeps your text until it is saved ([#1044](https://github.com/wenlan-app/wenlan/issues/1044)) ([d02c159](https://github.com/wenlan-app/wenlan/commit/d02c159d2924761e384c14125c08f4804e0fae3e))
+
+
+### Bug Fixes
+
+* **capture:** keep quick captures exactly as typed and recover old ones ([#1038](https://github.com/wenlan-app/wenlan/issues/1038)) ([67bd77e](https://github.com/wenlan-app/wenlan/commit/67bd77e8a5c78e7edc37adc81c904195ea662e71))
+* **editor:** don't let shortcuts interrupt Chinese input while composing ([#1039](https://github.com/wenlan-app/wenlan/issues/1039)) ([9437836](https://github.com/wenlan-app/wenlan/commit/9437836fe92bdfec546ee86de6f6e4940ae2e049))
+* **onboarding:** clean up the setup probe and guard the example wiki ([#1041](https://github.com/wenlan-app/wenlan/issues/1041)) ([93354fd](https://github.com/wenlan-app/wenlan/commit/93354fd9f98593c6cdd675dbfbcea429872ff7fc))
+* **pages:** keep page text exact when it goes through the Markdown file ([#1037](https://github.com/wenlan-app/wenlan/issues/1037)) ([591d3cc](https://github.com/wenlan-app/wenlan/commit/591d3ccd15789b21e40c6bb8c2dbfc7b062e4d56))
+* **windows:** ship the MSVC runtime with the app so a clean PC can start it ([#1036](https://github.com/wenlan-app/wenlan/issues/1036)) ([afff161](https://github.com/wenlan-app/wenlan/commit/afff161d12e314b62983f004f1c7fc2dcb6a7f07))
+
 ## [0.20.4](https://github.com/wenlan-app/wenlan/compare/v0.20.3...v0.20.4) (2026-10-30)
 
 
