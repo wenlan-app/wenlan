@@ -299,3 +299,71 @@ async fn restoring_under_a_new_title_updates_links_and_reports_them() {
     assert_eq!(linker_after.content, "See [[Wenlan positioning]].");
     assert_eq!(linker_after.version, linker_before.version + 1);
 }
+
+#[tokio::test]
+async fn a_second_rename_leaves_one_correct_link_card_on_a_locked_page() {
+    let (app, _tmp, db) = common::test_app().await;
+    db.create_space("work", None, false).await.unwrap();
+    let target = common::create_page_fixture(
+        &db,
+        "Origin positioning",
+        "Target body.",
+        Some("work"),
+        &[],
+        "authored",
+    )
+    .await;
+    let locked = common::create_page_fixture(
+        &db,
+        "Strategy",
+        "See [[Origin positioning]].",
+        Some("work"),
+        &[],
+        "authored",
+    )
+    .await;
+    assert!(db.set_page_review_required(&locked, true).await.unwrap());
+    let cards = |db: std::sync::Arc<wenlan_core::db::MemoryDB>, page: String| async move {
+        db.list_pending_revisions(50)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|card| card.target_source_id == page)
+            .map(|card| card.revision_content)
+            .collect::<Vec<_>>()
+    };
+
+    let mut version = db.get_page(&target).await.unwrap().unwrap().version;
+    for (title, expected) in [
+        ("Wenlan positioning", "See [[Wenlan positioning]]."),
+        ("Positioning", "See [[Positioning]]."),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(rename(&target, title, version, None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let reply: wenlan_types::responses::RenamePageResponse =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(reply.links_pending_review, 1);
+        version = reply.version;
+        assert_eq!(
+            cards(db.clone(), locked.clone()).await,
+            vec![expected.to_string()]
+        );
+    }
+
+    // Back to the title the page still links by: no card is needed.
+    let response = app
+        .clone()
+        .oneshot(rename(&target, "Origin positioning", version, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(cards(db.clone(), locked.clone()).await.is_empty());
+    assert_eq!(
+        db.get_page(&locked).await.unwrap().unwrap().content,
+        "See [[Origin positioning]]."
+    );
+}

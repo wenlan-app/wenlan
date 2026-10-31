@@ -18,6 +18,12 @@
 //! pointing at the page after the title changes, which makes the step
 //! convergent: running it again only rewrites what still names an old title,
 //! and a repeated rename request with the same title runs it again.
+//!
+//! A page locked for review gets a revision card instead of the rewrite. The
+//! card names the title the page had when it was staged, so a later rename
+//! of the same page (or a rename back) first removes the cards an earlier
+//! rename left for its links, then stages the one that is right now, if any,
+//! so only a correct card waits for review.
 
 use super::{page_dispatch::page_write, PageWrite, WriteOutcome};
 use crate::{db::MemoryDB, error::WenlanError, read_scope::ReadScope};
@@ -123,6 +129,14 @@ pub(crate) async fn update_links_to_renamed_page(
         let Some(page) = db.get_page(&source.page_id).await? else {
             continue;
         };
+        // A card an earlier rename staged here names a title this page no
+        // longer has. Remove it before deciding what this page needs now.
+        if let Err(error) = dismiss_superseded_link_cards(db, &page, &source.labels).await {
+            log::warn!(
+                "[page_link_rename] {} kept an earlier link card for {page_id}: {error}",
+                page.id
+            );
+        }
         let (content, changed) = rewrite(&page.content);
         if changed == 0 {
             continue;
@@ -181,9 +195,58 @@ pub(crate) async fn update_links_to_renamed_page(
     Ok(counts)
 }
 
+/// Remove the pending link cards on `page` that a rename of the page its
+/// `labels` link to staged. Such a card proposes `page` as it is with only
+/// those links' targets changed, so it is found by comparing link targets in
+/// order: a card that changes a link whose target is one of `labels` is for
+/// this renamed page. A card for another renamed page changes other links and
+/// stays. A card staged before `page` changed shape is left for its own
+/// version check to refuse.
+async fn dismiss_superseded_link_cards(
+    db: &MemoryDB,
+    page: &crate::pages::Page,
+    labels: &[String],
+) -> Result<(), WenlanError> {
+    let cards = db
+        .pending_page_cards_by_writer(&page.id, LINK_RENAME_WRITER)
+        .await?;
+    if cards.is_empty() {
+        return Ok(());
+    }
+    let current = card_link_targets(&page.content);
+    for (card_id, proposed) in cards {
+        if card_changes_links_to(&current, &card_link_targets(&proposed), labels) {
+            db.delete_by_source_id("memory", &card_id).await?;
+        }
+    }
+    Ok(())
+}
+
+/// The targets of the links `rewrite_wikilink_targets` would consider, in
+/// document order.
+fn card_link_targets(content: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    crate::synthesis::wikilinks::rewrite_wikilink_targets(content, |target| {
+        targets.push(target.to_string());
+        None
+    });
+    targets
+}
+
+fn card_changes_links_to(current: &[String], proposed: &[String], labels: &[String]) -> bool {
+    current.len() == proposed.len()
+        && current.iter().zip(proposed).any(|(now, card)| {
+            let key = MemoryDB::page_title_key(now);
+            key != MemoryDB::page_title_key(card)
+                && labels
+                    .iter()
+                    .any(|label| MemoryDB::page_title_key(label) == key)
+        })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::renamed_label;
+    use super::{card_changes_links_to, card_link_targets, renamed_label};
 
     #[test]
     fn bare_old_title_becomes_new_title() {
@@ -213,6 +276,30 @@ mod tests {
     fn a_label_already_naming_the_page_is_left_alone() {
         assert_eq!(renamed_label("new", "New", Some("Old"), None), None);
         assert_eq!(renamed_label("work/new", "New", None, Some("work")), None);
+    }
+
+    #[test]
+    fn a_card_is_matched_to_the_links_it_changes() {
+        let labels = vec!["Old".to_string()];
+        let current = card_link_targets("See [[Old]] and [[Other|x]]. `[[Old]]`");
+        assert_eq!(current, vec!["Old", "Other"]);
+        assert!(card_changes_links_to(
+            &current,
+            &card_link_targets("See [[Mid]] and [[Other|x]]. `[[Old]]`"),
+            &labels
+        ));
+        // A card for another renamed page changes only that page's links.
+        assert!(!card_changes_links_to(
+            &current,
+            &card_link_targets("See [[Old]] and [[Renamed|x]]. `[[Old]]`"),
+            &labels
+        ));
+        // A card from before the page changed shape is not matched.
+        assert!(!card_changes_links_to(
+            &current,
+            &card_link_targets("See [[Mid]]."),
+            &labels
+        ));
     }
 
     #[test]

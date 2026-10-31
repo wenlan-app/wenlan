@@ -147,6 +147,45 @@ impl MemoryDB {
         Ok(sources)
     }
 
+    /// The pending page revision cards on `page_id` that `edited_by` staged,
+    /// as `(card id, proposed body)`, ordered by card id.
+    pub(crate) async fn pending_page_cards_by_writer(
+        &self,
+        page_id: &str,
+        edited_by: &str,
+    ) -> Result<Vec<(String, String)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT source_id, COALESCE(source_text, content)
+                   FROM memories
+                  WHERE source='memory' AND pending_revision=1 AND chunk_index=0
+                    AND supersedes=?1 AND json_valid(structured_fields)
+                    AND json_extract(structured_fields,'$.revision_kind')='page_write'
+                    AND json_extract(structured_fields,'$.edited_by')=?2
+                  ORDER BY source_id",
+                libsql::params![page_id, edited_by],
+            )
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("pending page cards: {error}")))?;
+        let mut cards = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("pending page card row: {error}")))?
+        {
+            cards.push((
+                row.get::<String>(0).map_err(|error| {
+                    WenlanError::VectorDb(format!("pending page card id: {error}"))
+                })?,
+                row.get::<String>(1).map_err(|error| {
+                    WenlanError::VectorDb(format!("pending page card body: {error}"))
+                })?,
+            ));
+        }
+        Ok(cards)
+    }
+
     pub(crate) async fn commit_page_title_rename(
         &self,
         id: &str,
