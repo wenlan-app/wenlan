@@ -5,17 +5,17 @@
 //! it came from. The database is only read; deleting the folder undoes it.
 //!
 //! ```text
-//! <out>/visible/…            pages and topics, in the folders they are in today
+//! <out>/visible/…            pages, in the folders they are in today
 //! <out>/backstage/entities/  entity files
 //! <out>/backstage/archive/   archived pages
 //! <out>/backstage/memories/  memory files, by month
 //! <out>/export-manifest.json every file written, and every value left out
 //! ```
 //!
-//! So far: pages, topics, entities and archived pages
-//! ([`pages::export_pages`]) and memories ([`memories::export_memories`]).
-//! Briefs, originals, canvases, settings and history follow in their own
-//! parts and add to the same manifest.
+//! So far: pages, entities and archived pages ([`pages::export_pages`])
+//! and memories ([`memories::export_memories`]). Briefs, originals,
+//! canvases, settings and history follow in their own parts and add to the
+//! same manifest.
 
 pub mod memories;
 pub mod pages;

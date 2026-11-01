@@ -84,7 +84,7 @@ async fn fixture() -> (MemoryDB, tempfile::TempDir) {
         )
         .await;
     }
-    page(&db, "c", "Rust", "A topic.", "sp").await;
+    page(&db, "c", "Rust", "A concept page.", "sp").await;
     sql(&db, "UPDATE pages SET kind = 'concept' WHERE id = ?1", "c").await;
     page(&db, "x", "beta", "Same name as Beta, other case.", "sp").await;
     page(&db, "gone", "Gone", "Archived text.", "sp").await;
@@ -128,10 +128,7 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
     let done = export_pages(&db, &placement, &dirs, &mut manifest)
         .await
         .unwrap();
-    assert_eq!(
-        (done.pages, done.topics, done.archived, done.entities),
-        (3, 1, 1, 2)
-    );
+    assert_eq!((done.pages, done.archived, done.entities), (4, 1, 2));
     assert_eq!(done.entity_stems["ent_123456789"], "Bob-456789");
 
     let alpha = page::parse(&read(&dirs, "visible/Trips/Alpha.md"), "x").unwrap();
@@ -183,8 +180,12 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
     let other = page::parse(&read(&dirs, "visible/beta-x.md"), "x").unwrap();
     assert_eq!(other.id.as_deref(), Some("x"));
 
-    let topic = page::parse(&read(&dirs, "visible/Rust.md"), "x").unwrap();
-    assert_eq!(topic.kind, PageKind::Topic);
+    let rust = page::parse(&read(&dirs, "visible/Rust.md"), "x").unwrap();
+    assert_eq!(
+        rust.kind,
+        PageKind::Page,
+        "kind is not read until it can be trusted"
+    );
 
     let gone = page::parse(&read(&dirs, "backstage/archive/Old/Gone.md"), "x").unwrap();
     assert_eq!(gone.body, "Archived text.");

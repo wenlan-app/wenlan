@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Pages, topics, entities and archived pages as files.
+//! Pages, entities and archived pages as files.
 //!
 //! - A page keeps the folder it is in today (`placement`, from the pages
 //!   folder's own record); a page that has no file yet goes at the top.
@@ -30,7 +30,6 @@ use crate::store::format::page::{self, Basis, Citation, Locator, PageFile, PageK
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PagesExported {
     pub pages: usize,
-    pub topics: usize,
     pub archived: usize,
     pub entities: usize,
     /// Each entity id's file stem, for `[[stem]]` links to it.
@@ -88,12 +87,9 @@ pub async fn export_pages(
         let (archived, path) = &paths[row.id.as_str()];
         let mut file = PageFile::new(&row.title, &row.content);
         file.id = Some(row.id.clone());
-        let topic = row.kind == "concept" && row.entity_id.is_none();
-        file.kind = if topic {
-            PageKind::Topic
-        } else {
-            PageKind::Page
-        };
+        // `pages.kind` cannot be trusted to read yet (drift_guard), so
+        // every page is `type: page`; kind and creation kind go to history.
+        file.kind = PageKind::Page;
         file.tags = row.space.iter().cloned().collect();
         file.created = Some(row.created_at.clone());
         file.modified = Some(row.last_modified.clone());
@@ -114,9 +110,6 @@ pub async fn export_pages(
         let (relative, file_type) = if *archived {
             done.archived += 1;
             (format!("backstage/archive/{path}"), "archived_page")
-        } else if topic {
-            done.topics += 1;
-            (format!("visible/{path}"), "topic")
         } else {
             done.pages += 1;
             (format!("visible/{path}"), "page")
