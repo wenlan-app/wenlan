@@ -27,6 +27,10 @@ pub(crate) struct ExportPageRow {
     /// The `aliases` JSON as stored.
     pub aliases: Option<String>,
     pub established_by: Option<String>,
+    /// The page's one-line summary; the person can edit it.
+    pub summary: Option<String>,
+    pub entity_created_at: Option<i64>,
+    pub entity_updated_at: Option<i64>,
 }
 
 /// One `memories` row (one chunk), every column a memory file carries.
@@ -62,6 +66,11 @@ pub(crate) struct ExportMemoryRow {
     /// explicit, as enrichment treats it.
     pub memory_type_explicit: bool,
     pub structured_fields_explicit: bool,
+    pub last_modified: Option<i64>,
+    /// Extra text the memory is found by; part of what is embedded.
+    pub retrieval_cue: Option<String>,
+    /// The person turned down the space enrichment suggested.
+    pub space_rejected: bool,
 }
 
 impl MemoryDB {
@@ -77,7 +86,8 @@ impl MemoryDB {
                                  (SELECT m.entity_id FROM entity_page_map m \
                                   WHERE m.page_id = p.id ORDER BY m.entity_id LIMIT 1)), \
                         p.entity_type, COALESCE(p.entity_confirmed, 0), p.aliases, \
-                        p.established_by \
+                        p.established_by, p.summary, p.entity_created_at, \
+                        p.entity_updated_at \
                  FROM pages p ORDER BY p.id",
                 (),
             )
@@ -102,6 +112,9 @@ impl MemoryDB {
                 entity_confirmed: row.get::<i64>(12).map_err(decode)? != 0,
                 aliases: row.get(13).map_err(decode)?,
                 established_by: row.get(14).map_err(decode)?,
+                summary: row.get(15).map_err(decode)?,
+                entity_created_at: row.get(16).map_err(decode)?,
+                entity_updated_at: row.get(17).map_err(decode)?,
             });
         }
         Ok(out)
@@ -116,9 +129,11 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         for chunk in ids.chunks(200) {
             let marks = vec!["?"; chunk.len()].join(", ");
-            // A memory's id is its `source_id`; its first chunk starts its text.
+            // A memory's id is its `source_id`; its first chunk starts its
+            // text. Only `memory` rows, as the app's label reader reads them.
             let sql = format!(
-                "SELECT source_id, content FROM memories WHERE source_id IN ({marks}) \
+                "SELECT source_id, content FROM memories \
+                 WHERE source = 'memory' AND source_id IN ({marks}) \
                  ORDER BY source_id, chunk_index DESC"
             );
             let params: Vec<libsql::Value> = chunk
@@ -164,9 +179,10 @@ impl MemoryDB {
                         m.origin_class, m.session_id, m.authored_content, m.entity_id, \
                         COALESCE(m.is_recap, 0), \
                         COALESCE(o.memory_type_explicit, 1), \
-                        COALESCE(o.structured_fields_explicit, 1) \
+                        COALESCE(o.structured_fields_explicit, 1), m.last_modified, \
+                        m.retrieval_cue, COALESCE(o.space_rejected, 0) \
                  FROM memories m LEFT JOIN enrichment_origin o ON o.source_id = m.source_id \
-                 ORDER BY m.source_id, m.chunk_index, m.id",
+                 ORDER BY m.source_id, m.source, m.chunk_index, m.id",
                 (),
             )
             .await
@@ -205,6 +221,9 @@ impl MemoryDB {
                 is_recap: flag(row.get(25).map_err(decode)?),
                 memory_type_explicit: flag(row.get(26).map_err(decode)?),
                 structured_fields_explicit: flag(row.get(27).map_err(decode)?),
+                last_modified: row.get(28).map_err(decode)?,
+                retrieval_cue: row.get(29).map_err(decode)?,
+                space_rejected: flag(row.get(30).map_err(decode)?),
             });
         }
         Ok(out)

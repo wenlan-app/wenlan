@@ -526,7 +526,11 @@ fn every_original_reads_back_unchanged() {
                 .map(|_| Message {
                     role: gen.pick(&["user", "assistant", "tool"]).to_string(),
                     at: gen.chance().then(|| "2026-10-30T09:12:00Z".to_string()),
-                    text: text_block(&mut gen),
+                    // Line ends at either end are kept.
+                    text: {
+                        let text = text_block(&mut gen);
+                        edged(&mut gen, text)
+                    },
                 })
                 .collect(),
         };

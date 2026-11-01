@@ -11,13 +11,13 @@
 use std::collections::HashMap;
 
 use super::memories::{check, utc};
-use super::pages::{id_tail, Paths};
+use super::pages::Paths;
 use super::{ExportDirs, LeftOut, Manifest};
 use crate::db::export_reads::ExportBriefItemRow;
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
 use crate::store::format::brief::{self, BriefFile, BriefItem};
-use crate::store::format::names::file_stem;
+use crate::store::format::names::{collision_stem, file_stem};
 
 pub async fn export_briefs(
     db: &MemoryDB,
@@ -70,7 +70,7 @@ pub async fn export_briefs(
                 _ => file.backlog.push(line),
             }
         }
-        let stem = format!("{}-{}", file_stem(&space), id_tail(&row.space_id));
+        let stem = collision_stem(&file_stem(&space), &row.space_id);
         let path = paths.claim("briefs", &stem, &row.space_id);
         let text = brief::render(&file);
         check(

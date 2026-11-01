@@ -10,7 +10,8 @@
 //! - Each node keeps `"wenlan": {"ref": "<kind>:<id>", "accepted", …}` with
 //!   its parent, rank, pin, placed, collapsed, fingerprint, provenance and
 //!   times. A position or size the database leaves empty is drawn at a
-//!   default and named in `wenlan.unset`, so the rebuild restores it empty.
+//!   default and named in `wenlan.unset`, so the rebuild restores it empty;
+//!   an infinite one is named as `x=inf`.
 //! - The canvas itself keeps its revision, schema, viewport and times under
 //!   a top-level `wenlan` key.
 
@@ -19,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{json, Map, Number, Value};
 
 use super::memories::check;
+use super::pages::Paths;
 use super::{ExportDirs, Manifest};
 use crate::db::export_reads::{ExportCanvasEdgeRow, ExportCanvasNodeRow, ExportCanvasRow};
 use crate::db::MemoryDB;
@@ -48,6 +50,9 @@ pub async fn export_canvases(
         edges_by_page.entry(&edge.page_id).or_default().push(edge);
     }
     let mut done = CanvasesExported::default();
+    // Page ids differ by case on a case-sensitive database but not on the
+    // file system, so backstage canvas names are claimed like page names.
+    let mut names = Paths::default();
     for map in &maps {
         let page_nodes = nodes_by_page
             .remove(map.page_id.as_str())
@@ -77,6 +82,9 @@ pub async fn export_canvases(
             edges: Vec::new(),
             rest: Map::new(),
         };
+        hidden
+            .rest
+            .insert("wenlan".to_string(), json!({ "page": map.page_id }));
         for node in page_nodes {
             let target = if shown.contains(node.id.as_str()) {
                 &mut visible
@@ -96,14 +104,27 @@ pub async fn export_canvases(
 
         let path = match page_paths.get(&map.page_id) {
             Some(page) => format!("{}.canvas", page.strip_suffix(".md").unwrap_or(page)),
-            None => format!("backstage/layout/canvas/{}.canvas", file_safe(&map.page_id)),
+            None => format!(
+                "backstage/{}",
+                names.claim_as(
+                    "layout/canvas",
+                    &file_safe(&map.page_id),
+                    &map.page_id,
+                    "canvas"
+                )
+            ),
         };
         write_canvas(dirs, manifest, &path, &map.page_id, "canvas", &visible)?;
         done.canvases += 1;
         if !hidden.nodes.is_empty() || !hidden.edges.is_empty() {
             let path = format!(
-                "backstage/proposals/canvas/{}.canvas",
-                file_safe(&map.page_id)
+                "backstage/{}",
+                names.claim_as(
+                    "proposals/canvas",
+                    &file_safe(&map.page_id),
+                    &map.page_id,
+                    "canvas"
+                )
             );
             write_canvas(
                 dirs,
@@ -121,6 +142,13 @@ pub async fn export_canvases(
             id: page.to_string(),
             field: format!("canvas nodes ({})", rows.len()),
             why: "nodes of a page that has no canvas row".to_string(),
+        });
+    }
+    for (page, rows) in edges_by_page {
+        manifest.left_out.push(super::LeftOut {
+            id: page.to_string(),
+            field: format!("canvas lines ({})", rows.len()),
+            why: "lines of a page that has no canvas row".to_string(),
         });
     }
     Ok(done)
@@ -173,8 +201,13 @@ fn number(value: f64) -> Number {
 
 fn node_of(node: &ExportCanvasNodeRow) -> Node {
     let mut unset = Vec::new();
+    // An empty or non-finite value is drawn at the default and named.
     let mut coordinate = |name: &str, value: Option<f64>, default: f64| match value {
-        Some(value) => number(value),
+        Some(value) if value.is_finite() => number(value),
+        Some(value) => {
+            unset.push(Value::String(format!("{name}={value}")));
+            number(default)
+        }
         None => {
             unset.push(Value::String(name.to_string()));
             number(default)
