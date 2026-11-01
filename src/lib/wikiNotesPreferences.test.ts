@@ -27,7 +27,7 @@ const entries = [
 describe("wiki notes preferences", () => {
   it("persists the selected inventory mode and custom order", () => {
     const cache = memoryStorage();
-    expect(readWikiInventoryMode(cache.storage)).toBe("recent");
+    expect(readWikiInventoryMode(cache.storage)).toBe("folders");
     writeWikiInventoryMode("custom", cache.storage);
     writeWikiCustomOrder(["b", "a"], cache.storage);
     expect(readWikiInventoryMode(cache.storage)).toBe("custom");
@@ -38,11 +38,22 @@ describe("wiki notes preferences", () => {
   it("defaults malformed or blocked storage safely and still returns current entries", () => {
     const corrupt = memoryStorage("not-json");
     const blocked: WikiNotesStorage = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
-    expect(readWikiInventoryMode(corrupt.storage)).toBe("recent");
+    expect(readWikiInventoryMode(corrupt.storage)).toBe("folders");
     expect(readWikiCustomOrder(corrupt.storage)).toEqual([]);
     expect(() => writeWikiInventoryMode("custom", blocked)).not.toThrow();
     expect(() => writeWikiCustomOrder(["c"], blocked)).not.toThrow();
     expect(orderWikiRecentEntries(entries, ["c", "missing"])).toEqual([entries[2], entries[0], entries[1]]);
+  });
+
+  it("opens on Folders until the person picks a list, so it does not repeat the home's recent pages", () => {
+    // Saved before the person ever chose: the old default, not a choice.
+    const legacy = memoryStorage(JSON.stringify({ version: 1, mode: "recent", customOrder: ["a"] }));
+    expect(readWikiInventoryMode(legacy.storage)).toBe("folders");
+    expect(readWikiCustomOrder(legacy.storage)).toEqual(["a"]);
+    writeWikiInventoryMode("recent", legacy.storage);
+    expect(readWikiInventoryMode(legacy.storage)).toBe("recent");
+    writeWikiCustomOrder(["b"], legacy.storage);
+    expect(readWikiInventoryMode(legacy.storage)).toBe("recent");
   });
 
   it("keeps existing custom positions and appends new visible entries", () => {
@@ -59,7 +70,7 @@ describe("Archived pages browse mode", () => {
     writeWikiInventoryMode("folders", storage);
     writeWikiInventoryMode("archived", storage);
     expect(readWikiInventoryMode(storage)).toBe("folders");
-    store.set("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "archived", customOrder: [] }));
+    store.set("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "archived", customOrder: [], chosen: true }));
     expect(readWikiInventoryMode(storage)).toBe("recent");
   });
 });

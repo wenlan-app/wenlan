@@ -25,7 +25,8 @@ vi.mock("./PageInventoryPanel", () => ({
 vi.mock("./ArchivedNotesPanel", () => ({ ArchivedNotesPanel: ({ onOpenPage }: { onOpenPage: (page: { id: string }) => void }) => <div data-testid="archived-notes"><button type="button" onClick={() => onOpenPage({ id: "archived-one" })}>Open archived note</button></div> }));
 
 describe("WikiWorkspace", () => {
-  beforeEach(() => localStorage.removeItem("wenlan:wiki-inventory:v1"));
+  // Most cases start from a person who picked Recently used; the default is tested on its own.
+  beforeEach(() => localStorage.setItem("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "recent", customOrder: [], chosen: true })));
   it.each(["recent", "archived"] as const)("archive browse request opens the narrow drawer from %s, reopens it and closes on selection", async initialMode => {
     const onOpenPage = vi.fn();
     function BrowseArchive() {
@@ -70,7 +71,14 @@ describe("WikiWorkspace", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("defaults to recent pages and switches modes without remounting the active editor", () => {
+  it("opens on Folders for a person who never picked a list", () => {
+    localStorage.removeItem("wenlan:wiki-inventory:v1");
+    render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
+    expect(screen.getByRole("combobox")).toHaveValue("folders");
+    expect(screen.getByTestId("wiki-directory")).toBeInTheDocument();
+  });
+
+  it("keeps a chosen Recently used and switches modes without remounting the active editor", () => {
     const { getByTestId } = render(
       <WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}>
         <textarea data-testid="active-editor" defaultValue="unsaved text" />
@@ -267,7 +275,7 @@ describe("WikiWorkspace", () => {
     expect(screen.getByTestId("kept-editor")).toBe(editor);
     expect(editor).toHaveValue("unsaved");
     // A browse mode for this session only: the app never reopens in it.
-    expect(localStorage.getItem("wenlan:wiki-inventory:v1")).toBeNull();
+    expect(JSON.parse(localStorage.getItem("wenlan:wiki-inventory:v1")!).mode).toBe("recent");
   });
 
 });

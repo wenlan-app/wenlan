@@ -40,7 +40,7 @@ pub fn newer_bundle_from_launch(argv: &[String], running: &semver::Version) -> O
         .then_some(NewerBundle { bundle, version })
 }
 
-fn bundle_root(exe: &Path) -> Option<PathBuf> {
+pub(crate) fn bundle_root(exe: &Path) -> Option<PathBuf> {
     let macos = exe.parent()?;
     let contents = macos.parent()?;
     let bundle = contents.parent()?;

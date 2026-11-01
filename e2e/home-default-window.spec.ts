@@ -59,7 +59,7 @@ async function openWiki(page: BrowserPage, fixture: SpacesNavigationFixture, { g
   await expect(page.locator(".note-tab-create")).toBeVisible();
   await expect(wiki.getByRole("table")).toHaveCount(0);
   await expect(wiki.locator(".asset-card, .wiki-page-link, .wiki-pagination")).toHaveCount(0);
-  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Home", exact: true })).toHaveAttribute("aria-current", "page");
   return browserErrors;
 }
 
@@ -136,10 +136,12 @@ test("a new user's home keeps one column and fits 1280x800 while getting started
   await expect(checklist.getByRole("listitem")).toHaveCount(1);
   await expect(checklist.getByRole("button", { name: "Ask in Claude Code" })).toBeVisible();
 
-  // Hiding the card brings the directory back.
+  // Hiding the card leaves Home without a directory; every page is in the Wiki.
   await checklist.getByRole("button", { name: "Hide getting started" }).click();
-  await expect(page.locator(".wiki-workspace-directory")).toBeVisible();
   await expect(page.locator(".wiki-reading-start")).not.toHaveAttribute("data-onboarding");
+  await expect(page.locator(".wiki-workspace-directory")).toBeHidden();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true }).click();
+  await expect(page.locator(".wiki-workspace-directory")).toBeVisible();
 });
 
 test("empty pages can start writing without AI setup", async ({ page }) => {
@@ -151,10 +153,11 @@ test("empty pages can start writing without AI setup", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "Content", exact: true })).toBeVisible();
 });
 
-test("the home button returns to the Wiki home while the open page keeps its tab", async ({ page }) => {
+test("the home button returns to Home while the open page keeps its tab", async ({ page }) => {
   await page.setViewportSize({ ...DEFAULT_WINDOW });
   await openWiki(page, createFirstRunFixture());
-  const home = page.getByRole("button", { name: "Wiki home", exact: true });
+  const home = page.locator(".note-tab-home");
+  await expect(home).toHaveAccessibleName("Home");
   const overviewTitle = page.locator(".wiki-overview").getByRole("heading", { name: "Open a page", exact: true });
   // On the home the button stays in its place and shows it is the current view.
   await expect(overviewTitle).toBeVisible();

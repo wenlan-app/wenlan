@@ -492,3 +492,177 @@ async fn restore_route_refuses_a_new_title_for_a_source_page_with_a_typed_code()
     assert_eq!(status, StatusCode::OK, "{restored}");
     assert_eq!(restored["title"], "Imported original");
 }
+
+/// Publish a page and project it into the scratch pages folder, returning the
+/// page and the path of its live file.
+async fn projected(
+    tmp: &tempfile::TempDir,
+    db: &Arc<MemoryDB>,
+    title: &str,
+) -> (wenlan_core::pages::Page, std::path::PathBuf) {
+    let draft = db.create_page_draft(title, BODY, None, None).await.unwrap();
+    let wenlan_core::pages::PageDraftPublishOutcome::Published(page) = db
+        .publish_page_draft(&draft.id, draft.version)
+        .await
+        .unwrap()
+    else {
+        panic!("fixture must publish")
+    };
+    let projection =
+        wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(tmp.path().join("pages"), db);
+    let file = projection
+        .write_page_gated(db, &page)
+        .await
+        .unwrap()
+        .unwrap();
+    (page, std::path::PathBuf::from(file))
+}
+
+/// The archived page's file leaves the pages folder for `archive/` with
+/// exactly the bytes it had, including an edit the watcher never synced. An
+/// edit made to it there is not picked up as a live page edit and is never
+/// overwritten. Restore then projects the page back, in sync: the response
+/// says synced, and the next edit to the restored file reaches the page.
+#[tokio::test]
+async fn archive_moves_the_file_to_archive_and_restore_projects_it_back_in_sync() {
+    let (app, tmp, db) = common::test_app().await;
+    let pages = tmp.path().join("pages");
+    let (page, live) = projected(&tmp, &db, "Archived in vault").await;
+    let name = live.file_name().unwrap().to_owned();
+    let unsynced = format!(
+        "{}\nTyped in the vault just before archiving.\n",
+        std::fs::read_to_string(&live).unwrap()
+    );
+    std::fs::write(&live, &unsynced).unwrap();
+
+    let (status, archived) = send(
+        &app,
+        Method::POST,
+        &format!("/api/pages/{}/archive", page.id),
+        None,
+        None,
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{archived}");
+    assert_eq!(archived["status"], "archived");
+    assert_eq!(archived["projection_status"], "synced", "{archived}");
+    assert!(
+        !live.exists(),
+        "the pages folder must not keep an archived page"
+    );
+    let in_archive = pages.join("archive").join(&name);
+    assert_eq!(
+        std::fs::read_to_string(&in_archive).unwrap(),
+        unsynced,
+        "the unsynced edit survives in archive/"
+    );
+
+    // Obsidian edits the archived copy. The watcher does not treat it as a
+    // live page, and nothing overwrites it.
+    let edited_in_archive = format!("{unsynced}Edited after archiving.\n");
+    std::fs::write(&in_archive, &edited_in_archive).unwrap();
+    let stats = wenlan_core::sources::page_watcher::sync_filesystem_edits(&db, &pages)
+        .await
+        .unwrap();
+    assert_eq!((stats.applied, stats.errors), (0, 0), "{stats:?}");
+
+    let version = db.get_page(&page.id).await.unwrap().unwrap().version;
+    let (status, response) = send(
+        &app,
+        Method::POST,
+        &format!("/api/pages/{}/restore", page.id),
+        Some(json!({"expected_version":version})),
+        None,
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let response: RestorePageResponse = serde_json::from_value(response).unwrap();
+    assert_eq!(
+        response.projection_status,
+        PageProjectionStatus::Synced,
+        "restore must not report a file it could not update: {:?}",
+        response.projection_error
+    );
+    assert_eq!(response.projection_error, None);
+    let restored_file = std::fs::read_to_string(&live).unwrap();
+    assert!(
+        restored_file.contains(&format!("origin_version: {}", response.version)),
+        "{restored_file}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&in_archive).unwrap(),
+        edited_in_archive,
+        "restore leaves the archived copy and its edit alone"
+    );
+
+    // In sync: an edit to the restored file is applied, not skipped as stale.
+    std::fs::write(
+        &live,
+        restored_file.replacen("indented code", "indented code, edited after restore", 1),
+    )
+    .unwrap();
+    let stats = wenlan_core::sources::page_watcher::sync_filesystem_edits(&db, &pages)
+        .await
+        .unwrap();
+    assert_eq!(stats.applied, 1, "{stats:?}");
+    assert!(db
+        .get_page(&page.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .content
+        .contains("indented code, edited after restore"));
+}
+
+/// An untouched archive/restore round trip changes no byte the person wrote:
+/// the archived copy is the live file exactly, and after restore the page
+/// text and the restored file's page text are what they were.
+#[tokio::test]
+async fn an_archive_restore_round_trip_keeps_the_exact_bytes() {
+    let (app, tmp, db) = common::test_app().await;
+    let pages = tmp.path().join("pages");
+    let (page, live) = projected(&tmp, &db, "Round trip").await;
+    let before = std::fs::read(&live).unwrap();
+
+    let (status, archived) = send(
+        &app,
+        Method::POST,
+        &format!("/api/pages/{}/archive", page.id),
+        None,
+        None,
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{archived}");
+    let in_archive = pages.join("archive").join(live.file_name().unwrap());
+    assert_eq!(std::fs::read(&in_archive).unwrap(), before);
+    assert!(!live.exists());
+
+    let version = db.get_page(&page.id).await.unwrap().unwrap().version;
+    let (status, response) = send(
+        &app,
+        Method::POST,
+        &format!("/api/pages/{}/restore", page.id),
+        Some(json!({"expected_version":version})),
+        None,
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["projection_status"], "synced", "{response}");
+    let restored = db.get_page(&page.id).await.unwrap().unwrap();
+    assert_eq!(restored.content, BODY, "the page text is byte-identical");
+    let after = std::fs::read_to_string(&live).unwrap();
+    let body = |raw: &str| {
+        raw.split_once("\n---\n")
+            .map(|(_, body)| body.to_string())
+            .unwrap()
+    };
+    assert_eq!(
+        body(&after),
+        body(&String::from_utf8(before).unwrap()),
+        "the restored file holds the same page text at the same name"
+    );
+}

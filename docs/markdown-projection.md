@@ -48,3 +48,24 @@ Explicit receipted repair operations retain their existing captured-byte guards.
 Desktop IPC currently maps this additive daemon reply to its existing Saved
 result. Showing a low-interruption pending/conflict hint requires a subsequent
 frontend change; daemon status alone is not proof of that UI.
+
+## Archive and restore
+
+POST `/api/pages/{id}/archive` archives the row, then moves the page's file out
+of the pages folder into `archive/` without rewriting it, so unsynced edits
+survive there and no file in the pages folder poses as an active page (the
+watcher would skip its edits as stale, and a restore would refuse to replace
+them). The response adds `projection_status`: `synced` once the file is moved,
+`pending` with `projection_error` when it could not be; the next daemon start
+retries the move for every archived page (the desktop app does not show
+`pending` yet). Only files whose frontmatter names the page move, so a note
+someone put at the page's old path stays put and is reported; and only files
+stamped no newer than the archived version, so a restore that projected the
+page in between keeps its file. The moved file is checked again after the
+move and put back if it is not the page's. Archive and restore hold one
+lifecycle lock across their database change and projection, and archive moves
+the file only while the page is still archived at the version it produced, so
+a restore whose projection failed keeps its file. State remembers the folder the page
+was archived from. Restore projects the restored version as a fresh file in
+that folder (or the creation folder if it is gone) and leaves the copy in
+`archive/`, with any edit made to it, where it is.

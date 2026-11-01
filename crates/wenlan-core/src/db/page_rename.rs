@@ -306,7 +306,7 @@ impl MemoryDB {
         // loaded model, preserve the existing vector so the unchanged body and
         // summary remain semantically searchable; its title contribution will
         // remain stale until a later normal content-indexing write.
-        let embedding_sql = if self.embedder.is_some() && visible.title != title {
+        let embedding_sql = if self.embedder.get().is_some() && visible.title != title {
             let embedding_text = crate::pages::page_embedding_text(
                 &title,
                 visible.summary.as_deref(),

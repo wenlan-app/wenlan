@@ -415,6 +415,7 @@ export default function PageDetail({
     setDeleteGuardEntityId(entityId);
   };
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [actionMenuPlacement, setActionMenuPlacement] = useState<{ top: number; right: number } | null>(null);
   const [redistillNotice, setRedistillNotice] = useState<{
     kind: "success" | "warning" | "error";
     message: string;
@@ -1954,6 +1955,10 @@ export default function PageDetail({
 
   const openActionMenu = (initialFocus: MenuInitialFocus) => {
     actionMenuInitialFocusRef.current = initialFocus;
+    // In the top bar the menu drops below the trigger on its own layer, since
+    // the bar clips (and would scroll to) anything that hangs out of it.
+    const trigger = documentToolsHost ? actionMenuTriggerRef.current?.getBoundingClientRect() : undefined;
+    setActionMenuPlacement(trigger ? { top: trigger.bottom + 4, right: Math.max(8, window.innerWidth - trigger.right) } : null);
     setActionMenuOpen(true);
   };
 
@@ -2462,31 +2467,10 @@ export default function PageDetail({
     <SidebarSimple aria-hidden="true" size={18} style={{transform:"scaleX(-1)"}} />
   </button>;
 
-  const documentTools = (
-    <div className="page-document-tools">
-      {!documentToolsHost && inspectorToggle}
-      {hideOuterTitleWhileEditing && canRenamePage && (
-        <button
-          aria-label={t("pageDetail.renamePage")}
-          className="mem-icon-action page-detail-title-action"
-          disabled={titleRenameDisabled || renaming}
-          onClick={() => void renameFromTitle()}
-          title={t("pageDetail.renamePage")}
-          type="button"
-        >
-          <PencilSimple aria-hidden="true" size={16} />
-        </button>
-      )}
-      <WorkspaceBackButton
-          aria-label={t("main.back")}
-          className="mem-icon-action"
-          onClick={requestBack}
-          type="button"
-        >
-          <ArrowLeft aria-hidden="true" size={16} />
-        </WorkspaceBackButton>
-      {/* The example wiki is for looking at: nothing in it can be moved, renamed or deleted. */}
-      {!exampleWiki && (
+  // The example wiki is for looking at: nothing in it can be moved, renamed or deleted.
+  // Page actions sit in the top bar beside the page sidebar toggle, as Obsidian's
+  // view header does; the title row keeps only the title.
+  const actionsMenu = exampleWiki ? null : (
       <div className="page-detail-actions-anchor" ref={actionMenuRef}>
                 <button
                   ref={actionMenuTriggerRef}
@@ -2520,6 +2504,7 @@ export default function PageDetail({
                   <div
                     aria-label={t("pageDetail.actions")}
                     className="mem-popover-surface page-detail-actions-menu"
+                    style={actionMenuPlacement ? { position: "fixed", top: actionMenuPlacement.top, right: actionMenuPlacement.right } : undefined}
                     data-keyboard-navigation={actionMenuKeyboardNavigation ? "true" : "false"}
                     onKeyDown={(event) => {
                       setActionMenuKeyboardNavigation(true);
@@ -2540,12 +2525,12 @@ export default function PageDetail({
                         {t("pageDetail.editPage")}
                       </button>
                     ) : null}
-                    {!editing && !showCanvas && canRenamePage ? (
+                    {!showCanvas && canRenamePage && (!editing || hideOuterTitleWhileEditing) ? (
                       <button
-                        disabled={renaming || renameDisabled}
+                        disabled={renaming || (editing ? titleRenameDisabled : renameDisabled)}
                         onClick={() => {
                           closeActionMenu();
-                          startRename();
+                          if (editing) void renameFromTitle(); else startRename();
                         }}
                         role="menuitem"
                         type="button"
@@ -2623,14 +2608,39 @@ export default function PageDetail({
                   </div>
                 ) : null}
               </div>
+  );
+
+  const documentTools = (
+    <div className="page-document-tools">
+      {!documentToolsHost && inspectorToggle}
+      {!documentToolsHost && hideOuterTitleWhileEditing && canRenamePage && (
+        <button
+          aria-label={t("pageDetail.renamePage")}
+          className="mem-icon-action page-detail-title-action"
+          disabled={titleRenameDisabled || renaming}
+          onClick={() => void renameFromTitle()}
+          title={t("pageDetail.renamePage")}
+          type="button"
+        >
+          <PencilSimple aria-hidden="true" size={16} />
+        </button>
       )}
+      <WorkspaceBackButton
+          aria-label={t("main.back")}
+          className="mem-icon-action"
+          onClick={requestBack}
+          type="button"
+        >
+          <ArrowLeft aria-hidden="true" size={16} />
+        </WorkspaceBackButton>
+      {!documentToolsHost && actionsMenu}
     </div>
   );
 
 
   return (
     <div className={`page-detail document-context-host${infoOpen || showCanvas ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && (infoOpen || showCanvas) ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
-      {documentToolsHost && createPortal(inspectorToggle, documentToolsHost)}
+      {documentToolsHost && createPortal(<>{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
       {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
         {page.status === "archived" && <div className="wiki-archive-notice" role="status">

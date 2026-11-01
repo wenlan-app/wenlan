@@ -24,6 +24,7 @@ interface SidebarProps {
   readonly activityCurrent?: boolean;
   /** Opens the connect flow from "What your AI can do" when no tool is connected. */
   readonly onConnectTool?: () => void;
+  readonly onNavigateHome?: () => void;
   readonly onNavigatePages?: () => void;
   readonly onNavigateSettings?: () => void;
   readonly onNavigateSources?: () => void;
@@ -67,6 +68,7 @@ export default function Sidebar({
   onNavigateActivity,
   activityCurrent = false,
   onConnectTool,
+  onNavigateHome,
   onNavigatePages,
   onNavigateSettings,
   onNavigateSources,
@@ -155,6 +157,7 @@ export default function Sidebar({
             labels={{
               entities: t("sidebar.entities"),
               graph: t("sidebar.graph"),
+              home: t("sidebar.home"),
               memories: t("sidebar.memories"),
               more: t("sidebar.more"),
               navigation: t("sidebar.navigation"),
@@ -167,6 +170,7 @@ export default function Sidebar({
             onNavigateEntities={closeAfterNavigation(onNavigateEntities, closeOverlay)}
             onNavigateGraph={closeAfterNavigation(onNavigateGraph, closeOverlay)}
             onNavigateLog={closeAfterNavigation(onNavigateLog, closeOverlay)}
+            onNavigateHome={closeAfterNavigation(onNavigateHome, closeOverlay)}
             onNavigatePages={closeAfterNavigation(onNavigatePages, closeOverlay)}
             onNavigateSources={closeAfterNavigation(onNavigateSources, closeOverlay)}
             onNavigateSpaces={closeAfterNavigation(onNavigateSpaces, closeOverlay)}

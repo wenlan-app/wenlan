@@ -492,7 +492,8 @@ pub async fn test_db() -> (MemoryDB, tempfile::TempDir) {
         lint_freshness,
         page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
         derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
-        embedder: Some(shared_embedder()),
+        embedder: std::sync::OnceLock::from(shared_embedder()),
+        embedder_load_error: std::sync::Mutex::new(None),
         // Token-aware chunker matching production; falls back to char-based
         // when the BGE tokenizer isn't in the resolved cache.
         chunker: build_chunker(std::path::Path::new(".nonexistent")),
@@ -564,7 +565,8 @@ pub async fn test_db_at(ceiling: i64) -> (MemoryDB, tempfile::TempDir) {
         lint_freshness,
         page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
         derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
-        embedder: Some(shared_embedder()),
+        embedder: std::sync::OnceLock::from(shared_embedder()),
+        embedder_load_error: std::sync::Mutex::new(None),
         chunker: build_chunker(std::path::Path::new(".nonexistent")),
         embedding_cache: std::sync::Mutex::new(EmbeddingCache::new(200)),
         community_dirty_nodes: std::sync::Mutex::new(BTreeMap::new()),
@@ -44891,41 +44893,6 @@ fn community_leiden_enabled_is_explicit_opt_in() {
     }
 }
 
-#[test]
-fn genesis_shadow_enabled_is_explicit_opt_in() {
-    // Unset is the case that matters most: it is what every install that never
-    // heard of M6 evaluates, and it must leave the sub-second lane unspawned.
-    for value in [
-        None,
-        Some(""),
-        Some("0"),
-        Some("false"),
-        Some("no"),
-        Some("off"),
-        Some("garbage"),
-    ] {
-        assert!(
-            !genesis_shadow_enabled_value(value),
-            "{value:?} must leave the M6 genesis shadow lane unspawned"
-        );
-    }
-    // `on` is accepted here although the sibling lane flags do not take it —
-    // it is the natural partner of the `off` the falsey list already rejects.
-    for value in [
-        Some("1"),
-        Some("true"),
-        Some("yes"),
-        Some("on"),
-        Some(" TRUE "),
-        Some("On"),
-    ] {
-        assert!(
-            genesis_shadow_enabled_value(value),
-            "{value:?} must enable the M6 genesis shadow lane"
-        );
-    }
-}
-
 #[tokio::test]
 async fn migration_68_adds_citations_column_null_for_legacy() {
     let (db, _dir) = test_db().await;
@@ -45746,7 +45713,8 @@ async fn startup_reconciles_v79_observations_without_source_memory_id() {
         lint_freshness,
         page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
         derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
-        embedder: None,
+        embedder: std::sync::OnceLock::new(),
+        embedder_load_error: std::sync::Mutex::new(None),
         chunker: ChunkingEngine::default(),
         embedding_cache: std::sync::Mutex::new(EmbeddingCache::new(200)),
         community_dirty_nodes: std::sync::Mutex::new(BTreeMap::new()),
@@ -56175,6 +56143,56 @@ async fn the_daemon_open_defers_memory_embedding_recovery_and_ordinary_opens_do_
         .unwrap();
     assert_eq!(db.count_null_memory_embeddings().await.unwrap(), 0);
     assert!(memory_has_embedding(&db, "mem_deferred").await);
+}
+
+/// A daemon whose first start could not download the embedding model (#1050)
+/// still stores memories and pages and finds them by keyword; once the model
+/// loads, the rows written meanwhile get their vectors.
+#[tokio::test]
+async fn without_the_embedding_model_writes_and_keyword_search_still_work() {
+    let (mut db, _dir) = test_db().await;
+    let model = db.embedder.get().cloned().expect("test database embedder");
+    db.embedder = OnceLock::new();
+    assert!(!db.embedder_ready());
+
+    let doc = make_memory_doc(
+        "mem_offline",
+        "the office vllm server hosts the team model",
+        "fact",
+        "work",
+        "test",
+    );
+    db.upsert_documents(vec![doc]).await.unwrap();
+    assert_eq!(db.count_null_memory_embeddings().await.unwrap(), 1);
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page(
+        "page_offline",
+        "Office model server",
+        None,
+        "the office vllm server hosts the team model",
+        None,
+        None,
+        &[],
+        &now,
+    )
+    .await
+    .unwrap();
+
+    let found = db
+        .search("vllm", 5, None, &crate::read_scope::ReadScope::Global)
+        .await
+        .unwrap();
+    assert!(found.iter().any(|result| result.source_id == "mem_offline"));
+    let pages = db.search_pages("vllm", 5, None).await.unwrap();
+    assert!(pages.iter().any(|page| page.id == "page_offline"));
+    assert!(db.check_novelty("anything", None).await.unwrap().is_none());
+
+    assert!(db.embedder.set(model).is_ok());
+    assert_eq!(db.backfill_page_embeddings().await.unwrap(), 1);
+    db.recover_null_memory_embeddings(&crate::events::NoopEmitter)
+        .await
+        .unwrap();
+    assert_eq!(db.count_null_memory_embeddings().await.unwrap(), 0);
 }
 
 /// A batch writes only rows that still match what it embedded: a row embedded
