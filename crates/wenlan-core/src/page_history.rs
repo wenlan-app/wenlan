@@ -101,8 +101,43 @@ pub async fn build_page_history(
         })
         .collect();
 
+    // The changelog starts empty, so the page's first version has no entry.
+    // It is listed as the page's birth, so the first edit has a version to
+    // be compared with. Who made it decides the kind: the person, or else
+    // the AI (an older `create` row whose maker is not known is the AI's
+    // kind too; its `edited_by` stays `create`).
+    if !entries.iter().any(|entry| entry.version == 1) {
+        if let Some(birth) = own.iter().find(|row| row.version == 1) {
+            let person = match db.get_page(page_id).await? {
+                Some(page) => {
+                    crate::sentences::first_version_author(&page, &own)
+                        == Some(crate::authorship::VersionAuthor::Person)
+                }
+                None => false,
+            };
+            items.push(PageHistoryItem {
+                kind: if person {
+                    PageHistoryKind::PersonEdit
+                } else {
+                    PageHistoryKind::AiEdit
+                },
+                at: birth.created_at,
+                version: Some(1),
+                edited_by: Some(birth.edited_by.clone()),
+                agent: None,
+                delta_summary: None,
+                text: include_text.then(|| birth.content.clone()),
+                source: None,
+                changed_sentences: changed_sentences_at(&own, 1),
+            });
+        }
+    }
+
     // This page's version at a moment: the newest edit at or before it.
-    let mut edits: Vec<(i64, i64)> = entries.iter().map(|e| (e.at, e.version)).collect();
+    let mut edits: Vec<(i64, i64)> = items
+        .iter()
+        .filter_map(|item| Some((item.at, item.version?)))
+        .collect();
     edits.sort_unstable();
     let version_at = |at: i64| {
         edits

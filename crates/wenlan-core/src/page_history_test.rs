@@ -137,3 +137,87 @@ async fn one_list_holds_both_edits_and_a_source_update_with_texts() {
         .iter()
         .all(|h| h.text.is_none() && h.source.as_ref().is_none_or(|s| s.text.is_none())));
 }
+
+/// An authored page created by `actor`.
+async fn made_by(db: &MemoryDB, id: &str, content: &str, actor: &str) {
+    db.insert_page_with_basis(
+        id,
+        id,
+        None,
+        content,
+        None,
+        Some("sp"),
+        &[],
+        "2026-01-01T00:00:00Z",
+        "authored",
+        "confirmed",
+        None,
+        None,
+        &[],
+        actor,
+        None,
+    )
+    .await
+    .unwrap();
+}
+
+/// The changelog as the write paths leave it: an entry per edit, none for
+/// the version a page was created at.
+async fn real_changelog(db: &MemoryDB, id: &str) -> Vec<PageChangelogEntry> {
+    assert_eq!(
+        db.get_page_changelog(id).await.unwrap(),
+        "[]",
+        "created empty"
+    );
+    let mut entries = changelog(db, id).await;
+    entries.retain(|entry| entry.version != 1);
+    entries
+}
+
+#[tokio::test]
+async fn the_first_version_is_listed_as_the_pages_birth_with_its_text() {
+    let (db, _dir) = test_db().await;
+    made_by(&db, "ai", "Day one is Belém.", "claude-code").await;
+    let created = real_changelog(&db, "ai").await;
+    assert!(created.is_empty());
+    edit(
+        &db,
+        "ai",
+        "Day one is Belém. Day two is Sintra.",
+        "manual_edit",
+    )
+    .await;
+
+    let mut entries = changelog(&db, "ai").await;
+    entries.retain(|entry| entry.version != 1);
+    attach_texts(&db, "ai", &mut entries).await.unwrap();
+    let history = build_page_history(&db, "ai", &entries, &HashSet::new(), true)
+        .await
+        .unwrap();
+    let versions: Vec<_> = history.iter().map(|item| item.version).collect();
+    assert_eq!(versions, [Some(2), Some(1)], "{history:#?}");
+    let birth = &history[1];
+    assert_eq!(birth.kind, PageHistoryKind::AiEdit);
+    assert_eq!(birth.edited_by.as_deref(), Some("agent_create"));
+    assert_eq!(birth.text.as_deref(), Some("Day one is Belém."));
+    assert_eq!(birth.changed_sentences, Some(1));
+    assert_eq!(history[0].kind, PageHistoryKind::PersonEdit);
+    assert_eq!(history[0].changed_sentences, Some(1));
+
+    // A page the person made in the app is theirs from birth.
+    // ("unknown" is the actor the app's own create passes.)
+    made_by(&db, "mine", "My own note.", "unknown").await;
+    let history = build_page_history(
+        &db,
+        "mine",
+        &real_changelog(&db, "mine").await,
+        &HashSet::new(),
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].kind, PageHistoryKind::PersonEdit);
+    assert_eq!(history[0].edited_by.as_deref(), Some("person_create"));
+    assert_eq!(history[0].text, None, "no text without asking");
+}

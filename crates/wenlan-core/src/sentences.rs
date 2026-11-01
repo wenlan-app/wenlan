@@ -116,6 +116,19 @@ fn birth_kind<'a>(page: &'a Page, history: &[crate::db::PageHistoryEntry]) -> &'
     }
 }
 
+/// Who wrote `page`'s first version, given its history (any order).
+/// `None` when the first version is no longer in `history`.
+pub fn first_version_author(
+    page: &Page,
+    history: &[crate::db::PageHistoryEntry],
+) -> Option<authorship::VersionAuthor> {
+    let first = history.iter().find(|entry| entry.version == 1)?;
+    Some(authorship::version_author(
+        &first.edited_by,
+        birth_kind(page, history),
+    ))
+}
+
 /// Derive who wrote each sentence of `page`'s current body.
 pub async fn page_authorship(
     db: &MemoryDB,
