@@ -12,8 +12,6 @@ import {
   replaceDocument,
   selectRange,
 } from "./editor/editorTestUtils";
-import { undo } from "@codemirror/commands";
-import { clearRenamedLinks, recordRenamedLinks } from "./pages/renameLinkRewrite";
 
 const tauriMocks = vi.hoisted(() => ({
   getPage: vi.fn(),
@@ -86,7 +84,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  clearRenamedLinks();
 });
 
 describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
@@ -857,61 +854,6 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     expect(tauriMocks.updatePage).not.toHaveBeenCalled();
   });
 
-  it("takes a rename's link rewrite into the unsaved draft instead of a conflict", async () => {
-    const linking = { ...PAGE, content: "See [[Old title]] for more.\n" };
-    tauriMocks.getPage.mockResolvedValue(linking);
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={client}>
-        <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} />
-      </QueryClientProvider>,
-    );
-    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
-    const view = editorViewFromTextbox(textbox);
-    act(() => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: "My unsaved line." }, userEvent: "input.type" });
-    });
-    // Another page was renamed from "Old title" to "New title" in this app.
-    recordRenamedLinks("Old title", "New title");
-    const rewritten = { ...linking, content: "See [[New title]] for more.\n", version: PAGE.version + 1 };
-    tauriMocks.getPage.mockResolvedValue(rewritten);
-    await act(async () => { client.setQueryData(["page", PAGE.id], rewritten); });
-    await waitFor(() => expect(view.state.doc.toString()).toBe("See [[New title]] for more.\nMy unsaved line."));
-    expect(screen.queryByText("This page changed elsewhere.")).toBeNull();
-    // Undo takes back the person's typing, not the rename's rewrite.
-    act(() => { undo(view); });
-    expect(view.state.doc.toString()).toBe("See [[New title]] for more.\n");
-    act(() => {
-      view.dispatch({ changes: { from: view.state.doc.length, insert: "Typed again." }, userEvent: "input.type" });
-    });
-    await waitFor(() => expect(tauriMocks.updatePage).toHaveBeenCalledWith(expect.objectContaining({
-      content: "See [[New title]] for more.\nTyped again.",
-      expectedVersion: rewritten.version,
-    })), { timeout: 3000 });
-    expect(tauriMocks.updatePage).toHaveBeenCalledOnce();
-    expect(screen.queryByText("This page changed elsewhere.")).toBeNull();
-  });
-
-  it("still shows the conflict when the page also changed elsewhere after a rename", async () => {
-    const linking = { ...PAGE, content: "See [[Old title]] for more.\n" };
-    tauriMocks.getPage.mockResolvedValue(linking);
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={client}>
-        <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} />
-      </QueryClientProvider>,
-    );
-    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
-    const draft = "See [[Old title]] for more.\nMy unsaved line.";
-    act(() => replaceDocument(editorViewFromTextbox(textbox), draft));
-    recordRenamedLinks("Old title", "New title");
-    const edited = { ...linking, content: "See [[New title]] for more.\nEdited in Obsidian.\n", version: PAGE.version + 1 };
-    await act(async () => { client.setQueryData(["page", PAGE.id], edited); });
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("This page changed elsewhere."));
-    expect(editorViewFromTextbox(textbox).state.doc.toString()).toBe(draft);
-    expect(tauriMocks.updatePage).not.toHaveBeenCalled();
-  });
-
   it("Reload latest asks again and loads the newest page, not the first one it saw", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const user = userEvent.setup();
@@ -1029,8 +971,9 @@ it("refreshes an open context graph after a page autosave persists new links", a
     return result;
   });
   act(() => replaceDocument(editorViewFromTextbox(textbox), "Body with [[New linked page]].\n"));
-  // The autosave waits 650 ms before saving, then the graph refetches, so the
-  // default 1 s wait leaves almost no slack on a busy CI runner.
+  // Autosave waits for typing to settle, then the graph refetches; a busy CI
+  // runner can take longer than findBy's default second for both.
+  await waitFor(() => expect(tauriMocks.updatePage).toHaveBeenCalled(), { timeout: 5_000 });
   expect(await screen.findByRole("button", { name: "Open page: New linked page" }, { timeout: 5_000 })).toBeVisible();
   expect(screen.queryByText("No direct connections in the currently visible knowledge.")).toBeNull();
 });

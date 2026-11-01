@@ -11,6 +11,7 @@ import {
 import type { ComponentType, RefAttributes } from "react";
 import { NativeMarkdownEditor } from "./NativeMarkdownEditor";
 import type { PageLayersSettings } from "./pageLayersEditing";
+import type { SentenceProposalSettings } from "./sentenceProposals";
 import { loadCodeMirrorEditor } from "./loadCodeMirrorEditor";
 
 import type { EditorReferenceContext } from "./wikiLinkEditing";
@@ -109,6 +110,9 @@ export interface MarkdownEditorProps {
   /** Short or full and the folded part for AI (UX-VIEW-2, UX-VIEW-3). The
    *  plain-text fallback editor shows the whole text. */
   pageLayers?: PageLayersSettings;
+  /** The AI's proposals for the person's sentences, each under its sentence
+   *  (UX-WHO-2). The plain-text fallback editor does not draw them. */
+  sentenceProposals?: SentenceProposalSettings;
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(

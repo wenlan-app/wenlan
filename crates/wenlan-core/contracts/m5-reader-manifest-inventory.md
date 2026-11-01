@@ -566,6 +566,8 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/config` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `PUT` | `/api/config` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `GET` | `/api/config/routing` | main | no | not_applicable | `none` | — | no prose fields |
+| `POST` | `/api/check` | main | yes | automatic | `none` | `handle_check` | SourcePageRef.title of the page citing a decision |
+| `POST` | `/api/check/context` | main | yes | automatic | `none` | `handle_check_context` | SourcePageRef.title of the page citing a decision |
 | `POST` | `/api/context` | main | yes | automatic | `none` | `handle_context` | ChatContextResponse.context, KnowledgeContext.graph_context, Searc |
 | `GET` | `/api/decisions` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `GET` | `/api/decisions/domains` | main | no | not_applicable | `none` | — | no prose fields |
@@ -816,6 +818,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `attach_file` | yes | automatic | `none` | tool handler |
 | `brief` | yes | automatic | `none` | tool handler |
 | `capture` | yes | automatic | `none` | tool handler |
+| `check_reply` | yes | automatic | `none` | tool handler |
 | `confirm_memory` | yes | automatic | `none` | tool handler |
 | `create_entity` | yes | automatic | `none` | tool handler |
 | `create_relation` | yes | automatic | `none` | tool handler |
@@ -1130,6 +1133,7 @@ carrying the authority of agreement.
 
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
+| `core/chat_check.rs::decision_source` | `private` | no | no | — | `core/db.rs::get_pages_for_memory` |
 | `core/db.rs::accept_page_merge` | `pub` | no | no | — | `core/db.rs::page_merge_row` |
 | `core/db.rs::add_entity_alias_in_scope` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_add_entity_alias` | `core/db.rs::read_entity_page` |
 | `core/db.rs::append_page_history` | `private` | no | no | — | `core/db.rs::append_page_history_with_minor` |
@@ -1257,6 +1261,8 @@ carrying the authority of agreement.
 
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
+| `core/chat_check.rs::check_against_decisions` | `pub` | no | **yes** | `server/check_routes.rs::handle_check` | `core/chat_check.rs::decision_source` |
+| `core/chat_check.rs::decision_context` | `pub` | no | **yes** | `server/check_routes.rs::handle_check_context` | `core/chat_check.rs::decision_source` |
 | `core/citations.rs::run_citation_backfill_with_page_limit` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/code_basis_recheck.rs::note_unchanged` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/code_basis_recheck.rs::prepare_recheck_input` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1549,9 +1555,11 @@ carrying the authority of agreement.
 | `core/synthesis/distill.rs::distill_pages_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/synthesis/distill.rs::distill_pages_scoped_gated` |
 | `core/synthesis/distill.rs::refresh_page` | `pub` | no | no | — | `core/synthesis/distill.rs::refresh_page_with_prompt` |
 | `core/synthesis/refinement_queue.rs::apply_refinement` | `pub` | no | no | — | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` |
-| `core/truth_adapter.rs::filter_page_refs` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief`, `server/entity_graph_routes.rs::handle_get_knowledge_graph`, `server/memory_routes.rs::handle_search_memory_inner`, `server/page_basis_routes.rs::visible_ids`, `server/page_routes.rs::handle_get_page_links`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_list_orphan_links`, `server/page_routes.rs::handle_restore_page`, `server/routes.rs::handle_distill_inner`, `server/routes.rs::handle_recent_page_changes`, `server/routes.rs::handle_recent_pages`, `server/routes.rs::handle_recent_retrievals`, `server/routes.rs::handle_search_inner`, `server/session_routes.rs::handle_get_session` | `core/db/truth_exposure.rs::page_visibility` |
+| `core/truth_adapter.rs::filter_page_refs` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief`, `server/check_routes.rs::hide_unservable_pages`, `server/entity_graph_routes.rs::handle_get_knowledge_graph`, `server/memory_routes.rs::handle_search_memory_inner`, `server/page_basis_routes.rs::visible_ids`, `server/page_routes.rs::handle_get_page_links`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_list_orphan_links`, `server/page_routes.rs::handle_restore_page`, `server/routes.rs::handle_distill_inner`, `server/routes.rs::handle_recent_page_changes`, `server/routes.rs::handle_recent_pages`, `server/routes.rs::handle_recent_retrievals`, `server/routes.rs::handle_search_inner`, `server/session_routes.rs::handle_get_session` | `core/db/truth_exposure.rs::page_visibility` |
 | `core/truth_adapter.rs::filter_pages` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_search_pages`, `server/page_routes.rs::list_visible_browse_pages`, `server/routes.rs::handle_distill_inner` | `core/truth_adapter.rs::verdicts` |
 | `core/truth_adapter.rs::page_write_permit` | `pub` | no | **yes** | `server/page_routes.rs::handle_export_page`, `server/page_routes.rs::handle_export_pages`, `server/repo_wiki_routes.rs::exportable_pages` | `core/db/truth_exposure.rs::page_visibility` |
+| `server/check_routes.rs::handle_check` | `pub` | no | no | — | `core/chat_check.rs::check_against_decisions` |
+| `server/check_routes.rs::handle_check_context` | `pub` | no | no | — | `core/chat_check.rs::decision_context` |
 | `server/cmd_cutover.rs::run` | `pub` | yes | no | — | `core/export/knowledge.rs::plan_truth_cutover` |
 | `server/lint_routes.rs::prepare_current_repair` | `pub(crate)` | no | no | `server/repair_routes.rs::handle_prepare_current` | `core/repair/current.rs::prepare_current_repair_with_pages` |
 | `server/main.rs::main` | `private` | yes | no | — | `server/main.rs::run_daemon` |

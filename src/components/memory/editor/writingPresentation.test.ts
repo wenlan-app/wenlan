@@ -427,6 +427,19 @@ describe("writingPresentation", () => {
     resetAttachmentsDirForTest(null);
   });
 
+  it("shows an Obsidian image embed as the image, outside code only", () => {
+    resetAttachmentsDirForTest("/vault/_attachments");
+    const source = "Look ![[shot.png|240]] here.\n\n`![[code.png]]`\naway";
+    const view = makeView(source, { selection: EditorSelection.single(source.length) });
+    const images = view.contentDOM.querySelectorAll<HTMLImageElement>("img.cm-writing-image");
+    expect(images).toHaveLength(1);
+    expect(images[0]).toHaveAttribute("src", "asset://localhost//vault/_attachments/shot.png");
+    expect(images[0].style.width).toBe("240px");
+    expect(view.contentDOM.textContent).not.toContain("![[shot.png");
+    expect(view.state.doc.toString()).toBe(source);
+    resetAttachmentsDirForTest(null);
+  });
+
   it("keeps an image shown while the caret touches it, so one key removes it whole", async () => {
     const image = "![Wenlan graph](https://wenlan.app/graph.png)";
     const source = `before\n${image}\nafter`;

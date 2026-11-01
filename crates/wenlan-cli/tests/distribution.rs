@@ -44,6 +44,8 @@ fn plugin_distribution_contains_required_files() {
         "plugin/hooks/hooks.json",
         "plugin/hooks/check-daemon.sh",
         "plugin/hooks/session-context.sh",
+        "plugin/hooks/stop-check.sh",
+        "plugin/hooks/prompt-context.sh",
         "plugin/skills/brief/SKILL.md",
         "plugin/skills/capture/SKILL.md",
         "plugin/skills/handoff/SKILL.md",
