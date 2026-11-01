@@ -13,6 +13,7 @@
 //! <out>/backstage/briefs/    one Brief per space
 //! <out>/backstage/proposals/canvas/ suggested and dismissed canvas parts
 //! <out>/backstage/layout/canvas/    canvases of pages with no page file
+//! <out>/backstage/settings/  spaces, things, AI tools, profile, onboarding
 //! <out>/export-manifest.json every file written, and every value left out
 //! ```
 //!
@@ -20,7 +21,8 @@
 //! memories and imported chats ([`memories::export_memories`]), Briefs
 //! ([`briefs::export_briefs`]), canvases beside their pages
 //! ([`canvases::export_canvases`]) and artifact originals
-//! ([`artifacts::export_artifacts`]). Settings and history follow in their
+//! ([`artifacts::export_artifacts`]) and settings
+//! ([`settings::export_settings`]). Proposals and history follow in their
 //! own parts and add to the same manifest. Every file is
 //! read back after it is rendered; one that does not read back as written
 //! is listed.
@@ -30,6 +32,7 @@ pub mod briefs;
 pub mod canvases;
 pub mod memories;
 pub mod pages;
+pub mod settings;
 
 use std::path::{Component, Path, PathBuf};
 

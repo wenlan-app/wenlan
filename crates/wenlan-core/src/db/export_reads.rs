@@ -408,6 +408,75 @@ impl MemoryDB {
         }
         Ok(out)
     }
+
+    /// Every row of `table` as stored, in primary key order, or `None` when
+    /// the table does not exist. `table` is one of the export's fixed names,
+    /// never input.
+    pub(crate) async fn export_table(
+        &self,
+        table: &'static str,
+    ) -> Result<Option<ExportTable>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export {table}: {e}"));
+        let mut info = conn
+            .query(
+                "SELECT name, pk FROM pragma_table_info(?1) ORDER BY cid",
+                [table],
+            )
+            .await
+            .map_err(decode)?;
+        let mut columns = Vec::new();
+        let mut keys: Vec<(i64, String)> = Vec::new();
+        while let Some(row) = info.next().await.map_err(decode)? {
+            let name: String = row.get(0).map_err(decode)?;
+            let pk: i64 = row.get(1).map_err(decode)?;
+            if pk > 0 {
+                keys.push((pk, name.clone()));
+            }
+            columns.push(name);
+        }
+        if columns.is_empty() {
+            return Ok(None);
+        }
+        keys.sort();
+        let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+        let order = if keys.is_empty() {
+            "rowid".to_string()
+        } else {
+            keys.iter()
+                .map(|(_, name)| quote(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let select = columns
+            .iter()
+            .map(|name| quote(name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut rows = conn
+            .query(
+                &format!("SELECT {select} FROM {} ORDER BY {order}", quote(table)),
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            let mut values = Vec::with_capacity(columns.len());
+            for index in 0..columns.len() {
+                values.push(row.get_value(index as i32).map_err(decode)?);
+            }
+            out.push(values);
+        }
+        Ok(Some(ExportTable { columns, rows: out }))
+    }
+}
+
+/// A table copied whole: its column names and every row's values.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ExportTable {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<libsql::Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
