@@ -1761,6 +1761,24 @@ impl WenlanClient {
         .await
     }
 
+    /// The person undoes one AI write's sentence changes. The app never sends
+    /// an agent name, so the daemon counts this as the person's undo.
+    pub async fn revert_page_sentences(
+        &self,
+        page_id: &str,
+        version: i64,
+    ) -> Result<wenlan_types::authorship::SentenceRevertResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences/revert",
+            percent_encode_path_segment(page_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::authorship::SentenceRevertRequest { version },
+        )
+        .await
+    }
+
     /// The person turns one sentence proposal down; the sentence stays.
     pub async fn reject_sentence_proposal(
         &self,

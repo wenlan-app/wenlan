@@ -12,6 +12,7 @@ import type { ComponentType, RefAttributes } from "react";
 import { NativeMarkdownEditor } from "./NativeMarkdownEditor";
 import type { PageLayersSettings } from "./pageLayersEditing";
 import type { SentenceProposalSettings } from "./sentenceProposals";
+import type { AiChangeMarkSettings } from "./aiChangeMarks";
 import { loadCodeMirrorEditor } from "./loadCodeMirrorEditor";
 
 import type { EditorReferenceContext } from "./wikiLinkEditing";
@@ -122,6 +123,10 @@ export interface MarkdownEditorProps {
   /** The page being edited, so `![[name]]` embeds can be found anywhere in
    *  the pages folder. */
   pageId?: string | null;
+  /** The sentences the AI's newest write changed, marked while the person
+   *  asked to see them (UX-WHO-2). The plain-text fallback editor does not
+   *  draw them. */
+  aiChangeMarks?: AiChangeMarkSettings | null;
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
