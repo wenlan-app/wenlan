@@ -198,6 +198,7 @@ pub async fn handle_list_pages(
                 code_basis: code_basis_by_page.remove(&page.id).unwrap_or_default(),
                 storage_path: filenames.get(&page.id).cloned(),
                 folder_path: folders.get(&page.id).cloned(),
+                tags: wenlan_core::page_markdown::page_tags(&page.content),
                 page,
             })
             .collect(),
@@ -330,6 +331,7 @@ pub async fn handle_get_page(
                 page: PageInventoryEntry {
                     basis: Vec::new(),
                     code_basis: Vec::new(),
+                    tags: wenlan_core::page_markdown::page_tags(&page.content),
                     page,
                     storage_path,
                     folder_path,

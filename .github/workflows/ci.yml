@@ -480,6 +480,8 @@ jobs:
               - 'crates/wenlan-core/src/export/knowledge.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders_test.rs'
+              # The embed lookup's no-symlink case is `cfg(unix)`.
+              - 'crates/wenlan-core/src/page_markdown.rs'
               - 'crates/wenlan-core/src/pages_folder.rs'
               - 'crates/wenlan-core/src/pages_folder_test.rs'
               - 'crates/wenlan-core/src/vault_notes_test.rs'
@@ -604,6 +606,8 @@ jobs:
               - 'crates/wenlan-core/src/export/knowledge.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders_test.rs'
+              # The embed lookup's no-symlink case is `cfg(unix)`.
+              - 'crates/wenlan-core/src/page_markdown.rs'
               - 'crates/wenlan-core/src/pages_folder.rs'
               - 'crates/wenlan-core/src/pages_folder_test.rs'
               - 'crates/wenlan-core/src/vault_notes_test.rs'

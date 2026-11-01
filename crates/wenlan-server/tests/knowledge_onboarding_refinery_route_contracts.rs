@@ -255,3 +255,67 @@ async fn moved_knowledge_onboarding_and_refinery_routes_preserve_typed_contracts
         assert_eq!(error.error, "Database not initialized", "{uri}");
     }
 }
+
+#[tokio::test]
+async fn a_pages_tags_and_its_image_embeds_read_as_obsidian_reads_them() {
+    let _config_root = DataDirGuard::new();
+    let (router, dir, db) = common::test_app_no_gate_with_page_root().await;
+    let pages = dir.path().join("pages");
+    std::fs::create_dir_all(pages.join("trips")).unwrap();
+    std::fs::create_dir_all(pages.join(".obsidian")).unwrap();
+    std::fs::write(pages.join("trips/cat.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    std::fs::write(pages.join(".obsidian/bird.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    let page = common::create_page_fixture(
+        &db,
+        "Trip",
+        "Kyoto in spring #travel #旅行.\n\n![[cat.png|300]]",
+        None,
+        &[],
+        "authored",
+    )
+    .await;
+
+    let (status, read): (StatusCode, wenlan_types::responses::PageReadResponse) = request_typed(
+        &router,
+        Method::GET,
+        &format!("/api/pages/{page}"),
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read.page.tags, vec!["travel", "旅行"]);
+
+    let (status, embed): (StatusCode, wenlan_types::responses::ResolveEmbedResponse) =
+        request_typed(
+            &router,
+            Method::GET,
+            &format!("/api/pages/{page}/embed?name=cat.png%7C300"),
+            Body::empty(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(embed.path, "trips/cat.png");
+    assert_eq!(embed.kind, "image");
+
+    for (uri, why) in [
+        (
+            format!("/api/pages/{page}/embed?name=bird.png"),
+            "hidden folder",
+        ),
+        (
+            format!("/api/pages/{page}/embed?name=missing.png"),
+            "no such file",
+        ),
+        (
+            format!("/api/pages/{page}/embed?name=..%2Fescape.png"),
+            "outside",
+        ),
+        (
+            "/api/pages/ghost/embed?name=cat.png".to_string(),
+            "unknown page",
+        ),
+    ] {
+        let (status, _) = request_bytes(&router, Method::GET, &uri, Body::empty()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{why}");
+    }
+}
