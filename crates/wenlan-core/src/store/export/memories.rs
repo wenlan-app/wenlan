@@ -9,6 +9,10 @@
 //!   recomputed by the rebuild.
 //! - `origin` keeps whether the text counts as the person's writing.
 //! - `about` links each filed entity by its entity file's stem.
+//! - An imported chat (`source_id` `import_<vendor>_<conversation id>`)
+//!   becomes `backstage/originals/<vendor>/<conversation id>.md` instead,
+//!   one message per chunk in order. Import never stored who said each
+//!   message, so every heading reads `message`.
 //! - Not files: document chunks (their connected folder is their truth) and
 //!   rows derived from pages, web pages and summaries, which the rebuild
 //!   recomputes. Pending revisions become proposals in a later part. Each is
@@ -18,11 +22,13 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::pages::Paths;
 use super::{ExportDirs, LeftOut, Manifest, NotFiles};
+use crate::chat_import::types::Vendor;
 use crate::db::export_reads::ExportMemoryRow;
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
 use crate::store::format::memory::{self, MemoryFile};
 use crate::store::format::names::file_stem;
+use crate::store::format::original::{self, Message, OriginalFile};
 
 /// The memory sources that are memories: agent and person writes, quick
 /// captures from before migration 144, and episodes.
@@ -31,6 +37,7 @@ const MEMORY_SOURCES: &[&str] = &["memory", "manual", "episode"];
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemoriesExported {
     pub memories: usize,
+    pub originals: usize,
 }
 
 pub async fn export_memories(
@@ -65,6 +72,17 @@ pub async fn export_memories(
                 field: "memory".to_string(),
                 why: "a pending revision; it becomes a proposal file in a later part".to_string(),
             });
+            continue;
+        }
+        if let Some((vendor, external_id)) = imported_chat(id) {
+            let path = paths.claim(&format!("originals/{vendor}"), &file_stem(external_id), id);
+            let file = original_of(id, vendor, external_id, &chunks);
+            let text = original::render(&file);
+            check(manifest, id, original::parse(&text).ok() == Some(file));
+            manifest
+                .files
+                .push(dirs.write(&format!("backstage/{path}"), id, "original", &text)?);
+            done.originals += 1;
             continue;
         }
         let mut file = MemoryFile::new(id, text_of(&chunks));
@@ -108,12 +126,11 @@ pub async fn export_memories(
         }
         let folder = format!("memories/{}", month_of(head.created_at));
         let path = paths.claim(&folder, &file_stem(id), id);
-        manifest.files.push(dirs.write(
-            &format!("backstage/{path}"),
-            id,
-            "memory",
-            &memory::render(&file),
-        )?);
+        let text = memory::render(&file);
+        check(manifest, id, memory::parse(&text).ok() == Some(file));
+        manifest
+            .files
+            .push(dirs.write(&format!("backstage/{path}"), id, "memory", &text)?);
         done.memories += 1;
     }
     for (what, count) in skipped {
@@ -124,6 +141,61 @@ pub async fn export_memories(
         });
     }
     Ok(done)
+}
+
+/// `(vendor, conversation id)` of an imported chat's memory id.
+fn imported_chat(id: &str) -> Option<(&'static str, &str)> {
+    [Vendor::ChatGpt, Vendor::Claude]
+        .into_iter()
+        .find_map(|vendor| {
+            id.strip_prefix(vendor.source_id_prefix())
+                .filter(|rest| !rest.is_empty())
+                .map(|rest| (vendor.as_str(), rest))
+        })
+}
+
+fn original_of(
+    id: &str,
+    vendor: &str,
+    external_id: &str,
+    chunks: &[&ExportMemoryRow],
+) -> OriginalFile {
+    let head = chunks[0];
+    let mut other = serde_yaml::Mapping::new();
+    if let Some(session) = &head.session_id {
+        other.insert("session".into(), session.as_str().into());
+    }
+    if let Some(space) = &head.space {
+        other.insert("space".into(), space.as_str().into());
+    }
+    OriginalFile {
+        id: id.to_string(),
+        vendor: vendor.to_string(),
+        external_id: external_id.to_string(),
+        title: head.title.clone().filter(|title| !title.is_empty()),
+        imported: None,
+        url: head.url.clone(),
+        other,
+        messages: chunks
+            .iter()
+            .map(|chunk| Message {
+                role: "message".to_string(),
+                at: chunk.created_at.map(utc),
+                text: chunk.content.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// Lists a file whose text does not read back as what was written.
+pub(super) fn check(manifest: &mut Manifest, id: &str, reads_back: bool) {
+    if !reads_back {
+        manifest.left_out.push(LeftOut {
+            id: id.to_string(),
+            field: "file".to_string(),
+            why: "the file does not read back exactly as written; compare by hand".to_string(),
+        });
+    }
 }
 
 /// Why a memory is not written as a file, if it is not.

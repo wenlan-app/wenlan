@@ -360,3 +360,114 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
         [("document chunks", 1), ("memories with source page", 1)]
     );
 }
+
+#[tokio::test]
+async fn an_imported_chat_becomes_an_original_with_its_messages_in_order() {
+    use super::memories::export_memories;
+    use crate::store::format::original;
+
+    let (db, _db_dir) = test_db().await;
+    for (chunk, text, at) in [
+        (0, "Where should we go in May?", 1_793_404_800),
+        (1, "A few ideas.\n\n## Lisbon\nWarm.", 1_793_404_805),
+        (2, "Ends with a line end.\n", 1_793_404_810),
+    ] {
+        memory_row(
+            &db,
+            "import_claude_6720-abc",
+            chunk,
+            ", created_at, url, session_id",
+            &format!(", 'memory', '{text}', {at}, 'https://claude.ai/chat/6720-abc', 'sess_1'"),
+        )
+        .await;
+    }
+    sql(
+        &db,
+        "UPDATE memories SET title = 'Trip ideas' WHERE source_id = ?1",
+        "import_claude_6720-abc",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    let done = export_memories(&db, &HashMap::new(), &dirs, &mut manifest)
+        .await
+        .unwrap();
+    assert_eq!((done.memories, done.originals), (0, 1));
+    let chat = original::parse(&read(&dirs, "backstage/originals/claude/6720-abc.md")).unwrap();
+    assert_eq!(chat.id, "import_claude_6720-abc");
+    assert_eq!(chat.vendor, "claude");
+    assert_eq!(chat.title.as_deref(), Some("Trip ideas"));
+    assert_eq!(chat.url.as_deref(), Some("https://claude.ai/chat/6720-abc"));
+    let texts: Vec<_> = chat.messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        [
+            "Where should we go in May?",
+            "A few ideas.\n\n## Lisbon\nWarm.",
+            "Ends with a line end."
+        ]
+    );
+    assert_eq!(chat.messages[1].at.as_deref(), Some("2026-10-31T00:00:05Z"));
+    // The third message lost its line end in the file, so it is listed.
+    let left: Vec<_> = manifest
+        .left_out
+        .iter()
+        .map(|l| (l.id.as_str(), l.field.as_str()))
+        .collect();
+    assert_eq!(left, [("import_claude_6720-abc", "file")]);
+}
+
+#[tokio::test]
+async fn each_brief_keeps_its_lists_in_order() {
+    use super::briefs::export_briefs;
+    use crate::store::format::brief;
+
+    let (db, _db_dir) = test_db().await;
+    sql(
+        &db,
+        "INSERT INTO spaces (id, name, created_at, updated_at) VALUES (?1, 'Work', 0, 0)",
+        "space_123456789",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO briefs (space_id, last_session_summary, last_handoff_at, version, updated_at) \
+         VALUES (?1, 'Left off at the export.', 1793404800, 7, 1793404900)",
+        "space_123456789",
+    )
+    .await;
+    for (id, state, added, gate) in [
+        ("item_b", "active", 2, "NULL"),
+        ("item_a", "active", 1, "NULL"),
+        ("item_c", "backlog", 3, "'after <the> export -->'"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO brief_items (id, space_id, text, state, added_at, gate, version, \
+                 updated_at) VALUES ('{id}', ?1, 'Do {id}', '{state}', {added}, {gate}, 1, 0)"
+            ),
+            "space_123456789",
+        )
+        .await;
+    }
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    assert_eq!(export_briefs(&db, &dirs, &mut manifest).await.unwrap(), 1);
+    let file = brief::parse(&read(&dirs, "backstage/briefs/Work-456789.md")).unwrap();
+    assert_eq!(file.id, "space_123456789");
+    assert_eq!(file.space, "Work");
+    assert_eq!(file.version, 7);
+    assert_eq!(file.summary, "Left off at the export.");
+    let active: Vec<_> = file.active.iter().map(|i| i.id.as_str()).collect();
+    assert_eq!(active, ["item_a", "item_b"]);
+    assert_eq!(
+        file.backlog[0].gate.as_deref(),
+        Some("after <the> export -->")
+    );
+    assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
+}
