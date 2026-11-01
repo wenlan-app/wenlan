@@ -83,7 +83,17 @@ export function ThingDetail({ thingId, onBack, onOpenPage, onOpenThing }: ThingD
           ) : (
             <ul className="thing-detail-list">
               {thing.sessions.map((session) => (
-                <ConversationRow key={session.id} thing={thing} session={session} onMoved={setMoved} />
+                <ConversationRow
+                  key={session.id}
+                  thing={thing}
+                  session={session}
+                  onMoved={(to) => {
+                    // Moving the last conversation out leaves nothing here, so
+                    // go along with it to where it now is.
+                    if (thing.sessions.length <= 1) onOpenThing(to.id);
+                    else setMoved(to);
+                  }}
+                />
               ))}
             </ul>
           )}

@@ -68,13 +68,25 @@ describe("ThingDetail", () => {
   });
 
   it("UX-THING-1: moves a conversation to another thing in one step", async () => {
+    vi.mocked(getThing).mockResolvedValue({
+      ...tagline,
+      sessions: [...tagline.sessions, { id: "ses_b", tool: "codex", title: "Shorter variants", last_write_at: now - 900 }],
+    });
     vi.mocked(moveSessionThing).mockResolvedValue({ ...tagline, id: "thg_2", title: "Product Hunt launch" });
     const { onOpenThing } = renderThing();
-    fireEvent.click(await screen.findByRole("button", { name: "Move" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Move" }))[0]);
     fireEvent.click(await screen.findByRole("button", { name: "Product Hunt launch" }));
     await waitFor(() => expect(moveSessionThing).toHaveBeenCalledWith("ses_a", "thg_1", { thingId: "thg_2" }));
     fireEvent.click(await screen.findByRole("button", { name: "Open" }));
     expect(onOpenThing).toHaveBeenCalledWith("thg_2");
+  });
+
+  it("UX-CHAT-5: moving the last conversation out goes along with it", async () => {
+    vi.mocked(moveSessionThing).mockResolvedValue({ ...tagline, id: "thg_2", title: "Product Hunt launch" });
+    const { onOpenThing } = renderThing();
+    fireEvent.click(await screen.findByRole("button", { name: "Move" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Product Hunt launch" }));
+    await waitFor(() => expect(onOpenThing).toHaveBeenCalledWith("thg_2"));
   });
 
   it("UX-THING-1: moves a conversation into a new thing it names", async () => {
