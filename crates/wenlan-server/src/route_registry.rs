@@ -413,7 +413,7 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // Copies one named media file into the pages folder; returns its path only.
     "/api/attachments",
     // Finds the media file one `![[embed]]` names; returns its path only.
-    "/api/pages/{id}/embed",
+    "/api/attachments/resolve",
     "/api/onboarding/milestones/{id}/acknowledge", "/api/onboarding/reset", "/ws/updates",
     "/api/palace/layout/revert", "/api/pages/{id}/map/layout", "/api/pages/{id}/map/nodes", "/api/pages/{id}/map/edges",
     "/api/pages/{id}/map/nodes/{node_id}", "/api/pages/{id}/map/edges/{edge_id}",

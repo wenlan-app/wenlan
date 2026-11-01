@@ -1065,13 +1065,14 @@ pub struct KnowledgePathResponse {
     pub move_error: Option<String>,
 }
 
-/// `GET /api/pages/{id}/embed?name=` response: the file an `![[name]]` embed
-/// in that page shows, found in the pages folder the way Obsidian finds it.
+/// `GET /api/attachments/resolve?name=` response: the file an `![[name]]`
+/// embed shows, found in the pages folder the way Obsidian finds it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolveEmbedResponse {
-    /// Path from the pages folder, with `/` between folders.
+    /// Absolute path of the file.
     pub path: String,
-    pub absolute_path: String,
+    /// Path from the pages folder, with `/` between folders.
+    pub relative: String,
     /// `image` or `video`.
     pub kind: String,
 }

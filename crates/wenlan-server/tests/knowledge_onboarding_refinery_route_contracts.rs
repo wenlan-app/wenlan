@@ -258,7 +258,8 @@ async fn moved_knowledge_onboarding_and_refinery_routes_preserve_typed_contracts
 
 #[tokio::test]
 async fn a_pages_tags_and_its_image_embeds_read_as_obsidian_reads_them() {
-    let _config_root = DataDirGuard::new();
+    // The pages folder comes from the server state, so this test leaves the
+    // process-wide data dir alone (the other test here sets it).
     let (router, dir, db) = common::test_app_no_gate_with_page_root().await;
     let pages = dir.path().join("pages");
     std::fs::create_dir_all(pages.join("trips")).unwrap();
@@ -289,29 +290,30 @@ async fn a_pages_tags_and_its_image_embeds_read_as_obsidian_reads_them() {
         request_typed(
             &router,
             Method::GET,
-            &format!("/api/pages/{page}/embed?name=cat.png%7C300"),
+            &format!("/api/attachments/resolve?name=cat.png%7C300&page_id={page}"),
             Body::empty(),
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(embed.path, "trips/cat.png");
+    assert_eq!(embed.relative, "trips/cat.png");
+    assert!(embed.path.ends_with("trips/cat.png"), "{}", embed.path);
     assert_eq!(embed.kind, "image");
 
     for (uri, why) in [
         (
-            format!("/api/pages/{page}/embed?name=bird.png"),
+            "/api/attachments/resolve?name=bird.png".to_string(),
             "hidden folder",
         ),
         (
-            format!("/api/pages/{page}/embed?name=missing.png"),
+            "/api/attachments/resolve?name=missing.png".to_string(),
             "no such file",
         ),
         (
-            format!("/api/pages/{page}/embed?name=..%2Fescape.png"),
+            "/api/attachments/resolve?name=..%2Fescape.png".to_string(),
             "outside",
         ),
         (
-            "/api/pages/ghost/embed?name=cat.png".to_string(),
+            "/api/attachments/resolve?name=cat.png&page_id=ghost".to_string(),
             "unknown page",
         ),
     ] {

@@ -248,7 +248,7 @@ fn manifest_counts_match_the_spec() {
     // receipt, not page-bearing). Then 254 after POST `/api/pages/lock-edited`
     // was removed with "Lock pages I've written". Then 256 after POST
     // `/api/check` and `/api/check/context` (the in-chat check; cited page
-    // titles). Then 257 after GET `/api/pages/{id}/embed` (where an
+    // titles). Then 257 after GET `/api/attachments/resolve` (where an
     // `![[embed]]` file is; a path receipt, not page-bearing).
     assert_eq!(
         HTTP_READERS.len(),

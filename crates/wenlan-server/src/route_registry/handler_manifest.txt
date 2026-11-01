@@ -56,7 +56,7 @@ main|get|/api/pages/recent|wenlan_server::routes::handle_recent_pages
 main|get|/api/pages/recent-changes|wenlan_server::routes::handle_recent_page_changes
 main|get|/api/pages/{id}|wenlan_server::page_routes::handle_get_page
 main|get|/api/pages/{id}/basis/{basis_id}/diff|wenlan_server::page_basis_routes::handle_basis_diff
-main|get|/api/pages/{id}/embed|wenlan_server::knowledge_routes::handle_resolve_embed
+main|get|/api/attachments/resolve|wenlan_server::knowledge_routes::handle_resolve_embed
 main|get|/api/pages/{id}/sentences|wenlan_server::sentence_routes::handle_get_page_sentences
 main|get|/api/pages/{id}/links|wenlan_server::page_routes::handle_get_page_links
 main|get|/api/pages/{id}/map|wenlan_server::page_map_routes::handle_get_page_map
