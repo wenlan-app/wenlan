@@ -1729,6 +1729,56 @@ impl WenlanClient {
         .await
     }
 
+    /// Who wrote each sentence and the AI's pending proposals for the
+    /// person's sentences (UX-WHO-2).
+    pub async fn get_page_sentences(
+        &self,
+        page_id: &str,
+    ) -> Result<wenlan_types::authorship::PageSentencesResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences",
+            percent_encode_path_segment(page_id)
+        );
+        self.get_json(&path).await
+    }
+
+    /// The person takes one sentence proposal. The app never sends an agent
+    /// name, so the daemon counts this as the person's decision.
+    pub async fn accept_sentence_proposal(
+        &self,
+        page_id: &str,
+        proposal_id: &str,
+    ) -> Result<wenlan_types::authorship::SentenceAcceptResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences/proposals/{}/accept",
+            percent_encode_path_segment(page_id),
+            percent_encode_path_segment(proposal_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::authorship::SentenceDecisionRequest::default(),
+        )
+        .await
+    }
+
+    /// The person turns one sentence proposal down; the sentence stays.
+    pub async fn reject_sentence_proposal(
+        &self,
+        page_id: &str,
+        proposal_id: &str,
+    ) -> Result<wenlan_types::authorship::SentenceProposalResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences/proposals/{}/reject",
+            percent_encode_path_segment(page_id),
+            percent_encode_path_segment(proposal_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::authorship::SentenceDecisionRequest::default(),
+        )
+        .await
+    }
+
     pub async fn get_page_revisions(&self, page_id: &str) -> Result<serde_json::Value, String> {
         let path = format!(
             "/api/pages/{}/revisions",
@@ -2068,30 +2118,6 @@ impl WenlanClient {
         Ok(())
     }
 
-    /// "Lock pages I've written". An older daemon without the field reads off.
-    pub async fn lock_my_pages(&self) -> Result<bool, String> {
-        Ok(self.get_config().await?.lock_my_pages)
-    }
-
-    pub async fn set_lock_my_pages(&self, enabled: bool) -> Result<(), String> {
-        let mut req = empty_update();
-        req.lock_my_pages = Some(enabled);
-        let updated = self.update_config(req).await?;
-        if updated.lock_my_pages != enabled {
-            return Err("The daemon does not support locking pages you wrote yet".into());
-        }
-        Ok(())
-    }
-
-    /// POST /api/pages/lock-edited — lock every page the user wrote or
-    /// edited; returns how many were newly locked.
-    pub async fn lock_edited_pages(
-        &self,
-    ) -> Result<wenlan_types::responses::LockEditedPagesResponse, String> {
-        self.post_json("/api/pages/lock-edited", &serde_json::json!({}))
-            .await
-    }
-
     /// GET /api/setup/status — return daemon-owned setup/model/key state.
     ///
     /// Bounded by [`HEALTH_TIMEOUT`], not the ingest-sized [`REQUEST_TIMEOUT`]:
@@ -2309,7 +2335,7 @@ fn empty_update() -> wenlan_types::requests::UpdateConfigRequest {
         synthesis_source: None,
         background_ai_enabled: None,
         page_map_auto_suggest: None,
-        lock_my_pages: None,
+        chat_check_enabled: None,
         only_if_unset: None,
         // Tri-state (Option<Option<_>>): outer None = omit from JSON =
         // preserve the stored key. Note sparse_update_config strips nulls,
@@ -4739,6 +4765,9 @@ mod tests {
         let _get = WenlanClient::get_page_links;
         let _list = WenlanClient::list_orphan_links;
         let _lock = WenlanClient::set_page_review_required;
+        let _sentences = WenlanClient::get_page_sentences;
+        let _accept = WenlanClient::accept_sentence_proposal;
+        let _reject = WenlanClient::reject_sentence_proposal;
         let _mark = WenlanClient::mark_page_basis;
         let _unmark = WenlanClient::unmark_page_basis;
         let _confirm = WenlanClient::confirm_page_basis;

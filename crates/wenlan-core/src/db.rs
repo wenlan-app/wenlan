@@ -20,6 +20,7 @@ use std::sync::Arc;
 static ONLINE_BACKUP_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 mod brief;
+mod chat_check;
 pub use brief::LegacyBriefItem;
 mod claim_derivation;
 pub use claim_derivation::{
@@ -61,6 +62,7 @@ mod memory_point_reads;
 mod migrations_v004_v009;
 mod okf_concepts;
 mod onboarding_milestones;
+pub mod originals;
 mod page_basis;
 mod page_drafts;
 pub mod page_map;
@@ -98,6 +100,7 @@ mod space_context;
 mod space_rename;
 mod steep;
 pub(crate) mod steep_new;
+pub mod things;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
@@ -235,6 +238,8 @@ pub(crate) mod steep_code_test;
 #[cfg(test)]
 #[path = "db/test_support_test.rs"]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod things_test;
 #[cfg(test)]
 mod tx_rollback_test;
 
@@ -1542,6 +1547,10 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 143 adds `page_code_basis.recheck_note`, `recheck_verdict`,
 /// `recheck_digest` and `recheck_attempts` (what the background model recheck
 /// concluded about a changed row).
+/// Migration 144 adds `memories.authored_content` and moves legacy desktop
+/// quick captures into the `memory` namespace.
+/// Migration 145 adds `chat_reminders` (one `chat.reminder` history entry per
+/// in-chat reminder).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1549,7 +1558,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 146;
+pub const SCHEMA_VERSION: u32 = 150;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10726,14 +10735,48 @@ impl MemoryDB {
             if version < 145 {
                 self.migrate_145_sentence_history(version).await?;
             }
-            // Migration 146 drops tables no live code reads any more, the
-            // first step of the move to Markdown files. See
-            // db/table_classes.rs.
+            // Migration 146 adds `chat_reminders` (the in-chat check's
+            // `chat.reminder` log). See migrate_146_chat_reminders.
             if ceiling < 146 {
                 return Ok(());
             }
             if version < 146 {
-                self.migrate_146_drop_retired_tables(version).await?;
+                self.migrate_146_chat_reminders(version).await?;
+            }
+            // Migration 147 records the originals kept from imported chats
+            // (artifacts and canvases) and admits `creation_kind =
+            // 'original'` for their pages. See migrate_147_originals.
+            if ceiling < 147 {
+                return Ok(());
+            }
+            if version < 147 {
+                self.migrate_147_originals(version).await?;
+            }
+            // Migration 148 lets `sentence_history` record the person's Undo
+            // of an AI write (`sentence.revert`). See
+            // migrate_148_sentence_revert.
+            if ceiling < 148 {
+                return Ok(());
+            }
+            if version < 148 {
+                self.migrate_148_sentence_revert(version).await?;
+            }
+            // Migration 149 adds things (一件事): `things`, `thing_sessions`
+            // and `thing_history`. See migrate_149_things.
+            if ceiling < 149 {
+                return Ok(());
+            }
+            if version < 149 {
+                self.migrate_149_things(version).await?;
+            }
+            // Migration 150 drops tables no live code reads any more, the
+            // first step of the move to Markdown files. See
+            // db/table_classes.rs.
+            if ceiling < 150 {
+                return Ok(());
+            }
+            if version < 150 {
+                self.migrate_150_drop_retired_tables(version).await?;
             }
         }
 
@@ -57218,6 +57261,7 @@ impl MemoryDB {
         let changelog_str = row.get::<String>(15).unwrap_or_else(|_| "[]".to_string());
         let (last_edited_by, last_edited_at, last_delta_summary) =
             Self::parse_changelog_tail(&changelog_str);
+        let human_edited_at = Self::parse_changelog_person_edit(&changelog_str);
         let stale_reason = row.get::<Option<String>>(13).unwrap_or(None);
         let citations: Vec<wenlan_types::pages::PageCitation> = row
             .get::<Option<String>>(19)
@@ -57268,6 +57312,7 @@ impl MemoryDB {
             relevance_score: 0.0, // populated by search_pages after RRF fusion
             last_edited_by,
             last_edited_at,
+            human_edited_at,
             last_delta_summary,
             changelog: Some(changelog_str),
             creation_kind: row
@@ -57304,6 +57349,25 @@ impl MemoryDB {
 
     /// Extract the last changelog entry's (edited_by, at, delta_summary) fields.
     /// Returns (None, None, None) when the JSON is empty or unparseable.
+    /// When the newest of the changelog's entries that the person wrote was
+    /// written (`page_history::kind_of_edit`). The changelog keeps the most
+    /// recent entries only, so an older edit of theirs reads as `None`.
+    fn parse_changelog_person_edit(json: &str) -> Option<i64> {
+        let arr: Vec<serde_json::Value> = serde_json::from_str(json).unwrap_or_default();
+        arr.iter()
+            .rev()
+            .find(|entry| {
+                entry
+                    .get("edited_by")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|by| {
+                        crate::page_history::kind_of_edit(by)
+                            == wenlan_types::responses::PageHistoryKind::PersonEdit
+                    })
+            })
+            .and_then(|entry| entry.get("at").and_then(|v| v.as_i64()))
+    }
+
     fn parse_changelog_tail(json: &str) -> (Option<String>, Option<i64>, Option<String>) {
         let arr: Vec<serde_json::Value> = serde_json::from_str(json).unwrap_or_default();
         arr.last()
@@ -58954,34 +59018,6 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("set_page_review_required: {e}")))?;
         Ok(changed > 0)
-    }
-
-    /// Turn on the review lock for every page a person wrote or edited
-    /// (`user_edited = 1`, which also covers a page made in the app), for
-    /// "Lock pages I've written" being switched on. Unpublished drafts are
-    /// locked too, so they keep the lock once published. Entity shadow rows
-    /// and archived pages are skipped. Returns how many published pages this
-    /// call locked; pages already locked and drafts are not counted. Like a
-    /// single lock toggle, it does not bump any page's version.
-    pub async fn lock_user_edited_pages(&self) -> Result<u64, WenlanError> {
-        let conn = self.conn.lock().await;
-        let lock = |status: &'static str| {
-            format!(
-                "UPDATE pages SET review_required = 1 \
-                 WHERE COALESCE(user_edited, 0) = 1 \
-                   AND COALESCE(review_required, 0) = 0 \
-                   AND status = '{status}' \
-                   AND COALESCE(kind, 'concept') != 'entity'"
-            )
-        };
-        let locked = conn
-            .execute(&lock("active"), ())
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("lock_user_edited_pages: {e}")))?;
-        conn.execute(&lock("draft"), ())
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("lock_user_edited_pages drafts: {e}")))?;
-        Ok(locked)
     }
 
     /// [`Self::set_page_refresh_blocked_reason`] fenced to the compile input
@@ -60875,8 +60911,11 @@ impl MemoryDB {
             if let Err(e) = conn.execute(
                 // `origin_class` pinned for the same reason as the single-row
                 // `store_raw_import_memory` above: a chat export is `generated`.
-                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding, session_id)
-                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10), ?11)",
+                // `url` is where the conversation opens in the vendor's app
+                // ("open in the original AI tool"); the vendor and its
+                // conversation id are in `source_id` and the session row.
+                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding, session_id, url)
+                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10), ?11, ?12)",
                 libsql::params![
                     memory_id,
                     content.clone(),
@@ -60889,6 +60928,8 @@ impl MemoryDB {
                     crate::origin::OriginClass::Generated.as_str(),
                     Self::vec_to_sql(embedding),
                     session_id,
+                    crate::chat_import::Vendor::from_source_id(source_id)
+                        .map(|(vendor, id)| vendor.conversation_url(id)),
                 ],
             ).await {
                 let _ = conn.execute("ROLLBACK", ()).await;

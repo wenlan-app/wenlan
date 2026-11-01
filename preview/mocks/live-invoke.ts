@@ -692,6 +692,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_session_detail: (a) => get(`/api/sessions/${enc(a.sessionId)}`),
   set_page_review_required: (a) =>
     put(`/api/pages/${enc(a.pageId)}/review-required`, { required: a.required }),
+  get_page_sentences: (a) => get(`/api/pages/${enc(a.pageId)}/sentences`),
+  accept_sentence_proposal: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/accept`, {}),
+  reject_sentence_proposal: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/reject`, {}),
   get_source_annotation: (a) => get(`/api/source-annotations${qs({
     source: a?.source,
     source_id: a?.sourceId,
@@ -995,9 +1000,17 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // pasted bytes go through a temp file only the native app can write.
   page_attachments_dir: () =>
     get("/api/knowledge/path").then((r) => (r?.path ? `${String(r.path).replace(/\/+$/, "")}/_attachments` : null)),
+  // An `![[name]]` embed: the daemon finds the file anywhere in the pages folder.
+  resolve_page_embed: (a) =>
+    get(`/api/attachments/resolve?name=${enc(String(a?.name ?? ""))}${a?.pageId ? `&page_id=${enc(String(a.pageId))}` : ""}`)
+      .then((r) => (typeof r?.path === "string" && r.path ? r.path : null))
+      .catch(() => null),
   attach_file_to_page: (a) => post("/api/attachments", { source_path: a?.path, alt: a?.alt ?? null }),
   attach_bytes_to_page: async (): Promise<never> => {
     throw new Error("Pasting images and videos requires the native Wenlan app.");
+  },
+  attach_image_url_to_page: async (): Promise<never> => {
+    throw new Error("Pasting web images requires the native Wenlan app.");
   },
 
   // Saving a pasted link as a source (PageDetail). Mirrors app/src/api.rs:
@@ -1026,6 +1039,19 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_profile: () => get("/api/profile"),
   get_profile_narrative: () => get("/api/profile/narrative"),
   list_spaces: () => listPreviewSpaces(),
+  // Mirrors the app's list_working_on: active Brief items across kept Spaces.
+  list_working_on: async () => {
+    const spaces = (await listPreviewSpaces()).filter((space) => space.suggested !== true);
+    const items: Record<string, unknown>[] = [];
+    for (const space of spaces) {
+      const response = await post("/api/brief", { space: space.name }).catch(() => null);
+      const brief = response?.brief;
+      for (const item of Array.isArray(brief?.active) ? brief.active : []) {
+        items.push({ space: brief.space, id: item.id, text: item.text, added_at: item.added_at });
+      }
+    }
+    return items.sort((a, b) => Number(b.added_at) - Number(a.added_at) || String(a.id).localeCompare(String(b.id)));
+  },
   // A Space bound to a git repository. The daemon runs git and gh itself, so
   // the preview passes these straight through.
   get_repo_wiki: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`),
@@ -1244,16 +1270,6 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       throw new Error("The daemon does not support the background AI setting yet");
     }
   },
-  get_lock_my_pages: async () => (await get("/api/config")).lock_my_pages === true,
-  set_lock_my_pages: async (a) => {
-    if (typeof a?.enabled !== "boolean") throw new Error("Invalid lock setting");
-    const updated = await put("/api/config", { lock_my_pages: a.enabled });
-    if (updated?.lock_my_pages !== a.enabled) {
-      throw new Error("The daemon does not support locking pages you wrote yet");
-    }
-    if (!a.enabled) return null;
-    return (await post("/api/pages/lock-edited", {})).locked;
-  },
 };
 
 // App-local commands (no daemon route) → static defaults that route the UI
@@ -1277,6 +1293,8 @@ export const DEFAULTS: Record<string, unknown> = {
   set_editor_composing: null,
   // No wenlan://pair link can reach a browser preview.
   take_remote_pairing_link: null,
+  // Nor a wenlan://page or wenlan://memory link.
+  take_open_link: null,
   // Web access never runs in a browser preview, so it cannot stop on its own.
   take_remote_access_notice: null,
   set_setup_completed: null,

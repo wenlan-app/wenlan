@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Routes for who wrote each sentence of a page, sentence proposals, the
-//! person's 「不對」, and rechecking one sentence.
+//! person's 「不對」, undoing one AI write's sentence changes, and rechecking
+//! one sentence.
 //!
 //! The rules live in `wenlan_core::sentences`; this module frames
 //! them as HTTP and decides who may call what. Reads and rechecks answer only
 //! for a page the caller can see in its Space and under its truth grant; any
 //! other page reads as absent. Accepting, rejecting and flagging are the
-//! person's: an agent (a request with `x-agent-name`) is refused, as it is for
+//! person's, and so is undoing an AI write: an agent (a request with
+//! `x-agent-name`) is refused, as it is for
 //! accepting a vault note proposal. Proposing is what an agent does instead
 //! of rewriting the person's sentence.
 //!
@@ -27,7 +29,7 @@ use wenlan_core::truth_contract::TruthGrant;
 use wenlan_types::authorship::{
     PageSentencesResponse, SentenceAcceptResponse, SentenceDecisionRequest, SentenceFlagRequest,
     SentenceFlagResponse, SentenceProposalResponse, SentenceProposeRequest, SentenceRecheckRequest,
-    SentenceRecheckResponse,
+    SentenceRecheckResponse, SentenceRevertRequest, SentenceRevertResponse,
 };
 
 use crate::error::ServerError;
@@ -51,6 +53,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             post(handle_reject_sentence_proposal),
         )
         .route("/api/pages/{id}/sentences/flag", post(handle_flag_sentence))
+        .route(
+            "/api/pages/{id}/sentences/revert",
+            post(handle_revert_sentences),
+        )
         .route(
             "/api/pages/{id}/sentences/recheck",
             post(handle_recheck_sentence),
@@ -222,6 +228,41 @@ pub async fn handle_flag_sentence(
     .await?;
     Ok(Json(
         wenlan_core::sentences::flag_sentence(&db, &id, &req.sentence_hash, req.why.as_deref())
+            .await?,
+    ))
+}
+
+/// POST /api/pages/{id}/sentences/revert
+///
+/// The person's Undo of one AI write: the sentences that write added or
+/// changed, and nobody touched since, go back to how they read before it.
+/// Answers counts and the new version only; re-read the page for its text.
+/// 404 for an unknown page or version, 409 when that version is not an AI
+/// write, 422 when it is older than the history kept for undo.
+pub async fn handle_revert_sentences(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<SentenceRevertRequest>,
+) -> Result<Json<SentenceRevertResponse>, ServerError> {
+    require_person(&headers)?;
+    let (db, page_root) = {
+        let s = state.read().await;
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.lint_config.page_root().map(std::path::Path::to_path_buf),
+        )
+    };
+    require_visible_page(
+        &db,
+        &crate::page_basis_routes::MUTATION_GRANT,
+        header_space.as_deref(),
+        &id,
+    )
+    .await?;
+    Ok(Json(
+        wenlan_core::sentences::revert_ai_write(&db, &id, req.version, page_root.as_deref())
             .await?,
     ))
 }

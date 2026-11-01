@@ -10,7 +10,7 @@ vi.mock("../../../lib/tauri", async original => ({
   ...await original<typeof import("../../../lib/tauri")>(),
   getPage: vi.fn(), listPagesExplicitBrowse: vi.fn(), listPages: vi.fn(), restorePage: vi.fn(),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), warning: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), warning: vi.fn() }) }));
 function note(overrides: Partial<Page> = {}): Page {
   return { id: "archived-one", title: "Archived one", content: "\n\nOriginal **body**  \n\n", summary: null, entity_id: null, space: null, source_memory_ids: [], version: 2, status: "archived", created_at: "", last_compiled: "", last_modified: "", creation_kind: "authored", ...overrides } as Page;
 }
@@ -66,6 +66,27 @@ describe("Archived pages", () => {
     await waitFor(() => expect(restorePage).toHaveBeenLastCalledWith("archived-one", 2, "Recovered one"));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(toast.success).toHaveBeenCalledWith("Page restored.");
+  });
+  it("says what a restore under a new title did to links, as a rename does", async () => {
+    vi.mocked(restorePage).mockImplementation(async (id, expectedVersion, title) => {
+      rows = [];
+      return { id, title: title ?? "Archived one", version: expectedVersion + 1, status: "active", projection_status: "synced", links_updated: 2, links_pending_review: 1 };
+    });
+    renderPanel();
+    await userEvent.click(await screen.findByRole("button", { name: "Restore Archived one" }));
+    const input = screen.getByRole("textbox", { name: "Page title" });
+    await userEvent.clear(input); await userEvent.type(input, "Recovered one");
+    await userEvent.click(screen.getByRole("button", { name: "Restore page" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast.success).toHaveBeenCalledWith("Page restored.");
+    expect(toast).toHaveBeenCalledWith("Updated links in 2 pages. 1 page asks you first, so its link update is waiting for your review.");
+  });
+  it("restores under the same title without a link notice", async () => {
+    renderPanel();
+    await userEvent.click(await screen.findByRole("button", { name: "Restore Archived one" }));
+    await userEvent.click(screen.getByRole("button", { name: "Restore page" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(toast).not.toHaveBeenCalled();
   });
   it("reloads a stale version without discarding the user's chosen restore title", async () => {
     vi.mocked(restorePage).mockRejectedValueOnce(new RestorePageApiError("page version conflict", "page_version_conflict", 9));

@@ -650,17 +650,6 @@ export async function setBackgroundAiEnabled(enabled: boolean): Promise<void> {
   return invoke("set_background_ai_enabled", { enabled });
 }
 
-/** "Lock pages I've written". An older daemon without the setting reads off. */
-export async function getLockMyPages(): Promise<boolean> {
-  return invoke("get_lock_my_pages");
-}
-
-/** Turning it on also locks the pages the user already wrote or edited and
- * resolves to how many; turning it off resolves to null and unlocks nothing. */
-export async function setLockMyPages(enabled: boolean): Promise<number | null> {
-  return invoke("set_lock_my_pages", { enabled });
-}
-
 export interface SystemInfo {
   total_ram_gb: number;
   available_ram_gb: number;
@@ -926,6 +915,21 @@ export async function suggestTags(
 
 export async function listSpaces(): Promise<Space[]> {
   return invoke("list_spaces");
+}
+
+/** One active item of a Space Brief: a line of work home lists under "what
+ *  you're working on" until things have a record of their own. `added_at` is
+ *  in seconds. */
+export interface WorkingOnItem {
+  space: string;
+  id: string;
+  text: string;
+  added_at: number;
+}
+
+/** Active Brief items across the Spaces the person kept, newest first. */
+export async function listWorkingOn(): Promise<WorkingOnItem[]> {
+  return invoke("list_working_on");
 }
 
 export async function getSpace(name: string): Promise<Space | null> {
@@ -1718,6 +1722,12 @@ export interface RestorePageResponse {
   status: "active";
   projection_status: "synced" | "pending" | "hidden" | "not_configured";
   projection_error?: string;
+  /** Restored under a new title: pages whose [[links]] now name it, as for a rename. */
+  links_updated?: number;
+  /** Pages set to "Ask me first" whose link update waits for review. */
+  links_pending_review?: number;
+  /** Pages that still link by the old title. */
+  links_not_updated?: number;
 }
 
 /** Why the daemon refused a restore. Switch on this, never on the text. */
@@ -2100,6 +2110,57 @@ export async function getConceptSources(
   conceptId: string,
 ): Promise<PageSourceWithMemory[]> {
   return getPageSources(conceptId);
+}
+
+/** The AI's staged change to one of the person's sentences (UX-WHO-2). */
+export interface SentenceProposal {
+  id: string;
+  page_id: string;
+  version: number;
+  sentence_hash: string;
+  /** The sentence as it read when proposed. */
+  before: string;
+  /** The proposed text; empty proposes deleting the sentence. */
+  after: string;
+  why?: string | null;
+  actor: { kind: string; name: string; agent?: string | null };
+  ts: number;
+  status: "pending" | "accepted" | "rejected";
+}
+
+export interface PageSentence {
+  idx: number;
+  text: string;
+  hash: string;
+  author: "person" | "ai" | "unknown" | "original";
+  protected: boolean;
+  proposals?: string[];
+}
+
+export interface PageSentencesResponse {
+  page_id: string;
+  version: number;
+  ai_edits: "propose" | "locked";
+  sentences: PageSentence[];
+  proposals: SentenceProposal[];
+}
+
+export async function getPageSentences(pageId: string): Promise<PageSentencesResponse> {
+  return invoke("get_page_sentences", { pageId });
+}
+
+export async function acceptSentenceProposal(
+  pageId: string,
+  proposalId: string,
+): Promise<{ proposal: SentenceProposal; version: number }> {
+  return invoke("accept_sentence_proposal", { pageId, proposalId });
+}
+
+export async function rejectSentenceProposal(
+  pageId: string,
+  proposalId: string,
+): Promise<{ proposal: SentenceProposal }> {
+  return invoke("reject_sentence_proposal", { pageId, proposalId });
 }
 
 export async function getPageLinks(pageId: string): Promise<PageLinksResponse> {
@@ -3452,6 +3513,14 @@ export async function pageAttachmentsDir(): Promise<string> {
   return invoke("page_attachments_dir");
 }
 
+/** Where an Obsidian embed's file is, found anywhere in the pages folder;
+ *  with the page it is on, a file in that page's own folder wins. Null when no
+ *  image or video by that name exists. The app lets the webview load that one
+ *  file. */
+export async function resolvePageEmbed(name: string, pageId?: string | null): Promise<string | null> {
+  return invoke("resolve_page_embed", { name, pageId: pageId ?? null });
+}
+
 /** Copy a file on this computer into the pages folder. */
 export async function attachFileToPage(path: string, alt?: string): Promise<AttachedFile> {
   return invoke("attach_file_to_page", { path, alt: alt ?? null });
@@ -3462,6 +3531,11 @@ export async function attachBytesToPage(name: string, bytes: Uint8Array): Promis
   return invoke("attach_bytes_to_page", bytes, {
     headers: { "x-file-name": encodeURIComponent(name) },
   });
+}
+
+/** Download an image by its web address and copy it into the pages folder. */
+export async function attachImageUrlToPage(url: string): Promise<AttachedFile> {
+  return invoke("attach_image_url_to_page", { url });
 }
 
 // ===== Profile =====
@@ -4219,6 +4293,19 @@ export async function revokeRemoteGrant(expectedRevision: string, grantId: strin
 /** Takes the pairing code from the last `wenlan://pair` link, if one is waiting. */
 export async function takeRemotePairingLink(): Promise<string | null> {
   return invoke("take_remote_pairing_link");
+}
+
+/** What a wenlan://page/{id} or wenlan://memory/{id} link asked to open. */
+export type OpenLinkTarget =
+  | { kind: "page"; pageId: string }
+  | { kind: "memory"; memoryId: string };
+
+/**
+ * The page or memory link that opened the app or arrived since, handed out
+ * once. AI tools print these links next to an in-chat reminder or a page.
+ */
+export async function takeOpenLink(): Promise<OpenLinkTarget | null> {
+  return invoke("take_open_link");
 }
 
 /**

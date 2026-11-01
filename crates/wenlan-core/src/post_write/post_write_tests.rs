@@ -7465,7 +7465,7 @@ async fn create_page_without_kind_at_floor_lands_as_distilled() {
 /// one sentence here is the person's (their touch-up of the AI's line), so it
 /// is kept and the agent's text becomes a sentence proposal, not a card.
 #[tokio::test]
-async fn agent_refresh_with_matching_expected_version_proposes_on_the_persons_sentence() {
+async fn agent_refresh_with_matching_expected_version_drops_a_rewording_of_the_persons_sentence() {
     let (db, _dir) = test_db().await;
     let before = ownership_user_edited_page(&db, "page_agent_cas", "mem-agent-cas").await;
     let content = "Tokio runtimes schedule async tasks across worker threads, refreshed by agent";
@@ -7481,15 +7481,17 @@ async fn agent_refresh_with_matching_expected_version_proposes_on_the_persons_se
     .unwrap();
     assert_eq!(result.outcome, WriteOutcome::Unchanged);
     assert!(!result.gated, "no whole-page card");
-    assert_eq!(result.sentence_proposals.len(), 1);
+    assert!(
+        result.sentence_proposals.is_empty(),
+        "the facts behind the person's sentence did not change, so no proposal"
+    );
     let after = db.get_page("page_agent_cas").await.unwrap().unwrap();
     assert_eq!(after.content, before.content);
     assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
     let view = crate::sentences::page_sentences(&db, "page_agent_cas")
         .await
         .unwrap();
-    assert_eq!(view.proposals.len(), 1);
-    assert_eq!(view.proposals[0].after, content);
+    assert!(view.proposals.is_empty());
 }
 
 #[tokio::test]
@@ -7551,7 +7553,7 @@ async fn review_lock_stages_agent_and_pipeline_writes_but_not_human_edits() {
     let agent = ownership_write(
         &db,
         "page_locked",
-        "Tokio runtimes schedule async tasks, agent rewrite under lock",
+        "Tokio runtimes schedule async tasks. An agent sentence added under lock.",
         &["mem-locked"],
         "agent_refresh",
         Some(locked.version),
@@ -7566,7 +7568,7 @@ async fn review_lock_stages_agent_and_pipeline_writes_but_not_human_edits() {
     let pipeline = ownership_write(
         &db,
         "page_locked",
-        "Tokio runtimes schedule async tasks, pipeline rewrite under lock",
+        "Tokio runtimes schedule async tasks. A pipeline sentence added under lock.",
         &["mem-locked"],
         "re_distill",
         None,
@@ -7739,176 +7741,6 @@ async fn set_page_review_required_round_trips_without_bumping_version() {
     );
 }
 
-/// "Lock pages I've written": a human save through the editor seam that asks
-/// for it locks the page on its first human edit only.
-async fn human_save(db: &MemoryDB, page_id: &str, content: &str, lock: bool) -> WriteResult {
-    page_write(
-        db,
-        PageWrite::UpdatePreservingSources {
-            page_id,
-            req: UpdatePageRequest {
-                content: content.to_string(),
-                source_memory_ids: vec![],
-                expected_version: None,
-                caller_id: None,
-                operation_id: None,
-            },
-            edited_by: "manual_edit",
-            knowledge_path: None,
-            basis: crate::db::BasisWrite {
-                lock_on_first_human_edit: lock,
-                ..crate::db::BasisWrite::default()
-            },
-        },
-    )
-    .await
-    .unwrap()
-}
-
-#[tokio::test]
-async fn lock_my_pages_locks_a_page_on_its_first_human_edit() {
-    let (db, _dir) = test_db().await;
-    ownership_page(&db, "page_mine", "mem-mine").await;
-    let saved = human_save(
-        &db,
-        "page_mine",
-        "Tokio runtimes schedule async tasks across worker threads, my notes",
-        true,
-    )
-    .await;
-    assert!(saved.wrote);
-    let after = db.get_page("page_mine").await.unwrap().unwrap();
-    assert!(after.user_edited);
-    assert!(after.review_required, "the first human edit locks the page");
-
-    // An agent change now waits for review even with a matching version.
-    let agent = ownership_write(
-        &db,
-        "page_mine",
-        "Tokio runtimes schedule async tasks, agent rewrite",
-        &["mem-mine"],
-        "agent_refresh",
-        Some(after.version),
-    )
-    .await
-    .unwrap();
-    assert!(agent.gated && !agent.wrote);
-}
-
-#[tokio::test]
-async fn lock_my_pages_off_or_machine_writes_never_lock() {
-    let (db, _dir) = test_db().await;
-    ownership_page(&db, "page_off", "mem-off").await;
-    human_save(
-        &db,
-        "page_off",
-        "Tokio runtimes schedule async tasks across worker threads, edited with it off",
-        false,
-    )
-    .await;
-    let off = db.get_page("page_off").await.unwrap().unwrap();
-    assert!(off.user_edited);
-    assert!(!off.review_required, "the switch off locks nothing");
-
-    // A page only an agent ever wrote keeps updating.
-    let before = ownership_page(&db, "page_agent_only", "mem-agent-only").await;
-    let agent = ownership_write(
-        &db,
-        "page_agent_only",
-        "Tokio runtimes schedule async tasks, agent refresh",
-        &["mem-agent-only"],
-        "agent_refresh",
-        Some(before.version),
-    )
-    .await
-    .unwrap();
-    assert!(agent.wrote);
-    let after = db.get_page("page_agent_only").await.unwrap().unwrap();
-    assert!(!after.user_edited);
-    assert!(!after.review_required, "an AI-written page is never locked");
-}
-
-#[tokio::test]
-async fn lock_my_pages_never_relocks_a_page_the_user_unlocked() {
-    let (db, _dir) = test_db().await;
-    ownership_page(&db, "page_unlocked", "mem-unlocked").await;
-    human_save(
-        &db,
-        "page_unlocked",
-        "Tokio runtimes schedule async tasks across worker threads, first edit",
-        true,
-    )
-    .await;
-    assert!(db
-        .set_page_review_required("page_unlocked", false)
-        .await
-        .unwrap());
-    let again = human_save(
-        &db,
-        "page_unlocked",
-        "Tokio runtimes schedule async tasks across worker threads, second edit",
-        true,
-    )
-    .await;
-    assert!(again.wrote);
-    let after = db.get_page("page_unlocked").await.unwrap().unwrap();
-    assert!(
-        !after.review_required,
-        "a page the user unlocked stays unlocked through later edits"
-    );
-}
-
-#[tokio::test]
-async fn lock_user_edited_pages_locks_and_counts_only_unlocked_human_pages() {
-    let (db, _dir) = test_db().await;
-    ownership_user_edited_page(&db, "page_edited_a", "mem-edited-a").await;
-    ownership_user_edited_page(&db, "page_edited_b", "mem-edited-b").await;
-    ownership_user_edited_page(&db, "page_edited_locked", "mem-edited-locked").await;
-    assert!(db
-        .set_page_review_required("page_edited_locked", true)
-        .await
-        .unwrap());
-    ownership_page(&db, "page_ai", "mem-ai").await;
-    let draft = db
-        .create_page_draft_with_id(
-            "page_00000000-0000-4000-8000-0000000000aa",
-            "My draft",
-            "Draft body",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(
-        db.lock_user_edited_pages().await.unwrap(),
-        2,
-        "counts the two edited pages it locked, not the locked one or the draft"
-    );
-    for id in ["page_edited_a", "page_edited_b", "page_edited_locked"] {
-        assert!(
-            db.get_page(id).await.unwrap().unwrap().review_required,
-            "{id}"
-        );
-    }
-    assert!(
-        !db.get_page("page_ai")
-            .await
-            .unwrap()
-            .unwrap()
-            .review_required
-    );
-    assert!(
-        db.get_page(&draft.id)
-            .await
-            .unwrap()
-            .unwrap()
-            .review_required,
-        "an unpublished draft is locked too"
-    );
-    assert_eq!(db.lock_user_edited_pages().await.unwrap(), 0, "idempotent");
-}
-
 // ── PR A fix round: fences that hold when the page moves after the gate ──
 
 /// Park the next write to `page_id` at the pre-write seam. Returns the
@@ -8020,7 +7852,8 @@ async fn assert_late_lock_stages_a_card(page_id: &str, mem_id: &str, source_fenc
     let page = ownership_page(&db, page_id, mem_id).await;
     let source_revision = db.get_page_source_revision(page_id).await.unwrap();
     let (parked_rx, go_tx) = arm_pre_write_gate(page_id);
-    let body = "Tokio runtimes schedule async tasks, pipeline body from the unlocked read";
+    // It adds a sentence, so under the lock it waits as a whole-page card.
+    let body = "Tokio runtimes schedule async tasks. A pipeline sentence from the unlocked read.";
 
     let write = if source_fenced {
         source_fenced_write(page_id, body, mem_id, "re_distill", None, source_revision)
@@ -8195,7 +8028,8 @@ async fn staged_page_card_records_review_reason() {
     let unlocked = db.get_page(&page_id).await.unwrap().unwrap();
     assert!(db.set_page_review_required(&page_id, true).await.unwrap());
     let locked = db.get_page(&page_id).await.unwrap().unwrap();
-    // The lock "Lock pages I've written" sets: the person wrote the page.
+    // A locked page the person wrote (as the removed "Lock pages I've
+    // written" left them).
     let authored = crate::pages::Page {
         user_edited: true,
         ..locked.clone()
@@ -8284,7 +8118,7 @@ async fn core_gated_agent_refresh_keeps_the_agent_on_the_card() {
             basis: crate::db::BasisWrite::default(),
             page_id: &page_id,
             req: UpdatePageRequest {
-                content: "gated source, refreshed".to_string(),
+                content: "gated source. A sentence the agent adds.".to_string(),
                 source_memory_ids: vec!["mem-gate-a".to_string()],
                 expected_version: None,
                 caller_id: None,

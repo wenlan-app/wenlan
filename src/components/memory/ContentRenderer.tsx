@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { createContext, useContext, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -13,7 +14,8 @@ import { referenceTargetFromHref } from "./links/referenceTypes";
 import { displayUrl, isBareUrlLink } from "../../lib/displayUrl";
 import MermaidDiagram from "./MermaidDiagram";
 import { remarkReadingWikilinks, type ResolvedReadingWikilink } from "../../lib/readingWikilinks";
-import { attachmentKind, attachmentName, attachmentUrl, useAttachmentsDir, videoSource } from "../../lib/pageAttachments";
+import { attachmentKind, attachmentName, attachmentUrl, mediaEmbedUrl, parseMediaEmbed, useAttachmentsDir, videoSource } from "../../lib/pageAttachments";
+import { remarkCallouts, remarkObsidianEmbeds } from "../../lib/readingObsidian";
 
 interface ContentRendererProps {
   content: string;
@@ -56,7 +58,8 @@ function mermaidSource(node: HastNode | undefined): string | null {
 
 /** An image or video a page shows from the pages folder's `_attachments/`;
  * any other image link renders as before. */
-function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+function MarkdownImage({ src, alt, embed, width }: { src?: string; alt?: string; embed?: string; width?: number }) {
+  if (embed) return <EmbedMedia inner={embed} alt={alt ?? ""} width={width} />;
   const name = attachmentName(src);
   if (!name) return <img src={src} alt={alt ?? ""} />;
   return <AttachmentMedia src={src!} name={name} alt={alt ?? ""} />;
@@ -72,14 +75,39 @@ function AttachmentMedia({ src, name, alt }: { src: string; name: string; alt: s
   );
 }
 
+/** An Obsidian embed, `![[name.png]]`, found anywhere in the pages folder. */
+/** The page being read, so `![[name]]` embeds can be found anywhere in the
+ *  pages folder. */
+export const EmbedPageContext = createContext<string | null>(null);
+
+function EmbedMedia({ inner, alt, width }: { inner: string; alt: string; width?: number }) {
+  useAttachmentsDir();
+  const pageId = useContext(EmbedPageContext);
+  const [failed, setFailed] = useState(false);
+  const embed = parseMediaEmbed(inner);
+  const url = embed && !failed ? mediaEmbedUrl(embed, pageId) : null;
+  if (!embed || !url) return <span className="page-attachment-pending">{`![[${inner}]]`}</span>;
+  const style = width ? { width: `${width}px` } : undefined;
+  return embed.kind === "video" ? (
+    <video className="page-attachment page-attachment-video" src={videoSource(url)} controls preload="metadata" aria-label={alt} style={style} onError={() => setFailed(true)} />
+  ) : (
+    <img className="page-attachment" src={url} alt={alt} loading="lazy" decoding="async" style={style} onError={() => setFailed(true)} />
+  );
+}
+
 export const markdownComponents = {
-  img: ({ src, alt }: { src?: string; alt?: string }) => <MarkdownImage src={src} alt={alt} />,
+  img: ({ src, alt, node }: { src?: string; alt?: string; node?: { properties?: Record<string, unknown> } }) => {
+    const embed = node?.properties?.dataEmbed;
+    const width = Number(node?.properties?.width) || undefined;
+    return <MarkdownImage src={src} alt={alt} embed={typeof embed === "string" ? embed : undefined} width={width} />;
+  },
   pre: ({ node, children }: { node?: HastNode; children?: React.ReactNode }) => {
     const source = mermaidSource(node);
     return source !== null ? <MermaidDiagram source={source} /> : <pre>{children}</pre>;
   },
-  p: ({ children }: { children?: React.ReactNode }) => (
+  p: ({ children, className }: { children?: React.ReactNode; className?: string }) => (
     <p
+      className={className}
       style={{
         fontFamily: "var(--mem-font-body)",
         fontSize: "var(--content-body-size, 14px)",
@@ -332,8 +360,8 @@ export default function ContentRenderer({
   return (
     <div className={["content-renderer", className].filter(Boolean).join(" ")}>
       <ReactMarkdown remarkPlugins={resolveWikilink
-        ? [remarkGfm, [remarkReadingWikilinks, { source: prepared, resolve: resolveWikilink }]]
-        : [remarkGfm]} components={allowImages ? components : {
+        ? [remarkGfm, remarkCallouts, remarkObsidianEmbeds, [remarkReadingWikilinks, { source: prepared, resolve: resolveWikilink }]]
+        : [remarkGfm, remarkCallouts, remarkObsidianEmbeds]} components={allowImages ? components : {
         ...components,
         img: ({ alt }: { alt?: string }) => <span>{alt}</span>,
       }}>

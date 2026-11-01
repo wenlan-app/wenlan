@@ -48,7 +48,7 @@ export function RecentNoteRename({ page, onDone }: {
       for (const queryKey of [...RENAME_INVALIDATIONS, ["page-revisions", latest.id]]) {
         void queryClient.invalidateQueries({ queryKey });
       }
-      finishRenameLinks(t, queryClient, renamed);
+      finishRenameLinks(t, queryClient, renamed, latest.title);
       finish(renamed.title);
     } catch {
       setPending(false);

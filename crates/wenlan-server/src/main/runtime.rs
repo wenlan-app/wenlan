@@ -127,6 +127,26 @@ pub(super) async fn register_optional_runtime_workers(
     if optional_runtime_workers_allowed(repair_recovery_pending) {
         let shared_for_outbox = shared.clone();
         let mut outbox_shutdown = { shared.read().await.shutdown.subscribe() };
+        // Things (一件事): sort new conversations into things every minute,
+        // so one written through any route lands in a thing without anyone
+        // asking.
+        let mut things_shutdown = outbox_shutdown.clone();
+        let db_for_things = db_arc.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        wenlan_server::things_routes::sort_once(&db_for_things).await;
+                    }
+                    changed = things_shutdown.changed() => {
+                        if changed.is_err() || *things_shutdown.borrow() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
         tokio::spawn(async move {
             wenlan_server::outbox::drain_once(shared_for_outbox.clone()).await;
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));

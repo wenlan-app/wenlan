@@ -59,7 +59,6 @@ import { invokeRemoteFixture } from "./remote-access";
 
 let graphObsSeq = 0;
 let fixtureBackgroundAiEnabled = false;
-let fixtureLockMyPages = false;
 type PreviewPageUpdateRequest = {
   readonly id: string;
   readonly content: string;
@@ -109,12 +108,6 @@ export async function invoke(
     fixtureBackgroundAiEnabled = args.enabled;
     return;
   }
-  if (cmd === "get_lock_my_pages") return fixtureLockMyPages;
-  if (cmd === "set_lock_my_pages") {
-    if (typeof args?.enabled !== "boolean") throw new Error("Invalid lock setting");
-    fixtureLockMyPages = args.enabled;
-    return args.enabled ? 0 : null;
-  }
   if (new URLSearchParams(window.location.search).get("mode") === "remote-access") {
     return invokeRemoteFixture(cmd, args);
   }
@@ -139,6 +132,8 @@ export async function invoke(
     }
     case "get_page_links":
       return LINKS;
+    case "get_page_sentences":
+      return { page_id: args?.pageId, version: 1, ai_edits: "propose", sentences: [], proposals: [] };
     case "get_page_sessions":
       return { sessions: PAGE_SESSIONS[args?.pageId as string] ?? [] };
     case "get_session_detail":

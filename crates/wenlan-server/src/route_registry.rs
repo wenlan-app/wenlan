@@ -387,10 +387,13 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/memory/revision/{id}/dismiss", "/api/memory/contradiction/{source_id}/dismiss", "/api/memory/entities",
     "/api/memory/relations", "/api/memory/observations", "/api/memory/link-entity", "/api/spaces/{name}",
     "/api/spaces/{from}/move-to/{to}", "/api/pages/{id}/archive", "/api/pages/{id}/review",
-    "/api/pages/{id}/review-required", "/api/pages/lock-edited",
+    "/api/pages/{id}/review-required",
     "/api/pages/drafts", "/api/pages/drafts/{id}", "/api/pages/drafts/{id}/publish",
     // Records which agent session wrote; metadata only, no user data read.
     "/api/sessions",
+    // The person moves a conversation between things; returns the target
+    // thing's summary, which the scoped GET /api/things/{id} also guards.
+    "/api/sessions/{id}/things/move",
     "/api/refinery/queue/{id}/reject", "/api/refinery/queue/{id}/accept", "/api/sources/{id}", "/api/sources/{id}/sync",
     "/api/config", "/api/config/routing", "/api/setup/status", "/api/setup/anthropic-key", "/api/on-device-model",
     "/api/on-device-model/download", "/api/outbox/drain", "/api/outbox/status", "/api/chunks/{id}/update", "/api/chunks/time-range", "/api/chunks/delete-bulk",
@@ -412,6 +415,8 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/notes/proposals/{id}/accept",
     // Copies one named media file into the pages folder; returns its path only.
     "/api/attachments",
+    // Finds the media file one `![[embed]]` names; returns its path only.
+    "/api/attachments/resolve",
     "/api/onboarding/milestones/{id}/acknowledge", "/api/onboarding/reset", "/ws/updates",
     "/api/palace/layout/revert", "/api/pages/{id}/map/layout", "/api/pages/{id}/map/nodes", "/api/pages/{id}/map/edges",
     "/api/pages/{id}/map/nodes/{node_id}", "/api/pages/{id}/map/edges/{edge_id}",
@@ -423,6 +428,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // version, history seq); the sentence reads and proposals are in the
     // sensitive catalog instead.
     "/api/pages/{id}/sentences/flag",
+    // Undoing one AI write's sentence changes returns counts and the new
+    // version only; re-reading the page is a sensitive read.
+    "/api/pages/{id}/sentences/revert",
     // A code basis confirm and remove return a state receipt only; the recheck
     // (it reports note titles) is in the sensitive catalog instead.
     "/api/pages/{id}/code-basis/confirm", "/api/pages/{id}/code-basis",
@@ -459,6 +467,8 @@ const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
     (RegisteredMethod::Post, "/api/notes/proposals"),
     (RegisteredMethod::Delete, "/api/notes/proposals/{id}"),
     (RegisteredMethod::Patch, "/api/brief"),
+    // Renaming a thing; its read is the sensitive GET row.
+    (RegisteredMethod::Patch, "/api/things/{id}"),
     (RegisteredMethod::Put, "/api/profile"),
     (RegisteredMethod::Post, "/api/agents"),
     (RegisteredMethod::Put, "/api/agents/{name}"),

@@ -126,3 +126,49 @@
 .content-renderer .page-attachment-pending {
   color: var(--mem-text-tertiary);
 }
+
+/* Obsidian callouts, `> [!note] Title`: a tinted box with its type, drawn
+   like the editor's callout lines. */
+.content-renderer .page-callout {
+  box-sizing: border-box;
+  margin: 0.75em 0;
+  padding: 0.55em 0.85em;
+  border-left: 2px solid var(--mem-accent-indigo);
+  border-radius: 0 var(--mem-radius-sm) var(--mem-radius-sm) 0;
+  background: color-mix(in srgb, var(--mem-indigo-bg) 55%, transparent);
+  color: var(--mem-text);
+}
+
+/* Paragraphs set their gap inline from this variable; inside a callout the
+   lines sit as close as the editor draws them. */
+.content-renderer .page-callout {
+  --content-para-gap: 0.25em;
+}
+
+.content-renderer .page-callout > * {
+  margin-top: 0;
+}
+
+.content-renderer .page-callout-title {
+  font-weight: 600;
+}
+
+.content-renderer .page-callout-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.25rem;
+  margin-right: 0.45rem;
+  padding: 0.05rem 0.42rem;
+  border: 1px solid var(--mem-accent-indigo-border);
+  border-radius: 999px;
+  color: var(--mem-accent-indigo);
+  background-color: var(--mem-detail-surface);
+  font-family: var(--mem-font-body);
+  font-size: 0.72em;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  vertical-align: 0.08em;
+}

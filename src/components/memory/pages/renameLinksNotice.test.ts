@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
 import { finishRenameLinks, renameLinksMessage } from "./renameLinksNotice";
+import { clearRenamedLinks, renameRewriteExplaining } from "./renameLinkRewrite";
 
 const toast = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast }));
@@ -12,6 +13,7 @@ const renamed = { id: "page-a", title: "New", version: 4 };
 describe("rename link notice", () => {
   beforeEach(async () => {
     toast.mockReset();
+    clearRenamedLinks();
     await i18n.changeLanguage("en");
   });
 
@@ -41,8 +43,10 @@ describe("rename link notice", () => {
     const client = new QueryClient();
     client.setQueryData(["page", "page-b"], { id: "page-b", version: 3 });
     client.setQueryData(["page-revisions", "page-b"], []);
-    finishRenameLinks(i18n.t, client, { ...renamed, links_updated: 1 });
+    finishRenameLinks(i18n.t, client, { ...renamed, links_updated: 1 }, "Old");
     expect(client.getQueryState(["page", "page-b"])?.isInvalidated).toBe(true);
+    // Recorded before the refresh, so an open editor can explain the change.
+    expect(renameRewriteExplaining("See [[Old]].", "See [[New]].")).not.toBeNull();
     expect(client.getQueryState(["page-revisions", "page-b"])?.isInvalidated).toBe(true);
     expect(toast).toHaveBeenCalledWith("Updated links in 1 page.");
   });
@@ -50,8 +54,9 @@ describe("rename link notice", () => {
   it("leaves other pages alone when no link changed", () => {
     const client = new QueryClient();
     client.setQueryData(["page", "page-b"], { id: "page-b", version: 3 });
-    finishRenameLinks(i18n.t, client, renamed);
+    finishRenameLinks(i18n.t, client, renamed, "Old");
     expect(client.getQueryState(["page", "page-b"])?.isInvalidated).toBe(false);
+    expect(renameRewriteExplaining("See [[Old]].", "See [[New]].")).toBeNull();
     expect(toast).not.toHaveBeenCalled();
   });
 });

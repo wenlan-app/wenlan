@@ -1164,7 +1164,7 @@ async fn an_agent_write_scoped_to_one_space_answers_a_note_in_another_exactly_li
     // earlier, as absent, by its own check).
     let body = |version: i64, with_basis: bool| {
         let mut body = json!({
-            "content": "Changed by an agent scoped elsewhere.",
+            "content": "Changed by an agent scoped elsewhere. It adds a sentence.",
             "source_memory_ids": [],
             "expected_version": version,
         });
@@ -1360,7 +1360,7 @@ async fn a_locked_notes_agent_write_keeps_its_marks_on_the_card_and_accepting_re
         &router,
         &citer,
         json!({
-            "content": "Plans built on the launch plan and the glossary.",
+            "content": "Original plans. Plans built on the launch plan and the glossary.",
             "source_memory_ids": [],
             "expected_version": version,
             "basis": [
@@ -1386,7 +1386,7 @@ async fn a_locked_notes_agent_write_keeps_its_marks_on_the_card_and_accepting_re
     let read = read_note(&router, &citer).await;
     assert_eq!(
         read["page"]["content"],
-        "Plans built on the launch plan and the glossary."
+        "Original plans. Plans built on the launch plan and the glossary."
     );
     let basis = basis_of(&read);
     let by_id = |id: &str| basis.iter().find(|b| b.page_id == id).unwrap().clone();
@@ -1410,7 +1410,7 @@ async fn a_locked_notes_agent_write_with_a_refused_mark_is_refused_before_a_card
         &router,
         &citer,
         json!({
-            "content": "Plans built on the old plan.",
+            "content": "Original plans. Plans built on the old plan.",
             "source_memory_ids": [],
             "expected_version": version,
             "basis": [{ "page_id": archived, "version": 1 }],
@@ -1435,7 +1435,7 @@ async fn accepting_a_locked_notes_card_whose_basis_was_archived_since_is_409_and
         &router,
         &citer,
         json!({
-            "content": "Plans built on the launch plan.",
+            "content": "Original plans. Plans built on the launch plan.",
             "source_memory_ids": [],
             "expected_version": version,
             "basis": [{ "page_id": basis, "version": 1 }],

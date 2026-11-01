@@ -668,6 +668,12 @@ describe('spaces', () => {
     expect(mockInvoke).toHaveBeenCalledWith('list_spaces');
   });
 
+  it('listWorkingOn calls invoke', async () => {
+    mockInvoke.mockResolvedValue([]);
+    await tauri.listWorkingOn();
+    expect(mockInvoke).toHaveBeenCalledWith('list_working_on');
+  });
+
   it('getSpace passes name', async () => {
     mockInvoke.mockResolvedValue(null);
     await tauri.getSpace('work');

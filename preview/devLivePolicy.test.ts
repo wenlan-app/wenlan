@@ -6,6 +6,8 @@ describe("live dev read boundary", () => {
   it("permits graph reads and explicit read-only POST endpoints", () => {
     expect(allowsDevLiveRequest("GET", "/api/memory/graph")).toBe(true);
     expect(allowsDevLiveRequest("POST", "/api/memory/list")).toBe(true);
+    expect(allowsDevLiveRequest("POST", "/api/brief")).toBe(true);
+    expect(allowsDevLiveCommand("list_working_on")).toBe(true);
     expect(allowsDevLiveCommand("get_knowledge_graph_cmd")).toBe(true);
   });
   it("rejects writes including suffixes and encoded lookalikes", () => {

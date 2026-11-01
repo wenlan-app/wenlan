@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Where every table goes when Markdown files become the source of truth,
-//! and migration 146, which drops the first retired tables.
+//! and migration 150, which drops the first retired tables.
 //!
 //! [`TABLE_CLASSES`] is the allowlist the storage migration works from. It is
 //! read off `sqlite_master` of a fresh database (an upgraded one has the same
@@ -15,7 +15,7 @@
 //!   Each one is removed together with its readers in a later change.
 //!
 //! [`DROPPED_TABLES`] had no live reader left: only the migration that filled
-//! them and the migration tests read them. Migration 146 drops them, after
+//! them and the migration tests read them. Migration 150 drops them, after
 //! the usual pre-migration backup.
 use super::{commit_or_rollback, MemoryDB};
 use crate::error::WenlanError;
@@ -55,6 +55,9 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("entity_page_map", File),
         ("page_evidence", File),
         ("page_sources", File),
+        // Imported originals (the vendor's own text) and named things.
+        ("originals", File),
+        ("things", File),
         // History: versions, approvals, receipts, tombstones, sessions, reads.
         ("page_history", History),
         ("sentence_history", History),
@@ -69,6 +72,9 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("agent_sessions", History),
         ("agent_activity", History),
         ("enrichment_origin", History),
+        ("chat_reminders", History),
+        ("thing_sessions", History),
+        ("thing_history", History),
         // Usage counts are rebuilt from the reads stream, never reset.
         ("access_log", History),
         // Search indexes and their shadow tables.
@@ -182,7 +188,7 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
     ]
 };
 
-/// Tables migration 146 drops. Each one was written and read only by the
+/// Tables migration 150 drops. Each one was written and read only by the
 /// migration that filled it and by that migration's tests.
 pub const DROPPED_TABLES: &[&str] = &[
     // Edges cutover state. The only later reader was `bump_dual_write_epoch`,
@@ -244,17 +250,17 @@ const DROPPED_TABLE_DDL: &[(i64, &str)] = &[
     ),
 ];
 
-/// Every migration body below 146 is a frozen replay, and 107 and 111 read
-/// tables 146 drops. A database at a version between their creating
-/// migration and 146 always has them; one that does not (its version was
-/// set back after 146 ran, as the migration tests do) gets them back empty
+/// Every migration body below 150 is a frozen replay, and 107 and 111 read
+/// tables 150 drops. A database at a version between their creating
+/// migration and 150 always has them; one that does not (its version was
+/// set back after 150 ran, as the migration tests do) gets them back empty
 /// before the chain replays, the same way `ensure_legacy_entities_table`
-/// stands `entities` back up. Migration 146 drops them again at the end.
+/// stands `entities` back up. Migration 150 drops them again at the end.
 pub(super) async fn ensure_dropped_tables_for_replay(
     conn: &libsql::Connection,
     version: i64,
 ) -> Result<(), WenlanError> {
-    if version >= 146 {
+    if version >= 150 {
         return Ok(());
     }
     for (created_by, ddl) in DROPPED_TABLE_DDL {
@@ -285,33 +291,33 @@ pub fn table_class(name: &str) -> Option<TableClass> {
 }
 
 impl MemoryDB {
-    pub(super) async fn migrate_146_drop_retired_tables(
+    pub(super) async fn migrate_150_drop_retired_tables(
         &self,
         prior_version: i64,
     ) -> Result<(), WenlanError> {
-        self.backup_before_migration(146, prior_version).await?;
+        self.backup_before_migration(150, prior_version).await?;
         let conn = self.conn.lock().await;
         conn.execute("BEGIN IMMEDIATE", ())
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m146 begin: {e}")))?;
+            .map_err(|e| WenlanError::VectorDb(format!("m150 begin: {e}")))?;
         for table in DROPPED_TABLES {
             if let Err(error) = conn
                 .execute(&format!("DROP TABLE IF EXISTS {table}"), ())
                 .await
             {
                 let _ = conn.execute("ROLLBACK", ()).await;
-                return Err(WenlanError::VectorDb(format!("m146 drop {table}: {error}")));
+                return Err(WenlanError::VectorDb(format!("m150 drop {table}: {error}")));
             }
         }
-        if let Err(error) = conn.execute("PRAGMA user_version = 146", ()).await {
+        if let Err(error) = conn.execute("PRAGMA user_version = 150", ()).await {
             let _ = conn.execute("ROLLBACK", ()).await;
-            return Err(WenlanError::VectorDb(format!("m146 stamp: {error}")));
+            return Err(WenlanError::VectorDb(format!("m150 stamp: {error}")));
         }
         commit_or_rollback(&conn)
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m146 commit: {e}")))?;
+            .map_err(|e| WenlanError::VectorDb(format!("m150 commit: {e}")))?;
         log::info!(
-            "[migration] Migration 146 applied: dropped retired tables {}",
+            "[migration] Migration 150 applied: dropped retired tables {}",
             DROPPED_TABLES.join(", ")
         );
         Ok(())

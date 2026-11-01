@@ -63,7 +63,6 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/pages/{id}/review-required",
             put(handle_set_page_review_required),
         )
-        .route("/api/pages/lock-edited", post(handle_lock_edited_pages))
 }
 
 pub(crate) fn register_manual_edit(
@@ -199,6 +198,7 @@ pub async fn handle_list_pages(
                 code_basis: code_basis_by_page.remove(&page.id).unwrap_or_default(),
                 storage_path: filenames.get(&page.id).cloned(),
                 folder_path: folders.get(&page.id).cloned(),
+                tags: wenlan_core::page_markdown::page_tags(&page.content),
                 page,
             })
             .collect(),
@@ -320,15 +320,18 @@ pub async fn handle_get_page(
                     version,
                 })
                 .collect();
+            let body = Some(wenlan_core::page_body::body_parts(&page.content));
             Ok(Json(PageReadResponse {
                 code_basis: db.list_page_code_basis(&id).await?,
                 basis,
                 linked_changed,
+                body,
                 // The full list is the top-level `basis`; the entry's own
                 // non-ok list is for inventories.
                 page: PageInventoryEntry {
                     basis: Vec::new(),
                     code_basis: Vec::new(),
+                    tags: wenlan_core::page_markdown::page_tags(&page.content),
                     page,
                     storage_path,
                     folder_path,
@@ -458,25 +461,6 @@ pub async fn handle_set_page_review_required(
     }))
 }
 
-/// POST /api/pages/lock-edited
-///
-/// Turn on the review lock for every page a person wrote or edited. The app
-/// calls it when "Lock pages I've written" is switched on, so pages edited
-/// before the switch are covered too; later edits lock as they happen. The
-/// receipt counts the published pages this call locked.
-pub async fn handle_lock_edited_pages(
-    State(state): State<Arc<RwLock<ServerState>>>,
-) -> Result<Json<wenlan_types::responses::LockEditedPagesResponse>, ServerError> {
-    let db = {
-        let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
-    };
-    let locked = db.lock_user_edited_pages().await?;
-    Ok(Json(wenlan_types::responses::LockEditedPagesResponse {
-        locked,
-    }))
-}
-
 /// POST /api/pages/{id}/archive
 pub async fn handle_archive_page(
     State(state): State<Arc<RwLock<ServerState>>>,
@@ -496,10 +480,11 @@ pub async fn handle_archive_page(
 
 /// POST /api/pages/{id}/restore
 ///
-/// Put an archived page back. The database row is restored first; the
-/// projected Markdown file is then rewritten from that durable row, and a
-/// projection failure is reported as `projection_status: pending` rather than
-/// undoing the restore. Refusals carry a typed `code`
+/// Put an archived page back. The database row is restored first (and,
+/// under a new title, other pages' `[[links]]` to the old title are updated
+/// as a rename updates them); the projected Markdown file is then rewritten
+/// from that durable row, and a projection failure is reported as
+/// `projection_status: pending` rather than undoing the restore. Refusals carry a typed `code`
 /// ([`wenlan_types::responses::RestorePageErrorCode`]).
 pub async fn handle_restore_page(
     State(state): State<Arc<RwLock<ServerState>>>,
@@ -529,10 +514,18 @@ pub async fn handle_restore_page(
     {
         return Err(ServerError::NotFound("page not found".into()));
     }
-    let mut response = db
-        .restore_page(&id, req.title.as_deref(), req.expected_version, &scope)
-        .await
-        .map_err(restore_error)?;
+    // Under a new title this also updates other pages' links to the old one,
+    // as a rename does; the counts ride the response.
+    let mut response = wenlan_core::post_write::restore_page(
+        &db,
+        &id,
+        req.title.as_deref(),
+        req.expected_version,
+        &scope,
+        page_root.as_deref(),
+    )
+    .await
+    .map_err(restore_error)?;
     if let Some(root) = page_root {
         // Use the current durable row rather than request/saved editor text.
         let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
@@ -1068,7 +1061,7 @@ pub async fn handle_create_page_draft(
     } else {
         header_space
     };
-    let mut page = db
+    let page = db
         .create_page_draft_with_id_in_registered_space_and_folder(
             &req.draft_id,
             &req.title,
@@ -1078,14 +1071,6 @@ pub async fn handle_create_page_draft(
         )
         .await
         .map_err(page_draft_error)?;
-    // "Lock pages I've written": a page the person starts in the app is
-    // theirs from its first draft, and keeps the lock once published.
-    if !page.review_required
-        && wenlan_core::config::load_config().lock_my_pages
-        && db.set_page_review_required(&page.id, true).await?
-    {
-        page.review_required = true;
-    }
     let page = filter_draft_echo(&db, &view, page).await?;
     Ok(Json(draft_response(&db, page).await?))
 }
@@ -1717,7 +1702,6 @@ pub async fn handle_update_page(
                 card_marks: Vec::new(),
                 code_basis: Vec::new(),
                 space_guard: None,
-                lock_on_first_human_edit: wenlan_core::config::load_config().lock_my_pages,
             },
         },
     )
@@ -2064,7 +2048,16 @@ async fn handle_refresh_page_inner(
         req.content = body;
         (json, summary)
     });
-    if requires_review {
+    // A locked page whose write only changes sentences it already has goes
+    // to the core gate, which turns each change into a sentence proposal.
+    let lock_proposes = existing.review_required
+        && wenlan_core::sentences::locked_write_only_changes_sentences(
+            &db,
+            &existing,
+            &req.content,
+        )
+        .await?;
+    if requires_review && !lock_proposes {
         // The notes the write relies on ride the card and are recorded when
         // the human accepts it. Checked now, so a refused mark refuses this
         // request exactly as it would a direct write.
@@ -2131,7 +2124,6 @@ async fn handle_refresh_page_inner(
                 card_marks: Vec::new(),
                 code_basis: prepared_code_basis.clone(),
                 space_guard: space_guard.clone(),
-                lock_on_first_human_edit: false,
             },
             page_id: &id,
             req: wenlan_types::requests::UpdatePageRequest {
@@ -2235,6 +2227,8 @@ async fn handle_refresh_page_inner(
             gated: result.gated,
             warnings: if result.gated {
                 gated_code_basis_warning(&prepared_code_basis)
+            } else if lock_proposes {
+                result.warnings.clone()
             } else {
                 Vec::new()
             }
@@ -3285,7 +3279,7 @@ mod create_page_endpoint_tests {
     }
 
     #[tokio::test]
-    async fn refresh_with_matching_expected_version_proposes_on_the_persons_sentence() {
+    async fn refresh_with_matching_expected_version_keeps_the_persons_sentence() {
         let _lock = crate::TEST_DATA_DIR_LOCK
             .get_or_init(|| tokio::sync::Mutex::new(()))
             .lock()
@@ -3311,11 +3305,13 @@ mod create_page_endpoint_tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_ne!(body["gated"], json!(true), "{body}");
         // The page's one sentence is the person's (their fs_edit wrote it):
-        // a version-checked agent write lands only on the AI's sentences, so
-        // this one becomes a sentence proposal and the page is unchanged.
-        assert_eq!(
-            body["sentence_proposals"].as_array().map(Vec::len),
-            Some(1),
+        // a version-checked agent write lands only on the AI's sentences, and
+        // a rewording of the person's sentence, with no change in its facts,
+        // is not even a proposal. The page is unchanged.
+        assert!(
+            body["sentence_proposals"]
+                .as_array()
+                .is_none_or(Vec::is_empty),
             "{body}"
         );
         let after = db.get_page(&page.id).await.unwrap().unwrap();
@@ -3324,8 +3320,7 @@ mod create_page_endpoint_tests {
         let view = wenlan_core::sentences::page_sentences(&db, &page.id)
             .await
             .unwrap();
-        assert_eq!(view.proposals.len(), 1);
-        assert_eq!(view.proposals[0].after, content);
+        assert!(view.proposals.is_empty());
 
         // Without expected_version the same page is refused: nothing is
         // written and no card is staged, and the agent is told to re-read.
@@ -3396,6 +3391,9 @@ mod create_page_endpoint_tests {
                 .review_required
         );
 
+        // A rewrite of the page's one sentence: under the lock every sentence
+        // is protected, so it goes to the sentence gate, not a card, and a
+        // rewording with no change in its facts is dropped.
         let (status, body) = send_json(
             &app,
             "PUT",
@@ -3408,10 +3406,36 @@ mod create_page_endpoint_tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["gated"], json!(true), "{body}");
+        assert!(
+            body["sentence_proposals"]
+                .as_array()
+                .is_none_or(Vec::is_empty),
+            "{body}"
+        );
+        assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+        assert_eq!(
+            db.get_page(&page_id).await.unwrap().unwrap().content,
+            REFRESH_BODY
+        );
+
+        // A write that adds a sentence still waits as a whole-page card.
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{page_id}"),
+            json!({
+                "content": format!("{REFRESH_BODY}. Borrowing is checked at compile time."),
+                "source_memory_ids": REFRESH_SOURCES,
+                "expected_version": version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(
             body["gated"],
             json!(true),
-            "the lock stages even a versioned refresh: {body}"
+            "the lock stages a versioned refresh that adds a sentence: {body}"
         );
         assert_eq!(
             db.get_page(&page_id).await.unwrap().unwrap().content,
@@ -3456,23 +3480,24 @@ mod create_page_endpoint_tests {
         );
     }
 
-    /// "Lock pages I've written": with the setting on, the editor's first
-    /// save locks the page and a new app draft starts locked; the backfill
-    /// route locks pages edited before the switch and reports the count.
+    /// "Lock pages I've written" is gone: per-sentence protection replaced
+    /// it. A config that still carries `lock_my_pages: true` neither locks a
+    /// page on the editor's first save nor locks a new app draft, and the
+    /// backfill route no longer exists.
     #[tokio::test]
-    async fn lock_my_pages_locks_human_pages_and_backfills() {
+    async fn a_human_save_and_a_new_draft_no_longer_lock_the_page() {
         let _lock = crate::TEST_DATA_DIR_LOCK
             .get_or_init(|| tokio::sync::Mutex::new(()))
             .lock()
             .await;
         let _env = DataDirGuard::new();
-        wenlan_core::config::save_config(&wenlan_core::config::Config {
-            lock_my_pages: false,
-            ..Default::default()
-        })
-        .unwrap();
+        let path = std::path::PathBuf::from(std::env::var_os("WENLAN_DATA_DIR").unwrap())
+            .join("config.json");
+        let mut legacy: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        legacy["lock_my_pages"] = json!(true);
+        std::fs::write(&path, legacy.to_string()).unwrap();
         let (db, app, _tmp) = state_db_app().await;
-        let edited_before = seed_user_edited_page(&db).await;
         let ai_page = seed_distilled_page(
             &db,
             "Rust AI Only",
@@ -3486,48 +3511,13 @@ mod create_page_endpoint_tests {
         let (status, body) = send_json(
             &app,
             "POST",
-            "/api/pages/lock-edited".to_string(),
-            json!({}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body, json!({ "locked": 1 }));
-        assert!(
-            db.get_page(&edited_before.id)
-                .await
-                .unwrap()
-                .unwrap()
-                .review_required
-        );
-        assert!(
-            !db.get_page(&ai_page)
-                .await
-                .unwrap()
-                .unwrap()
-                .review_required
-        );
-
-        // Switch on; the editor's first save of the AI page now locks it.
-        wenlan_core::config::save_config(&wenlan_core::config::Config {
-            lock_my_pages: true,
-            ..Default::default()
-        })
-        .unwrap();
-        let (status, body) = send_json(
-            &app,
-            "POST",
             format!("/api/memory/{ai_page}/update-page"),
             json!({ "content": format!("{REFRESH_BODY}, with my own notes") }),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert!(
-            db.get_page(&ai_page)
-                .await
-                .unwrap()
-                .unwrap()
-                .review_required
-        );
+        let after = db.get_page(&ai_page).await.unwrap().unwrap();
+        assert!(after.user_edited && !after.review_required);
 
         let draft_id = "page_00000000-0000-4000-8000-0000000000ab";
         let (status, body) = send_json(
@@ -3538,14 +3528,23 @@ mod create_page_endpoint_tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(body["page"]["review_required"], json!(true), "{body}");
+        assert_ne!(body["page"]["review_required"], json!(true), "{body}");
         assert!(
-            db.get_page(draft_id)
+            !db.get_page(draft_id)
                 .await
                 .unwrap()
                 .unwrap()
                 .review_required
         );
+
+        let (status, _) = send_json(
+            &app,
+            "POST",
+            "/api/pages/lock-edited".to_string(),
+            json!({}),
+        )
+        .await;
+        assert!(status.is_client_error(), "{status}");
     }
 
     #[tokio::test]

@@ -5,7 +5,8 @@
 //! section "Format details — Claude" for the schema reference.
 
 use crate::chat_import::types::{
-    ChatExportParser, ImportError, MessageRole, ParsedConversation, ParsedMessage, Vendor,
+    ChatExportParser, ImportError, MessageRole, ParsedArtifact, ParsedConversation, ParsedMessage,
+    Vendor,
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -65,10 +66,12 @@ impl ChatExportParser for ClaudeParser {
 
         let mut out = Vec::with_capacity(raw.len());
         for raw_conv in raw {
-            let messages = flatten_current_branch(&raw_conv.chat_messages);
+            let branch = current_branch(&raw_conv.chat_messages);
+            let messages = branch_messages(&branch);
             if messages.is_empty() {
                 continue;
             }
+            let artifacts = branch_artifacts(&branch);
             out.push(ParsedConversation {
                 external_id: raw_conv.uuid,
                 vendor: Vendor::Claude,
@@ -84,6 +87,7 @@ impl ChatExportParser for ClaudeParser {
                     Some(raw_conv.summary)
                 },
                 messages,
+                artifacts,
             });
         }
         Ok(out)
@@ -121,20 +125,16 @@ fn extract_content(raw: &RawClaudeMessage) -> String {
     }
 }
 
-/// Walk the parent chain from the latest message backward, producing
-/// messages in chronological order for the "current" conversation branch.
+/// Walk the parent chain from the latest message backward, producing the raw
+/// messages of the "current" conversation branch in chronological order.
 ///
 /// Claude `chat_messages` arrays are sorted by `created_at` ascending, and
 /// conversations can branch when responses are regenerated. The current
 /// branch is defined as the path from root to the last-created message.
-fn flatten_current_branch(messages: &[RawClaudeMessage]) -> Vec<ParsedMessage> {
-    if messages.is_empty() {
+fn current_branch(messages: &[RawClaudeMessage]) -> Vec<&RawClaudeMessage> {
+    let Some(last) = messages.last() else {
         return Vec::new();
-    }
-
-    // The array is already sorted by created_at ascending; the last element
-    // is the latest message across all branches.
-    let last = messages.last().unwrap();
+    };
 
     // Build uuid → &message lookup.
     let by_uuid: HashMap<&str, &RawClaudeMessage> =
@@ -165,7 +165,7 @@ fn flatten_current_branch(messages: &[RawClaudeMessage]) -> Vec<ParsedMessage> {
     // cyclic). Return empty to skip it.
     if !reached_terminal {
         log::warn!(
-            "flatten_current_branch: chain did not reach root sentinel after walking {} messages; skipping malformed conversation",
+            "current_branch: chain did not reach root sentinel after walking {} messages; skipping malformed conversation",
             chain.len()
         );
         return Vec::new();
@@ -173,11 +173,16 @@ fn flatten_current_branch(messages: &[RawClaudeMessage]) -> Vec<ParsedMessage> {
 
     // Walked backward — reverse for chronological order.
     chain.reverse();
+    chain
+}
 
-    // Convert to ParsedMessage, filtering out messages with no extractable
-    // content. Uses content[] blocks when available, falls back to top-level text.
+/// The branch's chat text as memory pairs.
+///
+/// Uses content[] blocks when available, falls back to top-level text, and
+/// leaves out messages with no extractable text.
+fn branch_messages(chain: &[&RawClaudeMessage]) -> Vec<ParsedMessage> {
     let individual: Vec<ParsedMessage> = chain
-        .into_iter()
+        .iter()
         .filter_map(|raw| {
             let role = match raw.sender.as_str() {
                 "human" => MessageRole::User,
@@ -197,6 +202,81 @@ fn flatten_current_branch(messages: &[RawClaudeMessage]) -> Vec<ParsedMessage> {
         .collect();
     super::pair_messages(individual)
 }
+
+/// The artifacts the assistant made on this branch, each in its final state.
+///
+/// Claude writes an artifact with an `artifacts` tool call: `create` and
+/// `rewrite` carry the whole content, `update` replaces one `old_str` with
+/// `new_str`. They are replayed in order, so a later call wins. An update
+/// whose `old_str` is not in the content is skipped (the export does not
+/// say what Claude showed then); the artifact keeps its last whole state.
+fn branch_artifacts(chain: &[&RawClaudeMessage]) -> Vec<ParsedArtifact> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_id: HashMap<String, ParsedArtifact> = HashMap::new();
+    for raw in chain.iter().filter(|m| m.sender == "assistant") {
+        let at = parse_iso8601(&raw.created_at);
+        for block in raw
+            .content
+            .iter()
+            .filter(|b| b.block_type == "tool_use" && b.name.as_deref() == Some(ARTIFACTS_TOOL))
+        {
+            let Some(input) = block.input.as_ref() else {
+                continue;
+            };
+            let field = |name: &str| input.get(name).and_then(|v| v.as_str());
+            let Some(id) = field("id").filter(|id| !id.trim().is_empty()) else {
+                continue;
+            };
+            match field("command").unwrap_or("create") {
+                "create" | "rewrite" => {
+                    let Some(content) = field("content") else {
+                        continue;
+                    };
+                    let previous = by_id.get(id);
+                    let artifact = ParsedArtifact {
+                        id: id.to_string(),
+                        title: field("title")
+                            .map(str::to_string)
+                            .or_else(|| previous.and_then(|p| p.title.clone())),
+                        kind: field("type")
+                            .map(str::to_string)
+                            .or_else(|| previous.map(|p| p.kind.clone()))
+                            .unwrap_or_else(|| "text/plain".to_string()),
+                        language: field("language")
+                            .map(str::to_string)
+                            .or_else(|| previous.and_then(|p| p.language.clone())),
+                        content: content.to_string(),
+                        created_at: at,
+                    };
+                    if !by_id.contains_key(id) {
+                        order.push(id.to_string());
+                    }
+                    by_id.insert(id.to_string(), artifact);
+                }
+                "update" => {
+                    let (Some(old), Some(new)) = (field("old_str"), field("new_str")) else {
+                        continue;
+                    };
+                    if let Some(artifact) = by_id.get_mut(id) {
+                        if !old.is_empty() && artifact.content.contains(old) {
+                            artifact.content = artifact.content.replacen(old, new, 1);
+                            artifact.created_at = at.or(artifact.created_at);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .filter(|a| !a.content.trim().is_empty())
+        .collect()
+}
+
+/// The tool name Claude writes artifacts with.
+const ARTIFACTS_TOOL: &str = "artifacts";
 
 // ---- Raw types matching the Claude export JSON schema ----
 
@@ -246,6 +326,12 @@ struct RawClaudeContentBlock {
     block_type: String,
     #[serde(default)]
     text: String,
+    /// A `tool_use` block's tool (`artifacts` for an artifact).
+    #[serde(default)]
+    name: Option<String>,
+    /// A `tool_use` block's input.
+    #[serde(default)]
+    input: Option<serde_json::Value>,
 }
 
 #[cfg(test)]
@@ -760,5 +846,103 @@ mod tests {
         let parser = ClaudeParser::new();
         let conversations = parser.parse(&mut archive).expect("parse succeeds");
         assert_eq!(conversations.len(), 0);
+    }
+
+    fn parse_one(json: &str) -> Vec<ParsedConversation> {
+        let zip_bytes = make_zip(&[
+            ("users.json", b"[]"),
+            ("conversations.json", json.as_bytes()),
+        ]);
+        let cursor = Cursor::new(zip_bytes.as_slice());
+        let mut archive = zip::ZipArchive::new(cursor).unwrap();
+        ClaudeParser::new()
+            .parse(&mut archive)
+            .expect("parse succeeds")
+    }
+
+    /// A conversation where Claude makes an HTML artifact, updates it, and a
+    /// regenerated (stale) reply made a different one.
+    const ARTIFACT_CONVERSATION_JSON: &str = r#"[
+      {
+        "uuid": "conv-art",
+        "name": "Landing page",
+        "summary": "",
+        "created_at": "2026-04-01T10:00:00.000Z",
+        "updated_at": "2026-04-01T10:05:00.000Z",
+        "account": {"uuid": "acc-1"},
+        "chat_messages": [
+          {"uuid": "m1", "text": "make a page", "content": [{"type": "text", "text": "make a page"}],
+           "sender": "human", "created_at": "2026-04-01T10:00:00.000Z",
+           "parent_message_uuid": "00000000-0000-4000-8000-000000000000"},
+          {"uuid": "m2-stale", "text": "", "sender": "assistant", "created_at": "2026-04-01T10:00:03.000Z",
+           "content": [{"type": "tool_use", "name": "artifacts",
+             "input": {"id": "stale", "type": "text/html", "title": "Stale", "command": "create", "content": "<p>old</p>"}}],
+           "parent_message_uuid": "m1"},
+          {"uuid": "m2", "text": "", "sender": "assistant", "created_at": "2026-04-01T10:00:05.000Z",
+           "content": [
+             {"type": "text", "text": "Here is the page."},
+             {"type": "tool_use", "name": "artifacts",
+              "input": {"id": "landing", "type": "text/html", "title": "Landing", "command": "create",
+                        "content": "<h1>Hello</h1>"}},
+             {"type": "tool_result", "name": "artifacts", "content": [{"type": "text", "text": "OK"}]}
+           ],
+           "parent_message_uuid": "m1"},
+          {"uuid": "m3", "text": "say hi", "content": [{"type": "text", "text": "say hi instead"}],
+           "sender": "human", "created_at": "2026-04-01T10:01:00.000Z", "parent_message_uuid": "m2"},
+          {"uuid": "m4", "text": "", "sender": "assistant", "created_at": "2026-04-01T10:01:05.000Z",
+           "content": [
+             {"type": "tool_use", "name": "artifacts",
+              "input": {"id": "landing", "command": "update", "old_str": "Hello", "new_str": "Hi"}},
+             {"type": "tool_use", "name": "artifacts",
+              "input": {"id": "landing", "command": "update", "old_str": "not there", "new_str": "x"}},
+             {"type": "tool_use", "name": "artifacts",
+              "input": {"id": "notes", "type": "application/vnd.ant.code", "language": "python",
+                        "title": "Script", "command": "create", "content": "print('hi')"}},
+             {"type": "text", "text": "Done."}
+           ],
+           "parent_message_uuid": "m3"}
+        ]
+      }
+    ]"#;
+
+    #[test]
+    fn artifacts_on_the_current_branch_are_kept_in_their_final_state() {
+        let conversations = parse_one(ARTIFACT_CONVERSATION_JSON);
+        assert_eq!(conversations.len(), 1);
+        let conv = &conversations[0];
+        // The chat text is unchanged by the artifact blocks.
+        assert_eq!(conv.messages.len(), 2);
+        assert_eq!(
+            conv.messages[0].content,
+            "User: make a page\nAssistant: Here is the page."
+        );
+        let ids: Vec<&str> = conv.artifacts.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["landing", "notes"],
+            "the stale branch's artifact is not kept"
+        );
+        let landing = &conv.artifacts[0];
+        assert_eq!(
+            landing.content, "<h1>Hi</h1>",
+            "the update applied, the unmatched one skipped"
+        );
+        assert_eq!(landing.kind, "text/html");
+        assert_eq!(landing.title.as_deref(), Some("Landing"));
+        assert_eq!(landing.extension(), "html");
+        assert_eq!(
+            landing.created_at,
+            parse_iso8601("2026-04-01T10:01:05.000Z"),
+            "the time of the last write"
+        );
+        let notes = &conv.artifacts[1];
+        assert_eq!(notes.language.as_deref(), Some("python"));
+        assert_eq!(notes.extension(), "py");
+    }
+
+    #[test]
+    fn a_conversation_without_artifact_calls_keeps_none() {
+        let conversations = parse_one(MIN_CLAUDE_CONVERSATIONS_JSON);
+        assert!(conversations[0].artifacts.is_empty());
     }
 }

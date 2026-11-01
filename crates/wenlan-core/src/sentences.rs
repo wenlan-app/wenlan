@@ -9,9 +9,13 @@
 //!   it keeps every sentence that is the person's (or of unknown origin on a
 //!   human-owned or review-locked page, or imported original text) and plans
 //!   one `sentence.propose` entry for each such sentence the write changed or
-//!   dropped. It applies to every page: there is no "AI may edit directly"
-//!   mode. A locked page (`review_required`) stages a whole-page card before
-//!   this gate is reached.
+//!   dropped, but only when the facts behind that sentence changed (its
+//!   source does not back it, changed since it was cited, or disproves it).
+//!   A rewording alone is dropped and the sentence stays as the person wrote
+//!   it, so the person reviews as little as possible. It applies to every
+//!   page: there is no "AI may edit directly" mode. On a locked page
+//!   (`review_required`) every sentence is protected; a locked write that
+//!   would add sentences still stages a whole-page card before this gate.
 //! - [`propose_sentence`], [`accept_sentence_proposal`],
 //!   [`reject_sentence_proposal`] and [`flag_sentence`] are the per-sentence
 //!   decisions, each one history entry. They sit beside the whole-page
@@ -26,8 +30,9 @@ use wenlan_types::authorship::{
     PageSentencesResponse, SentenceAcceptResponse, SentenceAuthor, SentenceAuthorship,
     SentenceCitation, SentenceFlagResponse, SentenceProposal, SentenceProposalStatus,
     SentenceRecheckResponse, WeakReason, OP_SENTENCE_ACCEPT, OP_SENTENCE_FLAG, OP_SENTENCE_PROPOSE,
-    OP_SENTENCE_REJECT,
+    OP_SENTENCE_REJECT, OP_SENTENCE_REVERT,
 };
+use wenlan_types::authorship::{LastAiUpdate, SentenceRevertResponse};
 use wenlan_types::pages::PageCitation;
 
 use crate::authorship::{self, GatePlan, SentenceUnit, VersionText};
@@ -123,15 +128,32 @@ pub async fn page_authorship(
         });
     }
     let mut accepted: HashMap<i64, HashSet<String>> = HashMap::new();
+    let mut restored: HashMap<i64, HashSet<String>> = HashMap::new();
     for entry in db.list_sentence_history("page", &page.id).await? {
-        if entry.op != OP_SENTENCE_ACCEPT {
+        let Some(version) = entry.version else {
             continue;
-        }
-        if let (Some(version), Some(hash)) = (entry.version, str_field(&entry, "accepted_hash")) {
-            accepted
-                .entry(version)
-                .or_default()
-                .insert(hash.to_string());
+        };
+        match entry.op.as_str() {
+            OP_SENTENCE_ACCEPT => {
+                if let Some(hash) = str_field(&entry, "accepted_hash") {
+                    accepted
+                        .entry(version)
+                        .or_default()
+                        .insert(hash.to_string());
+                }
+            }
+            OP_SENTENCE_REVERT => {
+                let hashes = entry
+                    .data
+                    .get("restored_hashes")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string);
+                restored.entry(version).or_default().extend(hashes);
+            }
+            _ => {}
         }
     }
     Ok(authorship::derive_authorship(
@@ -139,6 +161,7 @@ pub async fn page_authorship(
         birth_kind(page),
         &versions,
         &accepted,
+        &restored,
         truncated,
     ))
 }
@@ -153,16 +176,110 @@ pub(crate) async fn sentence_gate(
 ) -> Result<(Option<GatePlan>, bool), WenlanError> {
     let rows = page_authorship(db, page).await?;
     let guard = guarded(page);
-    let protected: HashSet<usize> = rows
+    let owned: HashSet<usize> = rows
         .iter()
         .enumerate()
         .filter(|(_, row)| authorship::is_protected(row.author, guard))
         .map(|(idx, _)| idx)
         .collect();
-    Ok((
-        authorship::plan_sentence_gate(&page.content, new_content, &protected),
-        !protected.is_empty(),
-    ))
+    // The lock protects every sentence, the AI's own included.
+    let protected: HashSet<usize> = if page.review_required {
+        (0..rows.len()).collect()
+    } else {
+        owned.clone()
+    };
+    let mut plan = authorship::plan_sentence_gate(&page.content, new_content, &protected);
+    if let Some(plan) = plan.as_mut() {
+        let units = authorship::sentence_units(&page.content);
+        let reasons = unit_reasons(db, page, &units).await?;
+        let by_hash: HashMap<&str, WeakReason> = units
+            .iter()
+            .zip(&reasons)
+            .filter_map(|(unit, reason)| Some((unit.hash.as_str(), (*reason)?)))
+            .collect();
+        plan.proposals.retain_mut(|proposal| {
+            proposal.reason = by_hash.get(proposal.sentence_hash.as_str()).copied();
+            proposal.reason.is_some()
+        });
+    }
+    Ok((plan, !owned.is_empty()))
+}
+
+/// Under the page lock, would this machine write only change sentences the
+/// page already has? Then every change is a sentence proposal (or dropped as
+/// a rewording) and nothing lands. A write that adds sentences is not, and
+/// still waits as a whole-page revision card.
+pub async fn locked_write_only_changes_sentences(
+    db: &MemoryDB,
+    page: &Page,
+    new_content: &str,
+) -> Result<bool, WenlanError> {
+    let (plan, _) = sentence_gate(db, page, new_content).await?;
+    let landing = plan
+        .as_ref()
+        .map_or(new_content, |plan| plan.content.as_str());
+    let norms = |body: &str| -> Vec<String> {
+        authorship::sentence_units(body)
+            .into_iter()
+            .map(|unit| unit.norm)
+            .collect()
+    };
+    Ok(norms(landing) == norms(&page.content))
+}
+
+/// The facts-changed reason of a sentence: the strongest of its citation
+/// problems. A missing citation is not one; nothing about the facts changed.
+fn facts_changed(weak: &[WeakReason]) -> Option<WeakReason> {
+    [
+        WeakReason::Disproven,
+        WeakReason::Unsupported,
+        WeakReason::Stale,
+    ]
+    .into_iter()
+    .find(|reason| weak.contains(reason))
+}
+
+/// Each unit's citations, in unit order.
+async fn unit_citations(
+    db: &MemoryDB,
+    page: &Page,
+    units: &[SentenceUnit],
+) -> Result<Vec<Vec<SentenceCitation>>, WenlanError> {
+    let states = source_states(db, &page.citations).await?;
+    let by_occurrence: HashMap<u32, &PageCitation> =
+        page.citations.iter().map(|c| (c.occurrence, c)).collect();
+    let markers = occurrence_units(&page.content, units);
+    Ok((0..units.len())
+        .map(|idx| {
+            markers
+                .iter()
+                .enumerate()
+                .filter(|(_, at)| **at == Some(idx))
+                .map(|(k, _)| {
+                    let occurrence = u32::try_from(k + 1).unwrap_or(u32::MAX);
+                    sentence_citation(
+                        occurrence,
+                        &page.content,
+                        by_occurrence.get(&occurrence).copied(),
+                        &states,
+                    )
+                })
+                .collect()
+        })
+        .collect())
+}
+
+/// Each unit's facts-changed reason, in unit order.
+async fn unit_reasons(
+    db: &MemoryDB,
+    page: &Page,
+    units: &[SentenceUnit],
+) -> Result<Vec<Option<WeakReason>>, WenlanError> {
+    Ok(unit_citations(db, page, units)
+        .await?
+        .iter()
+        .map(|citations| facts_changed(&weak_reasons(citations, false)))
+        .collect())
 }
 
 /// The proposals of a page, oldest first, with their state.
@@ -191,6 +308,10 @@ fn proposals_from(entries: &[HistoryEntry], page_id: &str) -> Vec<SentencePropos
                 before: str_field(entry, "before").unwrap_or_default().to_string(),
                 after: entry.text.clone().unwrap_or_default(),
                 why: entry.why.clone(),
+                reason: entry
+                    .data
+                    .get("reason")
+                    .and_then(|value| serde_json::from_value(value.clone()).ok()),
                 actor: entry.actor.clone(),
                 ts: entry.ts,
                 status: decided
@@ -242,7 +363,8 @@ pub(crate) async fn stage_gate_proposals(
             &proposal.sentence_hash,
             &proposal.before,
             &proposal.after,
-            Some("the AI changed a sentence that is yours, so it is a proposal"),
+            Some("the facts behind a sentence that is yours changed, so it is a proposal"),
+            proposal.reason,
         )
         .await?;
         ids.push(id);
@@ -262,12 +384,16 @@ async fn append_proposal(
     before: &str,
     after: &str,
     why: Option<&str>,
+    reason: Option<WeakReason>,
 ) -> Result<i64, WenlanError> {
-    let data = serde_json::json!({
+    let mut data = serde_json::json!({
         "proposal_id": id,
         "sentence_hash": sentence_hash,
         "before": before,
     });
+    if let Some(reason) = reason {
+        data["reason"] = serde_json::to_value(reason)?;
+    }
     let after_hash = (!after.is_empty())
         .then(|| authorship::sentence_hash(&authorship::normalize_sentence(after)));
     db.append_sentence_history(NewHistoryEntry {
@@ -328,6 +454,36 @@ pub async fn propose_sentence(
             "the proposed text is the sentence as it already reads".into(),
         ));
     }
+    // A protected sentence (the person's, imported, or any on a locked page)
+    // gets a proposal only when its facts changed, and the reason must be
+    // one it has now.
+    let idx = units
+        .iter()
+        .position(|u| u.hash == unit.hash)
+        .expect("unit came from units");
+    let rows = page_authorship(db, &page).await?;
+    let protected = page.review_required
+        || rows
+            .get(idx)
+            .is_some_and(|row| authorship::is_protected(row.author, guarded(&page)));
+    if protected {
+        let citations = unit_citations(db, &page, &units).await?;
+        let weak = weak_reasons(&citations[idx], false);
+        let Some(given) = req.reason else {
+            return Err(WenlanError::Validation(
+                "reason_required: this sentence is protected; propose a change only when \
+                 its facts changed (reason unsupported, stale or disproven)"
+                    .into(),
+            ));
+        };
+        if facts_changed(&[given]).is_none() || !weak.contains(&given) {
+            return Err(WenlanError::Validation(format!(
+                "reason_not_current: {} is not a facts-changed reason this sentence has now \
+                 (it has {weak:?})",
+                serde_json::to_string(&given)?
+            )));
+        }
+    }
     let actor = HistoryActor {
         kind: ActorKind::Ai,
         name: agent.to_string(),
@@ -347,6 +503,7 @@ pub async fn propose_sentence(
         &unit.text,
         after,
         req.why.as_deref(),
+        req.reason,
     )
     .await?;
     find_proposal(db, page_id, &id).await
@@ -437,11 +594,9 @@ pub async fn accept_sentence_proposal(
             edited_by: "manual_edit",
             knowledge_path,
             // Accepting one sentence protects that sentence (it is the
-            // person's from now on); it does not lock the whole page, so
-            // "Lock pages I've written" is not triggered by it.
+            // person's from now on); it does not lock the whole page.
             basis: crate::db::BasisWrite {
                 actor: "human".to_string(),
-                lock_on_first_human_edit: false,
                 ..crate::db::BasisWrite::default()
             },
         },
@@ -670,12 +825,268 @@ pub async fn page_sentences(
             }
         })
         .collect();
+    let last_ai_update = last_ai_update(db, &page).await?;
     Ok(PageSentencesResponse {
         page_id: page.id,
         version: page.version,
         ai_edits: mode,
         sentences,
         proposals: pending,
+        last_ai_update,
+    })
+}
+
+/// Is this history version an AI write (not the person's, not a mechanical
+/// rewrite, not unknown)?
+fn is_ai_write(entry: &crate::db::PageHistoryEntry, page: &Page) -> bool {
+    authorship::version_author(&entry.edited_by, birth_kind(page)) == authorship::VersionAuthor::Ai
+}
+
+/// The page's newest AI write in its recorded history.
+async fn last_ai_update(db: &MemoryDB, page: &Page) -> Result<Option<LastAiUpdate>, WenlanError> {
+    let history = db.list_page_history(&page.id, HISTORY_LIMIT).await?;
+    let Some(at) = history.iter().position(|entry| is_ai_write(entry, page)) else {
+        return Ok(None);
+    };
+    let before = history
+        .get(at + 1)
+        .map_or("", |entry| entry.content.as_str());
+    let changes = authorship::sentence_changes(before, &history[at].content);
+    Ok(Some(LastAiUpdate {
+        version: history[at].version,
+        changed_sentences: u32::try_from(changes.len()).unwrap_or(u32::MAX),
+        at: history[at].created_at,
+        changes,
+    }))
+}
+
+/// One text edit of a revert, on byte ranges of the current body.
+struct RevertEdit {
+    start: usize,
+    end: usize,
+    text: String,
+}
+
+/// The byte range `body_with` removes for a deleted unit.
+fn removal_range(content: &str, unit: &SentenceUnit) -> (usize, usize) {
+    if unit.whole_line {
+        let start = content[..unit.start].rfind('\n').map_or(0, |i| i + 1);
+        let end = content[unit.end..]
+            .find('\n')
+            .map_or(content.len(), |i| unit.end + i + 1);
+        (start, end)
+    } else {
+        let rest = &content[unit.end..];
+        let trailing = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        (unit.start, unit.end + trailing)
+    }
+}
+
+/// The person undoes the sentence changes one AI write made. Only the
+/// sentences that write added or changed, and that nobody touched since, go
+/// back to how they read before it; a sentence it removed comes back after
+/// the sentence it followed. The undo lands as the person's write, but the
+/// sentences it puts back keep the author they had before (the AI's), so
+/// undoing never makes text "yours".
+pub async fn revert_ai_write(
+    db: &MemoryDB,
+    page_id: &str,
+    version: i64,
+    knowledge_path: Option<&std::path::Path>,
+) -> Result<SentenceRevertResponse, WenlanError> {
+    let page = load_page(db, page_id).await?;
+    let history = db.list_page_history(page_id, HISTORY_LIMIT).await?;
+    let Some(at) = history.iter().position(|entry| entry.version == version) else {
+        let truncated = i64::try_from(history.len()).unwrap_or(i64::MAX) >= HISTORY_LIMIT;
+        let oldest = history.last().map_or(0, |entry| entry.version);
+        if truncated && version < oldest {
+            return Err(WenlanError::Validation(format!(
+                "version_out_of_window: v{version} is older than the page history kept for undo"
+            )));
+        }
+        return Err(WenlanError::NotFound(format!(
+            "page {page_id} has no version {version}"
+        )));
+    };
+    if !is_ai_write(&history[at], &page) {
+        return Err(WenlanError::Conflict(format!(
+            "not_an_ai_write: v{version} was written by {}, not the AI",
+            history[at].edited_by
+        )));
+    }
+    let before_text = history
+        .get(at + 1)
+        .map_or("", |entry| entry.content.as_str());
+    let before = authorship::sentence_units(before_text);
+    let written = authorship::sentence_units(&history[at].content);
+    let ops = authorship::align(
+        &before.iter().map(|u| u.norm.as_str()).collect::<Vec<_>>(),
+        &written.iter().map(|u| u.norm.as_str()).collect::<Vec<_>>(),
+    );
+
+    let current = authorship::sentence_units(&page.content);
+    let rows = page_authorship(db, &page).await?;
+    // A sentence that write made, still exactly as it made it.
+    let untouched = |hash: &str| {
+        current.iter().zip(&rows).position(|(unit, row)| {
+            unit.hash == hash && row.since_version == version && row.author == SentenceAuthor::Ai
+        })
+    };
+
+    let mut edits: Vec<RevertEdit> = Vec::new();
+    let mut restored: Vec<String> = Vec::new();
+    let (mut reverted, mut skipped) = (0u32, 0u32);
+    // The current unit the last sentence of the write's body maps to.
+    let mut anchor: Option<usize> = None;
+    let mut anchor_seen = false;
+    for op in &ops {
+        match *op {
+            authorship::AlignOp::Equal(_, n) => {
+                anchor = current.iter().position(|u| u.hash == written[n].hash);
+                anchor_seen = true;
+            }
+            authorship::AlignOp::Replace(o, n) => match untouched(&written[n].hash) {
+                Some(idx) => {
+                    let text = crate::citations::strip_markers(&before[o].text);
+                    edits.push(RevertEdit {
+                        start: current[idx].start,
+                        end: current[idx].end,
+                        text: text.trim().to_string(),
+                    });
+                    restored.push(before[o].hash.clone());
+                    reverted += 1;
+                    anchor = Some(idx);
+                    anchor_seen = true;
+                }
+                None => {
+                    skipped += 1;
+                    anchor = current.iter().position(|u| u.hash == written[n].hash);
+                    anchor_seen = true;
+                }
+            },
+            authorship::AlignOp::Insert(n) => match untouched(&written[n].hash) {
+                Some(idx) => {
+                    let (start, end) = removal_range(&page.content, &current[idx]);
+                    edits.push(RevertEdit {
+                        start,
+                        end,
+                        text: String::new(),
+                    });
+                    reverted += 1;
+                }
+                None => {
+                    skipped += 1;
+                    anchor = current.iter().position(|u| u.hash == written[n].hash);
+                    anchor_seen = true;
+                }
+            },
+            authorship::AlignOp::Delete(o) => {
+                let unit = &before[o];
+                if current.iter().any(|u| u.norm == unit.norm) {
+                    continue;
+                }
+                let text = crate::citations::strip_markers(&unit.text);
+                let text = text.trim();
+                let separator = if unit.blank_before { "\n\n" } else { "\n" };
+                let insertion = match (anchor, anchor_seen, unit.whole_line) {
+                    (Some(idx), _, true) => {
+                        let end = current[idx].end;
+                        let line_end = page.content[end..]
+                            .find('\n')
+                            .map_or(page.content.len(), |i| end + i);
+                        (line_end, format!("{separator}{text}"))
+                    }
+                    (Some(idx), _, false) => (current[idx].end, format!(" {text}")),
+                    (None, false, true) => (0, format!("{text}{separator}")),
+                    (None, false, false) => (0, format!("{text} ")),
+                    // The sentence it followed is gone: nowhere to put it.
+                    (None, true, _) => {
+                        skipped += 1;
+                        continue;
+                    }
+                };
+                edits.push(RevertEdit {
+                    start: insertion.0,
+                    end: insertion.0,
+                    text: insertion.1,
+                });
+                restored.push(unit.hash.clone());
+                reverted += 1;
+            }
+        }
+    }
+    if edits.is_empty() {
+        return Ok(SentenceRevertResponse {
+            page_id: page.id,
+            version: page.version,
+            reverted: 0,
+            skipped,
+        });
+    }
+    // Apply back to front so earlier ranges stay valid; an insertion at the
+    // same place as a replacement goes after it.
+    edits.sort_by(|a, b| b.start.cmp(&a.start).then(b.end.cmp(&a.end)));
+    let mut content = page.content.clone();
+    for edit in &edits {
+        content.replace_range(edit.start..edit.end, &edit.text);
+    }
+    if content.trim().is_empty() {
+        return Err(WenlanError::Validation(
+            "undoing this AI write would leave the page empty".into(),
+        ));
+    }
+    let result = crate::post_write::page_write(
+        db,
+        crate::post_write::PageWrite::UpdatePreservingSources {
+            page_id,
+            req: wenlan_types::requests::UpdatePageRequest {
+                content,
+                source_memory_ids: vec![],
+                expected_version: Some(page.version),
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "manual_edit",
+            knowledge_path,
+            basis: crate::db::BasisWrite {
+                actor: "human".to_string(),
+                ..crate::db::BasisWrite::default()
+            },
+        },
+    )
+    .await?;
+    if result.outcome != crate::post_write::WriteOutcome::Wrote {
+        return Err(WenlanError::Conflict(format!(
+            "the undo of v{version} was not applied: {}",
+            result.warnings.join("; ")
+        )));
+    }
+    let new_version = load_page(db, page_id).await?.version;
+    let data = serde_json::json!({
+        "reverted_version": version,
+        "restored_hashes": restored,
+        "reverted": reverted,
+        "skipped": skipped,
+    });
+    db.append_sentence_history(NewHistoryEntry {
+        ts: chrono::Utc::now().timestamp(),
+        tx: &format!("tx_{}", uuid::Uuid::new_v4().simple()),
+        actor: &person(),
+        op: OP_SENTENCE_REVERT,
+        target: &page_target(page_id),
+        version: Some(new_version),
+        why: None,
+        text: None,
+        digest_before: None,
+        digest_after: None,
+        data: &data,
+    })
+    .await?;
+    Ok(SentenceRevertResponse {
+        page_id: page_id.to_string(),
+        version: new_version,
+        reverted,
+        skipped,
     })
 }
 

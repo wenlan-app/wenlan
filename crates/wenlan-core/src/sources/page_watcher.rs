@@ -58,28 +58,17 @@ pub async fn sync_filesystem_edits(
     db: &MemoryDB,
     knowledge_path: &Path,
 ) -> Result<WatcherStats, WenlanError> {
-    sync_filesystem_edits_locking(db, knowledge_path, false).await
+    sync_pass(db, knowledge_path, None).await
 }
 
-/// [`sync_filesystem_edits`], also locking a page for review when a vault
-/// edit is the first human edit it gets (`Config::lock_my_pages`).
-pub async fn sync_filesystem_edits_locking(
-    db: &MemoryDB,
-    knowledge_path: &Path,
-    lock_my_pages: bool,
-) -> Result<WatcherStats, WenlanError> {
-    sync_pass(db, knowledge_path, lock_my_pages, None).await
-}
-
-/// [`sync_filesystem_edits_locking`] for only the files in `changed`, for a
+/// [`sync_filesystem_edits`] for only the files in `changed`, for a
 /// watcher that already knows which files were saved since its last look.
 pub async fn sync_filesystem_edits_in(
     db: &MemoryDB,
     knowledge_path: &Path,
-    lock_my_pages: bool,
     changed: &[String],
 ) -> Result<WatcherStats, WenlanError> {
-    sync_pass(db, knowledge_path, lock_my_pages, Some(changed)).await
+    sync_pass(db, knowledge_path, Some(changed)).await
 }
 
 /// When each page file was last seen by [`sync_page_file_if_changed`].
@@ -114,8 +103,7 @@ pub async fn sync_page_file_if_changed(
     if unchanged {
         return Ok(false);
     }
-    let lock_my_pages = crate::config::load_config().lock_my_pages;
-    let stats = sync_filesystem_edits_in(db, knowledge_path, lock_my_pages, &[file]).await?;
+    let stats = sync_filesystem_edits_in(db, knowledge_path, &[file]).await?;
     SEEN.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(key, modified);
@@ -129,7 +117,6 @@ static PASS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 async fn sync_pass(
     db: &MemoryDB,
     knowledge_path: &Path,
-    lock_my_pages: bool,
     only: Option<&[String]>,
 ) -> Result<WatcherStats, WenlanError> {
     let _pass = PASS.lock().await;
@@ -146,7 +133,7 @@ async fn sync_pass(
     for relative in paths {
         let path = knowledge_path.join(&relative);
         stats.scanned += 1;
-        match sync_one_file(db, &relative, knowledge_path, &targets, lock_my_pages).await {
+        match sync_one_file(db, &relative, knowledge_path, &targets).await {
             Ok(Outcome::Applied { page_id }) => {
                 stats.applied += 1;
                 log::info!(
@@ -193,7 +180,6 @@ async fn sync_one_file(
     relative: &str,
     knowledge_path: &Path,
     targets: &HashMap<String, String>,
-    lock_my_pages: bool,
 ) -> Result<Outcome, WenlanError> {
     let (raw, _) = crate::export::knowledge::read_knowledge_markdown(knowledge_path, relative)?;
     let (fm, _) = obsidian::extract_frontmatter(&raw);
@@ -322,10 +308,7 @@ async fn sync_one_file(
             req,
             edited_by: "fs_edit",
             knowledge_path: Some(knowledge_path),
-            basis: crate::db::BasisWrite {
-                lock_on_first_human_edit: lock_my_pages,
-                ..crate::db::BasisWrite::default()
-            },
+            basis: crate::db::BasisWrite::default(),
         },
     )
     .await?;
@@ -410,6 +393,7 @@ mod tests {
             relevance_score: 0.0,
             last_edited_by: None,
             last_edited_at: None,
+            human_edited_at: None,
             last_delta_summary: None,
             changelog: None,
             creation_kind: "distilled".to_string(),
@@ -520,7 +504,6 @@ mod tests {
             let stats = sync_filesystem_edits_in(
                 &db,
                 knowledge_dir.path(),
-                false,
                 std::slice::from_ref(&filename),
             )
             .await
@@ -533,7 +516,7 @@ mod tests {
             assert_eq!(after.content, edited);
             assert_eq!(after.source_memory_ids, page.source_memory_ids);
             assert_eq!(after.version, page.version + 1);
-            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), false, &[filename])
+            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), &[filename])
                 .await
                 .unwrap();
             assert_eq!(stats.applied, 0, "reprojection must stabilize: {stats:?}");
@@ -614,7 +597,6 @@ mod tests {
                     let stats = sync_filesystem_edits_in(
                         &db,
                         knowledge_dir.path(),
-                        true,
                         std::slice::from_ref(&filename),
                     )
                     .await
@@ -660,7 +642,7 @@ mod tests {
             let projected = std::fs::read_to_string(&path).unwrap();
             std::fs::write(&path, to_crlf(&projected.replacen(before, edited, 1))).unwrap();
             let changed = std::slice::from_ref(&filename);
-            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), false, changed)
+            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), changed)
                 .await
                 .unwrap();
             assert_eq!(stats.applied, 1, "{stats:?}");
@@ -673,7 +655,7 @@ mod tests {
                 crate::export::knowledge::render_markdown_for(&after),
                 "the edited file must be re-projected with the new version"
             );
-            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), false, changed)
+            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), changed)
                 .await
                 .unwrap();
             assert_eq!(
@@ -714,7 +696,6 @@ mod tests {
                 let stats = sync_filesystem_edits_in(
                     &db,
                     knowledge_dir.path(),
-                    true,
                     std::slice::from_ref(&filename),
                 )
                 .await
@@ -724,7 +705,10 @@ mod tests {
                 assert_eq!(after.content, edited, "{edit}");
                 assert_eq!(after.version, page.version + 1, "{edit}");
                 assert!(after.user_edited, "{edit}");
-                assert!(after.review_required, "{edit}: first human edit locks");
+                assert!(
+                    !after.review_required,
+                    "{edit}: a human edit protects its sentences, it does not lock the page"
+                );
             }
         }
     }
@@ -745,14 +729,9 @@ mod tests {
             let path = knowledge_dir.path().join(&filename);
             let projected = std::fs::read_to_string(&path).unwrap();
             std::fs::write(&path, to_crlf(&format!("{projected}\n"))).unwrap();
-            sync_filesystem_edits_in(
-                &db,
-                knowledge_dir.path(),
-                false,
-                std::slice::from_ref(&filename),
-            )
-            .await
-            .unwrap();
+            sync_filesystem_edits_in(&db, knowledge_dir.path(), std::slice::from_ref(&filename))
+                .await
+                .unwrap();
             let req = wenlan_types::requests::UpdatePageRequest {
                 content: "rewritten in the app".to_string(),
                 source_memory_ids: Vec::new(),

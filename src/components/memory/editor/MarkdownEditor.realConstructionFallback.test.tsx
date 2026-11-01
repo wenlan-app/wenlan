@@ -9,7 +9,9 @@ vi.mock("@codemirror/view", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@codemirror/view")>();
 
   class ThrowingEditorView {
+    static atomicRanges = actual.EditorView.atomicRanges;
     static contentAttributes = actual.EditorView.contentAttributes;
+    static decorations = actual.EditorView.decorations;
     static editable = actual.EditorView.editable;
     static inputHandler = actual.EditorView.inputHandler;
     static lineWrapping = actual.EditorView.lineWrapping;

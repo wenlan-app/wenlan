@@ -13,6 +13,7 @@ frontend side of the Tauri command contract.
 | New IPC wrapper | `lib/tauri.ts` | centralize invoke payloads and response defaults |
 | Locale/copy change | `i18n/resources.ts` | keep parity across supported locales |
 | Locale resolution | `i18n/index.ts`, `i18n/locales.ts` | handles browser-safe language mapping |
+| Agreed UX rules | `../docs/ux/spec.md` | each rule has an id; a shipped rule's test carries it in its name (`uxSpec.test.ts` checks) |
 | Main memory UI | `components/memory/AGENTS.md` | navigation, settings, citations, sources |
 | Chat import | `components/ChatImport/` | polling and notifications can hide failures |
 | Onboarding | `components/onboarding/` | focus trap, milestone cache, dismissal policy |

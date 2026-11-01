@@ -7,6 +7,7 @@ import {
   syntaxTreeAvailable,
 } from "@codemirror/language";
 import {
+  Facet,
   StateEffect,
   StateField,
   type Extension,
@@ -28,6 +29,9 @@ import {
   attachmentKind,
   attachmentName,
   attachmentUrl,
+  MEDIA_EMBED,
+  mediaEmbedUrl,
+  parseMediaEmbed,
   primeAttachmentsDir,
   subscribeAttachmentsDir,
   videoSource,
@@ -35,6 +39,11 @@ import {
 } from "../../../lib/pageAttachments";
 
 export const setWritingCompositionActive = StateEffect.define<boolean>();
+
+/** The page in the editor, so `![[name]]` embeds resolve against it. */
+export const writingPageId = Facet.define<string | null, string | null>({
+  combine: (values) => values.find((value) => value) ?? null,
+});
 const refreshWritingPresentation = StateEffect.define<null>();
 
 const writingCompositionActive = StateField.define<boolean>({
@@ -145,13 +154,15 @@ class ImageWidget extends WidgetType {
     readonly kind: AttachmentKind = "image",
     /** Shown above its own Markdown while the caret is in it. */
     readonly open = false,
+    /** An Obsidian embed's `|300` width. */
+    readonly width?: number,
   ) {
     super();
   }
 
   eq(other: ImageWidget): boolean {
     return other.source === this.source && other.alt === this.alt && other.kind === this.kind
-      && other.open === this.open;
+      && other.open === this.open && other.width === this.width;
   }
 
   // A click on an image opens its source; a video keeps its own controls.
@@ -167,6 +178,7 @@ class ImageWidget extends WidgetType {
       video.controls = true;
       video.preload = "metadata";
       if (this.alt) video.setAttribute("aria-label", this.alt);
+      if (this.width) video.style.width = `${this.width}px`;
       return video;
     }
     const image = document.createElement("img");
@@ -177,6 +189,7 @@ class ImageWidget extends WidgetType {
     image.setAttribute("decoding", "async");
     image.setAttribute("referrerpolicy", "no-referrer");
     image.draggable = false;
+    if (this.width) image.style.width = `${this.width}px`;
     return image;
   }
 }
@@ -772,6 +785,27 @@ function buildWritingRanges(view: EditorView): WritingRanges {
         }
       },
     });
+
+    // Obsidian image embeds, `![[name.png]]`, show as the image (Markdown
+    // has no node for them, so they are found in the text).
+    const text = state.sliceDoc(visible.from, visible.to);
+    for (const match of text.matchAll(MEDIA_EMBED)) {
+      const from = visible.from + match.index;
+      const to = from + match[0].length;
+      if (from <= frontmatterEnd || insideCode(tree.resolveInner(from, 1))) continue;
+      const embed = parseMediaEmbed(match[1]);
+      const source = embed && mediaEmbedUrl(embed, state.facet(writingPageId));
+      if (!embed || !source) continue;
+      if (!mediaIsRevealed(state, from, to, contentFocused)) {
+        addConcealment(from, to, new ImageWidget(source, embed.alt, embed.kind, false, embed.width));
+        continue;
+      }
+      if (compositionActive) continue;
+      decorations.push(
+        Decoration.widget({ widget: new ImageWidget(source, embed.alt, embed.kind, true, embed.width), side: -1 }).range(from),
+      );
+      addMarkClass(from, to, "cm-writing-media-source");
+    }
   }
 
   return {
@@ -883,6 +917,15 @@ function directChildrenNamed(node: TreeNodeLike, name: string): TreeNodeLike[] {
     if (child.name === name) matches.push(child);
   }
   return matches;
+}
+
+const CODE_NODES = new Set(["InlineCode", "FencedCode", "CodeBlock", "CodeText", "HTMLBlock", "CommentBlock"]);
+
+function insideCode(node: TreeNodeLike | null): boolean {
+  for (let current = node; current; current = current.parent) {
+    if (CODE_NODES.has(current.name)) return true;
+  }
+  return false;
 }
 
 function closestAncestorNamed(

@@ -7,6 +7,7 @@ import {
   listPagesExplicitBrowse,
   listRefinements,
   listRegisteredSources,
+  listWorkingOn,
   type DistillReviewResponse,
   type Page,
 } from "../../../lib/tauri";
@@ -25,6 +26,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   listAgents: vi.fn().mockResolvedValue([]),
   listRegisteredSources: vi.fn().mockResolvedValue([]),
   getTruthStatus: vi.fn().mockResolvedValue(null),
+  listWorkingOn: vi.fn().mockResolvedValue([]),
 }));
 
 function page(overrides: Partial<Page> = {}): Page {
@@ -179,7 +181,7 @@ describe("PagesOverview reading workspace", () => {
     const { onSelectPage } = renderOverview({ onBrowseAll });
 
     const list = await screen.findByTestId("wiki-new-pages");
-    expect(screen.getByRole("heading", { level: 2, name: "New pages" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Recently edited" })).toBeInTheDocument();
     const titles = [...list.querySelectorAll(".wiki-new-pages-title")].map(node => node.textContent);
     expect(titles).toEqual(["v2 launch plan", "Older launch notes"]);
     expect(screen.queryByText("ISP Outage Runbook (section_h1)")).not.toBeInTheDocument();
@@ -189,6 +191,70 @@ describe("PagesOverview reading workspace", () => {
     expect(onSelectPage).toHaveBeenCalledWith("new");
     fireEvent.click(screen.getByRole("button", { name: "See all pages" }));
     expect(onBrowseAll).toHaveBeenCalled();
+  });
+
+  describe("what you're working on", () => {
+    const now = Math.floor(Date.now() / 1000);
+
+    it("UX-HOME-1 leads the home with one card per active Brief item, opening its Space", async () => {
+      vi.mocked(listWorkingOn).mockResolvedValueOnce([
+        { space: "wenlan", id: "b1", text: "Storage: files become the source of truth", added_at: now },
+        { space: "wenlan-site", id: "b2", text: "Launch page: drop the PH badge", added_at: now - 3 * 86_400 },
+      ]);
+      const { container, onSelectSpace } = renderOverview();
+
+      const section = await screen.findByTestId("wiki-working-on");
+      expect(screen.getByRole("heading", { level: 2, name: "What you're working on" })).toBeInTheDocument();
+      expect(container.querySelector(".wiki-overview")?.firstElementChild).toBe(section);
+      const cards = [...section.querySelectorAll(".wiki-working-on-card")];
+      expect(cards.map((card) => card.querySelector(".wiki-working-on-text")?.textContent)).toEqual([
+        "Storage: files become the source of truth",
+        "Launch page: drop the PH badge",
+      ]);
+      expect(cards[0]).toHaveTextContent("wenlan · today");
+      expect(cards[1]).toHaveTextContent("wenlan-site · 3 days ago");
+
+      fireEvent.click(cards[1]);
+      expect(onSelectSpace).toHaveBeenCalledWith("wenlan-site");
+    });
+
+    it("UX-HOME-1 shows nothing when no Space has active work", async () => {
+      vi.mocked(listWorkingOn).mockResolvedValueOnce([]);
+      renderOverview();
+      await waitFor(() => expect(listWorkingOn).toHaveBeenCalled());
+      expect(screen.queryByTestId("wiki-working-on")).toBeNull();
+    });
+
+    it("UX-HOME-3 lists pages you edited and pages the AI newly wrote, not the AI's small edits", async () => {
+      vi.mocked(listPagesExplicitBrowse).mockImplementation(async status => status === "draft"
+        ? []
+        : [
+          page({ id: "touched", title: "Old AI page, touched up", creation_kind: "distilled", created_at: "2026-06-01T00:00:00Z", last_modified: "2026-10-31T09:00:00Z" }),
+          page({ id: "mine", title: "New tagline", creation_kind: "distilled", user_edited: true, created_at: "2026-06-02T00:00:00Z", last_modified: "2026-10-31T08:00:00Z" }),
+          page({ id: "fresh", title: "Competitor OpenWiki", creation_kind: "distilled", created_at: "2026-10-30T00:00:00Z", last_modified: "2026-10-30T00:00:00Z" }),
+        ]);
+      renderOverview();
+      const list = await screen.findByTestId("wiki-new-pages");
+      const rows = [...list.querySelectorAll(".wiki-new-pages-row")];
+      expect(rows.map((row) => row.querySelector(".wiki-new-pages-title")?.textContent)).toEqual([
+        "New tagline",
+        "Competitor OpenWiki",
+        "Old AI page, touched up",
+      ]);
+      expect(rows[0]).not.toHaveTextContent("AI wrote");
+      expect(rows[1]).toHaveTextContent("AI wrote");
+    });
+
+    it("UX-HOME-2 lists new pages without counting their sources", async () => {
+      vi.mocked(listPagesExplicitBrowse).mockImplementation(async status => status === "draft"
+        ? []
+        : [page({ id: "new", title: "v2 launch plan", creation_kind: "distilled", source_memory_ids: ["a", "b"] })]);
+      renderOverview();
+      const list = await screen.findByTestId("wiki-new-pages");
+      expect(list).toHaveTextContent("v2 launch plan");
+      expect(list).not.toHaveTextContent(/source/i);
+      expect(list.querySelector(".wiki-new-pages-meta")).toBeNull();
+    });
   });
 
   describe("getting started", () => {
@@ -255,7 +321,8 @@ describe("PagesOverview reading workspace", () => {
     const { container } = renderOverview({ onBrowseArchived });
     await waitFor(() => expect(container.querySelector(".wiki-overview")).toHaveAttribute("data-library-empty", "true"));
     const entry = await screen.findByRole("button", { name: "Archived pages" });
-    expect(entry).toHaveTextContent("Archived pages1");
+    // UX-HOME-2: the way back carries no count.
+    expect(entry).toHaveTextContent(/^Archived pages$/);
     fireEvent.click(entry);
     expect(onBrowseArchived).toHaveBeenCalledOnce();
   });

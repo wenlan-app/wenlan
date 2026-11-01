@@ -232,6 +232,10 @@ pub struct SessionDetailResponse {
     /// say. Computed by the detail route only; false when no path is stored.
     #[serde(default)]
     pub transcript_available: bool,
+    /// The things this conversation is in (at least one once the daemon has
+    /// sorted it, within a minute of its first write).
+    #[serde(default)]
+    pub things: Vec<crate::things::ThingRef>,
 }
 
 /// How a session relates to a note.

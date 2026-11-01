@@ -16,13 +16,13 @@ const APP_COMMANDS = new Set([
   "acknowledge_guarded_quit_request", "cancel_guarded_quit_request", "daemon_version", "daemon_version_status",
   "detect_mcp_clients_cmd", "get_agent", "get_api_key", "get_avatar_data_url", "get_background_ai_enabled",
   "get_external_llm", "get_external_llm_key_configured", "get_knowledge_path", "get_knowledge_path_info",
-  "get_lock_my_pages", "get_model_choice", "get_on_device_model", "get_profile", "get_remote_access_profile",
+  "get_model_choice", "get_on_device_model", "get_profile", "get_remote_access_profile",
   "get_remote_access_status", "get_resolved_routing", "get_setup_completed", "get_startup_preflight_status",
   "get_system_info", "get_telemetry_status", "get_wenlan_mcp_entry", "is_run_at_login_enabled", "list_agents",
   "list_external_models", "list_remote_grants", "local_setup_completed", "should_show_wizard",
-  "take_remote_access_notice", "take_remote_pairing_link", "warnings", "wire_state", "get_activity",
+  "take_open_link", "take_remote_access_notice", "take_remote_pairing_link", "warnings", "wire_state", "get_activity",
   "get_enrichment_status", "get_index_status", "open_tool_with_prompt", "save_temp_file", "quick_capture",
-  "set_api_key", "set_avatar", "remove_avatar", "set_background_ai_enabled", "set_external_llm", "set_lock_my_pages",
+  "set_api_key", "set_avatar", "remove_avatar", "set_background_ai_enabled", "set_external_llm",
   "set_model_choice", "set_run_at_login", "set_setup_completed", "set_telemetry_enabled", "set_traffic_lights_visible", "set_editor_composing",
   "update_profile", "quit_wenlan_full", "restart_daemon", "start_daemon_sidecar", "install_client_plugin",
   "install_client_skills", "register_connected_agent", "update_agent", "delete_agent", "write_mcp_config",
@@ -40,6 +40,7 @@ const EMPTY: Record<string, unknown> = {
   list_pinned_memories: [], list_watch_paths: [], get_page_sessions: [], list_recent_retrievals: [],
   get_pending_contradictions: [], list_decisions_cmd: [], list_decision_domains_cmd: [], list_activities: [],
   list_agent_activity: [], list_sources: [], read_source_dir: [], get_nurture_cards_cmd: [], get_chunks: [],
+  list_working_on: [],
   active_import_batches_cmd: { batches: [] },
   list_refinements: { proposals: [] },
   list_communities: { schema_version: "1", communities: [], next_cursor: null },
@@ -87,6 +88,9 @@ function answer(command: string, args: Record<string, unknown> | undefined): unk
       return (id && wiki.pageSources.get(id)) ?? [];
     case "get_page_links":
       return (id && wiki.pageLinks.get(id)) ?? { outbound: [], inbound: [] };
+    // The example wiki is read-only and stages no sentence proposals.
+    case "get_page_sentences":
+      return { page_id: id ?? "", version: 1, ai_edits: "propose", sentences: [], proposals: [] };
     case "list_spaces":
       return wiki.spaces;
     case "get_space":
