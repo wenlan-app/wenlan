@@ -42,27 +42,48 @@ pub async fn export_settings(
 ) -> Result<usize, WenlanError> {
     let mut rows = 0;
     for (file, tables) in SETTINGS_FILES {
-        let mut held = Map::new();
-        for table in *tables {
-            let Some(copied) = db.export_table(table).await? else {
-                continue;
-            };
-            rows += copied.rows.len();
-            held.insert(table.to_string(), table_value(&copied));
-        }
-        let value = json!({ "tables": held });
-        let text = serde_json::to_string_pretty(&value)
-            .map_err(|error| WenlanError::Validation(format!("settings {file}: {error}")))?
-            + "\n";
-        let reads_back = serde_json::from_str::<Value>(&text).ok() == Some(value);
-        super::memories::check(manifest, file, reads_back);
-        manifest.files.push(dirs.write(
+        rows += write_tables(
+            db,
+            dirs,
+            manifest,
             &format!("backstage/settings/{file}.json"),
             file,
             "settings",
-            &text,
-        )?);
+            tables,
+        )
+        .await?;
     }
+    Ok(rows)
+}
+
+/// Writes `tables`, each copied whole, as one JSON file at `path`; returns
+/// how many rows it holds. A table this database does not have is left out
+/// of the file.
+pub(super) async fn write_tables(
+    db: &MemoryDB,
+    dirs: &ExportDirs,
+    manifest: &mut Manifest,
+    path: &str,
+    id: &str,
+    file_type: &str,
+    tables: &[&'static str],
+) -> Result<usize, WenlanError> {
+    let mut rows = 0;
+    let mut held = Map::new();
+    for table in tables {
+        let Some(copied) = db.export_table(table).await? else {
+            continue;
+        };
+        rows += copied.rows.len();
+        held.insert(table.to_string(), table_value(&copied));
+    }
+    let value = json!({ "tables": held });
+    let text = serde_json::to_string_pretty(&value)
+        .map_err(|error| WenlanError::Validation(format!("{path}: {error}")))?
+        + "\n";
+    let reads_back = serde_json::from_str::<Value>(&text).ok() == Some(value);
+    super::memories::check(manifest, id, reads_back);
+    manifest.files.push(dirs.write(path, id, file_type, &text)?);
     Ok(rows)
 }
 

@@ -14,6 +14,7 @@
 //! <out>/backstage/proposals/canvas/ suggested and dismissed canvas parts
 //! <out>/backstage/layout/canvas/    canvases of pages with no page file
 //! <out>/backstage/settings/  spaces, things, AI tools, profile, onboarding
+//! <out>/backstage/records/   records with no file shape of their own yet
 //! <out>/export-manifest.json every file written, and every value left out
 //! ```
 //!
@@ -21,9 +22,12 @@
 //! memories and imported chats ([`memories::export_memories`]), Briefs
 //! ([`briefs::export_briefs`]), canvases beside their pages
 //! ([`canvases::export_canvases`]) and artifact originals
-//! ([`artifacts::export_artifacts`]) and settings
-//! ([`settings::export_settings`]). Proposals and history follow in their
-//! own parts and add to the same manifest. Every file is
+//! ([`artifacts::export_artifacts`]), settings
+//! ([`settings::export_settings`]) and the remaining records
+//! ([`records::export_records`]). [`FILE_TABLE_HOMES`] names where every
+//! file-class table goes, and a test keeps it equal to the table classes.
+//! Proposals and history follow in their own parts and add to the same
+//! manifest. Every file is
 //! read back after it is rendered; one that does not read back as written
 //! is listed.
 
@@ -32,6 +36,7 @@ pub mod briefs;
 pub mod canvases;
 pub mod memories;
 pub mod pages;
+pub mod records;
 pub mod settings;
 
 use std::path::{Component, Path, PathBuf};
@@ -45,6 +50,33 @@ use crate::error::WenlanError;
 /// reads an export it does not understand.
 pub const EXPORT_FORMAT: u32 = 1;
 pub const MANIFEST_FILE: &str = "export-manifest.json";
+
+/// The export part that writes each table classed
+/// [`File`](crate::db::table_classes::TableClass::File).
+pub const FILE_TABLE_HOMES: &[(&str, &str)] = &[
+    ("pages", "pages"),
+    ("page_maps", "canvases"),
+    ("page_map_nodes", "canvases"),
+    ("page_map_edges", "canvases"),
+    ("memories", "memories"),
+    ("briefs", "briefs"),
+    ("brief_items", "briefs"),
+    ("originals", "artifacts"),
+    ("spaces", "settings"),
+    ("things", "settings"),
+    ("profiles", "settings"),
+    ("agent_connections", "settings"),
+    ("onboarding_milestones", "settings"),
+    ("app_metadata", "settings"),
+    ("source_annotations", "records"),
+    ("okf_concepts", "records"),
+    ("okf_concept_links", "records"),
+    ("page_basis", "records"),
+    ("page_code_basis", "records"),
+    ("entity_page_map", "records"),
+    ("page_evidence", "records"),
+    ("page_sources", "records"),
+];
 
 /// Where an export goes.
 #[derive(Debug, Clone)]

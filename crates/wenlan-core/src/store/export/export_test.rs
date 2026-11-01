@@ -677,3 +677,76 @@ async fn settings_tables_are_copied_whole_with_their_stored_types() {
         .is_empty());
     assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
 }
+
+#[test]
+fn every_file_class_table_has_an_export_part() {
+    use super::records::RECORD_TABLES;
+    use super::settings::SETTINGS_FILES;
+    use super::FILE_TABLE_HOMES;
+    use crate::db::table_classes::{TableClass, TABLE_CLASSES};
+    use std::collections::BTreeSet;
+
+    let file_tables: BTreeSet<&str> = TABLE_CLASSES
+        .iter()
+        .filter(|(_, class)| *class == TableClass::File)
+        .map(|(table, _)| *table)
+        .collect();
+    let homes: BTreeSet<&str> = FILE_TABLE_HOMES.iter().map(|(table, _)| *table).collect();
+    assert_eq!(homes, file_tables, "a file-class table has no export part");
+
+    let home = |part: &str| -> BTreeSet<&str> {
+        FILE_TABLE_HOMES
+            .iter()
+            .filter(|(_, home)| *home == part)
+            .map(|(table, _)| *table)
+            .collect()
+    };
+    let records: BTreeSet<&str> = RECORD_TABLES.iter().copied().collect();
+    assert_eq!(home("records"), records);
+    // `thing_sessions` rides with `things`; it is classed history.
+    let settings: BTreeSet<&str> = SETTINGS_FILES
+        .iter()
+        .flat_map(|(_, tables)| tables.iter().copied())
+        .filter(|table| *table != "thing_sessions")
+        .collect();
+    assert_eq!(home("settings"), settings);
+}
+
+#[tokio::test]
+async fn records_keep_every_confirmation_and_annotation_column() {
+    use super::records::{export_records, RECORD_TABLES};
+
+    let (db, _db_dir) = test_db().await;
+    sql(
+        &db,
+        "INSERT INTO source_annotations (source, source_id, context_key, notes, page_ids, \
+         version, updated_at) VALUES ('memory', ?1, 'space:sp', 'Check the date.', '[]', 2, 9)",
+        "mem_1",
+    )
+    .await;
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    assert_eq!(export_records(&db, &dirs, &mut manifest).await.unwrap(), 1);
+    assert_eq!(manifest.files.len(), RECORD_TABLES.len());
+    let file: serde_json::Value =
+        serde_json::from_str(&read(&dirs, "backstage/records/source_annotations.json")).unwrap();
+    let table = &file["tables"]["source_annotations"];
+    assert_eq!(
+        table["columns"],
+        serde_json::json!([
+            "source",
+            "source_id",
+            "context_key",
+            "notes",
+            "page_ids",
+            "version",
+            "updated_at"
+        ])
+    );
+    assert_eq!(
+        table["rows"][0],
+        serde_json::json!(["memory", "mem_1", "space:sp", "Check the date.", "[]", 2, 9])
+    );
+    assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
+}
