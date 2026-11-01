@@ -92,6 +92,7 @@ pub mod space_context;
 pub mod steep;
 pub mod steep_new;
 pub mod steep_organize;
+pub mod store;
 pub mod synthesis;
 pub mod tags;
 pub(crate) mod temporal_query;
