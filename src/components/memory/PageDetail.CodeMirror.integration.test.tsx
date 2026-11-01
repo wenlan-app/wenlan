@@ -971,6 +971,9 @@ it("refreshes an open context graph after a page autosave persists new links", a
     return result;
   });
   act(() => replaceDocument(editorViewFromTextbox(textbox), "Body with [[New linked page]].\n"));
-  expect(await screen.findByRole("button", { name: "Open page: New linked page" })).toBeVisible();
+  // Autosave waits for typing to settle, then the graph refetches; a busy CI
+  // runner can take longer than findBy's default second for both.
+  await waitFor(() => expect(tauriMocks.updatePage).toHaveBeenCalled(), { timeout: 5_000 });
+  expect(await screen.findByRole("button", { name: "Open page: New linked page" }, { timeout: 5_000 })).toBeVisible();
   expect(screen.queryByText("No direct connections in the currently visible knowledge.")).toBeNull();
 });
