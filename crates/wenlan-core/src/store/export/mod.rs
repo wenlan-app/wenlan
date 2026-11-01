@@ -11,17 +11,23 @@
 //! <out>/backstage/memories/  memory files, by month
 //! <out>/backstage/originals/ imported chats, by vendor
 //! <out>/backstage/briefs/    one Brief per space
+//! <out>/backstage/proposals/canvas/ suggested and dismissed canvas parts
+//! <out>/backstage/layout/canvas/    canvases of pages with no page file
 //! <out>/export-manifest.json every file written, and every value left out
 //! ```
 //!
 //! So far: pages, entities and archived pages ([`pages::export_pages`])
-//! memories and imported chats ([`memories::export_memories`]) and Briefs
-//! ([`briefs::export_briefs`]). Artifacts, canvases, settings and history
-//! follow in their own parts and add to the same manifest. Every file is
+//! memories and imported chats ([`memories::export_memories`]), Briefs
+//! ([`briefs::export_briefs`]), canvases beside their pages
+//! ([`canvases::export_canvases`]) and artifact originals
+//! ([`artifacts::export_artifacts`]). Settings and history follow in their
+//! own parts and add to the same manifest. Every file is
 //! read back after it is rendered; one that does not read back as written
 //! is listed.
 
+pub mod artifacts;
 pub mod briefs;
+pub mod canvases;
 pub mod memories;
 pub mod pages;
 
@@ -83,6 +89,17 @@ impl ExportDirs {
         file_type: &str,
         text: &str,
     ) -> Result<ExportedFile, WenlanError> {
+        self.write_bytes(relative, id, file_type, text.as_bytes())
+    }
+
+    /// [`Self::write`] for bytes that need not be text.
+    pub(crate) fn write_bytes(
+        &self,
+        relative: &str,
+        id: &str,
+        file_type: &str,
+        bytes: &[u8],
+    ) -> Result<ExportedFile, WenlanError> {
         let path = self.root.join(safe_relative(relative)?);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -94,13 +111,13 @@ impl ExportDirs {
             .map_err(|error| {
                 WenlanError::Validation(format!("cannot write export file {relative}: {error}"))
             })?;
-        std::io::Write::write_all(&mut file, text.as_bytes())?;
+        std::io::Write::write_all(&mut file, bytes)?;
         file.sync_all()?;
         Ok(ExportedFile {
             id: id.to_string(),
             file_type: file_type.to_string(),
             path: relative.to_string(),
-            sha256: sha256(text.as_bytes()),
+            sha256: sha256(bytes),
         })
     }
 
