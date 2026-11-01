@@ -1,0 +1,3246 @@
+{
+  "version": 1,
+  "base": "279fad041bd4ff299bb463772e05389c01723a19",
+  "pages": {
+    "pages/data-and-storage.md": {
+      "id": "page_2a20234e-9d13-488a-98d4-0cb4331fec47",
+      "code": [
+        {
+          "path": "crates/wenlan-core/src/config.rs",
+          "start": 227,
+          "end": 247,
+          "anchor": {
+            "digest": "7ce68733fec12474a018df0aef985c216d202635439bce4979652ef456194979",
+            "selected_line_count": 21,
+            "first_line_hash": "665bf21bf793154c877db546038a08db2dd964e6425966d938e4c7574e5419dd",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "6c891383c285ca47a89d66f05c99a1114033a2f78012a5cb27abcc73771ef55e",
+            "following_context_line_count": 3,
+            "following_context_hash": "b9dbf58935cde523e59902b9ad204bd67e86beaee8bd276bd136f320810a1cc7"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/config.rs",
+          "start": 249,
+          "end": 268,
+          "anchor": {
+            "digest": "b7e6b73a79a0c2e01065b52bbc7326e5257d45f46564219c4b3731d7e2b2dc37",
+            "selected_line_count": 20,
+            "first_line_hash": "2e580ae1010cb8d8e975bd260b5a8fa5dd67e5a0230eea69707df7354f1c8e1e",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "147a4d3a37100dfb1a45853dadddcde70995b3e4e6b8f0eb5b7b63f273b0c5f4",
+            "following_context_line_count": 3,
+            "following_context_hash": "e071a29699a2c121f1e1fd81543be1cb22d77d7bfa265ed70992661b9187d829"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/config.rs",
+          "start": 277,
+          "end": 290,
+          "anchor": {
+            "digest": "c168978866a767bf04bc4e36aa3cdc4da3bf4fa4d610cb066963737848f17ed9",
+            "selected_line_count": 14,
+            "first_line_hash": "bb26373302f9567f1c5afd0ac3c5bd2ca1cd5ed7e59d634fa20bd5abe22e3b1d",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "290e8e83e03b306e79a7a4c92c7267f9fccafbb079d23699cda3932965c5bc08",
+            "following_context_line_count": 3,
+            "following_context_hash": "84acc001e82082a3e0e703c8aae6821729081b5880bf2d169dbb6bb84a850e63"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 1514,
+          "end": 1520,
+          "anchor": {
+            "digest": "ccde56aa1ae454eb2cb39775802c570c880f0737de135cf6468dbc450b3db45b",
+            "selected_line_count": 7,
+            "first_line_hash": "0c8e308eabd0d523c364717554c3838081957a15b0198cfe289a70e7f5db941b",
+            "last_line_hash": "9f5389a53597d05128efcf951055a6e855a9c0ebc3daf86d71ef9ad2834028b5",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "65581765e1c11053941a11049ba0c563bca3f8b2b39990015da24ce94a963f34",
+            "following_context_line_count": 3,
+            "following_context_hash": "7d4524c6a52250b2d27df01e44d0f425eeeac34ec29b0343f0788b0642f0858d"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 4256,
+          "end": 4299,
+          "anchor": {
+            "digest": "95c063555e4e2f4fc0b065328df141fac86eb757e6ca3d224b3c603d87753b68",
+            "selected_line_count": 44,
+            "first_line_hash": "9d492355b190853f0a246b0545507538f3b6cbc2cc75efe15ff704cb4427f76b",
+            "last_line_hash": "9d8b2b5670d18da8a99f6152f7ee75558019cd106d8032bf7c1117bd37273e37",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "78abfa46ff8e1af954fa809b2a9fd34e0523815c7b6c105960c4545923bd11fe",
+            "following_context_line_count": 3,
+            "following_context_hash": "2a42ca5236844c35cded39f596fdd758afa6ab73a90241cb399ffbcbcb0cf503"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 5114,
+          "end": 5143,
+          "anchor": {
+            "digest": "f32a4f3a14e7c068b2ac77da55788e9b821daf3cd6686652651cd1b002399559",
+            "selected_line_count": 30,
+            "first_line_hash": "7b7e5033ca6a237a73ad194e1139cae37a7d67fa20098ffbf694e0dd99c43098",
+            "last_line_hash": "5cd6e58e8d6b9c1dfa7e4e287dc5354ddc7ce65381d632f79b9fa6d8dbab538c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "d43b0a3b160de9efa4ee950b50151fd1e1bc2f7d7a2c1311deea46b5a05bf4f4",
+            "following_context_line_count": 3,
+            "following_context_hash": "de5417164a6e1335e972d0c99292cc4641e81727c4be5c6036b5f23e84da0e12"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 8080,
+          "end": 8094,
+          "anchor": {
+            "digest": "c702f3432985715b72584b282df9365c42e8afdda4d700dac9deafd4b16060ee",
+            "selected_line_count": 15,
+            "first_line_hash": "3a0a1ff7a43f81ea9f36933f36e0017790b891c98f46b2f593f5b01c7f2a8e76",
+            "last_line_hash": "5fbabe3ee05c837140c71b46b9715a321170faef4738fe90b5edf8bfa5fd9701",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "8bbe5886ce4755b4e7f12a5e6833c910515c693d1ef73f90847cfcfa8149cf42",
+            "following_context_line_count": 3,
+            "following_context_hash": "6e93964719df2af07f4b9e30a3d04b12623c653e7a2d6f4a929d74c7ceab28ab"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 11310,
+          "end": 11342,
+          "anchor": {
+            "digest": "3370d679874de34d3efb00dd67e040e15d57a26772c9b63299d2e6653001830c",
+            "selected_line_count": 33,
+            "first_line_hash": "3a45d78cbcfaa8c533a70ece18d662052a95ba4faf5106cf469a68bc7cb32168",
+            "last_line_hash": "b8cc5d1069f5ecd157a3c3db0f51a5e5c189fdcef2ec19ed781aa7dd36269b78",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "bbce51637cfd513812d7ac7d56a27e9b65f8997b347226af4e0fc60c88c15744",
+            "following_context_line_count": 3,
+            "following_context_hash": "43e683ef44c857558a186ada3a33380d981c73f0c06ddec52ca3a54df0623478"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 17070,
+          "end": 17103,
+          "anchor": {
+            "digest": "74d54f21199012846508cda2a80c0f60786714f69ec1f0e8428d62a11373e0b0",
+            "selected_line_count": 34,
+            "first_line_hash": "9bc062c5a7148ade5093cb362ad1241148bccd413fd3e09169486aaa78e12e3a",
+            "last_line_hash": "3d6b02a18cdb8fd3ae64a46afba9805bc1f143497d603314ca27abff5146b8ea",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "803a7a617a08d5a6a7a1050e674e0172624dc8cecd5d371e66d364c1d670c427",
+            "following_context_line_count": 3,
+            "following_context_hash": "5a2848c069ec59d864c950bb37a39e177fa7e9ccac43572cf9f3de0d0dbc7045"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db/code_basis.rs",
+          "start": 38,
+          "end": 63,
+          "anchor": {
+            "digest": "187387a6e8e0cd52f68d17efcd5810e643043bb0cafde6406551058fc8d840a3",
+            "selected_line_count": 26,
+            "first_line_hash": "d5c0855482d1cf6035bf83424c181320ad6b47643dd0ddca8e33a5c9f2182c55",
+            "last_line_hash": "fac6fc9f64679a096eab79275c569179e5c37446f665efc1610546d14855d0f5",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "bfa9dd39150f2d5356df1664cd69d73a22f8e79a485d694ddd92723eb2510a26",
+            "following_context_line_count": 3,
+            "following_context_hash": "717f4c1e13a88e6dd29dbbcf20470bfa892eda1c91a635646cf50cb71d53282a"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/export/knowledge.rs",
+          "start": 70,
+          "end": 89,
+          "anchor": {
+            "digest": "71ae3a8e820c72f0dcbbc558b17a64c33371aa85ac39d1103b40713acba33aa0",
+            "selected_line_count": 20,
+            "first_line_hash": "3262643ba1854a39865ca9063d56a3d9e9efa72882831b7797b50a6d17d94862",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "738134137f366edbd729f168c993a36a651b91d544037f449ae91e3d92c96aef",
+            "following_context_line_count": 3,
+            "following_context_hash": "46a99be5e7e4c5d62fd6a1994127e054bebc0de361b834c618ee8651d853ad77"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/export/knowledge.rs",
+          "start": 611,
+          "end": 623,
+          "anchor": {
+            "digest": "2a32b3aff625b232bcab4955affcd95b228a1c7acd4877b19315132c5c0688e3",
+            "selected_line_count": 13,
+            "first_line_hash": "bbb5d81be4ecf62a8578680bcaa579840bb29a1a2afaebfdc625d89453899809",
+            "last_line_hash": "da17d809d5b4446248a1e60c226c23a42d5fef84a8496081af8fdb01b3b22d2f",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "e291eb652b8e9000940043791afac21c4153f288b66e7746ac7c63fabc518334",
+            "following_context_line_count": 3,
+            "following_context_hash": "f6bbcd7d46ed86d89dbd18e3dd90dd71460d636e3e348e806707157b30d89486"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/export/knowledge.rs",
+          "start": 1388,
+          "end": 1410,
+          "anchor": {
+            "digest": "35f4ba1bfc5e98ec056580ec446002ce532d70120ae14f816f351edb6e11939b",
+            "selected_line_count": 23,
+            "first_line_hash": "5a37d00b58522d05b99fc7d0bd6abd2df5b1d6f997721182783b677b2dd98966",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "be9a1c8d250a8528f7356bc12751ffe45e80240987845476f47879fe024e731d"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/export/knowledge.rs",
+          "start": 5173,
+          "end": 5224,
+          "anchor": {
+            "digest": "454f7560ae1bee6921293890958e1e9206dbd0beea3469ea84207227c9e3d240",
+            "selected_line_count": 52,
+            "first_line_hash": "5f3e4ce71798f3779ef44d838c981435d41fcbade791ca85982ed3de94a62d6f",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "e4f41666e2eeebfba581581ac82cfe720bfa18b596b5b3542ed5e73ec654d76d",
+            "following_context_line_count": 3,
+            "following_context_hash": "358fa10e837c1bad8f8d80fee1ed5a18fd4c505cb82bca965a1009f090bc39aa"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/sources/page_watcher.rs",
+          "start": 1,
+          "end": 23,
+          "anchor": {
+            "digest": "892450d22640649b620d7977fef9bca5b6d07bc1100692c30474ace71a414312",
+            "selected_line_count": 23,
+            "first_line_hash": "01461ae137dca0f445362c3eb3b15ced89d55a5b09eabdc9d453910d49b5aedc",
+            "last_line_hash": "ce520e6e76e71b410efe48c9300604bbe3a5179bdfdf43bb2574376670f40863",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "990d41f8907372967bdb293f352e5d661cfea80f794d688e348c64d781543912"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main.rs",
+          "start": 740,
+          "end": 746,
+          "anchor": {
+            "digest": "690710aa56b316f03fea344c4254da52de580668bd8a71066b952b2b7b18dd1d",
+            "selected_line_count": 7,
+            "first_line_hash": "4ad50b0bf042172ae5c31af1a3acda64b34956ec3bd3a581804092d3fb0e7311",
+            "last_line_hash": "3c40e1649b4cb413f60313ea339c5d90bad601666e4357c02d41648d0871c27b",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "9357778de929c0118c494bd11f24e60456b5990a2c0db15e6a94a90283d71478",
+            "following_context_line_count": 3,
+            "following_context_hash": "2723f4c20a53ded6b6b16ca58e1102d583b32e167398c86c5d8a14a49667074a"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main/startup.rs",
+          "start": 408,
+          "end": 439,
+          "anchor": {
+            "digest": "8c55f304f9527c4d03d664d7fd227ae9709ca2792058110227f86480e715a2b5",
+            "selected_line_count": 32,
+            "first_line_hash": "021fb596db81e6d02bf3d2586ee3981fe519f275c0ac9ca76bbcf2ebb4097d96",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "b6e056a9b818967a7782f106925f16db4b02f74016df39577fb14f60e081ada0",
+            "following_context_line_count": 3,
+            "following_context_hash": "308a5fbb5e25ef6f1037ce59994853ed1251e99351266eb3aa3d319fa3e6bda8"
+          }
+        },
+        {
+          "path": "docs/markdown-projection.md",
+          "start": 34,
+          "end": 41,
+          "anchor": {
+            "digest": "bbe9e1343dcab7eaa771862dbb49a048cb60249c8c60686fccb4f6ad490ed847",
+            "selected_line_count": 8,
+            "first_line_hash": "0c4cd14aea6f69cbe87caec0102a26d2f281409944f34e17c21bbd8c84c32271",
+            "last_line_hash": "7f774ac34df3f2e681dab0ada7291bf6f5b0a6fa78c9849c9359d243134bb834",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "eb02355eb80c717e61867baf667aa46e27037f6cb0d545bb6e3b4a9999d1f5dc",
+            "following_context_line_count": 3,
+            "following_context_hash": "7f36d1cc0f1e2979f8118a46f6d1e9e2d6aacc8d7978debfbafe6780b49ea8cb"
+          }
+        }
+      ]
+    },
+    "pages/desktop-app.md": {
+      "id": "page_f666d12a-8db5-4f52-8a76-c8e259138906",
+      "code": [
+        {
+          "path": "app/src/api.rs",
+          "start": 515,
+          "end": 532,
+          "anchor": {
+            "digest": "132e891fcc0ff2853ce47a1a53c589eb28667b29f83edab5cd21e9d827c3ebe9",
+            "selected_line_count": 18,
+            "first_line_hash": "c0aaef34ffbab2020f0f953a3c1d5551a8a5f741957c9caac187cc3c95ed32d3",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "277e1fef07aaf11f8bcebc1958beee11345e59d34d74d2e1148c55e52d263ce4"
+          }
+        },
+        {
+          "path": "app/src/lib.rs",
+          "start": 617,
+          "end": 656,
+          "anchor": {
+            "digest": "9b8e2182b9407e2ce6530996abe0a483ded3346b631bf10fe312a89dec82d5cf",
+            "selected_line_count": 40,
+            "first_line_hash": "f054982bfbfcc1f3833b35a910f27ef17a289ac7249d24ff0cb1f0f457574c74",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f29dc65e67e62b2b477fcf4e29119db172bc1c4f1de955a2859b5497c826cc44",
+            "following_context_line_count": 3,
+            "following_context_hash": "badaf2aa714ee459001dd4b23d00e69feb461cbe112ee484db6affc0d5a0c2fa"
+          }
+        },
+        {
+          "path": "app/src/lib.rs",
+          "start": 715,
+          "end": 721,
+          "anchor": {
+            "digest": "c2f75804d1ad7e57fd7572c711b46d80cb278281a57a8ac569c9c5ba871f624f",
+            "selected_line_count": 7,
+            "first_line_hash": "f054982bfbfcc1f3833b35a910f27ef17a289ac7249d24ff0cb1f0f457574c74",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "475a09f1cf965208067f62990c4262e371fe8edc1a03ff17d4bbcf2774da9e58",
+            "following_context_line_count": 3,
+            "following_context_hash": "ab466308097665f5b1e034cbb4ef0c701dc017a2640da22fbbc18557a59e0749"
+          }
+        },
+        {
+          "path": "app/src/lib.rs",
+          "start": 928,
+          "end": 963,
+          "anchor": {
+            "digest": "1656cabd5e7dfa0fd7a2c340041a0bcb24bcbef6bd651a3ee5eb730c990c488e",
+            "selected_line_count": 36,
+            "first_line_hash": "706c7fc720ef868b1c92d4eeda02f86fd36c66f529f02999025fdc135fce7b85",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "44e29999b6dcd4971c2ba1319cc534df6056051d3e47455a6cf61d4ed2e9693d",
+            "following_context_line_count": 3,
+            "following_context_hash": "e9f8cdc4a4707f01a8b913a818ef205f6979af5e32f9fab514a569ee21f34add"
+          }
+        },
+        {
+          "path": "app/src/lib.rs",
+          "start": 1296,
+          "end": 1311,
+          "anchor": {
+            "digest": "a0562802d4ce947934daf9684c09eac33c5f89784fafc5411c9959916729a4f0",
+            "selected_line_count": 16,
+            "first_line_hash": "b6c775c826929d31037cbc89ed16a3bb5278a2034340509f0e4c144a19a51d16",
+            "last_line_hash": "f0b23ec9d93c644195c5da46834357dd2c3d825aa7de11bf5e707ce23c84d4a9",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "e4107121bccd806f37696791bbc97f057ea2af05cc7c2cb3857cf2e0abcda4b3",
+            "following_context_line_count": 3,
+            "following_context_hash": "3cfd172f36d3cada1882a7f442437c499302b7377a1b3a6d60e29602801df5bf"
+          }
+        },
+        {
+          "path": "app/src/lib.rs",
+          "start": 1356,
+          "end": 1368,
+          "anchor": {
+            "digest": "50489e428a0ddbb53dbd158ad6a98b1f044bf0655d3e27cb08671e04692473f0",
+            "selected_line_count": 13,
+            "first_line_hash": "3100dd48bfc199541cc3c7ff8d822c14bfb5545af3b731495078f8a6f17363f9",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "e3fee9b00112be41e2a11d0e2dc55d35d12de137c34d22c623b19a99c64c9d6f"
+          }
+        },
+        {
+          "path": "app/src/lib.rs",
+          "start": 1567,
+          "end": 1575,
+          "anchor": {
+            "digest": "64d014759cf03509097f2e093eb2faa68fb454dae90ac0c5409b7f7d26d6e339",
+            "selected_line_count": 9,
+            "first_line_hash": "4af54a5228ab59714aa98381fb14f4bc15e55aa1d7591335d0c4803e9fe3ce0f",
+            "last_line_hash": "bdf964e9024d857bc57af271b2084b164b55c826b65e3d78de4a7d0fbca4f538",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "acb3dc1a8ff648f1119807c646ae96a33e7b30de9648ede22b698ecf97051f5d",
+            "following_context_line_count": 3,
+            "following_context_hash": "7bcd24a5683aab860eaf8faa2e0831ad8db97ac4ed1f6d35e43546eceaffb061"
+          }
+        },
+        {
+          "path": "app/src/lib.rs",
+          "start": 1855,
+          "end": 1867,
+          "anchor": {
+            "digest": "78f851af6205c703529b2ce3d79e157d4f985b65b0aa0e6b00f563733622c189",
+            "selected_line_count": 13,
+            "first_line_hash": "081f00fcaf2d7ccf0b072b4ec6aacdc885414e670ab5e733e24c85d9ffbd6783",
+            "last_line_hash": "12dcb914d1576c7891bb7ed8d45fe5982046354272e1f52b0821d1230f1f8f00",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "548635e4b1d6e4da7721086d3ce28438d1624c425ebe12f7354addc421eae555",
+            "following_context_line_count": 3,
+            "following_context_hash": "0cbfd51942436030002014b18adc0289c32004a46318946d762aed604f2544ba"
+          }
+        },
+        {
+          "path": "app/src/lifecycle.rs",
+          "start": 126,
+          "end": 146,
+          "anchor": {
+            "digest": "e180700eef9d9eb2846d7f551b35af49bda0c7fb3c3498a561e4d38a3528fde6",
+            "selected_line_count": 21,
+            "first_line_hash": "f6a3f506d5c924179cebb92f8efb59d08f1e25cee200a17c04ddc887249fc37d",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c79798b6df48b8e8583636431a2e7e0e58239d820deff09b39e666afc77fe912",
+            "following_context_line_count": 3,
+            "following_context_hash": "a8f3a4fd2a6337869be6042d2f50481ae707e1194f181ad45d47e422fa448b9b"
+          }
+        },
+        {
+          "path": "app/src/remote_access.rs",
+          "start": 1300,
+          "end": 1309,
+          "anchor": {
+            "digest": "110d53e0a8fe20c4626031015897a34d34c14406236148013b2537a3c141cff8",
+            "selected_line_count": 10,
+            "first_line_hash": "3ecbaece07b3d365f6d5f374d89f3d819d2966245b4140fddfc69b10fefdf18f",
+            "last_line_hash": "8890186c0a14378423d78cf29954ae2c4e0b53c224adea0cd716a0feaefba131",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "63fa66695d4fc7764c8113a640eee039b9f551ae59160aa226a87ae7200d93b7",
+            "following_context_line_count": 3,
+            "following_context_hash": "23a86c182f92730574b789fb8ca5b40ce01cf0fcc6bc4ade492cea02bbdfdb4c"
+          }
+        },
+        {
+          "path": "app/src/remote_relay.rs",
+          "start": 1,
+          "end": 21,
+          "anchor": {
+            "digest": "e878ffda5b3ccb57120b1d036ff218459ead025462235e11b148bf62a8f1bd6e",
+            "selected_line_count": 21,
+            "first_line_hash": "677548a3cfa3a81470a3d5d728271971d5c068515b23afac3d818069efe7f6b6",
+            "last_line_hash": "96a44d7d35257eecffa6f8e74a309713a6763cf7738aa32fdd99b868cb5ef678",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "75d56012faa9d776d05296a4630bd2b1612426e1c236f2d66882a1f7b5df807d"
+          }
+        },
+        {
+          "path": "app/src/search.rs",
+          "start": 27,
+          "end": 42,
+          "anchor": {
+            "digest": "ff73e59b0ec2048bb175735483efbdb8d79d7872dbcd3f8c8478fafac4534a16",
+            "selected_line_count": 16,
+            "first_line_hash": "03f1b8b21d9f159d092038d97f27d0988a89e955159da2c6274ec34db2fc813d",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c39105ee39208ce854f929bf7ffc67058a9aadd773c775cd165cf75f805bed64",
+            "following_context_line_count": 3,
+            "following_context_hash": "296e639bbf662b1592eb38edf92a36672adfeb2fecdba217681e126893dc7450"
+          }
+        },
+        {
+          "path": "app/src/updater.rs",
+          "start": 593,
+          "end": 605,
+          "anchor": {
+            "digest": "8e754c6dba430f29d4da654d445509d0938bf621d93d88db3d08a0af2ead0248",
+            "selected_line_count": 13,
+            "first_line_hash": "c5757d82f043fdb29ee4558fb1e66c10a79eafa33bf090785583e3d55ff56661",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "84cdff4f0012a10c378a4a338a5e6a471cce746a7a08bc71ce82d8534179e71e",
+            "following_context_line_count": 3,
+            "following_context_hash": "8df0baef8ffb93ef8dc107e7a2b263454969e2037d792e9eeff6087b80cd34ae"
+          }
+        },
+        {
+          "path": "app/tauri.conf.json",
+          "start": 67,
+          "end": 71,
+          "anchor": {
+            "digest": "9a4e3d7bbaec0272022bdd20c9af8407a999dd639a5ad6d2e776fffb68176da5",
+            "selected_line_count": 5,
+            "first_line_hash": "ea9d2ebe675a6098d15fd7adaaa5b6fa2e64f67eb353bfa5e8de04e96404a9a8",
+            "last_line_hash": "39d4b54e0416be65f3fcb26963ff2c5c40153a3b4044179d7d7c8a6ca2f2bf87",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "886c62355f89e7bd1bb9d49577ee0559ed920383243b5a1a29fab89e9d0a4ffe",
+            "following_context_line_count": 3,
+            "following_context_hash": "4526bf6ada1f69e862b05953cacb30c5fec651768ff75ccb0d47e996878d624a"
+          }
+        },
+        {
+          "path": "src/App.tsx",
+          "start": 35,
+          "end": 62,
+          "anchor": {
+            "digest": "64a60800ed0d2d7261e24540803b5181901836cf459a786a2743d6a04a7b6eec",
+            "selected_line_count": 28,
+            "first_line_hash": "28606c3b4f2320510902f6e2f760aa43a0f21f55da235ac9a008e5ba46a41a5e",
+            "last_line_hash": "29576b54e255e3c948eea5b5904fa38b81682fdd3cbd9ae841ff0e7bd80d394c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "27e1979e25aea850bf1e4bdacc6587f4be0387e3c0d0a6319238ce2a88939d36",
+            "following_context_line_count": 3,
+            "following_context_hash": "a7c4ca92d20441b6f4e78b1a18f28e4768d7e3532698285869b09adee00b9c06"
+          }
+        },
+        {
+          "path": "src/App.tsx",
+          "start": 344,
+          "end": 404,
+          "anchor": {
+            "digest": "f378cfbda7506b470c7fb7f48fbb817d3466268e99c7c4b157a13ece331804a4",
+            "selected_line_count": 61,
+            "first_line_hash": "23b20c8096f394025ae8c3e8662ff4e3079b29b2cb3cccc9cb6520335d316dde",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "8ab724e77c1038c5e4adc751b44d62efc24e181630df98ec18aa4329393de2c0",
+            "following_context_line_count": 3,
+            "following_context_hash": "a6129e7b1aba89820b72c2818068193f9af3a6423632ab502465069509bbf413"
+          }
+        },
+        {
+          "path": "src/lib/tauri.ts",
+          "start": 11,
+          "end": 20,
+          "anchor": {
+            "digest": "b7f240d715c690bf91c2d3371c4dbb50b19e3edf1b11166207f3629715917eb6",
+            "selected_line_count": 10,
+            "first_line_hash": "24b1a323de77c0ef44e3e5a25fddb5e6112d6177eba9e6fa6a9940f5d0c8c8fa",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "086c5f22f6a05661c12a4aee1f6357c65e4bc6b2352a1dac2eae68a00698a70c",
+            "following_context_line_count": 3,
+            "following_context_hash": "159c31d55d40ec786b71cfb0f66d964e89d8654b42a825848a0e9b6bfc52a528"
+          }
+        },
+        {
+          "path": "src/main.tsx",
+          "start": 22,
+          "end": 55,
+          "anchor": {
+            "digest": "68fbbc4a572813517b84e7fcf1cd641d524db87cfc27270a2e98b0da34b12cd1",
+            "selected_line_count": 34,
+            "first_line_hash": "b05f7df8fc0f32f1d210fc38e3cb21bd82234a25b133cf1874c00912fbb77652",
+            "last_line_hash": "29576b54e255e3c948eea5b5904fa38b81682fdd3cbd9ae841ff0e7bd80d394c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "82a3c40c861324eb00ed6e99389717d719ec31f81507f03115d463c84f2f4759",
+            "following_context_line_count": 3,
+            "following_context_hash": "bf27f63f3371d3f962d3a2ce7edbe6555e2dd1fad0463e627441e1b88def6fdd"
+          }
+        }
+      ]
+    },
+    "pages/how-a-page-is-written.md": {
+      "id": "page_14bca8f3-8647-41ba-8778-381356b8448e",
+      "code": [
+        {
+          "path": "crates/wenlan-core/src/citations.rs",
+          "start": 806,
+          "end": 843,
+          "anchor": {
+            "digest": "1b93317d92cbcae4b08d6872c6dea4d47e3dcabb748643c8d20140665640c409",
+            "selected_line_count": 38,
+            "first_line_hash": "d02a8dd7c00546baddf3791e37c00e5bd9a722177f7b915f582c6be9dded5e00",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "da701eea78b8e6371d5cfae93617b6d3fdccd02c3a5987f80c3f6477d1e2e6be",
+            "following_context_line_count": 3,
+            "following_context_hash": "650f12c5ce88f0fe8370c11b1d3a4f7a1f554548a6b4ee9b17743bf4a8f8f8ee"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/code_basis.rs",
+          "start": 31,
+          "end": 34,
+          "anchor": {
+            "digest": "1cfeb3155a4e6344d537518d24aeb6e78efa130a934dabba665cc05a7d5e6064",
+            "selected_line_count": 4,
+            "first_line_hash": "6f899726afb0b2e1cdd7b10f9b1aab8a1367cf423f6beb70e47c4956941c64f2",
+            "last_line_hash": "61d99a55178f3034bf4632dbb2d765bbc1d79829f61eb2dbe3d90482184cb503",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f029fae0202c7e222ff64cd76f7a44f3b6e6b81b59913a0ef06ef89a8171c5fb",
+            "following_context_line_count": 3,
+            "following_context_hash": "cd7dcbf1cd7fb94abd81e39291abf528676a54e77ddb25b1d1cef86bb3a2ff91"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/code_basis.rs",
+          "start": 363,
+          "end": 388,
+          "anchor": {
+            "digest": "96ad5d3cc23612f5f02a6ebf9427a8b59a644f2f4bb4056114871d281695234f",
+            "selected_line_count": 26,
+            "first_line_hash": "c22e01ff1cde24c0a2e588cc132d9c6a36bb47579a7c77b135bbcc7d8eea5d6f",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "e8c776853b9afc2614ce05b936d4a49b9d4ef3274b123190932147f5054b6c14",
+            "following_context_line_count": 3,
+            "following_context_hash": "8db8a7d1abfae70865e1eb3db457755f37107a7b126684b6e38180c64ef24046"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 53483,
+          "end": 53521,
+          "anchor": {
+            "digest": "f03d970286491e32434222e76861106179935f8f6a392e54afbc622e5ffbdfd0",
+            "selected_line_count": 39,
+            "first_line_hash": "442ed601299c0336863d25373754cd3fc495bb4899e1e1e2981db66b141bb831",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "fdc28dba24767a9a58e1995b1bb34a787c8f1286244bea3e576ee8ce9e6802fc",
+            "following_context_line_count": 3,
+            "following_context_hash": "895f72e22544bf0ca68502d8568851023f6d1b2671f40411635b7ff75ff8a31a"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 53949,
+          "end": 53983,
+          "anchor": {
+            "digest": "dde975af7433762b290d072161a5f0867c77a15de0a07cefe6a98f8928d52013",
+            "selected_line_count": 35,
+            "first_line_hash": "4bc2706089054275f1a20d2446daa344fe76c3f783c8290af5a10b320dd644b0",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "f16cb27afe279ac61e2df975eea4ee54511acbb088d8c04d69a5aa4933bdb576"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/diagrams.rs",
+          "start": 81,
+          "end": 123,
+          "anchor": {
+            "digest": "6dd40cd2b86589ce79d5b620fd39f5b1076ce965b035f305db7672e275c799dd",
+            "selected_line_count": 43,
+            "first_line_hash": "a830d60a199881ae79255767e14007833e71e69159ae0f184ecc7241beda781d",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "e6ec0fd28ce26999c814e179d688646a2afa383b132776a1686e944293cb659f",
+            "following_context_line_count": 3,
+            "following_context_hash": "090e53752becdfc383e17f8965e8c8beacfb79b9f28936fabc32d154ae90171b"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/export/knowledge.rs",
+          "start": 510,
+          "end": 543,
+          "anchor": {
+            "digest": "d894896efef2d141a1cb9678b078a0f2ee39c6ee6b7eb5a25e484a50e68b5f93",
+            "selected_line_count": 34,
+            "first_line_hash": "5f97f91d67074627ae612802fb8b5f74152be850fc9156e6d7a89605f986b85d",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f7b6a3ad388207c87abf66716ad3829f6b1441e2280c90a65fe7aa97c9fc7ad0",
+            "following_context_line_count": 3,
+            "following_context_hash": "df96398ba84a52c10224ad707059e4e1e37040bf97a41f829ee05e6faa958615"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/post_write/page_create.rs",
+          "start": 463,
+          "end": 509,
+          "anchor": {
+            "digest": "8e87541c27e973572ad98db19bd5845b44a84e5dbe9562770ad361c444e4fb86",
+            "selected_line_count": 47,
+            "first_line_hash": "8d264b5809a2741d44045ccf954fab17d0034406930794aa26516a6ec335bf7d",
+            "last_line_hash": "27fc58b2dc7d4da1b8a61f516de4c725dafdd4f045d9f77e6005773d6186eecf",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "0ee72d7997b1e0945cf89f4e1c353d985a2749882579ce75f22d6243e3e32095",
+            "following_context_line_count": 3,
+            "following_context_hash": "5ee36c01254c6165921e13aa72a4a0357f6177a7888e888741b8d461fd58ff7d"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/post_write/page_update.rs",
+          "start": 365,
+          "end": 414,
+          "anchor": {
+            "digest": "d17b72067d930f68eac2705edc9a11640397e037d244a1a7b00d3a3502535a6b",
+            "selected_line_count": 50,
+            "first_line_hash": "9421741b42460128e030efeac5ecf3fd54f636eafa2ddfc39c7018f0be79d276",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "abf62204adcbbf8f3ef9059ba75c60133035bb6f5024a8944ff1e2665ba7e4eb",
+            "following_context_line_count": 3,
+            "following_context_hash": "f11fe540e0900ce194143488c8e1a958091306614a5491a772a9af931c024a4f"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/tools.rs",
+          "start": 3298,
+          "end": 3332,
+          "anchor": {
+            "digest": "81a1486b87cc83dcf7eef23b9ea8a95095cf3ca82b8aa1faa912b25d5c1017a8",
+            "selected_line_count": 35,
+            "first_line_hash": "e76dca6fbb0acc781defaf50f5134c8defed70734aff51229ab753e6af98af3c",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "9695c20353b7be172d77dc7a46b75a51c80f41c170b55219916a7910ec8ec643",
+            "following_context_line_count": 3,
+            "following_context_hash": "796be200d0053917e9494745ba01fdcad054db5be0631374e9d3ef9d9e9f3e78"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/tools.rs",
+          "start": 3342,
+          "end": 3361,
+          "anchor": {
+            "digest": "998d3a5b2a0542bfd6ec7b2a907e2e78eeb052525ccb2dddb5e4ad8b2edd2ca6",
+            "selected_line_count": 20,
+            "first_line_hash": "2dd05433aaa9bbb0129606ffe277156146711f1d0e4a1883abe50de4ff4d1036",
+            "last_line_hash": "5097b4172abf5c9e75ba89ae2787c44ea466998af5e3abead27a003fa955ad70",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "9b887b21c575549869337a7da053a38298ef8a28fef269e83caadbcbaa072d13",
+            "following_context_line_count": 3,
+            "following_context_hash": "8ca9956405e79cc12203e8dcda55c117e13862821952399214617d08158aacdc"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/page_routes.rs",
+          "start": 627,
+          "end": 667,
+          "anchor": {
+            "digest": "886c63f769634421976181413475f752fa21b9dfec4e08145b2a92cd9b2035f7",
+            "selected_line_count": 41,
+            "first_line_hash": "2d3e10c075c14447689e98c3e21eadeb58c51fc68bb5665c940df52b6822440e",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c566baa4fac72a125485122504866ab91f74e36ba5c90b80aee6a948a8bdbb69",
+            "following_context_line_count": 3,
+            "following_context_hash": "eb876b4b0bf1189ac7e72a0fb418791db32c3884d054e472d48ea9738ee90903"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/page_routes.rs",
+          "start": 711,
+          "end": 740,
+          "anchor": {
+            "digest": "5bc66ae3890b34b0df85930dd5439778adb2681be27fe632722d9c61fa212767",
+            "selected_line_count": 30,
+            "first_line_hash": "8c9a02bf29352181307a815707660c8cabeca6d71b948ba00abbc8a75d1fa3e1",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "d229123cb7261d8d4efe4b39e0a2a8cd75e88cc07fd905dc7bb794fa0b673bc7",
+            "following_context_line_count": 3,
+            "following_context_hash": "81f9637809ab8a0c84aa8e7778721f9b64fa96732a219ff521f69133960e0a93"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/page_routes.rs",
+          "start": 1711,
+          "end": 1734,
+          "anchor": {
+            "digest": "55c9c8f22368b7abadbed994561eb9e542d7ab15094961a8c15a58c13a08a9a7",
+            "selected_line_count": 24,
+            "first_line_hash": "101d474234ee3eb9f33f3f1209187a7120a3e77e546bacd97a9a77cfb80810f8",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "1de75708ee11a1553b5f83c17f2946422eae20f7d353f52f473652c1b1d48ca1",
+            "following_context_line_count": 3,
+            "following_context_hash": "1790074e5e9698d8698f19216a0f2a541f260229ad60d2e6dce752d89ca7e352"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/page_routes.rs",
+          "start": 1866,
+          "end": 1906,
+          "anchor": {
+            "digest": "700a13e3e52a3bdd44962c458807aad985e40b81f1e1e8f81ddbb268faeca941",
+            "selected_line_count": 41,
+            "first_line_hash": "362f2f5f2f9fde7668645d7063cf718c2d52d3d69c044010197410fd86b76290",
+            "last_line_hash": "9d8b2b5670d18da8a99f6152f7ee75558019cd106d8032bf7c1117bd37273e37",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "07fd5f57fff93393860ac16a5f1a4fd08638c80eb9d31cb788e782d665d7b227",
+            "following_context_line_count": 3,
+            "following_context_hash": "990d65e8e774fafbed45082e963caca0dff98f57cada1323dc18ce4b5c86d893"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/page_routes.rs",
+          "start": 1907,
+          "end": 1961,
+          "anchor": {
+            "digest": "73590f8e06154ab72c2b63a75d8475cc63df1450cd0a4e28d033dcf8e7fe793e",
+            "selected_line_count": 55,
+            "first_line_hash": "8566d7a63a00b79c3deb4e6b899eb7dac41572297e910889f212274cfd910f14",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "9259d66bd9b0db35a78cac3153ccc3c164048a43a1a622a7c3f57ced36dbfe04",
+            "following_context_line_count": 3,
+            "following_context_hash": "ec0af1aa75675abacd01b9de769f2690b3aeb503671fe3eb233651f702c70526"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/page_routes.rs",
+          "start": 2007,
+          "end": 2068,
+          "anchor": {
+            "digest": "2f5bde516bc232ad5dbac3946421aa18c739151133d73b5db0a41563b8634336",
+            "selected_line_count": 62,
+            "first_line_hash": "6c5bc0294288dca7d404e46316e61d437207d7307fa0f905662ce986469de5d9",
+            "last_line_hash": "13713c3692359d7c8773ee40d21218bde64a0f370533cb4d27903d75dbb86992",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "4dd42c6059216173645e1e4b639fd62a9a031ba5f0d18fec8d08f2e7c28a663a",
+            "following_context_line_count": 3,
+            "following_context_hash": "4778f3f129068308f1f818d2dff3e62d3423bbdb765f179b32385b5df319725c"
+          }
+        },
+        {
+          "path": "crates/wenlan-types/src/code_basis.rs",
+          "start": 11,
+          "end": 34,
+          "anchor": {
+            "digest": "40534fb37f15bc4e5cbf76fc9482ace878f09757518ddc4d3c0a4421b537e2d1",
+            "selected_line_count": 24,
+            "first_line_hash": "49265a4cadc50b43e15d18f4c8e08e85600431a5d635e0ff79552d5862e2ae55",
+            "last_line_hash": "8bc1405478d983ca6d57276abad1ecf15e9006dc8c060ffee679b9e83d4736e6",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "41ba00d21cf6efe30b5f246b1b97a4be1f9cb4135ec29111b318de95bb897e99",
+            "following_context_line_count": 3,
+            "following_context_hash": "ef492c31ab7ea722783af57a8cdba6cb67cb1a78db1d64ea2a1c96f67f81120d"
+          }
+        },
+        {
+          "path": "docs/citation-checks.md",
+          "start": 13,
+          "end": 27,
+          "anchor": {
+            "digest": "fd54cc74eb170ccc137f9d1208d89ef1bb496a9229815df3ac52e8a031ab4177",
+            "selected_line_count": 15,
+            "first_line_hash": "7d4e1592e9735c9ce4d6edce7396e6dc51234d9f2ef6b25593748bedddf8421f",
+            "last_line_hash": "286a5a8bdc5426e5a128c8747523e1765262cf20110155c13096a19f0505f952",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "2da9503d9cea5a302c9583684a5eab53a0d2f92785ecf79da96f3278ef616b6f",
+            "following_context_line_count": 3,
+            "following_context_hash": "d5e7617c18344388918d0ec58d4a5a9fba3615f8d748aa56a228e9fec4600f34"
+          }
+        }
+      ]
+    },
+    "pages/how-search-works.md": {
+      "id": "page_61c74305-5265-469a-b2d3-f816b5493bb1",
+      "code": [
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 2814,
+          "end": 2822,
+          "anchor": {
+            "digest": "9bc1c7f0d2868d60b5aef3c85b3e311fb47311e69ef5a31e5b7965871d11075d",
+            "selected_line_count": 9,
+            "first_line_hash": "ad243225e20e844f1a34c9b2d87ff49fe9b442d6855a0837accd471146d5c537",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "ee48182cc4995c5ade086d32a9df9cec5f88d1f6ac72e690b832f9719207fe68",
+            "following_context_line_count": 3,
+            "following_context_hash": "cc50ac2bd6d519af51c9aa8d8d118e5e57fc3f5dc6295ed2cf7046222735e0f7"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 5304,
+          "end": 5310,
+          "anchor": {
+            "digest": "f6d1ccc981589403d93fbb7025d25cdae57d9f069e7b87e152ed9b97cc88d368",
+            "selected_line_count": 7,
+            "first_line_hash": "54ef294971d7a02ca104c3efee84db69a79f0e60866c25c7b54bfa6d3d9977a3",
+            "last_line_hash": "be96a6d524be293f4fc1a067de51154601f6e3a2c3cac3a6aeaebacc8fa09a52",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "4a670eeae96933db10a226f6a932e2ef197ea1fbd85360b7bac136b32eb2ebac",
+            "following_context_line_count": 3,
+            "following_context_hash": "7984ae6c7653c902c564922d1e7f87ac013ea7c607b71f3849814a2858e4d8c4"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 28316,
+          "end": 28348,
+          "anchor": {
+            "digest": "8cfc45abee93631a9ad7499c3f38145f56c8483826b9ce002b27624f28c67c70",
+            "selected_line_count": 33,
+            "first_line_hash": "42b7afb74455ab3802d0cedf1f5758c40c27afcc385c013b42580d67c413345c",
+            "last_line_hash": "5f6a42cec341bb3339816e2a89bc4572d6555060d9f7187afc60a67abce6765b",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "cf0b56f2fcb450c4aa033d68c8baa982fd321e62f7d6cd277a8c156c5956461f",
+            "following_context_line_count": 3,
+            "following_context_hash": "af824f9caa27323af236f7186a4aa0c5b38c7ba889610f16e4f188929bc48ca2"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 28422,
+          "end": 28437,
+          "anchor": {
+            "digest": "e2526db6f0d141540429d04dea21b9f683ea0e6d85264f7c0ec38ce89d464301",
+            "selected_line_count": 16,
+            "first_line_hash": "639bba73cadc6a7600048c3733a9ab254ca108ef5c04bbaae9c16f182c1e7a90",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "0965cf8588b87c488fac70e6235620a2cdce0ebed947f8e36759414086c907d6",
+            "following_context_line_count": 3,
+            "following_context_hash": "03d058770d72ee4b0c2d7fec57ac8c24670f498cc1b15448cab90b037659fe0e"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 28508,
+          "end": 28532,
+          "anchor": {
+            "digest": "a93df6c00f229978cba568708ac015c24333d6173756365a023267fb246e3855",
+            "selected_line_count": 25,
+            "first_line_hash": "b0e15bfbdb9cccbd143d6e42c2f93a9a42285463d082e27db31c04c78a88e4d7",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "b88908755418d969c6fcce12a625ebbeafea1b608cdb7240b5e7edca467f8a43",
+            "following_context_line_count": 3,
+            "following_context_hash": "75d15e0e634cc58620b36c199f7c59ca8f8d6055f9d4a055d21ceae1b404f9e6"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 28573,
+          "end": 28617,
+          "anchor": {
+            "digest": "f411ec4732c1cec3efe752456da7f704d174c6f33042a06e5c94da4787443666",
+            "selected_line_count": 45,
+            "first_line_hash": "4f99103ff348d3e84001ae1ee91a168511efc03550e2612fb5961b2d60775cc3",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "d2063e801682c1b7023ec37df5c1c76b60afe4ce18a3c86e4a17d72fa9c39073",
+            "following_context_line_count": 3,
+            "following_context_hash": "b63b5ffc314cac994ab3044d515392c09da45ac0bcf1cbe640dbb1bf06351b61"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 28683,
+          "end": 28724,
+          "anchor": {
+            "digest": "3a97be475c42c54c46802fb02ea6c520f46031ced233d05984b3ce56dba5b461",
+            "selected_line_count": 42,
+            "first_line_hash": "6fa4bb89e12f224fc9400fdf0ce1f7d12e7c55e8d9386178675fa7497309cd9c",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "6cecc7dc1b71d6a5c370b28ba0f3c71dd07d91607d823cfba50e51bfb0a59353",
+            "following_context_line_count": 3,
+            "following_context_hash": "7eba12957043f139977045fb58292f10508f54931a21c548b677893dae1fda38"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 28977,
+          "end": 29011,
+          "anchor": {
+            "digest": "14df50efbfa8f70a5e6ffbbc8bb5a36c177f7b45f8e802d555dff05854d3e5f6",
+            "selected_line_count": 35,
+            "first_line_hash": "291707ecf57f12b8070dae16d3eff97ee857f39bd0f72131cbff9aa29df4617d",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "8562ce9c96ff2fc7da4b0e867827db669774bd25485f3bad1aa1db14a3ef2d45"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 29917,
+          "end": 29974,
+          "anchor": {
+            "digest": "2f80e9f0ee2f97f2bfea583370c86e05821aff38a145073dea2f1e0c0efdf1ac",
+            "selected_line_count": 58,
+            "first_line_hash": "e46209a96b07dc8ad7a0a98c7861c62b51d8a04e1f17d7a70cb39530813773ae",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "e37df9b9ff5995bf01ecf85f7c30f8a8cf70c73c0850b2a1ea4fd38abad8d150",
+            "following_context_line_count": 3,
+            "following_context_hash": "dc1ce3367f2972b048e6b411c82ca9bccfa1010f3d5bb882733df9b569a4a9ef"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 30446,
+          "end": 30465,
+          "anchor": {
+            "digest": "100dbbc3770ffd5e330f02b16c12bf93a488b0e9b9d5edec476a239be01ce8e5",
+            "selected_line_count": 20,
+            "first_line_hash": "d163644c8d0004fb23de3f3f47d1fbaa7e3ed92c4a1df813b0d4488ca0518309",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "52735c9c5d6bf1cf90fea3a9d73ea71f54cb81013ecc4e145aaa43a068eff700",
+            "following_context_line_count": 3,
+            "following_context_hash": "50feaa055cf53707009859a82dcb5a59d64bd9ab12da670feab7c33aa58ade2b"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 30582,
+          "end": 30602,
+          "anchor": {
+            "digest": "8f39699a1deb2983044930445e6fdc83d1a0145eddf14cbbb40b1b5737ac1a0e",
+            "selected_line_count": 21,
+            "first_line_hash": "20261f240cb3c41a48cf830fb07aa43461320cd99b59f9e29aa507a611eceb04",
+            "last_line_hash": "9d8b2b5670d18da8a99f6152f7ee75558019cd106d8032bf7c1117bd37273e37",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "1626be1cd10031a14efae11bce063ea850d393d89798c5fb41c44e4718948028",
+            "following_context_line_count": 3,
+            "following_context_hash": "507555f32f9be707515a78927b96c747ab0beafdaa21fc7dc5bfc1647d0ed15a"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 30640,
+          "end": 30656,
+          "anchor": {
+            "digest": "38ca1a34c707062234d18af0212e030bb77131c452d75f92e244c64e7a2b7e94",
+            "selected_line_count": 17,
+            "first_line_hash": "380e1763dcae347c489f75de2bace34929fb5624c1297026ed26a735def698a4",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "0eadab5f03ec6cd8cb65854697ac22c3027f59b44962efcf79338f86645c3148",
+            "following_context_line_count": 3,
+            "following_context_hash": "c7e0fcb60eac34ce1c3e99f2c97e6f4a8cca0f4ce003b212b3d52f4835be9ba2"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 44637,
+          "end": 44680,
+          "anchor": {
+            "digest": "3a9980f8799f9805b35a6bd34617d75389ed2180443140819a7170c0bd790548",
+            "selected_line_count": 44,
+            "first_line_hash": "4f3f5bdd78ebf533a4144570e7b83d224202fbc9bff68dd9a8e88e2c7a65399e",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "02a6b83eadd47d65be1add54fff9fbdfbb2de81d62ce5ab78ae00abcb88a2309",
+            "following_context_line_count": 3,
+            "following_context_hash": "be8a4b3dfbaf54139d2ce34fe12a90e5177ca08c8612db8ad4daedc9c3aa0ec4"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/pages.rs",
+          "start": 162,
+          "end": 210,
+          "anchor": {
+            "digest": "5b143cb5dbcca62af368a393817a7ff0ffbecbfa442aba6e7deccb123ca67f52",
+            "selected_line_count": 49,
+            "first_line_hash": "c003d154e7dcf102ba07cdf19f9469acc53959b97b447404eb9f4f210cfecae5",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c0d84827ab454508178113a866a41eb14fbbdc345259ea9478ff49c8b0ce3ef3",
+            "following_context_line_count": 3,
+            "following_context_hash": "5e5f1d1cf13c9cb6609cfeb2cd7670666d470a46c01bd9c52f51573b58b7fa63"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/read_scope.rs",
+          "start": 5,
+          "end": 56,
+          "anchor": {
+            "digest": "4880d51d8eb0b9c9704cef22213741b32b322a553a1bc6b559e0bc52b8c2fecc",
+            "selected_line_count": 52,
+            "first_line_hash": "f5e4e8736d7a4baa999eb6718fdc7d300efa47c38aa9ba607edec6654c3ed85b",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "bf2d6158f14b2a76da0b398038a31b4852c5279a4ea531009239477b1d5581be",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/reranker.rs",
+          "start": 219,
+          "end": 283,
+          "anchor": {
+            "digest": "633e098d6f1c53a7fd26960bb8c84f0e40fc41960e64a716a91f9cd044857c68",
+            "selected_line_count": 65,
+            "first_line_hash": "3e56b9c03d4d6503ac6f9fce4160bfd0fc9b2026ab53e229a6abbb54d66f6ea0",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "bd66d09f9699a5c7d8a2d61492cc827f9c951d022eab529e268a9c91b89cf73a"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/tools.rs",
+          "start": 2351,
+          "end": 2386,
+          "anchor": {
+            "digest": "60b6c0badbec709d74b3b1ef0b6fac16a42f597acc818ce960c8271941890d84",
+            "selected_line_count": 36,
+            "first_line_hash": "48308fef80721460c8fb00831d2167e48682b7f29605fa6575a70e9fcef039c8",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "261b08ef4559854649bcb6d8b2380ecea13040d33f7f1740205ca4f6b17faae7",
+            "following_context_line_count": 3,
+            "following_context_hash": "622c05a37e5309c50a4c5ef2c354fb0a8b5189042036534965e840d3c7780b5c"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/memory_routes.rs",
+          "start": 1279,
+          "end": 1314,
+          "anchor": {
+            "digest": "faf9dabd8dd840ab7fc192980902377c20d795137af791e3a7b2050a11ea2549",
+            "selected_line_count": 36,
+            "first_line_hash": "6d579f50640624c2cf8b0119728ae2f2847ecf31efbff62a9e9c5e79827fb26d",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "4253e8674e69ed8e84ab246fce9bb34ae0268d6d8197e02df77d44c35d48ecfb",
+            "following_context_line_count": 3,
+            "following_context_hash": "b7d0c2a52f1c092fa8fe90ed3a2ab59210cae7364e5a51550299215cd0af7678"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/memory_routes.rs",
+          "start": 1378,
+          "end": 1424,
+          "anchor": {
+            "digest": "faf7e1c50187aaca915c8c1cc0449876820503d1366bba7339cb09f9258b6a59",
+            "selected_line_count": 47,
+            "first_line_hash": "5e0818c72dd05e9aa9565b5469f2d6632b0269b8a87c9db02ee939690c412945",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "5043111b342ada1d3a645b78c135df6b2551e54465d7c077f31e11d30c5f4628",
+            "following_context_line_count": 3,
+            "following_context_hash": "b314aa0a69501efb92fc23285fca4d33dc69f06d87d742b2418b79a8a4a52e71"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/routes.rs",
+          "start": 242,
+          "end": 268,
+          "anchor": {
+            "digest": "585fcd39d3907bcc79f7ff986317238ce7ed26dbc0521e84c201fb4ae8f856eb",
+            "selected_line_count": 27,
+            "first_line_hash": "0fdc38180033e3d0c86cf38b9cb392420925ff875dc19d79a40a133afe9827e2",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "ba6e1144c7548c943caf091a8f779529a1ce4386489e31b067191fe83688a844",
+            "following_context_line_count": 3,
+            "following_context_hash": "f5ed4697a95fb7ed18e7d7163886e47d484a1e4885b8124e3ebd384ee20a557c"
+          }
+        }
+      ]
+    },
+    "pages/how-steep-keeps-pages-current.md": {
+      "id": "page_425b3a3a-f111-4723-b7f9-cbb1e9fc1d07",
+      "code": [
+        {
+          "path": "crates/wenlan-core/src/code_basis_recheck.rs",
+          "start": 4,
+          "end": 17,
+          "anchor": {
+            "digest": "6f30d077c6bfda0d3ba6bf7aba328a322622deeda6a41ce125bb57e21cdaaaab",
+            "selected_line_count": 14,
+            "first_line_hash": "d4e83a7b4a1a8abacd0f82b7d8c0b368426393ac9c4c90862356face2bed2bd3",
+            "last_line_hash": "ca4c5bfffcc572fb20268b743a67caa30185e50b053848159733ab60c57d33a4",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "fece831f4320cb4e639bfe06f6e2ff377ae5c790940abad88d9c0d025b95fc31",
+            "following_context_line_count": 3,
+            "following_context_hash": "897670e597ff2f33b3ac995af58ee55892845d2f58927bf164b203c95598638f"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/config.rs",
+          "start": 105,
+          "end": 111,
+          "anchor": {
+            "digest": "2e270c04c706633ba0c60b7781c923035fdc154f8deb2f20a5eed0cdac9239e8",
+            "selected_line_count": 7,
+            "first_line_hash": "57f19c12a86cd1ccb442e9dd9894f468f1cd4856785be157536eaa9bafb82233",
+            "last_line_hash": "b67e6a201bed1828c2bc486120ddbb0fc13351b22d5d85ac5b718f0da7e6ea6e",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f903fa2c9437b4d285a1a48ea3bc6b4598dc56e4aa74d3d48bd75fc62307f29e",
+            "following_context_line_count": 3,
+            "following_context_hash": "1be9b9c6907a87d8a38b2e8f120a38786fa7a05072f9908eb29236d58db4fc78"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/config.rs",
+          "start": 393,
+          "end": 399,
+          "anchor": {
+            "digest": "3094878fce110b3a48c773ec85c75c13d8cd71e9b24527cbf01a7892b34c455e",
+            "selected_line_count": 7,
+            "first_line_hash": "dd50669576abfb6ed81bf265a13c53e7e8ffa8bca12a8ed0d13a792c4b6039b7",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "97797e012affd63a26b80ab360312e8ed44a4350eebb320e2b54aa0ec7710a96",
+            "following_context_line_count": 3,
+            "following_context_hash": "e724481af408d4101e96f633cb1175ef3d809d41fa44780e5cdf656bedf6cfa1"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 32543,
+          "end": 32548,
+          "anchor": {
+            "digest": "ce5b108dc4b31ab41c654a0bad5098f68008fa00ea1e05390c2c3881fb6ff812",
+            "selected_line_count": 6,
+            "first_line_hash": "e3334b2ff619dde48f7b76753ffdeb5f0c8846fe8b9d1286eb94dabb7c047251",
+            "last_line_hash": "ba5ec51d07a4ac0e951608704431d59a02b21a4e951acc10505a8dc407c501ee",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "a682a708b60c04627aa4d36adeb3186c0b3bd6e0c779c368037f3e0dbd272032",
+            "following_context_line_count": 3,
+            "following_context_hash": "b152bd01742488f431c35fa73084e6357612da99d21acb7e70411a42bb05a123"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 32817,
+          "end": 32827,
+          "anchor": {
+            "digest": "102380d1f67d660639ad66873c39297bb524c65f71b5bde345eae5c5fe88c6fa",
+            "selected_line_count": 11,
+            "first_line_hash": "602941ba18566f267512921150757d11adf903ac64f8d413eecc990a318968f5",
+            "last_line_hash": "ba5ec51d07a4ac0e951608704431d59a02b21a4e951acc10505a8dc407c501ee",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c521390a8322dc7582241fddc2839c7326b287427ace530c38214a59f713b0ad",
+            "following_context_line_count": 3,
+            "following_context_hash": "a8fbec335724ce01379a7c94b60107fe67a2d431462c66d7e8e8eacf5d216db8"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/db/steep.rs",
+          "start": 9,
+          "end": 29,
+          "anchor": {
+            "digest": "8996858dd5dec1e1759b1f52eb87ee6dd6871ee2df8044d67e107dfe41cf324d",
+            "selected_line_count": 21,
+            "first_line_hash": "d2ce8214eca3746f703722550fd8cd5b8031fed69d012f4fe6e3e0a02fb371cc",
+            "last_line_hash": "426f0da7bc21d87f517c726058e6e18e0fe63a742efbf729284e40386380c002",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "6c2f496cbdd0215d5e56fddd48f5b6e97e59a50ff973c60a775464c41d9210b9",
+            "following_context_line_count": 3,
+            "following_context_hash": "774f4bb8ec1de0f313a8794d8f68efd939c0e9721195dbf6ae6720190f44eaaf"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/post_write/page_update.rs",
+          "start": 120,
+          "end": 157,
+          "anchor": {
+            "digest": "5c9f68ccf2720d5c98c49844c8cd29f710ffb5410f3863e966e06fa6c8c1c654",
+            "selected_line_count": 38,
+            "first_line_hash": "7fd4c8af033a6e58ebff47764f3c6a1cbcbd5f28f5d98a25eb27cdaf7d8e2035",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "8cc89695789e66be20a967e3b1a3b1112ee6b00f32039c4d2f5dc7f0d1fb6977",
+            "following_context_line_count": 3,
+            "following_context_hash": "aeee28c06005db555bbf94f670f79727acdad88aa711812c684af7edbd4656ab"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep.rs",
+          "start": 1,
+          "end": 42,
+          "anchor": {
+            "digest": "23f299f85d477a8db36ce2e30bb013dbeef0df4988089a90a1f257cec4cb0abb",
+            "selected_line_count": 42,
+            "first_line_hash": "01461ae137dca0f445362c3eb3b15ced89d55a5b09eabdc9d453910d49b5aedc",
+            "last_line_hash": "37fc47074ea2ae83224bb97529bf587f70979a2e15c8a93fc9ae2349f3bc5e38",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "fa089b968d5754ee87a6184b7177fdf3e5bcdd63da52b243d947f04b2b0e46db"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep.rs",
+          "start": 579,
+          "end": 629,
+          "anchor": {
+            "digest": "ac2d3ad12cde59a37e89145925b5b08e88429805a32632d34b6405a02ee95f66",
+            "selected_line_count": 51,
+            "first_line_hash": "5ec3cdd9fd5f1b3a8e3a30a83b6218ec2733fd7a2c7f6d3ce892456ba750ccc7",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "41da1f6f890fb772255ec3fbb1efad150d3f45645b2be7ec02724345a11243e2",
+            "following_context_line_count": 3,
+            "following_context_hash": "aad60341b9f893ed56de86f5a4ece831e1d8fb824ec3cc7cf90407dd98ec84af"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep.rs",
+          "start": 1199,
+          "end": 1228,
+          "anchor": {
+            "digest": "b8bd14d761bac4fd8ffbf26683579878a840440b55d37b6e2a54077da4455254",
+            "selected_line_count": 30,
+            "first_line_hash": "6e38b12fed5aa402a922b66d97e0dacce43f620e9f95ae2a3708313cada62eda",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "48d842fe2e31cd37bc537c4c6aef2eda8262202012673876ac29fe4195432bf9",
+            "following_context_line_count": 3,
+            "following_context_hash": "a727c6f357d2471184971d4e40522b76d4aa4ea31f5827825c3eba46f891f243"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep.rs",
+          "start": 1344,
+          "end": 1372,
+          "anchor": {
+            "digest": "4ada63c4b41ede86d4d4809bcf2b087433de8b78d9e6f51454466779f5e270f2",
+            "selected_line_count": 29,
+            "first_line_hash": "13c971ce78a962dc06eb3bf884d10deb6a8bdddbf4170549a585b148810af952",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "67c5b5de3ef0ecc22155b3eb66c84eef21ea19953bd0885e0742adc311c3ec24",
+            "following_context_line_count": 3,
+            "following_context_hash": "f9a8a536dd5dab209a12bb67ca204d8a0eca13f33515bb8b00c145a45d1b8c75"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep.rs",
+          "start": 1376,
+          "end": 1424,
+          "anchor": {
+            "digest": "b7220d1fdbbefb0f955ce055c8e9d433395632c443eebd07dfe6df4cce4981ef",
+            "selected_line_count": 49,
+            "first_line_hash": "d3e34dbabc30a58103395fe9ab8743aaaadf869527a269b56570143ab5ef23b1",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f9a8a536dd5dab209a12bb67ca204d8a0eca13f33515bb8b00c145a45d1b8c75",
+            "following_context_line_count": 3,
+            "following_context_hash": "a32412488ae9e5a537af4bf88aac8756075e358239ac3d01c0c07200249e88f9"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep_automatic.rs",
+          "start": 2,
+          "end": 16,
+          "anchor": {
+            "digest": "5c9ea337cf4729f390a41dff881d797288ea168a9e9502c1f5be0b334c2a367d",
+            "selected_line_count": 15,
+            "first_line_hash": "f388dc4d5fdf46860a7aa6ce46ca5e24af139cd56465774a6da8ccc9b3cd4b6d",
+            "last_line_hash": "e0e79baa07376b661b847eba7a984a39cff0cc0b9e40df4a2163f50859651ece",
+            "preceding_context_line_count": 1,
+            "preceding_context_hash": "01461ae137dca0f445362c3eb3b15ced89d55a5b09eabdc9d453910d49b5aedc",
+            "following_context_line_count": 3,
+            "following_context_hash": "74be1191d2aea2cf9b7b01d95f17db1bd2d493dc070fbd306bcb4711a5a65242"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep_automatic.rs",
+          "start": 216,
+          "end": 262,
+          "anchor": {
+            "digest": "e1bd3588bfc27c61fea2c972698ee5d44a2215649d097637dde488136d7e6a33",
+            "selected_line_count": 47,
+            "first_line_hash": "9ce9054f3b206803615e9d685bce006f2f52bcb5dabffb5523232eb4f2715804",
+            "last_line_hash": "aa3733e587564c9f542dd34e2d8ba6b7f89506033778cf4fd36a11199cb7267d",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "adee19fb880c4d87b585708e3bc5646d50b11420670d24003bb689b4f3a45b9d",
+            "following_context_line_count": 3,
+            "following_context_hash": "20759cf399e95ec1346d74f70850f8a51ba768a82222e87eb3b67ced0f52ac46"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep_new.rs",
+          "start": 1,
+          "end": 23,
+          "anchor": {
+            "digest": "c5dd8579dacb64ec0c68415d6ce82e8af9b91e443ca8896806771a3d6621b0b7",
+            "selected_line_count": 23,
+            "first_line_hash": "01461ae137dca0f445362c3eb3b15ced89d55a5b09eabdc9d453910d49b5aedc",
+            "last_line_hash": "375ceb205e3d02f18028edd4e7eb74eea35274b3fefee9ccff24d60960e2d904",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "50382c62276c36e442fd4e27560ac27cef7f2d7fffbe242bcba8744cb1cb097e"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep_new.rs",
+          "start": 44,
+          "end": 64,
+          "anchor": {
+            "digest": "0df94359a7757f1d0b28bc35471e6c9a850b0fadcfd83f4ebe162c8e5fe4ba42",
+            "selected_line_count": 21,
+            "first_line_hash": "d5628108e8f0d1eae4e3fa22869c52a464de30bd25efd992c177385817479d06",
+            "last_line_hash": "98f82c3af495c11d8ef75b6f15007859f2c57c22add4707c3189b9674ceeedd3",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "90f163c6b4f6f0012d45cbf4fcacbdbfafd6a2e8d0cf6717de7613a0ca8a79c2",
+            "following_context_line_count": 3,
+            "following_context_hash": "caed04c9cf54803fb0aa1e248e268347931f236aee1de75186e50a8ff395d295"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/steep_new.rs",
+          "start": 613,
+          "end": 654,
+          "anchor": {
+            "digest": "660f8729d1e91476230887410fb58770d528634051200a0b38bf955f22b93e9f",
+            "selected_line_count": 42,
+            "first_line_hash": "967e028991508f922f70a459a1e526043e374ebb442b6328c12c6ec9c109a079",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "1c884cb6e5384b9a4b37900c3c6e855e0859fb402ded7c8339d3f1b9f13dd7c2",
+            "following_context_line_count": 3,
+            "following_context_hash": "abbe2b42dd7145eb967241098a145be193c99dc89d5312ca62ba93ae5b942572"
+          }
+        },
+        {
+          "path": "src/lib/steepMode.ts",
+          "start": 8,
+          "end": 13,
+          "anchor": {
+            "digest": "d2c5e69096f69e5614d9d66d7831cd1ed91724d1a225b604711a80448a06262d",
+            "selected_line_count": 6,
+            "first_line_hash": "8d64a30d9de151b649006a1d9871037ac5649ab6162ea5d7fd77c54fed07b155",
+            "last_line_hash": "ed9623369ff082abe9b1df1fb3a161857bab3bfccda2886b31d526248a676201",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "422ed429c44eb0360e48ad027ce52f426a21f0a2adf391833c923d074421dc7c",
+            "following_context_line_count": 3,
+            "following_context_hash": "a594b293789e42334e80873566a928116fbc682360ab49cd82be7ff39cffbe63"
+          }
+        }
+      ]
+    },
+    "pages/how-tests-run.md": {
+      "id": "page_53d10c4f-8321-4009-ba25-664d067ca604",
+      "code": [
+        {
+          "path": ".config/nextest.toml",
+          "start": 9,
+          "end": 20,
+          "anchor": {
+            "digest": "a37679f1200d72ff1ba6d6a6523bb8d31f53d748738978a8499754d78dd16056",
+            "selected_line_count": 12,
+            "first_line_hash": "b9bece78ffc9f610bf34e410ba8f3862506c8e7754ae4aac564904804e944037",
+            "last_line_hash": "64e3d2697df8a2de919936ee712fe81aff29bb5c953ee3391d0f4546c510a844",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "5d25c945c31db5f12610a6c2b936ab56cf842932deef8cff8617c592e5cfbe10",
+            "following_context_line_count": 3,
+            "following_context_hash": "86740b2a5df8c982ad7bb36150bec077f2957db699e72c0a122bd1f4378c36d4"
+          }
+        },
+        {
+          "path": ".githooks/pre-commit",
+          "start": 42,
+          "end": 56,
+          "anchor": {
+            "digest": "49a5524aa12ca42ca8a5a88d4e52932df10bf2fb65f00c84c6fd230d57932c27",
+            "selected_line_count": 15,
+            "first_line_hash": "f47763edd0fd7c161ba94552f928c5e74f96da334aa8636c0e138f62a4e9b59c",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c54b49ae609b0c151f13dbdeeb84243de5e09d0baee50a0d7b6c2e9608128956",
+            "following_context_line_count": 3,
+            "following_context_hash": "033af582a0ef8bf2b3b334d9c910f53a4223a9497f28e390047e900cf9eda127"
+          }
+        },
+        {
+          "path": ".githooks/pre-push",
+          "start": 4,
+          "end": 8,
+          "anchor": {
+            "digest": "41af11300215b6b5f83343905b556e57b1d36edde63055660bfbeca3c88ac056",
+            "selected_line_count": 5,
+            "first_line_hash": "6ce3f02f217bf343d1cfbe42de556401a4bd631096e2342d19d522d84d5bafe5",
+            "last_line_hash": "5d38a0a05b7bfcb53106ada283607ec1f263581e8644d771636a99ae8846b40b",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "7269fdd881f2a8fff804aed9d18e4487c2978912720204045ead0a0c5472b25f",
+            "following_context_line_count": 3,
+            "following_context_hash": "371f1822c33dcde1a34f045ebebd89081776cadf6b168100f7d0f8d611ebc177"
+          }
+        },
+        {
+          "path": ".githooks/pre-push",
+          "start": 55,
+          "end": 82,
+          "anchor": {
+            "digest": "2e4d897bd1d9c638357c94b7334f8ae80a12e7bc2f95d1bc8cd6709853d88bfa",
+            "selected_line_count": 28,
+            "first_line_hash": "df1194c3583013ee22585cb5b0b1ff43d3539247a7867c5394bb3e4d4aef6619",
+            "last_line_hash": "a47a1d6efc9089fccc0f3d7ed0458a6cd279cde72390ccbae553d14b1cbc105d",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "526e651963ab81bb0b97237c89763820990d720a0832ccd8657b73a6c9036f30",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "start": 3,
+          "end": 16,
+          "anchor": {
+            "digest": "7876d4061e8743517f272509f2e129ae21c7aff54fef7433f9b4dc9e534473da",
+            "selected_line_count": 14,
+            "first_line_hash": "fc8135fd1264162a0a9b1fb413cf3ab58a2f07a0d78717ded78108a950ea7b75",
+            "last_line_hash": "e02400c51488e53626c5c860c71e88953422b1cbfcf4e761fb39f34b4fbe10bc",
+            "preceding_context_line_count": 2,
+            "preceding_context_hash": "06e1b32fa09079ae2f0001fff0eca27b4985957d4eb4857929b3cf058faae541",
+            "following_context_line_count": 3,
+            "following_context_hash": "f988ed9f29390885fbaf08222613f26538f2a34aed99a3d9d8145bcd45304f02"
+          }
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "start": 66,
+          "end": 83,
+          "anchor": {
+            "digest": "b3f35f2e983a9ec510b4b19647efd470cb1bd4de5d9b43aef171885167e06243",
+            "selected_line_count": 18,
+            "first_line_hash": "e060ce49ba4a2d91923e17235974b59413de73db78994a604ef20a571fb78e22",
+            "last_line_hash": "6947121273cc52e263581da8adbdaa73934a2203148273e78fdca2ed8b4c71fa",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "0fc78c0c9ce82811eafa95388a1cbb18178b5b6ca566aca16d469a75485b2058",
+            "following_context_line_count": 3,
+            "following_context_hash": "8ec1af76dfebc0f0e49893a7026c3ec1ffb7e586a1804e304b94ec43dd0e8332"
+          }
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "start": 1889,
+          "end": 1898,
+          "anchor": {
+            "digest": "d519ec811ef5efef0aea4d54a23ad28763639cccf61998595f1e417b55bd0755",
+            "selected_line_count": 10,
+            "first_line_hash": "5b6100f1960628d0338eec3fab9c245ae013d28da0abc9ac130546c34aa90eb4",
+            "last_line_hash": "05cefab83fe9d73a90924156f14fa366f286eeb5aa13d4fadc0937856ad6654d",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "43748c99a27b2812cc94cbf2f6ede22978f63d1808a7c60c78cc288a5912b790",
+            "following_context_line_count": 3,
+            "following_context_hash": "a3515096cba33dc2709887020edb8541ae70c26c9dcb34adb763456e3f5c41d2"
+          }
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "start": 2449,
+          "end": 2459,
+          "anchor": {
+            "digest": "bea1530c15e03acd3e393566e60dd4763537fb66c0c56c590a43f6af1261a0fb",
+            "selected_line_count": 11,
+            "first_line_hash": "8ff17dc5af8826c95f107585fc578d63ff986b80a75ccfd418189570fbca8d51",
+            "last_line_hash": "f696b569be13478322ed542c3b08763c69209dd5bae52a8772661434ef5a3963",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c682a57f4f789e84a3fa8fc1501e50c72aeb64768b3e283ba89dbfc354408ef4",
+            "following_context_line_count": 3,
+            "following_context_hash": "6d9cf47b4403dab556b3696ada43da327f498efc836d65c23af47c9d89661626"
+          }
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "start": 2503,
+          "end": 2532,
+          "anchor": {
+            "digest": "9be7d854607e88b0057ff715b1d93d4dbafd64f3ca34e6d15b3f6274c04403f9",
+            "selected_line_count": 30,
+            "first_line_hash": "b4a2fc80e3eee12146b0b0b8320ce8506c0d6048125518b6557680bfaf0c6770",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "d8cd840bd44e509c564c034e71494d1ab949904313a7c29eab9b0e80976a2bd3",
+            "following_context_line_count": 3,
+            "following_context_hash": "be037d25792095c0f36bfc80a65ce33dbc0c8170fb084ebcd115c494fd5665f4"
+          }
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "start": 2693,
+          "end": 2735,
+          "anchor": {
+            "digest": "b73736596040fe489aa855ad24e2f861673d8363321da28e65dbb1b751560b09",
+            "selected_line_count": 43,
+            "first_line_hash": "c23c4b4889e05029a28b68c5747faa237e59ab88363486145edc8d57aabbf1c3",
+            "last_line_hash": "32d81f69cf87fb91ffc3f5e85eb5ccf0a7b440b3a6d58f6bf77a39d5595eb4b2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f23e1f548a6d001daab360cb944f79647e23dc7a9afbe6a22183633921d929c1",
+            "following_context_line_count": 3,
+            "following_context_hash": "9fa78e74dc1d1273207ccfbabf214f13f1d7f75086713075cb855692b36f83a4"
+          }
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "start": 2737,
+          "end": 2770,
+          "anchor": {
+            "digest": "ee362699292eb6cdf29c7d87936c1398449f6b118d9c272dfd7a5be6ca0a2f01",
+            "selected_line_count": 34,
+            "first_line_hash": "1d751a09a7e2b586fc287798ef1593eb3f641c675742b41234356d80111bb5c4",
+            "last_line_hash": "0bc2baac547604a0ce88f361e36b12d670910bfc47266a9471ae281554554342",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "cd52adf646cdc595cb9045adbc0cbeb20cdefba3169b1bc664bc9f6c0c24053d",
+            "following_context_line_count": 3,
+            "following_context_hash": "e529e3a728530ed1094912aea46ce950a55585d6e01fb74d3a555b3a03409196"
+          }
+        },
+        {
+          "path": "Cargo.toml",
+          "start": 11,
+          "end": 14,
+          "anchor": {
+            "digest": "250eaf5a2da4de34b71a3bee71678f14a8a7d719356492119d27e29151d4ff6f",
+            "selected_line_count": 4,
+            "first_line_hash": "4764871bb199bc97f20abf354eecc6c6e5fa7fad86964aa516f7b56a39e8d436",
+            "last_line_hash": "4f81bbda9200a46bb20bdbd261cef055c897db59ac36d69c80758ccebab1ce18",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c96e1bd687e2d18bdd219948e96c8953784d6edd9a964c438efda0be580970ae",
+            "following_context_line_count": 3,
+            "following_context_hash": "e1766af3027ac25ec723d03270a7fe85779ba3d04a05354bfb332f6a5c282859"
+          }
+        },
+        {
+          "path": "crates/wenlan-cli/src/client/recovery.rs",
+          "start": 12,
+          "end": 21,
+          "anchor": {
+            "digest": "7942627b072f94a14175267b5163546f16d86e4bc37e4be2602625783e353853",
+            "selected_line_count": 10,
+            "first_line_hash": "3189dcc0b2eaff504ec05c8b6066f4553d5779beb6a58128fdb74b8eaafd1ebf",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "a37a673ee813214e62aee0305442dda1949016ca0ec6221b3714509bc9b0f879",
+            "following_context_line_count": 3,
+            "following_context_hash": "5b36e36eb0ee840d2780ffa5077712fb3da2ae89f382892c77b771db03eadaa5"
+          }
+        },
+        {
+          "path": "docs/test-layers.md",
+          "start": 8,
+          "end": 26,
+          "anchor": {
+            "digest": "e05589560253f4603d63eb135bc70e53e208b3c365b3dd17f2e2edbf7ecfacb8",
+            "selected_line_count": 19,
+            "first_line_hash": "f1757647e9782f3c778923dbab7d028d85a0721842c1884732206e34e348c80e",
+            "last_line_hash": "e4091a12185af0b860b16738cc09b10ef8c96a728de53a18ccb3e520400a2957",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "cda9c65148254eba6beb7e0a396258ad7f6aa8ad32ff9434b9e7d601dc05ea56",
+            "following_context_line_count": 3,
+            "following_context_hash": "a8804804e3e819133098350fa60029b74711a23acbabcafbe872c423ac7644eb"
+          }
+        },
+        {
+          "path": "playwright.config.ts",
+          "start": 28,
+          "end": 50,
+          "anchor": {
+            "digest": "d24abb0cc8ce71ce5e05b8325a2947ac87e71243b7f547ca9c9b8561360b6e67",
+            "selected_line_count": 23,
+            "first_line_hash": "a719661ad61ed70d4a301bdae6ba7e94717eed9f8b1f9515878222fd9193428f",
+            "last_line_hash": "eb49b2148a7a77635b0579067aadb0d1340963ed28cecc07dbba7722e870bfe4",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "7c28914f1ffcf6d73befad34fdd2cab9bcf3d85e4c7afb286ae4e2b8c6dcd5bb",
+            "following_context_line_count": 3,
+            "following_context_hash": "852a16ae90abc7da92bed09bc48b148ebc6ab1c747fb08c014d3c2ba55aaacec"
+          }
+        },
+        {
+          "path": "scripts/ci_test_plan.py",
+          "start": 295,
+          "end": 300,
+          "anchor": {
+            "digest": "d2729c28fe48575c94726f00758b128807fb04007a682aac3b996904274360c9",
+            "selected_line_count": 6,
+            "first_line_hash": "a8b2648d3aee7df800781c533a8e559dfcdaa8c499703848c7756ff55d9412c0",
+            "last_line_hash": "e256ee8e7aff6957a781d8328f0f68e26996564c81fa458da59fbca2305138ad",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "cee0f9d2382a3251a96f37715d6ca86a4630503eac86161aaf0ddfcc2c3ce739",
+            "following_context_line_count": 3,
+            "following_context_hash": "927e190046e1055c39a552169850af2f96573b1bb641e275acd7a72a73a81ad2"
+          }
+        },
+        {
+          "path": "scripts/smoke-cli.sh",
+          "start": 48,
+          "end": 53,
+          "anchor": {
+            "digest": "267a5762934619e68d2f6a3f07eba9f3b50ae28cb5b2ee09fded567412ceb832",
+            "selected_line_count": 6,
+            "first_line_hash": "b8d10bdfc3b02d7c357dd03f2e41ce08b4d84f06114977a1fcfebb35da88bc13",
+            "last_line_hash": "c5f0d401d3e9246cbbe34e009655f45aecaa81debbbd7227bb5ce898471098bf",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "5232d9700b0befda10aa4ebbba6c3801c2441d684c6e53fceaa364a2b61ebdc3",
+            "following_context_line_count": 3,
+            "following_context_hash": "f0b0e539454dc546857108b0e6c746f254e2efa5fcb310846bd720d928510f2e"
+          }
+        },
+        {
+          "path": "vitest.config.ts",
+          "start": 11,
+          "end": 39,
+          "anchor": {
+            "digest": "a12b933bbe9c130a0ce8997eddff939f109148159a7b37d78e4cc2b409899db2",
+            "selected_line_count": 29,
+            "first_line_hash": "aeb1e43aead232bf8a46ffe325a504edbc147c77febe4dd96a27cf2598e032f3",
+            "last_line_hash": "e52a1813c46049513e6beb0b5c9e2acaf4b3b4120089e4b3cb2df44544d5df11",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "6ab3216f1510299f2a1adb39663ab0cbfa4c68f9b2dc45afd52ecb71dd2b53e2",
+            "following_context_line_count": 3,
+            "following_context_hash": "ad089d51e2daf29bc620bc46d6199096d7a15e98141ade91a692cb6d8cd66df7"
+          }
+        }
+      ]
+    },
+    "pages/how-to-run-it.md": {
+      "id": "page_c4655a82-3947-46b3-b0a5-4610ca1907d2",
+      "code": [
+        {
+          "path": ".claude/skills/run-wenlan/SKILL.md",
+          "start": 43,
+          "end": 53,
+          "anchor": {
+            "digest": "6594b83f86ff5f481fdf146d9c23003116d61abdfd481aaa75a5e8bc3f17e215",
+            "selected_line_count": 11,
+            "first_line_hash": "ad332335cfaa348c5bd715c3479844622270d5f7389ae070b81b135d521a221a",
+            "last_line_hash": "f1b901847390b0ed7e374e7c1e464ec17b46a427c487a5ad6cbd2906405083d5",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "706778aad569a0e431d8fdaad90dff84f994e83207c02446df3925a56d71c9e9",
+            "following_context_line_count": 3,
+            "following_context_hash": "409d87f35d88de80b89133ff24adaeaa5f26c0cfd75228fe70d5e32b3c7dcf76"
+          }
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "start": 2686,
+          "end": 2692,
+          "anchor": {
+            "digest": "8cda9b0ead0b5760baea1e2b2d57ea20f3ac21c6af9776d993a7d3be4e2790d6",
+            "selected_line_count": 7,
+            "first_line_hash": "b8eac4c1dfd6f74cf648b945f8e7fd407d23d70aa900ebfcb99a8487f84f9d6b",
+            "last_line_hash": "b70bd3960d7bfd88cc9585ea6fd8438de5db8ad67553355cfd34e0f52c1ac654",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "b7e20af55f5b4817b422566dd722905ccb6d0a0497cd6337c31324f14f2cf894",
+            "following_context_line_count": 3,
+            "following_context_hash": "89face00f32996ca40eb468ce6b554d7343dae442f75b9db2a192387b50b0871"
+          }
+        },
+        {
+          "path": "AGENTS.md",
+          "start": 50,
+          "end": 80,
+          "anchor": {
+            "digest": "974c59b27ed54be1e88e8c259a2c36ff8552db9edc078a6e602adc3ba6eb5b9b",
+            "selected_line_count": 31,
+            "first_line_hash": "7629c8ce0726f8225bf73f7c4aef040f4ac5279859a45de2271c63ecef9c0716",
+            "last_line_hash": "bf5808a6b979cf5f96e66af559d204194763cd725f2e50cb271b20005037ba3a",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "488cbafb93347532e364ad27d9b521ac81d328441fac5ca22fe421d5b4ef5dc6",
+            "following_context_line_count": 3,
+            "following_context_hash": "46dd878061037705315723e5206b6bd072acdc0d8cdf1c9ba3d2f638a8539299"
+          }
+        },
+        {
+          "path": "Cargo.toml",
+          "start": 11,
+          "end": 21,
+          "anchor": {
+            "digest": "8811adc68bf66d8813a1813627bc08d16a0bfe525599c3ad2ec8705ed896889b",
+            "selected_line_count": 11,
+            "first_line_hash": "4764871bb199bc97f20abf354eecc6c6e5fa7fad86964aa516f7b56a39e8d436",
+            "last_line_hash": "cfae0d4248f7142f7b17f826cd7a519280e312577690e957830d23dcf35a3fff",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c96e1bd687e2d18bdd219948e96c8953784d6edd9a964c438efda0be580970ae",
+            "following_context_line_count": 3,
+            "following_context_hash": "6d53e3ca99db814a544879aef0446b17c95d7499661d6cc705c8e238b276cba3"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/config.rs",
+          "start": 239,
+          "end": 247,
+          "anchor": {
+            "digest": "925c4b5fbe24e748dfcb05618cfad8fb8216c0b9be663c1cb045ac5594d6f566",
+            "selected_line_count": 9,
+            "first_line_hash": "a0cc42bfcedecd914834b066c3768c2a6be1910336b1a5b38462a5c35e2c32ff",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "46cf7e94cfb71619049bb05287348fa224ab7c5476ec3adade68c5232f3af180",
+            "following_context_line_count": 3,
+            "following_context_hash": "b9dbf58935cde523e59902b9ad204bd67e86beaee8bd276bd136f320810a1cc7"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main.rs",
+          "start": 667,
+          "end": 672,
+          "anchor": {
+            "digest": "e5a08b36d982ef0349bd7fd808df20a31236e43d66a1f0d095b73f07c3ccda15",
+            "selected_line_count": 6,
+            "first_line_hash": "4b907bb577c98af1c9c1dda6524a90605904b5ae2deaff974fde81d7552d5d42",
+            "last_line_hash": "27f9c5c8382bcf06c171306acb55f72714ad4a4cc20327d0aeee23ccc9aecde2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "8b1d7a864ab871dc5f55311458e443d961d31b2c98dd4958cadf6151c299ab2c",
+            "following_context_line_count": 3,
+            "following_context_hash": "adb10db4e49a58773c56584d3c98f44930d89cf31ba832c327ddcdd9aa404e8c"
+          }
+        },
+        {
+          "path": "docs/setup-and-data.md",
+          "start": 22,
+          "end": 46,
+          "anchor": {
+            "digest": "48d7f0291959c1aed696088d9925fd47e249db94d8a8af768864a2491c564d67",
+            "selected_line_count": 25,
+            "first_line_hash": "d9e2553bbd1a070912b4ae4ba8a33e3a814242b24f69910b69e3859ff6af00eb",
+            "last_line_hash": "abe24645d042663637671be5974f03b17c4b8284e87468d7f4412dd8bc74ccb7",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "1fdb31b3e23d44e14af8bec783cad8dac5c73c77aaf36b58245abbfa320e25b5",
+            "following_context_line_count": 3,
+            "following_context_hash": "a033bec8d41ca0958d092fbef83e91bce8c1a51ece2d3aa31572be88bff8b193"
+          }
+        },
+        {
+          "path": "package.json",
+          "start": 7,
+          "end": 35,
+          "anchor": {
+            "digest": "9de3e31d84f154e74e776031b01a68327b826fa1eddd36e6a22f5901d13b542f",
+            "selected_line_count": 29,
+            "first_line_hash": "cf0f1665cdcd259f5f1250c5a3985c105cb8b6cce29520f7990e44f9823d748b",
+            "last_line_hash": "13700e84346f6ac5b1fe16e778f4d7c15075c68c4a44bf89297717814165238c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "511d102afe0e422757e0b148c3e6ccc12df5dcab20f608d58638d6dcb01c2cc2",
+            "following_context_line_count": 3,
+            "following_context_hash": "9b040cef76fc617ee8ecabeecd2087ce68bcfa85af29b319559f263c310e19cf"
+          }
+        },
+        {
+          "path": "rust-toolchain.toml",
+          "start": 1,
+          "end": 4,
+          "anchor": {
+            "digest": "9a31283801aa98090265ed27e6fadf1a7d08e4d2d8a028215f020af638e865f9",
+            "selected_line_count": 4,
+            "first_line_hash": "383e6b3085f5ae24cd26a4647882abd7b59d0742067c0b2e753f34d937b04a7c",
+            "last_line_hash": "d9c799a7e772778afc5a18cb0c3f04ef02866abf14078dfa59ce2691df9515c1",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": "scripts/dev-all.sh",
+          "start": 45,
+          "end": 56,
+          "anchor": {
+            "digest": "c0ceb60dd75c5e05465e90ee6356d3016d5b58af4abe7824243925211bbbabc9",
+            "selected_line_count": 12,
+            "first_line_hash": "ff95c7eb18ea6bfa62f8d17f31ceb79bd314669f6f40d9b5531ff2239bf301ac",
+            "last_line_hash": "b446f7c9ac6f96855e2e19b209cf5cebda30a2760f678a7c024ed60477d1edea",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "4eabf4b4cc5a94cf71577a3c3cb2168dc47fa28b4ac77e732f426af8c298171a",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": "scripts/dev-runtime.sh",
+          "start": 222,
+          "end": 239,
+          "anchor": {
+            "digest": "edc4e0bcfb9da380f1df2ec528122abf13a5219385818ca46a286cb83598a88c",
+            "selected_line_count": 18,
+            "first_line_hash": "ec17b4783e3aa3ce18e26620ef8d4add49194bd947c9a4950c49a23aedec48ab",
+            "last_line_hash": "2bdde13af0e15caab30b380a638888c66ea81df7edab60c82352c74943cbc3dd",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "4c1814578699aebfebd0684c7719bd4b72385f92cc21394dae32829bc19b32c1",
+            "following_context_line_count": 3,
+            "following_context_hash": "a33ab0c8700c95c8ea570aac93722577d2a08c550ffdd310bb0584eadb52500e"
+          }
+        },
+        {
+          "path": "scripts/dev-runtime.sh",
+          "start": 2232,
+          "end": 2257,
+          "anchor": {
+            "digest": "bf44137aa3ba9aa2f8a4e0185d37a4a58f0f2cfa1b22e786a04f0aae1427d1b6",
+            "selected_line_count": 26,
+            "first_line_hash": "efef4b1867432b3b468ba447597c8750833532513fac78adb033c71234b04cc0",
+            "last_line_hash": "fb727a8e8923b8562dd9b5ed177d7b43af2414e5411ab40c22ff9c8fdfdf9380",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "e782b1d31bb8c99ecc3112dbffe9a20325141250d3517a5b95088b73487eed42",
+            "following_context_line_count": 3,
+            "following_context_hash": "74f9a181ab8237e30fbb5fcbd9a4ffc3d858ff20889646784dfc7efbc008cd5a"
+          }
+        },
+        {
+          "path": "scripts/install-git-hooks.mjs",
+          "start": 9,
+          "end": 37,
+          "anchor": {
+            "digest": "4a9d2dbd25b7175682faae8a85a60f77a3bb0183fba239ef4eaa966017f99f9c",
+            "selected_line_count": 29,
+            "first_line_hash": "8e33e2f0d83b5a76f849a14fb651d3339517bf05966d866b99435ae7d9fa4136",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f8049522a413d23cea288993fdeaffa41e82e88dce6b3bdf52876748a9d8dee3",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": "scripts/prepare-sidecars.sh",
+          "start": 74,
+          "end": 92,
+          "anchor": {
+            "digest": "af4cd828fb6a98b10f1504a63593eacec2f5868df4954f5ddb48d6aaaa71545a",
+            "selected_line_count": 19,
+            "first_line_hash": "e2849c71707505ce66846ec6e187b16c0f14ae472fe21e83017fb58218120771",
+            "last_line_hash": "36ff2f7b2d479bb813f76e71b331a32cbb651b491871f1720f4ae6d9a6edd547",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "e14a18460605b4434331f1282c5db6be2a1a5a2125a93de6d6d170ff3bf21a66",
+            "following_context_line_count": 3,
+            "following_context_hash": "a73a8e5f6b8d773796842d1e68166bec2ab8ac0170166f7dd05f9258a30702aa"
+          }
+        },
+        {
+          "path": "scripts/run-bash.mjs",
+          "start": 4,
+          "end": 14,
+          "anchor": {
+            "digest": "6f73a75ae631a86f67693a9b897c2090d6342cc818d98cc0808dd76322362d29",
+            "selected_line_count": 11,
+            "first_line_hash": "5b6bd954561c1b443c1093d7a48ad72ee3c0cce94e487f7948e3897d23e46b18",
+            "last_line_hash": "9672d6dbe0813e6cc1ee0879ca60eba7b70f88524cf4858d926e3249975dbf29",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "65bc3ba59a4e79fd3ea5408ae560ac361448041a2f8d231b6325bce2af60e89f",
+            "following_context_line_count": 3,
+            "following_context_hash": "a412d6d8f478bd5526042d43496e6352fe24ff6678f93e2a287293c73c82a334"
+          }
+        },
+        {
+          "path": "scripts/run-tauri.mjs",
+          "start": 4,
+          "end": 7,
+          "anchor": {
+            "digest": "ec921a0a9adf9d5f0b9cfc5e0c9870400af0f4e492c167b1652d85043f266943",
+            "selected_line_count": 4,
+            "first_line_hash": "cf268807aca8cfdd2367709f5a46faa8f6c896f58216c2c1c1c4629943f3503a",
+            "last_line_hash": "a2c2339691fc48fbd14fb307292dff3e21222712d9240810742d7df0c6d74dfb",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "65bc3ba59a4e79fd3ea5408ae560ac361448041a2f8d231b6325bce2af60e89f",
+            "following_context_line_count": 3,
+            "following_context_hash": "fd4873f890b4bb24fb0565e37cc52cc41505b714e47609a0ef993acb3aeddda0"
+          }
+        }
+      ]
+    },
+    "pages/known-pitfalls.md": {
+      "id": "page_d214ef14-4f99-435f-9d8a-06fc93f7dce0",
+      "code": [
+        {
+          "path": ".claude/skills/run-wenlan/SKILL.md",
+          "start": 179,
+          "end": 194,
+          "anchor": {
+            "digest": "1909b55d3385346d5eceee31ac1b34fc4b139c3665d8cb5d42f8ae3fdc7fb06d",
+            "selected_line_count": 16,
+            "first_line_hash": "bbba292b8f95a1fffd420139877387774d176dda8a98eb6bfc3fb98a8d100391",
+            "last_line_hash": "e58480035ae39fa7380e3dfc17daa3134ee8d3a7be932a282baae0618b8c3f20",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "27a01797dded398e7ef6786cf7f9013e905a2f98bc817cab9d97e58cfd3cd746",
+            "following_context_line_count": 3,
+            "following_context_hash": "ba53ecbe4d5e7875fa6c68f940b98ec2752e48346e61f74e000dd1e70d384a2a"
+          }
+        },
+        {
+          "path": ".githooks/pre-push",
+          "start": 4,
+          "end": 8,
+          "anchor": {
+            "digest": "41af11300215b6b5f83343905b556e57b1d36edde63055660bfbeca3c88ac056",
+            "selected_line_count": 5,
+            "first_line_hash": "6ce3f02f217bf343d1cfbe42de556401a4bd631096e2342d19d522d84d5bafe5",
+            "last_line_hash": "5d38a0a05b7bfcb53106ada283607ec1f263581e8644d771636a99ae8846b40b",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "7269fdd881f2a8fff804aed9d18e4487c2978912720204045ead0a0c5472b25f",
+            "following_context_line_count": 3,
+            "following_context_hash": "371f1822c33dcde1a34f045ebebd89081776cadf6b168100f7d0f8d611ebc177"
+          }
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "start": 2693,
+          "end": 2702,
+          "anchor": {
+            "digest": "d18aee577839ebb88c21eed4640f1924932a69771d2c6cc8dbfcfdee2a55b28a",
+            "selected_line_count": 10,
+            "first_line_hash": "c23c4b4889e05029a28b68c5747faa237e59ab88363486145edc8d57aabbf1c3",
+            "last_line_hash": "8d216f7d30fbfc2c1de14341592530116f91bafea54e63ebe2e80bd83d0c31c7",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f23e1f548a6d001daab360cb944f79647e23dc7a9afbe6a22183633921d929c1",
+            "following_context_line_count": 3,
+            "following_context_hash": "15fcb6d912459fed0a0be7dc56646b7db9aea4fab2e001bbd9dc1efde15d3e15"
+          }
+        },
+        {
+          "path": "AGENTS.md",
+          "start": 50,
+          "end": 77,
+          "anchor": {
+            "digest": "c2ba3cf249a6f9b18b34d8e6a05682ee9075eee9117aa98e3e6b336efae1e96a",
+            "selected_line_count": 28,
+            "first_line_hash": "7629c8ce0726f8225bf73f7c4aef040f4ac5279859a45de2271c63ecef9c0716",
+            "last_line_hash": "6400dd546f3084deff3f4e3787ca6a419e257d4c31c2c9ffb96ca0344dfad009",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "488cbafb93347532e364ad27d9b521ac81d328441fac5ca22fe421d5b4ef5dc6",
+            "following_context_line_count": 3,
+            "following_context_hash": "c5b03ed2f76697b51b8d60f7b63dd48e029ebfebae3e94959ea9f036e21d3544"
+          }
+        },
+        {
+          "path": "AGENTS.md",
+          "start": 93,
+          "end": 96,
+          "anchor": {
+            "digest": "dd8fa28dcd00e5f007c598d7edd23b47107476d78968734ab81aead13752e419",
+            "selected_line_count": 4,
+            "first_line_hash": "a9192f870dc40e8ce56b47f90def446c25826c806739105d198e7d3c6a4ecf71",
+            "last_line_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "aa1129aadd46be0deb891870c1edc13db1f4a215c05f767ec5cd566c4f758392",
+            "following_context_line_count": 3,
+            "following_context_hash": "f5569a0c3e3ae330f22bd7f44cda1a22671025e9dad77c72490028f84aca5553"
+          }
+        },
+        {
+          "path": "Cargo.toml",
+          "start": 11,
+          "end": 21,
+          "anchor": {
+            "digest": "8811adc68bf66d8813a1813627bc08d16a0bfe525599c3ad2ec8705ed896889b",
+            "selected_line_count": 11,
+            "first_line_hash": "4764871bb199bc97f20abf354eecc6c6e5fa7fad86964aa516f7b56a39e8d436",
+            "last_line_hash": "cfae0d4248f7142f7b17f826cd7a519280e312577690e957830d23dcf35a3fff",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c96e1bd687e2d18bdd219948e96c8953784d6edd9a964c438efda0be580970ae",
+            "following_context_line_count": 3,
+            "following_context_hash": "6d53e3ca99db814a544879aef0446b17c95d7499661d6cc705c8e238b276cba3"
+          }
+        },
+        {
+          "path": "Cargo.toml",
+          "start": 57,
+          "end": 88,
+          "anchor": {
+            "digest": "56726eff351145ad068c1fc2c7fb970176583652a49de697add56d482bd422e6",
+            "selected_line_count": 32,
+            "first_line_hash": "9d5e9efd4e23226e5922acc0968c4c1f34b82c4d3363b5b5131949e18d0e0b24",
+            "last_line_hash": "a09befa941da667c60a55d124512e0d5b60cc0b9d950b5f03ba7b20bd9fe2525",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f58f9da3dd768742e824b73ea92afb1dc5543ddbd01952232e767da5d4e1f563",
+            "following_context_line_count": 3,
+            "following_context_hash": "02110939580a3b4291c48d328f1fd6eba1b920ba33a5f33918c1853c74a7c3d3"
+          }
+        },
+        {
+          "path": "app/src/lib.rs",
+          "start": 715,
+          "end": 721,
+          "anchor": {
+            "digest": "c2f75804d1ad7e57fd7572c711b46d80cb278281a57a8ac569c9c5ba871f624f",
+            "selected_line_count": 7,
+            "first_line_hash": "f054982bfbfcc1f3833b35a910f27ef17a289ac7249d24ff0cb1f0f457574c74",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "475a09f1cf965208067f62990c4262e371fe8edc1a03ff17d4bbcf2774da9e58",
+            "following_context_line_count": 3,
+            "following_context_hash": "ab466308097665f5b1e034cbb4ef0c701dc017a2640da22fbbc18557a59e0749"
+          }
+        },
+        {
+          "path": "crates/wenlan-cli/src/client.rs",
+          "start": 4,
+          "end": 8,
+          "anchor": {
+            "digest": "ab873dbd99d7707437b16b23d7b64d73da5b900d5b87766735ca8ce716caaff2",
+            "selected_line_count": 5,
+            "first_line_hash": "d5603c524935352b791885de9545688bb2226386e2c50b24aa5c29c72606bbe8",
+            "last_line_hash": "82ab855e8d968d3b536fb88eb57fa0323af7e5b30adbdfa8fe6c89ac9173ade8",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "cf3a2eb8234352103e7894127822a7b01c4aacd49b6662e40627890e1ac63e98",
+            "following_context_line_count": 3,
+            "following_context_hash": "d6776599b80e399b3ca7e72858124814d77ea53d1b9c952dcb4fdc97f87a6cf0"
+          }
+        },
+        {
+          "path": "crates/wenlan-cli/src/client/recovery.rs",
+          "start": 50,
+          "end": 71,
+          "anchor": {
+            "digest": "46dfde9e78a5548313358aa95b1c95669ac42b4e50431d3be4a0bd69c04145d7",
+            "selected_line_count": 22,
+            "first_line_hash": "4780f6dbf04a53161953ab3581b8e3c4f1a982652f4b7d0f967a2a12ac1e0aee",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "2a505e0e3d1f583b9a9e1911a20d0019bcfe7b3f6afea8705046b078e0b20778",
+            "following_context_line_count": 3,
+            "following_context_hash": "9207ec763a0accd279f45b161ea27745f4f931631b46fb82b70fe27fd4e53b92"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/lint/serving_review_test.rs",
+          "start": 165,
+          "end": 169,
+          "anchor": {
+            "digest": "220d66e0e314aba935de0eff64247a93cc9d87e9532fb006a9a0558503a437bd",
+            "selected_line_count": 5,
+            "first_line_hash": "5cd4b81d071cecfbaab091be86f32ac6fa0aaddccf0ae5e27730f1421b952337",
+            "last_line_hash": "ccfc1ef0a7c354c9ba4eaffdf50b7d0dd750ae18442d8b94dd8bf049a6d4ae6a",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "7dfb2d8528f60d1f3ca76a492d0ee7374f5594cded6f7f77e84fbe88771a6f3c",
+            "following_context_line_count": 3,
+            "following_context_hash": "b7f5cdbe0d7833674761a2d7b04fe70f73ab849f0b733bfcfcb76a26b4fee4e1"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/client.rs",
+          "start": 18,
+          "end": 28,
+          "anchor": {
+            "digest": "03abdcc6614ce1841b4effad05219de21bf1b69ae600f0360137415c602c9e08",
+            "selected_line_count": 11,
+            "first_line_hash": "a5f5ee4366e2787980ae9c08f3ceb0502351fc41415afecc912767d7b07b9b71",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "6598d0ebdaac303bfaf2eb63049d0d4409dc66991ead35d83c37d5e16e9e86b4",
+            "following_context_line_count": 3,
+            "following_context_hash": "358ebe8b076739c87de17b3d620bbe9064c07f83b576747020b9980a787eeca5"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/main.rs",
+          "start": 21,
+          "end": 23,
+          "anchor": {
+            "digest": "9ff74f304bf1d510d630d65d17b58bb3d93fceaca3de139586ac3abcc3d15293",
+            "selected_line_count": 3,
+            "first_line_hash": "cf294507ca30bf01405e1522d8f4331c809425b379b3e411f74bcf7f2944d7ab",
+            "last_line_hash": "12b2f5c4d7502a0b1103890e02fd99668cf9f38c045ed93d108c190b395ec0bd",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "333cbfb5ce68162d24c1794a2e64d198276c7566595dfda1cf0cd87f9a980e47",
+            "following_context_line_count": 3,
+            "following_context_hash": "98d776320bc4a630f69dfb70b198c21d99adebfdd02744b7ef70bf0695c0a3fb"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/AGENTS.md",
+          "start": 21,
+          "end": 33,
+          "anchor": {
+            "digest": "61892ad0a48d1b76cdd4c674763dd73eef5dcfc401d72372b56d2fb537740f7f",
+            "selected_line_count": 13,
+            "first_line_hash": "38cde984fafe1cb220bf1b1272200717bafd43f9b8f939ffe85bef59b7597c09",
+            "last_line_hash": "275ee7410ac816ff3089027f01881c77ec6660e58577cc8bb3426bf2c7baf520",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "a80e4da8365667192aea89ac3ac32a31f3377b97103cd3474fa57c79b9cc2cf1",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/ingest_routes.rs",
+          "start": 246,
+          "end": 253,
+          "anchor": {
+            "digest": "ae23133608203c434f0da1102521ffe51f7c6dc3af10fbc6a98b503a6ee2bb3b",
+            "selected_line_count": 8,
+            "first_line_hash": "5786d5ba0de69d254b58072d93da79992e16ecfe94bd0ba8685013707cd74623",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "352c69903b7181c187b46c65f55137c8ebe2e98aefc4de9a36e031dc9269a363",
+            "following_context_line_count": 3,
+            "following_context_hash": "a78e1333bf1ab8af6e080633c280d2f43d749140c7dd36d13c35387a893903ec"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main.rs",
+          "start": 702,
+          "end": 721,
+          "anchor": {
+            "digest": "11905ffe3d85b8f9472ffa977ea646efd9c2b10c29e33e4b75807a1c7b9ca23b",
+            "selected_line_count": 20,
+            "first_line_hash": "aa2c30634df307813a0ebde9d92351e639a4f3fe8e4f34f5ea273943a28f3ab7",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "25aba152ae7326a22df935a40dc10f66d370690de69b871a26abbdb460b5baa5",
+            "following_context_line_count": 3,
+            "following_context_hash": "21e9d3fdefdedcf2a1a029317c4085b43ae21b0cf3f5a27ad135b4d2e9181b07"
+          }
+        },
+        {
+          "path": "crates/wenlan-types/Cargo.toml",
+          "start": 15,
+          "end": 18,
+          "anchor": {
+            "digest": "9699a5499e2ef40fe568074e631855ae56173bb58d6341b3dde2ad2f41621f4d",
+            "selected_line_count": 4,
+            "first_line_hash": "bfc0269bd956904891c7b2d32c23728905b2be7060b67a1432b252aada40f9cf",
+            "last_line_hash": "f0dd7340b27fa9530f0d95fabfb3d6664e4f8141c4e20b15d32149e4fc77685a",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "0e800417f1c25e2f3095eaa4b191fae774617ad147a13c5374c2d9d1793d085f",
+            "following_context_line_count": 3,
+            "following_context_hash": "0f24ca9615329d7851cbd78cc8c8cbe4ddae1063e38ae3214ce23cd3f0c659ba"
+          }
+        }
+      ]
+    },
+    "pages/mcp-server.md": {
+      "id": "page_e35231f0-d66b-4291-b5bc-7dc7a006bf94",
+      "code": [
+        {
+          "path": "crates/wenlan-mcp/src/client.rs",
+          "start": 9,
+          "end": 28,
+          "anchor": {
+            "digest": "6076b00dd5f691ae0219a1538121a2e4b64da169801b79e02ff882de053d926e",
+            "selected_line_count": 20,
+            "first_line_hash": "16f848e4c54b10810a7c6c5243a2aae58803c3eaa1347f91900d4d44c508705d",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "1ce8ada308127e394db9b3e6dd8f0f9e89702748214226343a52873473f7adab",
+            "following_context_line_count": 3,
+            "following_context_hash": "358ebe8b076739c87de17b3d620bbe9064c07f83b576747020b9980a787eeca5"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/client.rs",
+          "start": 157,
+          "end": 207,
+          "anchor": {
+            "digest": "8df3cc85c1af301f0178acccdbcf9e60fec7593a84ab782acbb7b2e046b25510",
+            "selected_line_count": 51,
+            "first_line_hash": "8b3895754627d49661baa197781b4dc2a835654353c847fca8537021dcfd892f",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "ceb6b96b4437538abcefbfcfab5c0d4e143448ccad84d035df9934cdb7604d70",
+            "following_context_line_count": 3,
+            "following_context_hash": "0def05a0b5aed824ee9739b09de92fd035ac458b04b385a10be6156675c0fdbb"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/client.rs",
+          "start": 351,
+          "end": 391,
+          "anchor": {
+            "digest": "b5e4ee4240b60c8fe5a349f6d87775574655d70ca5b36cb8a8bf095ff44c431b",
+            "selected_line_count": 41,
+            "first_line_hash": "4ad1ef1b27d3eab72180cbbff0d08335ed01d308e9f1d5ec23d385368373f00e",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "b1b9a1e7ed9d03bdb1e64f41aafbae02fbe5dcdb0be33651209810cbdc667258",
+            "following_context_line_count": 3,
+            "following_context_hash": "c12b8f75f3f65d6cc9e1f94a3c089be0261933af435700f01ea56e34e36934ed"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/lock_state.rs",
+          "start": 17,
+          "end": 54,
+          "anchor": {
+            "digest": "73ab1957f93defb24933248943a1b62f6a6c0d744d1d4b3f76f712deb60ac9e7",
+            "selected_line_count": 38,
+            "first_line_hash": "61e69e3b52c2d54cc158cf018379a136d349fcdb5edeab78ea8f78c25c983791",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "bf42ef521a1472bb0f0c07135e7c123c98685ea065c211a4fb17b62c6776a1f4",
+            "following_context_line_count": 3,
+            "following_context_hash": "2e6171a0f2b7cbf6a506d9498400f2f9f1e415580fdc0724ec5d382d7f1fa54f"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/main.rs",
+          "start": 1,
+          "end": 36,
+          "anchor": {
+            "digest": "858eaf2869b9a36375a23da4daafc986866d9da7acd3bd5d60e6e26fc8170263",
+            "selected_line_count": 36,
+            "first_line_hash": "765282d0cecda4e2a927a283bb652cc943bc99ef822c6106b40857ed151c8dc9",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "137976448bbacbf721db72c85f2a63fc8c386bf1623d5f15213efa13e4ee8298"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/main.rs",
+          "start": 38,
+          "end": 80,
+          "anchor": {
+            "digest": "711c71654c838adc621c367600a1fb32ac07cf5ca6e925ae09bf4bc951482a2e",
+            "selected_line_count": 43,
+            "first_line_hash": "bfda4c0eb9ddbc160b68ae1f6879dcc2db89d3848943b7104961bdc45a4eed79",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "3ce057aed89745c7cb7d23adbec1dd102188ffe72bc89185057384df741ae640",
+            "following_context_line_count": 3,
+            "following_context_hash": "354dae0091ed1aa351eaf84bc1f72f97af18949f96d8abc8741c577d5131cd46"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/main.rs",
+          "start": 137,
+          "end": 184,
+          "anchor": {
+            "digest": "a1a19a3f50528596362f158af4ad89743d4ca9d70d37ace3a7588cd70ed8c820",
+            "selected_line_count": 48,
+            "first_line_hash": "5798f0d9751dd49d9d100f6ae7acf801bac21bffbbea8f919c79ba6bf4edd419",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "10ea565519a5d1ffa7151e0f4d6b716a77ab7f6b9125ca235f016ff73942cb09",
+            "following_context_line_count": 3,
+            "following_context_hash": "86ea692d3da01c1e47bef88023e467dc659a3a8bdfb7652c58e7cef7148f5e03"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/main.rs",
+          "start": 270,
+          "end": 316,
+          "anchor": {
+            "digest": "ec30a1a54234f772c8bb5bb5e038885eefc5049031312c2e2bf8da54646c2164",
+            "selected_line_count": 47,
+            "first_line_hash": "a05b6b52a0325bc3f045663c426f3d6f1fe523f65d5fe15793fb8c6869c27362",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "1969ebe38aee7ee32eeb21e6193d259b19d0a7c9973bb460eaf745d9b9f720a5",
+            "following_context_line_count": 3,
+            "following_context_hash": "6acc3d65fbf4320d35baae4f727c216e2372f34bea7fe316a4e4e094bcc97737"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/serve.rs",
+          "start": 61,
+          "end": 96,
+          "anchor": {
+            "digest": "68301f75a4b345b90aa2010d5fd6c8a46992b4b62d470231fdf365cadff299e5",
+            "selected_line_count": 36,
+            "first_line_hash": "73935ce67613996f27292d5003ecee2a337c6698a9bfad1a675eadabe4814d06",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "59fa613ee353096b5800d882ba243284f6ec648a7e581490ab574a2093a8e900",
+            "following_context_line_count": 3,
+            "following_context_hash": "50b1ee301cbc52449f217683768120aa084ec2e06b0fb87eca3d489f2050ee87"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/serve.rs",
+          "start": 166,
+          "end": 222,
+          "anchor": {
+            "digest": "36f4872899635107f6c4c0ff97632ed2f14e1bb5cdcf8d5c828189ddc20836ef",
+            "selected_line_count": 57,
+            "first_line_hash": "cf6fb105f691020dcb7da68f27f34ecdb5313c4b113df9a7caced8797a5f6d8c",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "74d8e625002f7c692aa109c3d511e32b9aa0cc2d84f1ef766d325d725f109be9",
+            "following_context_line_count": 3,
+            "following_context_hash": "ed93d21f40c3d4c7d0cc1522c7f2d97412affb9da5d954e426b231a3295bf051"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/serve.rs",
+          "start": 326,
+          "end": 362,
+          "anchor": {
+            "digest": "a5a3c9994e288f096f8c35a97ad5c3af6dba7815bf76211ef49a178abd694eed",
+            "selected_line_count": 37,
+            "first_line_hash": "89579ab113a841372b5a609b7b88b0971856c85cb39c293b435e1bfecc7ac53a",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/token.rs",
+          "start": 3,
+          "end": 22,
+          "anchor": {
+            "digest": "2f7dd2644960607fe22e3c23238cc4c4d443e85571a15e79db7e9ece913b1460",
+            "selected_line_count": 20,
+            "first_line_hash": "0b933731d3c58078937d0fa68123467c4ca84894dc6abc87e124b0ac06753a98",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 2,
+            "preceding_context_hash": "b6b1b16c9f045aa3f01a588a6289c2dde816ede1410f5fc14db76d543ba6d041",
+            "following_context_line_count": 3,
+            "following_context_hash": "65a740ca05054209bff20016b0a867b4c9f19f8e9624dab86eb6eefc94c258a2"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/tools.rs",
+          "start": 40,
+          "end": 64,
+          "anchor": {
+            "digest": "795da0530fcae040926ecd558d666590db4c2d5d92d6a9c2c758facbfaa967e0",
+            "selected_line_count": 25,
+            "first_line_hash": "bb5e0e01bcd7c2eaeca78bc64f5355ef78bc2766b06b282482a22cc228ca543f",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "50862633cf0c467548635f81a0229b95dbdeff5a1c14544d44d167c15fd8e1a3"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/tools.rs",
+          "start": 94,
+          "end": 148,
+          "anchor": {
+            "digest": "298372a8fe30c5d9364a672404f8b3840d07a53f6f51406868662d4c972733d2",
+            "selected_line_count": 55,
+            "first_line_hash": "c4c1a37ca76471220d42e6edb60840adac7fa70520db02e23d76d2b29dc9f489",
+            "last_line_hash": "a10833be01afee3cec581f66d937f217965e4bf31dce1e433e440991215a65ba",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "a71f6f418145fc2072eb076149b9837f2ffb996284be6ab6d12b8ef6db1206a6"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/tools.rs",
+          "start": 1965,
+          "end": 1981,
+          "anchor": {
+            "digest": "477a4ce77c9f19c9a03e78248c21b05b938abd7048627e02883745d695ed2903",
+            "selected_line_count": 17,
+            "first_line_hash": "c994ede562e8954a70dd0fa60ac55410d9e3a10a553e96925e3f925893473673",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "546a253334d0402a9e8dc7442bfeabd63d6643d343d179d21c542afabc426a31",
+            "following_context_line_count": 3,
+            "following_context_hash": "25ea6a9dd8ef5ef1e4d00d82569f9ca8811660bdd0bcfc25a844a92eb93e7980"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/tools.rs",
+          "start": 5176,
+          "end": 5221,
+          "anchor": {
+            "digest": "466510f42dce435897169c20f67aacd78e99196400fa2dc2a31b50abd58e8764",
+            "selected_line_count": 46,
+            "first_line_hash": "9fb348cf35c8d4ba3e2a6af915feaccab57253e20861744abc4c704ad64991ea",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "cfe1c9f63b054be02d685eb6d430abcc435762c08d0d15e0a7b3f58eb5a209a2",
+            "following_context_line_count": 3,
+            "following_context_hash": "d834ef35cac00dffe9afdbd5de031722ac522da37a8b200d0bcec69b7204c2de"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/tools.rs",
+          "start": 11483,
+          "end": 11542,
+          "anchor": {
+            "digest": "23948c9edb101cc2519c6c528015095362cc426f400e7065a21b24e8e036b96d",
+            "selected_line_count": 60,
+            "first_line_hash": "6437cfd337d8d969d6cb9a5cd17f1e3db60ff382f8406ffe37ff878f4d785ebd",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "ecfa72733e6a792b3fbd11e10f4374fa201f1f00ff4073698ae429457a2095c9",
+            "following_context_line_count": 3,
+            "following_context_hash": "adbfeca67c10e0abbc48ce344553dc3f0f4a5fa2dcf29cd9ba0383b1baa13d68"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/version_check.rs",
+          "start": 10,
+          "end": 38,
+          "anchor": {
+            "digest": "c8710a8b8c8b399ca2ad174e68757f503b609482c9a3cfde350b5d7a4a99b204",
+            "selected_line_count": 29,
+            "first_line_hash": "46b9eed9006402e06968e31f5e878b90a9ae25406784f1188d82b025c0615a19",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "ea3b24324aa5a99588a1c8b436decfe936b71d6f946168dc4d345be0242fe953",
+            "following_context_line_count": 3,
+            "following_context_hash": "650f12c5ce88f0fe8370c11b1d3a4f7a1f554548a6b4ee9b17743bf4a8f8f8ee"
+          }
+        }
+      ]
+    },
+    "pages/module-map.md": {
+      "id": "page_8d6e4fd7-2100-4a74-aaca-37c53215115f",
+      "code": [
+        {
+          "path": "AGENTS.md",
+          "start": 50,
+          "end": 57,
+          "anchor": {
+            "digest": "50547ddd99aa3c660a34a68b95ff8cfdf5f48ad7e87ca922a7a4d81009e1a2be",
+            "selected_line_count": 8,
+            "first_line_hash": "7629c8ce0726f8225bf73f7c4aef040f4ac5279859a45de2271c63ecef9c0716",
+            "last_line_hash": "9675979f8c25c859b202634839e509d0c27fe42a511b079b8afa833dceb80808",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "488cbafb93347532e364ad27d9b521ac81d328441fac5ca22fe421d5b4ef5dc6",
+            "following_context_line_count": 3,
+            "following_context_hash": "cb3c8a1e9b642f7e9e7c26731c78736968bdd4298174355fdb207dc9d4961172"
+          }
+        },
+        {
+          "path": "Cargo.toml",
+          "start": 1,
+          "end": 21,
+          "anchor": {
+            "digest": "bd564fef138fe3afee6d9fc876fa274c7de86763a4f71463919b38bd6bc939e6",
+            "selected_line_count": 21,
+            "first_line_hash": "59bc0a0f46c351ca788a518854b298adb512865e8c940bc63665cae98879b4f8",
+            "last_line_hash": "cfae0d4248f7142f7b17f826cd7a519280e312577690e957830d23dcf35a3fff",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "6d53e3ca99db814a544879aef0446b17c95d7499661d6cc705c8e238b276cba3"
+          }
+        },
+        {
+          "path": "app/AGENTS.md",
+          "start": 17,
+          "end": 17,
+          "anchor": {
+            "digest": "db530c1c24f7b8e4f4b64097819241ac533ec45c157d7017b948363c6f22f36f",
+            "selected_line_count": 1,
+            "first_line_hash": "db530c1c24f7b8e4f4b64097819241ac533ec45c157d7017b948363c6f22f36f",
+            "last_line_hash": "db530c1c24f7b8e4f4b64097819241ac533ec45c157d7017b948363c6f22f36f",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "dd1a1ac3f2e47a4c04226801ca8d22f6536b444b0ae4bdf2761cbd768d87a208",
+            "following_context_line_count": 3,
+            "following_context_hash": "ffd2c42f3c88a02f7f789dad9f2ef33d3ced2969d63e4e836af7c3a6a1fce8fa"
+          }
+        },
+        {
+          "path": "app/Cargo.toml",
+          "start": 82,
+          "end": 84,
+          "anchor": {
+            "digest": "3f9f1aafa1ba4d26317091c4ad6fd572b2ea9594c2b1c914da7ad0b165984b86",
+            "selected_line_count": 3,
+            "first_line_hash": "48c82a10eed46784c0e42e3e92a985ae77420eb8a65f21c7085e15ca74f148b0",
+            "last_line_hash": "52b344d777e43a47f3326ae72a58fdd1dd87c35e2e66ddc6c5cd85fbd645ba60",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "6c6e24625d0db1ed2a75ad5df86048022977eccb1683f277995abfced415d259",
+            "following_context_line_count": 3,
+            "following_context_hash": "ce80b1b681fed5a316d9e1e0ac0a4b59724ddb1449cf9f7d46aa7405a3fde336"
+          }
+        },
+        {
+          "path": "app/src/api.rs",
+          "start": 47,
+          "end": 52,
+          "anchor": {
+            "digest": "657dc5fb18c63687f7854bea632875695b33f03b926f8bd8d7b17c5781ad2f5d",
+            "selected_line_count": 6,
+            "first_line_hash": "92077f3b21190eda9bc07d65ee644bcb2c9b5b87fcb87ed8d9c0299f48802195",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "3c402aeb13bdcee44b844923c6565ad9295dc20c17ea8cd42f85bf588b690c2a",
+            "following_context_line_count": 3,
+            "following_context_hash": "36d8ec5142ef076faca451143bd9bbdfe87d66cdcd07d2316c9d9f9ede5d7a40"
+          }
+        },
+        {
+          "path": "app/tauri.conf.json",
+          "start": 67,
+          "end": 71,
+          "anchor": {
+            "digest": "9a4e3d7bbaec0272022bdd20c9af8407a999dd639a5ad6d2e776fffb68176da5",
+            "selected_line_count": 5,
+            "first_line_hash": "ea9d2ebe675a6098d15fd7adaaa5b6fa2e64f67eb353bfa5e8de04e96404a9a8",
+            "last_line_hash": "39d4b54e0416be65f3fcb26963ff2c5c40153a3b4044179d7d7c8a6ca2f2bf87",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "886c62355f89e7bd1bb9d49577ee0559ed920383243b5a1a29fab89e9d0a4ffe",
+            "following_context_line_count": 3,
+            "following_context_hash": "4526bf6ada1f69e862b05953cacb30c5fec651768ff75ccb0d47e996878d624a"
+          }
+        },
+        {
+          "path": "crates/wenlan-cli/Cargo.toml",
+          "start": 19,
+          "end": 21,
+          "anchor": {
+            "digest": "24ae30d699dd7ad42a0d2abc1f5fbf04d8cdf32173eea09455e8d5ab4b9c0f38",
+            "selected_line_count": 3,
+            "first_line_hash": "bfc0269bd956904891c7b2d32c23728905b2be7060b67a1432b252aada40f9cf",
+            "last_line_hash": "7c291ddf08999aba8cef613fa4d2a765addd7a1039bcae421efbb85f992c4ee1",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "875cf5d31f34864746805f9540d1cb2e50116d2e46bcc209d874daf9b26a0a49",
+            "following_context_line_count": 3,
+            "following_context_hash": "868296c5708f2650fd67b668b3c7cf8c2bb186a8803fb3d657edd17df8d8d870"
+          }
+        },
+        {
+          "path": "crates/wenlan-cli/src/client.rs",
+          "start": 1,
+          "end": 7,
+          "anchor": {
+            "digest": "8de044d516a79284ff2062aa40388c6c09ef73920047a0b4e2316ae1d0890bcb",
+            "selected_line_count": 7,
+            "first_line_hash": "01461ae137dca0f445362c3eb3b15ced89d55a5b09eabdc9d453910d49b5aedc",
+            "last_line_hash": "19a71d3d17f9af33babf13dbf66af9a3e8cb1f1a3aa83763fc48155329b7a008",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "e9f45f09d3ea0f213f47247b9c491c7ee19bcca0a12c92367f8e934d9cd67d8d"
+          }
+        },
+        {
+          "path": "crates/wenlan-cli/src/client.rs",
+          "start": 39,
+          "end": 39,
+          "anchor": {
+            "digest": "ca1d94d2a5eabd260f0e3f47a883e35555d3902d606a3c4e54fda6e8056a76e1",
+            "selected_line_count": 1,
+            "first_line_hash": "ca1d94d2a5eabd260f0e3f47a883e35555d3902d606a3c4e54fda6e8056a76e1",
+            "last_line_hash": "ca1d94d2a5eabd260f0e3f47a883e35555d3902d606a3c4e54fda6e8056a76e1",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "34ba6b801e05a84a2b039ac700d75edbc7e5784f882450a973882ad4e873b608",
+            "following_context_line_count": 3,
+            "following_context_hash": "efb9b3fa21e5b955ebdae9938776f62949a7be44f6d72182e1dcb9343ca5aee9"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/lib.rs",
+          "start": 1,
+          "end": 9,
+          "anchor": {
+            "digest": "3f86b3db4480d7ae2911cf3bea24071e21536851372c47c33bf8aeffb461c4e5",
+            "selected_line_count": 9,
+            "first_line_hash": "01461ae137dca0f445362c3eb3b15ced89d55a5b09eabdc9d453910d49b5aedc",
+            "last_line_hash": "def1afaabf8bec7bee936937b0f41a1a2ee8ca9c688ef2f6dcd573bc5c7e854a",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "61f323e965dc135101081659da5e1f666637a0fa326038b1ca3ce659bd72cde6"
+          }
+        },
+        {
+          "path": "crates/wenlan-core/src/lib.rs",
+          "start": 26,
+          "end": 82,
+          "anchor": {
+            "digest": "de380bc068fd966f491cf1f76ed791b8937050531c2be5d9d91868be6c59aa78",
+            "selected_line_count": 57,
+            "first_line_hash": "f36610139453d2a80170f8362683117f465f13e9100da46fc78c23e7c43524a7",
+            "last_line_hash": "0811ce1d009927735ff8f9437eb8f5d01fcc156ae9bff0e66057dd8eced90371",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c507d8aa74f7794cf836ed20c9248a9a98c5da92d0954f4ebb9bb76d26cf08ca",
+            "following_context_line_count": 3,
+            "following_context_hash": "6132055b6f718516369f5a8f31a3809b89f11da4b51bff524b1939ad6053838e"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/Cargo.toml",
+          "start": 45,
+          "end": 54,
+          "anchor": {
+            "digest": "20103b0fb092cc2c1f906b164e238f759688c4bb4e9d656c95821f92f71be2db",
+            "selected_line_count": 10,
+            "first_line_hash": "b309ba368a821850d111f9bd1a09f9262da24e9f71184095928e0a57f158a3b8",
+            "last_line_hash": "aa282bfe0b845883ba8bcef4f792e15603713dbecd65fdb1eeaf060d7f2a8564",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "985d3d569709e1fc9c3ad4a4aea992e92b3bd196d3ef7bf3f3f0ea0edcd0224d",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/client.rs",
+          "start": 9,
+          "end": 29,
+          "anchor": {
+            "digest": "1eba281d857ce340525e83da09ed6c52a579a5c28e55b1c373831c62a3421e03",
+            "selected_line_count": 21,
+            "first_line_hash": "16f848e4c54b10810a7c6c5243a2aae58803c3eaa1347f91900d4d44c508705d",
+            "last_line_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "1ce8ada308127e394db9b3e6dd8f0f9e89702748214226343a52873473f7adab",
+            "following_context_line_count": 3,
+            "following_context_hash": "c248486a55c5ead1fae8713588efb879792521f55bc9ee8b814d80ce7630681e"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/Cargo.toml",
+          "start": 17,
+          "end": 26,
+          "anchor": {
+            "digest": "0a9c689dc8d1876d2ad9f3d40837eb87b75ec5adbdc0ad1e7bce724ed69ca4eb",
+            "selected_line_count": 10,
+            "first_line_hash": "bfc0269bd956904891c7b2d32c23728905b2be7060b67a1432b252aada40f9cf",
+            "last_line_hash": "a5d89274564f3065bc77cbbc5c53745940290b7721c0cf8815167a0c605c9940",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "caf4e6a8f1fa8385e2bf61fd16b423e29f65878247ff7fa8a2bae44575c91443",
+            "following_context_line_count": 3,
+            "following_context_hash": "bdee3670d3382892b6b4f00d7a99bb0eb9682d5dab5735093cb0ed68d1423720"
+          }
+        },
+        {
+          "path": "crates/wenlan-types/Cargo.toml",
+          "start": 15,
+          "end": 18,
+          "anchor": {
+            "digest": "9699a5499e2ef40fe568074e631855ae56173bb58d6341b3dde2ad2f41621f4d",
+            "selected_line_count": 4,
+            "first_line_hash": "bfc0269bd956904891c7b2d32c23728905b2be7060b67a1432b252aada40f9cf",
+            "last_line_hash": "f0dd7340b27fa9530f0d95fabfb3d6664e4f8141c4e20b15d32149e4fc77685a",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "0e800417f1c25e2f3095eaa4b191fae774617ad147a13c5374c2d9d1793d085f",
+            "following_context_line_count": 3,
+            "following_context_hash": "0f24ca9615329d7851cbd78cc8c8cbe4ddae1063e38ae3214ce23cd3f0c659ba"
+          }
+        },
+        {
+          "path": "plugin/.mcp.json",
+          "start": 1,
+          "end": 7,
+          "anchor": {
+            "digest": "4e0313ef864f73cea826c8e14591873bb95293e1942de9873754507d772a7c2b",
+            "selected_line_count": 7,
+            "first_line_hash": "021fb596db81e6d02bf3d2586ee3981fe519f275c0ac9ca76bbcf2ebb4097d96",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": "preview/AGENTS.md",
+          "start": 3,
+          "end": 7,
+          "anchor": {
+            "digest": "09144f4842a10edc8a300fa532b5c8778c86c64e89ef72d4714b39c04223c51b",
+            "selected_line_count": 5,
+            "first_line_hash": "ef42add9e9c12ad7386a357abdc31800e14cabc9388cd1bd31ca430b571b340c",
+            "last_line_hash": "ad1f9d96e2478e8fc2932283c35ba5467c9bcf000ce6c1fae432876a2ec0ee40",
+            "preceding_context_line_count": 2,
+            "preceding_context_hash": "e2ba648f47f2fdf54c5a4eedc7cac04d177c960055067347adf0ab0ce7f66e33",
+            "following_context_line_count": 3,
+            "following_context_hash": "aa23bba59ec94de067522e0af94ca4ea5015e9c02685204d3a7b1ea6894aa71c"
+          }
+        },
+        {
+          "path": "relay/src/worker.ts",
+          "start": 1,
+          "end": 5,
+          "anchor": {
+            "digest": "53296e9185ba6349e5e1499719ae503d2d7b7ddeb73ef16de147fd1d48c0b0d7",
+            "selected_line_count": 5,
+            "first_line_hash": "01461ae137dca0f445362c3eb3b15ced89d55a5b09eabdc9d453910d49b5aedc",
+            "last_line_hash": "0dd9776176bfa548b7492db78acb7b791389ac1584532d83efaf624c233b436e",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "792da01fc6f8760166db72dbe5ef01d2323eda2615db1630d4ce5d059344a4bf"
+          }
+        },
+        {
+          "path": "scripts/AGENTS.md",
+          "start": 1,
+          "end": 17,
+          "anchor": {
+            "digest": "a1c5ac5d15226adc2134ac2e5af7cdefe3294a9c42767a7f917479c126f11910",
+            "selected_line_count": 17,
+            "first_line_hash": "7f17d4a3801048c4e22ed770ed10741c491448cd51b58c9b16e9b14d9e837bea",
+            "last_line_hash": "8bc462d7cd38de60c4dfbece3d6d30dd672a054b95ccdea6f5a16d332e6c02de",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "e2423437bba5bc4ae769a94091ddd6a091ad244040f5d34fc1ec28a90174dcd1"
+          }
+        },
+        {
+          "path": "src/lib/tauri.ts",
+          "start": 1,
+          "end": 20,
+          "anchor": {
+            "digest": "b5042d0ecfcfdb5524e3339fb6ba4c2f9774503f98bf0c84bcf369d0b6de6258",
+            "selected_line_count": 20,
+            "first_line_hash": "677548a3cfa3a81470a3d5d728271971d5c068515b23afac3d818069efe7f6b6",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "159c31d55d40ec786b71cfb0f66d964e89d8654b42a825848a0e9b6bfc52a528"
+          }
+        }
+      ]
+    },
+    "pages/the-http-daemon.md": {
+      "id": "page_42074da7-5213-4d0c-a107-f1e3dd6482a1",
+      "code": [
+        {
+          "path": "crates/wenlan-core/src/db.rs",
+          "start": 1717,
+          "end": 1726,
+          "anchor": {
+            "digest": "b82cca217cb07fd654f3d67729491ffcf747a994d77c92885cc164ca0bfe96b1",
+            "selected_line_count": 10,
+            "first_line_hash": "e4c5ad3b4460978fbc020119edf503e392e9584e363261b14097c1c82aa9e82d",
+            "last_line_hash": "8b0dad79145bd0a2046222daf3cf7a51984377f219af4f96cb38cb38f3aa33b0",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "be15163b82a54ce69252c47e42b497b0d95114efc5e4423e2d41af1e0489a6ad",
+            "following_context_line_count": 3,
+            "following_context_hash": "43549ab803c1ec18abb8b4e4f986bb622a9bd03236b88ff49575709352bd6e1f"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/AGENTS.md",
+          "start": 5,
+          "end": 5,
+          "anchor": {
+            "digest": "60ee44806a59606da701fcf605706105788a88d4a7bc279bf967b6adcb260d1c",
+            "selected_line_count": 1,
+            "first_line_hash": "60ee44806a59606da701fcf605706105788a88d4a7bc279bf967b6adcb260d1c",
+            "last_line_hash": "60ee44806a59606da701fcf605706105788a88d4a7bc279bf967b6adcb260d1c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "3b853ff46b3d1663910ade01c23806037447e1a8a461706b87209cd2dd1d7f18",
+            "following_context_line_count": 3,
+            "following_context_hash": "ddcc85be583004c82244d7ac15aee97ffe2b9edc4cc0640c2afe2af00e20c5c2"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/AGENTS.md",
+          "start": 21,
+          "end": 28,
+          "anchor": {
+            "digest": "8ceee676ea58daae6c8b8edcbd779c25a534e1dd7b3e2fad7f0a06ee7f5ea1ac",
+            "selected_line_count": 8,
+            "first_line_hash": "38cde984fafe1cb220bf1b1272200717bafd43f9b8f939ffe85bef59b7597c09",
+            "last_line_hash": "b8cf779fa801e86754754f883764738d0a1474ba2ab7dd3ee2132c95d0c79fba",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "a80e4da8365667192aea89ac3ac32a31f3377b97103cd3474fa57c79b9cc2cf1",
+            "following_context_line_count": 3,
+            "following_context_hash": "16468784b522aa55c02ae73820024068c555b15e9142de8c9b5b240e31f1a3c1"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main.rs",
+          "start": 104,
+          "end": 126,
+          "anchor": {
+            "digest": "dd48a045a7c879b114917027cf169221a5ab042f2e4146e5eb0d5ec5f347f32e",
+            "selected_line_count": 23,
+            "first_line_hash": "e8712004eed115595268376d42574f6820029cfd85e3f4254cb4bb11e3305d5d",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "b3b56afc04aa0c322ffb952eb913e90322ea383ae490c6e95f00637b7fd6eccb"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main.rs",
+          "start": 664,
+          "end": 680,
+          "anchor": {
+            "digest": "4b2de55d10824b8f950a4f23a766d024f4acda209ee0135da64f52dba3f4154e",
+            "selected_line_count": 17,
+            "first_line_hash": "cc4fb0115c3ecb1fe83ac9c6f6d5eb8135f512f9cdf2da0dedd16b7be388f1fe",
+            "last_line_hash": "661ea004f701058e999c511fffc2b264778618121b73ff1492cf62439217b44e",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "a5d4139dd9c0570680353c799636a6a619bc29286cfeee7e2001aa93ce8826c8",
+            "following_context_line_count": 3,
+            "following_context_hash": "87aa6d3e7f6c3586907c4c47d79325afd44c07b00ceda1272e532a623cc05c38"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main.rs",
+          "start": 690,
+          "end": 728,
+          "anchor": {
+            "digest": "d4855e604333e552c4c372d850500259ab661ce8ed14a5601eef7efe10e08217",
+            "selected_line_count": 39,
+            "first_line_hash": "83d60cfc13f6731f6fd356de4435ffe2b1d9e99f926737d19a6f5b4bf444f477",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "87775f4b8b2d4ef34b4dbd2e0bb0d2b45c5d05cbcf64b37625f5d773b7029c74",
+            "following_context_line_count": 3,
+            "following_context_hash": "f81bc562f3eb9a5f511147b7a855e315e82a492d4e7b44db16875569b9912170"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main.rs",
+          "start": 732,
+          "end": 763,
+          "anchor": {
+            "digest": "d205ed230066b26c01d5a02428787898431b7ad7ad62b4365e570401f6b0e2fd",
+            "selected_line_count": 32,
+            "first_line_hash": "c2ef74ad6b64642ee39245808f7767b6ff8273f356432b998f0407a1943e0d4a",
+            "last_line_hash": "a9cb87efc0c8fabe3198d960e34121264e4c929964d9b81cae259be9ba7be3ee",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "f81bc562f3eb9a5f511147b7a855e315e82a492d4e7b44db16875569b9912170",
+            "following_context_line_count": 3,
+            "following_context_hash": "e7b02de743920b5fb34ca7e4d61ca9034f0eb13cdb88bca5db8f6dadca736daa"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main.rs",
+          "start": 770,
+          "end": 816,
+          "anchor": {
+            "digest": "6e0321ec4abb864f498f901050dca31bc8ec8c66f71f7b920e350ca1e1e940cc",
+            "selected_line_count": 47,
+            "first_line_hash": "f6854872cec2aa3fec402f32e5df1d17c48f770574fff381f92090c2f6bd15fc",
+            "last_line_hash": "86d6baeb453f065ffeb97cb9eecd2d962de5a99d3c6fbf64ab5c03861ae32b20",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "8c8b0ffceb545e59efa44e66077aad58cbfa5d10dde251208e118908e25c56ac",
+            "following_context_line_count": 3,
+            "following_context_hash": "54b66601e8aff30b57d845718c939d25e67303eeef92a97d37bad3322f3e0df8"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main/runtime.rs",
+          "start": 77,
+          "end": 107,
+          "anchor": {
+            "digest": "2ad477a2dcd2a5045f982453cf8ee3f7bbaf750a060f4a3b152fdf8a621f2501",
+            "selected_line_count": 31,
+            "first_line_hash": "6b0eceefb4590aa15ba6c9410106adf1bab2cb4385e35bb374fba683c2c1b01d",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "ecfa72733e6a792b3fbd11e10f4374fa201f1f00ff4073698ae429457a2095c9",
+            "following_context_line_count": 3,
+            "following_context_hash": "210b5b170668815784a27644cb58b3b05b98af9e21c2eab30950fe0874d23022"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main/runtime.rs",
+          "start": 590,
+          "end": 623,
+          "anchor": {
+            "digest": "accf343d2af1aedbe87b05fe514703ed92bd0cfe064c759c8c1eb781ec3d3352",
+            "selected_line_count": 34,
+            "first_line_hash": "941a8ac013392ab23884827da2fbc4a76512aee7bb06c6015f0ce7da9173024f",
+            "last_line_hash": "a3f8796beabe6437db3b05e846b8813a22206e7f6a70428ec82d2c0adb36fcea",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "132fbefa704e6847e8a4f2756c8a8b459713921b763aa123a6a1f92f2ed7781d",
+            "following_context_line_count": 3,
+            "following_context_hash": "6d274918a26f7983bf0664d1bcdb01d3809dfc45dc3c498ac10e0a34e103f2d1"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main/startup.rs",
+          "start": 102,
+          "end": 123,
+          "anchor": {
+            "digest": "e0bbe7b83ee3bb59c9f9f6a6af3c794157a903560eccd646bf127c7b8a396b21",
+            "selected_line_count": 22,
+            "first_line_hash": "90056fcaea309da74ab79c8a192bd5f69c63b2476437692ed8ebda5205c0b2cf",
+            "last_line_hash": "0737b5c7e63a2b70a4756de88cfdb2dbf9ccfd958de37a8329a6d1d8b2afa6a9",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "b8c20f3760a808bc636f10d0ea8312867d1197dab7be9f50dd441d6ca19de503",
+            "following_context_line_count": 3,
+            "following_context_hash": "1fd5144c3e57c7645e4b2f00122d4a3d4d3a34ccb16a62d27f44571d5ab8746d"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/route_registry.rs",
+          "start": 303,
+          "end": 330,
+          "anchor": {
+            "digest": "ce99f4ccea9abc0711cef17ff26a7d11ec7c776a971b4e2605ca9b9ae6ddfa33",
+            "selected_line_count": 28,
+            "first_line_hash": "57f5444db3294a8e0095026cfbd6f9d9853d2b036e398004aaa9fa221cc8086e",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "285577568ac35d60830cf925beb22babfffdf80c35bfd45a12e88fdba305694d",
+            "following_context_line_count": 3,
+            "following_context_hash": "dd6112e007c206e9e80a3aa5552262711dad7da8eec5367726d8071848560700"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/router.rs",
+          "start": 51,
+          "end": 98,
+          "anchor": {
+            "digest": "7bb60b8d02a684c265d96ac2d45d4d005cc808ec0be56ab2077102a6d5c88159",
+            "selected_line_count": 48,
+            "first_line_hash": "e9480f87c9d09f10c1a4d2b2ee4b746cc3bf9be0a962c325694ab475c40be025",
+            "last_line_hash": "28414a5101ff0df9bc02c134e672e565d01c2a303ba4374de4311ff5f7758bac",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "2955439c2b46fe8e311ac1e48ce77916097b78cfcdef62794e8b7d0973c476e1",
+            "following_context_line_count": 3,
+            "following_context_hash": "4f3b047049506d77e7ed1988e29a1d1a062dcf3f77c48a09f1ee7bb7d6f0ac25"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/router.rs",
+          "start": 100,
+          "end": 116,
+          "anchor": {
+            "digest": "aa4fe1c80e82d12d3353c95b82273be26375634e91771fae28d2c8e68af1f583",
+            "selected_line_count": 17,
+            "first_line_hash": "74c95604043427f0bee1d0e16bfa53afd537f736ad0073c4cc4e1ccb3a82b5dc",
+            "last_line_hash": "1fa8f249276753e4b13566b8e29b9556347cf1c458173eb8aabc56513a32363c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "45da2eea6b9fd1a107d8646b92e76a3b5c3c190854b9c577dfab78e8df19fd06",
+            "following_context_line_count": 3,
+            "following_context_hash": "ac575cc1304ddacc750f0a426fe93c03e7b6e053225408581d1462a321fc5857"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/router.rs",
+          "start": 119,
+          "end": 145,
+          "anchor": {
+            "digest": "707062a2140c8757f17e4478a3642ba5c9c7be5a21ed7afdea38459d7ec4ee74",
+            "selected_line_count": 27,
+            "first_line_hash": "1a406417669541b5830f89d7ae2c68504ce76771b7b34e10353fa0840cd2f5d5",
+            "last_line_hash": "7e9b17a095c7682d9f6c0ffca59a2538a00b63e43ec9de152b55de6e9406b8c4",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "135c9767b71d6fee8f156bb8cc0b1ed3c82f361d754243a00f88b38aa9a95b04",
+            "following_context_line_count": 3,
+            "following_context_hash": "0c29c5e3bfea24f4a2d59952e10aba10926245a3d0301b6b3e0bdf6ec3e26807"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/scheduler.rs",
+          "start": 1230,
+          "end": 1240,
+          "anchor": {
+            "digest": "e1541fb08172085eff6f077ff82c07f8877d2a3f1ceb6d4d3a916f4014868793",
+            "selected_line_count": 11,
+            "first_line_hash": "f1b7315afac349980e39b943dbf75e6891e63e8d581d5bba5ad40450f372738f",
+            "last_line_hash": "1ea103e50ae666bd1628f775c2812a2c0222d547e98578d858f125db148e7f72",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "1fa960a5dc2d6e32644f76222c9ba410ce91e94835a49ed6076dd80f1294d33e",
+            "following_context_line_count": 3,
+            "following_context_hash": "db891f587b6dbaf0edb5dc002f672f7872297d6d14dc64ef1d6a10d75dd32dcd"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/scheduler.rs",
+          "start": 1315,
+          "end": 1322,
+          "anchor": {
+            "digest": "0ce72df28ed7ddbb8e84731c764a78a19b549c2067a17a84c6415755bd473789",
+            "selected_line_count": 8,
+            "first_line_hash": "482827812f5b8f23430cdc8a06d6b12974bca57d7f207802961dd2006cda06fb",
+            "last_line_hash": "df3982fd610173599241fca93c7c866683f58f541eced1c2098102145477164c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "c4a11b75dd44d6b1dd2846f11fd170f83a6532a0d85c9fa395217fac783b0e85",
+            "following_context_line_count": 3,
+            "following_context_hash": "93474ed150f4f85a1c0ec05d2e5f8fcffd37d12080a92ca0f014346d8f423e61"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/state.rs",
+          "start": 131,
+          "end": 140,
+          "anchor": {
+            "digest": "b125eafc3c68e59e0930377d4ecb0f74ee6420bc8fe0a606d2fa9a4a197e7d7d",
+            "selected_line_count": 10,
+            "first_line_hash": "36037a3bc6c724c000076b1958a8f84f04c4a13ba44567e09c722e8684492cb1",
+            "last_line_hash": "bce746087fa7ddbc9dc10be0a4131f90c723c2d75d2242ae5a2acadcf8a04084",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "df6ad9272255b3c08b2a02e296fde57eafa8d7101bcc37146d4de0add0ca87da",
+            "following_context_line_count": 3,
+            "following_context_hash": "4e7e090ef743c8ea87293fa105880e4c676f84e373fcd190009382fe09c92c50"
+          }
+        }
+      ]
+    },
+    "pages/what-wenlan-is.md": {
+      "id": "page_1f01cf62-405a-4a9e-b2c9-2d2d0ff8f972",
+      "code": [
+        {
+          "path": "AGENTS.md",
+          "start": 3,
+          "end": 4,
+          "anchor": {
+            "digest": "856b5697c41bce0bd46a33939c3d831c52861e1fc6e71274e48e6d31f377dd1c",
+            "selected_line_count": 2,
+            "first_line_hash": "8407b37bd27484becacb78ce407cf1e0a747c77ebd64011461f7f691d86b72ae",
+            "last_line_hash": "e1e65b84b961a947c2000faa6cae493c546e2cbd81db93fec290c06be31ecdbd",
+            "preceding_context_line_count": 2,
+            "preceding_context_hash": "bc7f4408a2f9386558ff4bbb3e43856b516cb873c9df4c40eecd9c8e8f7c4e1b",
+            "following_context_line_count": 3,
+            "following_context_hash": "e4770bded80729851781a1d4bc5da015a2783e70034c3b53bf03acfa1a82257e"
+          }
+        },
+        {
+          "path": "AGENTS.md",
+          "start": 54,
+          "end": 55,
+          "anchor": {
+            "digest": "b6f97302c44e777ae07f6b09ca0882aad42178ef95a8f7d2c2bb70f282fcc44e",
+            "selected_line_count": 2,
+            "first_line_hash": "95801b0b8923e3010551bd524945fd00af120f9c2d4321659bc883129ff7da59",
+            "last_line_hash": "f205145d38109aea488a8d28f5109d48b750cf65408667a7cf838d9142546cb0",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "fad0225cfff83886ae04ceb6effe593cccc8cffc05acf6b0d717b11dec53fb72",
+            "following_context_line_count": 3,
+            "following_context_hash": "260201a180e26d056389779cabfa62a1d677f7d19d842d59f119f193fe0884f0"
+          }
+        },
+        {
+          "path": "Cargo.toml",
+          "start": 23,
+          "end": 24,
+          "anchor": {
+            "digest": "2307e8ddd568ee90d1e746a1074dbe0b6f891f96a9e7235a0be0c9e2e1b2b77e",
+            "selected_line_count": 2,
+            "first_line_hash": "8c4182aea1f3c2c06c665cbf6c80afc1558334f8e770a7ce55d2a3eece13534c",
+            "last_line_hash": "23761b34ac9396679082798d90792052e47873f44aa117d85e520a3af66451d4",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "38d31ddc9e2afdc4399070f101da60a85ad5b6544f14a566258371abefca04ff",
+            "following_context_line_count": 3,
+            "following_context_hash": "6b4940bb487f62d63dc56dbe7bee36dbf2948dcdb10b898d20f37da73027b86e"
+          }
+        },
+        {
+          "path": "README.md",
+          "start": 9,
+          "end": 10,
+          "anchor": {
+            "digest": "1c32e0d1345fef439a2c0011004c8824faed9359d699d0a6118580fc21949fe6",
+            "selected_line_count": 2,
+            "first_line_hash": "a9bd5f619dfcb394e5421d1a24ac37adb820bf846d678e6367912c1c0eb5428e",
+            "last_line_hash": "2223db00950686f7ed5c85734a422819b6b619f38ad6dcc4f7d39bd5e59d51df",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "645434ea2327c4965cf1fb7a17cd495b7a0c4dfd977581163ef2158ac0089769",
+            "following_context_line_count": 3,
+            "following_context_hash": "645434ea2327c4965cf1fb7a17cd495b7a0c4dfd977581163ef2158ac0089769"
+          }
+        },
+        {
+          "path": "README.md",
+          "start": 239,
+          "end": 239,
+          "anchor": {
+            "digest": "07cf33e1ffaee2f9c701afb5ade1ac9115813496637ea06079b7380c95080c7c",
+            "selected_line_count": 1,
+            "first_line_hash": "07cf33e1ffaee2f9c701afb5ade1ac9115813496637ea06079b7380c95080c7c",
+            "last_line_hash": "07cf33e1ffaee2f9c701afb5ade1ac9115813496637ea06079b7380c95080c7c",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "cfb8b084eee0c34cd885d8e73ad390307932bd6eead063129f1b750ba57a3179",
+            "following_context_line_count": 3,
+            "following_context_hash": "55316b5c9304b20d14b7e58326980be49aa244c7087c4dbd60220b5fcc7e81b5"
+          }
+        },
+        {
+          "path": "app/tauri.conf.json",
+          "start": 67,
+          "end": 71,
+          "anchor": {
+            "digest": "9a4e3d7bbaec0272022bdd20c9af8407a999dd639a5ad6d2e776fffb68176da5",
+            "selected_line_count": 5,
+            "first_line_hash": "ea9d2ebe675a6098d15fd7adaaa5b6fa2e64f67eb353bfa5e8de04e96404a9a8",
+            "last_line_hash": "39d4b54e0416be65f3fcb26963ff2c5c40153a3b4044179d7d7c8a6ca2f2bf87",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "886c62355f89e7bd1bb9d49577ee0559ed920383243b5a1a29fab89e9d0a4ffe",
+            "following_context_line_count": 3,
+            "following_context_hash": "4526bf6ada1f69e862b05953cacb30c5fec651768ff75ccb0d47e996878d624a"
+          }
+        },
+        {
+          "path": "crates/wenlan-cli/Cargo.toml",
+          "start": 15,
+          "end": 17,
+          "anchor": {
+            "digest": "d56af26c1fe0531f08ab2b7fefc73ee81e12d1f5c5e2730d28bd73be589ce359",
+            "selected_line_count": 3,
+            "first_line_hash": "fa72a98b63707e4a319a6160b9b7125ad54d1ceb1d668aa73f2ec3e92166896b",
+            "last_line_hash": "ee02f063d6a43238d5a0b0ec6ac45a1961091ba594e936898ca02ca16997c1d6",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "85ca3bec46efcfb49f75b8de015f61f0de997620a89a557323e3d4105c5f2b71",
+            "following_context_line_count": 3,
+            "following_context_hash": "d988571d28a099f2082d33a6bd3b6213a44a26f94ecc9ca8278268f56909bd6a"
+          }
+        },
+        {
+          "path": "crates/wenlan-mcp/src/main.rs",
+          "start": 30,
+          "end": 36,
+          "anchor": {
+            "digest": "ea04c65440e7e85a654e11a59509c09f43074c0e447b20f67dd6d49b5c068e64",
+            "selected_line_count": 7,
+            "first_line_hash": "0d8b7dea30df17aba0cfe8af52005691d40328e0da455950786df827a4655bcf",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "8daaa7d60f379488ec39103d4921c1087b8ddc7014fa0a0511539507e98c0d47",
+            "following_context_line_count": 3,
+            "following_context_hash": "137976448bbacbf721db72c85f2a63fc8c386bf1623d5f15213efa13e4ee8298"
+          }
+        },
+        {
+          "path": "crates/wenlan-server/src/main.rs",
+          "start": 591,
+          "end": 602,
+          "anchor": {
+            "digest": "7799d655fba8478f121f8dcb94089c851c63d21a1e9e9766915111c79cdd880f",
+            "selected_line_count": 12,
+            "first_line_hash": "1287bc95dd26d25d93b47453e12a1851e2b43cfc68fdc4100369d5797c097031",
+            "last_line_hash": "77b2fc11f5d3afa481cee9c8e09ad7d10692a12ab2349e02a7f825bf98a23bb2",
+            "preceding_context_line_count": 3,
+            "preceding_context_hash": "0b82279626ceeb18c08d8b53fb39daa8b16ac3dd8a64cef73afb4cb04ef8c8bc",
+            "following_context_line_count": 3,
+            "following_context_hash": "f2de607b8958e0abda8179ec9b63e61431a6779563418d6cc0ed53fd013264fe"
+          }
+        },
+        {
+          "path": "plugin/.mcp.json",
+          "start": 1,
+          "end": 7,
+          "anchor": {
+            "digest": "4e0313ef864f73cea826c8e14591873bb95293e1942de9873754507d772a7c2b",
+            "selected_line_count": 7,
+            "first_line_hash": "021fb596db81e6d02bf3d2586ee3981fe519f275c0ac9ca76bbcf2ebb4097d96",
+            "last_line_hash": "d10b36aa74a59bcf4a88185837f658afaf3646eff2bb16c3928d0e9335e945d2",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 0,
+            "following_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "path": "relay/README.md",
+          "start": 3,
+          "end": 7,
+          "anchor": {
+            "digest": "955dd1856a8283efecccea16c8ec70e1f792fa7848ea820fb7b8d31dad040bbd",
+            "selected_line_count": 5,
+            "first_line_hash": "6215230273ac51e6d1b2628989c64bd22eb1e8d0781533bde608caa53872c249",
+            "last_line_hash": "276d68ecfaeb7238c03f85eb4cfc36ba4680fa76ae95045b0e8ab3c40dbbea1a",
+            "preceding_context_line_count": 2,
+            "preceding_context_hash": "c6e35adaa0575bd7f4859a07e23a005de48fdc1052eff352618ddb60308e785a",
+            "following_context_line_count": 3,
+            "following_context_hash": "593dfab2abfadcf1260e21d533aeb3ef1851e57dbc5dac02a034a8f84b2c4bdf"
+          }
+        },
+        {
+          "path": "src/main.tsx",
+          "start": 1,
+          "end": 12,
+          "anchor": {
+            "digest": "3101c653d89dfc8df93aa994ab6d0b8a6ff4646951ffc671020685656330d5ec",
+            "selected_line_count": 12,
+            "first_line_hash": "677548a3cfa3a81470a3d5d728271971d5c068515b23afac3d818069efe7f6b6",
+            "last_line_hash": "85a952e30e0d7f2c0f14a5138053f38fea7a8481b21bdc0ff0fb0f827b26faf9",
+            "preceding_context_line_count": 0,
+            "preceding_context_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "following_context_line_count": 3,
+            "following_context_hash": "33809dbc8cfe2627404cc5f9c1a155f6d836a571a2c615472d3476f5770315cb"
+          }
+        }
+      ]
+    }
+  }
+}
