@@ -62,6 +62,7 @@ mod memory_point_reads;
 mod migrations_v004_v009;
 mod okf_concepts;
 mod onboarding_milestones;
+pub mod originals;
 mod page_basis;
 mod page_drafts;
 pub mod page_map;
@@ -10736,10 +10737,18 @@ impl MemoryDB {
             if version < 146 {
                 self.migrate_146_chat_reminders(version).await?;
             }
+            // Migration 147 records the originals kept from imported chats
+            // (artifacts and canvases) and admits `creation_kind =
+            // 'original'` for their pages. See migrate_147_originals.
+            if ceiling < 147 {
+                return Ok(());
+            }
+            if version < 147 {
+                self.migrate_147_originals(version).await?;
+            }
             // Migration 148 lets `sentence_history` record the person's Undo
             // of an AI write (`sentence.revert`). See
-            // migrate_148_sentence_revert. Migration 147 is the originals
-            // table (#1055), which lands first.
+            // migrate_148_sentence_revert.
             if ceiling < 148 {
                 return Ok(());
             }
@@ -60958,8 +60967,11 @@ impl MemoryDB {
             if let Err(e) = conn.execute(
                 // `origin_class` pinned for the same reason as the single-row
                 // `store_raw_import_memory` above: a chat export is `generated`.
-                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding, session_id)
-                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10), ?11)",
+                // `url` is where the conversation opens in the vendor's app
+                // ("open in the original AI tool"); the vendor and its
+                // conversation id are in `source_id` and the session row.
+                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding, session_id, url)
+                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10), ?11, ?12)",
                 libsql::params![
                     memory_id,
                     content.clone(),
@@ -60972,6 +60984,8 @@ impl MemoryDB {
                     crate::origin::OriginClass::Generated.as_str(),
                     Self::vec_to_sql(embedding),
                     session_id,
+                    crate::chat_import::Vendor::from_source_id(source_id)
+                        .map(|(vendor, id)| vendor.conversation_url(id)),
                 ],
             ).await {
                 let _ = conn.execute("ROLLBACK", ()).await;

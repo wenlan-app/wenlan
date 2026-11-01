@@ -857,7 +857,7 @@ async fn a_page_only_the_ai_wrote_has_no_person_edit_time() {
 
 #[tokio::test]
 async fn migration_148_keeps_every_sentence_history_row_and_admits_revert() {
-    let (db, dir) = crate::db::tests::test_db_at(146).await;
+    let (db, dir) = crate::db::tests::test_db_at(147).await;
     let page = ai_page(&db, "p", None).await;
     let hash = crate::authorship::sentence_units(&page.content)[0]
         .hash

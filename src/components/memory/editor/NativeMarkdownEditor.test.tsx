@@ -100,6 +100,21 @@ describe("NativeMarkdownEditor", () => {
     });
   });
 
+  it("takes an outside edit into the live text and keeps the cursor on the same words", () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    const onDocumentChange = vi.fn();
+    render(<NativeMarkdownEditor ref={ref} {...baseProps({ initialDocument: "See [[Old]] then type", onDocumentChange })} />);
+    const textbox = screen.getByRole("textbox") as HTMLTextAreaElement;
+    textbox.setSelectionRange(16, 16);
+    expect(ref.current?.applyExternalEdits(() => [{ from: 6, to: 9, insert: "Newer" }])).toBe(true);
+    expect(textbox.value).toBe("See [[Newer]] then type");
+    expect(textbox.selectionStart).toBe(18);
+    expect(onDocumentChange).toHaveBeenCalledExactlyOnceWith("See [[Newer]] then type");
+    // No edits is a success with nothing to do.
+    expect(ref.current?.applyExternalEdits(() => [])).toBe(true);
+    expect(onDocumentChange).toHaveBeenCalledOnce();
+  });
+
   it("is an accessible auto-growing multiline textbox and emits exact logical-LF text", () => {
     const onDocumentChange = vi.fn();
     const props = baseProps({ onDocumentChange, describedBy: "help" });

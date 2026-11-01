@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { i18n } from "../i18n";
 import { setConfirmPresenter } from "../lib/confirmAction";
 import QuickCapture from "./QuickCapture";
 
@@ -230,6 +231,42 @@ describe("QuickCapture surfaces a save error instead of swallowing it", () => {
     expect(alert).not.toHaveTextContent(/keep this window open/i);
     // The draft is not cleared on a rejected capture -- only onSuccess clears it.
     expect((textarea as HTMLTextAreaElement).value).toBe("long enough to save");
+  });
+
+  it.each([
+    ["en", "Couldn't save to memory. Wenlan's background service isn't responding.", "Your text is kept on this device."],
+    ["zh-Hans", "未能保存到记忆，文澜的后台服务没有响应。", "文字已保留在这台设备上"],
+    ["zh-Hant", "未能儲存到記憶，文瀾的背景服務沒有回應。", "文字已保留在這台裝置上"],
+  ])("says plainly in %s that the background service isn't responding, not the transport error", async (language, sentence, kept) => {
+    await i18n.changeLanguage(language);
+    try {
+      mockedInvoke.mockRejectedValueOnce(
+        "HTTP POST /api/ingest/memory: error sending request for url (http://127.0.0.1:7878/api/ingest/memory)",
+      );
+      renderCapture(false);
+
+      const textarea = screen.getByRole("textbox");
+      fireEvent.change(textarea, { target: { value: "long enough to save" } });
+      fireEvent.click(screen.getByText(i18n.t("quickCapture.save")));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(sentence);
+      expect(alert).toHaveTextContent(kept);
+      expect(alert).not.toHaveTextContent(/error sending request|api\/ingest/);
+      expect((textarea as HTMLTextAreaElement).value).toBe("long enough to save");
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+
+  it("treats a refused connection the same way", async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error("HTTP POST /api/ingest/memory: connection refused (os error 61)"));
+    renderCapture(false);
+    fireEvent.change(screen.getByRole("textbox", { name: "Quick capture" }), { target: { value: "long enough to save" } });
+    fireEvent.click(screen.getByText("Save"));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Wenlan's background service isn't responding.");
+    expect(alert).not.toHaveTextContent("os error 61");
   });
 
   it("blocks a too-short draft client-side without invoking", async () => {

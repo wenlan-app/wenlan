@@ -24,6 +24,20 @@ export interface MarkdownEditorHandle {
   runCommand(command: MarkdownEditorCommand): boolean;
   requestSave(): boolean;
   requestCancel(): boolean;
+  /**
+   * Apply a change made outside this editor (a rename's link rewrite) to the
+   * live document, keeping the cursor and the person's own undo steps.
+   * `edits` reads the current document. False when the editor cannot take it
+   * now (still loading, disabled, or mid composition).
+   */
+  applyExternalEdits(edits: (document: string) => readonly MarkdownEditorTextEdit[]): boolean;
+}
+
+/** Replace `from`..`to` of the document with `insert`. */
+export interface MarkdownEditorTextEdit {
+  readonly from: number;
+  readonly to: number;
+  readonly insert: string;
 }
 
 export type MarkdownEditorCommand =
@@ -142,6 +156,9 @@ const MarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         },
         requestSave(): boolean {
           return editorRef.current?.requestSave() ?? false;
+        },
+        applyExternalEdits(edits): boolean {
+          return editorRef.current?.applyExternalEdits(edits) ?? false;
         },
         requestCancel(): boolean {
           if (editorRef.current) return editorRef.current.requestCancel();
