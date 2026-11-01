@@ -176,22 +176,24 @@ const embedPaths = new Map<string, string | null>();
 const embedLookups = new Set<string>();
 
 /**
- * The webview URL for an embed. The daemon finds the file anywhere in the
- * pages folder the way Obsidian does; until it answers, or when it finds
- * nothing, a bare name falls back to `_attachments/<name>`. Listeners of
- * {@link subscribeAttachmentsDir} hear when an answer arrives.
+ * The webview URL for an embed on page `pageId`. The daemon finds the file
+ * anywhere in the pages folder the way Obsidian does; until it answers, when
+ * it finds nothing, or with no page, a bare name falls back to
+ * `_attachments/<name>`. Listeners of {@link subscribeAttachmentsDir} hear
+ * when an answer arrives.
  */
-export function mediaEmbedUrl(embed: MediaEmbed): string | null {
-  const resolved = embedPaths.get(embed.name);
+export function mediaEmbedUrl(embed: MediaEmbed, pageId?: string | null): string | null {
+  const key = `${pageId ?? ""}\u0000${embed.name}`;
+  const resolved = embedPaths.get(key);
   if (resolved) return convertFileSrc(resolved);
-  if (resolved === undefined && !embedLookups.has(embed.name)) {
-    embedLookups.add(embed.name);
-    void resolvePageEmbed(embed.name)
-      .then((path) => { embedPaths.set(embed.name, typeof path === "string" && path ? path : null); })
-      .catch(() => { embedPaths.set(embed.name, null); })
+  if (resolved === undefined && !embedLookups.has(key)) {
+    embedLookups.add(key);
+    void resolvePageEmbed(embed.name, pageId)
+      .then((path) => { embedPaths.set(key, typeof path === "string" && path ? path : null); })
+      .catch(() => { embedPaths.set(key, null); })
       .finally(() => {
-        embedLookups.delete(embed.name);
-        if (embedPaths.get(embed.name)) listeners.forEach((listener) => listener());
+        embedLookups.delete(key);
+        if (embedPaths.get(key)) listeners.forEach((listener) => listener());
       });
   }
   if (embed.name.includes("/")) return null;

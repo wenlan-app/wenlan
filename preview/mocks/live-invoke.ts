@@ -1002,7 +1002,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     get("/api/knowledge/path").then((r) => (r?.path ? `${String(r.path).replace(/\/+$/, "")}/_attachments` : null)),
   // An `![[name]]` embed: the daemon finds the file anywhere in the pages folder.
   resolve_page_embed: (a) =>
-    get(`/api/attachments/resolve?name=${enc(String(a?.name ?? ""))}`)
+    get(`/api/attachments/resolve?name=${enc(String(a?.name ?? ""))}${a?.pageId ? `&page_id=${enc(String(a.pageId))}` : ""}`)
       .then((r) => (typeof r?.path === "string" && r.path ? r.path : null))
       .catch(() => null),
   attach_file_to_page: (a) => post("/api/attachments", { source_path: a?.path, alt: a?.alt ?? null }),

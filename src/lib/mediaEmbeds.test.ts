@@ -34,18 +34,26 @@ describe("Obsidian media embeds", () => {
     const heard = vi.fn();
     const stop = subscribeAttachmentsDir(heard);
     const embed = parseMediaEmbed("shot.png")!;
-    expect(mediaEmbedUrl(embed)).toBeNull();
+    expect(mediaEmbedUrl(embed, "page-1")).toBeNull();
     await vi.waitFor(() => expect(heard).toHaveBeenCalled());
-    expect(mediaEmbedUrl(embed)).toBe("asset://localhost//vault/img/shot.png");
+    expect(mediaEmbedUrl(embed, "page-1")).toBe("asset://localhost//vault/img/shot.png");
     expect(resolvePageEmbed).toHaveBeenCalledOnce();
+    expect(resolvePageEmbed).toHaveBeenCalledWith("shot.png", "page-1");
     stop();
+  });
+
+  it("still asks the daemon when it doesn't know which page the embed is on", () => {
+    resetAttachmentsDirForTest("/vault/_attachments");
+    resolvePageEmbed.mockResolvedValue(null);
+    expect(mediaEmbedUrl(parseMediaEmbed("shot.png")!)).toBe("asset://localhost//vault/_attachments/shot.png");
+    expect(resolvePageEmbed).toHaveBeenCalledWith("shot.png", undefined);
   });
 
   it("falls back to the attachments folder for a bare name the daemon can't find", async () => {
     resetAttachmentsDirForTest("/vault/_attachments");
     resolvePageEmbed.mockResolvedValue(null);
     const embed = parseMediaEmbed("shot one.png")!;
-    expect(mediaEmbedUrl(embed)).toBe("asset://localhost//vault/_attachments/shot one.png");
-    expect(mediaEmbedUrl(parseMediaEmbed("img/shot.png")!)).toBeNull();
+    expect(mediaEmbedUrl(embed, "page-1")).toBe("asset://localhost//vault/_attachments/shot one.png");
+    expect(mediaEmbedUrl(parseMediaEmbed("img/shot.png")!, "page-1")).toBeNull();
   });
 });

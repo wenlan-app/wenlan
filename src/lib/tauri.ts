@@ -3514,10 +3514,11 @@ export async function pageAttachmentsDir(): Promise<string> {
 }
 
 /** Where an Obsidian embed's file is, found anywhere in the pages folder;
- *  null when no image or video by that name exists. The app lets the webview
- *  load that one file. */
-export async function resolvePageEmbed(name: string): Promise<string | null> {
-  return invoke("resolve_page_embed", { name });
+ *  with the page it is on, a file in that page's own folder wins. Null when no
+ *  image or video by that name exists. The app lets the webview load that one
+ *  file. */
+export async function resolvePageEmbed(name: string, pageId?: string | null): Promise<string | null> {
+  return invoke("resolve_page_embed", { name, pageId: pageId ?? null });
 }
 
 /** Copy a file on this computer into the pages folder. */
