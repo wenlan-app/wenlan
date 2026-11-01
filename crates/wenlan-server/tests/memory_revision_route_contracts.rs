@@ -291,7 +291,8 @@ async fn pending_revisions_lists_a_gated_page_write_card() {
     assert!(db.set_page_review_required(&page_id, true).await.unwrap());
     let version = db.get_page(&page_id).await.unwrap().unwrap().version;
 
-    let proposed = "Ferns reproduce by spores rather than by seeds.";
+    // Adds a sentence, so the locked page stages a card.
+    let proposed = "Ferns reproduce by spores. They have no seeds.";
     let response = router
         .clone()
         .oneshot(
@@ -426,7 +427,8 @@ async fn pending_revisions_card_for_a_locked_page_says_it_is_locked() {
         &router,
         &page_id,
         "claude-code",
-        "Lichens are symbioses of fungi and algae.",
+        // Adds a sentence, so the locked page stages a card.
+        "Lichens are symbioses. They join fungi and algae.",
         version,
     )
     .await;
