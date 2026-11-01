@@ -2216,6 +2216,8 @@ async fn handle_refresh_page_inner(
             gated: result.gated,
             warnings: if result.gated {
                 gated_code_basis_warning(&prepared_code_basis)
+            } else if lock_proposes {
+                result.warnings.clone()
             } else {
                 Vec::new()
             }
