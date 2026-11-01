@@ -866,6 +866,17 @@ impl KnowledgeWriter {
         self.load_state().pages.get(page_id).map(|s| s.file.clone())
     }
 
+    /// Every page id and the file `state.json` records for it, relative to
+    /// the pages folder, for the lossless export. Read only; an unreadable
+    /// state gives an empty map, and every page then goes at the top.
+    pub fn page_files(&self) -> HashMap<String, String> {
+        self.load_state()
+            .pages
+            .into_iter()
+            .map(|(id, state)| (id, state.file))
+            .collect()
+    }
+
     /// Verify live flat-root Markdown filenames for an already authorized set
     /// of page IDs. Reads state once, then only those files; never scans, creates
     /// directories, repairs state, or guesses a filename from a title. Missing,
