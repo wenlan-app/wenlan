@@ -22,6 +22,9 @@
 //!   revision cards; neither replaces the other.
 //! - [`page_sentences`] and [`recheck_sentence`] answer "who said it and how
 //!   well is it backed", per sentence.
+//! - [`ask_ai_to_fix`] is the AI's fix for a sentence the person flagged and
+//!   asked the AI to fix (UX-WHO-3): one model call, filed as an ordinary
+//!   pending proposal.
 
 use std::collections::{HashMap, HashSet};
 
@@ -429,6 +432,29 @@ fn unit_by_hash<'a>(
     })
 }
 
+/// Whether the person's 「不對」 on the sentence `hash` still stands: a flag
+/// recorded at or after `since_version`, the version that last changed it.
+fn flagged_since(entries: &[HistoryEntry], hash: &str, since_version: i64) -> bool {
+    entries.iter().any(|entry| {
+        entry.op == OP_SENTENCE_FLAG
+            && str_field(entry, "sentence_hash") == Some(hash)
+            && entry
+                .version
+                .is_some_and(|version| version >= since_version)
+    })
+}
+
+/// What lets a proposal reach a protected sentence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProposalGrant {
+    /// The default: only when its facts changed (a current `reason`).
+    FactsChanged,
+    /// The person flagged the sentence and asked the AI to fix it. While that
+    /// flag stands, the fix may reach the sentence without a reason. Only
+    /// [`ask_ai_to_fix`] uses this; the HTTP propose route never does.
+    PersonFlagged,
+}
+
 /// An AI's proposal for one sentence, made by name instead of by rewriting
 /// the page. `expected_version`, when sent, must be the page's version.
 pub async fn propose_sentence(
@@ -436,6 +462,22 @@ pub async fn propose_sentence(
     page_id: &str,
     req: &wenlan_types::authorship::SentenceProposeRequest,
     agent: &str,
+) -> Result<SentenceProposal, WenlanError> {
+    let actor = HistoryActor {
+        kind: ActorKind::Ai,
+        name: agent.to_string(),
+        agent: Some(agent.to_string()),
+        session: None,
+    };
+    propose_as(db, page_id, req, &actor, ProposalGrant::FactsChanged).await
+}
+
+async fn propose_as(
+    db: &MemoryDB,
+    page_id: &str,
+    req: &wenlan_types::authorship::SentenceProposeRequest,
+    actor: &HistoryActor,
+    grant: ProposalGrant,
 ) -> Result<SentenceProposal, WenlanError> {
     let page = load_page(db, page_id).await?;
     if let Some(expected) = req.expected_version {
@@ -456,7 +498,8 @@ pub async fn propose_sentence(
     }
     // A protected sentence (the person's, imported, or any on a locked page)
     // gets a proposal only when its facts changed, and the reason must be
-    // one it has now.
+    // one it has now. The one exception: the person flagged it and asked the
+    // AI to fix it, and it has not changed since the flag.
     let idx = units
         .iter()
         .position(|u| u.hash == unit.hash)
@@ -469,27 +512,31 @@ pub async fn propose_sentence(
     if protected {
         let citations = unit_citations(db, &page, &units).await?;
         let weak = weak_reasons(&citations[idx], false);
-        let Some(given) = req.reason else {
-            return Err(WenlanError::Validation(
-                "reason_required: this sentence is protected; propose a change only when \
-                 its facts changed (reason unsupported, stale or disproven)"
-                    .into(),
-            ));
+        let asked = grant == ProposalGrant::PersonFlagged && req.reason.is_none() && {
+            let entries = db.list_sentence_history("page", page_id).await?;
+            rows.get(idx)
+                .is_some_and(|row| flagged_since(&entries, &unit.hash, row.since_version))
         };
-        if facts_changed(&[given]).is_none() || !weak.contains(&given) {
-            return Err(WenlanError::Validation(format!(
-                "reason_not_current: {} is not a facts-changed reason this sentence has now \
-                 (it has {weak:?})",
-                serde_json::to_string(&given)?
-            )));
+        match req.reason {
+            Some(given) => {
+                if facts_changed(&[given]).is_none() || !weak.contains(&given) {
+                    return Err(WenlanError::Validation(format!(
+                        "reason_not_current: {} is not a facts-changed reason this sentence \
+                         has now (it has {weak:?})",
+                        serde_json::to_string(&given)?
+                    )));
+                }
+            }
+            None if asked => {}
+            None => {
+                return Err(WenlanError::Validation(
+                    "reason_required: this sentence is protected; propose a change only when \
+                     its facts changed (reason unsupported, stale or disproven)"
+                        .into(),
+                ));
+            }
         }
     }
-    let actor = HistoryActor {
-        kind: ActorKind::Ai,
-        name: agent.to_string(),
-        agent: Some(agent.to_string()),
-        session: None,
-    };
     let id = format!("sp_{}", uuid::Uuid::new_v4().simple());
     let tx = format!("tx_{}", uuid::Uuid::new_v4().simple());
     append_proposal(
@@ -497,7 +544,7 @@ pub async fn propose_sentence(
         page_id,
         page.version,
         &tx,
-        &actor,
+        actor,
         &id,
         &unit.hash,
         &unit.text,
@@ -701,6 +748,7 @@ pub async fn flag_sentence(
         version: page.version,
         sentence_hash: unit.hash.clone(),
         seq,
+        ai_fix_queued: false,
     })
 }
 
@@ -771,11 +819,6 @@ pub async fn page_sentences(
         .filter(|p| p.status == SentenceProposalStatus::Pending)
         .filter(|p| present.contains(p.sentence_hash.as_str()))
         .collect();
-    let flags: Vec<(String, i64)> = entries
-        .iter()
-        .filter(|e| e.op == OP_SENTENCE_FLAG)
-        .filter_map(|e| Some((str_field(e, "sentence_hash")?.to_string(), e.version?)))
-        .collect();
     let states = source_states(db, &page.citations).await?;
     let by_occurrence: HashMap<u32, &PageCitation> =
         page.citations.iter().map(|c| (c.occurrence, c)).collect();
@@ -800,9 +843,7 @@ pub async fn page_sentences(
                     )
                 })
                 .collect();
-            let flagged = flags
-                .iter()
-                .any(|(hash, version)| hash == &unit.hash && *version >= row.since_version);
+            let flagged = flagged_since(&entries, &unit.hash, row.since_version);
             PageSentence {
                 idx: row.idx,
                 text: unit.text.clone(),
@@ -1265,6 +1306,10 @@ pub async fn recheck_sentence(
         sentence,
     })
 }
+
+#[path = "sentence_fix.rs"]
+mod fix;
+pub use fix::{ask_ai_to_fix, fix_provider, FlagFixOutcome};
 
 #[cfg(test)]
 #[path = "sentences_test.rs"]

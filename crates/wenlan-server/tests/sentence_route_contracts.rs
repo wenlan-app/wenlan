@@ -606,3 +606,131 @@ async fn the_person_undoes_one_ai_write_and_an_agent_cannot() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// An everyday model that answers only once the test lets it, so the test
+/// can tell the flag's answer did not wait for it.
+struct HeldFixModel {
+    go: tokio::sync::Semaphore,
+}
+
+#[async_trait::async_trait]
+impl wenlan_core::llm_provider::LlmProvider for HeldFixModel {
+    async fn generate(
+        &self,
+        _request: wenlan_core::llm_provider::LlmRequest,
+    ) -> Result<String, wenlan_core::llm_provider::LlmError> {
+        let _permit = self.go.acquire().await.unwrap();
+        Ok(r#"{"action":"rewrite","text":"I prefer the multi-thread runtime."}"#.into())
+    }
+    fn is_available(&self) -> bool {
+        true
+    }
+    fn name(&self) -> &str {
+        "held-fix-model"
+    }
+    fn backend(&self) -> wenlan_core::llm_provider::LlmBackend {
+        wenlan_core::llm_provider::LlmBackend::Api
+    }
+}
+
+#[tokio::test]
+async fn a_flag_that_asks_the_ai_answers_at_once_and_the_fix_arrives_as_a_proposal() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Arc::new(
+        MemoryDB::new(tmp.path(), Arc::new(wenlan_core::events::NoopEmitter))
+            .await
+            .unwrap(),
+    );
+    let model = Arc::new(HeldFixModel {
+        go: tokio::sync::Semaphore::new(0),
+    });
+    let state = wenlan_server::state::ServerState {
+        db: Some(db.clone()),
+        api_llm: Some(model.clone()),
+        quality_gate: wenlan_core::quality_gate::QualityGate::new(
+            wenlan_core::tuning::GateConfig {
+                enabled: false,
+                ..Default::default()
+            },
+        ),
+        ..wenlan_server::state::ServerState::default()
+    }
+    .with_page_root(tmp.path().join("pages"));
+    state.maintenance_coordinator.finish_recovery();
+    let router = common::build_router(Arc::new(tokio::sync::RwLock::new(state)));
+    let id = page_with_my_line(&router, &db).await;
+    let mine = hash_of(&sentences(&router, &id).await, MY_LINE);
+
+    let flag = format!("/api/pages/{id}/sentences/flag");
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &flag,
+        Some(json!({ "sentence_hash": mine, "why": "I switched runtimes", "ask_ai": true })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let receipt: SentenceFlagResponse = typed(body.clone());
+    assert!(receipt.ai_fix_queued, "{body}");
+    // The model has not answered yet, and the flag already did.
+    let view = sentences(&router, &id).await;
+    assert!(view.proposals.is_empty(), "{:?}", view.proposals);
+    assert!(
+        view.sentences
+            .iter()
+            .find(|s| s.hash == mine)
+            .unwrap()
+            .flagged
+    );
+
+    model.go.add_permits(1);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let view = loop {
+        let view = sentences(&router, &id).await;
+        if !view.proposals.is_empty() || std::time::Instant::now() > deadline {
+            break view;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+    assert_eq!(view.proposals.len(), 1, "{:?}", view.proposals);
+    let proposal = &view.proposals[0];
+    assert_eq!(proposal.sentence_hash, mine);
+    assert_eq!(proposal.after, "I prefer the multi-thread runtime.");
+    assert_eq!(proposal.why.as_deref(), Some("I switched runtimes"));
+    assert_eq!(proposal.status, SentenceProposalStatus::Pending);
+    // The person's sentence is still theirs, unchanged, until they accept.
+    let still = view.sentences.iter().find(|s| s.hash == mine).unwrap();
+    assert_eq!(still.text.trim(), MY_LINE);
+    assert_eq!(still.proposals, vec![proposal.id.clone()]);
+}
+
+#[tokio::test]
+async fn a_flag_that_asks_the_ai_with_no_model_is_just_a_flag() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let id = page_with_my_line(&router, &db).await;
+    let mine = hash_of(&sentences(&router, &id).await, MY_LINE);
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &format!("/api/pages/{id}/sentences/flag"),
+        Some(json!({ "sentence_hash": mine, "ask_ai": true })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.get("ai_fix_queued").is_none(), "{body}");
+    let view = sentences(&router, &id).await;
+    assert!(
+        view.sentences
+            .iter()
+            .find(|s| s.hash == mine)
+            .unwrap()
+            .flagged
+    );
+    assert!(view.proposals.is_empty());
+}
