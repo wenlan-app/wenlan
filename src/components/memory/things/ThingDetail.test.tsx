@@ -53,7 +53,10 @@ describe("ThingDetail", () => {
     expect(screen.getByText(/Picked the X wording/)).toBeTruthy();
     expect(screen.getByText("Rewrite the hero line")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /done|wrap up|archive/i })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Tagline options" }));
+    // The tool shows by its mark, as on Home; a page says the AI wrote it.
+    expect(screen.getByRole("img", { name: "Claude Code" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Tagline options/ })).toHaveTextContent("AI wrote");
+    fireEvent.click(screen.getByRole("button", { name: /^Tagline options/ }));
     expect(onOpenPage).toHaveBeenCalledWith("page-1");
   });
 
