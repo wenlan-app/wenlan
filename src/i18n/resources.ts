@@ -262,6 +262,10 @@ const en = {
   boot: {
     stillWaiting: "Still waiting for Wenlan's background service to answer.",
     connectionTitle: "Could not reach the background service",
+    connectionNext: "Try again. If it still doesn't work, report it to us.",
+    reportProblem: "Report problem",
+    reportCopied: "Details copied. Paste them into the report if the page didn't open.",
+    reportOpened: "Opened the report page in your browser.",
     connectionProblem:
       "Wenlan could not reach its background service while starting up.",
     preflightRepairTitle: "Wenlan couldn't repair its startup configuration",
@@ -279,8 +283,6 @@ const en = {
   setup: {
     welcomeTitle: "Welcome to Wenlan",
     notesFirst: {
-      body: "Start with a page. Connect your AI tools when you need them.",
-      hint: "No model setup or import required.",
       openFailed: "Could not open your pages. Please try again.",
       checkConnection: "Check connection",
       intro: "A personal Wiki you and your AI tools build together. Your files and chats become pages they can recall.",
@@ -297,7 +299,6 @@ const en = {
     tagline: "A living Wiki your AI tools build as they work.",
     welcomeBody:
       "Your AI tools write what they learn into source-cited pages that refresh between sessions.",
-    privacyTitle: "Your memories live on this machine.",
     getStarted: "Get started",
     back: "Back",
     skip: "Skip",
@@ -3412,6 +3413,10 @@ const zhHans = {
   boot: {
     stillWaiting: "仍在等待文澜的后台服务响应。",
     connectionTitle: "无法连接到后台服务",
+    connectionNext: "请再试一次。还是不行的话，回报给我们。",
+    reportProblem: "回报问题",
+    reportCopied: "诊断信息已复制。如果回报页没有打开，可以直接贴到别处发给我们。",
+    reportOpened: "已在浏览器打开回报页。",
     connectionProblem: "启动时文澜无法连接到后台服务。",
     preflightRepairTitle: "文澜无法修复启动配置",
     preflightRepairBody: "请退出文澜后重新打开，再试一次修复。",
@@ -3428,8 +3433,6 @@ const zhHans = {
   setup: {
     welcomeTitle: "欢迎使用文澜",
     notesFirst: {
-      body: "先写笔记，需要时再接上你的 AI 工具。",
-      hint: "不用先设置模型或导入资料。",
       openFailed: "暂时无法打开笔记，请再试一次。",
       checkConnection: "检查连接",
       intro: "你和 AI 工具一起搭建的个人 Wiki。文件和对话会变成它们记得住的笔记。",
@@ -3445,7 +3448,6 @@ const zhHans = {
     },
     tagline: "一个随你的 AI 工具工作而持续更新的 Wiki。",
     welcomeBody: "你的 AI 工具会把学到的内容写成带来源引用的笔记，并在会话之间自动刷新。",
-    privacyTitle: "你的记忆保存在这台设备上。",
     getStarted: "开始使用",
     back: "返回",
     skip: "跳过",
@@ -6501,6 +6503,10 @@ const zhHant = {
   boot: {
     stillWaiting: "仍在等待文瀾的背景服務回應。",
     connectionTitle: "無法連線到背景服務",
+    connectionNext: "請再試一次。還是不行的話，回報給我們。",
+    reportProblem: "回報問題",
+    reportCopied: "診斷資訊已複製。如果回報頁沒有打開，可以直接貼到別處傳給我們。",
+    reportOpened: "已在瀏覽器打開回報頁。",
     connectionProblem: "啟動時文瀾無法連線到背景服務。",
     preflightRepairTitle: "文瀾無法修復啟動設定",
     preflightRepairBody: "請退出文瀾後重新開啟，再試一次修復。",
@@ -6517,8 +6523,6 @@ const zhHant = {
   setup: {
     welcomeTitle: "歡迎使用文瀾",
     notesFirst: {
-      body: "先寫筆記，需要時再接上你的 AI 工具。",
-      hint: "不用先設定模型或匯入資料。",
       openFailed: "暫時無法開啟筆記，請再試一次。",
       checkConnection: "檢查連線",
       intro: "你和 AI 工具一起搭建的個人 Wiki。文字、檔案和對話會變成它們記得住的筆記。",
@@ -6534,7 +6538,6 @@ const zhHant = {
     },
     tagline: "一個隨你的 AI 工具工作而持續更新的 Wiki。",
     welcomeBody: "你的 AI 工具會把學到的內容寫成附來源引用的筆記，並在工作階段之間自動更新。",
-    privacyTitle: "你的記憶保存在這台裝置上。",
     getStarted: "開始使用",
     back: "返回",
     skip: "略過",

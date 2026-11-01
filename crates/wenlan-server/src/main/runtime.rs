@@ -5,6 +5,60 @@ use super::*;
 /// Re-embed memory rows that have no embedding: once at boot, and again each
 /// time a big import stored rows without a vector
 /// ([`wenlan_server::embedding_backfill::request`]), until shutdown.
+/// First wait before retrying an embedding-model load the open could not do.
+const EMBEDDING_MODEL_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(30);
+/// Longest wait between retries.
+const EMBEDDING_MODEL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Load the embedding model the database open could not (first start offline,
+/// or huggingface.co unreachable), retrying with backoff until it loads. The
+/// daemon serves meanwhile: pages are written without a vector and searches
+/// use their keyword channel. Once loaded, pages get their vectors here and
+/// the memory worker is woken for the rest.
+async fn load_embedding_model_in_background(
+    db: Arc<wenlan_core::db::MemoryDB>,
+    data_dir: std::path::PathBuf,
+    maintenance: wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    tracing::warn!(
+        "[memory_db] serving without the embedding model; search is keyword-only until it loads"
+    );
+    let mut delay = EMBEDDING_MODEL_RETRY_FIRST;
+    loop {
+        if lifecycle::sleep_or_shutdown(&mut shutdown, delay).await {
+            return;
+        }
+        let loaded = tokio::select! {
+            biased;
+            _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
+            loaded = db.load_embedder(&data_dir) => loaded,
+        };
+        match loaded {
+            Ok(_) => break,
+            Err(error) => {
+                delay = (delay * 2).min(EMBEDDING_MODEL_RETRY_MAX);
+                tracing::warn!(
+                    "[memory_db] embedding model still unavailable, retrying in {}s: {error}",
+                    delay.as_secs()
+                );
+            }
+        }
+    }
+    tracing::info!("[memory_db] embedding model loaded; embedding rows written without it");
+    let guard = tokio::select! {
+        biased;
+        _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
+        guard = maintenance.begin_background() => guard,
+    };
+    match db.backfill_page_embeddings().await {
+        Ok(count) => tracing::info!("[memory_db] embedded {count} pages written without the model"),
+        Err(error) => tracing::warn!("[memory_db] page embedding backfill failed: {error}"),
+    }
+    drop(guard);
+    wenlan_server::embedding_backfill::request();
+}
+
 async fn recover_null_memory_embeddings_in_background(
     db: Arc<wenlan_core::db::MemoryDB>,
     maintenance: wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
@@ -40,6 +94,11 @@ async fn recover_null_memory_embeddings_run(
     maintenance: &wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
     shutdown: &tokio::sync::watch::Receiver<bool>,
 ) -> bool {
+    // No model yet: nothing can be embedded. The model loader requests a run
+    // once it loads.
+    if !db.embedder_ready() {
+        return true;
+    }
     // The run's one full count: Activity's live counters start from it, so
     // the route never counts rows without a vector itself.
     let mut pending = match db.count_null_memory_embeddings().await {
@@ -123,6 +182,7 @@ pub(super) async fn register_optional_runtime_workers(
     reranker_cache_dir: Option<std::path::PathBuf>,
     config: wenlan_core::config::Config,
     db_arc: Arc<wenlan_core::db::MemoryDB>,
+    data_dir: std::path::PathBuf,
 ) {
     if optional_runtime_workers_allowed(repair_recovery_pending) {
         let shared_for_outbox = shared.clone();
@@ -343,6 +403,14 @@ pub(super) async fn register_optional_runtime_workers(
             maintenance_for_ready.clone(),
             shutdown_for_reconcile.subscribe(),
         ));
+        if !db_arc.embedder_ready() {
+            tokio::spawn(load_embedding_model_in_background(
+                db_arc.clone(),
+                data_dir,
+                maintenance_for_ready.clone(),
+                shutdown_for_reconcile.subscribe(),
+            ));
+        }
         let maintenance_for_reconcile = maintenance_for_ready.clone();
         let maintenance_for_genesis = maintenance_for_ready.clone();
         let emitter_for_ready: Arc<dyn wenlan_core::events::EventEmitter> =
