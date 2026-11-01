@@ -65,8 +65,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[cfg(target_os = "macos")]
-fn activation_policy_for_main_window_visible(_visible: bool) -> tauri::ActivationPolicy {
-    tauri::ActivationPolicy::Regular
+fn activation_policy_for_main_window_visible(visible: bool) -> tauri::ActivationPolicy {
+    // With the main window closed Wenlan keeps running from the menu bar, and
+    // the Dock tile goes away; it comes back whenever the window is shown.
+    if visible {
+        tauri::ActivationPolicy::Regular
+    } else {
+        tauri::ActivationPolicy::Accessory
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -880,11 +886,12 @@ pub fn run() {
             // wenlan-mcp is, wherever the app was installed or run from.
             tauri::async_runtime::spawn_blocking(mcp_config::record_app_wenlan_mcp_path);
 
-            // Keep the app LaunchServices-friendly: the UI process is a normal
-            // Dock app from startup, while close/hide only affects the window.
+            // The main window is visible from config at launch, so the app
+            // starts as a normal Dock app. Closing the window hides the Dock
+            // tile (see `activation_policy_for_main_window_visible`).
             #[cfg(target_os = "macos")]
             {
-                app.set_activation_policy(activation_policy_for_main_window_visible(false));
+                app.set_activation_policy(activation_policy_for_main_window_visible(true));
             }
 
             // wenlan://page/{id} and wenlan://memory/{id} open that item;
@@ -925,6 +932,13 @@ pub fn run() {
                             api.prevent_close();
                             let _ = win.hide();
                             set_main_window_dock_visibility(&app_for_close, false);
+                        }
+
+                        // The frontend can show this window itself (search
+                        // shortcut, a toast's "open"). Whatever showed it,
+                        // a focused main window brings the Dock tile back.
+                        if let WindowEvent::Focused(true) = event {
+                            set_main_window_dock_visibility(&app_for_close, true);
                         }
 
                         #[cfg(target_os = "macos")]
@@ -2370,10 +2384,10 @@ mod tests {
     }
 
     #[test]
-    fn hidden_main_window_stays_regular_activation_policy() {
+    fn hidden_main_window_leaves_the_dock() {
         assert!(matches!(
             activation_policy_for_main_window_visible(false),
-            tauri::ActivationPolicy::Regular
+            tauri::ActivationPolicy::Accessory
         ));
     }
 

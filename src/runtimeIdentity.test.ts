@@ -118,7 +118,7 @@ describe("runtime product identity", () => {
 
     expect(tauri.app.windows[0].visible).toBe(true);
     expect(lib).toContain('handle.listen("app-ready"');
-    expect(lib).toContain("set_activation_policy(activation_policy_for_main_window_visible(false))");
+    expect(lib).toContain("set_activation_policy(activation_policy_for_main_window_visible(true))");
     expect(lib).toContain("startup_reveal_fallback_delay");
     expect(lib).toContain("app-ready did not reveal the main window");
     expect(lib).toContain("align_main_window_traffic_lights");
