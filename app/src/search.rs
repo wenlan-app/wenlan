@@ -5393,6 +5393,57 @@ pub async fn get_session_detail(
     client.get_session_detail(&session_id).await
 }
 
+/// Things with the newest activity first (UX-HOME-1).
+#[tauri::command]
+pub async fn list_things(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<wenlan_types::ThingSummary>, String> {
+    let client = { state.read().await.client.clone() };
+    Ok(client.list_things().await?.things)
+}
+
+#[tauri::command]
+pub async fn get_thing(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::ThingDetailResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_thing(&id).await
+}
+
+#[tauri::command]
+pub async fn rename_thing(
+    state: tauri::State<'_, State>,
+    id: String,
+    title: String,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.rename_thing(&id, title).await
+}
+
+/// Move a conversation between things (UX-THING-1): into `to_thing_id`, or
+/// into a new thing named `new_title`.
+#[tauri::command]
+pub async fn move_session_thing(
+    state: tauri::State<'_, State>,
+    session_id: String,
+    from_thing_id: String,
+    to_thing_id: Option<String>,
+    new_title: Option<String>,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client
+        .move_session_thing(
+            &session_id,
+            wenlan_types::ThingMoveRequest {
+                from_thing_id,
+                to_thing_id,
+                new_title,
+            },
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn get_page_sessions(
     state: tauri::State<'_, State>,

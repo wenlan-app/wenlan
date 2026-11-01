@@ -1,0 +1,29 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* One thing (一件事): where it stands, its conversations and pages. No divider
+   lines; groups are separated by space and type only. */
+.thing-detail-title-row { display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;min-width:0; }
+.thing-detail-title-row .page-detail-title { min-width:0;overflow-wrap:anywhere; }
+.thing-detail-rename { flex:none; }
+.thing-detail-title-form { display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;flex:1; }
+.thing-detail-title-input { flex:1 1 240px;min-width:0;padding:6px 10px;border:1px solid var(--mem-border);border-radius:8px;background:var(--mem-surface);color:var(--mem-text);font:600 22px/1.3 var(--mem-font-body); }
+.thing-detail-where { margin:8px 0 0;color:var(--mem-text);font:400 16px/1.6 var(--mem-font-body);overflow-wrap:anywhere; }
+.thing-detail-meta { margin:6px 0 0;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
+.thing-detail-section { margin-top:32px;min-width:0; }
+.thing-detail-section h2 { margin:0 0 10px;color:var(--mem-text);font:600 15px/1.4 var(--mem-font-body); }
+.thing-detail-empty { margin:0;color:var(--mem-text-tertiary);font:14px/1.5 var(--mem-font-body); }
+.thing-detail-list, .thing-detail-pages, .thing-detail-move ul { list-style:none;margin:0;padding:0;display:grid;gap:6px; }
+.thing-detail-row { display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 12px;border-radius:10px;background:var(--mem-surface);min-width:0; }
+.thing-detail-row-main { display:flex;flex-direction:column;gap:2px;flex:1 1 220px;min-width:0; }
+.thing-detail-row-title { color:var(--mem-text);font:500 14px/1.45 var(--mem-font-body);overflow-wrap:anywhere; }
+.thing-detail-row-meta { color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
+.thing-detail-move { flex:1 1 100%;display:grid;gap:8px;padding-top:4px; }
+.thing-detail-move-title { margin:0;color:var(--mem-text-secondary);font:13px/1.4 var(--mem-font-body); }
+.thing-detail-move-option, .thing-detail-page { width:100%;padding:8px 10px;border:0;border-radius:8px;background:var(--mem-hover);color:var(--mem-text);text-align:left;font:14px/1.4 var(--mem-font-body);cursor:pointer;overflow-wrap:anywhere; }
+.thing-detail-move-option:hover, .thing-detail-page:hover { background:var(--mem-active, var(--mem-hover)); }
+.thing-detail-page { background:var(--mem-surface); }
+.thing-detail-move-option:focus-visible, .thing-detail-page:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.thing-detail-move-new { display:flex;gap:8px;flex-wrap:wrap; }
+.thing-detail-move-new input { flex:1 1 200px;min-width:0;padding:6px 10px;border:1px solid var(--mem-border);border-radius:8px;background:var(--mem-bg, var(--mem-surface));color:var(--mem-text);font:14px/1.4 var(--mem-font-body); }
+.thing-detail-moved { margin:0 0 10px;color:var(--mem-text-secondary);font:13px/1.5 var(--mem-font-body); }
+.thing-detail-error { margin:0;color:var(--mem-danger, #c0392b);font:13px/1.4 var(--mem-font-body); }
+.thing-detail-status { padding:24px 0;color:var(--mem-text-tertiary); }

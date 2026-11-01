@@ -1693,6 +1693,42 @@ impl WenlanClient {
         self.get_optional_json(&path).await
     }
 
+    /// `GET /api/things`: things with the newest activity first.
+    pub async fn list_things(&self) -> Result<wenlan_types::ThingsResponse, String> {
+        self.get_json("/api/things").await
+    }
+
+    /// `GET /api/things/{id}`: one thing with its conversations and pages.
+    pub async fn get_thing(&self, id: &str) -> Result<wenlan_types::ThingDetailResponse, String> {
+        let path = format!("/api/things/{}", percent_encode_path_segment(id));
+        self.get_json(&path).await
+    }
+
+    /// `PATCH /api/things/{id}`: the person renames a thing.
+    pub async fn rename_thing(
+        &self,
+        id: &str,
+        title: String,
+    ) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!("/api/things/{}", percent_encode_path_segment(id));
+        self.patch_json(&path, &wenlan_types::ThingRenameRequest { title })
+            .await
+    }
+
+    /// `POST /api/sessions/{id}/things/move`: the person moves a conversation
+    /// into another thing, or into a new one they name.
+    pub async fn move_session_thing(
+        &self,
+        session_id: &str,
+        request: wenlan_types::ThingMoveRequest,
+    ) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!(
+            "/api/sessions/{}/things/move",
+            percent_encode_path_segment(session_id)
+        );
+        self.post_json(&path, &request).await
+    }
+
     /// `GET /api/pages/{id}/sessions`.
     pub async fn get_page_sessions(
         &self,
