@@ -2039,7 +2039,16 @@ async fn handle_refresh_page_inner(
         req.content = body;
         (json, summary)
     });
-    if requires_review {
+    // A locked page whose write only changes sentences it already has goes
+    // to the core gate, which turns each change into a sentence proposal.
+    let lock_proposes = existing.review_required
+        && wenlan_core::sentences::locked_write_only_changes_sentences(
+            &db,
+            &existing,
+            &req.content,
+        )
+        .await?;
+    if requires_review && !lock_proposes {
         // The notes the write relies on ride the card and are recorded when
         // the human accepts it. Checked now, so a refused mark refuses this
         // request exactly as it would a direct write.
@@ -2209,6 +2218,8 @@ async fn handle_refresh_page_inner(
             gated: result.gated,
             warnings: if result.gated {
                 gated_code_basis_warning(&prepared_code_basis)
+            } else if lock_proposes {
+                result.warnings.clone()
             } else {
                 Vec::new()
             }
@@ -3259,7 +3270,7 @@ mod create_page_endpoint_tests {
     }
 
     #[tokio::test]
-    async fn refresh_with_matching_expected_version_proposes_on_the_persons_sentence() {
+    async fn refresh_with_matching_expected_version_keeps_the_persons_sentence() {
         let _lock = crate::TEST_DATA_DIR_LOCK
             .get_or_init(|| tokio::sync::Mutex::new(()))
             .lock()
@@ -3285,11 +3296,13 @@ mod create_page_endpoint_tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_ne!(body["gated"], json!(true), "{body}");
         // The page's one sentence is the person's (their fs_edit wrote it):
-        // a version-checked agent write lands only on the AI's sentences, so
-        // this one becomes a sentence proposal and the page is unchanged.
-        assert_eq!(
-            body["sentence_proposals"].as_array().map(Vec::len),
-            Some(1),
+        // a version-checked agent write lands only on the AI's sentences, and
+        // a rewording of the person's sentence, with no change in its facts,
+        // is not even a proposal. The page is unchanged.
+        assert!(
+            body["sentence_proposals"]
+                .as_array()
+                .is_none_or(Vec::is_empty),
             "{body}"
         );
         let after = db.get_page(&page.id).await.unwrap().unwrap();
@@ -3298,8 +3311,7 @@ mod create_page_endpoint_tests {
         let view = wenlan_core::sentences::page_sentences(&db, &page.id)
             .await
             .unwrap();
-        assert_eq!(view.proposals.len(), 1);
-        assert_eq!(view.proposals[0].after, content);
+        assert!(view.proposals.is_empty());
 
         // Without expected_version the same page is refused: nothing is
         // written and no card is staged, and the agent is told to re-read.
@@ -3370,6 +3382,9 @@ mod create_page_endpoint_tests {
                 .review_required
         );
 
+        // A rewrite of the page's one sentence: under the lock every sentence
+        // is protected, so it goes to the sentence gate, not a card, and a
+        // rewording with no change in its facts is dropped.
         let (status, body) = send_json(
             &app,
             "PUT",
@@ -3382,10 +3397,36 @@ mod create_page_endpoint_tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["gated"], json!(true), "{body}");
+        assert!(
+            body["sentence_proposals"]
+                .as_array()
+                .is_none_or(Vec::is_empty),
+            "{body}"
+        );
+        assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+        assert_eq!(
+            db.get_page(&page_id).await.unwrap().unwrap().content,
+            REFRESH_BODY
+        );
+
+        // A write that adds a sentence still waits as a whole-page card.
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{page_id}"),
+            json!({
+                "content": format!("{REFRESH_BODY}. Borrowing is checked at compile time."),
+                "source_memory_ids": REFRESH_SOURCES,
+                "expected_version": version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(
             body["gated"],
             json!(true),
-            "the lock stages even a versioned refresh: {body}"
+            "the lock stages a versioned refresh that adds a sentence: {body}"
         );
         assert_eq!(
             db.get_page(&page_id).await.unwrap().unwrap().content,

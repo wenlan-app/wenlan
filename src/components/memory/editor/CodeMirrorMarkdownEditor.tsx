@@ -15,7 +15,7 @@ import {
 import { closeSearchPanel, findNext, findPrevious, openSearchPanel, search } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Compartment, EditorState } from "@codemirror/state";
+import { Compartment, EditorState, Transaction } from "@codemirror/state";
 import {
   drawSelection,
   dropCursor,
@@ -180,6 +180,19 @@ export const CodeMirrorMarkdownEditor = forwardRef<
         const applied = runMarkdownCommand(view, command);
         publishStatus(view);
         return applied;
+      },
+      applyExternalEdits(edits): boolean {
+        const view = viewRef.current;
+        if (!view || actionsBlocked(view)) return false;
+        const changes = edits(view.state.doc.toString());
+        if (changes.length === 0) return true;
+        // Not the person's own step: undo leaves it in place.
+        view.dispatch({
+          changes: changes.map(({ from, to, insert }) => ({ from, to, insert })),
+          annotations: [Transaction.addToHistory.of(false), Transaction.remote.of(true)],
+        });
+        publishStatus(view);
+        return true;
       },
       requestSave,
       requestCancel,
@@ -361,72 +374,125 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
                 backgroundColor: "var(--mem-indigo-bg)",
               },
-              // Find and replace panel, drawn in the app's colours instead of
-              // the package's light grey. "&.cm-editor" outranks its base theme.
+              // Find and replace panel in the app's own controls instead of
+              // the package's grey bar. "&.cm-editor" outranks its base theme.
+              // The package's markup is kept as is (one row of find controls
+              // and options, a <br>, then the replace row); flex order lays
+              // it out as find, replace, then options, so no label wraps.
+              // The bar itself is opaque, so the page scrolling under the
+              // pinned panel never shows through; its container stays clear
+              // and matches whatever pane the editor sits in.
               "&.cm-editor .cm-panels": {
-                backgroundColor: "var(--mem-detail-surface)",
+                backgroundColor: "transparent",
                 color: "var(--mem-text)",
               },
               "&.cm-editor .cm-panels-top": {
-                borderBottom: "1px solid var(--mem-border)",
+                borderBottom: "none",
                 marginBottom: "12px",
               },
               "&.cm-editor .cm-panel.cm-search": {
-                padding: "6px 28px 6px 0",
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                columnGap: "6px",
+                padding: "6px 40px 6px 8px",
                 fontFamily: "var(--mem-font-body)",
-                fontSize: "var(--mem-text-sm)",
+                fontSize: "var(--mem-text-control)",
+                backgroundColor: "var(--mem-detail-surface-raised)",
+                borderRadius: "var(--mem-radius-md)",
               },
+              // Row breaks: full-width, zero-height flex items.
+              "&.cm-editor .cm-panel.cm-search::before, &.cm-editor .cm-panel.cm-search::after": {
+                content: '""',
+                flexBasis: "100%",
+                height: "0",
+              },
+              "&.cm-editor .cm-panel.cm-search::before": { order: "2" },
+              "&.cm-editor .cm-panel.cm-search::after": { order: "4" },
+              "&.cm-editor .cm-search br": { display: "none" },
+              "&.cm-editor .cm-search :is([name=search], [name=next], [name=prev], [name=select])": { order: "1" },
+              "&.cm-editor .cm-search :is([name=replace], [name=replaceAll])": { order: "3" },
               "&.cm-editor .cm-search input, &.cm-editor .cm-search button, &.cm-editor .cm-search label": {
-                margin: "2px 6px 2px 0",
+                margin: "3px 0",
               },
               "&.cm-editor .cm-search .cm-textfield": {
-                width: "12em",
-                maxWidth: "100%",
-                fontSize: "var(--mem-text-sm)",
-                padding: "3px 8px",
+                boxSizing: "border-box",
+                flex: "0 1 15em",
+                minWidth: "8em",
+                height: "28px",
+                marginInlineEnd: "2px",
+                padding: "0 10px",
+                font: "400 var(--mem-text-control)/1 var(--mem-font-body)",
                 color: "var(--mem-text)",
                 backgroundColor: "var(--mem-surface)",
-                border: "1px solid var(--mem-control-border)",
-                borderRadius: "var(--mem-radius-sm)",
+                border: "1px solid var(--mem-border)",
+                borderRadius: "var(--mem-control-radius)",
+                outline: "none",
+                transition: "border-color 150ms, box-shadow 150ms",
+              },
+              "&.cm-editor .cm-search .cm-textfield::placeholder": {
+                color: "var(--mem-text-tertiary)",
               },
               "&.cm-editor .cm-search .cm-textfield:focus": {
-                outline: "2px solid var(--mem-focus-ring)",
-                outlineOffset: "-1px",
+                borderColor: "var(--mem-accent-page)",
+                boxShadow: "0 0 0 2px var(--mem-focus-ring)",
               },
               "&.cm-editor .cm-search .cm-button": {
+                boxSizing: "border-box",
+                height: "28px",
+                padding: "0 10px",
                 whiteSpace: "nowrap",
-                fontSize: "var(--mem-text-sm)",
-                padding: "3px 10px",
-                color: "var(--mem-text)",
+                font: "500 var(--mem-text-control)/1 var(--mem-font-body)",
+                color: "var(--mem-text-secondary)",
                 backgroundImage: "none",
-                backgroundColor: "var(--mem-hover)",
-                border: "1px solid var(--mem-control-border)",
-                borderRadius: "var(--mem-radius-sm)",
+                backgroundColor: "transparent",
+                border: "1px solid var(--mem-border)",
+                borderRadius: "var(--mem-control-radius)",
                 cursor: "pointer",
+                transition: "color 150ms, background-color 150ms, border-color 150ms",
               },
               "&.cm-editor .cm-search .cm-button:hover": {
+                color: "var(--mem-text)",
+                backgroundColor: "var(--mem-hover)",
+              },
+              "&.cm-editor .cm-search .cm-button:active": {
                 backgroundColor: "var(--mem-hover-strong)",
               },
+              "&.cm-editor .cm-search :is(.cm-button, [name=close]):focus-visible": {
+                outline: "2px solid var(--mem-focus-ring)",
+                outlineOffset: "1px",
+              },
               "&.cm-editor .cm-search label": {
+                order: "5",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
                 marginInlineEnd: "10px",
-                fontSize: "var(--mem-text-sm)",
+                fontSize: "var(--mem-text-xs)",
                 color: "var(--mem-text-secondary)",
                 whiteSpace: "nowrap",
+                cursor: "pointer",
               },
               "&.cm-editor .cm-search input[type=checkbox]": {
-                accentColor: "var(--mem-accent-indigo)",
-                verticalAlign: "middle",
+                width: "14px",
+                height: "14px",
+                margin: "0",
+                accentColor: "var(--mem-accent-page)",
+                cursor: "pointer",
               },
               "&.cm-editor .cm-search [name=close]": {
-                top: "6px",
-                right: "4px",
-                width: "22px",
-                height: "22px",
+                top: "8px",
+                right: "8px",
+                width: "24px",
+                height: "24px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 fontSize: "18px",
-                lineHeight: "20px",
-                color: "var(--mem-text-secondary)",
+                lineHeight: "1",
+                color: "var(--mem-text-tertiary)",
                 cursor: "pointer",
-                borderRadius: "var(--mem-radius-sm)",
+                borderRadius: "var(--mem-control-radius)",
               },
               "&.cm-editor .cm-search [name=close]:hover": {
                 color: "var(--mem-text)",

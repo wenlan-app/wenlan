@@ -603,6 +603,10 @@ pub struct PlannedProposal {
     pub before: String,
     /// Empty when the write deleted the sentence.
     pub after: String,
+    /// Why the facts behind the sentence changed. The planner leaves it
+    /// empty; `sentences::sentence_gate` fills it and drops every proposal
+    /// that has none, so a rewording alone is never proposed.
+    pub reason: Option<wenlan_types::authorship::WeakReason>,
 }
 
 /// What lands of a machine write once the protected sentences are kept.
@@ -683,6 +687,7 @@ pub fn plan_sentence_gate(
                         sentence_hash: unit.hash.clone(),
                         before: unit.text.clone(),
                         after: crate::citations::strip_markers(&new_units[n].text),
+                        reason: None,
                     });
                 }
                 anchor = Some(n);
@@ -713,6 +718,7 @@ pub fn plan_sentence_gate(
                     sentence_hash: unit.hash.clone(),
                     before: unit.text.clone(),
                     after: String::new(),
+                    reason: None,
                 });
             }
         }

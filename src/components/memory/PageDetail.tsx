@@ -111,6 +111,7 @@ import { leadingMarkdownH1MatchesTitle, withoutLeadingTitleH1 } from "./editor/p
 import { MovePageDialog } from "./pages/MovePageDialog";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
 import { finishRenameLinks } from "./pages/renameLinksNotice";
+import { applyTextEdits, renameRewriteExplaining } from "./pages/renameLinkRewrite";
 import { inventoryPageFilename, type PageProjectionIssue } from "./pages/pageInventory";
 import { PageAutosave } from "./editor/pageAutosave";
 import { NoteReviewNotice } from "./page/NoteReviewNotice";
@@ -1072,7 +1073,7 @@ export default function PageDetail({
   });
 
   const renameMutation = useMutation({
-    mutationFn: (input: { id: string; title: string; expectedVersion: number }) =>
+    mutationFn: (input: { id: string; title: string; previousTitle: string; expectedVersion: number }) =>
       renamePage(input.id, input.title, input.expectedVersion),
     onSuccess: (renamed, input) => {
       if (renamed.id !== input.id) return;
@@ -1099,7 +1100,7 @@ export default function PageDetail({
       ]) {
         void queryClient.invalidateQueries({ queryKey });
       }
-      finishRenameLinks(t, queryClient, renamed);
+      finishRenameLinks(t, queryClient, renamed, input.previousTitle);
       if (activePageIdRef.current !== input.id) return;
       renameAttemptRef.current += 1;
       setRenaming(false);
@@ -1496,6 +1497,20 @@ export default function PageDetail({
       if (canonicalPage?.status === "archived" && !autosave.snapshot().dirty &&
           !editorStatus.compositionActive && canonicalPage.content !== autosave.snapshot().baseline?.content) {
         closeEditor();
+        return;
+      }
+      // A rename made here rewrote this page's [[links]]: take the same
+      // rewrite into the draft rather than stopping on a conflict.
+      const baselineContent = autosave.snapshot().baseline?.content;
+      const linkRewrite = canonicalPage && baselineContent !== undefined
+        ? renameRewriteExplaining(baselineContent, canonicalPage.content)
+        : null;
+      if (canonicalPage && linkRewrite && autosave.rebaseOnto(
+        canonicalPage,
+        (text) => applyTextEdits(text, linkRewrite(text)),
+        () => editorRef.current?.applyExternalEdits(linkRewrite) ?? false,
+      )) {
+        editorPageRef.current = canonicalPage;
         return;
       }
       // Changed in Obsidian or another editor with nothing typed here: show it.
@@ -2343,7 +2358,7 @@ export default function PageDetail({
     setRenameError(false);
     setRenameNeedsReview(false);
     if (renameExpectedVersion === null) return;
-    renameMutation.mutate({ id: page.id, title, expectedVersion: renameExpectedVersion });
+    renameMutation.mutate({ id: page.id, title, previousTitle: page.title, expectedVersion: renameExpectedVersion });
   };
 
   const reloadForRename = async () => {

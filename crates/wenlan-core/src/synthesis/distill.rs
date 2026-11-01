@@ -5087,10 +5087,11 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
     }
 
     #[tokio::test]
-    async fn force_redistill_keeps_the_persons_prose_and_proposes_the_rebuild() {
+    async fn force_redistill_keeps_the_persons_prose_and_drops_a_rewording_of_it() {
         // The page's whole body is the person's own prose. A forced rebuild
-        // regenerates only the AI's sentences; a change to the person's
-        // sentence is staged as a sentence proposal, and the page stays theirs.
+        // regenerates only the AI's sentences and the page stays theirs. The
+        // person's sentence carries no citation whose facts changed, so the
+        // rebuild's rewording of it is not even a proposal.
         let (db, _db_dir) = crate::db::tests::test_db().await;
         let db = Arc::new(db);
         seed_protected_page(&db, "page_forced").await;
@@ -5127,11 +5128,8 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             .await
             .unwrap();
         assert!(
-            view.proposals
-                .iter()
-                .any(|p| p.before.trim() == FORCED_USER_PROSE
-                    && p.after.contains("Tokio is an async runtime")),
-            "the rebuild of the person's sentence waits as a proposal: {:?}",
+            view.proposals.is_empty(),
+            "a rewording of the person's sentence is not proposed: {:?}",
             view.proposals
         );
     }

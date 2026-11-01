@@ -69,6 +69,36 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         runCommand(): boolean {
           return false;
         },
+        applyExternalEdits(edits): boolean {
+          const textarea = textareaRef.current;
+          if (!textarea || disabledRef.current || composingRef.current) return false;
+          const changes = edits(documentRef.current);
+          if (changes.length === 0) return true;
+          // Keep the cursor on the same text it was on.
+          const map = (position: number): number => {
+            let shift = 0;
+            for (const change of changes) {
+              if (change.to <= position) shift += change.insert.length - (change.to - change.from);
+              else if (change.from < position) return change.from + shift + change.insert.length;
+              else break;
+            }
+            return position + shift;
+          };
+          const { selectionStart, selectionEnd, selectionDirection } = textarea;
+          let next = "";
+          let copied = 0;
+          for (const change of changes) {
+            next += documentRef.current.slice(copied, change.from) + change.insert;
+            copied = change.to;
+          }
+          next += documentRef.current.slice(copied);
+          documentRef.current = next;
+          textarea.value = next;
+          textarea.setSelectionRange(map(selectionStart), map(selectionEnd), selectionDirection ?? undefined);
+          resizeToDocument(textarea, minHeight);
+          callbacksRef.current.onDocumentChange(next);
+          return true;
+        },
         requestSave,
         requestCancel,
       }),

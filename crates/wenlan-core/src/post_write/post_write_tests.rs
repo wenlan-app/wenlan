@@ -7465,7 +7465,7 @@ async fn create_page_without_kind_at_floor_lands_as_distilled() {
 /// one sentence here is the person's (their touch-up of the AI's line), so it
 /// is kept and the agent's text becomes a sentence proposal, not a card.
 #[tokio::test]
-async fn agent_refresh_with_matching_expected_version_proposes_on_the_persons_sentence() {
+async fn agent_refresh_with_matching_expected_version_drops_a_rewording_of_the_persons_sentence() {
     let (db, _dir) = test_db().await;
     let before = ownership_user_edited_page(&db, "page_agent_cas", "mem-agent-cas").await;
     let content = "Tokio runtimes schedule async tasks across worker threads, refreshed by agent";
@@ -7481,15 +7481,17 @@ async fn agent_refresh_with_matching_expected_version_proposes_on_the_persons_se
     .unwrap();
     assert_eq!(result.outcome, WriteOutcome::Unchanged);
     assert!(!result.gated, "no whole-page card");
-    assert_eq!(result.sentence_proposals.len(), 1);
+    assert!(
+        result.sentence_proposals.is_empty(),
+        "the facts behind the person's sentence did not change, so no proposal"
+    );
     let after = db.get_page("page_agent_cas").await.unwrap().unwrap();
     assert_eq!(after.content, before.content);
     assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
     let view = crate::sentences::page_sentences(&db, "page_agent_cas")
         .await
         .unwrap();
-    assert_eq!(view.proposals.len(), 1);
-    assert_eq!(view.proposals[0].after, content);
+    assert!(view.proposals.is_empty());
 }
 
 #[tokio::test]
@@ -7551,7 +7553,7 @@ async fn review_lock_stages_agent_and_pipeline_writes_but_not_human_edits() {
     let agent = ownership_write(
         &db,
         "page_locked",
-        "Tokio runtimes schedule async tasks, agent rewrite under lock",
+        "Tokio runtimes schedule async tasks. An agent sentence added under lock.",
         &["mem-locked"],
         "agent_refresh",
         Some(locked.version),
@@ -7566,7 +7568,7 @@ async fn review_lock_stages_agent_and_pipeline_writes_but_not_human_edits() {
     let pipeline = ownership_write(
         &db,
         "page_locked",
-        "Tokio runtimes schedule async tasks, pipeline rewrite under lock",
+        "Tokio runtimes schedule async tasks. A pipeline sentence added under lock.",
         &["mem-locked"],
         "re_distill",
         None,
@@ -7850,7 +7852,8 @@ async fn assert_late_lock_stages_a_card(page_id: &str, mem_id: &str, source_fenc
     let page = ownership_page(&db, page_id, mem_id).await;
     let source_revision = db.get_page_source_revision(page_id).await.unwrap();
     let (parked_rx, go_tx) = arm_pre_write_gate(page_id);
-    let body = "Tokio runtimes schedule async tasks, pipeline body from the unlocked read";
+    // It adds a sentence, so under the lock it waits as a whole-page card.
+    let body = "Tokio runtimes schedule async tasks. A pipeline sentence from the unlocked read.";
 
     let write = if source_fenced {
         source_fenced_write(page_id, body, mem_id, "re_distill", None, source_revision)
@@ -8115,7 +8118,7 @@ async fn core_gated_agent_refresh_keeps_the_agent_on_the_card() {
             basis: crate::db::BasisWrite::default(),
             page_id: &page_id,
             req: UpdatePageRequest {
-                content: "gated source, refreshed".to_string(),
+                content: "gated source. A sentence the agent adds.".to_string(),
                 source_memory_ids: vec!["mem-gate-a".to_string()],
                 expected_version: None,
                 caller_id: None,
