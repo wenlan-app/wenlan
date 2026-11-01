@@ -16,6 +16,10 @@ pub struct ImportChatExportResponse {
     pub conversations_new: usize,
     pub conversations_skipped_existing: usize,
     pub memories_stored: usize,
+    /// Artifacts and canvases kept as originals, each a file under
+    /// `originals/` with its own page.
+    #[serde(default)]
+    pub originals_kept: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

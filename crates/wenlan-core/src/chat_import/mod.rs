@@ -4,10 +4,12 @@
 pub mod bulk_ingest;
 pub mod chatgpt;
 pub mod claude;
+pub mod originals;
 pub mod types;
 
 pub use types::{
-    ChatExportParser, ImportError, MessageRole, ParsedConversation, ParsedMessage, Vendor,
+    ChatExportParser, ImportError, MessageRole, ParsedArtifact, ParsedConversation, ParsedMessage,
+    Vendor,
 };
 
 use std::io::Cursor;

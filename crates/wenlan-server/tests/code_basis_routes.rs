@@ -891,12 +891,13 @@ async fn a_refresh_staged_as_a_card_says_the_code_basis_was_not_recorded() {
     .await;
     assert!(db.set_page_review_required(&page, true).await.unwrap());
 
+    // Adding a sentence to a locked page is staged as a card.
     let (status, body) = call(
         &router,
         Method::PUT,
         &format!("/api/pages/{page}"),
         Some(json!({
-            "content": "Replacement text.",
+            "content": "Original text. Replacement text.",
             "source_memory_ids": [],
             "expected_version": 1,
             "code_basis": [repo.span("a.rs", 1, 5)],
@@ -917,6 +918,56 @@ async fn a_refresh_staged_as_a_card_says_the_code_basis_was_not_recorded() {
         written.warnings
     );
     assert!(db.list_page_code_basis(&page).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_locked_page_that_keeps_its_text_records_no_code_basis() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let repo = Repo::new("a.rs", &numbered(40));
+    let page = common::create_page_fixture(
+        &db,
+        "Locked",
+        "Original text.",
+        Some(SPACE),
+        &[],
+        "authored",
+    )
+    .await;
+    assert!(db.set_page_review_required(&page, true).await.unwrap());
+
+    // Only changes a sentence the page has: nothing lands, no card.
+    let (status, body) = call(
+        &router,
+        Method::PUT,
+        &format!("/api/pages/{page}"),
+        Some(json!({
+            "content": "Replacement text.",
+            "source_memory_ids": [],
+            "expected_version": 1,
+            "code_basis": [repo.span("a.rs", 1, 5)],
+        })),
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let written: PageWriteResponse = typed(body);
+    assert!(!written.gated);
+    assert!(written.code_basis.is_empty());
+    assert!(
+        written
+            .warnings
+            .iter()
+            .any(|w| w.contains("code_basis were not recorded") && w.contains("locked")),
+        "{:?}",
+        written.warnings
+    );
+    assert!(db.list_page_code_basis(&page).await.unwrap().is_empty());
+    assert_eq!(
+        db.get_page(&page).await.unwrap().unwrap().content,
+        "Original text."
+    );
 }
 
 #[tokio::test]

@@ -129,6 +129,20 @@ impl<'a> Writer<'a> {
 /// How many recent versions are read to find the lines a person wrote.
 const USER_LINE_HISTORY: i64 = 200;
 
+/// The refusal code for a machine write to an original's page.
+const ORIGINAL_PAGE_READ_ONLY: &str = "original_page_is_read_only";
+
+/// A page made from an original (`creation_kind = "original"`: an artifact
+/// or canvas kept from an imported chat) is never rewritten by a machine.
+/// Later facts can only annotate it. A person may still edit it, and the
+/// mechanical `[[link]]` rewrite after a rename still lands, as it changes
+/// link targets only; the kept file under `originals/` is never touched.
+fn refuses_machine_rewrite(writer: Writer<'_>, page: &crate::pages::Page) -> bool {
+    page.creation_kind == "original"
+        && writer.is_machine()
+        && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
+}
+
 pub fn page_is_human_owned(page: &crate::pages::Page) -> bool {
     page.user_edited || page.creation_kind == "authored"
 }
@@ -1006,6 +1020,12 @@ async fn update_page_db_impl(
             if !in_space_guard(basis, &current) {
                 return Err(page_not_in_space(page_id));
             }
+            if refuses_machine_rewrite(writer, &current) {
+                return Err(WenlanError::Validation(format!(
+                    "{ORIGINAL_PAGE_READ_ONLY}: page '{page_id}' keeps an original the AI made \
+                     in a chat; it is not rewritten. Add an annotation instead."
+                )));
+            }
             if machine_empty_sources && !current.source_memory_ids.is_empty() {
                 return Err(WenlanError::Validation(
                     "page must cite at least one source memory".into(),
@@ -1095,12 +1115,29 @@ async fn update_page_db_impl(
             // authored page or the review lock, which still get a revision
             // card. An agent whose `expected_version` matched above may land
             // on a human-owned page; see `machine_write_requires_review`.
-            if machine_write_requires_review(
-                writer,
-                &current,
-                req.expected_version.is_some(),
-                user_forced,
-            ) {
+            // Under the page lock, a write that only changes sentences the
+            // page already has goes through the sentence gate instead of a
+            // whole-page card: every sentence is protected, so each change is
+            // a sentence proposal (when its facts changed) and nothing lands.
+            // A forced rebuild and a rename's link rewrite keep the card.
+            let lock_proposes = writer.is_machine()
+                && current.review_required
+                && !user_forced
+                && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
+                && crate::sentences::locked_write_only_changes_sentences(
+                    db,
+                    &current,
+                    &req.content,
+                )
+                .await?;
+            if !lock_proposes
+                && machine_write_requires_review(
+                    writer,
+                    &current,
+                    req.expected_version.is_some(),
+                    user_forced,
+                )
+            {
                 // `expected_source_revision` is the caller's compile fence
                 // when it supplied one. A caller with none (e.g. the generic
                 // `update_page` wrapper) gets an acceptance-time staging
@@ -1288,9 +1325,14 @@ async fn update_page_db_impl(
             // A stale page that recompiles to the byte-identical body still had its
             // compile done, so acknowledge it; otherwise the sweep re-dispatches the
             // same no-op work forever.
-            if delta_summary.is_none() && old_set == new_set {
+            if (delta_summary.is_none() && old_set == new_set) || lock_proposes {
                 // Nothing lands, but the changes the write wanted to make to
-                // the person's sentences are still proposals.
+                // the person's sentences are still proposals. On a locked
+                // page nothing lands by design, sources included, and a
+                // refused mark still refuses the write, as it would a card.
+                if lock_proposes {
+                    db.prepare_staged_basis_marks(page_id, &basis.marks).await?;
+                }
                 let sentence_proposals = match &gate {
                     Some(plan) => {
                         crate::sentences::stage_gate_proposals(
@@ -1310,7 +1352,18 @@ async fn update_page_db_impl(
                 // already had) are recorded on their own, in one transaction. A
                 // refused mark still refuses the write, and so does an edit that
                 // landed after the comparison above or a move out of the Space.
-                if !basis.marks.is_empty() || !basis.code_basis.is_empty() {
+                // On a locked page the write did not land, so what it relied
+                // on describes text the page does not have: nothing is
+                // recorded, and the caller is told why.
+                let mut lock_warnings = Vec::new();
+                if lock_proposes && (!basis.marks.is_empty() || !basis.code_basis.is_empty()) {
+                    lock_warnings.push(
+                        "basis and code_basis were not recorded: this page is locked, so the \
+                         write changed nothing and its sentence changes wait as proposals"
+                            .to_string(),
+                    );
+                }
+                if !lock_proposes && (!basis.marks.is_empty() || !basis.code_basis.is_empty()) {
                     match db
                         .mark_page_bases(
                             page_id,
@@ -1344,7 +1397,7 @@ async fn update_page_db_impl(
                         let acknowledged_result = WriteResult {
                             acknowledged: true,
                             sentence_proposals: sentence_proposals.clone(),
-                            ..no_op(WriteOutcome::Unchanged, vec![])
+                            ..no_op(WriteOutcome::Unchanged, lock_warnings.clone())
                         };
                         let response = serde_json::to_string(&acknowledged_result)?;
                         let receipt = crate::db::OperationReceipt {
@@ -1407,7 +1460,7 @@ async fn update_page_db_impl(
                     WriteResult {
                         acknowledged,
                         sentence_proposals,
-                        ..no_op(WriteOutcome::Unchanged, vec![])
+                        ..no_op(WriteOutcome::Unchanged, lock_warnings)
                     },
                 )
                 .await;

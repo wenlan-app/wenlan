@@ -676,6 +676,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `PUT` | `/api/pages/{id}/basis/{basis_id}` | main | yes | automatic | `none` | `handle_mark_basis` | BasisRef.title: visible_ids under the mutation grant |
 | `POST` | `/api/pages/{id}/basis/{basis_id}/confirm` | main | yes | automatic | `none` | `handle_confirm_basis` | BasisRef.title: visible_ids under the mutation grant |
 | `DELETE` | `/api/pages/{id}/basis/{basis_id}` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
+| `GET` | `/api/pages/{id}/original` | main | no | not_applicable | `none` | — | provenance only: vendor, conversation id and URL, artifact id, kind and title, kept file path; no page prose; visible_ids under the truth view before the read |
 | `GET` | `/api/pages/{id}/sentences` | main | yes | automatic | `none` | `handle_get_page_sentences` | PageSentence.text, SentenceProposal.before, SentenceProposal.after: require_visible_page under the truth view before any read |
 | `POST` | `/api/pages/{id}/sentences/propose` | main | yes | automatic | `none` | `handle_propose_sentence` | SentenceProposal.before, SentenceProposal.after: require_visible_page under the mutation grant |
 | `POST` | `/api/pages/{id}/sentences/proposals/{proposal_id}/accept` | main | yes | automatic | `none` | `handle_accept_sentence_proposal` | SentenceProposal.before, SentenceProposal.after: require_visible_page under the mutation grant |
@@ -1263,6 +1264,7 @@ carrying the authority of agreement.
 |---|---|---|---|---|---|
 | `core/chat_check.rs::check_against_decisions` | `pub` | no | **yes** | `server/check_routes.rs::handle_check` | `core/chat_check.rs::decision_source` |
 | `core/chat_check.rs::decision_context` | `pub` | no | **yes** | `server/check_routes.rs::handle_check_context` | `core/chat_check.rs::decision_source` |
+| `core/chat_import/originals.rs::unused_title` | `private` | no | no | — | `core/page_titles.rs::strict_same_title_note` |
 | `core/citations.rs::run_citation_backfill_with_page_limit` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/code_basis_recheck.rs::note_unchanged` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/code_basis_recheck.rs::prepare_recheck_input` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1459,6 +1461,7 @@ carrying the authority of agreement.
 
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
+| `core/chat_import/originals.rs::keep_conversation_originals` | `pub` | no | no | — | `core/chat_import/originals.rs::unused_title` |
 | `core/citations.rs::record_annotate_failure` | `private` | no | no | — | `core/db.rs::set_page_citations_with_changelog_at_version` |
 | `core/citations.rs::run_citation_backfill_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/citations.rs::run_citation_backfill_with_page_limit` |
 | `core/citations.rs::run_citation_backfill_tick` | `pub` | no | no | — | `core/citations.rs::run_citation_backfill_with_page_limit` |
@@ -1549,6 +1552,7 @@ carrying the authority of agreement.
 | `core/sentences.rs::propose_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_propose_sentence` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::recheck_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_recheck_sentence` | `core/db/sentence_history.rs::set_page_citations_at_page_version`, `core/sentences.rs::load_page`, `core/sentences.rs::source_states` |
 | `core/sentences.rs::reject_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/sentences.rs::load_page` |
+| `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
 | `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep.rs::claim` | `pub` | yes | no | — | `core/steep.rs::claim_as` |
 | `core/steep_new.rs::claim_new` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |

@@ -69,6 +69,21 @@ pub struct BulkImportResult {
     pub conversations_skipped_existing: usize,
     /// Number of individual memories stored.
     pub memories_stored: usize,
+    /// Artifacts and canvases kept as originals (files plus pages).
+    pub originals_kept: usize,
+    /// Conversations whose originals could not all be kept. Their chat text
+    /// is stored either way; the failure is logged.
+    pub originals_failed: usize,
+}
+
+/// Where an import keeps the originals (artifacts, canvases) of the chats it
+/// stores. Without one, an import keeps chat text only, as it always did.
+#[derive(Debug, Clone, Copy)]
+pub struct OriginalsTarget<'a> {
+    /// The Wenlan data root; files go under `<data_root>/originals/`.
+    pub data_root: &'a std::path::Path,
+    /// The pages folder, so each original's page is also written there.
+    pub knowledge_path: Option<&'a std::path::Path>,
 }
 
 /// Entries a chat import accumulates before it stores them. Each stored slice
@@ -101,8 +116,71 @@ pub async fn bulk_import_conversations(
     emitter: Arc<dyn EventEmitter>,
     import_id: &str,
 ) -> Result<BulkImportResult, WenlanError> {
-    bulk_import_conversations_with_flush(db, batch, emitter, import_id, RAW_IMPORT_FLUSH_ENTRIES)
+    bulk_import_conversations_with_flush(
+        db,
+        batch,
+        emitter,
+        import_id,
+        RAW_IMPORT_FLUSH_ENTRIES,
+        None,
+    )
+    .await
+}
+
+/// [`bulk_import_conversations`], also keeping each new conversation's
+/// artifacts and canvases as originals (see `chat_import::originals`). The
+/// originals of a slice are kept once its memories are committed, because
+/// each original's page cites the conversation's memory.
+pub async fn bulk_import_conversations_keeping_originals(
+    db: Arc<MemoryDB>,
+    batch: &[ParsedConversation],
+    emitter: Arc<dyn EventEmitter>,
+    import_id: &str,
+    originals: OriginalsTarget<'_>,
+) -> Result<BulkImportResult, WenlanError> {
+    bulk_import_conversations_with_flush(
+        db,
+        batch,
+        emitter,
+        import_id,
+        RAW_IMPORT_FLUSH_ENTRIES,
+        Some(originals),
+    )
+    .await
+}
+
+/// Keep the originals of conversations whose memories just committed.
+/// A failure is logged and counted; the chat text stays imported.
+async fn keep_slice_originals(
+    db: &MemoryDB,
+    target: Option<OriginalsTarget<'_>>,
+    slice: &[&ParsedConversation],
+    kept: &mut usize,
+    failed: &mut usize,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    for conv in slice.iter().filter(|c| !c.artifacts.is_empty()) {
+        match crate::chat_import::originals::keep_conversation_originals(
+            db,
+            target.data_root,
+            target.knowledge_path,
+            conv,
+        )
         .await
+        {
+            Ok(originals) => *kept += originals.len(),
+            Err(error) => {
+                *failed += 1;
+                log::warn!(
+                    "[chat_import] could not keep the originals of {} conversation {}: {error}",
+                    conv.vendor.as_str(),
+                    conv.external_id
+                );
+            }
+        }
+    }
 }
 
 /// [`bulk_import_conversations`] with the slice size as a parameter, so tests
@@ -113,12 +191,15 @@ pub(crate) async fn bulk_import_conversations_with_flush(
     emitter: Arc<dyn EventEmitter>,
     import_id: &str,
     flush_entries: usize,
+    originals: Option<OriginalsTarget<'_>>,
 ) -> Result<BulkImportResult, WenlanError> {
     if batch.is_empty() {
         return Ok(BulkImportResult {
             conversations_ingested: 0,
             conversations_skipped_existing: 0,
             memories_stored: 0,
+            originals_kept: 0,
+            originals_failed: 0,
         });
     }
 
@@ -156,12 +237,25 @@ pub(crate) async fn bulk_import_conversations_with_flush(
     )> = Vec::new();
     let mut memories_stored: usize = 0;
     let mut last_emitted_count: usize = 0;
+    let mut slice: Vec<&ParsedConversation> = Vec::new();
+    let mut originals_kept = 0usize;
+    let mut originals_failed = 0usize;
 
     for conv in &new_conversations {
         if !entries.is_empty() && entries.len() + conv.messages.len() > flush_entries {
             memories_stored += db.store_raw_import_memories_batch(&entries).await?;
             entries.clear();
+            keep_slice_originals(
+                &db,
+                originals,
+                &slice,
+                &mut originals_kept,
+                &mut originals_failed,
+            )
+            .await;
+            slice.clear();
         }
+        slice.push(*conv);
         let source_id = conv.vendor.build_source_id(&conv.external_id);
         for (ordinal, msg) in conv.messages.iter().enumerate() {
             entries.push((
@@ -194,6 +288,14 @@ pub(crate) async fn bulk_import_conversations_with_flush(
     if !entries.is_empty() {
         memories_stored += db.store_raw_import_memories_batch(&entries).await?;
     }
+    keep_slice_originals(
+        &db,
+        originals,
+        &slice,
+        &mut originals_kept,
+        &mut originals_failed,
+    )
+    .await;
 
     // Final progress emission — always fire so the frontend sees the
     // definitive 100% signal regardless of whether the count landed on an
@@ -216,6 +318,8 @@ pub(crate) async fn bulk_import_conversations_with_flush(
         conversations_ingested: new_conversations.len(),
         conversations_skipped_existing: skipped,
         memories_stored,
+        originals_kept,
+        originals_failed,
     })
 }
 
@@ -240,6 +344,7 @@ mod tests {
                     created_at: None,
                 })
                 .collect(),
+            artifacts: vec![],
         }
     }
 
@@ -333,6 +438,7 @@ mod tests {
                 noop_emitter(),
                 "imp_test",
                 flush_entries,
+                None,
             ),
         )
         .await
@@ -371,10 +477,16 @@ mod tests {
         assert_eq!(stored_chunk_indexes(&db_arc, "d").await, Vec::<i32>::new());
 
         // The retry resumes through dedup and completes every conversation.
-        let retry =
-            bulk_import_conversations_with_flush(db_arc.clone(), &batch, noop_emitter(), "imp", 2)
-                .await
-                .unwrap();
+        let retry = bulk_import_conversations_with_flush(
+            db_arc.clone(),
+            &batch,
+            noop_emitter(),
+            "imp",
+            2,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(retry.conversations_skipped_existing, 2);
         assert_eq!(retry.conversations_ingested, 2);
         assert_eq!(retry.memories_stored, 4);

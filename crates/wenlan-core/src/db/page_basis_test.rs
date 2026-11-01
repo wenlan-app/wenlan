@@ -1983,7 +1983,7 @@ async fn a_locked_notes_gated_agent_write_records_its_marks_when_the_card_is_acc
     let staged = agent_write(
         &db,
         "b",
-        "Plans built on Alpha.",
+        "Original plans. Plans built on Alpha.",
         vec![("a".into(), 1), ("c".into(), 2)],
     )
     .await
@@ -2003,7 +2003,7 @@ async fn a_locked_notes_gated_agent_write_records_its_marks_when_the_card_is_acc
         .unwrap();
     assert_eq!(
         db.get_page("b").await.unwrap().unwrap().content,
-        "Plans built on Alpha."
+        "Original plans. Plans built on Alpha."
     );
     let a = entry(&db, "b", "a").await;
     assert_eq!(a.state, BASIS_STATE_OK);
@@ -2026,7 +2026,7 @@ async fn editing_a_gated_card_before_accepting_it_keeps_its_marks() {
     let staged = agent_write(
         &db,
         "b",
-        "Plans built on Alpha.",
+        "Original plans. Plans built on Alpha.",
         vec![("a".into(), 1), ("c".into(), 2)],
     )
     .await
@@ -2089,11 +2089,16 @@ async fn accepting_a_card_whose_basis_can_no_longer_be_relied_on_discards_it_wit
         page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
         page(&db, "b", "Beta", "Original plans.", "sp").await;
         assert!(db.set_page_review_required("b", true).await.unwrap());
-        let card_id = agent_write(&db, "b", "Plans built on Alpha.", vec![("a".into(), 1)])
-            .await
-            .unwrap()
-            .revision_card_id
-            .unwrap();
+        let card_id = agent_write(
+            &db,
+            "b",
+            "Original plans. Plans built on Alpha.",
+            vec![("a".into(), 1)],
+        )
+        .await
+        .unwrap()
+        .revision_card_id
+        .unwrap();
 
         match spoil {
             "archive" => db.archive_page("a").await.unwrap(),
