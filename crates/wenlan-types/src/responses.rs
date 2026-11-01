@@ -1237,6 +1237,11 @@ pub struct PageHistoryItem {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<PageHistorySource>,
+    /// For an edit: how many sentences it added, changed or removed against
+    /// the version before it. `None` when either text is no longer in the
+    /// page's history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_sentences: Option<u32>,
 }
 
 // ===== Sources =====
