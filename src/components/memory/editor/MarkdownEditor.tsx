@@ -119,6 +119,9 @@ export interface MarkdownEditorProps {
   /** The AI's proposals for the person's sentences, each under its sentence
    *  (UX-WHO-2). The plain-text fallback editor does not draw them. */
   sentenceProposals?: SentenceProposalSettings;
+  /** The page being edited, so `![[name]]` embeds can be found anywhere in
+   *  the pages folder. */
+  pageId?: string | null;
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(

@@ -7,6 +7,7 @@ import {
   syntaxTreeAvailable,
 } from "@codemirror/language";
 import {
+  Facet,
   StateEffect,
   StateField,
   type Extension,
@@ -38,6 +39,11 @@ import {
 } from "../../../lib/pageAttachments";
 
 export const setWritingCompositionActive = StateEffect.define<boolean>();
+
+/** The page in the editor, so `![[name]]` embeds resolve against it. */
+export const writingPageId = Facet.define<string | null, string | null>({
+  combine: (values) => values.find((value) => value) ?? null,
+});
 const refreshWritingPresentation = StateEffect.define<null>();
 
 const writingCompositionActive = StateField.define<boolean>({
@@ -788,7 +794,7 @@ function buildWritingRanges(view: EditorView): WritingRanges {
       const to = from + match[0].length;
       if (from <= frontmatterEnd || insideCode(tree.resolveInner(from, 1))) continue;
       const embed = parseMediaEmbed(match[1]);
-      const source = embed && mediaEmbedUrl(embed);
+      const source = embed && mediaEmbedUrl(embed, state.facet(writingPageId));
       if (!embed || !source) continue;
       if (!mediaIsRevealed(state, from, to, contentFocused)) {
         addConcealment(from, to, new ImageWidget(source, embed.alt, embed.kind, false, embed.width));

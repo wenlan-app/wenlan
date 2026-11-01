@@ -57,7 +57,7 @@ import { confirmAction } from "../../lib/confirmAction";
 import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
-import ContentRenderer from "./ContentRenderer";
+import ContentRenderer, { EmbedPageContext } from "./ContentRenderer";
 import { PageLengthSwitch, PageReadingLayers, usePageLength } from "./page/PageReadingLayers";
 import { pageLayerOffsets } from "./page/pageLayers";
 import type { PageLayersSettings } from "./editor/pageLayersEditing";
@@ -3007,6 +3007,7 @@ export default function PageDetail({
                   ref={editorRef}
                   pageLayers={editorPageLayers}
                   sentenceProposals={editorSentenceProposals}
+                  pageId={page.id}
                   initialDocument={editInitialDocument}
                   initialSelection={initialSelection}
                   onSelectionChange={onSelectionChange}
@@ -3081,6 +3082,7 @@ export default function PageDetail({
           <div>
             <ReferenceNavigationProvider onOpenPage={onPageClick} onOpenMemory={openSourceMemory}>
             <div className="page-detail-prose" data-testid="page-document-reading" onClickCapture={handleContentClick}>
+            <EmbedPageContext.Provider value={page.id}>
               {ledeText && (
                 <div className="page-detail-lede">
                   {ledeMarkdown ? (
@@ -3106,6 +3108,7 @@ export default function PageDetail({
                   />
                 )}
               />
+            </EmbedPageContext.Provider>
             </div>
             </ReferenceNavigationProvider>
           </div>
