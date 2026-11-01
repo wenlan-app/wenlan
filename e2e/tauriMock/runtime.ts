@@ -326,6 +326,11 @@ export class TauriMockRuntime {
       case "revert_page_sentences":
         requiredString(command, args, "pageId");
         throw new TauriMockArgumentError(command, "version");
+      // The fixture's pages have no sentence hashes to flag or recheck.
+      case "flag_page_sentence":
+      case "recheck_page_sentence":
+        requiredString(command, args, "pageId");
+        throw new TauriMockArgumentError(command, "sentenceHash");
       case "mark_page_basis":
         return this.pageBasis.mark(
           requiredString(command, args, "pageId"),

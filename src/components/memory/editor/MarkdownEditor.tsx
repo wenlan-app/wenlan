@@ -13,6 +13,7 @@ import { NativeMarkdownEditor } from "./NativeMarkdownEditor";
 import type { PageLayersSettings } from "./pageLayersEditing";
 import type { SentenceProposalSettings } from "./sentenceProposals";
 import type { AiChangeMarkSettings } from "./aiChangeMarks";
+import type { SentenceAuthorshipSettings } from "./sentenceAuthorship";
 import { loadCodeMirrorEditor } from "./loadCodeMirrorEditor";
 
 import type { EditorReferenceContext } from "./wikiLinkEditing";
@@ -32,6 +33,9 @@ export interface MarkdownEditorHandle {
    * now (still loading, disabled, or mid composition).
    */
   applyExternalEdits(edits: (document: string) => readonly MarkdownEditorTextEdit[]): boolean;
+  /** Select `text` where it first appears and put the cursor there, so the
+   *  person can fix a sentence themselves. False when it is not in the page. */
+  selectText(text: string): boolean;
 }
 
 /** Replace `from`..`to` of the document with `insert`. */
@@ -127,6 +131,9 @@ export interface MarkdownEditorProps {
    *  asked to see them (UX-WHO-2). The plain-text fallback editor does not
    *  draw them. */
   aiChangeMarks?: AiChangeMarkSettings | null;
+  /** Who said each sentence, and the ones that can't be backed up (UX-WHO-1,
+   *  UX-WHO-4). The plain-text fallback editor does not draw them. */
+  sentenceAuthorship?: SentenceAuthorshipSettings | null;
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
@@ -173,6 +180,9 @@ const MarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         },
         applyExternalEdits(edits): boolean {
           return editorRef.current?.applyExternalEdits(edits) ?? false;
+        },
+        selectText(text): boolean {
+          return editorRef.current?.selectText(text) ?? false;
         },
         requestCancel(): boolean {
           if (editorRef.current) return editorRef.current.requestCancel();

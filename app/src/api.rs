@@ -1779,6 +1779,49 @@ impl WenlanClient {
         .await
     }
 
+    /// The person says 「不對」 about one sentence; with `ask_ai` the daemon
+    /// has the AI propose a fix, which lands only on accept.
+    pub async fn flag_page_sentence(
+        &self,
+        page_id: &str,
+        sentence_hash: &str,
+        ask_ai: bool,
+        why: Option<String>,
+    ) -> Result<wenlan_types::authorship::SentenceFlagResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences/flag",
+            percent_encode_path_segment(page_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::authorship::SentenceFlagRequest {
+                sentence_hash: sentence_hash.to_string(),
+                why,
+                ask_ai,
+            },
+        )
+        .await
+    }
+
+    /// Recheck only this sentence against its sources' current versions.
+    pub async fn recheck_page_sentence(
+        &self,
+        page_id: &str,
+        sentence_hash: &str,
+    ) -> Result<wenlan_types::authorship::SentenceRecheckResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences/recheck",
+            percent_encode_path_segment(page_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::authorship::SentenceRecheckRequest {
+                sentence_hash: sentence_hash.to_string(),
+            },
+        )
+        .await
+    }
+
     /// The person turns one sentence proposal down; the sentence stays.
     pub async fn reject_sentence_proposal(
         &self,

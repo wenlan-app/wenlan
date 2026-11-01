@@ -2164,12 +2164,36 @@ export interface SentenceProposal {
   status: "pending" | "accepted" | "rejected";
 }
 
+/** Why a sentence is weakly backed (UX-WHO-4). */
+export type WeakReason = "no_citation" | "unsupported" | "stale" | "disproven";
+
+/** One citation on a sentence, with the source version it cited. */
+export interface SentenceCitation {
+  occurrence: number;
+  marker: number;
+  source_kind: string;
+  locator: string;
+  /** `verified`, `unverified`, or `unevaluated`. */
+  status: string;
+  cited_version?: number;
+  current_version?: number;
+  stale?: boolean;
+  disproven?: boolean;
+}
+
 export interface PageSentence {
   idx: number;
   text: string;
   hash: string;
   author: "person" | "ai" | "unknown" | "original";
+  /** Yours: written, edited or accepted by you. A machine write can't change it. */
   protected: boolean;
+  accepted?: boolean;
+  citations?: SentenceCitation[];
+  evidence?: "verified" | "unverified" | "unevaluated" | "none";
+  weak?: WeakReason[];
+  /** You said 「不對」 about it and it has not changed since. */
+  flagged?: boolean;
   proposals?: string[];
 }
 
@@ -2226,6 +2250,26 @@ export async function acceptSentenceProposal(
 }
 
 /** The person undoes one AI write's sentence changes (UX-WHO-2). */
+/** Say 「不對」 about one sentence; with `askAi` the AI proposes a fix, which
+ *  still lands only when you accept it (UX-WHO-3). */
+export async function flagPageSentence(pageId: string, sentenceHash: string, askAi: boolean, why?: string) {
+  // `ai_fix_queued` is true only when a model took the request; absent otherwise.
+  return invoke<{ page_id: string; version: number; sentence_hash: string; seq: number; ai_fix_queued?: boolean }>("flag_page_sentence", {
+    pageId,
+    sentenceHash,
+    askAi,
+    why: why ?? null,
+  });
+}
+
+/** Recheck only this sentence against its sources' current versions (UX-WHO-4). */
+export async function recheckPageSentence(pageId: string, sentenceHash: string) {
+  return invoke<{ page_id: string; version: number; sentence: PageSentence }>("recheck_page_sentence", {
+    pageId,
+    sentenceHash,
+  });
+}
+
 export async function revertPageSentences(pageId: string, version: number): Promise<SentenceRevertResponse> {
   return invoke("revert_page_sentences", { pageId, version });
 }
