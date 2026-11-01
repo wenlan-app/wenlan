@@ -507,3 +507,85 @@ fn every_original_reads_back_unchanged() {
         assert_eq!(original::render(&read), text, "round {round}");
     }
 }
+
+use super::canvas::{self, WenlanNode};
+
+/// A canvas as Obsidian writes one, with a group, a file node, an edge with
+/// sides, a plugin's key, and one node Wenlan placed.
+const OBSIDIAN_CANVAS: &str = r##"{
+	"nodes":[
+		{"id":"g1","type":"group","x":-40,"y":-40,"width":600,"height":400,"label":"Trip"},
+		{"id":"n1","type":"text","text":"Lisbon in May","x":0,"y":0,"width":250,"height":60,"color":"4",
+			"wenlan":{"source":"page_abc@12","ref":"page:page_def","accepted":true}},
+		{"id":"n2","type":"file","file":"Trip planning.md","subpath":"#Hotels","x":300,"y":0.5,"width":250,"height":200},
+		{"id":"n3","type":"link","url":"https://example.com","x":0,"y":120,"width":250,"height":60,"plugin-data":{"pinned":true}}
+	],
+	"edges":[
+		{"id":"e1","fromNode":"n1","fromSide":"right","toNode":"n2","toSide":"left","toEnd":"arrow","label":"see"}
+	],
+	"metadata":{"version":"1.0"}
+}"##;
+
+#[test]
+fn a_canvas_from_obsidian_keeps_every_key() {
+    let canvas = canvas::parse(OBSIDIAN_CANVAS).unwrap();
+    assert_eq!(canvas.nodes.len(), 4);
+    assert_eq!(
+        canvas.nodes[1].wenlan,
+        Some(WenlanNode {
+            source: Some("page_abc@12".to_string()),
+            reference: Some("page:page_def".to_string()),
+            accepted: true,
+            rest: Default::default(),
+        })
+    );
+    let text = canvas::render(&canvas);
+    for kept in [
+        "\"label\": \"Trip\"",
+        "\"subpath\": \"#Hotels\"",
+        "\"y\": 0.5",
+        "\"plugin-data\"",
+        "\"toEnd\": \"arrow\"",
+        "\"metadata\"",
+        "\"wenlan\"",
+    ] {
+        assert!(text.contains(kept), "{kept} is lost:\n{text}");
+    }
+    assert!(text.contains("\n\t\"nodes\""), "tab indent like Obsidian");
+    let again = canvas::parse(&text).unwrap();
+    assert_eq!(again, canvas);
+    assert_eq!(canvas::render(&again), text);
+}
+
+#[test]
+fn wenlan_data_survives_a_save_that_drops_its_key() {
+    let mut canvas = canvas::parse(OBSIDIAN_CANVAS).unwrap();
+    let sidecar = canvas::split_sidecar(&mut canvas);
+    assert_eq!(sidecar.keys().collect::<Vec<_>>(), ["n1"]);
+    assert!(canvas.nodes.iter().all(|node| node.wenlan.is_none()));
+
+    // The person deletes n1 and adds a node of their own; then Wenlan reads
+    // the canvas back with the sidecar.
+    let mut saved = canvas.clone();
+    let restored = {
+        let mut copy = saved.clone();
+        canvas::merge_sidecar(&mut copy, sidecar.clone());
+        copy
+    };
+    assert_eq!(restored.nodes[1].wenlan, sidecar.get("n1").cloned());
+
+    saved.nodes.retain(|node| node.id != "n1");
+    let gone = canvas::merge_sidecar(&mut saved, sidecar);
+    assert_eq!(
+        gone,
+        ["n1"],
+        "a sidecar entry whose node is gone is reported"
+    );
+}
+
+#[test]
+fn a_file_that_is_not_a_canvas_is_refused() {
+    assert!(canvas::parse("{\"nodes\":[{\"id\":\"x\"}]}").is_err());
+    assert!(canvas::parse("not json").is_err());
+    assert_eq!(canvas::parse("{}").unwrap().nodes.len(), 0);
+}

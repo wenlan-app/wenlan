@@ -8,6 +8,7 @@
 //! after the owned ones.
 
 pub mod brief;
+pub mod canvas;
 pub mod entity;
 pub mod memory;
 pub mod names;
