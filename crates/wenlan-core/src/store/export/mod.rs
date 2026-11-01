@@ -78,6 +78,162 @@ pub const FILE_TABLE_HOMES: &[(&str, &str)] = &[
     ("page_sources", "records"),
 ];
 
+/// Columns of the tables written field by field (pages, entities, memories,
+/// Briefs) that their files hold. Every other column of those tables is in
+/// [`DEFERRED_COLUMNS`]; a test keeps the two equal to the live schema.
+pub const FILE_COLUMNS: &[(&str, &[&str])] = &[
+    (
+        "pages",
+        &[
+            "id",
+            "title",
+            "content",
+            "status",
+            "space",
+            "created_at",
+            "last_modified",
+            "citations",
+            "entity_id",
+            "entity_type",
+            "entity_confirmed",
+            "aliases",
+            "established_by",
+            "summary",
+            "entity_created_at",
+            "entity_updated_at",
+        ],
+    ),
+    (
+        "memories",
+        &[
+            "id",
+            "source",
+            "source_id",
+            "chunk_index",
+            "content",
+            "title",
+            "url",
+            "memory_type",
+            "space",
+            "source_agent",
+            "confirmed",
+            "pinned",
+            "supersedes",
+            "supersede_mode",
+            "pending_revision",
+            "structured_fields",
+            "source_text",
+            "created_at",
+            "event_date",
+            "event_end",
+            "importance",
+            "episode_of",
+            "origin_class",
+            "session_id",
+            "authored_content",
+            "entity_id",
+            "is_recap",
+            "last_modified",
+            "retrieval_cue",
+        ],
+    ),
+    (
+        "briefs",
+        &[
+            "space_id",
+            "last_session_summary",
+            "last_handoff_at",
+            "version",
+            "updated_at",
+        ],
+    ),
+    (
+        "brief_items",
+        &[
+            "id", "space_id", "text", "state", "added_at", "gate", "version",
+        ],
+    ),
+];
+
+/// Where the columns no file holds go: `history` (the history export
+/// restores them) or `cache` (the rebuild recomputes them). The comparison
+/// step checks each one against its source.
+pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
+    (
+        "pages",
+        "history",
+        &[
+            "version",
+            "review_status",
+            "review_required",
+            "user_edited",
+            "kind",
+            "creation_kind",
+            "workspace",
+            "changelog",
+            "source_memory_ids",
+            "source_revision",
+            "incarnation",
+            "basis_revision",
+            "source_agent",
+        ],
+    ),
+    (
+        "pages",
+        "cache",
+        &[
+            "embedding",
+            "embedding_updated_at",
+            "community_id",
+            "confidence",
+            "last_compiled",
+            "sources_updated_count",
+            "stale_reason",
+            "refresh_blocked_reason",
+        ],
+    ),
+    (
+        "memories",
+        "history",
+        &["version", "changelog", "access_count", "last_accessed"],
+    ),
+    // A quick capture's `content` (the tidied text) is also cache: its
+    // file holds what the person typed. Chunk boundaries are cache too: the
+    // comparison checks the joined text, not the rows.
+    (
+        "memories",
+        "cache",
+        &[
+            "embedding",
+            "summary",
+            "confidence",
+            "quality",
+            "stability",
+            "enrichment_status",
+            "needs_reembed",
+            "content_hash",
+            "refinement_status",
+            "effective_confidence",
+            "word_count",
+            "language",
+            "chunk_type",
+            "byte_start",
+            "byte_end",
+            "semantic_unit",
+            "last_distilled_at",
+        ],
+    ),
+    ("brief_items", "history", &["updated_at"]),
+];
+
+/// [`DEFERRED_COLUMNS`] as the manifest lists them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Deferred {
+    pub table: String,
+    pub to: String,
+    pub columns: Vec<String>,
+}
+
 /// Where an export goes.
 #[derive(Debug, Clone)]
 pub struct ExportDirs {
@@ -227,12 +383,23 @@ pub struct Manifest {
     pub files: Vec<ExportedFile>,
     pub left_out: Vec<LeftOut>,
     pub not_files: Vec<NotFiles>,
+    /// Columns no file holds, and where each goes.
+    pub deferred: Vec<Deferred>,
 }
 
 impl Manifest {
     pub fn new() -> Self {
         Self {
             format: EXPORT_FORMAT,
+            deferred: DEFERRED_COLUMNS
+                .iter()
+                .filter(|(_, _, columns)| !columns.is_empty())
+                .map(|(table, to, columns)| Deferred {
+                    table: table.to_string(),
+                    to: to.to_string(),
+                    columns: columns.iter().map(|c| c.to_string()).collect(),
+                })
+                .collect(),
             ..Self::default()
         }
     }

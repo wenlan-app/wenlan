@@ -7,18 +7,22 @@
 //!   links stay as written; turning them into `[[stem]]` is a later edit
 //!   with its own history entry, not part of a lossless copy.
 //! - The sources block lists one line per citation marker (`[N]` in the
-//!   body) and one `basis:` line per page this page relies on, at the version
-//!   that was confirmed. Who confirmed it and when, review state, version
-//!   numbers and the rest go to history (spec section 4).
+//!   body) and one `basis:` line per page this page relies on (state `ok`
+//!   or `pending`), at the version that was confirmed. Every basis row with
+//!   its state and confirmation is also in `records/page_basis.json`. Review
+//!   state, version numbers and the rest go to history (spec section 4).
+//! - The page's `summary`, which the person can edit, is a frontmatter key.
 //! - An entity's shadow page becomes `backstage/entities/<name>-<id6>.md`,
-//!   its description the body.
+//!   its description the body, with `status` (when not active, so an
+//!   archived entity stays archived), `created`, `modified`, `first_seen`
+//!   and `last_seen`.
 //! - An archived page goes to `backstage/archive/`, keeping its folder.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use wenlan_types::pages::PageCitation;
 
-use super::memories::check;
+use super::memories::{check, utc};
 use super::{ExportDirs, LeftOut, Manifest};
 use crate::db::export_reads::ExportPageRow;
 use crate::db::MemoryDB;
@@ -26,6 +30,9 @@ use crate::error::WenlanError;
 use crate::store::format::entity::{self, EntityFile};
 use crate::store::format::names::{collision_stem, file_stem, same_file_name};
 use crate::store::format::page::{self, Basis, Citation, Locator, PageFile, PageKind};
+
+/// Basis states that still point at a page; the rest are only in records.
+const LIVE_BASIS_STATES: &[&str] = &["ok", "pending"];
 
 /// What one export of pages wrote.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -96,8 +103,16 @@ pub async fn export_pages(
         file.tags = row.space.iter().cloned().collect();
         file.created = Some(row.created_at.clone());
         file.modified = Some(row.last_modified.clone());
+        if let Some(summary) = &row.summary {
+            file.other.insert("summary".into(), summary.as_str().into());
+        }
         file.citations = citation_lines(row, &memory_texts, &stems, manifest);
+        // A basis whose page is gone is not a line; every basis row, state
+        // and confirmation is in `records/page_basis.json`.
         for basis in db.list_page_basis(&row.id).await? {
+            if !LIVE_BASIS_STATES.contains(&basis.state.as_str()) {
+                continue;
+            }
             let label = stems
                 .get(basis.basis_page_id.as_str())
                 .cloned()
@@ -146,7 +161,22 @@ pub async fn export_pages(
         file.established_by = row.established_by.clone();
         file.space = row.space.clone();
         file.description = row.content.clone();
-        let stem = format!("{}-{}", file_stem(&row.title), id_tail(&entity_id));
+        // Wenlan's keys the entity file has no field for.
+        if row.status != "active" {
+            file.other
+                .insert("status".into(), row.status.as_str().into());
+        }
+        file.other
+            .insert("created".into(), row.created_at.as_str().into());
+        file.other
+            .insert("modified".into(), row.last_modified.as_str().into());
+        if let Some(at) = row.entity_created_at {
+            file.other.insert("first_seen".into(), utc(at).into());
+        }
+        if let Some(at) = row.entity_updated_at {
+            file.other.insert("last_seen".into(), utc(at).into());
+        }
+        let stem = collision_stem(&file_stem(&row.title), &entity_id);
         let path = entity_paths.claim("", &stem, &entity_id);
         done.entity_stems.insert(entity_id.clone(), stem_of(&path));
         let text = entity::render(&file);
@@ -203,21 +233,38 @@ pub(super) struct Paths {
 }
 
 impl Paths {
-    /// `folder/stem.md`, or `folder/stem-<id6>.md` when that name is taken.
+    /// `folder/stem.md`, or `folder/stem-<id6>.md` when that name is taken,
+    /// then `-2`, `-3`, … until a name is free.
     pub(super) fn claim(&mut self, folder: &str, stem: &str, id: &str) -> String {
+        self.claim_as(folder, stem, id, "md")
+    }
+
+    /// [`Self::claim`] with another extension.
+    pub(super) fn claim_as(
+        &mut self,
+        folder: &str,
+        stem: &str,
+        id: &str,
+        extension: &str,
+    ) -> String {
         let key = folder.to_lowercase();
         let names = self.taken.entry(key).or_default();
         let clash = |stem: &str| names.iter().any(|name| same_file_name(name, stem));
-        let stem = if clash(stem) {
-            collision_stem(stem, id)
-        } else {
-            stem.to_string()
-        };
-        names.push(stem.clone());
+        let mut chosen = stem.to_string();
+        if clash(&chosen) {
+            let base = collision_stem(stem, id);
+            chosen = base.clone();
+            let mut n = 2;
+            while clash(&chosen) {
+                chosen = collision_stem(&base, &format!("{n}"));
+                n += 1;
+            }
+        }
+        names.push(chosen.clone());
         if folder.is_empty() {
-            format!("{stem}.md")
+            format!("{chosen}.{extension}")
         } else {
-            format!("{folder}/{stem}.md")
+            format!("{folder}/{chosen}.{extension}")
         }
     }
 }
@@ -225,11 +272,6 @@ impl Paths {
 fn stem_of(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     name.strip_suffix(".md").unwrap_or(name).to_string()
-}
-
-pub(super) fn id_tail(id: &str) -> String {
-    let chars: Vec<char> = id.chars().collect();
-    chars[chars.len().saturating_sub(6)..].iter().collect()
 }
 
 /// `None` when the stored citations cannot be read.

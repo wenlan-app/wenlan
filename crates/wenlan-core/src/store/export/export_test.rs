@@ -297,6 +297,38 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     )
     .await;
     memory_row(&db, "page_derived", 0, "", ", 'page', 'from a page'").await;
+    // An episode shares its parent's id and is not part of its text.
+    sql(
+        &db,
+        "INSERT INTO memories (id, source_id, chunk_index, title, last_modified, chunk_type, \
+         source, content) VALUES ('episode_row', ?1, 0, '', 0, 'text', 'episode', 'a slice')",
+        "mem_long",
+    )
+    .await;
+    memory_row(&db, "mem_odd", 0, "", ", 'mystery', 'who knows'").await;
+    for (chunk, text) in [(0, "Saved page text."), (1, "Second part.")] {
+        memory_row(
+            &db,
+            "https://example.com/post",
+            chunk,
+            ", url",
+            &format!(", 'webpage', '{text}', 'https://example.com/post'"),
+        )
+        .await;
+    }
+    sql(
+        &db,
+        "UPDATE memories SET retrieval_cue = 'window seat', last_modified = 1793404900 \
+         WHERE source_id = ?1",
+        "mem_cap",
+    )
+    .await;
+    sql(
+        &db,
+        "UPDATE enrichment_origin SET space_rejected = 1 WHERE source_id = ?1",
+        "mem_cap",
+    )
+    .await;
     memory_row(
         &db,
         "mem_pending",
@@ -319,7 +351,7 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     let done = export_memories(&db, &stems, &dirs, &mut manifest)
         .await
         .unwrap();
-    assert_eq!(done.memories, 2);
+    assert_eq!((done.memories, done.originals), (2, 1));
 
     let cap = memory::parse(&read(&dirs, "backstage/memories/2026-10/mem_cap.md")).unwrap();
     assert_eq!(
@@ -334,6 +366,21 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     assert_eq!(cap.about, ["Bob-ent_bob"]);
     let fields: serde_json::Value = serde_yaml::from_value(cap.fields.clone().unwrap()).unwrap();
     assert_eq!(fields, serde_json::json!({"a": "x", "b": 1}));
+    assert_eq!(cap.other["cue"], "window seat");
+    assert_eq!(cap.other["modified"], "2026-10-31T00:01:40Z");
+    assert_eq!(cap.other["space_rejected"], true);
+    assert!(!cap.other.contains_key("source"));
+
+    let web = crate::store::format::original::parse(&read(
+        &dirs,
+        "backstage/originals/web/https example.com post.md",
+    ))
+    .unwrap();
+    assert_eq!(web.vendor, "web");
+    assert_eq!(web.external_id, "https://example.com/post");
+    let texts: Vec<_> = web.messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, ["Saved page text.", "Second part."]);
+    assert_eq!(web.other["source"], "webpage");
 
     let long = memory::parse(&read(&dirs, "backstage/memories/undated/mem_long.md")).unwrap();
     assert_eq!(long.text, "part one\npart two");
@@ -348,7 +395,11 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
         .collect();
     assert_eq!(
         left,
-        [("mem_cap", "about[ent_gone]"), ("mem_pending", "memory")]
+        [
+            ("mem_cap", "about[ent_gone]"),
+            ("mem_odd", "memory with source mystery"),
+            ("mem_pending", "memory")
+        ]
     );
     let skipped: Vec<_> = manifest
         .not_files
@@ -357,7 +408,11 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
         .collect();
     assert_eq!(
         skipped,
-        [("document chunks", 1), ("memories with source page", 1)]
+        [
+            ("document chunks", 1),
+            ("memories with source episode", 1),
+            ("memories with source page", 1)
+        ]
     );
 }
 
@@ -383,7 +438,8 @@ async fn an_imported_chat_becomes_an_original_with_its_messages_in_order() {
     }
     sql(
         &db,
-        "UPDATE memories SET title = 'Trip ideas' WHERE source_id = ?1",
+        "UPDATE memories SET title = 'Trip ideas', pinned = 1, entity_id = 'ent_trip' \
+         WHERE source_id = ?1",
         "import_claude_6720-abc",
     )
     .await;
@@ -406,17 +462,14 @@ async fn an_imported_chat_becomes_an_original_with_its_messages_in_order() {
         [
             "Where should we go in May?",
             "A few ideas.\n\n## Lisbon\nWarm.",
-            "Ends with a line end."
+            "Ends with a line end.\n"
         ]
     );
     assert_eq!(chat.messages[1].at.as_deref(), Some("2026-10-31T00:00:05Z"));
-    // The third message lost its line end in the file, so it is listed.
-    let left: Vec<_> = manifest
-        .left_out
-        .iter()
-        .map(|l| (l.id.as_str(), l.field.as_str()))
-        .collect();
-    assert_eq!(left, [("import_claude_6720-abc", "file")]);
+    // The person's pin and entity on the chat are kept.
+    assert_eq!(chat.other["pinned"], true);
+    assert_eq!(chat.other["entity"], "ent_trip");
+    assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
 }
 
 #[tokio::test]
@@ -749,4 +802,82 @@ async fn records_keep_every_confirmation_and_annotation_column() {
         serde_json::json!(["memory", "mem_1", "space:sp", "Check the date.", "[]", 2, 9])
     );
     assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
+}
+
+#[tokio::test]
+async fn names_never_clash_and_page_and_entity_state_is_kept() {
+    let (db, _db_dir) = test_db().await;
+    page(&db, "p1", "Beta", "one", "sp").await;
+    page(&db, "p2", "beta-p3", "two", "sp").await;
+    page(&db, "p3", "beta", "three", "sp").await;
+    sql(
+        &db,
+        "UPDATE pages SET summary = 'The short claim.' WHERE id = ?1",
+        "p1",
+    )
+    .await;
+    page(&db, "shadow", "Bob", "Bob ran it.", "sp").await;
+    sql(
+        &db,
+        "UPDATE pages SET kind = 'entity', entity_id = 'ent_bob', status = 'archived', \
+         entity_created_at = 1793404800 WHERE id = ?1",
+        "shadow",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    let done = export_pages(&db, &HashMap::new(), &dirs, &mut manifest)
+        .await
+        .unwrap();
+    assert_eq!((done.pages, done.entities), (3, 1));
+    let p3 = page::parse(&read(&dirs, "visible/beta-p3-2.md"), "").unwrap();
+    assert_eq!(p3.id.as_deref(), Some("p3"));
+    let p1 = page::parse(&read(&dirs, "visible/Beta.md"), "").unwrap();
+    assert_eq!(p1.other["summary"], "The short claim.");
+
+    let bob = entity::parse(&read(&dirs, "backstage/entities/Bob-nt_bob.md")).unwrap();
+    assert_eq!(bob.other["status"], "archived");
+    assert_eq!(bob.other["first_seen"], "2026-10-31T00:00:00Z");
+    assert!(bob.other.contains_key("created"));
+    assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
+}
+
+#[tokio::test]
+async fn every_column_of_a_field_by_field_table_is_written_or_deferred() {
+    use super::{DEFERRED_COLUMNS, FILE_COLUMNS};
+    use std::collections::BTreeSet;
+
+    let (db, _db_dir) = test_db().await;
+    let mut problems = Vec::new();
+    for (table, written) in FILE_COLUMNS {
+        let live: BTreeSet<String> = db
+            .export_table(table)
+            .await
+            .unwrap()
+            .unwrap()
+            .columns
+            .into_iter()
+            .collect();
+        let mut listed: BTreeSet<String> = written.iter().map(|c| c.to_string()).collect();
+        for (deferred_table, _, columns) in DEFERRED_COLUMNS {
+            if deferred_table == table {
+                for column in *columns {
+                    assert!(
+                        listed.insert(column.to_string()),
+                        "{table}.{column} is listed twice"
+                    );
+                }
+            }
+        }
+        let missing: Vec<_> = live.difference(&listed).collect();
+        let gone: Vec<_> = listed.difference(&live).collect();
+        if !missing.is_empty() || !gone.is_empty() {
+            problems.push(format!(
+                "{table}: not written or deferred {missing:?}; listed but not in the schema {gone:?}"
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }

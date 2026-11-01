@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Memories as files: `backstage/memories/YYYY-MM/<id>.md` (spec section 3).
 //!
-//! - One file per memory (`source_id`), not per chunk. The body is the text
+//! - One file per memory (`source`, `source_id`), not per chunk; the app
+//!   reads a memory by both, and an episode row shares its parent's
+//!   `source_id`. The body is the text
 //!   the app shows: a quick capture's `authored_content`, otherwise the
 //!   chunks joined with line ends, as `get_memory_detail` joins them.
 //! - `kind` and `fields` are written only when someone stated them
@@ -13,10 +15,18 @@
 //!   becomes `backstage/originals/<vendor>/<conversation id>.md` instead,
 //!   one message per chunk in order. Import never stored who said each
 //!   message, so every heading reads `message`.
+//! - A saved web page (`source` `webpage`, id = its URL) becomes
+//!   `backstage/originals/web/<url stem>.md`, one `page` message per chunk:
+//!   the rebuild cannot fetch it again.
+//! - Wenlan's keys the memory file has no field for ride in its other keys:
+//!   `source` (when not `memory`), `modified`, `cue` (retrieval cue) and
+//!   `space_rejected`. An original carries the same person decisions (pin,
+//!   confirm, entity, supersedes, stated kind and fields, `about`, …) there.
 //! - Not files: document chunks (their connected folder is their truth) and
-//!   rows derived from pages, web pages and summaries, which the rebuild
+//!   rows derived from pages, summaries and episodes, which the rebuild
 //!   recomputes. Pending revisions become proposals in a later part. Each is
-//!   counted in the manifest.
+//!   counted in the manifest. A source this export does not know is listed
+//!   as left out, never counted as derived.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -30,9 +40,16 @@ use crate::store::format::memory::{self, MemoryFile};
 use crate::store::format::names::file_stem;
 use crate::store::format::original::{self, Message, OriginalFile};
 
-/// The memory sources that are memories: agent and person writes, quick
-/// captures from before migration 144, and episodes.
-const MEMORY_SOURCES: &[&str] = &["memory", "manual", "episode"];
+/// The memory sources that are memories: agent and person writes, and quick
+/// captures from before migration 144.
+const MEMORY_SOURCES: &[&str] = &["memory", "manual"];
+
+/// Rows the rebuild recomputes: episodes (a verbatim slice of their parent),
+/// page and summary rows, and connected-folder documents.
+const DERIVED_SOURCES: &[&str] = &["episode", "page", "summary", "local_files"];
+
+/// A person's saved web page.
+const WEB_SOURCE: &str = "webpage";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemoriesExported {
@@ -52,19 +69,33 @@ pub async fn export_memories(
         about.entry(memory_id).or_default().push(entity_id);
     }
 
-    let mut groups: BTreeMap<&str, Vec<&ExportMemoryRow>> = BTreeMap::new();
+    let mut groups: BTreeMap<(&str, &str), Vec<&ExportMemoryRow>> = BTreeMap::new();
     for row in &rows {
-        groups.entry(row.source_id.as_str()).or_default().push(row);
+        groups
+            .entry((row.source_id.as_str(), row.source.as_str()))
+            .or_default()
+            .push(row);
     }
 
     let mut done = MemoriesExported::default();
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
     let mut paths = Paths::default();
-    for (id, chunks) in groups {
+    for ((id, source), chunks) in groups {
         let head = chunks[0];
-        if let Some(reason) = not_a_file(head) {
-            *skipped.entry(reason).or_default() += 1;
-            continue;
+        match class_of(head) {
+            Class::Memory | Class::Web => {}
+            Class::Derived(reason) => {
+                *skipped.entry(reason).or_default() += 1;
+                continue;
+            }
+            Class::Unknown => {
+                manifest.left_out.push(LeftOut {
+                    id: id.to_string(),
+                    field: format!("memory with source {source}"),
+                    why: "a source the export does not know; compare by hand".to_string(),
+                });
+                continue;
+            }
         }
         if head.pending_revision {
             manifest.left_out.push(LeftOut {
@@ -74,9 +105,16 @@ pub async fn export_memories(
             });
             continue;
         }
-        if let Some((vendor, external_id)) = imported_chat(id) {
+        let original = if source == WEB_SOURCE {
+            Some(("web", id, "page"))
+        } else {
+            imported_chat(id).map(|(vendor, external_id)| (vendor, external_id, "message"))
+        };
+        if let Some((vendor, external_id, role)) = original {
             let path = paths.claim(&format!("originals/{vendor}"), &file_stem(external_id), id);
-            let file = original_of(id, vendor, external_id, &chunks);
+            let mut file = original_of(id, vendor, external_id, role, &chunks);
+            let decisions = memory_file(id, head, &chunks, &mut about, entity_stems, manifest);
+            file.other.extend(decisions_of(&decisions));
             let text = original::render(&file);
             check(manifest, id, original::parse(&text).ok() == Some(file));
             manifest
@@ -85,45 +123,7 @@ pub async fn export_memories(
             done.originals += 1;
             continue;
         }
-        let mut file = MemoryFile::new(id, text_of(&chunks));
-        file.kind = head
-            .memory_type
-            .clone()
-            .filter(|_| head.memory_type_explicit);
-        file.space = head.space.clone();
-        file.agent = head.source_agent.clone();
-        file.created = head.created_at.map(utc);
-        file.pinned = head.pinned;
-        file.confirmed = head.confirmed;
-        file.supersedes = head.supersedes.clone();
-        file.supersede_mode = head.supersede_mode.clone();
-        file.episode_of = head.episode_of.clone();
-        file.event_date = head.event_date.map(utc);
-        file.event_end = head.event_end.map(utc);
-        file.importance = head.importance;
-        file.origin = head.origin_class.clone();
-        file.title = head.title.clone().filter(|title| !title.is_empty());
-        file.url = head.url.clone();
-        file.session = head.session_id.clone();
-        file.entity = head.entity_id.clone();
-        file.recap = head.is_recap;
-        if head.structured_fields_explicit {
-            file.fields = head.structured_fields.as_deref().map(fields_value);
-        }
-        file.source_text = head
-            .source_text
-            .clone()
-            .filter(|source| *source != file.text);
-        for entity_id in about.remove(id).unwrap_or_default() {
-            match entity_stems.get(&entity_id) {
-                Some(stem) => file.about.push(stem.clone()),
-                None => manifest.left_out.push(LeftOut {
-                    id: id.to_string(),
-                    field: format!("about[{entity_id}]"),
-                    why: "the memory is filed under an entity that has no entity file".to_string(),
-                }),
-            }
-        }
+        let file = memory_file(id, head, &chunks, &mut about, entity_stems, manifest);
         let folder = format!("memories/{}", month_of(head.created_at));
         let path = paths.claim(&folder, &file_stem(id), id);
         let text = memory::render(&file);
@@ -143,6 +143,123 @@ pub async fn export_memories(
     Ok(done)
 }
 
+/// The memory file for one memory's rows, with what someone stated.
+fn memory_file(
+    id: &str,
+    head: &ExportMemoryRow,
+    chunks: &[&ExportMemoryRow],
+    about: &mut HashMap<String, Vec<String>>,
+    entity_stems: &HashMap<String, String>,
+    manifest: &mut Manifest,
+) -> MemoryFile {
+    let mut file = MemoryFile::new(id, text_of(chunks));
+    file.kind = head
+        .memory_type
+        .clone()
+        .filter(|_| head.memory_type_explicit);
+    file.space = head.space.clone();
+    file.agent = head.source_agent.clone();
+    file.created = head.created_at.map(utc);
+    file.pinned = head.pinned;
+    file.confirmed = head.confirmed;
+    file.supersedes = head.supersedes.clone();
+    file.supersede_mode = head.supersede_mode.clone();
+    file.episode_of = head.episode_of.clone();
+    file.event_date = head.event_date.map(utc);
+    file.event_end = head.event_end.map(utc);
+    file.importance = head.importance;
+    file.origin = head.origin_class.clone();
+    file.title = head.title.clone().filter(|title| !title.is_empty());
+    file.url = head.url.clone();
+    file.session = head.session_id.clone();
+    file.entity = head.entity_id.clone();
+    file.recap = head.is_recap;
+    if head.structured_fields_explicit {
+        file.fields = head.structured_fields.as_deref().map(fields_value);
+    }
+    file.source_text = head
+        .source_text
+        .clone()
+        .filter(|source| *source != file.text);
+    for entity_id in about.remove(id).unwrap_or_default() {
+        match entity_stems.get(&entity_id) {
+            Some(stem) => file.about.push(stem.clone()),
+            None => manifest.left_out.push(LeftOut {
+                id: id.to_string(),
+                field: format!("about[{entity_id}]"),
+                why: "the memory is filed under an entity that has no entity file".to_string(),
+            }),
+        }
+    }
+    if head.source != "memory" {
+        file.other
+            .insert("source".into(), head.source.as_str().into());
+    }
+    if let Some(modified) = head.last_modified {
+        file.other.insert("modified".into(), utc(modified).into());
+    }
+    if let Some(cue) = head.retrieval_cue.as_deref().filter(|cue| !cue.is_empty()) {
+        file.other.insert("cue".into(), cue.into());
+    }
+    if head.space_rejected {
+        file.other.insert("space_rejected".into(), true.into());
+    }
+    file
+}
+
+/// The person's decisions on a memory that became an original, as keys.
+fn decisions_of(file: &MemoryFile) -> serde_yaml::Mapping {
+    let mut keys = serde_yaml::Mapping::new();
+    let mut put = |key: &str, value: serde_yaml::Value| {
+        keys.insert(key.into(), value);
+    };
+    let text = |value: &Option<String>| value.as_deref().map(serde_yaml::Value::from);
+    for (key, value) in [
+        ("kind", text(&file.kind)),
+        ("agent", text(&file.agent)),
+        ("created", text(&file.created)),
+        ("supersedes", text(&file.supersedes)),
+        ("supersede_mode", text(&file.supersede_mode)),
+        ("episode_of", text(&file.episode_of)),
+        ("event_date", text(&file.event_date)),
+        ("event_end", text(&file.event_end)),
+        ("origin", text(&file.origin)),
+        ("entity", text(&file.entity)),
+        ("source_text", text(&file.source_text)),
+    ] {
+        if let Some(value) = value {
+            put(key, value);
+        }
+    }
+    if file.pinned {
+        put("pinned", true.into());
+    }
+    if file.confirmed {
+        put("confirmed", true.into());
+    }
+    if file.recap {
+        put("recap", true.into());
+    }
+    if let Some(importance) = file.importance {
+        put("importance", importance.into());
+    }
+    if let Some(fields) = &file.fields {
+        put("fields", fields.clone());
+    }
+    if !file.about.is_empty() {
+        put(
+            "about",
+            serde_yaml::Value::Sequence(
+                file.about.iter().map(|stem| stem.as_str().into()).collect(),
+            ),
+        );
+    }
+    for (key, value) in &file.other {
+        keys.insert(key.clone(), value.clone());
+    }
+    keys
+}
+
 /// `(vendor, conversation id)` of an imported chat's memory id.
 fn imported_chat(id: &str) -> Option<(&'static str, &str)> {
     [Vendor::ChatGpt, Vendor::Claude]
@@ -158,6 +275,7 @@ fn original_of(
     id: &str,
     vendor: &str,
     external_id: &str,
+    role: &str,
     chunks: &[&ExportMemoryRow],
 ) -> OriginalFile {
     let head = chunks[0];
@@ -179,7 +297,7 @@ fn original_of(
         messages: chunks
             .iter()
             .map(|chunk| Message {
-                role: "message".to_string(),
+                role: role.to_string(),
                 at: chunk.created_at.map(utc),
                 text: chunk.content.clone(),
             })
@@ -198,17 +316,32 @@ pub(super) fn check(manifest: &mut Manifest, id: &str, reads_back: bool) {
     }
 }
 
-/// Why a memory is not written as a file, if it is not.
-fn not_a_file(head: &ExportMemoryRow) -> Option<String> {
-    if !MEMORY_SOURCES.contains(&head.source.as_str()) {
-        return Some(format!("memories with source {}", head.source));
-    }
+enum Class {
+    Memory,
+    Web,
+    /// Recomputed by the rebuild, counted under this name.
+    Derived(String),
+    Unknown,
+}
+
+fn class_of(head: &ExportMemoryRow) -> Class {
+    let source = head.source.as_str();
     let ingest = head.origin_class.as_deref() == Some("document_ingest")
         || head
             .source_agent
             .as_deref()
             .is_some_and(crate::origin::is_document_ingest_source_agent);
-    ingest.then(|| "document chunks".to_string())
+    if DERIVED_SOURCES.contains(&source) {
+        Class::Derived(format!("memories with source {source}"))
+    } else if ingest {
+        Class::Derived("document chunks".to_string())
+    } else if MEMORY_SOURCES.contains(&source) {
+        Class::Memory
+    } else if source == WEB_SOURCE {
+        Class::Web
+    } else {
+        Class::Unknown
+    }
 }
 
 /// The text the app shows for a memory.
