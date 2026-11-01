@@ -84,7 +84,7 @@ export function HistoryChangeDialog({ pageId, item, onClose }: HistoryChangeDial
     body = <p className="basis-diff__status" role="status">{t("pageHistory.notKept")}</p>;
   } else if (texts.before == null) {
     body = <>
-      <p className="basis-diff__status">{t("pageHistory.noEarlier")}</p>
+      <p className="basis-diff__status">{t(item.version === 1 ? "pageHistory.firstVersion" : "pageHistory.noEarlier")}</p>
       <div className="basis-diff__text" data-testid="history-change-text">{texts.after}</div>
     </>;
   } else {
