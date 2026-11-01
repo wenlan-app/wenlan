@@ -412,4 +412,4 @@ impl Manifest {
 
 #[cfg(test)]
 #[path = "export_test.rs"]
-mod tests;
+pub(crate) mod tests;

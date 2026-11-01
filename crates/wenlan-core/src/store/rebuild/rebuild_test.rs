@@ -265,3 +265,117 @@ async fn pages_and_entities_rebuild_from_their_files() {
         .unwrap();
     assert!(diff.is_empty(), "{diff:#?}");
 }
+
+/// export(rebuild(export(db))) == export(db), file by file, and the tables
+/// copied whole or kept in history are equal row by row.
+#[tokio::test]
+async fn an_export_of_the_rebuild_is_the_same_export() {
+    use super::{compare_exports, export_again, rebuild};
+
+    let (db, _db_dir) = crate::store::export::tests::fixture().await;
+    let memory = |id: &'static str, chunk: i64, columns: &'static str, values: String| {
+        let db = &db;
+        async move {
+            sql(
+                db,
+                &format!(
+                    "INSERT INTO memories (id, source_id, chunk_index, title, last_modified, \
+                     chunk_type, source, content{columns}) VALUES ('{id}#{chunk}', ?1, {chunk}, \
+                     '', 1793404900, 'text'{values})"
+                ),
+                id,
+            )
+            .await;
+        }
+    };
+    // 2026-10-31T00:00:00Z
+    let at = 1_793_404_800;
+    memory(
+        "mem_cap",
+        0,
+        ", created_at, pinned, memory_type, structured_fields, space, origin_class, retrieval_cue",
+        format!(
+            ", 'memory', 'My own note', {at}, 1, 'preference', '{{\"a\":\"x\",\"b\":1}}', 'sp', \
+             'human_capture', 'window seat'"
+        ),
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 1, 1, 1)",
+        "mem_cap",
+    )
+    .await;
+    // A classified type and extracted fields are cache: not in the file.
+    memory(
+        "mem_auto",
+        0,
+        ", memory_type, structured_fields, created_at",
+        format!(", 'memory', 'Auto typed', 'fact', '{{\"k\":2}}', {at}"),
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 0, 0, 0)",
+        "mem_auto",
+    )
+    .await;
+    memory("clipboard_1", 0, "", ", 'clipboard', 'copied'".to_string()).await;
+    for (chunk, text) in [(0, "Hello?"), (1, "Hi there.")] {
+        memory(
+            "import_chatgpt_conv1",
+            chunk,
+            ", title, created_at, space",
+            format!(", 'memory', '{text}', 'A chat', {}, 'sp'", at + chunk),
+        )
+        .await;
+    }
+    for (chunk, text) in [(0, "Saved page."), (1, "Part two.")] {
+        memory(
+            "https://example.com/post",
+            chunk,
+            ", url",
+            format!(", 'webpage', '{text}', 'https://example.com/post'"),
+        )
+        .await;
+    }
+    memory("docs::README.md", 0, "", ", 'file', '# Notes'".to_string()).await;
+    sql(
+        &db,
+        "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'ent_123456789')",
+        "mem_cap",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let data_root = tempfile::tempdir().unwrap();
+    let first = out.path().join("first");
+    export_lossless(
+        &db,
+        &crate::store::export::run::PagesFolder::default(),
+        data_root.path(),
+        &first,
+    )
+    .await
+    .unwrap();
+
+    let (fresh, _fresh_dir) = test_db().await;
+    let rebuilt = rebuild(&first, &fresh).await.unwrap();
+    assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
+
+    let second = out.path().join("second");
+    export_again(&fresh, &first, &second).await.unwrap();
+    let diff = compare_exports(&first, &second).unwrap();
+    assert!(diff.is_empty(), "{diff:#?}");
+
+    let mut tables: Vec<&'static str> = SETTINGS_FILES
+        .iter()
+        .flat_map(|(_, tables)| tables.iter().copied())
+        .collect();
+    tables.extend(RECORD_TABLES.iter().copied());
+    tables.extend(HISTORY_TABLES.iter().map(|spec| spec.table));
+    let diffs = compare_tables(&db, &fresh, &tables).await.unwrap();
+    assert!(diffs.is_empty(), "{diffs:#?}");
+}

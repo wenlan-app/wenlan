@@ -52,7 +52,7 @@ fn read(dirs: &ExportDirs, relative: &str) -> String {
         .unwrap_or_else(|error| panic!("{relative}: {error}"))
 }
 
-async fn fixture() -> (MemoryDB, tempfile::TempDir) {
+pub(crate) async fn fixture() -> (MemoryDB, tempfile::TempDir) {
     let (db, dir) = test_db().await;
     page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
     // Line ends at either end, a CRLF and a details part are kept as stored.
@@ -162,8 +162,8 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
     let labels: Vec<_> = beta.citations.iter().map(|c| c.label.as_str()).collect();
     assert_eq!(
         labels,
-        ["Prefers window seats · on long flights", "mem_two"],
-        "a memory's label is the start of its first chunk"
+        ["Prefers window seats · on long flights second chunk", "mem_two"],
+        "a memory's label is the start of its text, chunks joined in order"
     );
     assert_eq!(beta.basis.len(), 1);
     assert_eq!(beta.basis[0].label, "[[Alpha]]");
