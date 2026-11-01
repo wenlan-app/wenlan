@@ -50,13 +50,15 @@ describe("WorkingOn", () => {
       sessions: [
         { id: "s1", tool: "claude-code", title: null, last_write_at: now },
         { id: "s2", tool: "codex", title: null, last_write_at: now - 60 },
+        { id: "s3", tool: "kiro", title: null, last_write_at: now - 120 },
       ],
       pages: [],
     });
     renderWorkingOn();
     const mark = await screen.findByRole("img", { name: "Claude Code" });
+    expect(screen.getByRole("img", { name: "ChatGPT / Codex" })).toBeInTheDocument();
     const meta = mark.closest(".wiki-working-on-meta")!;
-    expect(meta.querySelector(".wiki-working-on-where")?.textContent).toBe("ChatGPT / Codex · wenlan");
+    expect(meta.querySelector(".wiki-working-on-where")?.textContent).toBe("Kiro · wenlan");
   });
 
   it("UX-HOME-1: each thing shows where it stands and opens that thing", async () => {
