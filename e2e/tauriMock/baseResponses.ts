@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { UnknownTauriCommandError } from "./errors";
+import { TauriMockArgumentError, UnknownTauriCommandError } from "./errors";
 
 // Mirrors `COMMUNITY_READ_SCHEMA_VERSION` in src/lib/tauri.ts; kept as a
 // literal here for the same reason runtime.ts keeps PAGE_EDIT_DAEMON_FLOOR —
@@ -120,6 +120,9 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     // The fixture has no AI conversations: no note lists one, no id resolves.
     case "get_page_sessions": return { sessions: [] };
     case "get_session_detail": return null;
+    // The fixture has no things, so no thing id resolves.
+    case "get_thing": case "rename_thing": throw new TauriMockArgumentError(command, "id");
+    case "move_session_thing": throw new TauriMockArgumentError(command, "fromThingId");
     case "list_communities": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, communities: [], next_cursor: null };
     case "list_community_members": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, members: [], next_cursor: null };
     case "get_page_revisions": return { page_id: optionalString(args, "pageId") ?? "", current_version: 1, user_edited: false, entries: [] };
