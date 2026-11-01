@@ -255,3 +255,69 @@ async fn moved_knowledge_onboarding_and_refinery_routes_preserve_typed_contracts
         assert_eq!(error.error, "Database not initialized", "{uri}");
     }
 }
+
+#[tokio::test]
+async fn a_pages_tags_and_its_image_embeds_read_as_obsidian_reads_them() {
+    // The pages folder comes from the server state, so this test leaves the
+    // process-wide data dir alone (the other test here sets it).
+    let (router, dir, db) = common::test_app_no_gate_with_page_root().await;
+    let pages = dir.path().join("pages");
+    std::fs::create_dir_all(pages.join("trips")).unwrap();
+    std::fs::create_dir_all(pages.join(".obsidian")).unwrap();
+    std::fs::write(pages.join("trips/cat.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    std::fs::write(pages.join(".obsidian/bird.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+    let page = common::create_page_fixture(
+        &db,
+        "Trip",
+        "Kyoto in spring #travel #旅行.\n\n![[cat.png|300]]",
+        None,
+        &[],
+        "authored",
+    )
+    .await;
+
+    let (status, read): (StatusCode, wenlan_types::responses::PageReadResponse) = request_typed(
+        &router,
+        Method::GET,
+        &format!("/api/pages/{page}"),
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read.page.tags, vec!["travel", "旅行"]);
+
+    let (status, embed): (StatusCode, wenlan_types::responses::ResolveEmbedResponse) =
+        request_typed(
+            &router,
+            Method::GET,
+            &format!("/api/attachments/resolve?name=cat.png%7C300&page_id={page}"),
+            Body::empty(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(embed.relative, "trips/cat.png");
+    assert!(embed.path.ends_with("trips/cat.png"), "{}", embed.path);
+    assert_eq!(embed.kind, "image");
+
+    for (uri, why) in [
+        (
+            "/api/attachments/resolve?name=bird.png".to_string(),
+            "hidden folder",
+        ),
+        (
+            "/api/attachments/resolve?name=missing.png".to_string(),
+            "no such file",
+        ),
+        (
+            "/api/attachments/resolve?name=..%2Fescape.png".to_string(),
+            "outside",
+        ),
+        (
+            "/api/attachments/resolve?name=cat.png&page_id=ghost".to_string(),
+            "unknown page",
+        ),
+    ] {
+        let (status, _) = request_bytes(&router, Method::GET, &uri, Body::empty()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{why}");
+    }
+}
