@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.20.6](https://github.com/wenlan-app/wenlan/compare/v0.20.5...v0.20.6) (2026-11-01)
+
+
+### Features
+
+* **app:** lock the UX spec, lead home with what you're working on, and fold page layers ([#1051](https://github.com/wenlan-app/wenlan/issues/1051)) ([06d8c74](https://github.com/wenlan-app/wenlan/commit/06d8c74e6099a5a71d01939378b63f9d2d28680f))
+* **app:** look up page embeds with the page they are on ([#1073](https://github.com/wenlan-app/wenlan/issues/1073)) ([9f9bfd2](https://github.com/wenlan-app/wenlan/commit/9f9bfd2ca750d4107f26cfa39065a31f41f4faab))
+* **app:** one Lock switch per page and the AI's proposals under each sentence ([#1060](https://github.com/wenlan-app/wenlan/issues/1060)) ([2b75846](https://github.com/wenlan-app/wenlan/commit/2b758463df118e03df6d20d0a6d99f0f5c00be32))
+* **app:** show Obsidian image embeds and callouts ([#1063](https://github.com/wenlan-app/wenlan/issues/1063)) ([efc639f](https://github.com/wenlan-app/wenlan/commit/efc639f28090136615ae4cce6f37226bd7ccb95e))
+* **core:** propose on the person's sentences only when their facts changed; locked pages go sentence by sentence ([#1065](https://github.com/wenlan-app/wenlan/issues/1065)) ([128cddf](https://github.com/wenlan-app/wenlan/commit/128cddf6e3fa02219c533dbb511a660550db5f01))
+* keep imported chat artifacts as original files and pages ([#1055](https://github.com/wenlan-app/wenlan/issues/1055)) ([479e3d7](https://github.com/wenlan-app/wenlan/commit/479e3d76e1e4db6c8073f9931d1a5aa84a386428))
+* opt-in in-chat decision check (Beta) and two-length pages ([#1053](https://github.com/wenlan-app/wenlan/issues/1053)) ([36bf95b](https://github.com/wenlan-app/wenlan/commit/36bf95b951300ec3932be804e4fa0483feaa16cb))
+* persisted palace layout and one merged page history ([#1054](https://github.com/wenlan-app/wenlan/issues/1054)) ([17842c4](https://github.com/wenlan-app/wenlan/commit/17842c45b7a42eceb55763323077a987fcd9b04e))
+* read #tags and ![[image]] embeds on every page as Obsidian does ([#1069](https://github.com/wenlan-app/wenlan/issues/1069)) ([9ad992f](https://github.com/wenlan-app/wenlan/commit/9ad992f152a3dd5bf57fa107205fafea98799c76))
+* record who wrote each sentence and keep AI edits to the person's sentences as proposals ([#1056](https://github.com/wenlan-app/wenlan/issues/1056)) ([c3d1b06](https://github.com/wenlan-app/wenlan/commit/c3d1b065b5c22d9e8025032498451e0ce7a7d201))
+* remove the "Lock pages I've written" setting ([#1058](https://github.com/wenlan-app/wenlan/issues/1058)) ([b4e48e2](https://github.com/wenlan-app/wenlan/commit/b4e48e2586ecb7dfc4d7880ab06a44f6f764ac56))
+
+
+### Bug Fixes
+
+* **app:** keep drafts through a rename, say plainly when Quick Capture can't save, and style the find panel ([#1062](https://github.com/wenlan-app/wenlan/issues/1062)) ([6a8588a](https://github.com/wenlan-app/wenlan/commit/6a8588a3f052e954dcdaf4b4aa3c669d1cb640a2))
+* **app:** paste an image copied in a browser into a page ([#1052](https://github.com/wenlan-app/wenlan/issues/1052)) ([6458df6](https://github.com/wenlan-app/wenlan/commit/6458df69f0d177e36441428e5339055e9fd3598c))
+* **app:** save what the editor shows after a rename, and keep the new link through undo ([#1068](https://github.com/wenlan-app/wenlan/issues/1068)) ([bb46388](https://github.com/wenlan-app/wenlan/commit/bb463884c60725b2ac583101b274390aad376cb1))
+* **cli:** restart a pre-0.20.4 macOS daemon after an in-app upgrade ([#1067](https://github.com/wenlan-app/wenlan/issues/1067)) ([e03e827](https://github.com/wenlan-app/wenlan/commit/e03e827ddad98d6df3de32e8ddbe1ad4cd29815c))
+* **core:** split Chinese sentences on 。！？ and keep abbreviations whole ([#1061](https://github.com/wenlan-app/wenlan/issues/1061)) ([80528ef](https://github.com/wenlan-app/wenlan/commit/80528ef32df79d0567f5bca8eaa3db8e755aeadd))
+* **pages:** restore under a new title updates links, and a second rename replaces the stale link card ([#1066](https://github.com/wenlan-app/wenlan/issues/1066)) ([00770d4](https://github.com/wenlan-app/wenlan/commit/00770d478a032a5504855d9d4bd8eb473a4de976))
+
 ## [0.20.5](https://github.com/wenlan-app/wenlan/compare/v0.20.4...v0.20.5) (2026-10-31)
 
 

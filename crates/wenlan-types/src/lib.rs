@@ -11,6 +11,7 @@ pub mod authorship;
 pub mod brand;
 pub mod brief;
 pub mod briefing;
+pub mod chat_check;
 pub mod code_basis;
 pub mod communities;
 pub mod entities;
@@ -21,6 +22,7 @@ pub mod memory;
 pub mod memory_type;
 pub mod narrative;
 pub mod onboarding;
+pub mod originals;
 pub mod outbox;
 pub mod page_basis;
 pub mod page_map;
@@ -45,6 +47,7 @@ pub mod space_context;
 pub mod steep;
 pub mod steep_new;
 pub mod system_info;
+pub mod things;
 
 // Re-export commonly used types at crate root for convenience.
 pub use brief::*;
@@ -118,6 +121,10 @@ pub use steep_new::{
     SteepNewLinksResponse, SteepNewListResponse, SteepNewTasksRequest, SteepNewTasksResponse,
     SteepOrganizeCommitRequest, SteepOrganizeCommitResponse, SteepOrganizeStage, SteepOrganizeTask,
     SteepOrganizeWork,
+};
+pub use things::{
+    ThingActor, ThingDetailResponse, ThingMoveRequest, ThingPageEntry, ThingPageVia, ThingRef,
+    ThingRenameRequest, ThingSessionEntry, ThingSummary, ThingsResponse,
 };
 
 use serde::{Deserialize, Serialize};

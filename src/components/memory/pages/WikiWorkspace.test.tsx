@@ -92,6 +92,18 @@ describe("WikiWorkspace", () => {
     expect(getByTestId("active-editor")).toBe(editor);
   });
 
+  it("offers New page at the top of the list, as Obsidian's file explorer does, but not among archived pages", () => {
+    const onCreatePage = vi.fn();
+    render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={onCreatePage} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
+    const mode = screen.getByRole("combobox");
+    fireEvent.click(screen.getByRole("button", { name: "New page" }));
+    expect(onCreatePage).toHaveBeenLastCalledWith(undefined);
+    fireEvent.change(mode, { target: { value: "folders" } });
+    expect(screen.getByRole("button", { name: "New page" })).toBeInTheDocument();
+    fireEvent.change(mode, { target: { value: "archived" } });
+    expect(screen.queryByRole("button", { name: "New page" })).not.toBeInTheDocument();
+  });
+
   it("shows the Folders page count as a number beside the title, and only in folders mode", () => {
     render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
     const mode = screen.getByRole("combobox");

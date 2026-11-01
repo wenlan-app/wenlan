@@ -17,6 +17,8 @@ import {
   searchEntities,
   searchPages,
   takeRemotePairingLink,
+  takeOpenLink,
+  type OpenLinkTarget,
   type Page,
   type SearchResult,
   type Space,
@@ -50,6 +52,7 @@ import { SetupWizard } from "../SetupWizard";
 import Sidebar, { SidebarToggleButton } from "./Sidebar";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import SpaceDetail from "./SpaceDetail";
+import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
 import { PagesOverview } from "./pages/PagesOverview";
 import { BASIS_UPDATES_REVIEW_ID } from "./page/useBasisActions";
@@ -125,6 +128,8 @@ function scrollDestinationKey(view: View): string {
       return `settings:${view.section ?? "general"}`;
     case "space":
       return `space:${view.spaceId ?? view.spaceName}`;
+    case "thing":
+      return `thing:${view.thingId}`;
     default:
       return view.kind;
   }
@@ -146,6 +151,7 @@ function sameDestination(current: View, next: View): boolean {
     case "source-document": return next.kind === "source-document" && current.file.source === next.file.source && current.file.source_id === next.file.source_id && (current.file.space ?? null) === (next.file.space ?? null);
     case "memory": return next.kind === "memory" && current.sourceId === next.sourceId;
     case "entity": return next.kind === "entity" && current.entityId === next.entityId;
+    case "thing": return next.kind === "thing" && current.thingId === next.thingId;
     case "settings": return next.kind === "settings"
       && (current.section ?? "general") === (next.section ?? "general");
     case "space": return next.kind === "space" && (current.spaceId && next.spaceId
@@ -1235,6 +1241,25 @@ export default function Main({
     return () => { unlisten.then((f) => f()); };
   }, []);
 
+  // wenlan://page/{id} and wenlan://memory/{id} links (an AI tool prints them
+  // next to an in-chat reminder) open that page or memory. As with pairing,
+  // the native side holds the link until asked, so a cold start keeps it.
+  const openLinkNavigateRef = useRef<(target: OpenLinkTarget) => void>(() => {});
+  openLinkNavigateRef.current = (target) => {
+    if (target.kind === "page") navigateTo({ kind: "page", pageId: target.pageId });
+    else if (target.kind === "memory") navigateTo({ kind: "memory", sourceId: target.memoryId });
+  };
+  useEffect(() => {
+    const pull = () => {
+      takeOpenLink()
+        .then((target) => { if (target) openLinkNavigateRef.current(target); })
+        .catch(() => {});
+    };
+    pull();
+    const unlisten = listen("wenlan-open-link", pull);
+    return () => { unlisten.then((f) => f()); };
+  }, []);
+
   // Cmd/Ctrl+K is delivered by App.tsx and opens the shared search dialog.
   useEffect(() => {
     const unlisten = listen("focus-search", () => {
@@ -1298,7 +1323,7 @@ export default function Main({
         } else if (view.kind === "page-draft") {
           // PageDraftEditor owns Escape so it can await the same flush gate as Back.
           return;
-        } else if (view.kind === "source-document" || view.kind === "entity" || view.kind === "memory" || view.kind === "settings" || view.kind === "import" || view.kind === "graph" || view.kind === "page" || view.kind === "space" || view.kind === "distill-review") {
+        } else if (view.kind === "source-document" || view.kind === "entity" || view.kind === "memory" || view.kind === "settings" || view.kind === "import" || view.kind === "graph" || view.kind === "page" || view.kind === "space" || view.kind === "thing" || view.kind === "distill-review") {
           navigateBack();
         }
       }
@@ -1489,7 +1514,7 @@ export default function Main({
         )}
 
         {/* Main content */}
-        <main ref={mainContentRef} className={`flex-1 ${view.kind === "graph" || view.kind === "sources" || view.kind === "connect-agent" ? "min-w-0 overflow-hidden p-0" : isWikiWorkspaceView ? "memory-main-content memory-main-content--wiki overflow-hidden" : `memory-main-content overflow-y-auto${view.kind === "memory" || view.kind === "source-document" || view.kind === "entity" ? " memory-main-content--page" : ["spaces", "entities", "stream"].includes(view.kind) ? " memory-main-content--collection" : ""}`}`}>
+        <main ref={mainContentRef} className={`flex-1 ${view.kind === "graph" || view.kind === "sources" || view.kind === "connect-agent" ? "min-w-0 overflow-hidden p-0" : isWikiWorkspaceView ? "memory-main-content memory-main-content--wiki overflow-hidden" : `memory-main-content overflow-y-auto${view.kind === "memory" || view.kind === "source-document" || view.kind === "entity" || view.kind === "thing" ? " memory-main-content--page" : ["spaces", "entities", "stream"].includes(view.kind) ? " memory-main-content--collection" : ""}`}`}>
           <TabIntro tab={INTRO_TABS[view.kind] ?? null} newUser={gettingStarted.newLibrary} areaRef={mainContentRef} />
           {view.kind === "import" ? (
             <ImportView
@@ -1565,6 +1590,7 @@ export default function Main({
                 onSelectDraft={openWikiDraft}
                 onSelectPage={(id) => navigateTo({ kind: "page", pageId: id, inventoryScope: view.kind === "pages" ? view.inventoryScope : undefined })}
                 onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
+                onOpenThing={(thingId) => navigateTo({ kind: "thing", thingId })}
                 onConnectTool={() => navigateTo({ kind: "connect-agent" })}
                 onSeeExample={() => switchExampleWiki(true)}
                 onImportChatsQuick={() => navigateTo({ kind: "import", fromHome: true })}
@@ -1621,6 +1647,14 @@ export default function Main({
               embedded
               initialStep="connect"
               onComplete={navigateBack}
+            />
+          ) : view.kind === "thing" ? (
+            <ThingDetail
+              key={view.thingId}
+              thingId={view.thingId}
+              onBack={navigateBack}
+              onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })}
+              onOpenThing={(thingId) => navigateTo({ kind: "thing", thingId })}
             />
           ) : view.kind === "entity" ? (
             <EntityDetail

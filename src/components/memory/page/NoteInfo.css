@@ -407,3 +407,29 @@
 }
 /* The ":20–30" range is set in the UI face: the mono face draws an en dash like a hyphen. */
 .note-info-code-range { font-family: var(--mem-font-body); }
+
+/* Each history entry opens to show what changed (UX-HIST-2). */
+.note-revision-open {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 4px 6px;
+  margin-inline: -6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: content-box;
+}
+.note-revision-open:hover:not(:disabled) { background: var(--mem-hover); }
+.note-revision-open:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: 1px;
+}
+.note-revision-open:disabled { cursor: default; }
+.note-revision-open .note-revision-summary,
+.note-revision-open .note-revision-provenance { display: block; }
+.note-revision-open .note-revision-provenance { display: flex; }

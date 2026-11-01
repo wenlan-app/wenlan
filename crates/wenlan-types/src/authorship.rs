@@ -24,6 +24,10 @@ pub const OP_SENTENCE_ACCEPT: &str = "sentence.accept";
 pub const OP_SENTENCE_REJECT: &str = "sentence.reject";
 /// The `op` of a history entry that records the person's 「不對」 on a sentence.
 pub const OP_SENTENCE_FLAG: &str = "sentence.flag";
+/// The person undid one AI write's sentence changes. The page version it
+/// landed in restored `data.restored_hashes`, which keep the author they had
+/// before that AI write.
+pub const OP_SENTENCE_REVERT: &str = "sentence.revert";
 
 /// Who wrote a sentence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -82,11 +86,14 @@ pub struct SentenceAuthorship {
 pub enum AiEditMode {
     /// The default: the AI updates the sentences it wrote that the person
     /// has not touched (recorded, revertible); a change to a sentence the
-    /// person wrote, edited or accepted is staged as a sentence proposal.
+    /// person wrote, edited or accepted is staged as a sentence proposal, and
+    /// only when the facts changed (see [`SentenceProposal::reason`]).
     #[default]
     Propose,
-    /// The page is locked: every AI change waits for the person. Today that
-    /// is the whole-page revision card the lock already stages.
+    /// The page is locked: every sentence, the AI's included, is protected
+    /// like the person's, so an AI change to one is a sentence proposal (on
+    /// the same facts-changed rule). A write that would add new sentences
+    /// still waits as a whole-page revision card.
     Locked,
 }
 
@@ -190,6 +197,15 @@ pub struct SentenceProposal {
     pub after: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+    /// Why the facts behind the sentence changed: `unsupported` (its source
+    /// does not back it), `stale` (its source changed since it was cited) or
+    /// `disproven`. A protected sentence only gets a proposal with one; a
+    /// rewording alone never does. The one exception is the AI's fix for a
+    /// sentence the person flagged (「不對」) and asked the AI to fix: the
+    /// person asked, so it may carry none. `None` on proposals made before the
+    /// rule, and on a proposal for a sentence that is not protected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<WeakReason>,
     pub actor: HistoryActor,
     pub ts: i64,
     pub status: SentenceProposalStatus,
@@ -205,6 +221,9 @@ pub struct PageSentencesResponse {
     /// Every pending proposal on the page.
     #[serde(default)]
     pub proposals: Vec<SentenceProposal>,
+    /// The page's newest AI write in its history, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_ai_update: Option<LastAiUpdate>,
 }
 
 /// `POST /api/pages/{id}/sentences/propose`.
@@ -216,6 +235,11 @@ pub struct SentenceProposeRequest {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+    /// Required when the sentence is protected (the person's, imported, or
+    /// any sentence on a locked page): one of the facts-changed reasons the
+    /// sentence has right now (`unsupported`, `stale`, `disproven`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<WeakReason>,
     /// The page version the caller read. Refused when the page moved on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_version: Option<i64>,
@@ -236,6 +260,70 @@ pub struct SentenceFlagRequest {
     pub sentence_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+    /// Also ask the AI to fix this one sentence. The fix is worked out after
+    /// the flag is answered and arrives as a pending sentence proposal (with
+    /// `why` as its why); nothing lands until the person accepts it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ask_ai: bool,
+}
+
+/// `POST /api/pages/{id}/sentences/revert`: undo the sentence changes of one
+/// AI write.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SentenceRevertRequest {
+    /// The page version the AI write produced.
+    pub version: i64,
+}
+
+/// Answer to a revert. Re-read the page for its text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SentenceRevertResponse {
+    pub page_id: String,
+    /// The page's version after the revert; unchanged when nothing was put
+    /// back.
+    pub version: i64,
+    /// Sentences put back as they were before that AI write.
+    pub reverted: u32,
+    /// Sentences that write changed but that changed again since, so they
+    /// were left as they are.
+    pub skipped: u32,
+}
+
+/// The page's newest AI write, for "updated N sentences" and its Undo.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastAiUpdate {
+    /// The page version the AI write produced; what the revert takes.
+    pub version: i64,
+    /// Sentences that write added, changed or removed.
+    pub changed_sentences: u32,
+    /// Unix seconds.
+    pub at: i64,
+    /// What that write did to each sentence, in page order; one entry per
+    /// counted sentence, so its length is `changed_sentences`. Derived from
+    /// history on read, never stored.
+    #[serde(default)]
+    pub changes: Vec<SentenceChange>,
+}
+
+/// What one AI write did to one sentence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SentenceChangeKind {
+    Changed,
+    Added,
+    Removed,
+}
+
+/// One sentence an AI write added, changed or removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SentenceChange {
+    pub kind: SentenceChangeKind,
+    /// The sentence's hash as that write left it, which is the hash in the
+    /// sentences list while nobody has changed it since. `None` for removed.
+    pub hash: Option<String>,
+    /// The sentence's text before that write. `None` for added.
+    pub before: Option<String>,
 }
 
 /// `POST /api/pages/{id}/sentences/recheck`: recheck one sentence only.
@@ -265,6 +353,11 @@ pub struct SentenceFlagResponse {
     pub version: i64,
     pub sentence_hash: String,
     pub seq: i64,
+    /// The flag asked the AI for a fix and a model is there to try. The fix,
+    /// if the sources support one, appears later as a pending proposal on
+    /// this sentence; false when no model is configured or available.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ai_fix_queued: bool,
 }
 
 /// Answer to a one-sentence recheck.
@@ -368,6 +461,36 @@ mod tests {
         assert!(value.get("why").is_none());
         let back: HistoryEntry = serde_json::from_value(value).unwrap();
         assert_eq!(back, entry);
+    }
+
+    #[test]
+    fn a_flag_without_ask_ai_keeps_its_old_wire_shape() {
+        let old: SentenceFlagRequest =
+            serde_json::from_value(serde_json::json!({"sentence_hash": "h"})).unwrap();
+        assert!(!old.ask_ai);
+        assert_eq!(
+            serde_json::to_value(&old).unwrap(),
+            serde_json::json!({"sentence_hash": "h"})
+        );
+        let asked: SentenceFlagRequest =
+            serde_json::from_value(serde_json::json!({"sentence_hash": "h", "ask_ai": true}))
+                .unwrap();
+        assert!(asked.ask_ai);
+        assert!(serde_json::from_value::<SentenceFlagRequest>(
+            serde_json::json!({"sentence_hash": "h", "fix": true})
+        )
+        .is_err());
+        let receipt = SentenceFlagResponse {
+            page_id: "p".into(),
+            version: 1,
+            sentence_hash: "h".into(),
+            seq: 3,
+            ai_fix_queued: false,
+        };
+        assert!(serde_json::to_value(&receipt)
+            .unwrap()
+            .get("ai_fix_queued")
+            .is_none());
     }
 
     #[test]

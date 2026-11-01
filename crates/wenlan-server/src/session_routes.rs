@@ -85,7 +85,11 @@ pub async fn handle_upsert_session(
         let state = state.read().await;
         state.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
-    Ok(Json(db.upsert_session_metadata(&request).await?))
+    let session = db.upsert_session_metadata(&request).await?;
+    // Sort it into a thing now that its title and repository are known,
+    // off the response path; the daemon's minute pass catches any miss.
+    tokio::spawn(async move { crate::things_routes::sort_once(&db).await });
+    Ok(Json(session))
 }
 
 /// GET /api/sessions/{id}
@@ -145,6 +149,7 @@ pub async fn handle_get_session(
         |note| note.id.as_str(),
     )
     .await?;
+    detail.things = db.session_things(&detail.session.id).await?;
     detail.transcript_available = transcript_exists(detail.session.transcript_path.as_deref());
     fill_title_from_transcript(&mut detail.session).await;
     Ok(Json(detail))

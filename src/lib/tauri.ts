@@ -932,6 +932,69 @@ export async function listWorkingOn(): Promise<WorkingOnItem[]> {
   return invoke("list_working_on");
 }
 
+/** One thing (一件事): a line of work that conversations are sorted into
+ *  (docs/ux/spec.md, UX-THING-1). Times are in seconds. */
+export interface ThingSummary {
+  id: string;
+  /** Null until the AI or the person names it. */
+  title: string | null;
+  /** Who gave the current title: the AI names new things, the person can rename. */
+  title_by: "ai" | "person";
+  /** One line on where the work stands: the newest handoff summary of one of
+   *  its conversations, else its Brief item text. */
+  status_line: string | null;
+  spaces: string[];
+  last_activity_at: number;
+}
+
+export interface ThingSession {
+  id: string;
+  tool: string;
+  title: string | null;
+  last_write_at: number;
+}
+
+export interface ThingPage {
+  id: string;
+  title: string;
+  /** Whether its conversations wrote the page or read it. */
+  via: "wrote" | "read";
+  at: number;
+}
+
+export interface ThingDetail extends ThingSummary {
+  sessions: ThingSession[];
+  pages: ThingPage[];
+}
+
+/** Things with recent activity first. Empty until things have their own record. */
+export async function listThings(): Promise<ThingSummary[]> {
+  return invoke("list_things");
+}
+
+export async function getThing(id: string): Promise<ThingDetail> {
+  return invoke("get_thing", { id });
+}
+
+export async function renameThing(id: string, title: string): Promise<ThingSummary> {
+  return invoke("rename_thing", { id, title });
+}
+
+/** Move a conversation out of one thing into another, or into a new thing
+ *  named `newTitle`, in one step (UX-THING-1). Its other things stay. */
+export async function moveSessionThing(
+  sessionId: string,
+  fromThingId: string,
+  target: { thingId: string } | { newTitle: string },
+): Promise<ThingSummary> {
+  return invoke("move_session_thing", {
+    sessionId,
+    fromThingId,
+    toThingId: "thingId" in target ? target.thingId : null,
+    newTitle: "newTitle" in target ? target.newTitle : null,
+  });
+}
+
 export async function getSpace(name: string): Promise<Space | null> {
   return invoke("get_space", { name });
 }
@@ -1353,12 +1416,45 @@ export interface PageChangelogEntry {
   sources_removed?: number | null;
 }
 
+export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update";
+
+/** The page a `source_update` history item is about. */
+export interface PageHistorySource {
+  page_id: string;
+  title: string;
+  /** The version the source got. */
+  version: number;
+  /** The source version this page was last checked against. */
+  relied_on_version: number;
+  /** True while this page has not been checked against `version` yet. */
+  pending: boolean;
+  /** The source's text at `version`, with `includeText`. */
+  text?: string | null;
+}
+
+/** One change in a page's one history (UX-HIST-1), newest first. */
+export interface PageHistoryItem {
+  kind: PageHistoryKind;
+  /** Unix seconds. */
+  at: number;
+  version?: number | null;
+  edited_by?: string | null;
+  agent?: string | null;
+  delta_summary?: string | null;
+  /** The page text after an edit, with `includeText`. */
+  text?: string | null;
+  source?: PageHistorySource | null;
+  changed_sentences?: number | null;
+}
+
 export interface ListPageRevisionsResponse {
   page_id: string;
   current_version: number;
   user_edited: boolean;
   stale_reason?: string | null;
   entries: PageChangelogEntry[];
+  /** The page's one history: your edits, the AI's, and new versions of the pages it relies on. */
+  history?: PageHistoryItem[];
 }
 
 // ── Memory Page ─────────────────────────────────────────────────────
@@ -1674,6 +1770,9 @@ export interface Page {
    */
   refresh_blocked_reason?: string | null;
   user_edited?: boolean;
+  /** When the person last edited the page, unix seconds; null or missing when
+   *  no recent edit is theirs. */
+  human_edited_at?: number | null;
   /** Review lock: machine writes wait as revision cards. Omitted while false. */
   review_required?: boolean;
   /**
@@ -1722,6 +1821,12 @@ export interface RestorePageResponse {
   status: "active";
   projection_status: "synced" | "pending" | "hidden" | "not_configured";
   projection_error?: string;
+  /** Restored under a new title: pages whose [[links]] now name it, as for a rename. */
+  links_updated?: number;
+  /** Pages set to "Ask me first" whose link update waits for review. */
+  links_pending_review?: number;
+  /** Pages that still link by the old title. */
+  links_not_updated?: number;
 }
 
 /** Why the daemon refused a restore. Switch on this, never on the text. */
@@ -2104,6 +2209,139 @@ export async function getConceptSources(
   conceptId: string,
 ): Promise<PageSourceWithMemory[]> {
   return getPageSources(conceptId);
+}
+
+/** The AI's staged change to one of the person's sentences (UX-WHO-2). */
+export interface SentenceProposal {
+  id: string;
+  page_id: string;
+  version: number;
+  sentence_hash: string;
+  /** The sentence as it read when proposed. */
+  before: string;
+  /** The proposed text; empty proposes deleting the sentence. */
+  after: string;
+  why?: string | null;
+  actor: { kind: string; name: string; agent?: string | null };
+  ts: number;
+  status: "pending" | "accepted" | "rejected";
+}
+
+/** Why a sentence is weakly backed (UX-WHO-4). */
+export type WeakReason = "no_citation" | "unsupported" | "stale" | "disproven";
+
+/** One citation on a sentence, with the source version it cited. */
+export interface SentenceCitation {
+  occurrence: number;
+  marker: number;
+  source_kind: string;
+  locator: string;
+  /** `verified`, `unverified`, or `unevaluated`. */
+  status: string;
+  cited_version?: number;
+  current_version?: number;
+  stale?: boolean;
+  disproven?: boolean;
+}
+
+export interface PageSentence {
+  idx: number;
+  text: string;
+  hash: string;
+  author: "person" | "ai" | "unknown" | "original";
+  /** Yours: written, edited or accepted by you. A machine write can't change it. */
+  protected: boolean;
+  accepted?: boolean;
+  citations?: SentenceCitation[];
+  evidence?: "verified" | "unverified" | "unevaluated" | "none";
+  weak?: WeakReason[];
+  /** You said 「不對」 about it and it has not changed since. */
+  flagged?: boolean;
+  proposals?: string[];
+}
+
+/** The page's newest AI write, for "AI updated N sentences" and its Undo. */
+export interface LastAiUpdate {
+  /** The page version that write produced; what an undo takes. */
+  version: number;
+  /** Sentences that write added, changed or removed. */
+  changed_sentences: number;
+  /** Unix seconds. */
+  at: number;
+  /** What that write did to each sentence, in page order. */
+  changes?: SentenceChange[];
+}
+
+/** One sentence an AI write added, changed or removed. */
+export interface SentenceChange {
+  kind: "changed" | "added" | "removed";
+  /** The sentence's hash as that write left it; null for removed. A hash no
+   *  longer in the sentences list means the sentence changed again since. */
+  hash: string | null;
+  /** Its text before that write; null for added. */
+  before: string | null;
+}
+
+export interface PageSentencesResponse {
+  page_id: string;
+  version: number;
+  ai_edits: "propose" | "locked";
+  sentences: PageSentence[];
+  proposals: SentenceProposal[];
+  last_ai_update?: LastAiUpdate | null;
+}
+
+export interface SentenceRevertResponse {
+  page_id: string;
+  /** The page's version after the undo; unchanged when nothing was put back. */
+  version: number;
+  /** Sentences put back as they were before that AI write. */
+  reverted: number;
+  /** Sentences that write changed but that changed again since; left as they are. */
+  skipped: number;
+}
+
+export async function getPageSentences(pageId: string): Promise<PageSentencesResponse> {
+  return invoke("get_page_sentences", { pageId });
+}
+
+export async function acceptSentenceProposal(
+  pageId: string,
+  proposalId: string,
+): Promise<{ proposal: SentenceProposal; version: number }> {
+  return invoke("accept_sentence_proposal", { pageId, proposalId });
+}
+
+/** The person undoes one AI write's sentence changes (UX-WHO-2). */
+/** Say 「不對」 about one sentence; with `askAi` the AI proposes a fix, which
+ *  still lands only when you accept it (UX-WHO-3). */
+export async function flagPageSentence(pageId: string, sentenceHash: string, askAi: boolean, why?: string) {
+  // `ai_fix_queued` is true only when a model took the request; absent otherwise.
+  return invoke<{ page_id: string; version: number; sentence_hash: string; seq: number; ai_fix_queued?: boolean }>("flag_page_sentence", {
+    pageId,
+    sentenceHash,
+    askAi,
+    why: why ?? null,
+  });
+}
+
+/** Recheck only this sentence against its sources' current versions (UX-WHO-4). */
+export async function recheckPageSentence(pageId: string, sentenceHash: string) {
+  return invoke<{ page_id: string; version: number; sentence: PageSentence }>("recheck_page_sentence", {
+    pageId,
+    sentenceHash,
+  });
+}
+
+export async function revertPageSentences(pageId: string, version: number): Promise<SentenceRevertResponse> {
+  return invoke("revert_page_sentences", { pageId, version });
+}
+
+export async function rejectSentenceProposal(
+  pageId: string,
+  proposalId: string,
+): Promise<{ proposal: SentenceProposal }> {
+  return invoke("reject_sentence_proposal", { pageId, proposalId });
 }
 
 export async function getPageLinks(pageId: string): Promise<PageLinksResponse> {
@@ -2790,10 +3028,12 @@ export async function getMemoryRevisions(
   return invoke("get_memory_revisions", { sourceId });
 }
 
+/** `includeText` adds each version's whole text, so a change can be opened (UX-HIST-2). */
 export async function getPageRevisions(
   pageId: string,
+  includeText = false,
 ): Promise<ListPageRevisionsResponse> {
-  return invoke("get_page_revisions", { pageId });
+  return invoke("get_page_revisions", { pageId, includeText });
 }
 
 export async function listPendingRevisions(limit?: number): Promise<PendingRevisionItem[]> {
@@ -3456,6 +3696,14 @@ export async function pageAttachmentsDir(): Promise<string> {
   return invoke("page_attachments_dir");
 }
 
+/** Where an Obsidian embed's file is, found anywhere in the pages folder;
+ *  with the page it is on, a file in that page's own folder wins. Null when no
+ *  image or video by that name exists. The app lets the webview load that one
+ *  file. */
+export async function resolvePageEmbed(name: string, pageId?: string | null): Promise<string | null> {
+  return invoke("resolve_page_embed", { name, pageId: pageId ?? null });
+}
+
 /** Copy a file on this computer into the pages folder. */
 export async function attachFileToPage(path: string, alt?: string): Promise<AttachedFile> {
   return invoke("attach_file_to_page", { path, alt: alt ?? null });
@@ -3466,6 +3714,11 @@ export async function attachBytesToPage(name: string, bytes: Uint8Array): Promis
   return invoke("attach_bytes_to_page", bytes, {
     headers: { "x-file-name": encodeURIComponent(name) },
   });
+}
+
+/** Download an image by its web address and copy it into the pages folder. */
+export async function attachImageUrlToPage(url: string): Promise<AttachedFile> {
+  return invoke("attach_image_url_to_page", { url });
 }
 
 // ===== Profile =====
@@ -4223,6 +4476,19 @@ export async function revokeRemoteGrant(expectedRevision: string, grantId: strin
 /** Takes the pairing code from the last `wenlan://pair` link, if one is waiting. */
 export async function takeRemotePairingLink(): Promise<string | null> {
   return invoke("take_remote_pairing_link");
+}
+
+/** What a wenlan://page/{id} or wenlan://memory/{id} link asked to open. */
+export type OpenLinkTarget =
+  | { kind: "page"; pageId: string }
+  | { kind: "memory"; memoryId: string };
+
+/**
+ * The page or memory link that opened the app or arrived since, handed out
+ * once. AI tools print these links next to an in-chat reminder or a page.
+ */
+export async function takeOpenLink(): Promise<OpenLinkTarget | null> {
+  return invoke("take_open_link");
 }
 
 /**

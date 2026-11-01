@@ -64,25 +64,66 @@ pub async fn rename_page(
         .commit_page_title_rename(id, title, expected_version, scope, knowledge_path)
         .await?;
     let mut response = renamed.response;
-    match page_link_rename::update_links_to_renamed_page(
+    let counts = links_to_retitled_page(
         db,
         id,
         renamed.previous_title.as_deref(),
         scope,
         knowledge_path,
     )
-    .await
-    {
-        Ok(counts) => {
-            response.links_updated = counts.updated;
-            response.links_pending_review = counts.pending_review;
-            response.links_not_updated = counts.not_updated;
-        }
-        Err(error) => {
-            log::warn!("[page_rename] {id} renamed; updating links to it failed: {error}");
-        }
+    .await;
+    response.links_updated = counts.updated;
+    response.links_pending_review = counts.pending_review;
+    response.links_not_updated = counts.not_updated;
+    Ok(response)
+}
+
+/// Restore an archived page, optionally under a new title, using the same
+/// version and Space rules as `MemoryDB::restore_page`.
+///
+/// A restore under a new title is a rename of the archived page: the
+/// `[[links]]` other pages in the same Space make to its old title are then
+/// updated exactly as `rename_page` updates them (same Space, same review
+/// lock and revision cards, same version fence), and the response carries
+/// the same counts. A restore under its old title, or a replay that wrote
+/// nothing, leaves every link as it is.
+pub async fn restore_page(
+    db: &MemoryDB,
+    id: &str,
+    title: Option<&str>,
+    expected_version: i64,
+    scope: &crate::read_scope::ReadScope,
+    knowledge_path: Option<&Path>,
+) -> Result<wenlan_types::responses::RestorePageResponse, crate::db::RestorePageError> {
+    let restored = db
+        .commit_page_restore(id, title, expected_version, scope)
+        .await?;
+    let mut response = restored.response;
+    if let Some(previous_title) = restored.previous_title.as_deref() {
+        let counts =
+            links_to_retitled_page(db, id, Some(previous_title), scope, knowledge_path).await;
+        response.links_updated = counts.updated;
+        response.links_pending_review = counts.pending_review;
+        response.links_not_updated = counts.not_updated;
     }
     Ok(response)
+}
+
+/// The link step after a committed title change. Its failure is logged and
+/// reported as nothing updated, never turned into a failed rename or restore.
+async fn links_to_retitled_page(
+    db: &MemoryDB,
+    id: &str,
+    previous_title: Option<&str>,
+    scope: &crate::read_scope::ReadScope,
+    knowledge_path: Option<&Path>,
+) -> page_link_rename::LinkRenameCounts {
+    page_link_rename::update_links_to_renamed_page(db, id, previous_title, scope, knowledge_path)
+        .await
+        .unwrap_or_else(|error| {
+            log::warn!("[page_rename] {id} retitled; updating links to it failed: {error}");
+            page_link_rename::LinkRenameCounts::default()
+        })
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

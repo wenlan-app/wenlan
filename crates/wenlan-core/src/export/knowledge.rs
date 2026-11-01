@@ -5751,6 +5751,7 @@ mod tests {
             relevance_score: 0.0,
             last_edited_by: None,
             last_edited_at: None,
+            human_edited_at: None,
             last_delta_summary: None,
             changelog: None,
             creation_kind: "distilled".to_string(),

@@ -11,6 +11,9 @@ import {
 import type { ComponentType, RefAttributes } from "react";
 import { NativeMarkdownEditor } from "./NativeMarkdownEditor";
 import type { PageLayersSettings } from "./pageLayersEditing";
+import type { SentenceProposalSettings } from "./sentenceProposals";
+import type { AiChangeMarkSettings } from "./aiChangeMarks";
+import type { SentenceAuthorshipSettings } from "./sentenceAuthorship";
 import { loadCodeMirrorEditor } from "./loadCodeMirrorEditor";
 
 import type { EditorReferenceContext } from "./wikiLinkEditing";
@@ -23,6 +26,29 @@ export interface MarkdownEditorHandle {
   runCommand(command: MarkdownEditorCommand): boolean;
   requestSave(): boolean;
   requestCancel(): boolean;
+  /**
+   * Apply a change made outside this editor (a rename's link rewrite) to the
+   * live document, keeping the cursor and the person's own undo steps.
+   * `edits` reads the current document. False when the editor cannot take it
+   * now (still loading, disabled, or mid composition).
+   */
+  applyExternalEdits(edits: (document: string) => readonly MarkdownEditorTextEdit[]): boolean;
+  /** Select `text` where it first appears and put the cursor there, so the
+   *  person can fix a sentence themselves. False when it is not in the page. */
+  selectText(text: string): boolean;
+}
+
+/** Replace `from`..`to` of the document with `insert`. */
+export interface MarkdownEditorTextEdit {
+  readonly from: number;
+  readonly to: number;
+  readonly insert: string;
+  /**
+   * The whole construct the edit belongs to (a link's `[[` to `]]`), when it
+   * is wider than `from`..`to`. Replayed after undo or redo when the
+   * restored text touches any of it. Defaults to `from`..`to`.
+   */
+  readonly scope?: readonly [from: number, to: number];
 }
 
 export type MarkdownEditorCommand =
@@ -95,6 +121,19 @@ export interface MarkdownEditorProps {
   /** Short or full and the folded part for AI (UX-VIEW-2, UX-VIEW-3). The
    *  plain-text fallback editor shows the whole text. */
   pageLayers?: PageLayersSettings;
+  /** The AI's proposals for the person's sentences, each under its sentence
+   *  (UX-WHO-2). The plain-text fallback editor does not draw them. */
+  sentenceProposals?: SentenceProposalSettings;
+  /** The page being edited, so `![[name]]` embeds can be found anywhere in
+   *  the pages folder. */
+  pageId?: string | null;
+  /** The sentences the AI's newest write changed, marked while the person
+   *  asked to see them (UX-WHO-2). The plain-text fallback editor does not
+   *  draw them. */
+  aiChangeMarks?: AiChangeMarkSettings | null;
+  /** Who said each sentence, and the ones that can't be backed up (UX-WHO-1,
+   *  UX-WHO-4). The plain-text fallback editor does not draw them. */
+  sentenceAuthorship?: SentenceAuthorshipSettings | null;
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
@@ -138,6 +177,12 @@ const MarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         },
         requestSave(): boolean {
           return editorRef.current?.requestSave() ?? false;
+        },
+        applyExternalEdits(edits): boolean {
+          return editorRef.current?.applyExternalEdits(edits) ?? false;
+        },
+        selectText(text): boolean {
+          return editorRef.current?.selectText(text) ?? false;
         },
         requestCancel(): boolean {
           if (editorRef.current) return editorRef.current.requestCancel();

@@ -103,6 +103,20 @@ async fn page_with_my_line(db: &MemoryDB, id: &str) -> Page {
     db.get_page(id).await.unwrap().unwrap()
 }
 
+/// The AI page after the person added a cited sentence whose citation was
+/// checked and found unsupported: its facts changed.
+async fn page_with_my_unsupported_line(db: &MemoryDB, id: &str) -> Page {
+    ai_page(db, id, None).await;
+    let mine = format!("{AI_BODY} I prefer the current-thread runtime.[1]");
+    assert!(write(db, id, &mine, "manual_edit", None).await.wrote);
+    let page = db.get_page(id).await.unwrap().unwrap();
+    assert!(db
+        .set_page_citations_at_page_version(id, &citation("mem-tokio", "unverified"), page.version)
+        .await
+        .unwrap());
+    db.get_page(id).await.unwrap().unwrap()
+}
+
 fn authors(view: &PageSentencesResponse) -> Vec<SentenceAuthor> {
     view.sentences.iter().map(|s| s.author).collect()
 }
@@ -136,9 +150,29 @@ async fn sentences_view_tells_the_persons_sentences_from_the_ais() {
 }
 
 #[tokio::test]
-async fn a_version_checked_agent_write_lands_only_on_the_ais_sentences() {
+async fn a_rewording_of_the_persons_sentence_is_dropped_not_proposed() {
+    // 只在事实变了时: the person's sentence has no citation problem, so the
+    // AI's rewording of it is not a proposal; the sentence stays as written.
     let (db, _dir) = test_db().await;
     let before = page_with_my_line(&db, "p").await;
+    let rewrite = "Tokio runs async tasks on a pool. Workers steal queued tasks. \
+                   The multi-thread runtime is better for everyone.";
+    let result = write(&db, "p", rewrite, "agent_refresh", Some(before.version)).await;
+    assert!(result.wrote, "the AI's own sentence change lands");
+    assert!(result.sentence_proposals.is_empty());
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(
+        after.content,
+        "Tokio runs async tasks on a pool. Workers steal queued tasks. \
+         I prefer the current-thread runtime."
+    );
+    assert!(page_sentences(&db, "p").await.unwrap().proposals.is_empty());
+}
+
+#[tokio::test]
+async fn a_version_checked_agent_write_lands_only_on_the_ais_sentences() {
+    let (db, _dir) = test_db().await;
+    let before = page_with_my_unsupported_line(&db, "p").await;
     let rewrite = "Tokio runs async tasks on a pool. Workers steal queued tasks. \
                    The multi-thread runtime is better for everyone.";
     let result = write(&db, "p", rewrite, "agent_refresh", Some(before.version)).await;
@@ -148,14 +182,19 @@ async fn a_version_checked_agent_write_lands_only_on_the_ais_sentences() {
     assert_eq!(
         after.content,
         "Tokio runs async tasks on a pool. Workers steal queued tasks. \
-         I prefer the current-thread runtime."
+         I prefer the current-thread runtime.[1]"
     );
     assert!(after.user_edited, "the page is still the person's");
 
     let view = page_sentences(&db, "p").await.unwrap();
     assert_eq!(view.proposals.len(), 1);
     let proposal = &view.proposals[0];
-    assert_eq!(proposal.before, "I prefer the current-thread runtime.");
+    assert_eq!(proposal.before, "I prefer the current-thread runtime.[1]");
+    assert_eq!(
+        proposal.reason,
+        Some(WeakReason::Unsupported),
+        "the facts changed: its source does not back it"
+    );
     assert_eq!(
         proposal.after,
         "The multi-thread runtime is better for everyone."
@@ -188,7 +227,7 @@ async fn a_machine_rewrite_keeps_the_citations_on_the_persons_sentence() {
     assert!(write(&db, "p", &mine, "manual_edit", None).await.wrote);
     let before = db.get_page("p").await.unwrap().unwrap();
     assert!(db
-        .set_page_citations_at_page_version("p", &citation("mem-x", "verified"), before.version)
+        .set_page_citations_at_page_version("p", &citation("mem-x", "unverified"), before.version)
         .await
         .unwrap());
 
@@ -252,9 +291,32 @@ async fn a_machine_rewrite_keeps_the_citations_on_the_persons_sentence() {
 #[tokio::test]
 async fn proposals_are_accepted_or_rejected_one_by_one() {
     let (db, _dir) = test_db().await;
-    let before = page_with_my_line(&db, "p").await;
+    let before = page_with_my_unsupported_line(&db, "p").await;
     let units = crate::authorship::sentence_units(&before.content);
     let mine = units[2].hash.clone();
+    for (reason, refused) in [
+        (None, "reason_required"),
+        (Some(WeakReason::Stale), "reason_not_current"),
+        (Some(WeakReason::NoCitation), "reason_not_current"),
+    ] {
+        let result = propose_sentence(
+            &db,
+            "p",
+            &SentenceProposeRequest {
+                sentence_hash: mine.clone(),
+                text: "I prefer the multi-thread runtime now.".into(),
+                why: None,
+                reason,
+                expected_version: None,
+            },
+            "claude-code",
+        )
+        .await;
+        assert!(
+            matches!(&result, Err(WenlanError::Validation(m)) if m.starts_with(refused)),
+            "{reason:?}: {result:?}"
+        );
+    }
     let first = propose_sentence(
         &db,
         "p",
@@ -262,6 +324,7 @@ async fn proposals_are_accepted_or_rejected_one_by_one() {
             sentence_hash: mine.clone(),
             text: "I prefer the multi-thread runtime now.".into(),
             why: Some("you said so yesterday".into()),
+            reason: Some(WeakReason::Unsupported),
             expected_version: Some(before.version),
         },
         "claude-code",
@@ -275,6 +338,7 @@ async fn proposals_are_accepted_or_rejected_one_by_one() {
             sentence_hash: mine.clone(),
             text: String::new(),
             why: None,
+            reason: Some(WeakReason::Unsupported),
             expected_version: None,
         },
         "claude-code",
@@ -288,6 +352,7 @@ async fn proposals_are_accepted_or_rejected_one_by_one() {
             sentence_hash: mine.clone(),
             text: "x".into(),
             why: None,
+            reason: Some(WeakReason::Unsupported),
             expected_version: Some(before.version - 1),
         },
         "claude-code",
@@ -376,6 +441,7 @@ async fn an_accepted_sentence_waits_for_the_person_and_the_lock_makes_everything
             sentence_hash: first,
             text: "Tokio runs async tasks on a work-stealing pool.".into(),
             why: None,
+            reason: None,
             expected_version: Some(page.version),
         },
         "claude-code",
@@ -390,10 +456,9 @@ async fn an_accepted_sentence_waits_for_the_person_and_the_lock_makes_everything
     let rewrite = "Tokio runs async tasks. Workers steal tasks from each other.";
     let result = write(&db, "p", rewrite, "agent_refresh", Some(accepted.version)).await;
     assert!(result.wrote, "the AI's untouched sentence updates");
-    assert_eq!(
-        result.sentence_proposals.len(),
-        1,
-        "the accepted one becomes a proposal"
+    assert!(
+        result.sentence_proposals.is_empty(),
+        "the accepted one is protected, and a rewording of it is not proposed"
     );
     let after = db.get_page("p").await.unwrap().unwrap();
     assert_eq!(
@@ -405,6 +470,24 @@ async fn an_accepted_sentence_waits_for_the_person_and_the_lock_makes_everything
     assert!(db.set_page_review_required("p", true).await.unwrap());
     let locked = db.get_page("p").await.unwrap().unwrap();
     assert_eq!(ai_edit_mode(&locked), AiEditMode::Locked);
+    // A change to a sentence the page has: no whole-page card, nothing
+    // lands, and with no facts-changed reason nothing is proposed either.
+    let reworded = "Tokio runs async tasks on a work-stealing pool. Workers trade tasks.";
+    let result = write(&db, "p", reworded, "agent_refresh", Some(locked.version)).await;
+    assert_eq!(result.outcome, WriteOutcome::Unchanged);
+    assert!(result.revision_card_id.is_none() && result.sentence_proposals.is_empty());
+    assert_eq!(
+        db.get_page("p").await.unwrap().unwrap().content,
+        after.content
+    );
+    // A write that adds a sentence still waits as a whole-page card.
+    let grown = format!("{} Tokio has timers.", after.content);
+    let result = write(&db, "p", &grown, "agent_refresh", Some(locked.version)).await;
+    assert!(result.revision_card_id.is_some(), "{result:?}");
+    assert_eq!(
+        db.get_page("p").await.unwrap().unwrap().content,
+        after.content
+    );
     assert_eq!(
         page_sentences(&db, "p").await.unwrap().ai_edits,
         AiEditMode::Locked
@@ -444,7 +527,10 @@ async fn unknown_origin_is_protected_only_on_a_human_owned_page() {
         .all(|s| s.author == SentenceAuthor::Unknown && s.protected));
     let result = write(&db, "q", rewrite, "agent_refresh", Some(page.version)).await;
     assert_eq!(result.outcome, WriteOutcome::Unchanged);
-    assert_eq!(result.sentence_proposals.len(), 1);
+    assert!(
+        result.sentence_proposals.is_empty(),
+        "protected, and a rewording is not proposed"
+    );
     assert_eq!(db.get_page("q").await.unwrap().unwrap().content, AI_BODY);
 }
 
@@ -473,10 +559,9 @@ async fn a_forced_rebuild_regenerates_the_ais_sentences_and_keeps_the_persons() 
     .await
     .unwrap();
     assert!(result.wrote);
-    assert_eq!(
-        result.sentence_proposals.len(),
-        1,
-        "deleting my line is a proposal"
+    assert!(
+        result.sentence_proposals.is_empty(),
+        "my line is kept, and with no facts-changed reason dropping it is not proposed"
     );
     let after = db.get_page("p").await.unwrap().unwrap();
     assert_eq!(
@@ -488,8 +573,6 @@ async fn a_forced_rebuild_regenerates_the_ais_sentences_and_keeps_the_persons() 
         after.user_edited,
         "the rebuild kept the person's text, so it stays theirs"
     );
-    let view = page_sentences(&db, "p").await.unwrap();
-    assert_eq!(view.proposals[0].after, "", "the AI proposed removing it");
 }
 
 fn citation(locator: &str, status: &str) -> String {
@@ -631,7 +714,7 @@ async fn migration_145_is_idempotent_on_an_upgraded_database() {
                   + (SELECT user_version FROM pragma_user_version)",
             )
             .await;
-        assert_eq!(found, 1 + 145);
+        assert_eq!(found, 1 + i64::from(crate::db::SCHEMA_VERSION));
     }
 }
 
@@ -666,7 +749,9 @@ async fn an_authored_note_no_person_touched_is_the_ais() {
         .iter()
         .all(|s| s.author == SentenceAuthor::Ai && !s.protected));
 
-    // Once a person has edited it, the page's first version counts as theirs.
+    // This older `create` row does not say who made the page, and an edit
+    // says only that the person edited it: their own line is theirs, the rest
+    // stays unattributed (and protected, the page now being theirs).
     let mine = format!("{AI_BODY} I keep this line.");
     assert!(
         write(&db, "agent_note", &mine, "manual_edit", None)
@@ -674,8 +759,547 @@ async fn an_authored_note_no_person_touched_is_the_ais() {
             .wrote
     );
     let view = page_sentences(&db, "agent_note").await.unwrap();
+    assert_eq!(
+        authors(&view),
+        [
+            SentenceAuthor::Unknown,
+            SentenceAuthor::Unknown,
+            SentenceAuthor::Person
+        ]
+    );
+    assert!(view.sentences.iter().all(|s| s.protected));
+}
+
+/// An authored page created by `actor` (`unknown` is the person in the app).
+async fn authored_page(db: &MemoryDB, id: &str, actor: &str) -> Page {
+    db.insert_page_with_basis(
+        id,
+        "Authored",
+        None,
+        AI_BODY,
+        None,
+        None,
+        &[],
+        &chrono::Utc::now().to_rfc3339(),
+        "authored",
+        "confirmed",
+        None,
+        None,
+        &[],
+        actor,
+        None,
+    )
+    .await
+    .unwrap();
+    db.get_page(id).await.unwrap().unwrap()
+}
+
+#[tokio::test]
+async fn an_ai_tools_page_stays_the_ais_after_the_person_edits_one_line() {
+    // Seeing a page does not make it yours: the person's first edit makes
+    // only what they changed theirs.
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-tokio", "Tokio runs async tasks").await;
+    authored_page(&db, "codex_note", "codex").await;
+    let rows = db.list_page_history("codex_note", 10).await.unwrap();
+    assert_eq!(rows[0].edited_by, "agent_create");
+    let edited = "Tokio runs many async tasks. Workers steal queued tasks.";
+    assert!(
+        write(&db, "codex_note", edited, "manual_edit", None)
+            .await
+            .wrote
+    );
+    let view = page_sentences(&db, "codex_note").await.unwrap();
+    assert_eq!(
+        authors(&view),
+        [SentenceAuthor::Person, SentenceAuthor::Ai],
+        "the untouched sentence is still the AI tool's"
+    );
+    assert!(
+        !view.sentences[1].protected,
+        "so the AI can still update it"
+    );
+}
+
+#[tokio::test]
+async fn a_page_the_person_creates_in_the_app_is_theirs_from_birth() {
+    let (db, _dir) = test_db().await;
+    authored_page(&db, "my_note", "unknown").await;
+    let rows = db.list_page_history("my_note", 10).await.unwrap();
+    assert_eq!(rows[0].edited_by, "person_create");
+    assert_eq!(
+        crate::page_history::kind_of_edit(&rows[0].edited_by),
+        wenlan_types::responses::PageHistoryKind::PersonEdit
+    );
+    let view = page_sentences(&db, "my_note").await.unwrap();
     assert!(view
         .sentences
         .iter()
         .all(|s| s.author == SentenceAuthor::Person && s.protected));
+}
+
+#[tokio::test]
+async fn undoing_an_ai_write_puts_back_only_its_untouched_sentences_as_the_ais() {
+    let (db, _dir) = test_db().await;
+    let mine = page_with_my_line(&db, "p").await;
+    assert!(
+        mine.human_edited_at.is_some(),
+        "the person's save counts as their edit"
+    );
+    // The AI rewrites its first sentence, drops its second, and adds one.
+    let rewrite = "Tokio runs async tasks on a pool. I prefer the current-thread runtime. \
+                   Tokio has timers.";
+    let result = write(&db, "p", rewrite, "agent_refresh", Some(mine.version)).await;
+    assert!(result.wrote);
+    let ai = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(ai.content, rewrite);
+    assert_eq!(
+        ai.human_edited_at, mine.human_edited_at,
+        "an AI write is not the person's edit"
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    let last = view.last_ai_update.expect("the AI wrote last");
+    assert_eq!(last.version, ai.version);
+    assert_eq!(
+        last.changed_sentences, 3,
+        "changed one, removed one, added one"
+    );
+    assert_eq!(last.changes.len(), 3, "one entry per counted sentence");
+    let changed: Vec<_> = last
+        .changes
+        .iter()
+        .filter(|c| c.kind == wenlan_types::authorship::SentenceChangeKind::Changed)
+        .collect();
+    assert!(!changed.is_empty(), "{:?}", last.changes);
+    for change in &changed {
+        assert!(
+            view.sentences
+                .iter()
+                .any(|s| Some(&s.hash) == change.hash.as_ref()),
+            "a changed sentence is found in the sentences list: {change:?}"
+        );
+        assert!(change.before.is_some());
+    }
+    let rows = db.list_page_history("p", 10).await.unwrap();
+    assert_eq!(
+        crate::page_history::changed_sentences_at(&rows, ai.version),
+        Some(3)
+    );
+
+    // The person touches the AI's new sentence; the undo leaves it alone.
+    let touched = "Tokio runs async tasks on a pool. I prefer the current-thread runtime. \
+                   Tokio has timers and intervals.";
+    assert!(write(&db, "p", touched, "manual_edit", None).await.wrote);
+    let person_version = db.get_page("p").await.unwrap().unwrap().version;
+
+    let undone = revert_ai_write(&db, "p", ai.version, None).await.unwrap();
+    assert_eq!((undone.reverted, undone.skipped), (2, 1));
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(undone.version, after.version);
+    assert_eq!(
+        after.content,
+        "Tokio runs async tasks. Workers steal queued tasks. I prefer the current-thread runtime. \
+         Tokio has timers and intervals."
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    assert_eq!(
+        authors(&view),
+        [
+            SentenceAuthor::Ai,
+            SentenceAuthor::Ai,
+            SentenceAuthor::Person,
+            SentenceAuthor::Person
+        ],
+        "what the undo put back stays the AI's; undoing never makes text yours"
+    );
+    let ops: Vec<String> = db
+        .list_sentence_history("page", "p")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.op)
+        .collect();
+    assert!(ops.iter().any(|op| op == "sentence.revert"));
+
+    assert!(matches!(
+        revert_ai_write(&db, "p", person_version, None).await,
+        Err(WenlanError::Conflict(m)) if m.starts_with("not_an_ai_write")
+    ));
+    assert!(matches!(
+        revert_ai_write(&db, "p", 9_999, None).await,
+        Err(WenlanError::NotFound(_))
+    ));
+    assert!(matches!(
+        revert_ai_write(&db, "nope", 1, None).await,
+        Err(WenlanError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn a_page_only_the_ai_wrote_has_no_person_edit_time() {
+    let (db, _dir) = test_db().await;
+    let page = ai_page(&db, "p", None).await;
+    assert_eq!(page.human_edited_at, None);
+    let view = page_sentences(&db, "p").await.unwrap();
+    let last = view.last_ai_update.expect("the AI wrote the page");
+    assert_eq!(last.version, page.version);
+    assert_eq!(last.changed_sentences, 2, "both sentences are new");
+}
+
+#[tokio::test]
+async fn migration_148_keeps_every_sentence_history_row_and_admits_revert() {
+    let (db, dir) = crate::db::tests::test_db_at(147).await;
+    let page = ai_page(&db, "p", None).await;
+    let hash = crate::authorship::sentence_units(&page.content)[0]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &hash, Some("不對")).await.unwrap();
+    drop(db);
+    for _ in 0..2 {
+        let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+            .await
+            .unwrap();
+        let entries = db.list_sentence_history("page", "p").await.unwrap();
+        assert_eq!(entries.len(), 1, "the flag survives the rebuild");
+        assert_eq!(entries[0].op, "sentence.flag");
+        db.append_sentence_history(NewHistoryEntry {
+            ts: 1,
+            tx: "tx_m148",
+            actor: &person(),
+            op: OP_SENTENCE_REVERT,
+            target: &page_target("q"),
+            version: Some(1),
+            why: None,
+            text: None,
+            digest_before: None,
+            digest_after: None,
+            data: &serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 「不對」 → ask the AI (UX-WHO-3): the AI's fix is still a proposal.
+// ---------------------------------------------------------------------------
+
+/// A model that answers one fixed text and keeps every prompt it was sent.
+struct FixModel {
+    answer: Option<String>,
+    prompts: std::sync::Mutex<Vec<String>>,
+}
+
+impl FixModel {
+    fn answering(answer: &str) -> Self {
+        Self {
+            answer: Some(answer.to_string()),
+            prompts: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.prompts.lock().unwrap().len()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::llm_provider::LlmProvider for FixModel {
+    async fn generate(
+        &self,
+        request: crate::llm_provider::LlmRequest,
+    ) -> Result<String, crate::llm_provider::LlmError> {
+        self.prompts.lock().unwrap().push(request.user_prompt);
+        self.answer
+            .clone()
+            .ok_or_else(|| crate::llm_provider::LlmError::InferenceFailed("boom".into()))
+    }
+    fn is_available(&self) -> bool {
+        true
+    }
+    fn name(&self) -> &str {
+        "fix-model"
+    }
+    fn backend(&self) -> crate::llm_provider::LlmBackend {
+        crate::llm_provider::LlmBackend::OnDevice
+    }
+}
+
+/// An AI page whose first sentence cites a verified memory.
+async fn cited_ai_page(db: &MemoryDB, id: &str) -> Page {
+    seed_memory(db, "mem-port", "The daemon binds port 7878 by default").await;
+    db.insert_page_with_kind(
+        id,
+        "Ports",
+        None,
+        "The daemon binds port 7979 by default.[1] It starts at login.",
+        None,
+        None,
+        &["mem-port"],
+        &chrono::Utc::now().to_rfc3339(),
+        "distilled",
+        "confirmed",
+        None,
+        Some(&citation("mem-port", "verified")),
+    )
+    .await
+    .unwrap();
+    db.get_page(id).await.unwrap().unwrap()
+}
+
+fn pending_for<'a>(view: &'a PageSentencesResponse, hash: &str) -> Vec<&'a SentenceProposal> {
+    view.proposals
+        .iter()
+        .filter(|p| p.sentence_hash == hash && p.status == SentenceProposalStatus::Pending)
+        .collect()
+}
+
+#[tokio::test]
+async fn asking_the_ai_files_one_pending_proposal_grounded_in_the_cited_source() {
+    let (db, _dir) = test_db().await;
+    let page = cited_ai_page(&db, "p").await;
+    let hash = crate::authorship::sentence_units(&page.content)[0]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &hash, Some("wrong port"))
+        .await
+        .unwrap();
+    let model = FixModel::answering(
+        "<think>check</think>```json\n{\"action\":\"rewrite\",\
+         \"text\":\"The daemon binds port 7878 by default.\"}\n```",
+    );
+
+    let outcome = ask_ai_to_fix(&db, &model, "p", &hash, Some("wrong port"))
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, FlagFixOutcome::Proposed(_)),
+        "{outcome:?}"
+    );
+    let prompt = model.prompts.lock().unwrap()[0].clone();
+    assert!(
+        prompt.contains("The daemon binds port 7878 by default"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("wrong port"), "{prompt}");
+    assert!(
+        !prompt.contains("[1]"),
+        "markers stay out of the prompt: {prompt}"
+    );
+
+    let view = page_sentences(&db, "p").await.unwrap();
+    let pending = pending_for(&view, &hash);
+    assert_eq!(pending.len(), 1, "{:?}", view.proposals);
+    let proposal = pending[0];
+    assert_eq!(proposal.after, "The daemon binds port 7878 by default.[1]");
+    assert_eq!(proposal.why.as_deref(), Some("wrong port"));
+    assert_eq!(proposal.actor.kind, ActorKind::Ai);
+    assert_eq!(proposal.reason, None);
+    // Nothing landed: the page is as it was until the person accepts.
+    assert_eq!(view.version, page.version);
+    assert_eq!(
+        view.sentences[0].text,
+        "The daemon binds port 7979 by default.[1]"
+    );
+    assert!(view.sentences[0].flagged);
+
+    // Asking again for the same fix files nothing twice.
+    let again = ask_ai_to_fix(&db, &model, "p", &hash, Some("wrong port"))
+        .await
+        .unwrap();
+    assert_eq!(again, FlagFixOutcome::Skipped("already_proposed"));
+    assert_eq!(
+        pending_for(&page_sentences(&db, "p").await.unwrap(), &hash).len(),
+        1
+    );
+
+    // Accepting it lands the fix with its citation kept.
+    let accepted = accept_sentence_proposal(&db, "p", &proposal.id, None, None)
+        .await
+        .unwrap();
+    let page = db.get_page("p").await.unwrap().unwrap();
+    assert!(accepted.version > view.version);
+    assert!(page
+        .content
+        .starts_with("The daemon binds port 7878 by default.[1] "));
+}
+
+#[tokio::test]
+async fn the_fix_uses_a_fixed_why_when_the_person_gave_none_and_may_propose_deleting() {
+    let (db, _dir) = test_db().await;
+    let page = cited_ai_page(&db, "p").await;
+    let hash = crate::authorship::sentence_units(&page.content)[0]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &hash, None).await.unwrap();
+    let model = FixModel::answering("{\"action\":\"delete\"}");
+    let outcome = ask_ai_to_fix(&db, &model, "p", &hash, None).await.unwrap();
+    assert!(
+        matches!(outcome, FlagFixOutcome::ProposedDeletion(_)),
+        "{outcome:?}"
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    let pending = pending_for(&view, &hash);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].after, "");
+    assert_eq!(pending[0].why.as_deref(), Some(fix::DEFAULT_FIX_WHY));
+}
+
+#[tokio::test]
+async fn no_model_or_no_supported_fix_leaves_only_the_flag() {
+    let (db, _dir) = test_db().await;
+    let page = cited_ai_page(&db, "p").await;
+    let hash = crate::authorship::sentence_units(&page.content)[0]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &hash, Some("wrong port"))
+        .await
+        .unwrap();
+
+    // No model configured: the route finds no provider at all.
+    assert!(fix_provider(None, None, None, None).is_none());
+    // A model that is there but not available, one that fails, one that says
+    // the sources show no fix, and one that answers nonsense.
+    let unavailable = crate::llm_provider::MockProvider::unavailable();
+    assert_eq!(
+        ask_ai_to_fix(&db, &unavailable, "p", &hash, None)
+            .await
+            .unwrap(),
+        FlagFixOutcome::Skipped("model_unavailable")
+    );
+    let failing = FixModel {
+        answer: None,
+        prompts: std::sync::Mutex::new(Vec::new()),
+    };
+    assert_eq!(
+        ask_ai_to_fix(&db, &failing, "p", &hash, None)
+            .await
+            .unwrap(),
+        FlagFixOutcome::Skipped("model_error")
+    );
+    let none = FixModel::answering("{\"action\":\"none\"}");
+    assert_eq!(
+        ask_ai_to_fix(&db, &none, "p", &hash, None).await.unwrap(),
+        FlagFixOutcome::NoFix
+    );
+    let two = FixModel::answering(
+        "{\"action\":\"rewrite\",\"text\":\"Port 7878.\\nIt also says hello.\"}",
+    );
+    assert_eq!(
+        ask_ai_to_fix(&db, &two, "p", &hash, None).await.unwrap(),
+        FlagFixOutcome::Skipped("unusable_answer")
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    assert!(view.proposals.is_empty(), "{:?}", view.proposals);
+    assert!(view.sentences[0].flagged, "the flag stays as it is");
+
+    // An uncited sentence flagged with no note gives the model nothing to
+    // ground a fix on, so it is not asked.
+    let other = crate::authorship::sentence_units(&page.content)[1]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &other, None).await.unwrap();
+    let model = FixModel::answering("{\"action\":\"rewrite\",\"text\":\"It starts at boot.\"}");
+    assert_eq!(
+        ask_ai_to_fix(&db, &model, "p", &other, None).await.unwrap(),
+        FlagFixOutcome::Skipped("nothing_to_ground")
+    );
+    assert_eq!(model.calls(), 0);
+}
+
+#[tokio::test]
+async fn a_flagged_sentence_of_the_persons_gets_the_fix_without_a_facts_changed_reason() {
+    let (db, _dir) = test_db().await;
+    let page = page_with_my_line(&db, "p").await;
+    let mine = crate::authorship::sentence_units(&page.content)[2]
+        .hash
+        .clone();
+    let model = FixModel::answering(
+        "{\"action\":\"rewrite\",\"text\":\"I prefer the multi-thread runtime.\"}",
+    );
+    let note = "I switched to the multi-thread runtime";
+
+    // Not flagged yet: no fix is asked for, and a reasonless proposal from an
+    // agent is still refused.
+    assert_eq!(
+        ask_ai_to_fix(&db, &model, "p", &mine, Some(note))
+            .await
+            .unwrap(),
+        FlagFixOutcome::Skipped("not_flagged")
+    );
+    assert_eq!(model.calls(), 0);
+    let agent_ask = SentenceProposeRequest {
+        sentence_hash: mine.clone(),
+        text: "I prefer the multi-thread runtime.".into(),
+        why: None,
+        reason: None,
+        expected_version: None,
+    };
+    assert!(matches!(
+        propose_sentence(&db, "p", &agent_ask, "claude-code").await,
+        Err(WenlanError::Validation(m)) if m.starts_with("reason_required")
+    ));
+
+    flag_sentence(&db, "p", &mine, Some(note)).await.unwrap();
+    // The flag opens the way for the AI's fix only, never for any agent.
+    assert!(matches!(
+        propose_sentence(&db, "p", &agent_ask, "claude-code").await,
+        Err(WenlanError::Validation(m)) if m.starts_with("reason_required")
+    ));
+    let outcome = ask_ai_to_fix(&db, &model, "p", &mine, Some(note))
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, FlagFixOutcome::Proposed(_)),
+        "{outcome:?}"
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    let sentence = &view.sentences[2];
+    assert!(sentence.protected && sentence.author == SentenceAuthor::Person);
+    let pending = pending_for(&view, &mine);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].after, "I prefer the multi-thread runtime.");
+    assert_eq!(pending[0].why.as_deref(), Some(note));
+    assert_eq!(view.version, page.version, "nothing lands before accept");
+
+    // Once the sentence changes, the old flag no longer stands.
+    let edited = format!("{AI_BODY} I prefer no runtime at all.");
+    assert!(write(&db, "p", &edited, "manual_edit", None).await.wrote);
+    let changed = crate::authorship::sentence_units(&edited)[2].hash.clone();
+    assert_eq!(
+        ask_ai_to_fix(&db, &model, "p", &changed, Some(note))
+            .await
+            .unwrap(),
+        FlagFixOutcome::Skipped("not_flagged")
+    );
+}
+
+#[tokio::test]
+async fn the_fix_follows_a_pinned_everyday_source_and_never_crosses_it() {
+    use crate::llm_provider::{LlmProvider, MockProvider};
+    use crate::refinery::EverydaySource;
+    let api: Arc<dyn LlmProvider> = Arc::new(MockProvider::new("api"));
+    let local: Arc<dyn LlmProvider> = Arc::new(MockProvider::new("local"));
+    let down: Arc<dyn LlmProvider> = Arc::new(MockProvider::unavailable());
+    let picked = fix_provider(None, Some(&down), None, Some(&local)).unwrap();
+    assert!(Arc::ptr_eq(picked, &local), "no pin: first available");
+    let picked = fix_provider(None, Some(&api), None, Some(&local)).unwrap();
+    assert!(Arc::ptr_eq(picked, &api));
+    let picked = fix_provider(
+        Some(EverydaySource::OnDevice),
+        Some(&api),
+        None,
+        Some(&local),
+    );
+    assert!(Arc::ptr_eq(picked.unwrap(), &local), "the pin wins");
+    assert!(
+        fix_provider(
+            Some(EverydaySource::External),
+            Some(&api),
+            None,
+            Some(&local)
+        )
+        .is_none(),
+        "a pinned source that is not there means no fix"
+    );
 }

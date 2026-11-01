@@ -54,6 +54,7 @@ fn config_to_response(cfg: &config::Config) -> ConfigResponse {
         synthesis_source: cfg.synthesis_source.clone(),
         background_ai_enabled: Some(cfg.background_ai_enabled()),
         page_map_auto_suggest: cfg.page_map_auto_suggest,
+        chat_check_enabled: cfg.chat_check_enabled,
     }
 }
 
@@ -154,6 +155,9 @@ pub async fn handle_update_config(
         }
         if let Some(v) = req.page_map_auto_suggest {
             cfg.page_map_auto_suggest = v;
+        }
+        if let Some(v) = req.chat_check_enabled {
+            cfg.chat_check_enabled = v;
         }
         if let Some(enabled) = req.background_ai_enabled {
             cfg.background_ai_enabled = Some(enabled);

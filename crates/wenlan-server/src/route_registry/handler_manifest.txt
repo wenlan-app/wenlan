@@ -18,6 +18,8 @@ main|get|/api/config|wenlan_server::config_routes::handle_get_config
 main|get|/api/config/routing|wenlan_server::config_routes::handle_get_resolved_routing
 main|get|/api/decisions|wenlan_server::decisions_routes::handle_list_decisions
 main|get|/api/decisions/domains|wenlan_server::decisions_routes::handle_list_decision_domains
+main|post|/api/check|wenlan_server::check_routes::handle_check
+main|post|/api/check/context|wenlan_server::check_routes::handle_check_context
 main|get|/api/health|wenlan_server::routes::handle_health
 main|get|/api/home-stats|wenlan_server::memory_routes::handle_get_home_stats
 main|get|/api/import/batches/active|wenlan_server::import_routes::handle_active_import_batches
@@ -54,6 +56,8 @@ main|get|/api/pages/recent|wenlan_server::routes::handle_recent_pages
 main|get|/api/pages/recent-changes|wenlan_server::routes::handle_recent_page_changes
 main|get|/api/pages/{id}|wenlan_server::page_routes::handle_get_page
 main|get|/api/pages/{id}/basis/{basis_id}/diff|wenlan_server::page_basis_routes::handle_basis_diff
+main|get|/api/attachments/resolve|wenlan_server::knowledge_routes::handle_resolve_embed
+main|get|/api/pages/{id}/original|wenlan_server::original_routes::handle_get_page_original
 main|get|/api/pages/{id}/sentences|wenlan_server::sentence_routes::handle_get_page_sentences
 main|get|/api/pages/{id}/links|wenlan_server::page_routes::handle_get_page_links
 main|get|/api/pages/{id}/map|wenlan_server::page_map_routes::handle_get_page_map
@@ -68,6 +72,8 @@ main|get|/api/repairs/recovery/{review_id}|wenlan_server::repair_read_routes::ha
 main|get|/api/repairs/runtime|wenlan_server::repair_runtime_routes::handle_runtime
 main|get|/api/retrievals/recent|wenlan_server::routes::handle_recent_retrievals
 main|get|/api/sessions/{id}|wenlan_server::session_routes::handle_get_session
+main|get|/api/things|wenlan_server::things_routes::handle_list_things
+main|get|/api/things/{id}|wenlan_server::things_routes::handle_get_thing
 main|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 repair|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 main|get|/api/snapshots|wenlan_server::snapshot_routes::handle_list_snapshots
@@ -143,6 +149,7 @@ main|post|/api/pages/{id}/sentences/propose|wenlan_server::sentence_routes::hand
 main|post|/api/pages/{id}/sentences/proposals/{proposal_id}/accept|wenlan_server::sentence_routes::handle_accept_sentence_proposal
 main|post|/api/pages/{id}/sentences/proposals/{proposal_id}/reject|wenlan_server::sentence_routes::handle_reject_sentence_proposal
 main|post|/api/pages/{id}/sentences/flag|wenlan_server::sentence_routes::handle_flag_sentence
+main|post|/api/pages/{id}/sentences/revert|wenlan_server::sentence_routes::handle_revert_sentences
 main|post|/api/pages/{id}/sentences/recheck|wenlan_server::sentence_routes::handle_recheck_sentence
 main|post|/api/pages/{id}/code-basis/cited|wenlan_server::code_basis_routes::handle_code_basis_cited
 main|post|/api/steep/claim|wenlan_server::steep_routes::handle_steep_claim
@@ -173,6 +180,7 @@ main|post|/api/repairs/verify|wenlan_server::repair_routes::handle_verify
 main|post|/api/repairs/runtime/resume|wenlan_server::repair_runtime_routes::handle_resume
 main|post|/api/search|wenlan_server::routes::handle_search
 main|post|/api/sessions|wenlan_server::session_routes::handle_upsert_session
+main|post|/api/sessions/{id}/things/move|wenlan_server::things_routes::handle_move_session_thing
 main|post|/api/shutdown|wenlan_server::routes::handle_shutdown
 main|post|/api/snapshots/{id}/delete|wenlan_server::snapshot_routes::handle_delete_snapshot
 main|post|/api/sources|wenlan_server::source_routes::handle_add_source
@@ -237,6 +245,7 @@ main|delete|/api/spaces/{name}|wenlan_server::spaces_routes::handle_delete_space
 main|delete|/api/spaces/{name}/wiki/repo|wenlan_server::repo_wiki_routes::handle_unbind
 main|delete|/api/tags/{name}|wenlan_server::activity_tag_routes::handle_delete_tag
 main|patch|/api/brief|wenlan_server::brief_routes::handle_update_brief
+main|patch|/api/things/{id}|wenlan_server::things_routes::handle_rename_thing
 main|patch|/api/sources/{id}|wenlan_server::source_routes::handle_update_source
 main|get|/api/outbox/status|wenlan_server::outbox_routes::handle_status
 main|patch|/api/pages/{id}/map/edges/{edge_id}|wenlan_server::page_map_routes::handle_patch_map_edge

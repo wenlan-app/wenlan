@@ -146,9 +146,9 @@ fn main_only_route_is_refused_in_the_repair_builder() {
 
 /// Group the manifest's entries for one builder into per-path method routers.
 ///
-/// `Get` and `Patch` have no chaining method on `TrackedMethodRouter`, so they
-/// have to open the chain; everything else chains onto them. No path in the
-/// manifest carries both, which this asserts rather than assumes.
+/// `Get` has no chaining method on `TrackedMethodRouter`, so it opens the
+/// chain; `Patch` opens it when there is no `Get`, and otherwise chains onto
+/// it like everything else.
 fn register_builder(builder: Builder) -> TrackedRouter<()> {
     let mut by_path: BTreeMap<&'static str, Vec<ReaderMethod>> = BTreeMap::new();
     for (b, method, path) in truth_manifest::runtime_entries() {
@@ -159,12 +159,12 @@ fn register_builder(builder: Builder) -> TrackedRouter<()> {
 
     let mut router = TrackedRouter::<()>::new_unbound_for_test(builder);
     for (path, mut methods) in by_path {
-        let opener = |m: &ReaderMethod| !matches!(m, ReaderMethod::Get | ReaderMethod::Patch);
+        let opener = |m: &ReaderMethod| match m {
+            ReaderMethod::Get => 0,
+            ReaderMethod::Patch => 1,
+            _ => 2,
+        };
         methods.sort_by_key(opener);
-        assert!(
-            !(methods.contains(&ReaderMethod::Get) && methods.contains(&ReaderMethod::Patch)),
-            "{path} carries both GET and PATCH; neither can chain onto the other"
-        );
 
         let mut method_router = match methods[0] {
             ReaderMethod::Get => super::get(|| async { "read" }),
@@ -178,8 +178,9 @@ fn register_builder(builder: Builder) -> TrackedRouter<()> {
                 ReaderMethod::Post => method_router.post(|| async { "read" }),
                 ReaderMethod::Put => method_router.put(|| async { "read" }),
                 ReaderMethod::Delete => method_router.delete(|| async { "read" }),
-                ReaderMethod::Get | ReaderMethod::Patch => {
-                    unreachable!("{path}: {method:?} cannot chain, and sorting put it first")
+                ReaderMethod::Patch => method_router.patch(|| async { "read" }),
+                ReaderMethod::Get => {
+                    unreachable!("{path}: GET cannot chain, and sorting put it first")
                 }
             };
         }

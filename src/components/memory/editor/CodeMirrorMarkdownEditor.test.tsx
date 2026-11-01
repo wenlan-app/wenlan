@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { StrictMode, createRef } from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { EditorView } from "@codemirror/view";
-import { undo, undoDepth } from "@codemirror/commands";
+import { isolateHistory, redo, undo, undoDepth } from "@codemirror/commands";
 import { SearchQuery, replaceAll, setSearchQuery } from "@codemirror/search";
 import { i18n } from "../../../i18n";
 import { CodeMirrorMarkdownEditor } from "./CodeMirrorMarkdownEditor";
+import { renamedLinkEdits } from "../pages/renameLinkRewrite";
 import type {
   MarkdownEditorHandle,
   MarkdownEditorProps,
@@ -66,6 +67,99 @@ describe("CodeMirrorMarkdownEditor", () => {
     expect(editorViewFromTextbox(screen.getByRole("textbox")).state.selection.main)
       .toMatchObject({ anchor: 2, head: 0 });
     expect(props.onDocumentChange).not.toHaveBeenCalled();
+  });
+
+  it("replays an outside link rewrite on text that undo brings back", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    const onDocumentChange = vi.fn();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "See [[Old]].\nKeep.", onDocumentChange })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    // The person deletes the line naming the old title, then the page is renamed.
+    act(() => { view.dispatch({ changes: { from: 0, to: 13 }, userEvent: "delete" }); });
+    expect(view.state.doc.toString()).toBe("Keep.");
+    const rewrite = (doc: string) => {
+      const at = doc.indexOf("[[Old]]");
+      return at < 0 ? [] : [{ from: at + 2, to: at + 5, insert: "New" }];
+    };
+    act(() => { expect(ref.current?.applyExternalEdits(rewrite)).toBe(true); });
+    act(() => { undo(view); });
+    await waitFor(() => expect(view.state.doc.toString()).toBe("See [[New]].\nKeep."));
+    expect(onDocumentChange).toHaveBeenLastCalledWith("See [[New]].\nKeep.");
+    // The replay is not a step of its own: one more undo has nothing left.
+    expect(undoDepth(view.state)).toBe(0);
+    act(() => { redo(view); });
+    await waitFor(() => expect(view.state.doc.toString()).toBe("Keep."));
+  });
+
+  it("keeps an old-title link typed after the rename when undo restores other text", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "Intro.\nKeep." })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    const rewrite = (doc: string) => [...doc.matchAll(/\[\[Old\]\]/g)]
+      .map((match) => ({ from: match.index + 2, to: match.index + 5, insert: "New" }));
+    act(() => { expect(ref.current?.applyExternalEdits(rewrite)).toBe(true); });
+    // A new page now carries the old title; the person links to it on purpose.
+    act(() => { view.dispatch({ changes: { from: view.state.doc.length, insert: " See [[Old]]." }, userEvent: "input.type", annotations: isolateHistory.of("full") }); });
+    // Then deletes an unrelated line, and takes that back.
+    act(() => { view.dispatch({ changes: { from: 0, to: 7 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("Intro.\nKeep. See [[Old]].");
+    // Negative control: text the undo itself restores is still rewritten.
+    act(() => { view.dispatch({ changes: { from: 0, to: 7, insert: "[[Old]] " }, userEvent: "input.type", annotations: isolateHistory.of("full") }); });
+    act(() => { view.dispatch({ changes: { from: 0, to: 8 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("[[New]] Keep. See [[Old]].");
+  });
+
+  it("rewrites a link that undo completes by restoring part of it", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "[[Old]] [[Old]]" })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    // Delete only the "d" of the first link, then rename Old to New.
+    act(() => { view.dispatch({ changes: { from: 4, to: 5 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    act(() => { expect(ref.current?.applyExternalEdits((doc) => renamedLinkEdits(doc, "Old", "New"))).toBe(true); });
+    expect(view.state.doc.toString()).toBe("[[Ol]] [[New]]");
+    // Undo puts back one letter, inside the target: the link names Old again.
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("[[New]] [[New]]");
+    // The old check wanted the whole target inside the restored text; here
+    // the restored "d" (4..5) does not hold the target (2..5).
+    const target = renamedLinkEdits("[[Old]] [[New]]", "Old", "New")[0];
+    expect(target.from >= 4 && target.to <= 5).toBe(false);
+  });
+
+  it("rewrites a link that undo completes by restoring its closing bracket", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "[[Old]] x" })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    act(() => { view.dispatch({ changes: { from: 6, to: 7 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    act(() => { expect(ref.current?.applyExternalEdits((doc) => renamedLinkEdits(doc, "Old", "New"))).toBe(true); });
+    expect(view.state.doc.toString()).toBe("[[Old] x");
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("[[New]] x");
+  });
+
+  it("negative control: without the link's whole span, a restored bracket leaves the old title", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "[[Old]] x" })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    act(() => { view.dispatch({ changes: { from: 6, to: 7 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    const targetOnly = (doc: string) => renamedLinkEdits(doc, "Old", "New").map(({ from, to, insert }) => ({ from, to, insert }));
+    act(() => { expect(ref.current?.applyExternalEdits(targetOnly)).toBe(true); });
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("[[Old]] x");
+  });
+
+  it("leaves text undo brings back as it was when no outside rewrite applies", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "See [[Old]].\nKeep." })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    act(() => { view.dispatch({ changes: { from: 0, to: 13 }, userEvent: "delete" }); });
+    // An expired rename rewrites nothing.
+    act(() => { expect(ref.current?.applyExternalEdits(() => [])).toBe(true); });
+    act(() => { undo(view); });
+    await Promise.resolve();
+    expect(view.state.doc.toString()).toBe("See [[Old]].\nKeep.");
   });
 
   it("reports selection-only changes through the latest callback without writing text", () => {

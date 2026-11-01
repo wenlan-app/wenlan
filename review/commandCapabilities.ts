@@ -51,6 +51,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // The main shell asks once per launch whether a wenlan://pair link
     // opened the app. Shared chrome, so it belongs in the contract.
     "take_remote_pairing_link",
+    // It also asks whether a wenlan://page or wenlan://memory link is waiting.
+    "take_open_link",
     // The same shell listens for "Web access stopped on its own" and asks for
     // the one pending notice. Shared chrome, so it belongs in the contract.
     "take_remote_access_notice",
@@ -94,6 +96,13 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "page_review_supported",
     "get_page_links",
     "set_page_review_required",
+    // The AI's proposals for the person's sentences (UX-WHO-2).
+    "get_page_sentences",
+    "accept_sentence_proposal",
+    "reject_sentence_proposal",
+    "revert_page_sentences",
+    "flag_page_sentence",
+    "recheck_page_sentence",
     "mark_page_basis",
     "unmark_page_basis",
     "confirm_page_basis",
@@ -110,6 +119,11 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // Fixtures have no AI conversations; both answer with the quiet shape.
     "get_page_sessions",
     "get_session_detail",
+    // Fixtures have no things: the list is empty and no id resolves.
+    "list_things",
+    "get_thing",
+    "rename_thing",
+    "move_session_thing",
     "list_registered_sources",
   ],
   pageDrafts: [

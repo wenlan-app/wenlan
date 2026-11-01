@@ -756,7 +756,13 @@ describe('revision history', () => {
       entries: [],
     });
     await tauri.getPageRevisions('page-1');
-    expect(mockInvoke).toHaveBeenCalledWith('get_page_revisions', { pageId: 'page-1' });
+    expect(mockInvoke).toHaveBeenCalledWith('get_page_revisions', { pageId: 'page-1', includeText: false });
+  });
+
+  it('getPageRevisions can ask for each version\'s text', async () => {
+    mockInvoke.mockResolvedValue({ page_id: 'page-1', current_version: 2, user_edited: false, entries: [] });
+    await tauri.getPageRevisions('page-1', true);
+    expect(mockInvoke).toHaveBeenCalledWith('get_page_revisions', { pageId: 'page-1', includeText: true });
   });
 });
 

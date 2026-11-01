@@ -289,6 +289,31 @@ describe("writingPresentation", () => {
     expect(onDocumentUpdate).not.toHaveBeenCalled();
   });
 
+  it("keeps the bullet, number and checkbox on the line being typed, as Obsidian does", async () => {
+    const source = "- typing a list item\n1. numbered\n- [ ] task";
+    const numbered = source.indexOf("1. numbered");
+    const task = source.indexOf("- [ ] task");
+    for (const caret of [source.indexOf("item") + 4, numbered + "1. numbered".length, source.length]) {
+      const view = makeView(source, { selection: EditorSelection.single(caret) });
+      await settleFocusChange();
+      expect(concealedDecorationRanges(view)).toEqual([
+        { from: 0, to: 2 },
+        { from: numbered, to: numbered + 3 },
+        { from: task, to: task + 2 },
+        { from: task + 2, to: task + 5 },
+      ]);
+      view.destroy();
+    }
+  });
+
+  it("shows a marker's source only when a selection covers it", async () => {
+    const source = "- item\naway";
+    const view = makeView(source, { selection: EditorSelection.single(0, 4) });
+    await settleFocusChange();
+    expect(concealedDecorationRanges(view)).toEqual([]);
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
   it("reveals the active quoted line without exposing neighboring Markdown", async () => {
     const source = [
       "> first",
@@ -423,6 +448,19 @@ describe("writingPresentation", () => {
     expect(image).toHaveAttribute("alt", "Home");
     expect(video).toHaveAttribute("src", "asset://localhost//Users/me/.wenlan/pages/_attachments/film-0a1b2c3d4e.mp4#t=0.1");
     expect(video?.controls).toBe(true);
+    expect(view.state.doc.toString()).toBe(source);
+    resetAttachmentsDirForTest(null);
+  });
+
+  it("shows an Obsidian image embed as the image, outside code only", () => {
+    resetAttachmentsDirForTest("/vault/_attachments");
+    const source = "Look ![[shot.png|240]] here.\n\n`![[code.png]]`\naway";
+    const view = makeView(source, { selection: EditorSelection.single(source.length) });
+    const images = view.contentDOM.querySelectorAll<HTMLImageElement>("img.cm-writing-image");
+    expect(images).toHaveLength(1);
+    expect(images[0]).toHaveAttribute("src", "asset://localhost//vault/_attachments/shot.png");
+    expect(images[0].style.width).toBe("240px");
+    expect(view.contentDOM.textContent).not.toContain("![[shot.png");
     expect(view.state.doc.toString()).toBe(source);
     resetAttachmentsDirForTest(null);
   });

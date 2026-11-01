@@ -18,6 +18,9 @@ import {
   getEntityDetail,
   redistillPage,
   setPageReviewRequired,
+  getPageSentences,
+  acceptSentenceProposal,
+  rejectSentenceProposal,
   updatePage,
   renamePage,
   getDaemonVersion,
@@ -46,6 +49,8 @@ import {
   type PageReviewOutcome,
   type IndexedFileInfo,
   type UpdatePageFailureKind,
+  recheckPageSentence,
+  type WeakReason,
 } from "../../lib/tauri";
 // Imported from its own module, not the lib/tauri barrel: tests mock that
 // barrel, and a mocked module would shadow the value this must stay bound to.
@@ -54,10 +59,14 @@ import { confirmAction } from "../../lib/confirmAction";
 import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
-import ContentRenderer from "./ContentRenderer";
+import ContentRenderer, { EmbedPageContext } from "./ContentRenderer";
 import { PageLengthSwitch, PageReadingLayers, usePageLength } from "./page/PageReadingLayers";
 import { pageLayerOffsets } from "./page/pageLayers";
 import type { PageLayersSettings } from "./editor/pageLayersEditing";
+import type { SentenceProposalSettings } from "./editor/sentenceProposals";
+import type { AiChangeMarkSettings } from "./editor/aiChangeMarks";
+import type { SentenceAuthorshipSettings } from "./editor/sentenceAuthorship";
+import { proposalsInFolds } from "./page/proposalsInFolds";
 import RelatedPages from "./page/RelatedPages";
 import PageInfo from "./page/PageInfo";
 import { PageSessionSources } from "./sessions/SessionSourceSection";
@@ -68,7 +77,9 @@ import "./page/pageDocumentTools.css";
 import KnowledgeContext from "./context/KnowledgeContext";
 import { pageReviewNotice, type PageReviewNotice } from "./page/pageReviewNotice";
 import { RailPanelTitle } from "./MemoryDetailPrimitives";
-import { AiChangesOptions } from "./AiChangesOptions";
+import { PageLockSwitch } from "./page/PageLockSwitch";
+import { AiUpdateLine } from "./page/AiUpdateLine";
+import { ThisSentence } from "./page/ThisSentence";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
 import { folderName } from "../../lib/dateFormat";
 import { stripLedeLabel } from "../../lib/pageLede";
@@ -106,6 +117,7 @@ import { leadingMarkdownH1MatchesTitle, withoutLeadingTitleH1 } from "./editor/p
 import { MovePageDialog } from "./pages/MovePageDialog";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
 import { finishRenameLinks } from "./pages/renameLinksNotice";
+import { applyTextEdits, renameRewriteExplaining } from "./pages/renameLinkRewrite";
 import { inventoryPageFilename, type PageProjectionIssue } from "./pages/pageInventory";
 import { PageAutosave } from "./editor/pageAutosave";
 import { NoteReviewNotice } from "./page/NoteReviewNotice";
@@ -521,6 +533,23 @@ export default function PageDetail({
     retry: false,
   });
 
+  // The AI's proposals for the person's sentences (UX-WHO-2). A proposal
+  // does not change the page, so look again now and then, and sooner on a
+  // locked page where every AI change waits here.
+  const { data: pageSentences } = useQuery({
+    queryKey: ["page-sentences", pageId],
+    queryFn: () => getPageSentences(pageId),
+    enabled: !!pageId && !exampleWiki,
+    staleTime: 15_000,
+    refetchInterval: canonicalPage?.review_required === true ? 5_000 : 30_000,
+    retry: false,
+  });
+  const pendingProposals = useMemo(
+    () => (pageSentences?.page_id === pageId ? pageSentences.proposals : [])
+      .filter((proposal) => proposal.status === "pending"),
+    [pageSentences, pageId],
+  );
+
   const { data: pageRevisions, isFetching: revisionsLoading, isError: revisionsError, refetch: refetchRevisions } = useQuery({
     queryKey: ["page-revisions", pageId],
     queryFn: () => getPageRevisions(pageId),
@@ -744,11 +773,25 @@ export default function PageDetail({
 
   // The editor folds the same layers the reading view cuts (UX-VIEW-2/3).
   const [pageLength, choosePageLength] = usePageLength();
-  const editorPageLayers = useMemo<PageLayersSettings>(() => ({
-    length: pageLength,
-    labels: { aiDetails: t("pageLayers.aiDetails"), showFull: t("pageLayers.showFull") },
-    onShowFull: () => choosePageLength("full"),
-  }), [pageLength, choosePageLength, t]);
+  // A proposal inside a folded part is counted on that fold's line, so it
+  // is never out of sight (UX-WHO-2).
+  const foldedProposals = useMemo(
+    () => proposalsInFolds(page?.content ?? "", pendingProposals, pageLength),
+    [page?.content, pendingProposals, pageLength],
+  );
+  const editorPageLayers = useMemo<PageLayersSettings>(() => {
+    const waiting = (label: string, count: number) => count > 0
+      ? `${label} · ${t("sentenceProposals.waiting", { count })}`
+      : label;
+    return {
+      length: pageLength,
+      labels: {
+        aiDetails: waiting(t("pageLayers.aiDetails"), foldedProposals.ai),
+        showFull: waiting(t("pageLayers.showFull"), foldedProposals.short),
+      },
+      onShowFull: () => choosePageLength("full"),
+    };
+  }, [pageLength, choosePageLength, t, foldedProposals.ai, foldedProposals.short]);
   const pageHasTwoLengths = pageLayerOffsets(page?.content ?? "").sectionStart !== null;
 
   useEffect(() => {
@@ -884,6 +927,106 @@ export default function PageDetail({
   const flushEditor = useCallback(() => storedActionRef.current
     ? Promise.resolve(false)
     : autosave.flush(), [autosave]);
+  const [proposalBusyId, setProposalBusyId] = useState<string | null>(null);
+  const decideProposal = useCallback(async (proposalId: string, accept: boolean) => {
+    const originPageId = pageId;
+    setProposalBusyId(proposalId);
+    setActionErrorMessage(null);
+    try {
+      // Accepting writes the page; anything typed here must land first so
+      // the accepted sentence never races the autosave.
+      if (accept && !await flushEditor()) return;
+      if (accept) await acceptSentenceProposal(originPageId, proposalId);
+      else await rejectSentenceProposal(originPageId, proposalId);
+      if (accept) {
+        await queryClient.invalidateQueries({ queryKey: ["page", originPageId] });
+        queryClient.invalidateQueries({ queryKey: ["page-revisions", originPageId] });
+        queryClient.invalidateQueries({ queryKey: ["pages"] });
+      }
+    } catch {
+      if (activePageIdRef.current === originPageId) {
+        setActionErrorMessage(t(accept ? "sentenceProposals.acceptFailed" : "sentenceProposals.rejectFailed"));
+      }
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ["page-sentences", originPageId] });
+      setProposalBusyId(null);
+    }
+  }, [flushEditor, pageId, queryClient, t]);
+  // The sentences the AI's newest write changed, marked only after the person
+  // asks from Info (UX-WHO-2, Qi-Xuan's 2026-11-01 choice).
+  const [aiChangesShownFor, setAiChangesShownFor] = useState<string | null>(null);
+  const lastAiUpdate = pageSentences?.page_id === pageId ? pageSentences.last_ai_update ?? null : null;
+  const aiChangesShown = aiChangesShownFor === pageId && !!lastAiUpdate;
+  const removedByAi = useMemo(
+    () => (lastAiUpdate?.changes ?? []).flatMap((change) =>
+      change.kind === "removed" && change.before ? [change.before] : []),
+    [lastAiUpdate],
+  );
+  const editorAiChangeMarks = useMemo<AiChangeMarkSettings | null>(() => {
+    if (!aiChangesShown || !lastAiUpdate || !pageSentences) return null;
+    const textByHash = new Map(pageSentences.sentences.map((sentence) => [sentence.hash, sentence.text]));
+    const marks = (lastAiUpdate.changes ?? []).flatMap((change) => {
+      const text = change.hash ? textByHash.get(change.hash) : undefined;
+      return text ? [{ text, before: change.kind === "changed" ? change.before : null }] : [];
+    });
+    return { marks, beforeLabel: t("aiUpdate.before") };
+  }, [aiChangesShown, lastAiUpdate, pageSentences, t]);
+
+  // Who said each sentence and which can't be backed up (UX-WHO-1, UX-WHO-4),
+  // plus the sentence the cursor is in for Info's "this sentence" (UX-WHO-3).
+  const [cursorSentenceHash, setCursorSentenceHash] = useState<string | null>(null);
+  const [recheckingHash, setRecheckingHash] = useState<string | null>(null);
+  const recheckSentence = useCallback(async (hash: string) => {
+    const originPageId = pageId;
+    setRecheckingHash(hash);
+    try {
+      await recheckPageSentence(originPageId, hash);
+    } catch {
+      if (activePageIdRef.current === originPageId) setActionErrorMessage(t("thisSentence.recheckFailed"));
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ["page-sentences", originPageId] });
+      setRecheckingHash(null);
+    }
+  }, [pageId, queryClient, t]);
+  const currentSentences = pageSentences?.page_id === pageId ? pageSentences.sentences : null;
+  const cursorSentence = useMemo(
+    () => currentSentences?.find((sentence) => sentence.hash === cursorSentenceHash) ?? null,
+    [currentSentences, cursorSentenceHash],
+  );
+  const editorSentenceAuthorship = useMemo<SentenceAuthorshipSettings | null>(() => {
+    if (!currentSentences) return null;
+    return {
+      sentences: currentSentences.map((sentence) => ({
+        hash: sentence.hash,
+        text: sentence.text,
+        said: sentence.author === "original" ? null : sentence.protected ? "you" : sentence.author === "ai" ? "ai" : null,
+        weak: sentence.weak ?? [],
+      })),
+      labels: {
+        you: t("thisSentence.who.you"),
+        ai: t("thisSentence.who.ai"),
+        weak: (reason: WeakReason) => t("thisSentence.weak", { reason: t(`weakReason.${reason}`) }),
+        recheck: t("thisSentence.recheck"),
+        rechecking: t("thisSentence.rechecking"),
+      },
+      busyHash: recheckingHash,
+      onRecheck: (hash) => void recheckSentence(hash),
+      onCursorSentence: setCursorSentenceHash,
+    };
+  }, [currentSentences, recheckingHash, recheckSentence, t]);
+
+  const editorSentenceProposals = useMemo<SentenceProposalSettings>(() => ({
+    proposals: pendingProposals,
+    labels: {
+      suggests: t("sentenceProposals.suggests"),
+      suggestsRemoving: t("sentenceProposals.suggestsRemoving"),
+      accept: t("sentenceProposals.accept"),
+      reject: t("sentenceProposals.reject"),
+    },
+    busyId: proposalBusyId,
+    onAccept: (id) => void decideProposal(id, true),
+    onReject: (id) => void decideProposal(id, false),
+  }), [pendingProposals, proposalBusyId, decideProposal, t]);
   useEffect(() => {
     onRegisterFlush?.(flushEditor);
     return () => onRegisterFlush?.(null);
@@ -999,7 +1142,7 @@ export default function PageDetail({
   });
 
   const renameMutation = useMutation({
-    mutationFn: (input: { id: string; title: string; expectedVersion: number }) =>
+    mutationFn: (input: { id: string; title: string; previousTitle: string; expectedVersion: number }) =>
       renamePage(input.id, input.title, input.expectedVersion),
     onSuccess: (renamed, input) => {
       if (renamed.id !== input.id) return;
@@ -1026,7 +1169,7 @@ export default function PageDetail({
       ]) {
         void queryClient.invalidateQueries({ queryKey });
       }
-      finishRenameLinks(t, queryClient, renamed);
+      finishRenameLinks(t, queryClient, renamed, input.previousTitle);
       if (activePageIdRef.current !== input.id) return;
       renameAttemptRef.current += 1;
       setRenaming(false);
@@ -1423,6 +1566,22 @@ export default function PageDetail({
       if (canonicalPage?.status === "archived" && !autosave.snapshot().dirty &&
           !editorStatus.compositionActive && canonicalPage.content !== autosave.snapshot().baseline?.content) {
         closeEditor();
+        return;
+      }
+      // A rename made here rewrote this page's [[links]]: take the same
+      // rewrite into the draft rather than stopping on a conflict.
+      const baselineContent = autosave.snapshot().baseline?.content;
+      const linkRewrite = canonicalPage && baselineContent !== undefined
+        ? renameRewriteExplaining(baselineContent, canonicalPage.content)
+        : null;
+      if (canonicalPage && linkRewrite && autosave.rebaseOnto(
+        canonicalPage,
+        (text) => applyTextEdits(text, linkRewrite(text)),
+        // The editor rewrites its own document once; that document,
+        // serialized, is what autosave keeps and saves.
+        () => editorRef.current?.applyExternalEdits(linkRewrite) ? currentDraftSource() : null,
+      )) {
+        editorPageRef.current = canonicalPage;
         return;
       }
       // Changed in Obsidian or another editor with nothing typed here: show it.
@@ -2175,7 +2334,6 @@ export default function PageDetail({
   // PageDetail is reused across pages; a slow request for another page must
   // not disable this page's toggle.
   const reviewLockPending = reviewRequiredMutation.isPending && reviewRequiredMutation.variables?.id === page.id;
-  const humanOwned = page.user_edited === true || page.creation_kind === "authored";
   const hasRail = pageEntities.length > 0 || outboundLinks.length > 0;
   const canRenamePage = !exampleWiki && page.status === "active" &&
     page.creation_kind !== "entity" && page.creation_kind !== "source" &&
@@ -2271,7 +2429,7 @@ export default function PageDetail({
     setRenameError(false);
     setRenameNeedsReview(false);
     if (renameExpectedVersion === null) return;
-    renameMutation.mutate({ id: page.id, title, expectedVersion: renameExpectedVersion });
+    renameMutation.mutate({ id: page.id, title, previousTitle: page.title, expectedVersion: renameExpectedVersion });
   };
 
   const reloadForRename = async () => {
@@ -2917,6 +3075,10 @@ export default function PageDetail({
                 <MarkdownEditor
                   ref={editorRef}
                   pageLayers={editorPageLayers}
+                  sentenceProposals={editorSentenceProposals}
+                  pageId={page.id}
+                  aiChangeMarks={editorAiChangeMarks}
+                  sentenceAuthorship={editorSentenceAuthorship}
                   initialDocument={editInitialDocument}
                   initialSelection={initialSelection}
                   onSelectionChange={onSelectionChange}
@@ -2991,6 +3153,7 @@ export default function PageDetail({
           <div>
             <ReferenceNavigationProvider onOpenPage={onPageClick} onOpenMemory={openSourceMemory}>
             <div className="page-detail-prose" data-testid="page-document-reading" onClickCapture={handleContentClick}>
+            <EmbedPageContext.Provider value={page.id}>
               {ledeText && (
                 <div className="page-detail-lede">
                   {ledeMarkdown ? (
@@ -3016,6 +3179,7 @@ export default function PageDetail({
                   />
                 )}
               />
+            </EmbedPageContext.Provider>
             </div>
             </ReferenceNavigationProvider>
           </div>
@@ -3080,6 +3244,26 @@ export default function PageDetail({
                   {t("pageDetail.dateline.sourceMemories", { count: sourceCount })}
                 </span>}
             </div>
+            <AiUpdateLine
+              key={page.id}
+              pageId={page.id}
+              update={lastAiUpdate}
+              shown={aiChangesShown}
+              onToggleShown={() => setAiChangesShownFor((current) => current === page.id ? null : page.id)}
+              removed={removedByAi}
+              humanEditedAt={page.human_edited_at}
+              time={pageSentences?.last_ai_update
+                ? relativeTimeFromISO(new Date(pageSentences.last_ai_update.at * 1000).toISOString(), t)
+                : ""}
+              disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"}
+            />
+            <ThisSentence
+              key={`${page.id}:${cursorSentence?.hash ?? ""}`}
+              pageId={page.id}
+              sentence={cursorSentence}
+              onFixMyself={(text) => { editorRef.current?.selectText(text); }}
+              disabled={storedActionBlocked}
+            />
           <div className="flex flex-wrap gap-2">
             {page.stale_reason && <span style={datelineBlocked || page.stale_reason === "source_conflict"
               ? { color: "var(--mem-accent-amber)" }
@@ -3093,28 +3277,17 @@ export default function PageDetail({
             <PageTruthBadges cutoverLive={cutoverLive} truth={page.truth} />
           </div>
           </div>
-          {/* The daemon refuses to lock an entity shadow page. "Ask me first"
-              is the page's review lock. */}
-          {page.creation_kind !== "entity" && <AiChangesOptions
-            heading={t("pageDetail.aiChanges")}
-            name={`page-ai-${page.id}`}
-            options={[
-              { value: "allowed", label: t("pageDetail.aiAllowed"), hint: t("pageDetail.aiAllowedHint") },
-              { value: "ask_first", label: t("pageDetail.aiAskFirst"), hint: t("pageDetail.aiAskFirstHint") },
-            ]}
-            value={page.review_required === true ? "ask_first" : "allowed"}
-            disabled={storedActionBlocked || reviewLockPending}
-            onChange={(value) => {
+          {/* The daemon refuses to lock an entity shadow page. The switch is
+              the page's review lock (UX-WHO-2). */}
+          {page.creation_kind !== "entity" && <PageLockSwitch
+            locked={page.review_required === true}
+            pending={reviewLockPending}
+            disabled={storedActionBlocked}
+            onChange={(locked) => {
               setActionErrorMessage(null);
-              reviewRequiredMutation.mutate({ id: page.id, required: value === "ask_first" });
+              reviewRequiredMutation.mutate({ id: page.id, required: locked });
             }}
-          >
-            {/* "Wrote" follows the daemon's own ownership rule
-                (page_is_human_owned): edited by hand, or written here. */}
-            {page.review_required === true
-              ? <p className="note-ai-from">{t(humanOwned ? "pageDetail.aiFromWrote" : "pageDetail.aiFromPage")}</p>
-              : !humanOwned && <p className="note-ai-from">{t("pageDetail.aiFromAi")}</p>}
-          </AiChangesOptions>}
+          />}
           <div className="note-info-sections">
             <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
               onOpenGraph={onOpenGraph ? () => onOpenGraph(pageId) : undefined}
@@ -3158,6 +3331,7 @@ export default function PageDetail({
               sources={pageSources}
               inbound={inboundLinks}
               revisions={pageRevisionEntries}
+              history={pageRevisions?.history}
               revisionsLoading={revisionsLoading}
               revisionsError={revisionsError}
               onRetryRevisions={() => void refetchRevisions()}

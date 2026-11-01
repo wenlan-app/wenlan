@@ -31,6 +31,8 @@ interface PagesOverviewProps {
   readonly onSelectDraft: (draftId: string, space: string | null) => void;
   readonly onSelectPage: (pageId: string) => void;
   readonly onSelectSpace: (spaceName: string) => void;
+  /** Opens one thing from 「正在做的事」 (UX-HOME-1). */
+  readonly onOpenThing?: (thingId: string) => void;
   /** Getting-started destinations. The checklist renders only when both are
    *  wired, so no step ever names an action with nothing behind it. Adding a
    *  source opens its dialog in place and needs no destination. */
@@ -51,6 +53,7 @@ export function PagesOverview({
   onCreatePage,
   onSelectPage,
   onSelectSpace,
+  onOpenThing,
   onConnectTool,
   onSeeExample,
   onImportChatsQuick,
@@ -141,7 +144,7 @@ export function PagesOverview({
       data-lists-pages={listsPages ? "true" : undefined}
     >
       {/* What you're working on leads the home (UX-HOME-1). */}
-      {example ? null : <WorkingOn onSelectSpace={onSelectSpace} />}
+      {example ? null : <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} />}
       {onOpenBasisUpdates && <BasisUpdatesSummary onOpen={onOpenBasisUpdates} />}
       {onOpenNoteSuggestion && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}

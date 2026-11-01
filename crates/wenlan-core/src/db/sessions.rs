@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 );
 ";
 
-const SESSION_COLUMNS: &str = "id, tool, external_id, title, cwd, repo_root, repo_remote, \
+pub(super) const SESSION_COLUMNS: &str =
+    "id, tool, external_id, title, cwd, repo_root, repo_remote, \
                                repo_branch, repo_commit, transcript_path, space, \
                                first_write_at, last_write_at";
 
@@ -94,23 +95,29 @@ pub fn import_session_ref(source_id: &str) -> Option<SessionRef> {
     SessionRef::new(tool, external_id).ok()
 }
 
-fn session_from_row(row: &libsql::Row) -> AgentSession {
+pub(super) fn session_from_row(row: &libsql::Row) -> AgentSession {
+    session_from_row_at(row, 0)
+}
+
+/// The session in `row`, its columns (`SESSION_COLUMNS` order) starting at
+/// `at`.
+pub(super) fn session_from_row_at(row: &libsql::Row, at: i32) -> AgentSession {
     AgentSession {
-        id: row.get::<String>(0).unwrap_or_default(),
-        tool: row.get::<String>(1).unwrap_or_default(),
-        external_id: row.get::<String>(2).unwrap_or_default(),
-        title: row.get::<Option<String>>(3).unwrap_or(None),
-        cwd: row.get::<Option<String>>(4).unwrap_or(None),
-        repo_root: row.get::<Option<String>>(5).unwrap_or(None),
-        repo_remote: row.get::<Option<String>>(6).unwrap_or(None),
-        repo_branch: row.get::<Option<String>>(7).unwrap_or(None),
-        repo_commit: row.get::<Option<String>>(8).unwrap_or(None),
-        transcript_path: row.get::<Option<String>>(9).unwrap_or(None),
+        id: row.get::<String>(at).unwrap_or_default(),
+        tool: row.get::<String>(at + 1).unwrap_or_default(),
+        external_id: row.get::<String>(at + 2).unwrap_or_default(),
+        title: row.get::<Option<String>>(at + 3).unwrap_or(None),
+        cwd: row.get::<Option<String>>(at + 4).unwrap_or(None),
+        repo_root: row.get::<Option<String>>(at + 5).unwrap_or(None),
+        repo_remote: row.get::<Option<String>>(at + 6).unwrap_or(None),
+        repo_branch: row.get::<Option<String>>(at + 7).unwrap_or(None),
+        repo_commit: row.get::<Option<String>>(at + 8).unwrap_or(None),
+        transcript_path: row.get::<Option<String>>(at + 9).unwrap_or(None),
         space: crate::space_context::normalize_unfiled_space(
-            row.get::<Option<String>>(10).unwrap_or(None),
+            row.get::<Option<String>>(at + 10).unwrap_or(None),
         ),
-        first_write_at: row.get::<i64>(11).unwrap_or(0),
-        last_write_at: row.get::<i64>(12).unwrap_or(0),
+        first_write_at: row.get::<i64>(at + 11).unwrap_or(0),
+        last_write_at: row.get::<i64>(at + 12).unwrap_or(0),
     }
 }
 
@@ -967,6 +974,7 @@ impl MemoryDB {
             reads_total,
             cited_by,
             transcript_available: false,
+            things: Vec::new(),
         }))
     }
 
@@ -1040,7 +1048,7 @@ impl MemoryDB {
     }
 }
 
-fn prefixed_columns(alias: &str) -> String {
+pub(super) fn prefixed_columns(alias: &str) -> String {
     SESSION_COLUMNS
         .split(',')
         .map(|column| format!("{alias}.{}", column.trim()))

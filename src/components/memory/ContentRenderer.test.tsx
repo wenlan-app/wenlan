@@ -216,3 +216,31 @@ describe("ContentRenderer preserveMarkdown", () => {
     expect(container.querySelector("table")).toBeNull();
   });
 });
+
+describe("ContentRenderer Obsidian basics", () => {
+  afterEach(() => resetAttachmentsDirForTest(null));
+
+  it("shows an image embed as the image, keeps one in code as written, and sets its width", () => {
+    resetAttachmentsDirForTest("/pages/_attachments");
+    const content = "Before ![[shot.png|240]] after.\n\n`![[code.png]]`\n\n![[Some note]]";
+    const { container } = render(<ContentRenderer content={content} variant="detail" />);
+    const image = container.querySelector<HTMLImageElement>("img.page-attachment");
+    expect(image).toHaveAttribute("src", "asset://localhost//pages/_attachments/shot.png");
+    expect(image).toHaveAttribute("alt", "shot.png");
+    expect(image?.style.width).toBe("240px");
+    expect(container.querySelector("code")?.textContent).toBe("![[code.png]]");
+    expect(container.textContent).toContain("![[Some note]]");
+  });
+
+  it("draws a callout as a box with its type and title", () => {
+    const content = "> [!warning] Before launch\n> Check the demo video.\n\n> A plain quote.";
+    const { container } = render(<ContentRenderer content={content} variant="detail" />);
+    const box = container.querySelector(".page-callout");
+    expect(box).toHaveClass("page-callout-warning");
+    expect(box?.querySelector(".page-callout-badge")?.textContent).toBe("Warning");
+    expect(box?.querySelector(".page-callout-title")?.textContent).toBe("WarningBefore launch");
+    expect(box?.textContent).toContain("Check the demo video.");
+    expect(box?.textContent).not.toContain("[!warning]");
+    expect(container.querySelectorAll(".page-callout")).toHaveLength(1);
+  });
+});

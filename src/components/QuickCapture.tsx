@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { quickCapture } from "../lib/tauri";
+import { isDaemonUnreachableError } from "../lib/setupErrors";
 import { isInputCompositionActive } from "../lib/inputComposition";
 import { confirmAction } from "../lib/confirmAction";
 import { primaryShortcutModifier } from "../lib/windowChrome";
@@ -93,10 +94,14 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
   // The daemon's own words follow, as other inline save errors in the app
   // show them. Nothing here clears the text, so a failed save keeps it in the
   // editor and in this device's copy for another try.
+  // An unreachable daemon gets a plain sentence: its transport text
+  // ("error sending request for url ...") tells the person nothing.
   const saveFailure = captureMutation.isError
     ? captureMutation.error instanceof NothingSavedError
       ? t("quickCapture.nothingSaved")
-      : t("quickCapture.saveError", {
+      : isDaemonUnreachableError(captureMutation.error)
+        ? t("quickCapture.daemonUnreachable")
+        : t("quickCapture.saveError", {
           message: captureMutation.error instanceof Error
             ? captureMutation.error.message
             : String(captureMutation.error),

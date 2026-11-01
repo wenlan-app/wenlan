@@ -5393,6 +5393,57 @@ pub async fn get_session_detail(
     client.get_session_detail(&session_id).await
 }
 
+/// Things with the newest activity first (UX-HOME-1).
+#[tauri::command]
+pub async fn list_things(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<wenlan_types::ThingSummary>, String> {
+    let client = { state.read().await.client.clone() };
+    Ok(client.list_things().await?.things)
+}
+
+#[tauri::command]
+pub async fn get_thing(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::ThingDetailResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_thing(&id).await
+}
+
+#[tauri::command]
+pub async fn rename_thing(
+    state: tauri::State<'_, State>,
+    id: String,
+    title: String,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.rename_thing(&id, title).await
+}
+
+/// Move a conversation between things (UX-THING-1): into `to_thing_id`, or
+/// into a new thing named `new_title`.
+#[tauri::command]
+pub async fn move_session_thing(
+    state: tauri::State<'_, State>,
+    session_id: String,
+    from_thing_id: String,
+    to_thing_id: Option<String>,
+    new_title: Option<String>,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client
+        .move_session_thing(
+            &session_id,
+            wenlan_types::ThingMoveRequest {
+                from_thing_id,
+                to_thing_id,
+                new_title,
+            },
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn get_page_sessions(
     state: tauri::State<'_, State>,
@@ -5419,6 +5470,73 @@ pub async fn set_page_review_required(
 ) -> Result<responses::PageReviewRequiredResponse, String> {
     let client = { state.read().await.client.clone() };
     client.set_page_review_required(&page_id, required).await
+}
+
+#[tauri::command]
+pub async fn get_page_sentences(
+    state: tauri::State<'_, State>,
+    page_id: String,
+) -> Result<wenlan_types::authorship::PageSentencesResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_page_sentences(&page_id).await
+}
+
+#[tauri::command]
+pub async fn accept_sentence_proposal(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    proposal_id: String,
+) -> Result<wenlan_types::authorship::SentenceAcceptResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client
+        .accept_sentence_proposal(&page_id, &proposal_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn reject_sentence_proposal(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    proposal_id: String,
+) -> Result<wenlan_types::authorship::SentenceProposalResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client
+        .reject_sentence_proposal(&page_id, &proposal_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn revert_page_sentences(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    version: i64,
+) -> Result<wenlan_types::authorship::SentenceRevertResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.revert_page_sentences(&page_id, version).await
+}
+
+#[tauri::command]
+pub async fn flag_page_sentence(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    sentence_hash: String,
+    ask_ai: bool,
+    why: Option<String>,
+) -> Result<wenlan_types::authorship::SentenceFlagResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client
+        .flag_page_sentence(&page_id, &sentence_hash, ask_ai, why)
+        .await
+}
+
+#[tauri::command]
+pub async fn recheck_page_sentence(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    sentence_hash: String,
+) -> Result<wenlan_types::authorship::SentenceRecheckResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.recheck_page_sentence(&page_id, &sentence_hash).await
 }
 
 #[tauri::command]
@@ -5516,12 +5634,15 @@ pub async fn get_page_code_basis_cited(
 pub async fn get_page_revisions(
     state: tauri::State<'_, State>,
     page_id: String,
+    include_text: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
-    client.get_page_revisions(&page_id).await
+    client
+        .get_page_revisions(&page_id, include_text.unwrap_or(false))
+        .await
 }
 
 #[tauri::command]

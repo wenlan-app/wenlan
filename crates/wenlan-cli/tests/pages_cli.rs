@@ -187,7 +187,7 @@ fn pages_print_shows_title_body_and_sources() {
     assert!(output.status.success(), "stderr: {:?}", output.stderr);
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "Project Atlas\n\nAtlas ships in March.\n\nSources:\n  mem_0123  The Atlas launch moved to March.\n"
+        "Project Atlas\nwenlan://page/page_atlas\n\nAtlas ships in March.\n\nSources:\n  mem_0123  The Atlas launch moved to March.\n"
     );
     let served: Vec<String> = requests.try_iter().map(|(line, _)| line).collect();
     assert_eq!(served.len(), 3);
@@ -212,6 +212,7 @@ fn pages_print_json_is_one_object_with_page_and_sources() {
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["page"]["title"], "Project Atlas");
     assert_eq!(value["page"]["content"], "Atlas ships in March.");
+    assert_eq!(value["link"], "wenlan://page/page_atlas");
     assert_eq!(
         value["sources"][0]["source"]["memory_source_id"],
         "mem_0123456789"

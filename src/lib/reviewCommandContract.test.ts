@@ -43,6 +43,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "approve_remote_pairing",
   "attach_bytes_to_page",
   "attach_file_to_page",
+  "attach_image_url_to_page",
   "bind_repo_wiki",
   "cancel_guarded_quit_request",
   "connect_source",
@@ -128,6 +129,8 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "quit_wenlan_full",
   "read_source_dir",
   "read_text_file",
+  // Finding an embed outside _attachments/ needs a real pages folder.
+  "resolve_page_embed",
   "rebuild_activities",
   "regenerate_narrative",
   "register_connected_agent",

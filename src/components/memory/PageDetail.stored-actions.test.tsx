@@ -377,15 +377,21 @@ describe("PageDetail stored actions in seamless editing", () => {
   let flush:(()=>Promise<boolean>)|null=null;
   let release!:()=>void;
   tauriMocks.archivePage.mockImplementation(()=>new Promise<void>(resolve=>{release=resolve;}));
-  const {editor}=await start({onRegisterArchive:(_id,fn)=>{archive=fn;},onRegisterFlush:fn=>{flush=fn;}});
+  const {editor,user}=await start({onRegisterArchive:(_id,fn)=>{archive=fn;},onRegisterFlush:fn=>{flush=fn;}});
   fireEvent.compositionStart(editor,{data:''});
   await act(async()=>{expect(await archive!()).toBe(false);});
   expect(tauriMocks.archivePage).not.toHaveBeenCalled();
   fireEvent.compositionEnd(editor,{data:''});
-  await waitFor(()=>expect(editorViewFromTextbox(editor).composing).toBe(false));
+  // The editor reports the composition's end a microtask later, and the
+  // registered action reads that report. The menu's Archive item uses the
+  // same guard, so it turning enabled shows the page will accept the action.
+  const archiveItem=await action(user,i18n.t('pageDetail.archivePage'));
+  await waitFor(()=>expect(archiveItem).toBeEnabled());
   let pending!:Promise<boolean>;
   await act(async()=>{pending=archive!();});
-  await waitFor(()=>expect(tauriMocks.archivePage).toHaveBeenCalledOnce());
+  // Archive first waits for the editor to settle after the composition; the
+  // default 1 s wait has too little room for that on a busy CI runner.
+  await waitFor(()=>expect(tauriMocks.archivePage).toHaveBeenCalledOnce(),{timeout:5_000});
   expect(await flush!()).toBe(false);
   await waitFor(()=>expect(editor).toHaveAttribute('contenteditable','false'));
   await act(async()=>{expect(await archive!()).toBe(false);});

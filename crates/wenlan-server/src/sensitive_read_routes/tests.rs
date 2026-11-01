@@ -101,6 +101,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/palace/layout"),
     ];
     const SCOPED: &[(Method, &str)] = &[
+        (Method::Post, "/api/check"),
+        (Method::Post, "/api/check/context"),
         (Method::Get, "/api/knowledge/folders"),
         (Method::Post, "/api/pages/{id}/move"),
         (Method::Post, "/api/pages/{id}/rename"),
@@ -131,6 +133,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/brief/history"),
         (Method::Get, "/api/brief/history/{version}"),
         (Method::Get, "/api/sessions/{id}"),
+        (Method::Get, "/api/things"),
+        (Method::Get, "/api/things/{id}"),
         (Method::Get, "/api/briefing"),
         (Method::Get, "/api/memory/pending-revisions"),
         (Method::Get, "/api/memory/pending-revision/{source_id}"),
@@ -150,6 +154,7 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/pages/{id}/sessions"),
         (Method::Get, "/api/pages/basis-pending"),
         (Method::Get, "/api/pages/{id}/basis/{basis_id}/diff"),
+        (Method::Get, "/api/pages/{id}/original"),
         (Method::Get, "/api/pages/{id}/sentences"),
         (Method::Post, "/api/pages/{id}/sentences/propose"),
         (
@@ -196,8 +201,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         .map(|row| (row.method, row.path))
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(rows.len(), 95);
-    assert_eq!(keys.len(), 95, "duplicate sensitive route key");
+    assert_eq!(rows.len(), 100);
+    assert_eq!(keys.len(), 100, "duplicate sensitive route key");
     assert_eq!(global, GLOBAL.iter().copied().collect());
     assert_eq!(scoped, SCOPED.iter().copied().collect());
     assert_eq!(

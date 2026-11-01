@@ -1,15 +1,18 @@
+/* A new page sits in the same centred reading column as a saved page, so
+   the title does not jump when the draft becomes a page. */
 .page-draft-editor {
+  box-sizing: border-box;
   color: var(--mem-text);
   margin-inline: auto;
   min-height: 100%;
-  padding: 0 0 72px;
-  width: min(100%, 1130px);
+  padding: var(--reading-frame-padding-block) var(--reading-frame-padding-inline) 72px;
+  width: min(var(--reading-frame-max-width), 100%);
 }
 
 .page-draft-editor-axis {
   display: flex;
   flex-direction: column;
-  max-width: 730px;
+  max-width: var(--reading-measure);
   min-height: calc(100vh - 144px);
   width: 100%;
 }
@@ -63,11 +66,11 @@
   border: 0;
   color: var(--mem-text);
   font-family: var(--mem-font-heading);
-  font-size: clamp(24px, 1.6vw + 14px, 30px);
+  font-size: var(--reading-title-size);
   font-weight: 500;
   letter-spacing: -0.01em;
   line-height: 1.22;
-  margin: 12px 0 0;
+  margin: 0;
   outline: 0;
   padding: 0;
   width: 100%;
@@ -162,6 +165,12 @@
 
 .page-draft-load-state p {
   margin: 0 0 12px;
+}
+
+@media (max-width: 640px) {
+  .page-draft-editor {
+    padding: var(--reading-frame-padding-block-narrow) var(--reading-frame-padding-inline-narrow) 72px;
+  }
 }
 
 @media (max-width: 639px) {
