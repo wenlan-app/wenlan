@@ -4,7 +4,7 @@ import { DotsSixVertical } from "@phosphor-icons/react";
 import { PageIcon } from "../assets/PageIcon";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { forgetRecentPage, readRecentPageHistory, renameRecentPage } from "../../../lib/recentPages";
+import { RECENT_PAGES_CHANGED_EVENT, forgetRecentPage, readRecentPageHistory, renameRecentPage } from "../../../lib/recentPages";
 import type { Page } from "../../../lib/tauri";
 import { MovePageDialog } from "./MovePageDialog";
 import { RecentNoteMenu, type RecentNoteMenuTarget } from "./RecentNoteMenu";
@@ -35,6 +35,11 @@ export function RecentNotesPanel({ currentPageId = null, revision = 0, mode = "r
   // Bumped when this list changes the history itself (remove, rename, delete).
   const [localRevision, setLocalRevision] = useState(0);
   const refresh = useCallback(() => setLocalRevision(value => value + 1), []);
+  // A page created or opened anywhere (a new page, the other note group) shows up at once.
+  useEffect(() => {
+    window.addEventListener(RECENT_PAGES_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(RECENT_PAGES_CHANGED_EVENT, refresh);
+  }, [refresh]);
   // An archived page is hidden here, not forgotten: once restored it is back in
   // its place. The archived set is the same cache entry the Archived pages list reads.
   const archived = useQuery({ queryKey: ARCHIVED_PAGES_QUERY_KEY, queryFn: listAllArchivedPagesExplicitBrowse, ...EXPLICIT_BROWSE_QUERY_POLICY });

@@ -126,14 +126,14 @@ test("tab Plus waits for a successful save and preserves the selected folder", a
  const editor=await append(page,"\nPreserve before creating a page.");
  await editor.evaluate(el=>el.setAttribute("data-session","plus-retained"));
  runtime.failNext("update_page","save refused");
- await page.getByRole("button",{name:"New page",exact:true}).click();
+ await page.locator(".note-tabs").getByRole("button",{name:"New page",exact:true}).click();
  await expect(page.locator(".page-detail").getByRole("alert")).toBeVisible();
  await expect(editor).toHaveAttribute("data-session","plus-retained");
  await expect(page.getByRole("tablist").getByRole("tab")).toHaveCount(1);
  await expect.poll(()=>source(editor)).toContain("Preserve before creating a page.");
  await page.getByRole("button",{name:"Retry",exact:true}).click();
  await expect(page.locator('.page-detail .sr-only[role="status"]')).toHaveText("Saved");
- await page.getByRole("button",{name:"New page",exact:true}).click();
+ await page.locator(".note-tabs").getByRole("button",{name:"New page",exact:true}).click();
  await expect(page.getByRole("textbox",{name:"Title",exact:true})).toBeFocused();
  await expect(page.getByRole("tablist").getByRole("tab")).toHaveCount(2);
  await page.getByRole("textbox",{name:"Title",exact:true}).fill("New tab page");

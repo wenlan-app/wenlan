@@ -73,8 +73,9 @@
 
 /* On the home itself the button has nowhere to go. It keeps its slot while
    notes are open so their tabs do not shift, and drops out when none are. */
-.note-tab-home[data-active="true"] { visibility: hidden; }
-.note-tabs:not(:has(.note-tabs-list)) > .note-tab-home[data-active="true"] { display: none; }
+/* On the home the button stays where it is and shows it is the current view,
+   so the strip never jumps and the way back is always in the same place. */
+.note-tab-home[data-active="true"] { background: var(--mem-hover); color: var(--mem-text); }
 .note-tab-home:hover { background: var(--mem-hover); color: var(--mem-text); }
 .note-tab-home:focus-visible { outline: 2px solid var(--mem-text-secondary); outline-offset: 1px; }
 

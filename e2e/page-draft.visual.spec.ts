@@ -31,7 +31,9 @@ async function openPrimaryDestination(
 }
 
 async function controlMetrics(page: Page, name: "New page" | "New") {
-  return page.getByRole("button", { name, exact: true }).evaluate((element) => {
+  // The tab strip's New page; the page list has its own New page too.
+  const scope = name === "New page" ? page.locator(".note-tabs") : page;
+  return scope.getByRole("button", { name, exact: true }).evaluate((element) => {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
     return {
