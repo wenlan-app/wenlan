@@ -136,19 +136,13 @@ fn archive_file_from_with_hook(
         .symlink_metadata(&held)
         .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink());
     if !plain {
-        if let Err(error) = vault_fs::rename_noreplace(&archive, &held, source, filename) {
-            log::warn!("[archive] could not put {filename} back from {held}: {error}");
-        }
+        put_back(&archive, &held, source, filename, before_place);
         return Err(WenlanError::Conflict(
             "page_projection_target_invalid".to_string(),
         ));
     }
     if !belongs(&archive, &held) {
-        if let Err(error) = vault_fs::rename_noreplace(&archive, &held, source, filename) {
-            // Something took the name meanwhile. The bytes stay in archive/
-            // under the private name, so nothing is lost.
-            log::warn!("[archive] could not put {filename} back from {held}: {error}");
-        }
+        put_back(&archive, &held, source, filename, before_place);
         return Err(WenlanError::Conflict(
             "page_archive_identity_changed".to_string(),
         ));
@@ -171,6 +165,38 @@ pub(crate) fn archive_aside_from(
         .rename(aside, &archive, &held)
         .map_err(WenlanError::Io)?;
     place_held(&archive, &held, filename, &mut |_| {})
+}
+
+/// Put a file an archive took by mistake back at `filename`, never over a
+/// file saved there meanwhile. Only an atomic no-replace rename is used: the
+/// probing fallback could replace that newer save. When the put-back cannot
+/// happen (the name is taken, or the filesystem has no atomic way), the
+/// bytes are filed under a visible name in `archive/` rather than left under
+/// the hidden private one, so a person can find them.
+fn put_back(
+    archive: &Dir,
+    held: &str,
+    source: &Dir,
+    filename: &str,
+    before_place: &mut dyn FnMut(&str),
+) {
+    let Err(error) = vault_fs::rename_noreplace_atomic(archive, held, source, filename) else {
+        return;
+    };
+    log::warn!("[archive] could not put {filename} back from {held}: {error}");
+    if !archive
+        .symlink_metadata(held)
+        .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink())
+    {
+        // Not a plain file (or already gone): nothing a visible name helps.
+        return;
+    }
+    match place_held(archive, held, filename, before_place) {
+        Ok(()) => log::warn!("[archive] kept the file that was at {filename} in archive/ instead"),
+        Err(error) => log::warn!(
+            "[archive] the file that was at {filename} stays in archive/ as {held}: {error}"
+        ),
+    }
 }
 
 fn place_held(
