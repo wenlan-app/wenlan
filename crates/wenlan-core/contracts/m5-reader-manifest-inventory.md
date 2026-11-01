@@ -1069,6 +1069,7 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::derive_leased_page_claims` | `pub(super)` | no | no | — | — |
 | `core/db/claim_derivation.rs::evaluate_support_on` | `private` | no | no | — | — |
 | `core/db/claim_derivation.rs::load_linked_memory_chunks` | `private` | no | no | — | — |
+| `core/db/export_reads.rs::export_page_rows` | `pub(crate)` | no | no | — | — |
 | `core/db/kg_quality_diagnostics.rs::list_contradiction_observation_counts` | `pub(crate)` | no | no | — | — |
 | `core/db/kg_quality_duplicate_candidates.rs::duplicate_name_groups_for_merge_candidates` | `pub(crate)` | no | no | — | — |
 | `core/db/kg_quality_duplicate_candidates.rs::entities_for_minhash_merge_candidates` | `pub(crate)` | no | no | — | — |
@@ -1238,6 +1239,7 @@ carrying the authority of agreement.
 | `core/steep_new.rs::link_targets` | `private` | no | no | — | `core/db/steep_new.rs::notes_sharing_entities`, `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::list_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_list` | `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::strict_entity_titled` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles` |
+| `core/store/export/pages.rs::export_pages` | `pub` | no | no | — | `core/db/export_reads.rs::export_page_rows` |
 | `core/synthesis/distill.rs::build_existing_titles_hint` | `pub(crate)` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::build_refresh_titles_hint` | `private` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::refresh_page_with_candidate_sources` | `pub(crate)` | no | no | — | `core/db/page_basis.rs::list_basis_context` |
