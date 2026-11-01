@@ -10,12 +10,17 @@ export interface TextEdit {
   readonly from: number;
   readonly to: number;
   readonly insert: string;
+  /** The whole link, `[[` to `]]`, this edit retargets. */
+  readonly scope?: readonly [from: number, to: number];
 }
 
 /** The daemon's wikilink pattern (`sources::obsidian::WIKILINK_RE`). */
 const WIKILINK = /(!?)\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
 /** Characters that end or split a wikilink target (`WIKILINK_TARGET_BREAKERS`). */
 const TARGET_BREAKERS = /[[\]|#]/;
+
+/** A blank line starting here: LF or CRLF line endings. */
+const BLANK_LINE = /^(?:\n\n|\r\n\r\n)/;
 
 type Range = readonly [start: number, end: number];
 
@@ -58,7 +63,9 @@ function inlineCodeRanges(content: string, fenced: readonly Range[]): Range[] {
     let scan = at;
     let close: number | null = null;
     while (scan < content.length) {
-      if (inside(fenced, scan) || content.startsWith("\n\n", scan)) break;
+      // A blank line ends a span, whether the text uses LF or CRLF, so the
+      // stored source and the editor's LF document read the same spans.
+      if (inside(fenced, scan) || BLANK_LINE.test(content.slice(scan, scan + 4))) break;
       if (content[scan] !== "`") { scan += 1; continue; }
       const runStart = scan;
       while (scan < content.length && content[scan] === "`") scan += 1;
@@ -94,7 +101,7 @@ export function renamedLinkEdits(content: string, oldTitle: string, newTitle: st
     if (!trimmed || TARGET_BREAKERS.test(trimmed) || pageTitleKey(trimmed) !== oldKey) continue;
     if (trimmed === target) continue;
     const from = open + 2 + raw.indexOf(trimmed);
-    edits.push({ from, to: from + trimmed.length, insert: target });
+    edits.push({ from, to: from + trimmed.length, insert: target, scope: [start, start + match[0].length] });
   }
   return edits;
 }
@@ -149,7 +156,11 @@ export function renameRewriteExplaining(
   // Newest first: the rename the person just made is the likeliest cause.
   for (const rename of [...recent].reverse()) {
     if (now - rename.at > RENAME_WINDOW_MS) continue;
-    const rewrite: LinkRewrite = (content) => renamedLinkEdits(content, rename.oldTitle, rename.newTitle);
+    // The rewrite keeps answering for the rest of the window (an editor
+    // replays it after undo), then stops: an old rename changes nothing.
+    const deadline = Date.now() + (rename.at + RENAME_WINDOW_MS - now);
+    const rewrite: LinkRewrite = (content) =>
+      Date.now() > deadline ? [] : renamedLinkEdits(content, rename.oldTitle, rename.newTitle);
     const edits = rewrite(baseline);
     if (edits.length > 0 && applyTextEdits(baseline, edits) === canonical) return rewrite;
   }

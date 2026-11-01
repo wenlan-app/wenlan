@@ -181,13 +181,16 @@ export class PageAutosave {
   /**
    * Carries a newer canonical page into the local draft when `rewrite` turns
    * the baseline into exactly that page: the change is one this app made
-   * itself (a rename's link rewrite), not an edit made elsewhere. The draft
-   * gets the same rewrite and keeps its unsaved text; `applyToEditor` puts the
-   * rewrite into the editor document. Returns false, changing nothing, when
-   * the change is anything more, or a save or composition is in progress; the
-   * caller then goes on to `observeCanonical`.
+   * itself (a rename's link rewrite), not an edit made elsewhere. `rewrite`
+   * only checks that; the draft is rewritten once, in the editor:
+   * `applyToEditor` applies the rewrite to the editor document and returns
+   * that document serialized, or null when the editor cannot take it now.
+   * The serialized document becomes the draft, so what is saved is what the
+   * editor shows. Returns false, changing nothing, when the change is
+   * anything more, or a save or composition is in progress; the caller then
+   * goes on to `observeCanonical`.
    */
-  rebaseOnto(page: Page, rewrite: (text: string) => string, applyToEditor: () => boolean): boolean {
+  rebaseOnto(page: Page, rewrite: (text: string) => string, applyToEditor: () => string | null): boolean {
     const baseline = this.baseline;
     if (
       !baseline || this.readOnly || page.id !== baseline.pageId || page.status !== "active" ||
@@ -195,12 +198,13 @@ export class PageAutosave {
       this.state.phase !== "idle" || this.composing || this.running !== null ||
       this.awaitingCanonical !== null || rewrite(baseline.content) !== page.content
     ) return false;
-    const source = rewrite(this.source);
-    if (!applyToEditor()) return false;
+    const source = applyToEditor();
+    if (source === null) return false;
     this.baseline = { pageId: page.id, content: page.content, version: page.version };
     this.source = source;
     this.observedVersion = page.version;
     this.latest = null;
+    this.validation = null;
     this.emit();
     this.schedule();
     return true;
