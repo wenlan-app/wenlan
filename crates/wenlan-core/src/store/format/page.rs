@@ -27,17 +27,15 @@
 //!
 //! Only `id, title, type, tags, created, modified, aliases` are Wenlan's in
 //! the frontmatter; who wrote what, versions and review state live in history
-//! and the cache. `[N]` markers stay in the body, and the sources block lists
-//! one line per marker, then the basis lines.
+//! and the cache. The body is the page's text byte for byte, so a page moves
+//! between the database and its file unchanged; its two parts (the
+//! `<!-- wenlan:details -->` marker) are `page_body`'s to split. `[N]` markers
+//! stay in the body, and the sources block after it lists one line per
+//! marker, then the basis lines.
 
 use super::{normalize_line_ends, render_frontmatter, scalar_text, split_frontmatter, text_list};
 use crate::error::WenlanError;
 
-/// The line before the heading that starts the part for AI tools. The
-/// heading's text is localized, so the marker is what is matched.
-pub const DETAILS_MARKER: &str = "<!-- wenlan:details -->";
-/// The heading written under [`DETAILS_MARKER`] when a page has none yet.
-pub const DETAILS_HEADING: &str = "Details for AI";
 /// The sources block keeps the delimiters today's export writes.
 pub const SOURCES_START: &str = "<!-- origin:sources:start -->";
 pub const SOURCES_END: &str = "<!-- origin:sources:end -->";
@@ -112,13 +110,6 @@ pub struct Basis {
     pub locator: Locator,
 }
 
-/// The part for AI tools, under its heading.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Details {
-    pub heading: String,
-    pub text: String,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct PageFile {
     /// `None` for a file someone dropped in that Wenlan has not seen yet.
@@ -131,9 +122,8 @@ pub struct PageFile {
     pub aliases: Vec<String>,
     /// Frontmatter keys that are not Wenlan's, in their order.
     pub other: serde_yaml::Mapping,
-    /// The part the person reads.
+    /// The page's text, exactly as stored.
     pub body: String,
-    pub details: Option<Details>,
     pub citations: Vec<Citation>,
     pub basis: Vec<Basis>,
 }
@@ -150,7 +140,6 @@ impl PageFile {
             aliases: Vec::new(),
             other: serde_yaml::Mapping::new(),
             body: body.into(),
-            details: None,
             citations: Vec::new(),
             basis: Vec::new(),
         }
@@ -200,9 +189,8 @@ pub fn parse(text: &str, fallback_title: &str) -> Result<PageFile, WenlanError> 
     let (rest, citations, basis) = split_sources(body);
     page.citations = citations;
     page.basis = basis;
-    let (human, details) = split_details(rest);
-    page.body = human.trim_end_matches('\n').to_string();
-    page.details = details;
+    // The renderer ends the body with one line end.
+    page.body = rest.strip_suffix('\n').unwrap_or(rest).to_string();
     Ok(page)
 }
 
@@ -239,20 +227,8 @@ pub fn render(page: &PageFile) -> String {
 
     let mut out = render_frontmatter(&frontmatter);
     out.push('\n');
-    out.push_str(page.body.trim_end_matches('\n'));
+    out.push_str(&page.body);
     out.push('\n');
-    if let Some(details) = &page.details {
-        out.push('\n');
-        out.push_str(DETAILS_MARKER);
-        out.push_str("\n## ");
-        out.push_str(&details.heading);
-        out.push_str("\n\n");
-        let text = details.text.trim_end_matches('\n');
-        if !text.is_empty() {
-            out.push_str(text);
-            out.push('\n');
-        }
-    }
     if !page.citations.is_empty() || !page.basis.is_empty() {
         out.push('\n');
         out.push_str(SOURCES_START);
@@ -330,29 +306,4 @@ fn split_sources(body: &str) -> (&str, Vec<Citation>, Vec<Basis>) {
         citations,
         basis,
     )
-}
-
-/// Splits the body at the details marker: the marker line, then a `## `
-/// heading line.
-fn split_details(body: &str) -> (&str, Option<Details>) {
-    let mut offset = 0;
-    for line in body.split_inclusive('\n') {
-        if line.trim_end() == DETAILS_MARKER {
-            let after = &body[offset + line.len()..];
-            let (heading_line, rest) = after.split_once('\n').unwrap_or((after, ""));
-            if let Some(heading) = heading_line.strip_prefix("## ") {
-                let human = &body[..offset];
-                let text = rest.strip_prefix('\n').unwrap_or(rest);
-                return (
-                    human.strip_suffix('\n').unwrap_or(human),
-                    Some(Details {
-                        heading: heading.trim_end().to_string(),
-                        text: text.trim_end_matches('\n').to_string(),
-                    }),
-                );
-            }
-        }
-        offset += line.len();
-    }
-    (body, None)
 }

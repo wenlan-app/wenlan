@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::names::{collision_stem, file_stem, same_file_name, MAX_STEM_BYTES};
-use super::page::{self, Basis, Citation, Details, Locator, PageFile, PageKind};
+use super::page::{self, Basis, Citation, Locator, PageFile, PageKind};
 
 #[test]
 fn a_stem_is_safe_on_every_system() {
@@ -42,16 +42,12 @@ fn a_taken_name_gets_the_end_of_the_id() {
 fn sample() -> PageFile {
     let mut page = PageFile::new(
         "Trip planning",
-        "We fly on Friday [1].\n\nThe hotel is booked.",
+        "We fly on Friday [1].\n\nThe hotel is booked.\n\n<!-- wenlan:details -->\n## Details for AI\n\nFlight LH 454, seat 32A.",
     );
     page.id = Some("page_abc".to_string());
     page.tags = vec!["Travel".to_string()];
     page.created = Some("2026-11-01T10:00:00Z".to_string());
     page.modified = Some("2026-11-01T12:00:00Z".to_string());
-    page.details = Some(Details {
-        heading: "Details for AI".to_string(),
-        text: "Flight LH 454, seat 32A.".to_string(),
-    });
     page.citations = vec![Citation {
         marker: 1,
         label: "[[Flights]]".to_string(),
@@ -201,6 +197,19 @@ fn text_block(gen: &mut Gen) -> String {
     out.join("\n").trim_end_matches('\n').to_string()
 }
 
+/// `text` with, sometimes, line ends or spaces at either end and a CRLF.
+fn edged(gen: &mut Gen, text: String) -> String {
+    if !gen.chance() {
+        return text;
+    }
+    format!(
+        "{}{}{}",
+        gen.pick(&["", "\n", "\n\n", "  "]),
+        text,
+        gen.pick(&["", "\n", "\n\n", " \n", "\r\nx\r\n"]),
+    )
+}
+
 fn random_page(gen: &mut Gen) -> PageFile {
     let mut page = PageFile::new(gen.pick(WORDS), text_block(gen));
     if gen.chance() {
@@ -226,13 +235,15 @@ fn random_page(gen: &mut Gen) -> PageFile {
             .insert("rating".into(), serde_yaml::Value::Number(4.into()));
         page.other.insert("note".into(), gen.pick(WORDS).into());
     }
+    // The body is kept byte for byte: line ends at either end, CRLF, and
+    // the details marker are all just text.
+    page.body = edged(gen, std::mem::take(&mut page.body));
     if gen.chance() {
-        page.details = Some(Details {
-            heading: gen
-                .pick(&["Details for AI", "給 AI 的細節", ""])
-                .to_string(),
-            text: text_block(gen),
-        });
+        page.body.push_str(&format!(
+            "\n\n<!-- wenlan:details -->\n{}\n\n{}",
+            gen.pick(&["## Details for AI", "## 給 AI 的細節", ""]),
+            text_block(gen)
+        ));
     }
     for marker in 1..=(gen.next() % 3) as u32 {
         page.citations.push(Citation {
@@ -274,4 +285,339 @@ fn every_page_wenlan_can_write_reads_back_unchanged() {
         assert_eq!(read, page, "round {round}:\n{text}");
         assert_eq!(page::render(&read), text, "round {round}: render is stable");
     }
+}
+
+use super::brief::{self, BriefFile, BriefItem};
+use super::entity::{self, EntityFile};
+use super::memory::{self, MemoryFile};
+use super::original::{self, Message, OriginalFile};
+
+fn maybe(gen: &mut Gen) -> Option<String> {
+    gen.chance().then(|| gen.pick(WORDS).to_string())
+}
+
+fn person_keys(gen: &mut Gen) -> serde_yaml::Mapping {
+    let mut other = serde_yaml::Mapping::new();
+    if gen.chance() {
+        other.insert("rating".into(), serde_yaml::Value::Number(4.into()));
+        other.insert("note".into(), gen.pick(WORDS).into());
+    }
+    other
+}
+
+/// One line, no line end at the end: the shape the formats keep exactly.
+fn one_line(gen: &mut Gen) -> String {
+    gen.pick(WORDS).to_string()
+}
+
+#[test]
+fn a_memory_file_reads_back_as_written() {
+    let mut memory = MemoryFile::new("mem_1", "Prefers window seats.");
+    memory.kind = Some("preference".to_string());
+    memory.space = Some("Travel".to_string());
+    memory.agent = Some("claude-code".to_string());
+    memory.created = Some("2026-11-01T10:00:00Z".to_string());
+    memory.pinned = true;
+    memory.importance = Some(7);
+    memory.about = vec!["Lufthansa".to_string()];
+    let text = memory::render(&memory);
+    assert_eq!(
+        text,
+        "---
+id: mem_1
+type: memory
+kind: preference
+space: Travel
+agent: claude-code
+created: 2026-11-01T10:00:00Z
+pinned: true
+importance: 7
+about:
+- '[[Lufthansa]]'
+---
+
+Prefers window seats.
+"
+    );
+    assert_eq!(memory::parse(&text).unwrap(), memory);
+    assert!(memory::parse("---\ntype: memory\n---\nno id\n").is_err());
+    assert!(memory::parse("---\nid: x\ntype: page\n---\n").is_err());
+}
+
+#[test]
+fn every_memory_reads_back_unchanged() {
+    let mut gen = Gen(11);
+    for round in 0..1000 {
+        let text = text_block(&mut gen);
+        let text = edged(&mut gen, text);
+        let mut memory = MemoryFile::new(format!("mem_{}", gen.next()), text);
+        memory.kind = maybe(&mut gen);
+        memory.space = maybe(&mut gen);
+        memory.agent = maybe(&mut gen);
+        memory.created = maybe(&mut gen);
+        memory.pinned = gen.chance();
+        memory.confirmed = gen.chance();
+        memory.supersedes = maybe(&mut gen);
+        memory.supersede_mode = maybe(&mut gen);
+        memory.episode_of = maybe(&mut gen);
+        memory.event_date = maybe(&mut gen);
+        memory.importance = gen.chance().then(|| (gen.next() % 11) as i64);
+        memory.about = (0..gen.next() % 3).map(|_| one_line(&mut gen)).collect();
+        memory.other = person_keys(&mut gen);
+        let text = memory::render(&memory);
+        let read = memory::parse(&text).unwrap_or_else(|error| panic!("{round}: {error}\n{text}"));
+        assert_eq!(read, memory, "round {round}:\n{text}");
+        assert_eq!(memory::render(&read), text, "round {round}");
+    }
+}
+
+#[test]
+fn every_entity_reads_back_unchanged() {
+    let mut gen = Gen(13);
+    for round in 0..1000 {
+        let mut entity = EntityFile::new(format!("ent_{}", gen.next()), one_line(&mut gen));
+        entity.entity_type = maybe(&mut gen);
+        entity.aliases = (0..gen.next() % 3).map(|_| one_line(&mut gen)).collect();
+        entity.confirmed = gen.chance();
+        entity.established_by = maybe(&mut gen);
+        entity.space = maybe(&mut gen);
+        entity.other = person_keys(&mut gen);
+        let description = text_block(&mut gen);
+        entity.description = edged(&mut gen, description);
+        let text = entity::render(&entity);
+        let read = entity::parse(&text).unwrap_or_else(|error| panic!("{round}: {error}\n{text}"));
+        assert_eq!(read, entity, "round {round}:\n{text}");
+        assert_eq!(entity::render(&read), text, "round {round}");
+    }
+}
+
+#[test]
+fn a_brief_reads_as_a_checklist() {
+    let brief = BriefFile {
+        id: "brief_1".to_string(),
+        space: "Work".to_string(),
+        version: 7,
+        other: serde_yaml::Mapping::new(),
+        summary: "Left off at the export.".to_string(),
+        active: vec![BriefItem {
+            id: "item_1".to_string(),
+            text: "Ship the export".to_string(),
+            added: 1_793_491_200,
+            version: 3,
+            gate: None,
+        }],
+        backlog: vec![BriefItem {
+            id: "item_2".to_string(),
+            text: "Try <the> new --> parser\nnext week".to_string(),
+            added: 1_793_491_300,
+            version: 5,
+            gate: Some("after the export".to_string()),
+        }],
+    };
+    let text = brief::render(&brief);
+    assert!(text.contains(
+        "## Active\n- [ ] Ship the export <!-- wenlan {\"id\":\"item_1\",\"added\":1793491200,\"version\":3} -->\n"
+    ), "{text}");
+    assert!(
+        text.contains("- [ ] Try <the> new --> parser next week <!-- wenlan "),
+        "{text}"
+    );
+    assert_eq!(
+        text.matches("-->").count(),
+        3,
+        "only the item comments close: {text}"
+    );
+    assert_eq!(brief::parse(&text).unwrap(), brief);
+}
+
+#[test]
+fn every_brief_reads_back_unchanged() {
+    let mut gen = Gen(17);
+    let item = |gen: &mut Gen| BriefItem {
+        id: format!("item_{}", gen.next()),
+        text: if gen.chance() {
+            text_block(gen)
+        } else {
+            one_line(gen)
+        },
+        added: gen.next() as i64,
+        version: (gen.next() % 9) as i64,
+        gate: maybe(gen),
+    };
+    for round in 0..1000 {
+        let brief = BriefFile {
+            id: format!("brief_{}", gen.next()),
+            space: one_line(&mut gen),
+            version: (gen.next() % 50) as i64,
+            other: person_keys(&mut gen),
+            summary: text_block(&mut gen),
+            active: (0..gen.next() % 3).map(|_| item(&mut gen)).collect(),
+            backlog: (0..gen.next() % 3).map(|_| item(&mut gen)).collect(),
+        };
+        let text = brief::render(&brief);
+        let read = brief::parse(&text).unwrap_or_else(|error| panic!("{round}: {error}\n{text}"));
+        assert_eq!(read, brief, "round {round}:\n{text}");
+        assert_eq!(brief::render(&read), text, "round {round}");
+    }
+}
+
+#[test]
+fn an_original_keeps_each_message_and_a_heading_inside_one() {
+    let original = OriginalFile {
+        id: "orig_1".to_string(),
+        vendor: "chatgpt".to_string(),
+        external_id: "6720-abc".to_string(),
+        title: Some("Trip ideas".to_string()),
+        imported: Some("2026-11-01T10:00:00Z".to_string()),
+        url: Some("https://chatgpt.com/c/6720-abc".to_string()),
+        other: serde_yaml::Mapping::new(),
+        messages: vec![
+            Message {
+                role: "user".to_string(),
+                at: Some("2026-10-30T09:12:00Z".to_string()),
+                text: "Where should we go in May?".to_string(),
+            },
+            Message {
+                role: "assistant".to_string(),
+                at: None,
+                text: "## Options\n\n- Lisbon\n- Kyoto".to_string(),
+            },
+        ],
+    };
+    let text = original::render(&original);
+    assert!(text.contains("author: original\n"));
+    assert_eq!(original::parse(&text).unwrap(), original);
+    let edited = text.replace("author: original", "author: person");
+    assert!(
+        original::parse(&edited).is_err(),
+        "an original is never the person's"
+    );
+}
+
+#[test]
+fn every_original_reads_back_unchanged() {
+    let mut gen = Gen(19);
+    for round in 0..1000 {
+        let original = OriginalFile {
+            id: format!("orig_{}", gen.next()),
+            vendor: gen.pick(&["chatgpt", "claude", "gemini"]).to_string(),
+            external_id: one_line(&mut gen),
+            title: maybe(&mut gen),
+            imported: maybe(&mut gen),
+            url: maybe(&mut gen),
+            other: person_keys(&mut gen),
+            messages: (0..gen.next() % 4)
+                .map(|_| Message {
+                    role: gen.pick(&["user", "assistant", "tool"]).to_string(),
+                    at: gen.chance().then(|| "2026-10-30T09:12:00Z".to_string()),
+                    text: text_block(&mut gen),
+                })
+                .collect(),
+        };
+        let text = original::render(&original);
+        let read =
+            original::parse(&text).unwrap_or_else(|error| panic!("{round}: {error}\n{text}"));
+        assert_eq!(read, original, "round {round}:\n{text}");
+        assert_eq!(original::render(&read), text, "round {round}");
+    }
+}
+
+use super::canvas::{self, WenlanNode};
+
+/// A canvas as Obsidian writes one, with a group, a file node, an edge with
+/// sides, a plugin's key, and one node Wenlan placed.
+const OBSIDIAN_CANVAS: &str = r##"{
+	"nodes":[
+		{"id":"g1","type":"group","x":-40,"y":-40,"width":600,"height":400,"label":"Trip"},
+		{"id":"n1","type":"text","text":"Lisbon in May","x":0,"y":0,"width":250,"height":60,"color":"4",
+			"wenlan":{"source":"page_abc@12","ref":"page:page_def","accepted":true}},
+		{"id":"n2","type":"file","file":"Trip planning.md","subpath":"#Hotels","x":300,"y":0.5,"width":250,"height":200},
+		{"id":"n3","type":"link","url":"https://example.com","x":0,"y":120,"width":250,"height":60,"plugin-data":{"pinned":true}}
+	],
+	"edges":[
+		{"id":"e1","fromNode":"n1","fromSide":"right","toNode":"n2","toSide":"left","toEnd":"arrow","label":"see"}
+	],
+	"metadata":{"version":"1.0"}
+}"##;
+
+#[test]
+fn a_canvas_from_obsidian_keeps_every_key() {
+    let canvas = canvas::parse(OBSIDIAN_CANVAS).unwrap();
+    assert_eq!(canvas.nodes.len(), 4);
+    assert_eq!(
+        canvas.nodes[1].wenlan,
+        Some(WenlanNode {
+            source: Some("page_abc@12".to_string()),
+            reference: Some("page:page_def".to_string()),
+            accepted: true,
+            rest: Default::default(),
+        })
+    );
+    let text = canvas::render(&canvas);
+    for kept in [
+        "\"label\": \"Trip\"",
+        "\"subpath\": \"#Hotels\"",
+        "\"y\": 0.5",
+        "\"plugin-data\"",
+        "\"toEnd\": \"arrow\"",
+        "\"metadata\"",
+        "\"wenlan\"",
+    ] {
+        assert!(text.contains(kept), "{kept} is lost:\n{text}");
+    }
+    assert!(text.contains("\n\t\"nodes\""), "tab indent like Obsidian");
+    let again = canvas::parse(&text).unwrap();
+    assert_eq!(again, canvas);
+    assert_eq!(canvas::render(&again), text);
+}
+
+#[test]
+fn wenlan_data_survives_a_save_that_drops_its_key() {
+    let mut canvas = canvas::parse(OBSIDIAN_CANVAS).unwrap();
+    let sidecar = canvas::split_sidecar(&mut canvas);
+    assert_eq!(sidecar.keys().collect::<Vec<_>>(), ["n1"]);
+    assert!(canvas.nodes.iter().all(|node| node.wenlan.is_none()));
+
+    // The person deletes n1 and adds a node of their own; then Wenlan reads
+    // the canvas back with the sidecar.
+    let mut saved = canvas.clone();
+    let restored = {
+        let mut copy = saved.clone();
+        canvas::merge_sidecar(&mut copy, sidecar.clone());
+        copy
+    };
+    assert_eq!(restored.nodes[1].wenlan, sidecar.get("n1").cloned());
+
+    saved.nodes.retain(|node| node.id != "n1");
+    let gone = canvas::merge_sidecar(&mut saved, sidecar);
+    assert_eq!(
+        gone,
+        ["n1"],
+        "a sidecar entry whose node is gone is reported"
+    );
+}
+
+#[test]
+fn a_file_that_is_not_a_canvas_is_refused() {
+    assert!(canvas::parse("{\"nodes\":[{\"id\":\"x\"}]}").is_err());
+    assert!(canvas::parse("not json").is_err());
+    assert_eq!(canvas::parse("{}").unwrap().nodes.len(), 0);
+}
+
+#[test]
+fn a_body_page_body_joined_reads_back_byte_for_byte() {
+    let joined = crate::page_body::join_body(
+        "We fly on Friday.\n",
+        "Flight LH 454.\n\n```\n## not a heading\n```\n",
+        Some("en"),
+    );
+    let page = PageFile::new("Trip", joined.clone());
+    let read = page::parse(&page::render(&page), "Trip").unwrap();
+    assert_eq!(read.body, joined);
+    let split = crate::page_body::split_body(&read.body).expect("the parts are still there");
+    assert_eq!(
+        split,
+        crate::page_body::split_body(&joined).unwrap(),
+        "page_body splits the file's body as it split the database's"
+    );
 }
