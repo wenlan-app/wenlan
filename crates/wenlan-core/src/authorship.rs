@@ -458,16 +458,27 @@ fn similar(a: &str, b: &str) -> bool {
 }
 
 /// How many sentence units `after` added, changed or removed against
-/// `before`.
+/// `before`. A sentence rewritten past recognition aligns as a removal and an
+/// addition in the same place; it counts once, so within each run of changes
+/// the removals and additions pair up and only the larger side counts.
 pub fn changed_sentence_count(before: &str, after: &str) -> u32 {
     let old = sentence_units(before);
     let new = sentence_units(after);
     let old_norms: Vec<&str> = old.iter().map(|u| u.norm.as_str()).collect();
     let new_norms: Vec<&str> = new.iter().map(|u| u.norm.as_str()).collect();
-    let changed = align(&old_norms, &new_norms)
-        .into_iter()
-        .filter(|op| !matches!(op, AlignOp::Equal(..)))
-        .count();
+    let (mut changed, mut removed, mut added) = (0usize, 0usize, 0usize);
+    for op in align(&old_norms, &new_norms) {
+        match op {
+            AlignOp::Equal(..) => {
+                changed += removed.max(added);
+                (removed, added) = (0, 0);
+            }
+            AlignOp::Replace(..) => changed += 1,
+            AlignOp::Delete(..) => removed += 1,
+            AlignOp::Insert(..) => added += 1,
+        }
+    }
+    changed += removed.max(added);
     u32::try_from(changed).unwrap_or(u32::MAX)
 }
 

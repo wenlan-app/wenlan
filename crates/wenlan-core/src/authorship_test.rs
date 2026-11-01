@@ -350,3 +350,21 @@ fn alignment_pairs_only_touch_ups_as_replacements() {
     let unrelated = align(&["alpha"], &["omega"]);
     assert_eq!(unrelated, [AlignOp::Delete(0), AlignOp::Insert(0)]);
 }
+
+#[test]
+fn a_rewritten_sentence_counts_once() {
+    let before = "The shop opens at 9 am. It closes at 5 pm on Mondays. \
+                  Parking is free. Cards are accepted.";
+    let after = "The shop opens at 9 am. It is closed on Mondays. \
+                 Street parking costs two dollars. Only cash is taken.";
+    assert_eq!(changed_sentence_count(before, after), 3);
+    assert_eq!(changed_sentence_count(before, before), 0);
+    assert_eq!(
+        changed_sentence_count(before, &format!("{before} A new line.")),
+        1
+    );
+    assert_eq!(
+        changed_sentence_count(before, "The shop opens at 9 am. Parking is free."),
+        2
+    );
+}
