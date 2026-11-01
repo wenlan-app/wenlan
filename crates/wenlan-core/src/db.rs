@@ -70,6 +70,7 @@ pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
 mod page_restore;
+pub(crate) mod rebuild_writes;
 pub use page_restore::{restore_refusal_message, RestorePageError};
 mod page_summary_backfill;
 mod presence_review;
