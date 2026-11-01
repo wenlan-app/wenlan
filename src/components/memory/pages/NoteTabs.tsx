@@ -17,7 +17,7 @@ type NoteTabsProps = {
   readonly moveLabel?: string;
   readonly groupId?: "primary" | "secondary";
   readonly tabListLabel?: string;
-  /** Primary strip only: a button back to the Wiki home, which has no tab of its own. It hides while the home is showing. */
+  /** Primary strip only: a button back to the Wiki home, which has no tab of its own. It stays visible and marks itself current while the home is showing. */
   readonly onHome?: () => void;
   readonly homeActive?: boolean;
 };

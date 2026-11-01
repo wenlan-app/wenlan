@@ -58,13 +58,13 @@ for (const persisted of [false, true]) {
       await openWikiNote(page, "Original synthetic page");
       await expect(title(page)).toHaveValue(original.title);
     } else {
-      await page.getByRole("button", { name: "New page", exact: true }).click();
+      await page.locator(".note-tabs").getByRole("button", { name: "New page", exact: true }).click();
       await title(page).fill(original.title);
       await content(page).fill(original.content);
       // Click before the debounce: the transition itself must flush this editor.
       expect(controller.calls().filter(call => call.command === "create_page_draft")).toHaveLength(0);
     }
-    await page.getByRole("button", { name: "New page", exact: true }).click();
+    await page.locator(".note-tabs").getByRole("button", { name: "New page", exact: true }).click();
     await expect(title(page)).toHaveValue("");
     await expectEditorSource(content(page), "");
     await expect(title(page)).toBeFocused();

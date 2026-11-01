@@ -37,8 +37,9 @@ describe("Wiki, Space, and Page microcontrol contract", () => {
       /\.page-detail-title\s*\{[^}]*font-size:\s*clamp\(24px, 1\.6vw \+ 14px, 30px\);/s,
     );
     expect(draft).toMatch(/\.page-draft-editor\s*\{[^}]*margin-inline:\s*auto;/s);
-    expect(draft).toMatch(/\.page-draft-editor\s*\{[^}]*width:\s*min\(100%, 1130px\);/s);
-    expect(draft).toMatch(/\.page-draft-editor-axis\s*\{[^}]*max-width:\s*730px;/s);
+    // A new page uses the saved page's reading column (readingSurface.css).
+    expect(draft).toMatch(/\.page-draft-editor\s*\{[^}]*width:\s*min\(var\(--reading-frame-max-width\), 100%\);/s);
+    expect(draft).toMatch(/\.page-draft-editor-axis\s*\{[^}]*max-width:\s*var\(--reading-measure\);/s);
   });
 
   it("applies one shared visual contract to text controls, icon actions, and menus", () => {

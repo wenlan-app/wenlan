@@ -289,6 +289,31 @@ describe("writingPresentation", () => {
     expect(onDocumentUpdate).not.toHaveBeenCalled();
   });
 
+  it("keeps the bullet, number and checkbox on the line being typed, as Obsidian does", async () => {
+    const source = "- typing a list item\n1. numbered\n- [ ] task";
+    const numbered = source.indexOf("1. numbered");
+    const task = source.indexOf("- [ ] task");
+    for (const caret of [source.indexOf("item") + 4, numbered + "1. numbered".length, source.length]) {
+      const view = makeView(source, { selection: EditorSelection.single(caret) });
+      await settleFocusChange();
+      expect(concealedDecorationRanges(view)).toEqual([
+        { from: 0, to: 2 },
+        { from: numbered, to: numbered + 3 },
+        { from: task, to: task + 2 },
+        { from: task + 2, to: task + 5 },
+      ]);
+      view.destroy();
+    }
+  });
+
+  it("shows a marker's source only when a selection covers it", async () => {
+    const source = "- item\naway";
+    const view = makeView(source, { selection: EditorSelection.single(0, 4) });
+    await settleFocusChange();
+    expect(concealedDecorationRanges(view)).toEqual([]);
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
   it("reveals the active quoted line without exposing neighboring Markdown", async () => {
     const source = [
       "> first",
