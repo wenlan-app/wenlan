@@ -11,7 +11,9 @@ for (const width of [1280,375]) test(`recent pages replace default hierarchy and
  await page.goto("/");
  const directory=page.locator(".wiki-workspace-directory");
  if(width===375)await page.locator(".wiki-workspace-folders-toggle").click();
- await expect(directory.getByRole("combobox")).toHaveValue("recent");
+ // The whole library is the default list; Recently used is a choice.
+ await expect(directory.getByRole("combobox")).toHaveValue("folders");
+ await directory.getByRole("combobox").selectOption("recent");
  await expect(directory).toContainText("Pages you open appear here");
  await expect(directory.locator(".notes-inventory-root")).toHaveCount(0);
  await openWikiNote(page,"Fixture architecture");

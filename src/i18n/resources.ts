@@ -859,6 +859,9 @@ const en = {
     taskList: "To-do",
     blockquote: "Quote",
     fencedCode: "Code block",
+    heading3: "Heading 3",
+    pageLink: "Link to page",
+    callout: "Callout",
   },
   pageInfo: {
     label: "Page info",
@@ -3927,6 +3930,9 @@ const zhHans = {
     taskList: "待办",
     blockquote: "引用",
     fencedCode: "代码块",
+    heading3: "三级标题",
+    pageLink: "链接到笔记",
+    callout: "提示框",
   },
   pageInfo: {
     label: "笔记信息",
@@ -6951,6 +6957,9 @@ const zhHant = {
     taskList: "待辦",
     blockquote: "引用",
     fencedCode: "程式碼區塊",
+    heading3: "三級標題",
+    pageLink: "連結到筆記",
+    callout: "提示框",
   },
   pageInfo: {
     label: "筆記資訊",

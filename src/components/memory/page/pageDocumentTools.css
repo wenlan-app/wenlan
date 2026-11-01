@@ -71,4 +71,7 @@
   display: block;
 }
 /* These actions no longer have a duplicate desktop toolbar. */
-.page-document-tools .page-detail-actions-menu .page-detail-mobile-menu-item { display: block; }
+.page-detail-actions-anchor .page-detail-actions-menu .page-detail-mobile-menu-item { display: block; }
+/* In the top bar, page actions sit just left of the page sidebar toggle. */
+.workspace-document-tools-host, .note-group-document-tools { gap: 2px; }
+.page-detail-actions-anchor .page-detail-actions-menu[style*="fixed"] { z-index: 60; }
