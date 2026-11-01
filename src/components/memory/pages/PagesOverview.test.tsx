@@ -205,7 +205,7 @@ describe("PagesOverview reading workspace", () => {
 
       const section = await screen.findByTestId("wiki-working-on");
       expect(screen.getByRole("heading", { level: 2, name: "What you're working on" })).toBeInTheDocument();
-      expect(container.querySelector(".wiki-overview")?.firstElementChild).toBe(section);
+      expect(container.querySelector(".wiki-overview .home-columns")?.firstElementChild).toBe(section);
       const cards = [...section.querySelectorAll(".wiki-working-on-card")];
       expect(cards.map((card) => card.querySelector(".wiki-working-on-text")?.textContent)).toEqual([
         "Storage: files become the source of truth",
