@@ -40,9 +40,9 @@ use crate::store::format::memory::{self, MemoryFile};
 use crate::store::format::names::file_stem;
 use crate::store::format::original::{self, Message, OriginalFile};
 
-/// The memory sources that are memories: agent and person writes, and quick
-/// captures from before migration 144.
-const MEMORY_SOURCES: &[&str] = &["memory", "manual"];
+/// The memory sources that are memories: agent and person writes, quick
+/// captures from before migration 144, and kept clipboard captures.
+const MEMORY_SOURCES: &[&str] = &["memory", "manual", "clipboard"];
 
 /// Rows the rebuild recomputes: episodes (a verbatim slice of their parent),
 /// page and summary rows, and connected-folder documents.
@@ -50,6 +50,10 @@ const DERIVED_SOURCES: &[&str] = &["episode", "page", "summary", "local_files"];
 
 /// A person's saved web page.
 const WEB_SOURCE: &str = "webpage";
+
+/// A document from the file watcher of older versions: an original, kept
+/// as written, since the folder it came from may be gone.
+const FILE_SOURCE: &str = "file";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemoriesExported {
@@ -83,7 +87,7 @@ pub async fn export_memories(
     for ((id, source), chunks) in groups {
         let head = chunks[0];
         match class_of(head) {
-            Class::Memory | Class::Web => {}
+            Class::Memory | Class::Original => {}
             Class::Derived(reason) => {
                 *skipped.entry(reason).or_default() += 1;
                 continue;
@@ -107,6 +111,8 @@ pub async fn export_memories(
         }
         let original = if source == WEB_SOURCE {
             Some(("web", id, "page"))
+        } else if source == FILE_SOURCE {
+            Some(("file", id, "document"))
         } else {
             imported_chat(id).map(|(vendor, external_id)| (vendor, external_id, "message"))
         };
@@ -318,7 +324,8 @@ pub(super) fn check(manifest: &mut Manifest, id: &str, reads_back: bool) {
 
 enum Class {
     Memory,
-    Web,
+    /// A saved web page or watched file, written as an original.
+    Original,
     /// Recomputed by the rebuild, counted under this name.
     Derived(String),
     Unknown,
@@ -337,8 +344,8 @@ fn class_of(head: &ExportMemoryRow) -> Class {
         Class::Derived("document chunks".to_string())
     } else if MEMORY_SOURCES.contains(&source) {
         Class::Memory
-    } else if source == WEB_SOURCE {
-        Class::Web
+    } else if source == WEB_SOURCE || source == FILE_SOURCE {
+        Class::Original
     } else {
         Class::Unknown
     }

@@ -306,6 +306,17 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     )
     .await;
     memory_row(&db, "mem_odd", 0, "", ", 'mystery', 'who knows'").await;
+    memory_row(&db, "clipboard_1", 0, "", ", 'clipboard', 'copied text'").await;
+    for (chunk, text) in [(0, "# Notes"), (1, "Body.")] {
+        memory_row(
+            &db,
+            "docs::README.md",
+            chunk,
+            "",
+            &format!(", 'file', '{text}'"),
+        )
+        .await;
+    }
     for (chunk, text) in [(0, "Saved page text."), (1, "Second part.")] {
         memory_row(
             &db,
@@ -351,7 +362,19 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     let done = export_memories(&db, &stems, &dirs, &mut manifest)
         .await
         .unwrap();
-    assert_eq!((done.memories, done.originals), (2, 1));
+    assert_eq!((done.memories, done.originals), (3, 2));
+    let clip = memory::parse(&read(&dirs, "backstage/memories/undated/clipboard_1.md")).unwrap();
+    assert_eq!(clip.text, "copied text");
+    assert_eq!(clip.other["source"], "clipboard");
+    let doc = crate::store::format::original::parse(&read(
+        &dirs,
+        "backstage/originals/file/docs README.md.md",
+    ))
+    .unwrap();
+    assert_eq!(doc.external_id, "docs::README.md");
+    let texts: Vec<_> = doc.messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, ["# Notes", "Body."]);
+    assert_eq!(doc.other["source"], "file");
 
     let cap = memory::parse(&read(&dirs, "backstage/memories/2026-10/mem_cap.md")).unwrap();
     assert_eq!(
@@ -816,10 +839,10 @@ async fn names_never_clash_and_page_and_entity_state_is_kept() {
         "p1",
     )
     .await;
-    // An entity column on an ordinary page has no place in its file.
+    // A page distilled about an entity keeps that entity, as stored.
     sql(
         &db,
-        "UPDATE pages SET entity_type = 'person' WHERE id = ?1",
+        "UPDATE pages SET entity_id = 'ent_bob', entity_type = 'person' WHERE id = ?1",
         "p2",
     )
     .await;
@@ -853,7 +876,10 @@ async fn names_never_clash_and_page_and_entity_state_is_kept() {
         .iter()
         .map(|l| (l.id.as_str(), l.field.as_str()))
         .collect();
-    assert_eq!(left, [("p2", "entity_type")]);
+    assert!(left.is_empty(), "{left:?}");
+    let p2 = page::parse(&read(&dirs, "visible/beta-p3.md"), "").unwrap();
+    assert_eq!(p2.other["entity_id"], "ent_bob");
+    assert_eq!(p2.other["entity_type"], "person");
 }
 
 #[tokio::test]
@@ -953,6 +979,14 @@ async fn replaying_the_history_log_gives_back_every_row() {
         "mem_1",
     )
     .await;
+    // No time column: stamped with the export time, never 1970.
+    sql(
+        &db,
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 1, 0, 0)",
+        "mem_1",
+    )
+    .await;
 
     let out = tempfile::tempdir().unwrap();
     let dirs = ExportDirs::create(out.path().join("export")).unwrap();
@@ -969,13 +1003,22 @@ async fn replaying_the_history_log_gives_back_every_row() {
         .any(|file| file.path.ends_with(".lock")));
 
     let root = dirs.backstage().join("history");
+    assert!(!root.join("1970-01").exists(), "an entry claims 1970");
     let mut rebuilt: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
     for (log_root, log) in [(root.clone(), Log::Main), (root.join("reads"), Log::Reads)] {
         let replay = history::replay(&log_root).unwrap();
         assert!(replay.report.is_clean(), "{:?}", replay.report);
         for entry in &replay.entries {
             let data = entry.data.as_ref().unwrap();
+            if data.get("state_of").is_some() {
+                assert_eq!(entry.op, "state.seed");
+                assert_eq!(log, Log::Main);
+                continue;
+            }
             let table = data["table"].as_str().unwrap().to_string();
+            if table == "enrichment_origin" {
+                assert_eq!(data["time_unknown"], true);
+            }
             let spec = HISTORY_TABLES.iter().find(|s| s.table == table).unwrap();
             assert_eq!(spec.log, log, "{table} is in the wrong log");
             let mut row = data["row"].as_object().unwrap().clone();
@@ -1042,7 +1085,8 @@ async fn one_call_exports_everything_and_writes_the_manifest_last() {
     let out = tempfile::tempdir().unwrap();
     let target = out.path().join("export");
     let placement = HashMap::from([("a".to_string(), "Plans/a.md".to_string())]);
-    let summary = export_lossless(&db, &placement, data_root.path(), &target)
+    let folder = super::run::PagesFolder::recorded(placement);
+    let summary = export_lossless(&db, &folder, data_root.path(), &target)
         .await
         .unwrap();
     assert_eq!((summary.pages, summary.archived), (4, 1));
@@ -1059,7 +1103,94 @@ async fn one_call_exports_everything_and_writes_the_manifest_last() {
         assert_eq!(sha256(&bytes), file.sha256, "{}", file.path);
     }
     // A second run into the same folder is refused.
-    assert!(export_lossless(&db, &placement, data_root.path(), &target)
+    assert!(export_lossless(&db, &folder, data_root.path(), &target)
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn the_pages_folder_is_read_and_nothing_in_it_is_lost() {
+    use super::run::{export_lossless, PagesFolder};
+
+    let (db, _db_dir) = fixture().await;
+    let pages = tempfile::tempdir().unwrap();
+    let write = |relative: &str, text: &str| {
+        let path = pages.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("Plans/a.md", "---\norigin_id: a\n---\nAlpha\n");
+    // state.json forgot page b; its file still says whose it is.
+    write(
+        "Notes/Beta page.md",
+        "---\norigin_id: b\ntitle: Beta\n---\nBeta\n",
+    );
+    write(
+        "external-compile-topic-001.md",
+        "a file no page row claims\n",
+    );
+    write("deleted.md", "---\norigin_id: deleted\n---\nold\n");
+    write(".wenlan/state.json", "{}");
+    write(".obsidian/app.json", "{}");
+    let before = snapshot(pages.path());
+
+    let recorded = HashMap::from([
+        ("a".to_string(), "Plans/a.md".to_string()),
+        ("deleted".to_string(), "deleted.md".to_string()),
+        ("deleted_too".to_string(), "missing.md".to_string()),
+    ]);
+    let folder = PagesFolder {
+        dir: Some(pages.path().to_path_buf()),
+        recorded,
+    };
+    let data_root = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    let summary = export_lossless(&db, &folder, data_root.path(), &target)
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot(pages.path()),
+        before,
+        "the pages folder is never written"
+    );
+    assert_eq!(summary.found_by_id, 1);
+    assert_eq!(summary.stale_records, 2);
+    assert_eq!(summary.folder_only, 2);
+    assert!(target.join("visible/Plans/a.md").is_file());
+    assert!(target.join("visible/Notes/Beta page.md").is_file());
+    assert_eq!(
+        std::fs::read_to_string(
+            target.join("backstage/pages-folder/external-compile-topic-001.md")
+        )
+        .unwrap(),
+        "a file no page row claims\n"
+    );
+    assert!(target.join("backstage/pages-folder/deleted.md").is_file());
+    assert!(!target.join("backstage/pages-folder/.wenlan").exists());
+}
+
+/// Every file under `dir` with its bytes and modified time.
+fn snapshot(dir: &std::path::Path) -> Vec<(String, Vec<u8>, std::time::SystemTime)> {
+    let mut found = Vec::new();
+    for entry in walk(dir) {
+        let bytes = std::fs::read(&entry).unwrap();
+        let modified = std::fs::metadata(&entry).unwrap().modified().unwrap();
+        found.push((entry.display().to_string(), bytes, modified));
+    }
+    found.sort();
+    found
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(walk(&path));
+        } else {
+            found.push(path);
+        }
+    }
+    found
 }

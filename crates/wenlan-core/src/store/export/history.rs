@@ -188,13 +188,15 @@ pub async fn export_history(
                 .zip(values.iter().map(cell))
                 .collect();
             let entry = entry_of(spec, row, &first_kinds);
-            let key = (entry.ts.unwrap_or(0), spec.table, order);
+            // Untimed rows go after every timed one, before the state seeds.
+            let key = (entry.ts.unwrap_or(i64::MAX - 1), spec.table, order);
             match spec.log {
                 Log::Main => main.push((key, entry)),
                 Log::Reads => reads.push((key, entry)),
             }
         }
     }
+    main.extend(state_entries(db).await?);
     let done = HistoryExported {
         entries: main.len(),
         reads: reads.len(),
@@ -207,6 +209,68 @@ pub async fn export_history(
 }
 
 type Keyed = ((i64, &'static str, usize), NewEntry);
+
+/// The tables whose file leaves columns to history, and each one's key.
+pub const STATE_OF: &[(&str, &[&str])] = &[
+    ("pages", &["id"]),
+    ("memories", &["source", "source_id"]),
+    ("brief_items", &["id"]),
+];
+
+/// One `state.seed` entry per row (per memory, from its first chunk) with
+/// the columns [`super::DEFERRED_COLUMNS`] sends to history, as they are
+/// now, so the rebuild restores them: `data: {"state_of", "key", "columns"}`.
+async fn state_entries(db: &MemoryDB) -> Result<Vec<Keyed>, WenlanError> {
+    let mut out = Vec::new();
+    for (table, key) in STATE_OF {
+        let deferred: Vec<&str> = super::DEFERRED_COLUMNS
+            .iter()
+            .filter(|(t, to, _)| t == table && *to == "history")
+            .flat_map(|(_, _, columns)| columns.iter().copied())
+            .collect();
+        if deferred.is_empty() {
+            continue;
+        }
+        let mut wanted: Vec<&str> = key.to_vec();
+        wanted.extend(deferred.iter().copied());
+        let mut order: Vec<&str> = key.to_vec();
+        if *table == "memories" {
+            order.push("chunk_index");
+        }
+        let Some(copied) = db.export_columns(table, &wanted, &order).await? else {
+            continue;
+        };
+        let mut seen = std::collections::HashSet::new();
+        for (index, values) in copied.rows.iter().enumerate() {
+            let mut keyed = Map::new();
+            let mut columns = Map::new();
+            for (name, value) in copied.columns.iter().zip(values) {
+                if key.contains(&name.as_str()) {
+                    keyed.insert(name.clone(), cell(value));
+                } else {
+                    columns.insert(name.clone(), cell(value));
+                }
+            }
+            // A memory's first chunk speaks for it.
+            if !seen.insert(Value::Object(keyed.clone()).to_string()) {
+                continue;
+            }
+            let mut entry = NewEntry::new(Actor::system(), "state.seed");
+            entry.target = keyed
+                .values()
+                .next_back()
+                .and_then(Value::as_str)
+                .map(|id| Target::new(*table, id));
+            entry.data = Some(json!({
+                "state_of": table,
+                "key": Value::Object(keyed),
+                "columns": Value::Object(columns),
+            }));
+            out.push(((i64::MAX, *table, index), entry));
+        }
+    }
+    Ok(out)
+}
 
 fn write_log(root: &Path, mut entries: Vec<Keyed>) -> Result<(), WenlanError> {
     if entries.is_empty() {
@@ -323,7 +387,9 @@ fn entry_of(
     .or_else(|| text_of(&row, "op"))
     .unwrap_or_else(|| format!("{}.row", spec.table));
     let mut entry = NewEntry::new(actor_of(spec.table, &row, first_kinds), op);
-    entry.ts = Some(ts.unwrap_or(0));
+    // No stored time (the table has none, or it does not parse): the log
+    // stamps the export time and the entry says so, instead of claiming 1970.
+    entry.ts = ts;
     let text_column = match spec.table {
         "page_history" => {
             entry.target = text_of(&row, "page_id").map(|id| Target::new("page", id));
@@ -399,6 +465,9 @@ fn entry_of(
     let mut data = json!({ "table": spec.table, "row": Value::Object(row) });
     if let (Some(column), Some(_)) = (text_column, &entry.text) {
         data["text_column"] = json!(column);
+    }
+    if entry.ts.is_none() {
+        data["time_unknown"] = json!(true);
     }
     entry.data = Some(data);
     entry
