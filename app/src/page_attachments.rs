@@ -67,19 +67,25 @@ fn is_showable_embed(path: &std::path::Path, root: &std::path::Path) -> bool {
 
 /// Where an Obsidian embed (`![[name]]`) points: the daemon finds the file in
 /// the pages folder the way Obsidian does, and the webview may then load that
-/// one file. `None` when nothing matches or the daemon cannot say.
+/// one file. With `page_id`, a file in that page's own folder wins. `None`
+/// when nothing matches or the daemon cannot say.
 #[tauri::command]
 pub async fn resolve_page_embed(
     app: tauri::AppHandle,
     state: tauri::State<'_, State>,
     name: String,
+    page_id: Option<String>,
 ) -> Result<Option<String>, String> {
     let client = client(&state).await;
     let root: KnowledgePathResponse = client.get_json("/api/knowledge/path").await?;
-    let path = format!(
+    let mut path = format!(
         "/api/attachments/resolve?name={}",
         crate::api::percent_encode_path_segment(&name)
     );
+    if let Some(page_id) = page_id.filter(|id| !id.is_empty()) {
+        path.push_str("&page_id=");
+        path.push_str(&crate::api::percent_encode_path_segment(&page_id));
+    }
     let Ok(resolved) = client.get_json::<ResolvedEmbed>(&path).await else {
         return Ok(None);
     };

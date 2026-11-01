@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -76,11 +76,16 @@ function AttachmentMedia({ src, name, alt }: { src: string; name: string; alt: s
 }
 
 /** An Obsidian embed, `![[name.png]]`, found anywhere in the pages folder. */
+/** The page being read, so `![[name]]` embeds can be found anywhere in the
+ *  pages folder. */
+export const EmbedPageContext = createContext<string | null>(null);
+
 function EmbedMedia({ inner, alt, width }: { inner: string; alt: string; width?: number }) {
   useAttachmentsDir();
+  const pageId = useContext(EmbedPageContext);
   const [failed, setFailed] = useState(false);
   const embed = parseMediaEmbed(inner);
-  const url = embed && !failed ? mediaEmbedUrl(embed) : null;
+  const url = embed && !failed ? mediaEmbedUrl(embed, pageId) : null;
   if (!embed || !url) return <span className="page-attachment-pending">{`![[${inner}]]`}</span>;
   const style = width ? { width: `${width}px` } : undefined;
   return embed.kind === "video" ? (

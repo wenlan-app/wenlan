@@ -42,6 +42,7 @@ import { createWikiLinkEditing, setResolvedWikiLinkTargets, setEditorReferenceCo
 import { createLinkCompletion, refreshLinkCompletion, type LinkCompletionLabels, type LinkCompletionNote } from "./wikiLinkCompletion";
 import {
   setWritingCompositionActive,
+  writingPageId,
   writingPresentation,
 } from "./writingPresentation";
 import { pageLayersEditing, setPageLayers } from "./pageLayersEditing";
@@ -338,6 +339,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             search({ top: true }),
             pageLayersEditing(props.pageLayers ?? null),
             sentenceProposals(props.sentenceProposals ?? null),
+            writingPageId.of(props.pageId ?? null),
             searchPhrasesCompartmentRef.current.of(EditorState.phrases.of(searchPhrases(t))),
             drawSelection(),
             dropCursor(),
