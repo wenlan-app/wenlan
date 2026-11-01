@@ -368,3 +368,58 @@ fn a_rewritten_sentence_counts_once() {
         2
     );
 }
+
+#[test]
+fn sentence_changes_pair_a_rewrite_and_keep_the_old_text() {
+    use wenlan_types::authorship::SentenceChangeKind::{Added, Changed, Removed};
+    let hash = |text: &str| sentence_hash(&normalize_sentence(text));
+    let before = "The shop opens at 9 am. It closes at 5 pm on Mondays. \
+                  Parking is free. Cards are accepted.";
+    let after = "The shop opens at 9 am. It is closed on Mondays. \
+                 Street parking costs two dollars. Only cash is taken.";
+    let changes = sentence_changes(before, after);
+    let got: Vec<_> = changes
+        .iter()
+        .map(|c| (c.kind, c.hash.clone(), c.before.as_deref()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                Changed,
+                Some(hash("It is closed on Mondays.")),
+                Some("It closes at 5 pm on Mondays.")
+            ),
+            (
+                Changed,
+                Some(hash("Street parking costs two dollars.")),
+                Some("Parking is free.")
+            ),
+            (
+                Changed,
+                Some(hash("Only cash is taken.")),
+                Some("Cards are accepted.")
+            ),
+        ]
+    );
+    assert!(sentence_changes(before, before).is_empty());
+
+    let added = sentence_changes(before, &format!("{before} A new line."));
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0].kind, Added);
+    assert_eq!(added[0].hash, Some(hash("A new line.")));
+    assert_eq!(added[0].before, None);
+
+    let removed = sentence_changes(before, "The shop opens at 9 am. Parking is free.");
+    let got: Vec<_> = removed
+        .iter()
+        .map(|c| (c.kind, c.hash.is_none(), c.before.as_deref()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (Removed, true, Some("It closes at 5 pm on Mondays.")),
+            (Removed, true, Some("Cards are accepted.")),
+        ]
+    );
+}

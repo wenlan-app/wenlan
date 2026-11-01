@@ -35,7 +35,9 @@
 use std::collections::{HashMap, HashSet};
 
 use sha2::{Digest, Sha256};
-use wenlan_types::authorship::{AuthorshipConfidence, SentenceAuthor, SentenceAuthorship};
+use wenlan_types::authorship::{
+    AuthorshipConfidence, SentenceAuthor, SentenceAuthorship, SentenceChange, SentenceChangeKind,
+};
 
 /// One sentence unit of a page body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -458,28 +460,60 @@ fn similar(a: &str, b: &str) -> bool {
 }
 
 /// How many sentence units `after` added, changed or removed against
-/// `before`. A sentence rewritten past recognition aligns as a removal and an
-/// addition in the same place; it counts once, so within each run of changes
-/// the removals and additions pair up and only the larger side counts.
+/// `before`: the length of [`sentence_changes`].
 pub fn changed_sentence_count(before: &str, after: &str) -> u32 {
+    u32::try_from(sentence_changes(before, after).len()).unwrap_or(u32::MAX)
+}
+
+/// What `after` did to each sentence of `before`, in page order. A sentence
+/// rewritten past recognition aligns as a removal and an addition in the
+/// same place; it is one change, so within each run of changes the removals
+/// and additions pair up in order as `Changed`, and only the leftovers are
+/// `Removed` or `Added`.
+pub fn sentence_changes(before: &str, after: &str) -> Vec<SentenceChange> {
     let old = sentence_units(before);
     let new = sentence_units(after);
     let old_norms: Vec<&str> = old.iter().map(|u| u.norm.as_str()).collect();
     let new_norms: Vec<&str> = new.iter().map(|u| u.norm.as_str()).collect();
-    let (mut changed, mut removed, mut added) = (0usize, 0usize, 0usize);
+    let changed = |o: &SentenceUnit, n: &SentenceUnit| SentenceChange {
+        kind: SentenceChangeKind::Changed,
+        hash: Some(n.hash.clone()),
+        before: Some(o.text.clone()),
+    };
+    let mut out = Vec::new();
+    let (mut removed, mut added): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
+    let flush =
+        |out: &mut Vec<SentenceChange>, removed: &mut Vec<usize>, added: &mut Vec<usize>| {
+            let pairs = removed.len().min(added.len());
+            for (&o, &n) in removed.iter().zip(added.iter()) {
+                out.push(changed(&old[o], &new[n]));
+            }
+            out.extend(removed[pairs..].iter().map(|&o| SentenceChange {
+                kind: SentenceChangeKind::Removed,
+                hash: None,
+                before: Some(old[o].text.clone()),
+            }));
+            out.extend(added[pairs..].iter().map(|&n| SentenceChange {
+                kind: SentenceChangeKind::Added,
+                hash: Some(new[n].hash.clone()),
+                before: None,
+            }));
+            removed.clear();
+            added.clear();
+        };
     for op in align(&old_norms, &new_norms) {
         match op {
-            AlignOp::Equal(..) => {
-                changed += removed.max(added);
-                (removed, added) = (0, 0);
+            AlignOp::Equal(..) => flush(&mut out, &mut removed, &mut added),
+            AlignOp::Replace(o, n) => {
+                flush(&mut out, &mut removed, &mut added);
+                out.push(changed(&old[o], &new[n]));
             }
-            AlignOp::Replace(..) => changed += 1,
-            AlignOp::Delete(..) => removed += 1,
-            AlignOp::Insert(..) => added += 1,
+            AlignOp::Delete(o) => removed.push(o),
+            AlignOp::Insert(n) => added.push(n),
         }
     }
-    changed += removed.max(added);
-    u32::try_from(changed).unwrap_or(u32::MAX)
+    flush(&mut out, &mut removed, &mut added);
+    out
 }
 
 /// Replay `versions` (oldest first) into the authorship of the last one.

@@ -789,6 +789,22 @@ async fn undoing_an_ai_write_puts_back_only_its_untouched_sentences_as_the_ais()
         last.changed_sentences, 3,
         "changed one, removed one, added one"
     );
+    assert_eq!(last.changes.len(), 3, "one entry per counted sentence");
+    let changed: Vec<_> = last
+        .changes
+        .iter()
+        .filter(|c| c.kind == wenlan_types::authorship::SentenceChangeKind::Changed)
+        .collect();
+    assert!(!changed.is_empty(), "{:?}", last.changes);
+    for change in &changed {
+        assert!(
+            view.sentences
+                .iter()
+                .any(|s| Some(&s.hash) == change.hash.as_ref()),
+            "a changed sentence is found in the sentences list: {change:?}"
+        );
+        assert!(change.before.is_some());
+    }
     let rows = db.list_page_history("p", 10).await.unwrap();
     assert_eq!(
         crate::page_history::changed_sentences_at(&rows, ai.version),

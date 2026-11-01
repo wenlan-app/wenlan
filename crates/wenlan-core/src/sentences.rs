@@ -851,10 +851,12 @@ async fn last_ai_update(db: &MemoryDB, page: &Page) -> Result<Option<LastAiUpdat
     let before = history
         .get(at + 1)
         .map_or("", |entry| entry.content.as_str());
+    let changes = authorship::sentence_changes(before, &history[at].content);
     Ok(Some(LastAiUpdate {
         version: history[at].version,
-        changed_sentences: authorship::changed_sentence_count(before, &history[at].content),
+        changed_sentences: u32::try_from(changes.len()).unwrap_or(u32::MAX),
         at: history[at].created_at,
+        changes,
     }))
 }
 

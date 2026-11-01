@@ -284,7 +284,7 @@ pub struct SentenceRevertResponse {
 }
 
 /// The page's newest AI write, for "updated N sentences" and its Undo.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastAiUpdate {
     /// The page version the AI write produced; what the revert takes.
     pub version: i64,
@@ -292,6 +292,31 @@ pub struct LastAiUpdate {
     pub changed_sentences: u32,
     /// Unix seconds.
     pub at: i64,
+    /// What that write did to each sentence, in page order; one entry per
+    /// counted sentence, so its length is `changed_sentences`. Derived from
+    /// history on read, never stored.
+    #[serde(default)]
+    pub changes: Vec<SentenceChange>,
+}
+
+/// What one AI write did to one sentence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SentenceChangeKind {
+    Changed,
+    Added,
+    Removed,
+}
+
+/// One sentence an AI write added, changed or removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SentenceChange {
+    pub kind: SentenceChangeKind,
+    /// The sentence's hash as that write left it, which is the hash in the
+    /// sentences list while nobody has changed it since. `None` for removed.
+    pub hash: Option<String>,
+    /// The sentence's text before that write. `None` for added.
+    pub before: Option<String>,
 }
 
 /// `POST /api/pages/{id}/sentences/recheck`: recheck one sentence only.
