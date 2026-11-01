@@ -672,7 +672,11 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           if (/^[ \t]+$/.test(state.sliceDoc(itemLine.from, node.from))) {
             addMarkClass(itemLine.from, node.from, "cm-writing-list-indent");
           }
-          if (lineConstructIsRevealed(state, node.from, parent.from, parent.to, contentFocused)) {
+          // A list marker stays a bullet (or number) while the caret is on its
+          // line, as in Obsidian: only a selection over the marker itself
+          // shows the source "- ". The line's text reveals its own syntax as usual.
+          const taskMarker = task ? directChildrenNamed(task, "TaskMarker")[0] : undefined;
+          if (markerIsRevealed(state, node.from, taskMarker ? taskMarker.to : markerTo, contentFocused)) {
             return;
           }
           if (task) {
@@ -694,7 +698,8 @@ function buildWritingRanges(view: EditorView): WritingRanges {
         }
 
         if (node.name === "TaskMarker" && parent.name === "Task") {
-          if (lineConstructIsRevealed(state, node.from, parent.from, parent.to, contentFocused)) {
+          const listMark = parent.parent ? directChildrenNamed(parent.parent, "ListMark")[0] : undefined;
+          if (markerIsRevealed(state, listMark?.from ?? node.from, node.to, contentFocused)) {
             return;
           }
           addConcealment(
@@ -962,6 +967,21 @@ function lineConstructIsRevealed(
     if (range.empty) return range.head >= line.from && range.head <= line.to;
     return range.from <= constructTo && range.to >= constructFrom;
   });
+}
+
+/** A list or task marker shows its source only when a selection covers part of it. */
+function markerIsRevealed(
+  state: EditorView["state"],
+  markerFrom: number,
+  markerTo: number,
+  contentFocused: boolean,
+): boolean {
+  if (!contentFocused) return false;
+  return state.selection.ranges.some((range) =>
+    range.empty
+      ? range.head > markerFrom && range.head < markerTo
+      : range.from < markerTo && range.to > markerFrom,
+  );
 }
 
 /**

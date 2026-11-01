@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { CaretDown, Folder, FolderPlus } from "@phosphor-icons/react";
+import { CaretDown, Folder, FolderPlus, NotePencil } from "@phosphor-icons/react";
+import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { useTranslation } from "react-i18next";
 import type { Page } from "../../../lib/tauri";
 import { readWikiInventoryMode, writeWikiInventoryMode, type WikiInventoryMode } from "../../../lib/wikiNotesPreferences";
@@ -93,6 +94,7 @@ export function WikiWorkspace({
     setFolderOpen(true);
   }, [directoryOpenRequest]);
   const [creationFolderPath, reportCreationFolderPath] = useState<string | null>(null);
+  const exampleWiki = useExampleWikiActive();
   useEffect(() => {
     onCreationFolderPathChange?.(inventoryMode === "folders" ? creationFolderPath : null);
   }, [creationFolderPath, inventoryMode, onCreationFolderPathChange]);
@@ -175,6 +177,19 @@ export function WikiWorkspace({
                 <span aria-hidden="true">{noteCount}</span>
                 <span className="sr-only">{t("pages.folders.noteCount", { count: noteCount })}</span>
               </span>
+            )}
+            {/* New page sits at the top of the list, as in Obsidian's file
+                explorer; in Folders it lands in the folder in view. */}
+            {inventoryMode !== "archived" && !exampleWiki && (
+              <button
+                type="button"
+                className="wiki-workspace-new-folder wiki-workspace-new-page"
+                aria-label={t("pages.overview.newPage")}
+                title={t("pages.overview.newPage")}
+                onClick={() => closeForNavigation(onCreatePage)(inventoryMode === "folders" ? creationFolderPath ?? currentFolderPath ?? undefined : undefined)}
+              >
+                <NotePencil aria-hidden="true" size={16} />
+              </button>
             )}
             {inventoryMode === "folders" && (
               <button

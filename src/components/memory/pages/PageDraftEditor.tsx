@@ -21,6 +21,7 @@ import { AskInsteadHint } from "../askAi/AskInsteadHint";
 import { MarkdownEditor, type MarkdownEditorHandle } from "../editor/MarkdownEditor";
 import { useEditorLinkNotes } from "../editor/useEditorLinkNotes";
 import { getPage, publishPageDraft, type Page } from "../../../lib/tauri";
+import { recordRecentPageVisit } from "../../../lib/recentPages";
 import {
   usePageDraftAutosave,
   type PageDraftSnapshot,
@@ -156,6 +157,9 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
 
     const finishPublished = useCallback(async (published: Page) => {
       publishedPageRef.current = published;
+      // A new page belongs in Recently used as soon as it exists, even when
+      // the person goes home or elsewhere instead of reopening it.
+      recordRecentPageVisit(published);
       projectionIssueRef.current = published.projection_status === "pending" && published.projection_error
         ? { expectedVersion: published.version - 1 }
         : undefined;
