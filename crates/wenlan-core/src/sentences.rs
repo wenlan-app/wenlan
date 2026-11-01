@@ -85,19 +85,31 @@ fn guarded(page: &Page) -> bool {
     crate::post_write::page_is_human_owned(page) || page.review_required
 }
 
-/// The creation kind that decides who wrote a page's first version.
+/// The creation kind that decides who wrote a page's first version when
+/// that version is an older `create` row. Newer pages record
+/// `person_create` or `agent_create` and need none of this.
 ///
-/// `authored` alone does not mean the person wrote it: a note an agent
-/// writes with no sources lands as `authored` too (steep keeps such a note up
-/// to date as Wenlan's own, see `steep::owned`). A page the person made in the
-/// app is born `user_edited`, and any page a person has edited since is
-/// `user_edited`, so an authored page counts as the person's from birth only
-/// then. An authored page no person has touched was an agent's.
-fn birth_kind(page: &Page) -> &str {
-    if page.creation_kind == "authored" && !page.user_edited {
-        "agent_authored"
+/// `authored` alone does not mean the person wrote it: an AI tool's page
+/// with no sources lands as `authored` too. An authored page no person has
+/// touched was an AI tool's. Once the person has edited it, `user_edited`
+/// says only that they edited it, not that they made it ("having seen it
+/// does not make it yours"), so its first version's author is unknown: the
+/// person's edits still count as theirs, the rest stays unattributed.
+fn birth_kind<'a>(page: &'a Page, history: &[crate::db::PageHistoryEntry]) -> &'a str {
+    if page.creation_kind != "authored" {
+        return &page.creation_kind;
+    }
+    if !page.user_edited {
+        return "agent_authored";
+    }
+    let person_edited_later = history.iter().any(|entry| {
+        entry.version > 1
+            && authorship::version_author(&entry.edited_by, "") == authorship::VersionAuthor::Person
+    });
+    if person_edited_later {
+        "legacy_authored"
     } else {
-        &page.creation_kind
+        "authored"
     }
 }
 
@@ -158,7 +170,7 @@ pub async fn page_authorship(
     }
     Ok(authorship::derive_authorship(
         &page.id,
-        birth_kind(page),
+        birth_kind(page, &history),
         &versions,
         &accepted,
         &restored,
@@ -838,14 +850,22 @@ pub async fn page_sentences(
 
 /// Is this history version an AI write (not the person's, not a mechanical
 /// rewrite, not unknown)?
-fn is_ai_write(entry: &crate::db::PageHistoryEntry, page: &Page) -> bool {
-    authorship::version_author(&entry.edited_by, birth_kind(page)) == authorship::VersionAuthor::Ai
+fn is_ai_write(
+    entry: &crate::db::PageHistoryEntry,
+    page: &Page,
+    history: &[crate::db::PageHistoryEntry],
+) -> bool {
+    authorship::version_author(&entry.edited_by, birth_kind(page, history))
+        == authorship::VersionAuthor::Ai
 }
 
 /// The page's newest AI write in its recorded history.
 async fn last_ai_update(db: &MemoryDB, page: &Page) -> Result<Option<LastAiUpdate>, WenlanError> {
     let history = db.list_page_history(&page.id, HISTORY_LIMIT).await?;
-    let Some(at) = history.iter().position(|entry| is_ai_write(entry, page)) else {
+    let Some(at) = history
+        .iter()
+        .position(|entry| is_ai_write(entry, page, &history))
+    else {
         return Ok(None);
     };
     let before = history
@@ -908,7 +928,7 @@ pub async fn revert_ai_write(
             "page {page_id} has no version {version}"
         )));
     };
-    if !is_ai_write(&history[at], &page) {
+    if !is_ai_write(&history[at], &page, &history) {
         return Err(WenlanError::Conflict(format!(
             "not_an_ai_write: v{version} was written by {}, not the AI",
             history[at].edited_by

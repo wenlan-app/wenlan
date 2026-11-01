@@ -23,7 +23,7 @@ const HISTORY_SCAN: i64 = 1_000;
 /// and putting back an archived page.
 pub fn kind_of_edit(edited_by: &str) -> PageHistoryKind {
     match edited_by {
-        "manual_edit" | "fs_edit" | "restore" => PageHistoryKind::PersonEdit,
+        "manual_edit" | "fs_edit" | "restore" | "person_create" => PageHistoryKind::PersonEdit,
         _ => PageHistoryKind::AiEdit,
     }
 }

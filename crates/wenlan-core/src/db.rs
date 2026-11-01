@@ -19104,6 +19104,20 @@ pub struct BackupReceipt {
     pub created_at: i64,
 }
 
+/// The `page_history.edited_by` of a page's first version. An authored page
+/// records who made it, so a later edit by the person never makes the AI
+/// tool's sentences theirs: `person_create` for the person in the app (no
+/// agent name), `agent_create` for an AI tool. Other pages, and internal
+/// callers that name no actor, keep `create`.
+fn create_label(creation_kind: &str, actor: &str) -> &'static str {
+    match (creation_kind, actor) {
+        ("authored", "unknown") => "person_create",
+        ("authored", "") => "create",
+        ("authored", _) => "agent_create",
+        _ => "create",
+    }
+}
+
 impl MemoryDB {
     /// Insert one backfilled edge (`ON CONFLICT(edge_id) DO NOTHING` --
     /// content-addressed retry identity, spec §6.1). `grounded=0`, `root_id`
@@ -52503,9 +52517,9 @@ impl MemoryDB {
             .execute(
                 "INSERT OR IGNORE INTO page_history \
                    (page_id, version, title, content, source_memory_ids, edited_by, created_at) \
-                 SELECT id, version, title, content, source_memory_ids, 'create', ?2 \
+                 SELECT id, version, title, content, source_memory_ids, ?3, ?2 \
                  FROM pages WHERE id = ?1",
-                libsql::params![id, linked_at],
+                libsql::params![id, linked_at, create_label(creation_kind, basis_actor)],
             )
             .await
         {
