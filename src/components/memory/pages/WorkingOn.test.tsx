@@ -2,13 +2,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listThings, listWorkingOn, type ThingSummary } from "../../../lib/tauri";
+import { getThing, listThings, listWorkingOn, type ThingSummary } from "../../../lib/tauri";
 import { WorkingOn } from "./WorkingOn";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
   listThings: vi.fn(),
   listWorkingOn: vi.fn(),
+  getThing: vi.fn(),
 }));
 
 const now = Math.floor(Date.now() / 1000);
@@ -39,6 +40,23 @@ describe("WorkingOn", () => {
   beforeEach(() => {
     vi.mocked(listThings).mockReset();
     vi.mocked(listWorkingOn).mockReset().mockResolvedValue([]);
+    vi.mocked(getThing).mockReset().mockImplementation(async (id) => ({ ...thing({ id }), sessions: [], pages: [] }));
+  });
+
+  it("shows a tool by its mark, and a tool without one by its name", async () => {
+    vi.mocked(listThings).mockResolvedValue([thing()]);
+    vi.mocked(getThing).mockResolvedValue({
+      ...thing(),
+      sessions: [
+        { id: "s1", tool: "claude-code", title: null, last_write_at: now },
+        { id: "s2", tool: "codex", title: null, last_write_at: now - 60 },
+      ],
+      pages: [],
+    });
+    renderWorkingOn();
+    const mark = await screen.findByRole("img", { name: "Claude Code" });
+    const meta = mark.closest(".wiki-working-on-meta")!;
+    expect(meta.querySelector(".wiki-working-on-where")?.textContent).toBe("ChatGPT / Codex · wenlan");
   });
 
   it("UX-HOME-1: each thing shows where it stands and opens that thing", async () => {

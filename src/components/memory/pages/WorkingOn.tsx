@@ -2,6 +2,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import { hasToolMark, ToolMark } from "../assets/toolMarks";
 import { agentDisplayName, getThing, listThings, listWorkingOn, type ThingDetail, type ThingSummary, type WorkingOnItem } from "../../../lib/tauri";
 
 export const WORKING_ON_QUERY_KEY = ["working-on"] as const;
@@ -79,15 +80,25 @@ export function WorkingOn({
         {thingItems.map((thing, index) => {
           const detail = details[index]?.data;
           const line = whereItStands(t, thing, detail);
-          const tools = [...new Set((detail?.sessions ?? []).map((session) => agentDisplayName(session.tool)).filter(Boolean))];
-          const where = [...tools, ...thing.spaces].join(" · ");
+          // A tool with a mark shows the mark; others keep their name.
+          const slugs = [...new Set((detail?.sessions ?? []).map((session) => session.tool).filter((tool): tool is string => !!tool))];
+          const marked = slugs.filter(hasToolMark);
+          const named = [...new Set(slugs.filter((tool) => !hasToolMark(tool)).map((tool) => agentDisplayName(tool)).filter(Boolean))];
+          const where = [...named, ...thing.spaces].join(" · ");
           return (
             <li key={thing.id}>
               <button type="button" className="wiki-working-on-card" onClick={() => onOpenThing?.(thing.id)}>
                 <span className="wiki-working-on-title">{thing.title ?? t("thing.untitled")}</span>
                 <span className="wiki-working-on-text">{line ?? ""}</span>
                 <span className="wiki-working-on-foot">
-                  <span className="wiki-working-on-meta">{where}</span>
+                  <span className="wiki-working-on-meta">
+                    {marked.length > 0 ? (
+                      <span className="wiki-working-on-tools">
+                        {marked.map((tool) => <ToolMark key={tool} tool={tool} />)}
+                      </span>
+                    ) : null}
+                    {where ? <span className="wiki-working-on-where">{where}</span> : null}
+                  </span>
                   <span className="wiki-working-on-when">{addedWhen(i18n.language, thing.last_activity_at)}</span>
                 </span>
               </button>
