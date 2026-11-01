@@ -1315,7 +1315,11 @@ impl KnowledgeWriter {
             let mut found: HashMap<String, Vec<String>> = HashMap::new();
             for path in folders::scan_tree(&capabilities.root)?.1 {
                 let (directory, name) = folders::page_parent(&capabilities.root, &path)?;
-                if let Some(page_id) = Self::read_origin_id(&directory, &OsString::from(name)) {
+                // The quick 8 KiB read first; a page whose front matter runs
+                // longer is found by the same 1 MiB reader the archive uses.
+                let page_id = Self::read_origin_id(&directory, &OsString::from(&name))
+                    .or_else(|| Self::read_origin_stamp_in(&directory, &name).map(|(id, _)| id));
+                if let Some(page_id) = page_id {
                     found.entry(page_id).or_default().push(path);
                 }
             }
@@ -1609,11 +1613,10 @@ impl KnowledgeWriter {
                 // names no page that could be read (front matter too long to
                 // parse, say). It is not known to be someone else's, so the
                 // page keeps its mapping and the file stays for a later pass.
-                if files.is_empty()
-                    && mapped_file
-                        .as_ref()
-                        .is_some_and(|mapped| unreadable.contains(&mapped))
-                {
+                let mapped_unreadable = mapped_file
+                    .as_ref()
+                    .is_some_and(|mapped| unreadable.contains(&mapped));
+                if files.is_empty() && mapped_unreadable {
                     moves.stuck.push(page_id.clone());
                     continue;
                 }
@@ -1686,7 +1689,14 @@ impl KnowledgeWriter {
                     if archived.is_some() {
                         // Where the page's own file was, over a recorded path
                         // that may now hold something else.
-                        let place = files.first().map(|file| (*file).clone()).or(recorded);
+                        // The recorded file when it was one of the moved
+                        // ones, so a stray copy elsewhere never decides it.
+                        let place = recorded
+                            .as_ref()
+                            .filter(|recorded| files.contains(recorded))
+                            .cloned()
+                            .or_else(|| files.first().map(|file| (*file).clone()))
+                            .or(recorded);
                         if let Some(place) = place {
                             state.archived_from.insert(page_id.clone(), place);
                         }
@@ -8647,6 +8657,56 @@ mod tests {
             .is_err());
         assert!(std::path::Path::new(&live).exists());
         assert!(writer.load_state().pages.contains_key(&page.id));
+    }
+
+    /// Round 5 review of #1064: a stray copy of the page in another folder
+    /// moves too, but restore goes back to the folder `state.json` recorded.
+    #[test]
+    fn archive_remembers_the_recorded_folder_over_a_stray_copy() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        let guard = writer.begin_test_write();
+        let live = writer.write_page(&guard, &page).unwrap();
+        std::fs::create_dir(dir.path().join("Backups")).unwrap();
+        std::fs::copy(&live, dir.path().join("Backups/rust-ownership.md")).unwrap();
+
+        writer
+            .archive_pages(&guard, &[(page.id.clone(), page.version + 1)])
+            .unwrap();
+        assert!(!dir.path().join("Backups/rust-ownership.md").exists());
+        assert_eq!(
+            writer
+                .load_state()
+                .archived_from
+                .get(&page.id)
+                .map(String::as_str),
+            Some("rust-ownership.md")
+        );
+    }
+
+    /// Round 5 review of #1064: a file renamed outside Wenlan whose page id
+    /// sits past the first 8 KiB of front matter is still found and moved.
+    #[test]
+    fn archive_finds_a_renamed_page_whose_id_is_past_8_kib() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        let guard = writer.begin_test_write();
+        let live = writer.write_page(&guard, &page).unwrap();
+        let text = std::fs::read_to_string(&live).unwrap();
+        let long: String = (0..600)
+            .map(|i| format!("  - generated-source-number-{i:04}\n"))
+            .collect();
+        let padded = text.replacen("---\n", &format!("---\nleading_padding:\n{long}"), 1);
+        assert!(padded.find("origin_id").unwrap() > 8 * 1024);
+        std::fs::remove_file(&live).unwrap();
+        std::fs::write(dir.path().join("renamed.md"), &padded).unwrap();
+
+        writer
+            .archive_pages(&guard, &[(page.id.clone(), page.version + 1)])
+            .unwrap();
+        assert!(!dir.path().join("renamed.md").exists());
     }
 
     /// Round 3 review of #1064: a folder the person already has may carry a
