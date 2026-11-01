@@ -120,7 +120,7 @@ impl MemoryDB {
         Ok(out)
     }
 
-    /// The start of each memory in `ids` that exists, for citation labels.
+    /// The text of each memory in `ids` that exists, for citation labels.
     pub(crate) async fn export_memory_texts(
         &self,
         ids: &[String],
@@ -129,12 +129,14 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         for chunk in ids.chunks(200) {
             let marks = vec!["?"; chunk.len()].join(", ");
-            // A memory's id is its `source_id`; its first chunk starts its
-            // text. Only `memory` rows, as the app's label reader reads them.
+            // A memory's id is its `source_id`; its text is its chunks in
+            // order (chunk boundaries are cache, so a label never depends on
+            // where one falls). Only `memory` rows, as the app's label
+            // reader reads them.
             let sql = format!(
                 "SELECT source_id, content FROM memories \
                  WHERE source = 'memory' AND source_id IN ({marks}) \
-                 ORDER BY source_id, chunk_index DESC"
+                 ORDER BY source_id, chunk_index"
             );
             let params: Vec<libsql::Value> = chunk
                 .iter()
@@ -153,7 +155,12 @@ impl MemoryDB {
                     .get(0)
                     .map_err(|e| WenlanError::VectorDb(format!("export_memory_texts id: {e}")))?;
                 let text: String = row.get(1).unwrap_or_default();
-                out.insert(id, text);
+                out.entry(id)
+                    .and_modify(|joined: &mut String| {
+                        joined.push('\n');
+                        joined.push_str(&text);
+                    })
+                    .or_insert(text);
             }
         }
         Ok(out)

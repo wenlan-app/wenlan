@@ -168,3 +168,307 @@ async fn state_seeds_put_back_the_columns_no_file_holds() {
         .unwrap();
     assert!(diffs.is_empty(), "{diffs:#?}");
 }
+
+#[tokio::test]
+async fn pages_and_entities_rebuild_from_their_files() {
+    use super::compare::compare_keyed;
+    use crate::store::export::DEFERRED_COLUMNS;
+
+    let (db, _db_dir) = test_db().await;
+    let page = |id: &'static str, title: &'static str, content: &'static str| {
+        let db = &db;
+        async move {
+            db.insert_page_with_kind(
+                id,
+                title,
+                None,
+                content,
+                None,
+                Some("sp"),
+                &[],
+                "2026-10-31T00:00:00Z",
+                "authored",
+                "confirmed",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+    };
+    page(
+        "p1",
+        "Alpha",
+        "The launch moved [1]. Again [1], and see [2].",
+    )
+    .await;
+    sql(
+        &db,
+        "UPDATE pages SET summary = 'Short.', version = 3, user_edited = 1, \
+         citations = '[{\"occurrence\":1,\"marker\":1,\"source_kind\":\"memory\",\"locator\":\"mem_1\",\
+         \"score\":0.8,\"status\":\"verified\",\"scope\":\"sentence\",\"cited_version\":2},\
+         {\"occurrence\":2,\"marker\":1,\"source_kind\":\"memory\",\"locator\":\"mem_1\",\
+         \"score\":0.5,\"status\":\"verified\",\"scope\":\"sentence\",\"cited_version\":2},\
+         {\"occurrence\":3,\"marker\":2,\"source_kind\":\"url\",\"locator\":\"https://a.example/x\",\
+         \"score\":0.1,\"status\":\"unverified\",\"scope\":\"paragraph\"}]' WHERE id = ?1",
+        "p1",
+    )
+    .await;
+    page("p2", "Beta", "About Bob.").await;
+    sql(
+        &db,
+        "UPDATE pages SET entity_id = 'ent_bob', status = 'archived' WHERE id = ?1",
+        "p2",
+    )
+    .await;
+    page("p3", "Gamma", "Odd status.").await;
+    sql(
+        &db,
+        "UPDATE pages SET status = 'failed' WHERE id = ?1",
+        "p3",
+    )
+    .await;
+    page("shadow", "Bob", "Bob runs the launch.").await;
+    sql(
+        &db,
+        "UPDATE pages SET kind = 'entity', entity_id = 'ent_bob', entity_type = 'person', \
+         entity_confirmed = 1, aliases = '[\"Robert\"]', established_by = 'human', \
+         entity_created_at = 1793404800, entity_updated_at = 1793404900 WHERE id = ?1",
+        "shadow",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let data_root = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    export_lossless(
+        &db,
+        &crate::store::export::run::PagesFolder::default(),
+        data_root.path(),
+        &target,
+    )
+    .await
+    .unwrap();
+
+    let (fresh, _fresh_dir) = test_db().await;
+    let rebuilt = super::rebuild(&target, &fresh).await.unwrap();
+    assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
+    assert_eq!(rebuilt.tables["pages"], 4);
+
+    let cache: Vec<&str> = DEFERRED_COLUMNS
+        .iter()
+        .filter(|(table, to, _)| *table == "pages" && *to == "cache")
+        .flat_map(|(_, _, columns)| columns.iter().copied())
+        .collect();
+    let diff = compare_keyed(&db, &fresh, "pages", &["id"], &cache)
+        .await
+        .unwrap();
+    assert!(diff.is_empty(), "{diff:#?}");
+}
+
+/// export(rebuild(export(db))) == export(db), file by file, and the tables
+/// copied whole or kept in history are equal row by row.
+#[tokio::test]
+async fn an_export_of_the_rebuild_is_the_same_export() {
+    use super::{compare_exports, export_again, rebuild};
+
+    let (db, _db_dir) = crate::store::export::tests::fixture().await;
+    let memory = |id: &'static str, chunk: i64, columns: &'static str, values: String| {
+        let db = &db;
+        async move {
+            sql(
+                db,
+                &format!(
+                    "INSERT INTO memories (id, source_id, chunk_index, title, last_modified, \
+                     chunk_type, source, content{columns}) VALUES ('{id}#{chunk}', ?1, {chunk}, \
+                     '', 1793404900, 'text'{values})"
+                ),
+                id,
+            )
+            .await;
+        }
+    };
+    // 2026-10-31T00:00:00Z
+    let at = 1_793_404_800;
+    memory(
+        "mem_cap",
+        0,
+        ", created_at, pinned, memory_type, structured_fields, space, origin_class, retrieval_cue",
+        format!(
+            ", 'memory', 'My own note', {at}, 1, 'preference', '{{\"a\":\"x\",\"b\":1}}', 'sp', \
+             'human_capture', 'window seat'"
+        ),
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 1, 1, 1)",
+        "mem_cap",
+    )
+    .await;
+    // A classified type and extracted fields are cache: not in the file.
+    memory(
+        "mem_auto",
+        0,
+        ", memory_type, structured_fields, created_at",
+        format!(", 'memory', 'Auto typed', 'fact', '{{\"k\":2}}', {at}"),
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 0, 0, 0)",
+        "mem_auto",
+    )
+    .await;
+    memory("clipboard_1", 0, "", ", 'clipboard', 'copied'".to_string()).await;
+    for (chunk, text) in [(0, "Hello?"), (1, "Hi there.")] {
+        memory(
+            "import_chatgpt_conv1",
+            chunk,
+            ", title, created_at, space",
+            format!(", 'memory', '{text}', 'A chat', {}, 'sp'", at + chunk),
+        )
+        .await;
+    }
+    for (chunk, text) in [(0, "Saved page."), (1, "Part two.")] {
+        memory(
+            "https://example.com/post",
+            chunk,
+            ", url",
+            format!(", 'webpage', '{text}', 'https://example.com/post'"),
+        )
+        .await;
+    }
+    memory("docs::README.md", 0, "", ", 'file', '# Notes'".to_string()).await;
+    sql(
+        &db,
+        "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'ent_123456789')",
+        "mem_cap",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO spaces (id, name, created_at, updated_at) VALUES (?1, 'Work', 0, 0)",
+        "space_123456789",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO briefs (space_id, last_session_summary, last_handoff_at, version, \
+         updated_at) VALUES (?1, 'Left off here.', 1793404800, 7, 1793404900)",
+        "space_123456789",
+    )
+    .await;
+    for (id, state, gate) in [
+        ("item_a", "active", "NULL"),
+        ("item_b", "backlog", "'after the export'"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO brief_items (id, space_id, text, state, added_at, gate, version, \
+                 updated_at) VALUES ('{id}', ?1, 'Do {id}', '{state}', 5, {gate}, 2, 9)"
+            ),
+            "space_123456789",
+        )
+        .await;
+    }
+    for page_id in ["a", "shadow"] {
+        sql(
+            &db,
+            "INSERT INTO page_maps (page_id, revision, map_schema, viewport, generated_at, \
+             created_at, updated_at) VALUES (?1, 4, 1, '{\"zoom\":1.5}', NULL, \
+             '2026-01-01 00:00:00', '2026-01-02 00:00:00')",
+            page_id,
+        )
+        .await;
+    }
+    for (id, status, coordinates, parent) in [
+        ("n_placed", "active", "12.5, -40, 300, 80", "NULL"),
+        ("n_unplaced", "active", "NULL, 7, NULL, NULL", "'n_placed'"),
+        ("n_suggested", "suggested", "1, 2, 3, 4", "NULL"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO page_map_nodes (id, page_id, parent_id, rank, ref_kind, ref_id, \
+                 label, status, pinned, placed, collapsed, x, y, width, height, fingerprint, \
+                 provenance, created_at, updated_at) VALUES ('{id}', ?1, {parent}, 2, \
+                 'memory', 'mem:{id}', 'Label {id}', '{status}', 1, 0, 1, {coordinates}, \
+                 'fp_{id}', 'agent', 't0', 't1')"
+            ),
+            "a",
+        )
+        .await;
+    }
+    // No label: drawn as the file of what it stands for.
+    sql(
+        &db,
+        "UPDATE page_map_nodes SET label = NULL, ref_kind = 'page', ref_id = 'b' \
+         WHERE id = ?1",
+        "n_unplaced",
+    )
+    .await;
+    sql(
+        &db,
+        "UPDATE page_map_nodes SET label = NULL, ref_kind = 'memory', ref_id = 'gone_memory' \
+         WHERE id = ?1",
+        "n_suggested",
+    )
+    .await;
+    for (id, to, status) in [
+        ("e_shown", "n_unplaced", "active"),
+        ("e_hidden", "n_suggested", "suggested"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO page_map_edges (id, page_id, from_node, to_node, kind, label, \
+                 status, provenance, created_at) VALUES ('{id}', ?1, 'n_placed', '{to}', \
+                 'link', 'why', '{status}', NULL, 't0')"
+            ),
+            "a",
+        )
+        .await;
+    }
+
+    let out = tempfile::tempdir().unwrap();
+    let data_root = tempfile::tempdir().unwrap();
+    let first = out.path().join("first");
+    export_lossless(
+        &db,
+        &crate::store::export::run::PagesFolder::default(),
+        data_root.path(),
+        &first,
+    )
+    .await
+    .unwrap();
+
+    let (fresh, _fresh_dir) = test_db().await;
+    let rebuilt = rebuild(&first, &fresh).await.unwrap();
+    assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
+
+    let second = out.path().join("second");
+    export_again(&fresh, &first, &second).await.unwrap();
+    let diff = compare_exports(&first, &second).unwrap();
+    assert!(diff.is_empty(), "{diff:#?}");
+
+    let mut tables: Vec<&'static str> = vec![
+        "briefs",
+        "brief_items",
+        "page_maps",
+        "page_map_nodes",
+        "page_map_edges",
+    ];
+    tables.extend(
+        SETTINGS_FILES
+            .iter()
+            .flat_map(|(_, tables)| tables.iter().copied()),
+    );
+    tables.extend(RECORD_TABLES.iter().copied());
+    tables.extend(HISTORY_TABLES.iter().map(|spec| spec.table));
+    let diffs = compare_tables(&db, &fresh, &tables).await.unwrap();
+    assert!(diffs.is_empty(), "{diffs:#?}");
+}

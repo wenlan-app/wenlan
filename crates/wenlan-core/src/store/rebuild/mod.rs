@@ -4,11 +4,18 @@
 //! field by field against the database it came from. Only ever writes the
 //! fresh database it is given.
 //!
-//! So far: the tables copied whole (`settings/`, `records/`) and every
-//! history table, replayed from the log. Pages, entities, memories,
-//! originals, Briefs and canvases follow, read from their files.
+//! So far: the tables copied whole (`settings/`, `records/`), every
+//! history table, replayed from the log, and pages and entities from their
+//! files ([`pages::rebuild_pages`]), memories and originals
+//! ([`memories::rebuild_memories`]), Briefs ([`briefs::rebuild_briefs`]) and
+//! canvases ([`canvases::rebuild_canvases`]). [`rebuild`] runs every part
+//! in order; [`export_again`] and [`compare_exports`] check the result.
 
+pub mod briefs;
+pub mod canvases;
 pub mod compare;
+pub mod memories;
+pub mod pages;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -153,6 +160,139 @@ pub async fn rebuild_tables(from: &Path, into: &MemoryDB) -> Result<Rebuilt, Wen
         rebuilt.tables.insert(table, values.len());
     }
     Ok(rebuilt)
+}
+
+/// Rebuilds every part the export folder `from` holds into `into` (a
+/// fresh database): whole tables and history, then the file rows, then the
+/// state seeds on the file rows.
+pub async fn rebuild(from: &Path, into: &MemoryDB) -> Result<Rebuilt, WenlanError> {
+    let manifest = read_manifest(from)?;
+    if manifest.format != crate::store::export::EXPORT_FORMAT {
+        return Err(WenlanError::Validation(format!(
+            "export format {} is not {}",
+            manifest.format,
+            crate::store::export::EXPORT_FORMAT
+        )));
+    }
+    let mut problems = Vec::new();
+    // Settings first: Brief rows name their space.
+    let mut rebuilt = rebuild_tables(from, into).await?;
+    let pages = pages::rebuild_pages(from, &manifest, into, &mut problems).await?;
+    let memories = memories::rebuild_memories(from, &manifest, into, &mut problems).await?;
+    let (briefs, items) = briefs::rebuild_briefs(from, &manifest, into, &mut problems).await?;
+    let canvases = canvases::rebuild_canvases(from, &manifest, into, &mut problems).await?;
+    rebuilt.tables.insert("briefs".to_string(), briefs);
+    rebuilt.tables.insert("brief_items".to_string(), items);
+    rebuilt.tables.insert("page_maps".to_string(), canvases);
+    rebuilt.tables.insert("pages".to_string(), pages);
+    rebuilt.tables.insert("memories".to_string(), memories.rows);
+    rebuilt
+        .tables
+        .insert("memory_entities".to_string(), memories.links);
+    let (_, unset) = apply_states(from, into).await?;
+    problems.extend(unset);
+    problems.append(&mut rebuilt.problems);
+    rebuilt.problems = problems;
+    Ok(rebuilt)
+}
+
+/// Files of two exports that differ, by path. History files are left out:
+/// an entry with no stored time is stamped with each export's own time, so
+/// the log is compared row by row instead ([`compare::compare_tables`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ExportDiff {
+    pub only_in_first: Vec<String>,
+    pub only_in_second: Vec<String>,
+    pub differ: Vec<String>,
+}
+
+impl ExportDiff {
+    pub fn is_empty(&self) -> bool {
+        self.only_in_first.is_empty() && self.only_in_second.is_empty() && self.differ.is_empty()
+    }
+}
+
+/// File types the second export cannot have: the log (see [`ExportDiff`])
+/// and copies of a pages folder the rebuilt database never had.
+const NOT_COMPARED: &[&str] = &["history", "pages_folder_only"];
+
+fn read_manifest(from: &Path) -> Result<crate::store::export::Manifest, WenlanError> {
+    let text = std::fs::read_to_string(from.join(crate::store::export::MANIFEST_FILE))?;
+    serde_json::from_str(&text)
+        .map_err(|error| WenlanError::Validation(format!("export manifest: {error}")))
+}
+
+/// Exports `rebuilt` into `out` the way `first` was laid out: each page in
+/// the folder `first` put it, with the layout and artifact files `first`
+/// copied. With [`compare_exports`], the fixpoint check:
+/// export(rebuild(export(db))) == export(db).
+pub async fn export_again(
+    rebuilt: &MemoryDB,
+    first: &Path,
+    out: &Path,
+) -> Result<crate::store::export::run::LosslessSummary, WenlanError> {
+    let manifest = read_manifest(first)?;
+    let mut recorded = std::collections::HashMap::new();
+    for file in &manifest.files {
+        let path = match file.file_type.as_str() {
+            "page" => file.path.strip_prefix("visible/").map(str::to_string),
+            "archived_page" => file
+                .path
+                .strip_prefix("backstage/archive/")
+                .map(|rest| format!("archive/{rest}")),
+            _ => None,
+        };
+        if let Some(path) = path {
+            recorded.insert(file.id.clone(), path);
+        }
+    }
+    // A data folder holding only what the first export copied from one:
+    // the palace layout and artifact files. (`backstage/layout/` also holds
+    // canvases the export wrote itself, which must not be copied again.)
+    let data_root = tempfile::tempdir()?;
+    for file in &manifest.files {
+        let inner = match file.file_type.as_str() {
+            "layout" => file
+                .path
+                .strip_prefix("backstage/layout/")
+                .map(|rest| format!("layout/{rest}")),
+            "artifact" => file.path.strip_prefix("backstage/").map(str::to_string),
+            _ => None,
+        };
+        if let Some(inner) = inner {
+            let target = data_root.path().join(&inner);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(first.join(&file.path), target)?;
+        }
+    }
+    let folder = crate::store::export::run::PagesFolder::recorded(recorded);
+    crate::store::export::run::export_lossless(rebuilt, &folder, data_root.path(), out).await
+}
+
+/// Compares two exports' manifests file by file (path and digest).
+pub fn compare_exports(first: &Path, second: &Path) -> Result<ExportDiff, WenlanError> {
+    let files = |root: &Path| -> Result<BTreeMap<String, String>, WenlanError> {
+        Ok(read_manifest(root)?
+            .files
+            .into_iter()
+            .filter(|file| !NOT_COMPARED.contains(&file.file_type.as_str()))
+            .map(|file| (file.path, file.sha256))
+            .collect())
+    };
+    let a = files(first)?;
+    let mut b = files(second)?;
+    let mut diff = ExportDiff::default();
+    for (path, digest) in a {
+        match b.remove(&path) {
+            None => diff.only_in_first.push(path),
+            Some(other) if other != digest => diff.differ.push(path),
+            Some(_) => {}
+        }
+    }
+    diff.only_in_second = b.into_keys().collect();
+    Ok(diff)
 }
 
 /// Applies the `state.seed` entries of the main log: the columns the files
