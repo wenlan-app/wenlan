@@ -190,27 +190,79 @@ impl MemoryDB {
     }
 
     /// Record on a pending page revision card which renamed page its link
-    /// update is for and the digest of the body it staged, so a later rename
-    /// can tell its own unedited card from a card the person changed. Merged
-    /// into the card's existing structured fields; nothing else moves.
+    /// update is for, and the digest of the body the card stores (after the
+    /// write path's redaction, so it is what an accept would write). A later
+    /// rename uses both to tell its own untouched card from a card the person
+    /// changed. Merged into the card's existing structured fields.
     pub(crate) async fn tag_link_rename_card(
         &self,
         card_id: &str,
         renamed_page_id: &str,
-        staged_digest: &str,
     ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
-        conn.execute(
-            "UPDATE memories
-                SET structured_fields=json_set(structured_fields,
-                        '$.link_rename_page',?2,'$.link_rename_digest',?3)
-              WHERE source='memory' AND source_id=?1 AND pending_revision=1
-                AND chunk_index=0 AND json_valid(structured_fields)",
-            libsql::params![card_id, renamed_page_id, staged_digest],
-        )
-        .await
-        .map_err(|error| WenlanError::VectorDb(format!("tag link card: {error}")))?;
-        Ok(())
+        conn.execute("BEGIN IMMEDIATE", ())
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("tag link card begin: {error}")))?;
+        let result = async {
+            let Some(body) = staged_card_body_on(&conn, card_id).await? else {
+                return Ok(());
+            };
+            conn.execute(
+                "UPDATE memories
+                    SET structured_fields=json_set(structured_fields,
+                            '$.link_rename_page',?2,'$.link_rename_digest',?3)
+                  WHERE source='memory' AND source_id=?1 AND pending_revision=1
+                    AND chunk_index=0 AND json_valid(structured_fields)",
+                libsql::params![
+                    card_id,
+                    renamed_page_id,
+                    crate::provenance::revision_content_digest(&body)
+                ],
+            )
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("tag link card: {error}")))?;
+            Ok(())
+        }
+        .await;
+        finish_card_transaction(&conn, result).await
+    }
+
+    /// The body a pending page card would write if accepted: after a person
+    /// edits a card, the edited body.
+    pub(crate) async fn staged_card_body(
+        &self,
+        card_id: &str,
+    ) -> Result<Option<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        staged_card_body_on(&conn, card_id).await
+    }
+
+    /// Delete a pending page card only if the body it would write still has
+    /// `expected_digest`, checked and deleted in one write transaction, so an
+    /// edit that lands first keeps the card. Returns whether it was deleted.
+    pub(crate) async fn delete_page_card_if_unchanged(
+        &self,
+        card_id: &str,
+        expected_digest: &str,
+    ) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute("BEGIN IMMEDIATE", ())
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("delete link card begin: {error}")))?;
+        let result = async {
+            let unchanged = staged_card_body_on(&conn, card_id)
+                .await?
+                .is_some_and(|body| {
+                    crate::provenance::revision_content_digest(&body) == expected_digest
+                });
+            if unchanged {
+                self.delete_by_source_id_in_transaction(&conn, "memory", card_id, false)
+                    .await?;
+            }
+            Ok(unchanged)
+        }
+        .await;
+        finish_card_transaction(&conn, result).await
     }
 
     pub(crate) async fn commit_page_title_rename(
@@ -607,6 +659,67 @@ impl MemoryDB {
                     Err(error)
                 }
             }
+        }
+    }
+}
+
+/// The body a pending page card stores, resolved as
+/// `pending_memory_revision_payload` resolves it for an accept: chunk zero's
+/// `content`, or the whole staged body when the card spans several rows.
+async fn staged_card_body_on(
+    conn: &libsql::Connection,
+    card_id: &str,
+) -> Result<Option<String>, WenlanError> {
+    let mut rows = conn
+        .query(
+            "SELECT content, source_text, COALESCE(created_at, last_modified),
+                    EXISTS (SELECT 1 FROM memories sibling
+                             WHERE sibling.source_id = memories.source_id
+                               AND sibling.source = 'memory'
+                               AND sibling.chunk_index > 0)
+               FROM memories
+              WHERE source='memory' AND source_id=?1 AND pending_revision=1
+                AND chunk_index=0
+              LIMIT 1",
+            libsql::params![card_id],
+        )
+        .await
+        .map_err(|error| WenlanError::VectorDb(format!("staged card body: {error}")))?;
+    let Some(row) = rows
+        .next()
+        .await
+        .map_err(|error| WenlanError::VectorDb(format!("staged card body row: {error}")))?
+    else {
+        return Ok(None);
+    };
+    let content = row
+        .get::<String>(0)
+        .map_err(|error| WenlanError::VectorDb(format!("staged card content: {error}")))?;
+    let chunked = row.get::<i64>(3).unwrap_or(0) != 0;
+    let staged = row.get::<Option<String>>(1).unwrap_or(None);
+    Ok(Some(match (chunked, staged) {
+        (true, Some(raw)) => {
+            super::memory_point_reads::rehydrate_staged_body(&raw, row.get::<i64>(2).unwrap_or(0))
+        }
+        _ => content,
+    }))
+}
+
+async fn finish_card_transaction<T>(
+    conn: &libsql::Connection,
+    result: Result<T, WenlanError>,
+) -> Result<T, WenlanError> {
+    match result {
+        Ok(value) => {
+            if let Err(error) = conn.execute("COMMIT", ()).await {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::VectorDb(format!("page card commit: {error}")));
+            }
+            Ok(value)
+        }
+        Err(error) => {
+            let _ = conn.execute("ROLLBACK", ()).await;
+            Err(error)
         }
     }
 }

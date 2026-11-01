@@ -911,3 +911,114 @@ async fn an_untagged_link_card_from_an_earlier_release_is_still_replaced() {
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].1, "Locked [[New]].");
 }
+
+#[tokio::test]
+async fn a_link_card_whose_stored_body_was_redacted_is_still_replaced() {
+    let fixture = fixture(&[
+        (
+            "page-a",
+            "Old",
+            "work",
+            "The renamed page.",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-locked",
+            "Locked",
+            "work",
+            "Locked [[Old]], mail someone@example.com.",
+            1,
+            1,
+            "authored",
+        ),
+    ])
+    .await;
+    let db = &fixture.db;
+    let first = rename_page(db, "page-a", "Mid", 3, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    let staged = link_card_ids(db, "page-locked").await;
+    assert_eq!(staged.len(), 1);
+    // The card stores the body as the write path keeps it, redacted.
+    assert!(
+        !staged[0].1.contains("someone@example.com"),
+        "{}",
+        staged[0].1
+    );
+
+    rename_page(db, "page-a", "New", first.version, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    let cards = link_card_ids(db, "page-locked").await;
+    assert_eq!(cards.len(), 1, "{cards:?}");
+    assert!(cards[0].1.starts_with("Locked [[New]], mail "));
+}
+
+#[tokio::test]
+async fn a_link_card_edited_after_it_was_read_is_not_deleted() {
+    let fixture = fixture(&locked_pair()).await;
+    let db = &fixture.db;
+    rename_page(db, "page-a", "Mid", 3, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    let (card_id, body) = link_card_ids(db, "page-locked").await.remove(0);
+    // What the cleanup read, before the person's edit landed.
+    let read_digest = crate::provenance::revision_content_digest(&body);
+    db.update_memory(&card_id, "Locked [[Mid]], reworded by me.")
+        .await
+        .unwrap();
+    assert!(!db
+        .delete_page_card_if_unchanged(&card_id, &read_digest)
+        .await
+        .unwrap());
+    assert_eq!(
+        link_card_ids(db, "page-locked").await,
+        vec![(
+            card_id.clone(),
+            "Locked [[Mid]], reworded by me.".to_string()
+        )]
+    );
+    // Unchanged since the read: deleted.
+    let digest = crate::provenance::revision_content_digest("Locked [[Mid]], reworded by me.");
+    assert!(db
+        .delete_page_card_if_unchanged(&card_id, &digest)
+        .await
+        .unwrap());
+    assert!(link_card_ids(db, "page-locked").await.is_empty());
+}
+
+#[tokio::test]
+async fn an_untagged_link_card_is_kept_when_its_page_moved_since() {
+    let fixture = fixture(&locked_pair()).await;
+    let db = &fixture.db;
+    let first = rename_page(db, "page-a", "Mid", 3, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute_batch(
+            "UPDATE memories SET structured_fields=json_remove(structured_fields,
+                     '$.link_rename_page','$.link_rename_digest')
+              WHERE supersedes='page-locked' AND pending_revision=1;
+             UPDATE pages SET version=version+1 WHERE id='page-locked';",
+        )
+        .await
+        .unwrap();
+    }
+    rename_page(db, "page-a", "New", first.version, &ReadScope::Global, None)
+        .await
+        .unwrap();
+    // Not provably this rename's card any more: it stays, next to the new one.
+    let mut bodies: Vec<String> = link_card_ids(db, "page-locked")
+        .await
+        .into_iter()
+        .map(|(_, body)| body)
+        .collect();
+    bodies.sort();
+    assert_eq!(
+        bodies,
+        vec!["Locked [[Mid]].".to_string(), "Locked [[New]].".to_string()]
+    );
+}
