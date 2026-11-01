@@ -9,6 +9,8 @@ use crate::error::WenlanError;
 pub struct EntityFile {
     pub id: String,
     pub name: String,
+    /// The id of the page that shows this entity, when it has one.
+    pub page: Option<String>,
     pub entity_type: Option<String>,
     pub aliases: Vec<String>,
     pub confirmed: bool,
@@ -23,6 +25,7 @@ impl EntityFile {
         Self {
             id: id.into(),
             name: name.into(),
+            page: None,
             entity_type: None,
             aliases: Vec::new(),
             confirmed: false,
@@ -40,6 +43,7 @@ pub fn parse(text: &str) -> Result<EntityFile, WenlanError> {
     let name = required(fields.text("title"), "entity", "title")?;
     fields.expect_type("entity")?;
     let mut entity = EntityFile::new(id, name);
+    entity.page = fields.text("page");
     entity.entity_type = fields.text("entity_type");
     entity.aliases = fields.list("aliases");
     entity.confirmed = fields.flag("confirmed");
@@ -55,6 +59,7 @@ pub fn render(entity: &EntityFile) -> String {
         .text("id", &entity.id)
         .text("title", &entity.name)
         .text("type", "entity")
+        .some("page", entity.page.as_deref())
         .some("entity_type", entity.entity_type.as_deref())
         .list("aliases", &entity.aliases)
         .flag("confirmed", entity.confirmed)

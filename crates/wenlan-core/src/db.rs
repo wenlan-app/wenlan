@@ -41,6 +41,7 @@ mod eval_paired_guard;
 mod eval_pipeline_reads;
 mod eval_substrate_guard;
 mod eval_temporal_seed;
+pub(crate) mod export_reads;
 mod kg_quality_diagnostics;
 mod kg_quality_duplicate_candidates;
 mod kg_quality_embedding_refresh;
