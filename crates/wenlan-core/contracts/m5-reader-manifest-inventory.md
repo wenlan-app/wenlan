@@ -700,6 +700,10 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `DELETE` | `/api/pages/{id}/code-basis` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
 | `POST` | `/api/sessions` | main | no | not_applicable | `none` | — | AgentSession carries no page prose |
 | `GET` | `/api/sessions/{id}` | main | yes | automatic | `none` | `handle_get_session` | SessionPageEntry.title |
+| `POST` | `/api/sessions/{id}/things/move` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `GET` | `/api/things` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `GET` | `/api/things/{id}` | main | yes | automatic | `none` | `handle_get_thing` | ThingPageEntry.title |
+| `PATCH` | `/api/things/{id}` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
 | `POST` | `/api/pages/{id}/rename` | main | yes | automatic | `none` | `handle_rename_page` | title metadata — core page_write_permit before mutation |
@@ -1198,6 +1202,7 @@ carrying the authority of agreement.
 | `core/db/sentence_history.rs::stamp_cited_versions` | `pub(super)` | no | no | — | `core/db/sentence_history.rs::cited_source_state_on` |
 | `core/db/steep_new.rs::notes_citing_sources_with` | `pub(crate)` | no | no | — | `core/db/steep_new.rs::notes_citing_where` |
 | `core/db/steep_new.rs::notes_citing_text_with` | `pub(crate)` | no | no | — | `core/db/steep_new.rs::notes_citing_where` |
+| `core/db/things.rs::get_thing_detail` | `pub` | no | **yes** | `server/things_routes.rs::handle_get_thing` | `core/db/sessions.rs::get_session_detail` |
 | `core/db/truth_exposure.rs::page_truth_states` | `pub` | no | no | — | `core/db/truth_exposure.rs::page_truth_states_on_conn` |
 | `core/kg_quality.rs::find_merge_candidates` | `pub` | no | no | — | `core/db/kg_quality_duplicate_candidates.rs::duplicate_name_groups_for_merge_candidates` |
 | `core/kg_quality.rs::refresh_stale_entity_embeddings` | `pub` | no | no | — | `core/db/kg_quality_embedding_refresh.rs::stale_entity_embedding_candidates_for_refresh` |
@@ -1459,6 +1464,7 @@ carrying the authority of agreement.
 | `server/steep_new_routes.rs::handle_steep_new_list` | `pub` | no | no | — | `core/steep_new.rs::list_new` |
 | `server/steep_routes.rs::handle_steep_commit` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/steep_routes.rs::handle_steep_worklist` | `pub` | no | no | — | `core/steep.rs::waiting_page_ids` |
+| `server/things_routes.rs::handle_get_thing` | `pub` | no | no | — | `core/db/things.rs::get_thing_detail` |
 
 ### Depth 3 — outer consumers — route handlers and orchestration
 
@@ -1565,7 +1571,7 @@ carrying the authority of agreement.
 | `core/synthesis/distill.rs::distill_pages_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/synthesis/distill.rs::distill_pages_scoped_gated` |
 | `core/synthesis/distill.rs::refresh_page` | `pub` | no | no | — | `core/synthesis/distill.rs::refresh_page_with_prompt` |
 | `core/synthesis/refinement_queue.rs::apply_refinement` | `pub` | no | no | — | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` |
-| `core/truth_adapter.rs::filter_page_refs` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief`, `server/check_routes.rs::hide_unservable_pages`, `server/entity_graph_routes.rs::handle_get_knowledge_graph`, `server/memory_routes.rs::handle_search_memory_inner`, `server/page_basis_routes.rs::visible_ids`, `server/page_routes.rs::handle_get_page_links`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_list_orphan_links`, `server/page_routes.rs::handle_restore_page`, `server/routes.rs::handle_distill_inner`, `server/routes.rs::handle_recent_page_changes`, `server/routes.rs::handle_recent_pages`, `server/routes.rs::handle_recent_retrievals`, `server/routes.rs::handle_search_inner`, `server/session_routes.rs::handle_get_session` | `core/db/truth_exposure.rs::page_visibility` |
+| `core/truth_adapter.rs::filter_page_refs` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief`, `server/check_routes.rs::hide_unservable_pages`, `server/entity_graph_routes.rs::handle_get_knowledge_graph`, `server/memory_routes.rs::handle_search_memory_inner`, `server/page_basis_routes.rs::visible_ids`, `server/page_routes.rs::handle_get_page_links`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_list_orphan_links`, `server/page_routes.rs::handle_restore_page`, `server/routes.rs::handle_distill_inner`, `server/routes.rs::handle_recent_page_changes`, `server/routes.rs::handle_recent_pages`, `server/routes.rs::handle_recent_retrievals`, `server/routes.rs::handle_search_inner`, `server/session_routes.rs::handle_get_session`, `server/things_routes.rs::handle_get_thing` | `core/db/truth_exposure.rs::page_visibility` |
 | `core/truth_adapter.rs::filter_pages` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_search_pages`, `server/page_routes.rs::list_visible_browse_pages`, `server/routes.rs::handle_distill_inner` | `core/truth_adapter.rs::verdicts` |
 | `core/truth_adapter.rs::page_write_permit` | `pub` | no | **yes** | `server/page_routes.rs::handle_export_page`, `server/page_routes.rs::handle_export_pages`, `server/repo_wiki_routes.rs::exportable_pages` | `core/db/truth_exposure.rs::page_visibility` |
 | `server/check_routes.rs::handle_check` | `pub` | no | no | — | `core/chat_check.rs::check_against_decisions` |
