@@ -368,9 +368,12 @@ pub enum VersionAuthor {
     System,
 }
 
-/// Classify a `page_history.edited_by` value. `creation_kind` decides who
-/// wrote a page's first version (`create`); the caller passes something
-/// other than `authored` for an authored page no person has touched (see
+/// Classify a `page_history.edited_by` value. A page's first version says
+/// who made it: `person_create` (the person, in the app) or `agent_create`
+/// (an AI tool), both written since the create path started telling them
+/// apart. For an older `create` row, `creation_kind` decides; the caller
+/// passes `agent_authored` for an authored page no person has touched and
+/// `legacy_authored` when that can no longer be told (see
 /// `sentences::birth_kind`).
 pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
     match edited_by {
@@ -380,9 +383,12 @@ pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
         "manual_edit" | "fs_edit" | "revision_accept" | "restore" | "publish" => {
             VersionAuthor::Person
         }
+        "person_create" => VersionAuthor::Person,
+        "agent_create" => VersionAuthor::Ai,
         "create" => match creation_kind {
             "authored" => VersionAuthor::Person,
             "original" => VersionAuthor::Original,
+            "legacy_authored" => VersionAuthor::Unknown,
             _ => VersionAuthor::Ai,
         },
         "original" | "chat_import" => VersionAuthor::Original,

@@ -84,19 +84,31 @@ fn guarded(page: &Page) -> bool {
     crate::post_write::page_is_human_owned(page) || page.review_required
 }
 
-/// The creation kind that decides who wrote a page's first version.
+/// The creation kind that decides who wrote a page's first version when
+/// that version is an older `create` row. Newer pages record
+/// `person_create` or `agent_create` and need none of this.
 ///
-/// `authored` alone does not mean the person wrote it: a note an agent
-/// writes with no sources lands as `authored` too (steep keeps such a note up
-/// to date as Wenlan's own, see `steep::owned`). A page the person made in the
-/// app is born `user_edited`, and any page a person has edited since is
-/// `user_edited`, so an authored page counts as the person's from birth only
-/// then. An authored page no person has touched was an agent's.
-fn birth_kind(page: &Page) -> &str {
-    if page.creation_kind == "authored" && !page.user_edited {
-        "agent_authored"
+/// `authored` alone does not mean the person wrote it: an AI tool's page
+/// with no sources lands as `authored` too. An authored page no person has
+/// touched was an AI tool's. Once the person has edited it, `user_edited`
+/// says only that they edited it, not that they made it ("having seen it
+/// does not make it yours"), so its first version's author is unknown: the
+/// person's edits still count as theirs, the rest stays unattributed.
+fn birth_kind<'a>(page: &'a Page, history: &[crate::db::PageHistoryEntry]) -> &'a str {
+    if page.creation_kind != "authored" {
+        return &page.creation_kind;
+    }
+    if !page.user_edited {
+        return "agent_authored";
+    }
+    let person_edited_later = history.iter().any(|entry| {
+        entry.version > 1
+            && authorship::version_author(&entry.edited_by, "") == authorship::VersionAuthor::Person
+    });
+    if person_edited_later {
+        "legacy_authored"
     } else {
-        &page.creation_kind
+        "authored"
     }
 }
 
@@ -140,7 +152,7 @@ pub async fn page_authorship(
     }
     Ok(authorship::derive_authorship(
         &page.id,
-        birth_kind(page),
+        birth_kind(page, &history),
         &versions,
         &accepted,
         truncated,

@@ -749,7 +749,9 @@ async fn an_authored_note_no_person_touched_is_the_ais() {
         .iter()
         .all(|s| s.author == SentenceAuthor::Ai && !s.protected));
 
-    // Once a person has edited it, the page's first version counts as theirs.
+    // This older `create` row does not say who made the page, and an edit
+    // says only that the person edited it: their own line is theirs, the rest
+    // stays unattributed (and protected, the page now being theirs).
     let mine = format!("{AI_BODY} I keep this line.");
     assert!(
         write(&db, "agent_note", &mine, "manual_edit", None)
@@ -757,6 +759,79 @@ async fn an_authored_note_no_person_touched_is_the_ais() {
             .wrote
     );
     let view = page_sentences(&db, "agent_note").await.unwrap();
+    assert_eq!(
+        authors(&view),
+        [
+            SentenceAuthor::Unknown,
+            SentenceAuthor::Unknown,
+            SentenceAuthor::Person
+        ]
+    );
+    assert!(view.sentences.iter().all(|s| s.protected));
+}
+
+/// An authored page created by `actor` (`unknown` is the person in the app).
+async fn authored_page(db: &MemoryDB, id: &str, actor: &str) -> Page {
+    db.insert_page_with_basis(
+        id,
+        "Authored",
+        None,
+        AI_BODY,
+        None,
+        None,
+        &[],
+        &chrono::Utc::now().to_rfc3339(),
+        "authored",
+        "confirmed",
+        None,
+        None,
+        &[],
+        actor,
+        None,
+    )
+    .await
+    .unwrap();
+    db.get_page(id).await.unwrap().unwrap()
+}
+
+#[tokio::test]
+async fn an_ai_tools_page_stays_the_ais_after_the_person_edits_one_line() {
+    // Seeing a page does not make it yours: the person's first edit makes
+    // only what they changed theirs.
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-tokio", "Tokio runs async tasks").await;
+    authored_page(&db, "codex_note", "codex").await;
+    let rows = db.list_page_history("codex_note", 10).await.unwrap();
+    assert_eq!(rows[0].edited_by, "agent_create");
+    let edited = "Tokio runs many async tasks. Workers steal queued tasks.";
+    assert!(
+        write(&db, "codex_note", edited, "manual_edit", None)
+            .await
+            .wrote
+    );
+    let view = page_sentences(&db, "codex_note").await.unwrap();
+    assert_eq!(
+        authors(&view),
+        [SentenceAuthor::Person, SentenceAuthor::Ai],
+        "the untouched sentence is still the AI tool's"
+    );
+    assert!(
+        !view.sentences[1].protected,
+        "so the AI can still update it"
+    );
+}
+
+#[tokio::test]
+async fn a_page_the_person_creates_in_the_app_is_theirs_from_birth() {
+    let (db, _dir) = test_db().await;
+    authored_page(&db, "my_note", "unknown").await;
+    let rows = db.list_page_history("my_note", 10).await.unwrap();
+    assert_eq!(rows[0].edited_by, "person_create");
+    assert_eq!(
+        crate::page_history::kind_of_edit(&rows[0].edited_by),
+        wenlan_types::responses::PageHistoryKind::PersonEdit
+    );
+    let view = page_sentences(&db, "my_note").await.unwrap();
     assert!(view
         .sentences
         .iter()
