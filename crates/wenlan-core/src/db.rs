@@ -99,6 +99,7 @@ mod space_context;
 mod space_rename;
 mod steep;
 pub(crate) mod steep_new;
+pub mod things;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
@@ -236,6 +237,8 @@ pub(crate) mod steep_code_test;
 #[cfg(test)]
 #[path = "db/test_support_test.rs"]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod things_test;
 #[cfg(test)]
 mod tx_rollback_test;
 
@@ -1554,7 +1557,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 148;
+pub const SCHEMA_VERSION: u32 = 149;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10754,6 +10757,14 @@ impl MemoryDB {
             }
             if version < 148 {
                 self.migrate_148_sentence_revert(version).await?;
+            }
+            // Migration 149 adds things (一件事): `things`, `thing_sessions`
+            // and `thing_history`. See migrate_149_things.
+            if ceiling < 149 {
+                return Ok(());
+            }
+            if version < 149 {
+                self.migrate_149_things(version).await?;
             }
         }
 

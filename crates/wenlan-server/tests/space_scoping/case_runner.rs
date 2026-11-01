@@ -394,7 +394,8 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // accept, reject and recheck routes add five more. The in-chat
     // decision check and its context read add two scoped readers, and a
     // kept original's provenance (`/api/pages/{id}/original`) one more.
-    assert_eq!(rows.len(), 98);
+    // The thing list and thing detail add two scoped readers.
+    assert_eq!(rows.len(), 100);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -405,7 +406,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        74
+        76
     );
     assert_eq!(
         rows.iter()

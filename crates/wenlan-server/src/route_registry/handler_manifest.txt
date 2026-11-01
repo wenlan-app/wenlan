@@ -72,6 +72,8 @@ main|get|/api/repairs/recovery/{review_id}|wenlan_server::repair_read_routes::ha
 main|get|/api/repairs/runtime|wenlan_server::repair_runtime_routes::handle_runtime
 main|get|/api/retrievals/recent|wenlan_server::routes::handle_recent_retrievals
 main|get|/api/sessions/{id}|wenlan_server::session_routes::handle_get_session
+main|get|/api/things|wenlan_server::things_routes::handle_list_things
+main|get|/api/things/{id}|wenlan_server::things_routes::handle_get_thing
 main|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 repair|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 main|get|/api/snapshots|wenlan_server::snapshot_routes::handle_list_snapshots
@@ -178,6 +180,7 @@ main|post|/api/repairs/verify|wenlan_server::repair_routes::handle_verify
 main|post|/api/repairs/runtime/resume|wenlan_server::repair_runtime_routes::handle_resume
 main|post|/api/search|wenlan_server::routes::handle_search
 main|post|/api/sessions|wenlan_server::session_routes::handle_upsert_session
+main|post|/api/sessions/{id}/things/move|wenlan_server::things_routes::handle_move_session_thing
 main|post|/api/shutdown|wenlan_server::routes::handle_shutdown
 main|post|/api/snapshots/{id}/delete|wenlan_server::snapshot_routes::handle_delete_snapshot
 main|post|/api/sources|wenlan_server::source_routes::handle_add_source
@@ -242,6 +245,7 @@ main|delete|/api/spaces/{name}|wenlan_server::spaces_routes::handle_delete_space
 main|delete|/api/spaces/{name}/wiki/repo|wenlan_server::repo_wiki_routes::handle_unbind
 main|delete|/api/tags/{name}|wenlan_server::activity_tag_routes::handle_delete_tag
 main|patch|/api/brief|wenlan_server::brief_routes::handle_update_brief
+main|patch|/api/things/{id}|wenlan_server::things_routes::handle_rename_thing
 main|patch|/api/sources/{id}|wenlan_server::source_routes::handle_update_source
 main|get|/api/outbox/status|wenlan_server::outbox_routes::handle_status
 main|patch|/api/pages/{id}/map/edges/{edge_id}|wenlan_server::page_map_routes::handle_patch_map_edge

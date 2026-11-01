@@ -391,6 +391,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/pages/drafts", "/api/pages/drafts/{id}", "/api/pages/drafts/{id}/publish",
     // Records which agent session wrote; metadata only, no user data read.
     "/api/sessions",
+    // The person moves a conversation between things; returns the target
+    // thing's summary, which the scoped GET /api/things/{id} also guards.
+    "/api/sessions/{id}/things/move",
     "/api/refinery/queue/{id}/reject", "/api/refinery/queue/{id}/accept", "/api/sources/{id}", "/api/sources/{id}/sync",
     "/api/config", "/api/config/routing", "/api/setup/status", "/api/setup/anthropic-key", "/api/on-device-model",
     "/api/on-device-model/download", "/api/outbox/drain", "/api/outbox/status", "/api/chunks/{id}/update", "/api/chunks/time-range", "/api/chunks/delete-bulk",
@@ -464,6 +467,8 @@ const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
     (RegisteredMethod::Post, "/api/notes/proposals"),
     (RegisteredMethod::Delete, "/api/notes/proposals/{id}"),
     (RegisteredMethod::Patch, "/api/brief"),
+    // Renaming a thing; its read is the sensitive GET row.
+    (RegisteredMethod::Patch, "/api/things/{id}"),
     (RegisteredMethod::Put, "/api/profile"),
     (RegisteredMethod::Post, "/api/agents"),
     (RegisteredMethod::Put, "/api/agents/{name}"),

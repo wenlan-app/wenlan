@@ -71,6 +71,7 @@ pub mod steep_new_routes;
 pub mod steep_routes;
 pub mod telemetry;
 pub mod telemetry_routes;
+pub mod things_routes;
 pub mod truth_guard;
 mod web_fetch;
 pub mod web_fetch_routes;
