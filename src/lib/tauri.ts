@@ -1353,12 +1353,45 @@ export interface PageChangelogEntry {
   sources_removed?: number | null;
 }
 
+export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update";
+
+/** The page a `source_update` history item is about. */
+export interface PageHistorySource {
+  page_id: string;
+  title: string;
+  /** The version the source got. */
+  version: number;
+  /** The source version this page was last checked against. */
+  relied_on_version: number;
+  /** True while this page has not been checked against `version` yet. */
+  pending: boolean;
+  /** The source's text at `version`, with `includeText`. */
+  text?: string | null;
+}
+
+/** One change in a page's one history (UX-HIST-1), newest first. */
+export interface PageHistoryItem {
+  kind: PageHistoryKind;
+  /** Unix seconds. */
+  at: number;
+  version?: number | null;
+  edited_by?: string | null;
+  agent?: string | null;
+  delta_summary?: string | null;
+  /** The page text after an edit, with `includeText`. */
+  text?: string | null;
+  source?: PageHistorySource | null;
+  changed_sentences?: number | null;
+}
+
 export interface ListPageRevisionsResponse {
   page_id: string;
   current_version: number;
   user_edited: boolean;
   stale_reason?: string | null;
   entries: PageChangelogEntry[];
+  /** The page's one history: your edits, the AI's, and new versions of the pages it relies on. */
+  history?: PageHistoryItem[];
 }
 
 // ── Memory Page ─────────────────────────────────────────────────────
@@ -2847,10 +2880,12 @@ export async function getMemoryRevisions(
   return invoke("get_memory_revisions", { sourceId });
 }
 
+/** `includeText` adds each version's whole text, so a change can be opened (UX-HIST-2). */
 export async function getPageRevisions(
   pageId: string,
+  includeText = false,
 ): Promise<ListPageRevisionsResponse> {
-  return invoke("get_page_revisions", { pageId });
+  return invoke("get_page_revisions", { pageId, includeText });
 }
 
 export async function listPendingRevisions(limit?: number): Promise<PendingRevisionItem[]> {
