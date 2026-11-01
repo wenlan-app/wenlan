@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Registry of supported on-device GGUF models.
+//! Registry of on-device GGUF models Wenlan can download and run itself.
 //!
-//! Two tiers, chosen by RAM:
-//! - Qwen 3 4B (default) — runs on any laptop, ~3GB RAM
-//! - Qwen 3.5 9B — requires 16GB+ RAM, better synthesis quality
+//! The list spans several families and sizes, ordered by memory. Which ones a
+//! computer is offered, and which one is recommended, follows its total RAM
+//! ([`fits_ram`], [`recommend_for_ram`], [`shortlist_for_ram`]). Qwen 3 4B
+//! stays the default: it runs on any laptop. Only Qwen 3 4B and Qwen 3.5 9B
+//! have been quality-measured on Wenlan's jobs; the others are offered as
+//! choices and measured later.
 //!
 //! ## Token budget calibration (2026-04-18)
 //!
@@ -25,6 +28,16 @@
 //!   models at long contexts.
 
 use std::path::PathBuf;
+
+/// How prompts are written for a model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptFormat {
+    /// Wenlan's own Qwen ChatML template (see `format_chatml_prompt`).
+    ChatMl,
+    /// The chat template stored inside the GGUF file, rendered by llama.cpp.
+    /// Used for families whose turn markers are not ChatML (Gemma).
+    ModelTemplate,
+}
 
 #[derive(Debug, Clone)]
 pub struct OnDeviceModel {
@@ -54,9 +67,11 @@ pub struct OnDeviceModel {
     /// answer that already ended and, at the title job's sampling
     /// temperature, stops before its first word (greedy decoding answers).
     pub thinking_mode: bool,
+    /// How prompts are written for this model.
+    pub prompt_format: PromptFormat,
 }
 
-/// All available on-device models, ordered by size.
+/// All available on-device models, ordered by memory needed.
 pub const MODELS: &[OnDeviceModel] = &[
     OnDeviceModel {
         id: "qwen3-4b",
@@ -70,6 +85,21 @@ pub const MODELS: &[OnDeviceModel] = &[
         context_size: 8_192,          // 25% of 32K. KV cache ~2GB on Metal.
         max_output_tokens: 1_024,     // 4B quality degrades past ~750 words
         thinking_mode: false,         // Instruct-2507 has no thinking mode
+        prompt_format: PromptFormat::ChatMl,
+    },
+    OnDeviceModel {
+        id: "gemma4-e4b",
+        display_name: "Gemma 4 E4B",
+        repo_id: "unsloth/gemma-4-E4B-it-GGUF",
+        filename: "gemma-4-E4B-it-Q4_K_M.gguf",
+        param_count: "4B",
+        ram_required_gb: 6.0,
+        file_size_gb: 5.0,
+        synthesis_token_limit: 6_000,
+        context_size: 8_192,
+        max_output_tokens: 1_024,
+        thinking_mode: false, // thinking stays off through the model's template
+        prompt_format: PromptFormat::ModelTemplate,
     },
     OnDeviceModel {
         id: "qwen3.5-9b",
@@ -85,6 +115,63 @@ pub const MODELS: &[OnDeviceModel] = &[
         // overhead of 16K which slows prefill without benefit.
         max_output_tokens: 2_048, // 9B sustains quality up to ~1500 words
         thinking_mode: true,      // defaults to thinking-on
+        prompt_format: PromptFormat::ChatMl,
+    },
+    OnDeviceModel {
+        id: "gemma4-12b",
+        display_name: "Gemma 4 12B",
+        repo_id: "unsloth/gemma-4-12b-it-GGUF",
+        filename: "gemma-4-12b-it-Q4_K_M.gguf",
+        param_count: "12B",
+        ram_required_gb: 9.0,
+        file_size_gb: 7.1,
+        synthesis_token_limit: 16_000,
+        context_size: 8_192,
+        max_output_tokens: 2_048,
+        thinking_mode: false,
+        prompt_format: PromptFormat::ModelTemplate,
+    },
+    OnDeviceModel {
+        id: "qwen3.8-27b",
+        display_name: "Qwen 3.8 27B",
+        repo_id: "unsloth/Qwen3.8-27B-GGUF",
+        filename: "Qwen3.8-27B-UD-Q4_K_M.gguf",
+        param_count: "27B",
+        ram_required_gb: 19.0,
+        file_size_gb: 16.5,
+        synthesis_token_limit: 16_000,
+        context_size: 8_192,
+        max_output_tokens: 2_048,
+        thinking_mode: true, // Qwen 3.5-family architecture, thinking-on by default
+        prompt_format: PromptFormat::ChatMl,
+    },
+    OnDeviceModel {
+        id: "gemma4-31b",
+        display_name: "Gemma 4 31B",
+        repo_id: "unsloth/gemma-4-31B-it-GGUF",
+        filename: "gemma-4-31B-it-Q4_K_M.gguf",
+        param_count: "31B",
+        ram_required_gb: 21.0,
+        file_size_gb: 18.3,
+        synthesis_token_limit: 16_000,
+        context_size: 8_192,
+        max_output_tokens: 2_048,
+        thinking_mode: false,
+        prompt_format: PromptFormat::ModelTemplate,
+    },
+    OnDeviceModel {
+        id: "qwen3.6-35b-a3b",
+        display_name: "Qwen 3.6 35B-A3B",
+        repo_id: "unsloth/Qwen3.6-35B-A3B-GGUF",
+        filename: "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+        param_count: "35B",
+        ram_required_gb: 24.0,
+        file_size_gb: 22.1,
+        synthesis_token_limit: 16_000,
+        context_size: 8_192,
+        max_output_tokens: 2_048,
+        thinking_mode: true,
+        prompt_format: PromptFormat::ChatMl,
     },
 ];
 
@@ -104,6 +191,17 @@ pub fn thinking_mode_for_model_file(path: &std::path::Path) -> bool {
         .find(|m| m.filename == name)
         .map(|m| m.thinking_mode)
         .unwrap_or(false)
+}
+
+/// How prompts are written for the model file at `path`. Files not in the
+/// registry get the model's own template, which is right for any family.
+pub fn prompt_format_for_model_file(path: &std::path::Path) -> PromptFormat {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    MODELS
+        .iter()
+        .find(|m| m.filename == name)
+        .map(|m| m.prompt_format)
+        .unwrap_or(PromptFormat::ModelTemplate)
 }
 
 /// Get the default model (smallest tier, runs on any laptop).
@@ -130,13 +228,61 @@ pub fn resolve_or_default(id: Option<&str>) -> &'static OnDeviceModel {
     }
 }
 
-/// Recommend a model based on total system RAM.
+/// Share of total RAM a model may use and still be offered on this computer.
+/// The rest stays for the system, the app, and the embedding model.
+const FIT_SHARE: f64 = 0.6;
+/// Share of total RAM the recommended model may use, so background steeping
+/// stays light while people keep working.
+const RECOMMEND_SHARE: f64 = 0.4;
+
+/// Whether `model` can run on a computer with `total_ram_gb` of memory.
+pub fn fits_ram(model: &OnDeviceModel, total_ram_gb: f64) -> bool {
+    model.ram_required_gb <= total_ram_gb * FIT_SHARE
+}
+
+/// Recommend a model based on total system RAM: the largest one that stays
+/// within [`RECOMMEND_SHARE`] of memory, or the default when none does.
 pub fn recommend_for_ram(total_ram_gb: f64) -> &'static OnDeviceModel {
-    if total_ram_gb >= 16.0 {
-        &MODELS[1] // qwen3.5-9b
-    } else {
-        &MODELS[0] // qwen3-4b
+    MODELS
+        .iter()
+        .rfind(|m| m.ram_required_gb <= total_ram_gb * RECOMMEND_SHARE)
+        .unwrap_or_else(get_default_model)
+}
+
+/// The few models offered before "Show all": the recommended one, the next
+/// smaller one (faster), and the next larger one that still fits (smarter).
+/// Returned in registry order, at most three, every one fitting this computer
+/// (the default is the floor when nothing fits).
+pub fn shortlist_for_ram(total_ram_gb: f64) -> Vec<&'static OnDeviceModel> {
+    let recommended = recommend_for_ram(total_ram_gb);
+    let fitting: Vec<&'static OnDeviceModel> = MODELS
+        .iter()
+        .filter(|m| fits_ram(m, total_ram_gb) || m.id == recommended.id)
+        .collect();
+    let at = fitting
+        .iter()
+        .position(|m| m.id == recommended.id)
+        .unwrap_or(0);
+    let mut picked = vec![at];
+    if at > 0 {
+        picked.push(at - 1);
     }
+    if at + 1 < fitting.len() {
+        picked.push(at + 1);
+    }
+    // Near the top or bottom of the list, fill from the other side.
+    let mut step = 2;
+    while picked.len() < 3 && (at >= step || at + step < fitting.len()) {
+        if at + step < fitting.len() && picked.len() < 3 {
+            picked.push(at + step);
+        }
+        if at >= step && picked.len() < 3 {
+            picked.push(at - step);
+        }
+        step += 1;
+    }
+    picked.sort_unstable();
+    picked.into_iter().map(|i| fitting[i]).collect()
 }
 
 /// Check whether a model is already downloaded to the hf-hub cache.
@@ -233,10 +379,60 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_two_models() {
-        assert_eq!(MODELS.len(), 2);
+    fn registry_is_ordered_by_memory_with_the_default_first() {
         assert_eq!(MODELS[0].id, "qwen3-4b");
-        assert_eq!(MODELS[1].id, "qwen3.5-9b");
+        assert!(MODELS
+            .windows(2)
+            .all(|pair| pair[0].ram_required_gb <= pair[1].ram_required_gb));
+        let mut ids: Vec<_> = MODELS.iter().map(|m| m.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), MODELS.len(), "model ids are unique");
+    }
+
+    #[test]
+    fn non_chatml_families_use_the_model_template() {
+        use std::path::Path;
+        for model in MODELS {
+            let expected = if model.id.starts_with("gemma") {
+                PromptFormat::ModelTemplate
+            } else {
+                PromptFormat::ChatMl
+            };
+            assert_eq!(model.prompt_format, expected, "{}", model.id);
+            assert_eq!(
+                prompt_format_for_model_file(Path::new(model.filename)),
+                expected
+            );
+        }
+        assert_eq!(
+            prompt_format_for_model_file(Path::new("/x/someone-else.gguf")),
+            PromptFormat::ModelTemplate
+        );
+    }
+
+    #[test]
+    fn shortlist_offers_at_most_three_fitting_models_around_the_recommendation() {
+        for ram in [8.0, 16.0, 24.0, 32.0, 36.0, 48.0, 64.0, 128.0] {
+            let list = shortlist_for_ram(ram);
+            let recommended = recommend_for_ram(ram);
+            assert!(!list.is_empty() && list.len() <= 3, "{ram}: {}", list.len());
+            assert!(list.iter().any(|m| m.id == recommended.id), "{ram}");
+            assert!(list.iter().all(|m| fits_ram(m, ram)), "{ram}");
+        }
+        let ids = |ram| {
+            shortlist_for_ram(ram)
+                .iter()
+                .map(|m| m.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(8.0), vec!["qwen3-4b"]);
+        assert_eq!(ids(16.0), vec!["gemma4-e4b", "qwen3.5-9b", "gemma4-12b"]);
+        assert_eq!(ids(32.0), vec!["qwen3.5-9b", "gemma4-12b", "qwen3.8-27b"]);
+        assert_eq!(
+            ids(64.0),
+            vec!["qwen3.8-27b", "gemma4-31b", "qwen3.6-35b-a3b"]
+        );
     }
 
     #[test]
@@ -259,9 +455,11 @@ mod tests {
 
     #[test]
     fn recommendation_by_ram() {
+        assert_eq!(recommend_for_ram(4.0).id, "qwen3-4b");
         assert_eq!(recommend_for_ram(8.0).id, "qwen3-4b");
         assert_eq!(recommend_for_ram(16.0).id, "qwen3.5-9b");
-        assert_eq!(recommend_for_ram(32.0).id, "qwen3.5-9b");
+        assert_eq!(recommend_for_ram(32.0).id, "gemma4-12b");
+        assert_eq!(recommend_for_ram(64.0).id, "qwen3.6-35b-a3b");
     }
 
     #[test]

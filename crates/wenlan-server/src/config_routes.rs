@@ -538,14 +538,75 @@ pub async fn handle_clear_anthropic_key(
 
 // ── On-device model endpoints ──────────────────────────────────────────────
 
-fn model_entry(model: &OnDeviceModel) -> OnDeviceModelEntry {
-    OnDeviceModelEntry {
-        id: model.id.to_string(),
-        display_name: model.display_name.to_string(),
-        param_count: model.param_count.to_string(),
-        ram_required_gb: model.ram_required_gb,
-        file_size_gb: model.file_size_gb,
-        cached: on_device_models::is_cached(model),
+/// Total memory of this computer in GB, or `None` when it cannot be read.
+fn total_ram_gb() -> Option<f64> {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    let bytes = system.total_memory();
+    (bytes > 0).then(|| bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+}
+
+/// The catalog as this computer sees it: which models fit, which one is
+/// recommended, and which few are offered before "Show all". Without a
+/// memory reading every model is offered and none is recommended.
+fn model_entries(
+    total_ram_gb: Option<f64>,
+    cached: impl Fn(&OnDeviceModel) -> bool,
+) -> Vec<OnDeviceModelEntry> {
+    let recommended = total_ram_gb.map(|ram| on_device_models::recommend_for_ram(ram).id);
+    let shortlist: Vec<&str> = total_ram_gb
+        .map(|ram| {
+            on_device_models::shortlist_for_ram(ram)
+                .iter()
+                .map(|m| m.id)
+                .collect()
+        })
+        .unwrap_or_default();
+    on_device_models::MODELS
+        .iter()
+        .map(|model| OnDeviceModelEntry {
+            id: model.id.to_string(),
+            display_name: model.display_name.to_string(),
+            param_count: model.param_count.to_string(),
+            ram_required_gb: model.ram_required_gb,
+            file_size_gb: model.file_size_gb,
+            cached: cached(model),
+            fits: total_ram_gb.is_none_or(|ram| on_device_models::fits_ram(model, ram)),
+            recommended: recommended == Some(model.id),
+            shortlisted: shortlist.contains(&model.id),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod model_entries_tests {
+    use super::*;
+
+    #[test]
+    fn a_32_gb_computer_gets_three_offers_one_recommended_and_greyed_big_models() {
+        let entries = model_entries(Some(32.0), |_| false);
+        let shortlisted: Vec<_> = entries
+            .iter()
+            .filter(|e| e.shortlisted)
+            .map(|e| e.id.as_str())
+            .collect();
+        assert_eq!(shortlisted, vec!["qwen3.5-9b", "gemma4-12b", "qwen3.8-27b"]);
+        let recommended: Vec<_> = entries
+            .iter()
+            .filter(|e| e.recommended)
+            .map(|e| e.id.as_str())
+            .collect();
+        assert_eq!(recommended, vec!["gemma4-12b"]);
+        assert!(entries.iter().any(|e| !e.fits));
+        assert!(entries.iter().filter(|e| e.shortlisted).all(|e| e.fits));
+    }
+
+    #[test]
+    fn without_a_memory_reading_everything_is_offered_and_nothing_recommended() {
+        let entries = model_entries(None, |_| false);
+        assert!(entries
+            .iter()
+            .all(|e| e.fits && !e.recommended && !e.shortlisted));
     }
 }
 
@@ -558,8 +619,8 @@ pub async fn handle_get_on_device_model(
         let s = state.read().await;
         s.loaded_on_device_model.clone()
     };
-    let models: Vec<OnDeviceModelEntry> =
-        on_device_models::MODELS.iter().map(model_entry).collect();
+    let total_ram_gb = total_ram_gb();
+    let models = model_entries(total_ram_gb, on_device_models::is_cached);
     // Resolve selected against registry so stale config values map to the default,
     // but keep local memory distinct from "default local model selected".
     let selected = cfg
@@ -571,6 +632,7 @@ pub async fn handle_get_on_device_model(
         loaded,
         selected,
         models,
+        total_ram_gb,
     }))
 }
 

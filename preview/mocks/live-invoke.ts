@@ -122,6 +122,11 @@ const MODEL_DOWNLOAD_DURATION_MS = 25_000;
 // the simulated byte ramp just under the real total rather than at a round number.
 const MODEL_BLOB_BYTES = 2_497_281_120;
 let downloadStartedAt: number | null = null;
+// Memory the preview pretends this computer has; `?ram=` overrides it.
+const PREVIEW_TOTAL_RAM_GB = Number(new URLSearchParams(globalThis.location?.search ?? "").get("ram")) || 64;
+// A model already downloaded and in use before the preview starts (`?inuse=`);
+// none by default, like a first run.
+const PREVIEW_IN_USE_MODEL = new URLSearchParams(globalThis.location?.search ?? "").get("inuse");
 let downloadingModelId: string | null = null;
 
 // --- setup wizard: daemon row probe memory (store_memory / get_memory_detail /
@@ -1243,14 +1248,36 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   },
   get_on_device_model: async () => {
     const complete = downloadComplete();
-    const cachedFor = (id: string) => (id === downloadingModelId ? complete : true);
+    const cachedFor = (id: string) => (id === downloadingModelId ? complete : id === PREVIEW_IN_USE_MODEL);
+    // Mirrors crates/wenlan-core/src/on_device_models.rs (MODELS plus the
+    // fits / recommended / shortlist rules) for PREVIEW_TOTAL_RAM_GB.
+    const catalog = [
+      { id: "qwen3-4b", display_name: "Qwen 3 4B", param_count: "4B", ram_required_gb: 3, file_size_gb: 2.5 },
+      { id: "gemma4-e4b", display_name: "Gemma 4 E4B", param_count: "4B", ram_required_gb: 6, file_size_gb: 5.0 },
+      { id: "qwen3.5-9b", display_name: "Qwen 3.5 9B", param_count: "9B", ram_required_gb: 6, file_size_gb: 5.5 },
+      { id: "gemma4-12b", display_name: "Gemma 4 12B", param_count: "12B", ram_required_gb: 9, file_size_gb: 7.1 },
+      { id: "qwen3.8-27b", display_name: "Qwen 3.8 27B", param_count: "27B", ram_required_gb: 19, file_size_gb: 16.5 },
+      { id: "gemma4-31b", display_name: "Gemma 4 31B", param_count: "31B", ram_required_gb: 21, file_size_gb: 18.3 },
+      { id: "qwen3.6-35b-a3b", display_name: "Qwen 3.6 35B-A3B", param_count: "35B", ram_required_gb: 24, file_size_gb: 22.1 },
+    ];
+    const ram = PREVIEW_TOTAL_RAM_GB;
+    const fits = (m: (typeof catalog)[number]) => m.ram_required_gb <= ram * 0.6;
+    const recommendedIndex = Math.max(0, catalog.map((m) => m.ram_required_gb <= ram * 0.4).lastIndexOf(true));
+    const fitting = catalog.map((m, i) => ({ m, i })).filter(({ m, i }) => fits(m) || i === recommendedIndex);
+    const at = Math.max(0, fitting.findIndex(({ i }) => i === recommendedIndex));
+    const picked = [at, at - 1, at + 1, at + 2, at - 2].filter((i) => i >= 0 && i < fitting.length).slice(0, 3);
+    const shortlist = new Set(picked.map((i) => fitting[i].m.id));
     return {
-      loaded: complete ? downloadingModelId : null,
-      selected: downloadingModelId,
-      models: [
-        { id: "qwen3-4b", display_name: "Qwen 3 4B", param_count: "4B", ram_required_gb: 3.0, file_size_gb: 2.7, cached: cachedFor("qwen3-4b") },
-        { id: "qwen3.5-9b", display_name: "Qwen 3.5 9B", param_count: "9B", ram_required_gb: 6.0, file_size_gb: 5.5, cached: cachedFor("qwen3.5-9b") },
-      ],
+      loaded: complete ? downloadingModelId : PREVIEW_IN_USE_MODEL,
+      selected: downloadingModelId ?? PREVIEW_IN_USE_MODEL,
+      total_ram_gb: ram,
+      models: catalog.map((m, i) => ({
+        ...m,
+        cached: cachedFor(m.id),
+        fits: fits(m),
+        recommended: i === recommendedIndex,
+        shortlisted: shortlist.has(m.id),
+      })),
     };
   },
   // The byte count an in-flight hf-hub download has written so far (stats

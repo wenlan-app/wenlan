@@ -818,6 +818,16 @@ pub struct OnDeviceModelEntry {
     pub ram_required_gb: f64,
     pub file_size_gb: f64,
     pub cached: bool,
+    /// Runs on this computer (enough total memory). Missing on an older
+    /// daemon reads true, so nothing is hidden.
+    #[serde(default = "crate::requests::default_true")]
+    pub fits: bool,
+    /// The one model recommended for this computer.
+    #[serde(default)]
+    pub recommended: bool,
+    /// Offered before "Show all" (at most three per computer).
+    #[serde(default)]
+    pub shortlisted: bool,
 }
 
 /// Response envelope for `GET /api/on-device-model`.
@@ -830,6 +840,9 @@ pub struct OnDeviceModelResponse {
     pub selected: Option<String>,
     /// All available models with per-model cache/download state.
     pub models: Vec<OnDeviceModelEntry>,
+    /// Total memory of the computer the daemon runs on, in GB.
+    #[serde(default)]
+    pub total_ram_gb: Option<f64>,
 }
 
 // ===== Indexed files / chunks =====
@@ -1659,7 +1672,11 @@ mod on_device_model_response_tests {
                 ram_required_gb: 6.0,
                 file_size_gb: 2.7,
                 cached: true,
+                fits: true,
+                recommended: true,
+                shortlisted: true,
             }],
+            total_ram_gb: Some(16.0),
         };
 
         let value = serde_json::to_value(&response).unwrap();
@@ -1684,6 +1701,18 @@ mod on_device_model_response_tests {
         assert!(parsed.loaded.is_none());
         assert!(parsed.selected.is_none());
         assert!(parsed.models.is_empty());
+        assert!(parsed.total_ram_gb.is_none());
+    }
+
+    #[test]
+    fn older_daemon_entries_read_as_fitting_and_not_shortlisted() {
+        let parsed: OnDeviceModelEntry = serde_json::from_str(
+            r#"{"id":"qwen3-4b","display_name":"Qwen 3 4B","param_count":"4B","ram_required_gb":3.0,"file_size_gb":2.7,"cached":false}"#,
+        )
+        .unwrap();
+        assert!(parsed.fits);
+        assert!(!parsed.recommended);
+        assert!(!parsed.shortlisted);
     }
 }
 

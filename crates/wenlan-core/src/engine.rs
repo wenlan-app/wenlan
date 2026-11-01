@@ -385,6 +385,21 @@ pub struct LlmEngine {
     backend_plan: InferenceBackendPlan,
     /// See [`crate::on_device_models::OnDeviceModel::thinking_mode`].
     thinking_mode: bool,
+    /// The GGUF's own chat template, set only for models whose prompts use it
+    /// ([`crate::on_device_models::PromptFormat::ModelTemplate`]). `None`
+    /// means Wenlan's ChatML template.
+    chat_template: Option<llama_cpp_2::model::LlamaChatTemplate>,
+}
+
+/// OpenAI-style messages for a system/user pair, as the model's chat
+/// template expects them.
+fn template_messages_json(system_prompt: Option<&str>, prompt: &str) -> String {
+    let mut messages = Vec::with_capacity(2);
+    if let Some(system) = system_prompt {
+        messages.push(serde_json::json!({ "role": "system", "content": system }));
+    }
+    messages.push(serde_json::json!({ "role": "user", "content": prompt }));
+    serde_json::Value::Array(messages).to_string()
 }
 
 // SAFETY: LlamaCppModel and LlamaBackend are created once on the init thread
@@ -487,6 +502,7 @@ impl LlmEngine {
             prompts,
             backend_plan,
             thinking_mode: false,
+            chat_template: None,
         })
     }
 
@@ -521,9 +537,75 @@ impl LlmEngine {
         self.thinking_mode
     }
 
-    /// The ChatML prompt this engine sends for a system/user pair.
+    /// Choose how prompts are written. `ModelTemplate` reads the chat template
+    /// stored in the GGUF file; a file without one keeps ChatML.
+    pub fn with_prompt_format(mut self, format: crate::on_device_models::PromptFormat) -> Self {
+        self.chat_template = match format {
+            crate::on_device_models::PromptFormat::ChatMl => None,
+            crate::on_device_models::PromptFormat::ModelTemplate => {
+                match self.model.chat_template(None) {
+                    Ok(template) => Some(template),
+                    Err(error) => {
+                        log::warn!(
+                            "[llm_engine] model has no usable chat template ({error}); using ChatML"
+                        );
+                        None
+                    }
+                }
+            }
+        };
+        self
+    }
+
+    /// Whether prompts use the model's own chat template.
+    pub fn uses_model_template(&self) -> bool {
+        self.chat_template.is_some()
+    }
+
+    /// The prompt this engine sends for a system/user pair: the model's own
+    /// chat template when it has one in use, otherwise Wenlan's ChatML.
     pub fn format_prompt(&self, system_prompt: Option<&str>, prompt: &str) -> String {
+        if let Some(template) = &self.chat_template {
+            match self.format_with_model_template(template, system_prompt, prompt) {
+                Ok(formatted) => return formatted,
+                Err(error) => {
+                    log::warn!("[llm_engine] model chat template failed ({error}); using ChatML")
+                }
+            }
+        }
         format_chatml_prompt(system_prompt, prompt, self.thinking_mode)
+    }
+
+    fn format_with_model_template(
+        &self,
+        template: &llama_cpp_2::model::LlamaChatTemplate,
+        system_prompt: Option<&str>,
+        prompt: &str,
+    ) -> Result<String, String> {
+        let messages_json = template_messages_json(system_prompt, prompt);
+        let params = llama_cpp_2::openai::OpenAIChatTemplateParams {
+            messages_json: &messages_json,
+            tools_json: None,
+            tool_choice: None,
+            json_schema: None,
+            grammar: None,
+            reasoning_format: None,
+            chat_template_kwargs: None,
+            add_generation_prompt: true,
+            use_jinja: true,
+            parallel_tool_calls: false,
+            // Wenlan's jobs want the answer only; a thinking block would spend
+            // the output budget and is stripped anyway.
+            enable_thinking: false,
+            // Tokenization adds BOS (`AddBos::Always`), so the template must not.
+            add_bos: false,
+            add_eos: false,
+            parse_tool_calls: false,
+        };
+        self.model
+            .apply_chat_template_oaicompat(template, &params)
+            .map(|result| result.prompt)
+            .map_err(|error| error.to_string())
     }
 
     pub(crate) fn inference_backend_plan(&self) -> &InferenceBackendPlan {
@@ -572,6 +654,7 @@ impl LlmEngine {
             prompts,
             backend_plan: plan,
             thinking_mode: false,
+            chat_template: None,
         })
     }
 

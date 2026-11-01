@@ -714,6 +714,12 @@ export interface OnDeviceModelEntry {
   ram_required_gb: number;
   file_size_gb: number;
   cached: boolean;
+  /// Runs on this computer. Older daemons omit it; read missing as true.
+  fits?: boolean;
+  /// The one model recommended for this computer.
+  recommended?: boolean;
+  /// Offered before "Show all" (at most three).
+  shortlisted?: boolean;
 }
 
 export interface OnDeviceModelResponse {
@@ -723,6 +729,8 @@ export interface OnDeviceModelResponse {
   selected: string | null;
   /// All available models with per-model cache state.
   models: OnDeviceModelEntry[];
+  /// Total memory of this computer in GB; missing when unreadable.
+  total_ram_gb?: number | null;
 }
 
 export async function getOnDeviceModel(): Promise<OnDeviceModelResponse> {

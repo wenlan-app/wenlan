@@ -357,7 +357,9 @@ async fn interactive_setup() -> anyhow::Result<()> {
             Ok(())
         }
         "2" => {
-            let default = on_device_models::get_default_model();
+            let default = this_computer_ram_gb()
+                .map(on_device_models::recommend_for_ram)
+                .unwrap_or_else(on_device_models::get_default_model);
             print_model_list();
             let input = prompt_line(&format!("Model id [{}]: ", default.id))?;
             let model_id = if input.trim().is_empty() {
@@ -379,7 +381,17 @@ async fn interactive_setup() -> anyhow::Result<()> {
     }
 }
 
+/// Total memory of this computer in GB, or `None` when it cannot be read.
+fn this_computer_ram_gb() -> Option<f64> {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    let bytes = system.total_memory();
+    (bytes > 0).then(|| bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+}
+
 fn print_model_list() {
+    let ram = this_computer_ram_gb();
+    let recommended = ram.map(|ram| on_device_models::recommend_for_ram(ram).id);
     let cfg = config::load_config();
     let selected = cfg
         .on_device_model
@@ -393,9 +405,22 @@ fn print_model_list() {
             "not downloaded"
         };
         let marker = if Some(model.id) == selected { "*" } else { " " };
+        let note = if Some(model.id) == recommended {
+            " - recommended"
+        } else if ram.is_some_and(|ram| !on_device_models::fits_ram(model, ram)) {
+            " - too large for this computer"
+        } else {
+            ""
+        };
         println!(
-            "{} {} ({}, {:.1}GB download, needs {:.0}GB RAM) - {}",
-            marker, model.id, model.display_name, model.file_size_gb, model.ram_required_gb, cached
+            "{} {} ({}, {:.1}GB download, needs {:.0}GB RAM) - {}{}",
+            marker,
+            model.id,
+            model.display_name,
+            model.file_size_gb,
+            model.ram_required_gb,
+            cached,
+            note
         );
     }
 }

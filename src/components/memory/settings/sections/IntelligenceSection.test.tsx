@@ -355,7 +355,7 @@ describe("IntelligenceSection", () => {
     expect(mocks.downloadOnDeviceModel).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("tab", { name: "On-device" }));
     expect(screen.getAllByText("Qwen3 4B", { exact: true })).toHaveLength(1);
-    const enable = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Enable" });
+    const enable = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Use" });
     await userEvent.click(enable);
     await waitFor(() => expect(mocks.downloadOnDeviceModel).toHaveBeenCalledWith("qwen3-8b"));
   });
@@ -405,34 +405,58 @@ describe("IntelligenceSection", () => {
     { id: "qwen3-14b", display_name: "Qwen3 14B", param_count: "14B", ram_required_gb: 20, file_size_gb: 9, cached: false },
   ];
 
-  it("separates downloaded and enabled models, then refreshes actual activation state", async () => {
+  it("uses a downloaded model, shows which one is in use, and greys out models too large for this computer", async () => {
     mocks.getApiKey.mockResolvedValue("configured");
-    mocks.getOnDeviceModel.mockResolvedValue({ loaded: "qwen3-4b-instruct-2507", selected: "qwen3-4b-instruct-2507", models: deviceModels });
+    const tooBig = { ...deviceModels[2], fits: false };
+    const models = [deviceModels[0], deviceModels[1], tooBig];
+    mocks.getOnDeviceModel.mockResolvedValue({ loaded: "qwen3-4b-instruct-2507", selected: "qwen3-4b-instruct-2507", models, total_ram_gb: 16 });
     mocks.downloadOnDeviceModel.mockImplementation(async (id: string) => {
-      mocks.getOnDeviceModel.mockResolvedValue({ loaded: id, selected: id, models: deviceModels });
+      mocks.getOnDeviceModel.mockResolvedValue({ loaded: id, selected: id, models, total_ram_gb: 16 });
     });
     renderSection();
     await userEvent.click(screen.getByRole("tab", { name: "On-device" }));
     const panel = screen.getByRole("tabpanel");
-    const enable = await within(panel).findByRole("button", { name: "Enable" });
-    expect(within(panel).getByText("Enabled", { exact: true })).toBeVisible();
-    expect(within(panel).getByText("Downloaded", { exact: true })).toBeVisible();
-    expect(within(panel).getByRole("button", { name: "Download & enable" })).toBeDisabled();
-    await userEvent.click(enable);
+    expect(await within(panel).findByText("This computer has 16 GB of memory.")).toBeVisible();
+    const use = await within(panel).findByRole("button", { name: "Use" });
+    expect(within(panel).getByText("In use", { exact: true })).toBeVisible();
+    const big = within(panel).getByText("Qwen3 14B").closest(".settings-device-model") as HTMLElement;
+    expect(big).toHaveTextContent("Needs 20 GB of memory");
+    expect(within(big).queryByRole("button")).not.toBeInTheDocument();
+    await userEvent.click(use);
     await waitFor(() => expect(mocks.downloadOnDeviceModel).toHaveBeenCalledWith("qwen3.5-9b"));
-    await waitFor(() => expect(within(panel).getByText("Qwen3.5 9B").closest(".settings-row")).toHaveTextContent("Enabled"));
+    await waitFor(() => expect(within(panel).getByText("Qwen3.5 9B").closest(".settings-device-model")).toHaveTextContent("In use"));
     expect(mocks.setSourcePin).not.toHaveBeenCalled();
   });
 
-  it("reports a model activation error without showing it as enabled", async () => {
+  it("offers this computer's shortlist with one recommended model, and Show all expands the full list", async () => {
+    const models = [
+      { ...deviceModels[0], shortlisted: true },
+      { ...deviceModels[1], shortlisted: true, recommended: true, cached: false },
+      { ...deviceModels[2], shortlisted: false },
+    ];
+    mocks.getOnDeviceModel.mockResolvedValue({ loaded: null, selected: null, models, total_ram_gb: 32 });
+    renderSection();
+    await userEvent.click(screen.getByRole("tab", { name: "On-device" }));
+    const panel = screen.getByRole("tabpanel");
+    const recommended = (await within(panel).findByText("Qwen3.5 9B")).closest(".settings-device-model") as HTMLElement;
+    expect(recommended).toHaveTextContent("Recommended");
+    expect(within(recommended).getByRole("button", { name: "Download" })).toBeEnabled();
+    expect(within(panel).queryByText("Qwen3 14B")).not.toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "Show all (3)" }));
+    expect(within(panel).getByText("Qwen3 14B")).toBeVisible();
+    await userEvent.click(within(panel).getByRole("button", { name: "Show fewer" }));
+    expect(within(panel).queryByText("Qwen3 14B")).not.toBeInTheDocument();
+  });
+
+  it("reports a model activation error without showing it as in use", async () => {
     mocks.getOnDeviceModel.mockResolvedValue({ loaded: null, selected: null, models: [deviceModels[0]] });
     mocks.downloadOnDeviceModel.mockRejectedValue(new Error("model load failed"));
     renderSection();
     await userEvent.click(screen.getByRole("tab", { name: "On-device" }));
     const panel = screen.getByRole("tabpanel");
-    await userEvent.click(await within(panel).findByRole("button", { name: "Enable" }));
+    await userEvent.click(await within(panel).findByRole("button", { name: "Use" }));
     expect(await within(panel).findByRole("alert")).toHaveTextContent("model load failed");
-    expect(within(panel).queryByText("Enabled", { exact: true })).not.toBeInTheDocument();
+    expect(within(panel).queryByText("In use", { exact: true })).not.toBeInTheDocument();
   });
 
   it("does not offer a downloaded but unloaded device model as an available AI service", async () => {
