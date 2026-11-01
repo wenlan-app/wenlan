@@ -23,7 +23,8 @@ pub(crate) struct ExportPageRow {
     /// `entity_page_map`.
     pub entity_id: Option<String>,
     pub entity_type: Option<String>,
-    pub entity_confirmed: bool,
+    /// As stored: NULL, 0 and 1 are kept apart.
+    pub entity_confirmed: Option<i64>,
     /// The `aliases` JSON as stored.
     pub aliases: Option<String>,
     pub established_by: Option<String>,
@@ -85,7 +86,7 @@ impl MemoryDB {
                         COALESCE(p.entity_id, \
                                  (SELECT m.entity_id FROM entity_page_map m \
                                   WHERE m.page_id = p.id ORDER BY m.entity_id LIMIT 1)), \
-                        p.entity_type, COALESCE(p.entity_confirmed, 0), p.aliases, \
+                        p.entity_type, p.entity_confirmed, p.aliases, \
                         p.established_by, p.summary, p.entity_created_at, \
                         p.entity_updated_at \
                  FROM pages p ORDER BY p.id",
@@ -109,7 +110,7 @@ impl MemoryDB {
                 citations: row.get(9).map_err(decode)?,
                 entity_id: row.get(10).map_err(decode)?,
                 entity_type: row.get(11).map_err(decode)?,
-                entity_confirmed: row.get::<i64>(12).map_err(decode)? != 0,
+                entity_confirmed: row.get::<Option<i64>>(12).map_err(decode)?,
                 aliases: row.get(13).map_err(decode)?,
                 established_by: row.get(14).map_err(decode)?,
                 summary: row.get(15).map_err(decode)?,
@@ -470,7 +471,11 @@ impl MemoryDB {
         let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export {table}: {e}"));
         let mut info = conn
             .query(
-                "SELECT name, pk FROM pragma_table_info(?1) ORDER BY cid",
+                // Key columns first, in key order, then the rest by name, not
+                // by position: a database upgraded with ALTER TABLE and a
+                // fresh one list the same columns in different orders.
+                "SELECT name, pk FROM pragma_table_info(?1) \
+                 ORDER BY pk = 0, NULLIF(pk, 0), name",
                 [table],
             )
             .await

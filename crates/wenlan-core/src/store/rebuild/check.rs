@@ -8,6 +8,8 @@
 //!   value the rebuild lost shows as a file that differs;
 //! - `pages` column by column (cache columns skipped), so a history column
 //!   the state seeds did not restore shows by name;
+//! - every memory the export wrote, decision by decision
+//!   ([`compare_memories`]), since chunk rows are cache;
 //! - Briefs, canvases, settings, records and every history table row for row.
 
 use std::collections::BTreeMap;
@@ -16,7 +18,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
-use super::compare::{compare_keyed, compare_tables, KeyedDiff};
+use super::compare::{compare_keyed, compare_memories, compare_tables, KeyedDiff};
 use super::{compare_exports, export_again, rebuild, ExportDiff};
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
@@ -60,6 +62,8 @@ pub struct CheckReport {
     pub files: ExportDiff,
     pub pages: KeyedDiff,
     pub page_columns: Vec<ColumnCount>,
+    pub memories: KeyedDiff,
+    pub memory_fields: Vec<ColumnCount>,
     /// Tables whose rows differ; equal tables are left out.
     pub tables: Vec<TableCount>,
     pub tables_compared: usize,
@@ -72,6 +76,9 @@ impl CheckReport {
             && self.pages.only_in_source.is_empty()
             && self.pages.only_in_rebuilt.is_empty()
             && self.page_columns.iter().all(|c| c.unlisted.is_empty())
+            && self.memories.only_in_source.is_empty()
+            && self.memories.only_in_rebuilt.is_empty()
+            && self.memory_fields.iter().all(|c| c.unlisted.is_empty())
             && self.tables.is_empty()
     }
 
@@ -110,6 +117,20 @@ impl CheckReport {
                 column.column,
                 column.unlisted.len(),
                 column.listed
+            ));
+        }
+        out.push_str(&format!(
+            "Memories: {}, {} only in source, {} only in rebuild\n",
+            self.memories.rows,
+            self.memories.only_in_source.len(),
+            self.memories.only_in_rebuilt.len()
+        ));
+        for field in &self.memory_fields {
+            out.push_str(&format!(
+                "  field {}: {} memories differ that are not listed as left out, {} listed\n",
+                field.column,
+                field.unlisted.len(),
+                field.listed
             ));
         }
         out.push_str(&format!(
@@ -159,19 +180,34 @@ pub async fn check_export(
             .iter()
             .any(|left| left.id == key && left.field.starts_with(column))
     };
-    let page_columns = pages
-        .columns
+    let counts = |diff: &KeyedDiff, id_of: &dyn Fn(&str) -> String| -> Vec<ColumnCount> {
+        diff.columns
+            .iter()
+            .map(|(column, columns)| {
+                let (known, unlisted): (Vec<&String>, Vec<&String>) = columns
+                    .keys
+                    .iter()
+                    .partition(|key| listed(&id_of(key), column));
+                ColumnCount {
+                    column: column.clone(),
+                    listed: known.len(),
+                    unlisted: unlisted.into_iter().cloned().collect(),
+                }
+            })
+            .collect()
+    };
+    let page_columns = counts(&pages, &|key| key.to_string());
+    let written: std::collections::HashSet<String> = manifest
+        .files
         .iter()
-        .map(|(column, diff)| {
-            let (known, unlisted): (Vec<&String>, Vec<&String>) =
-                diff.keys.iter().partition(|key| listed(key, column));
-            ColumnCount {
-                column: column.clone(),
-                listed: known.len(),
-                unlisted: unlisted.into_iter().cloned().collect(),
-            }
-        })
+        .filter(|file| file.file_type == "memory" || file.file_type == "original")
+        .map(|file| file.id.clone())
         .collect();
+    let memories = compare_memories(source, &fresh, &written).await?;
+    // Keys are `source/source_id`; the manifest lists by source id.
+    let memory_fields = counts(&memories, &|key| {
+        key.split_once('/').map_or(key, |(_, id)| id).to_string()
+    });
 
     let mut tables: Vec<&'static str> = WHOLE_ROWS.to_vec();
     tables.extend(
@@ -197,6 +233,8 @@ pub async fn check_export(
         files,
         pages,
         page_columns,
+        memories,
+        memory_fields,
         tables,
         tables_compared,
     })

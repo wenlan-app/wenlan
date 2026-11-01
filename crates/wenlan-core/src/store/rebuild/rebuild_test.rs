@@ -342,6 +342,22 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         .await;
     }
     memory("docs::README.md", 0, "", ", 'file', '# Notes'".to_string()).await;
+    // Typed by the person; the tidied text is cache.
+    memory(
+        "mem_typed",
+        0,
+        ", authored_content, source_text, created_at",
+        format!(", 'memory', 'Tidied text.', 'typed text', 'typed text', {at}"),
+    )
+    .await;
+    // A record that names a page: written before pages by the rebuild.
+    sql(
+        &db,
+        "INSERT INTO entity_page_map (entity_id, page_id, created_at) \
+         VALUES ('ent_123456789', ?1, 't0')",
+        "shadow",
+    )
+    .await;
     sql(
         &db,
         "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'ent_123456789')",
@@ -389,6 +405,8 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         ("n_placed", "active", "12.5, -40, 300, 80", "NULL"),
         ("n_unplaced", "active", "NULL, 7, NULL, NULL", "'n_placed'"),
         ("n_suggested", "suggested", "1, 2, 3, 4", "NULL"),
+        // Sorts before its parent: the rebuild must not need parents first.
+        ("n_child", "active", "5, 6, 7, 8", "'n_unplaced'"),
     ] {
         sql(
             &db,
@@ -478,4 +496,10 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         .unwrap();
     assert!(report.is_clean(), "{}", report.summary());
     assert!(report.summary().starts_with("CLEAN"));
+    // Every memory the export wrote is compared, the typed one included.
+    assert!(report.memories.rows >= 7, "{}", report.summary());
+
+    // The rebuild never writes into a database that has pages or memories.
+    let refused = rebuild(&first, &db).await;
+    assert!(refused.is_err());
 }

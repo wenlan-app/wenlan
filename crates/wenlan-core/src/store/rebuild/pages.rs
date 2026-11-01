@@ -146,7 +146,7 @@ fn page_row(mut file: PageFile, archived: bool, problems: &mut Vec<String>) -> O
         summary: take_text(&mut other, "summary"),
         entity_id: take_text(&mut other, "entity_id"),
         entity_type: take_text(&mut other, "entity_type"),
-        aliases: take_text(&mut other, "aliases"),
+        aliases: take_text(&mut other, "entity_aliases"),
         established_by: take_text(&mut other, "established_by"),
         entity_confirmed: other
             .shift_remove("entity_confirmed")
@@ -181,7 +181,11 @@ fn entity_row(mut file: entity::EntityFile, problems: &mut Vec<String>) -> Optio
         // An entity's page has no citations; the export lists any it had.
         citations: Some("[]".to_string()),
         entity_type: file.entity_type,
-        entity_confirmed: file.confirmed.then_some(1),
+        entity_confirmed: if file.confirmed {
+            Some(1)
+        } else {
+            take_bool(other, "entity_confirmed").map(|_| 0)
+        },
         aliases: (!file.aliases.is_empty())
             .then(|| serde_json::to_string(&file.aliases).unwrap_or_default()),
         established_by: file.established_by,
@@ -271,6 +275,10 @@ pub(super) fn take_text(other: &mut serde_yaml::Mapping, key: &str) -> Option<St
             .ok()
             .map(|text| text.trim_end().to_string()),
     }
+}
+
+fn take_bool(other: &mut serde_yaml::Mapping, key: &str) -> Option<bool> {
+    other.shift_remove(key)?.as_bool()
 }
 
 fn take_int(other: &mut serde_yaml::Mapping, key: &str) -> Option<i64> {

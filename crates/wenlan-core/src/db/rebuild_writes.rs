@@ -107,4 +107,65 @@ impl MemoryDB {
         .await
         .map_err(|e| WenlanError::VectorDb(format!("rebuild update {table}: {e}")))
     }
+
+    /// Whether the database has no page and no memory: the rebuild writes
+    /// only into a database it may wipe.
+    pub(crate) async fn rebuild_target_is_empty(&self) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        let fail = |e: libsql::Error| WenlanError::VectorDb(format!("rebuild check target: {e}"));
+        let mut rows = conn
+            .query(
+                "SELECT (SELECT COUNT(*) FROM pages) + (SELECT COUNT(*) FROM memories)",
+                (),
+            )
+            .await
+            .map_err(fail)?;
+        let count: i64 = match rows.next().await.map_err(fail)? {
+            Some(row) => row.get(0).map_err(fail)?,
+            None => 0,
+        };
+        Ok(count == 0)
+    }
+
+    /// Turns foreign key enforcement on or off for this database. The
+    /// rebuild writes tables one at a time, so a row can name one that is
+    /// written later; [`Self::rebuild_foreign_key_problems`] checks them all
+    /// at the end.
+    pub(crate) async fn rebuild_foreign_keys(&self, on: bool) -> Result<(), WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            if on {
+                "PRAGMA foreign_keys = ON"
+            } else {
+                "PRAGMA foreign_keys = OFF"
+            },
+            (),
+        )
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("rebuild foreign keys: {e}")))?;
+        Ok(())
+    }
+
+    /// Every row whose foreign key names a row that is not there, as
+    /// `table rowid → parent`, from `PRAGMA foreign_key_check`.
+    pub(crate) async fn rebuild_foreign_key_problems(&self) -> Result<Vec<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let fail =
+            |e: libsql::Error| WenlanError::VectorDb(format!("rebuild foreign key check: {e}"));
+        let mut rows = conn
+            .query("PRAGMA foreign_key_check", ())
+            .await
+            .map_err(fail)?;
+        let mut problems = Vec::new();
+        while let Some(row) = rows.next().await.map_err(fail)? {
+            let table: String = row.get(0).map_err(fail)?;
+            let rowid: Option<i64> = row.get(1).ok();
+            let parent: String = row.get(2).map_err(fail)?;
+            problems.push(format!(
+                "{table} row {}: names a {parent} row that is not there",
+                rowid.map_or_else(|| "?".to_string(), |id| id.to_string())
+            ));
+        }
+        Ok(problems)
+    }
 }

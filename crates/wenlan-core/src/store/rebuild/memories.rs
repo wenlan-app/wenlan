@@ -45,6 +45,7 @@ const COLUMNS: &[&str] = &[
     "last_modified",
     "retrieval_cue",
     "chunk_type",
+    "authored_content",
 ];
 
 /// What the rebuild wrote.
@@ -170,6 +171,8 @@ struct Decisions {
     source_text: Option<String>,
     modified: Option<i64>,
     cue: Option<String>,
+    /// The text is what the person typed: it is also `authored_content`.
+    typed: bool,
 }
 
 fn memory_row(mut file: MemoryFile, problems: &mut Vec<String>) -> Vec<libsql::Value> {
@@ -201,6 +204,11 @@ fn memory_row(mut file: MemoryFile, problems: &mut Vec<String>) -> Vec<libsql::V
         source_text: file.source_text,
         modified,
         cue: text_key(&mut file.other, "cue"),
+        typed: file
+            .other
+            .shift_remove("typed")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
     };
     row_of(
         &file.id, 0, file.text, file.title, file.url, &decisions, None,
@@ -243,6 +251,7 @@ fn original_rows(mut file: OriginalFile, problems: &mut Vec<String>) -> Vec<Vec<
         source_text: text_key(other, "source_text"),
         modified,
         cue: text_key(other, "cue"),
+        typed: flag(other, "typed"),
     };
     file.messages
         .into_iter()
@@ -278,6 +287,11 @@ fn row_of(
     };
     let int = |value: Option<i64>| value.map_or(libsql::Value::Null, libsql::Value::Integer);
     let flag = |value: bool| libsql::Value::Integer(i64::from(value));
+    let authored = if d.typed && chunk == 0 {
+        libsql::Value::Text(content.clone())
+    } else {
+        libsql::Value::Null
+    };
     vec![
         // Row ids are not part of a memory; a stable one per chunk.
         libsql::Value::Text(format!("{source_id}#{chunk}")),
@@ -312,6 +326,7 @@ fn row_of(
         libsql::Value::Integer(d.modified.unwrap_or(0)),
         text(&d.cue),
         libsql::Value::Text("text".to_string()),
+        authored,
     ]
 }
 

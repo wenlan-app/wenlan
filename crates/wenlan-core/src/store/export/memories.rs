@@ -59,6 +59,8 @@ const FILE_SOURCE: &str = "file";
 pub struct MemoriesExported {
     pub memories: usize,
     pub originals: usize,
+    /// `(source, source_id)` of each memory and original written.
+    pub keys: std::collections::HashSet<(String, String)>,
 }
 
 pub async fn export_memories(
@@ -127,6 +129,7 @@ pub async fn export_memories(
                 .files
                 .push(dirs.write(&format!("backstage/{path}"), id, "original", &text)?);
             done.originals += 1;
+            done.keys.insert((source.to_string(), id.to_string()));
             continue;
         }
         let file = memory_file(id, head, &chunks, &mut about, entity_stems, manifest);
@@ -138,6 +141,7 @@ pub async fn export_memories(
             .files
             .push(dirs.write(&format!("backstage/{path}"), id, "memory", &text)?);
         done.memories += 1;
+        done.keys.insert((source.to_string(), id.to_string()));
     }
     for (what, count) in skipped {
         manifest.not_files.push(NotFiles {
@@ -209,6 +213,11 @@ fn memory_file(
     }
     if head.space_rejected {
         file.other.insert("space_rejected".into(), true.into());
+    }
+    // The text is what the person typed (`authored_content`); the tidied
+    // `content` is cache. The rebuild needs to know which it is.
+    if chunks.iter().any(|chunk| chunk.authored_content.is_some()) {
+        file.other.insert("typed".into(), true.into());
     }
     file
 }

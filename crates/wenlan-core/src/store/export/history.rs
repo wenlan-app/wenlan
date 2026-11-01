@@ -166,10 +166,20 @@ pub struct HistoryExported {
     pub reads: usize,
 }
 
+/// The rows the export wrote as files, so state seeds are written only for
+/// rows the rebuild brings back. `None` seeds every row of that table.
+#[derive(Debug, Clone, Default)]
+pub struct Seeded {
+    pub pages: Option<std::collections::HashSet<String>>,
+    /// `(source, source_id)` of each memory and original written.
+    pub memories: Option<std::collections::HashSet<(String, String)>>,
+}
+
 pub async fn export_history(
     db: &MemoryDB,
     dirs: &ExportDirs,
     manifest: &mut Manifest,
+    seeded: &Seeded,
 ) -> Result<HistoryExported, WenlanError> {
     let births = db.export_page_births().await?;
     let page_rows = db.export_table("page_history").await?;
@@ -196,7 +206,14 @@ pub async fn export_history(
             }
         }
     }
-    main.extend(state_entries(db).await?);
+    // Brief items of a space with no Brief are listed, not written.
+    let orphan_items: std::collections::HashSet<String> = manifest
+        .left_out
+        .iter()
+        .filter(|left| left.field == "brief_item")
+        .map(|left| left.id.clone())
+        .collect();
+    main.extend(state_entries(db, seeded, &orphan_items).await?);
     let done = HistoryExported {
         entries: main.len(),
         reads: reads.len(),
@@ -220,7 +237,30 @@ pub const STATE_OF: &[(&str, &[&str])] = &[
 /// One `state.seed` entry per row (per memory, from its first chunk) with
 /// the columns [`super::DEFERRED_COLUMNS`] sends to history, as they are
 /// now, so the rebuild restores them: `data: {"state_of", "key", "columns"}`.
-async fn state_entries(db: &MemoryDB) -> Result<Vec<Keyed>, WenlanError> {
+async fn state_entries(
+    db: &MemoryDB,
+    seeded: &Seeded,
+    orphan_items: &std::collections::HashSet<String>,
+) -> Result<Vec<Keyed>, WenlanError> {
+    let text = |keyed: &Map<String, Value>, name: &str| {
+        keyed
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let written = |table: &str, keyed: &Map<String, Value>| match table {
+        "pages" => seeded
+            .pages
+            .as_ref()
+            .is_none_or(|ids| ids.contains(&text(keyed, "id"))),
+        "memories" => seeded
+            .memories
+            .as_ref()
+            .is_none_or(|keys| keys.contains(&(text(keyed, "source"), text(keyed, "source_id")))),
+        "brief_items" => !orphan_items.contains(&text(keyed, "id")),
+        _ => true,
+    };
     let mut out = Vec::new();
     for (table, key) in STATE_OF {
         let deferred: Vec<&str> = super::DEFERRED_COLUMNS
@@ -253,6 +293,9 @@ async fn state_entries(db: &MemoryDB) -> Result<Vec<Keyed>, WenlanError> {
             }
             // A memory's first chunk speaks for it.
             if !seen.insert(Value::Object(keyed.clone()).to_string()) {
+                continue;
+            }
+            if !written(table, &keyed) {
                 continue;
             }
             let mut entry = NewEntry::new(Actor::system(), "state.seed");
