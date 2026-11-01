@@ -62,6 +62,7 @@ import { PageLengthSwitch, PageReadingLayers, usePageLength } from "./page/PageR
 import { pageLayerOffsets } from "./page/pageLayers";
 import type { PageLayersSettings } from "./editor/pageLayersEditing";
 import type { SentenceProposalSettings } from "./editor/sentenceProposals";
+import type { AiChangeMarkSettings } from "./editor/aiChangeMarks";
 import { proposalsInFolds } from "./page/proposalsInFolds";
 import RelatedPages from "./page/RelatedPages";
 import PageInfo from "./page/PageInfo";
@@ -947,6 +948,26 @@ export default function PageDetail({
       setProposalBusyId(null);
     }
   }, [flushEditor, pageId, queryClient, t]);
+  // The sentences the AI's newest write changed, marked only after the person
+  // asks from Info (UX-WHO-2, Qi-Xuan's 2026-11-01 choice).
+  const [aiChangesShownFor, setAiChangesShownFor] = useState<string | null>(null);
+  const lastAiUpdate = pageSentences?.page_id === pageId ? pageSentences.last_ai_update ?? null : null;
+  const aiChangesShown = aiChangesShownFor === pageId && !!lastAiUpdate;
+  const removedByAi = useMemo(
+    () => (lastAiUpdate?.changes ?? []).flatMap((change) =>
+      change.kind === "removed" && change.before ? [change.before] : []),
+    [lastAiUpdate],
+  );
+  const editorAiChangeMarks = useMemo<AiChangeMarkSettings | null>(() => {
+    if (!aiChangesShown || !lastAiUpdate || !pageSentences) return null;
+    const textByHash = new Map(pageSentences.sentences.map((sentence) => [sentence.hash, sentence.text]));
+    const marks = (lastAiUpdate.changes ?? []).flatMap((change) => {
+      const text = change.hash ? textByHash.get(change.hash) : undefined;
+      return text ? [{ text, before: change.kind === "changed" ? change.before : null }] : [];
+    });
+    return { marks, beforeLabel: t("aiUpdate.before") };
+  }, [aiChangesShown, lastAiUpdate, pageSentences, t]);
+
   const editorSentenceProposals = useMemo<SentenceProposalSettings>(() => ({
     proposals: pendingProposals,
     labels: {
@@ -3009,6 +3030,7 @@ export default function PageDetail({
                   pageLayers={editorPageLayers}
                   sentenceProposals={editorSentenceProposals}
                   pageId={page.id}
+                  aiChangeMarks={editorAiChangeMarks}
                   initialDocument={editInitialDocument}
                   initialSelection={initialSelection}
                   onSelectionChange={onSelectionChange}
@@ -3177,7 +3199,10 @@ export default function PageDetail({
             <AiUpdateLine
               key={page.id}
               pageId={page.id}
-              update={pageSentences?.page_id === page.id ? pageSentences.last_ai_update : null}
+              update={lastAiUpdate}
+              shown={aiChangesShown}
+              onToggleShown={() => setAiChangesShownFor((current) => current === page.id ? null : page.id)}
+              removed={removedByAi}
               humanEditedAt={page.human_edited_at}
               time={pageSentences?.last_ai_update
                 ? relativeTimeFromISO(new Date(pageSentences.last_ai_update.at * 1000).toISOString(), t)

@@ -14,9 +14,16 @@ export function aiUpdateShows(update: LastAiUpdate | null | undefined, humanEdit
 /** The quiet line in Info that says the AI updated its own sentences, with
  *  one Undo (UX-WHO-2). Mount it with `key={pageId}` so a result never shows
  *  on another page. */
-export function AiUpdateLine({ pageId, update, humanEditedAt, time, disabled }: {
+export function AiUpdateLine({ pageId, update, humanEditedAt, time, disabled, shown = false, onToggleShown, removed = [] }: {
   pageId: string;
   update: LastAiUpdate | null | undefined;
+  /** Whether the changed sentences are marked in the text now. */
+  shown?: boolean;
+  /** Pressing the line marks or unmarks the changed sentences. */
+  onToggleShown?: () => void;
+  /** What the sentences the AI removed said; listed here while shown, since
+   *  the text no longer has them. */
+  removed?: readonly string[];
   humanEditedAt: number | null | undefined;
   /** When the update landed, already worded ("2h ago"). */
   time: string;
@@ -50,7 +57,16 @@ export function AiUpdateLine({ pageId, update, humanEditedAt, time, disabled }: 
   if (!aiUpdateShows(update, humanEditedAt)) return null;
   return (
     <div className="ai-update-line">
-      <span>{t("aiUpdate.updated", { count: update.changed_sentences, time })}</span>
+      {onToggleShown
+        ? <button
+            aria-pressed={shown}
+            className="ai-update-show"
+            onClick={onToggleShown}
+            type="button"
+          >
+            {t("aiUpdate.updated", { count: update.changed_sentences, time })}
+          </button>
+        : <span>{t("aiUpdate.updated", { count: update.changed_sentences, time })}</span>}
       <button
         className="ai-update-undo"
         disabled={disabled || undo.isPending}
@@ -59,6 +75,13 @@ export function AiUpdateLine({ pageId, update, humanEditedAt, time, disabled }: 
       >
         {t("aiUpdate.undo")}
       </button>
+      {shown && removed.length > 0 && (
+        <ul className="ai-update-removed">
+          {removed.map((text, index) => (
+            <li key={index}><span>{t("aiUpdate.removed")}</span> {text}</li>
+          ))}
+        </ul>
+      )}
       {result === "failed" && <span className="ai-update-error" role="alert">{t("aiUpdate.failed")}</span>}
     </div>
   );

@@ -43,6 +43,22 @@ describe("AI update line", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 
+  it("marks the changed sentences when pressed, and lists the removed ones", () => {
+    const onToggleShown = vi.fn();
+    const { rerender } = renderLine({ onToggleShown, removed: ["Trams stop at midnight."] });
+    const toggle = screen.getByRole("button", { name: "AI updated 3 sentences 2h ago" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByText("Trams stop at midnight.", { exact: false })).toBeNull();
+    fireEvent.click(toggle);
+    expect(onToggleShown).toHaveBeenCalledOnce();
+    rerender(<QueryClientProvider client={new QueryClient()}>
+      <AiUpdateLine pageId="page-1" update={update} humanEditedAt={null} time="2h ago" disabled={false}
+        shown onToggleShown={onToggleShown} removed={["Trams stop at midnight."]} />
+    </QueryClientProvider>);
+    expect(screen.getByRole("button", { name: "AI updated 3 sentences 2h ago" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("listitem")).toHaveTextContent("Removed: Trams stop at midnight.");
+  });
+
   it("can't undo while the page is held by an edit or another action", () => {
     renderLine({ disabled: true });
     expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();

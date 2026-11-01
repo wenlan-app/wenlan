@@ -2181,6 +2181,18 @@ export interface LastAiUpdate {
   changed_sentences: number;
   /** Unix seconds. */
   at: number;
+  /** What that write did to each sentence, in page order. */
+  changes?: SentenceChange[];
+}
+
+/** One sentence an AI write added, changed or removed. */
+export interface SentenceChange {
+  kind: "changed" | "added" | "removed";
+  /** The sentence's hash as that write left it; null for removed. A hash no
+   *  longer in the sentences list means the sentence changed again since. */
+  hash: string | null;
+  /** Its text before that write; null for added. */
+  before: string | null;
 }
 
 export interface PageSentencesResponse {
