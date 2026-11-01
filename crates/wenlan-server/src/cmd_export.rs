@@ -19,7 +19,7 @@ use anyhow::{bail, Context, Result};
 use wenlan_core::db::MemoryDB;
 use wenlan_core::events::NoopEmitter;
 use wenlan_core::export::knowledge::KnowledgeWriter;
-use wenlan_core::store::export::run::export_lossless;
+use wenlan_core::store::export::run::{export_lossless, PagesFolder};
 
 fn installed_root() -> PathBuf {
     dirs::data_local_dir()
@@ -55,14 +55,18 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
 
     let pages =
         pages.unwrap_or_else(|| wenlan_core::config::load_config().knowledge_path_or_default());
-    let page_files = KnowledgeWriter::new(pages.clone(), &db).page_files();
+    let recorded = KnowledgeWriter::new(pages.clone(), &db).page_files();
     println!(
-        "Pages folder: {} ({} page files recorded)",
+        "Pages folder: {} ({} entries in state.json)",
         pages.display(),
-        page_files.len()
+        recorded.len()
     );
+    let folder = PagesFolder {
+        dir: Some(pages.clone()),
+        recorded,
+    };
 
-    let summary = export_lossless(&db, &page_files, &root, &out)
+    let summary = export_lossless(&db, &folder, &root, &out)
         .await
         .with_context(|| format!("exporting into {}", out.display()))?;
     println!("Exported into {}:", out.display());
@@ -82,6 +86,11 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
     println!(
         "  settings rows {}, record rows {}, history entries {} (+{} reads)",
         summary.settings_rows, summary.record_rows, summary.history_entries, summary.history_reads
+    );
+    println!(
+        "  pages folder: {} found by their file's id, {} files no page claims (copied to \
+         backstage/pages-folder/), {} state.json entries for pages that are gone",
+        summary.found_by_id, summary.folder_only, summary.stale_records
     );
     println!(
         "  {} files; {} values left out, listed in export-manifest.json",

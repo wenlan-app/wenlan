@@ -57,9 +57,14 @@ async fn whole_tables_and_history_rebuild_field_for_field() {
     let out = tempfile::tempdir().unwrap();
     let data_root = tempfile::tempdir().unwrap();
     let target = out.path().join("export");
-    export_lossless(&db, &Default::default(), data_root.path(), &target)
-        .await
-        .unwrap();
+    export_lossless(
+        &db,
+        &crate::store::export::run::PagesFolder::default(),
+        data_root.path(),
+        &target,
+    )
+    .await
+    .unwrap();
 
     let (fresh, _fresh_dir) = test_db().await;
     let rebuilt = rebuild_tables(&target, &fresh).await.unwrap();
@@ -72,5 +77,94 @@ async fn whole_tables_and_history_rebuild_field_for_field() {
     tables.extend(RECORD_TABLES.iter().copied());
     tables.extend(HISTORY_TABLES.iter().map(|spec| spec.table));
     let diffs = compare_tables(&db, &fresh, &tables).await.unwrap();
+    assert!(diffs.is_empty(), "{diffs:#?}");
+}
+
+#[tokio::test]
+async fn state_seeds_put_back_the_columns_no_file_holds() {
+    use super::apply_states;
+
+    let (db, _db_dir) = test_db().await;
+    db.insert_page_with_kind(
+        "p1",
+        "Alpha",
+        None,
+        "Text.",
+        None,
+        Some("sp"),
+        &[],
+        "2026-10-31T00:00:00Z",
+        "authored",
+        "confirmed",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    sql(
+        &db,
+        "UPDATE pages SET version = 4, user_edited = 1, incarnation = 2, \
+         changelog = 'edited twice' WHERE id = ?1",
+        "p1",
+    )
+    .await;
+    for chunk in [0, 1] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO memories (id, source_id, chunk_index, title, last_modified, \
+                 chunk_type, source, content, version, access_count) VALUES \
+                 ('m#{chunk}', ?1, {chunk}, '', 0, 'text', 'memory', 'part', 3, 7)"
+            ),
+            "mem_1",
+        )
+        .await;
+    }
+
+    let out = tempfile::tempdir().unwrap();
+    let data_root = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    export_lossless(
+        &db,
+        &crate::store::export::run::PagesFolder::default(),
+        data_root.path(),
+        &target,
+    )
+    .await
+    .unwrap();
+
+    // The rows as the file rebuild leaves them: everything but history.
+    let (fresh, _fresh_dir) = test_db().await;
+    for table in ["pages", "memories"] {
+        let copied = db.export_table(table).await.unwrap().unwrap();
+        fresh
+            .rebuild_replace_table(table, &copied.columns, &copied.rows)
+            .await
+            .unwrap();
+    }
+    sql(
+        &fresh,
+        "UPDATE pages SET version = 1, user_edited = 0, incarnation = 0, changelog = NULL \
+         WHERE id = ?1",
+        "p1",
+    )
+    .await;
+    sql(
+        &fresh,
+        "UPDATE memories SET version = 1, access_count = 0 WHERE source_id = ?1",
+        "mem_1",
+    )
+    .await;
+    assert!(!compare_tables(&db, &fresh, &["pages", "memories"])
+        .await
+        .unwrap()
+        .is_empty());
+
+    let (set, problems) = apply_states(&target, &fresh).await.unwrap();
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(set, 2);
+    let diffs = compare_tables(&db, &fresh, &["pages", "memories"])
+        .await
+        .unwrap();
     assert!(diffs.is_empty(), "{diffs:#?}");
 }

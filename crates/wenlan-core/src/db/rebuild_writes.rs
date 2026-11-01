@@ -64,4 +64,47 @@ impl MemoryDB {
             }
         }
     }
+
+    /// Sets `set` on the rows of `table` whose `key` columns equal the given
+    /// values; returns how many rows changed.
+    pub(crate) async fn rebuild_update_rows(
+        &self,
+        table: &str,
+        key: &[(String, libsql::Value)],
+        set: &[(String, libsql::Value)],
+    ) -> Result<u64, WenlanError> {
+        if !TABLE_CLASSES.iter().any(|(name, _)| *name == table) {
+            return Err(WenlanError::Validation(format!(
+                "rebuild cannot write table {table:?}"
+            )));
+        }
+        if set.is_empty() || key.is_empty() {
+            return Ok(0);
+        }
+        let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+        let assignments = set
+            .iter()
+            .enumerate()
+            .map(|(i, (column, _))| format!("{} = ?{}", quote(column), i + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let matches = key
+            .iter()
+            .enumerate()
+            .map(|(i, (column, _))| format!("{} IS ?{}", quote(column), set.len() + i + 1))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let params: Vec<libsql::Value> = set
+            .iter()
+            .chain(key.iter())
+            .map(|(_, value)| value.clone())
+            .collect();
+        let conn = self.conn.lock().await;
+        conn.execute(
+            &format!("UPDATE {} SET {assignments} WHERE {matches}", quote(table)),
+            params,
+        )
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("rebuild update {table}: {e}")))
+    }
 }

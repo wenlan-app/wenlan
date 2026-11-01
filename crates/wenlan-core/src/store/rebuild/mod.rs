@@ -105,6 +105,10 @@ pub async fn rebuild_tables(from: &Path, into: &MemoryDB) -> Result<Rebuilt, Wen
             let Some(data) = &entry.data else {
                 continue;
             };
+            if data.get("state_of").is_some() {
+                // Applied by `apply_states`, once the files' rows exist.
+                continue;
+            }
             let (Some(table), Some(row)) = (
                 data.get("table").and_then(Value::as_str),
                 data.get("row").and_then(Value::as_object),
@@ -149,6 +153,49 @@ pub async fn rebuild_tables(from: &Path, into: &MemoryDB) -> Result<Rebuilt, Wen
         rebuilt.tables.insert(table, values.len());
     }
     Ok(rebuilt)
+}
+
+/// Applies the `state.seed` entries of the main log: the columns the files
+/// leave to history, set on the rows the files rebuilt. Returns how many
+/// rows were set; a key that matches no row is a problem.
+pub async fn apply_states(
+    from: &Path,
+    into: &MemoryDB,
+) -> Result<(usize, Vec<String>), WenlanError> {
+    let log = from.join("backstage").join("history");
+    if !log.is_dir() {
+        return Ok((0, Vec::new()));
+    }
+    let replay = history::replay(&log)?;
+    let mut set = 0;
+    let mut problems = Vec::new();
+    for entry in &replay.entries {
+        let Some(data) = &entry.data else {
+            continue;
+        };
+        let Some(table) = data.get("state_of").and_then(Value::as_str) else {
+            continue;
+        };
+        let pairs = |value: Option<&Value>| -> Vec<(String, libsql::Value)> {
+            value
+                .and_then(Value::as_object)
+                .map(|object| {
+                    object
+                        .iter()
+                        .map(|(column, cell)| (column.clone(), value_of(cell)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let key = pairs(data.get("key"));
+        let columns = pairs(data.get("columns"));
+        let changed = into.rebuild_update_rows(table, &key, &columns).await?;
+        if changed == 0 && !columns.is_empty() {
+            problems.push(format!("{table} {:?}: no row to set", data.get("key")));
+        }
+        set += usize::from(changed > 0);
+    }
+    Ok((set, problems))
 }
 
 /// The stored value a cell of an export file stands for: the inverse of

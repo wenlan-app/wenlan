@@ -44,6 +44,8 @@ pub struct PagesExported {
     pub entity_stems: HashMap<String, String>,
     /// Each page id's file, relative to the export root.
     pub page_paths: HashMap<String, String>,
+    /// Every page row's id, entities included.
+    pub row_ids: HashSet<String>,
 }
 
 /// Writes every page row. `placement` maps a page id to its file's path
@@ -56,7 +58,10 @@ pub async fn export_pages(
     manifest: &mut Manifest,
 ) -> Result<PagesExported, WenlanError> {
     let rows = db.export_page_rows().await?;
-    let mut done = PagesExported::default();
+    let mut done = PagesExported {
+        row_ids: rows.iter().map(|row| row.id.clone()).collect(),
+        ..PagesExported::default()
+    };
 
     let (entities, pages): (Vec<&ExportPageRow>, Vec<&ExportPageRow>) =
         rows.iter().partition(|row| is_entity(row));
@@ -94,24 +99,6 @@ pub async fn export_pages(
     let memory_texts = db.export_memory_texts(&memory_ids).await?;
 
     for row in &pages {
-        unwritten(
-            manifest,
-            &row.id,
-            &[
-                ("entity_id", row.entity_id.is_some()),
-                ("entity_type", row.entity_type.is_some()),
-                ("entity_confirmed", row.entity_confirmed),
-                (
-                    "aliases",
-                    row.aliases
-                        .as_deref()
-                        .is_some_and(|a| !matches!(a.trim(), "" | "[]")),
-                ),
-                ("established_by", row.established_by.is_some()),
-                ("entity_created_at", row.entity_created_at.is_some()),
-                ("entity_updated_at", row.entity_updated_at.is_some()),
-            ],
-        );
         let (archived, path) = &paths[row.id.as_str()];
         let mut file = PageFile::new(&row.title, &row.content);
         file.id = Some(row.id.clone());
@@ -124,6 +111,7 @@ pub async fn export_pages(
         if let Some(summary) = &row.summary {
             file.other.insert("summary".into(), summary.as_str().into());
         }
+        entity_keys(&mut file.other, row);
         file.citations = citation_lines(row, &memory_texts, &stems, manifest);
         // A basis whose page is gone is not a line; every basis row, state
         // and confirmation is in `records/page_basis.json`.
@@ -232,6 +220,34 @@ fn unwritten(manifest: &mut Manifest, id: &str, columns: &[(&str, bool)]) {
                 field: column.to_string(),
                 why: "a value this kind of file has no place for".to_string(),
             });
+        }
+    }
+}
+
+/// The entity a page is about (a distilled page keeps its cluster's
+/// entity), and any other entity column a page row carries, as stored, so
+/// the rebuild restores them exactly.
+fn entity_keys(other: &mut serde_yaml::Mapping, row: &ExportPageRow) {
+    let text = [
+        ("entity_id", &row.entity_id),
+        ("entity_type", &row.entity_type),
+        ("aliases", &row.aliases),
+        ("established_by", &row.established_by),
+    ];
+    for (key, value) in text {
+        if let Some(value) = value {
+            other.insert(key.into(), value.as_str().into());
+        }
+    }
+    if row.entity_confirmed {
+        other.insert("entity_confirmed".into(), true.into());
+    }
+    for (key, value) in [
+        ("entity_created_at", row.entity_created_at),
+        ("entity_updated_at", row.entity_updated_at),
+    ] {
+        if let Some(value) = value {
+            other.insert(key.into(), value.into());
         }
     }
 }
