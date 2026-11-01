@@ -55,7 +55,16 @@ pub async fn rebuild_canvases(
             ]);
         }
         for node in &parsed.nodes {
-            nodes.push(node_row(page, node));
+            let copy = node
+                .wenlan
+                .as_ref()
+                .and_then(|w| w.rest.get("shown"))
+                .and_then(Value::as_bool)
+                == Some(true);
+            // A copy drawn beside a hidden line; its own file holds it.
+            if !copy {
+                nodes.push(node_row(page, node));
+            }
         }
         for edge in &parsed.edges {
             edges.push(edge_row(page, edge));
@@ -168,7 +177,11 @@ fn node_row(page: &str, node: &Node) -> Vec<libsql::Value> {
         libsql::Value::Real(data.get("rank").and_then(Value::as_f64).unwrap_or(0.0)),
         libsql::Value::Text(ref_kind),
         libsql::Value::Text(ref_id),
-        text_value(node.rest.get("text").and_then(Value::as_str)),
+        if node.kind == "text" && !unset.contains(&"label") {
+            text_value(node.rest.get("text").and_then(Value::as_str))
+        } else {
+            libsql::Value::Null
+        },
         text("status"),
         flag("pinned"),
         flag("placed"),

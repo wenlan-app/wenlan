@@ -3,6 +3,8 @@
 //!
 //! - A page keeps the folder it is in today (`placement`, from the pages
 //!   folder's own record); a page that has no file yet goes at the top.
+//!   Its file is named by its title (a clash adds the end of its id), so
+//!   the `[[Title]]` links pages already hold find it in Obsidian.
 //! - Its body is `pages.content` byte for byte. Today's `[x](concept_…)`
 //!   links stay as written; turning them into `[[stem]]` is a later edit
 //!   with its own history entry, not part of a lossless copy.
@@ -12,7 +14,7 @@
 //!   its state and confirmation is also in `records/page_basis.json`. Review
 //!   state, version numbers and the rest go to history (spec section 4).
 //! - The page's `summary`, which the person can edit, is a frontmatter key.
-//! - An entity's shadow page becomes `backstage/entities/<name>-<id6>.md`,
+//! - An entity's shadow page becomes `backstage/entities/<name>.md`,
 //!   its description the body, with `status` (when not active, so an
 //!   archived entity stays archived), `created`, `modified`, `first_seen`
 //!   and `last_seen`.
@@ -75,10 +77,12 @@ pub async fn export_pages(
         .partition(|row| placement_of(placement, &row.id).is_some());
     for row in placed.iter().chain(unplaced.iter()) {
         let archived = row.status == "archived";
-        let (folder, stem) = match placement_of(placement, &row.id) {
-            Some((folder, stem)) => (folder, stem),
-            None => (String::new(), file_stem(&row.title)),
-        };
+        // The file is named by the page's title, so a `[[Title]]` link in
+        // another page finds it; the folder is the one it is in today.
+        let folder = placement_of(placement, &row.id)
+            .map(|(folder, _)| folder)
+            .unwrap_or_default();
+        let stem = file_stem(&row.title);
         let taken = if archived { &mut archive } else { &mut visible };
         let path = taken.claim(&folder, &stem, &row.id);
         paths.insert(&row.id, (archived, path));
@@ -195,7 +199,7 @@ pub async fn export_pages(
         if let Some(at) = row.entity_updated_at {
             file.other.insert("last_seen".into(), utc(at).into());
         }
-        let stem = collision_stem(&file_stem(&row.title), &entity_id);
+        let stem = file_stem(&row.title);
         let path = entity_paths.claim("", &stem, &entity_id);
         done.entity_stems.insert(entity_id.clone(), stem_of(&path));
         let text = entity::render(&file);
@@ -280,9 +284,7 @@ fn placement_of(placement: &HashMap<String, String>, id: &str) -> Option<(String
             && !part.contains('\\')
             && !part.starts_with('.')
     };
-    let fine = plain(&stem)
-        && (folder.is_empty() || folder.split('/').all(plain))
-        && file_stem(&stem) == stem;
+    let fine = plain(&stem) && (folder.is_empty() || folder.split('/').all(plain));
     fine.then_some((folder, stem))
 }
 

@@ -403,6 +403,21 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         )
         .await;
     }
+    // No label: drawn as the file of what it stands for.
+    sql(
+        &db,
+        "UPDATE page_map_nodes SET label = NULL, ref_kind = 'page', ref_id = 'b' \
+         WHERE id = ?1",
+        "n_unplaced",
+    )
+    .await;
+    sql(
+        &db,
+        "UPDATE page_map_nodes SET label = NULL, ref_kind = 'memory', ref_id = 'gone_memory' \
+         WHERE id = ?1",
+        "n_suggested",
+    )
+    .await;
     for (id, to, status) in [
         ("e_shown", "n_unplaced", "active"),
         ("e_hidden", "n_suggested", "suggested"),

@@ -129,7 +129,7 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
         .await
         .unwrap();
     assert_eq!((done.pages, done.archived, done.entities), (4, 1, 2));
-    assert_eq!(done.entity_stems["ent_123456789"], "Bob-456789");
+    assert_eq!(done.entity_stems["ent_123456789"], "Bob");
 
     let alpha = page::parse(&read(&dirs, "visible/Trips/Alpha.md"), "x").unwrap();
     assert_eq!(alpha.id.as_deref(), Some("a"));
@@ -193,7 +193,7 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
     let gone = page::parse(&read(&dirs, "backstage/archive/Old/Gone.md"), "x").unwrap();
     assert_eq!(gone.body, "Archived text.");
 
-    let bob = entity::parse(&read(&dirs, "backstage/entities/Bob-456789.md")).unwrap();
+    let bob = entity::parse(&read(&dirs, "backstage/entities/Bob.md")).unwrap();
     assert_eq!(bob.id, "ent_123456789");
     assert_eq!(bob.page.as_deref(), Some("shadow"));
     assert_eq!(bob.aliases, ["Robert"]);
@@ -637,8 +637,12 @@ async fn a_canvas_shows_accepted_nodes_beside_its_page_and_keeps_the_rest_backst
     );
 
     let hidden = canvas::parse(&read(&dirs, "backstage/proposals/canvas/p1.canvas")).unwrap();
-    assert_eq!(hidden.nodes.len(), 1);
+    // The suggested node, and a copy of the shown node its line starts at.
+    assert_eq!(hidden.nodes.len(), 2);
     assert!(!hidden.nodes[0].wenlan.as_ref().unwrap().accepted);
+    let copy = hidden.nodes[1].wenlan.as_ref().unwrap();
+    assert_eq!(hidden.nodes[1].id, "n_placed");
+    assert_eq!(copy.rest["shown"], true);
     assert_eq!(hidden.edges[0].id, "e_hidden");
 
     let loose = canvas::parse(&read(&dirs, "backstage/layout/canvas/p2.canvas")).unwrap();
@@ -870,7 +874,7 @@ async fn names_never_clash_and_page_and_entity_state_is_kept() {
     let p1 = page::parse(&read(&dirs, "visible/Beta.md"), "").unwrap();
     assert_eq!(p1.other["summary"], "The short claim.");
 
-    let bob = entity::parse(&read(&dirs, "backstage/entities/Bob-nt_bob.md")).unwrap();
+    let bob = entity::parse(&read(&dirs, "backstage/entities/Bob.md")).unwrap();
     assert_eq!(bob.other["status"], "archived");
     assert_eq!(bob.other["first_seen"], "2026-10-31T00:00:00Z");
     assert!(bob.other.contains_key("created"));
@@ -1094,7 +1098,7 @@ async fn one_call_exports_everything_and_writes_the_manifest_last() {
         .unwrap();
     assert_eq!((summary.pages, summary.archived), (4, 1));
     assert_eq!(summary.layout_files, 2);
-    assert!(target.join("visible/Plans/a.md").is_file());
+    assert!(target.join("visible/Plans/Alpha.md").is_file());
     assert!(target.join("backstage/layout/versions/1.json").is_file());
     let manifest: Manifest =
         serde_json::from_str(&std::fs::read_to_string(target.join(MANIFEST_FILE)).unwrap())
@@ -1160,8 +1164,8 @@ async fn the_pages_folder_is_read_and_nothing_in_it_is_lost() {
     assert_eq!(summary.found_by_id, 1);
     assert_eq!(summary.stale_records, 2);
     assert_eq!(summary.folder_only, 2);
-    assert!(target.join("visible/Plans/a.md").is_file());
-    assert!(target.join("visible/Notes/Beta page.md").is_file());
+    assert!(target.join("visible/Plans/Alpha.md").is_file());
+    assert!(target.join("visible/Notes/Beta.md").is_file());
     assert_eq!(
         std::fs::read_to_string(
             target.join("backstage/pages-folder/external-compile-topic-001.md")
