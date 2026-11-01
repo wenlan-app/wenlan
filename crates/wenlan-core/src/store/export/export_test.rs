@@ -992,6 +992,10 @@ async fn replaying_the_history_log_gives_back_every_row() {
                 assert_eq!(entry.op, "page.write");
                 assert_eq!(entry.version, Some(2));
             }
+            if table == "page_history" && row["edited_by"] == "distill" {
+                assert_eq!(entry.actor.kind, ActorKind::Ai);
+                assert_eq!(data["text_column"], "content");
+            }
             rebuilt
                 .entry(table)
                 .or_default()

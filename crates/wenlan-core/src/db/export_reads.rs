@@ -395,6 +395,30 @@ impl MemoryDB {
         Ok((maps, nodes, edges))
     }
 
+    /// Each page's `creation_kind` and `user_edited`, which say who made a
+    /// first version recorded as plain `create`.
+    pub(crate) async fn export_page_births(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (String, bool)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export_page_births: {e}"));
+        let mut rows = conn
+            .query(
+                "SELECT id, COALESCE(creation_kind, ''), COALESCE(user_edited, 0) FROM pages",
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        let mut out = std::collections::HashMap::new();
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            let id: String = row.get(0).map_err(decode)?;
+            let kind: String = row.get(1).map_err(decode)?;
+            let edited: i64 = row.get(2).map_err(decode)?;
+            out.insert(id, (kind, edited != 0));
+        }
+        Ok(out)
+    }
+
     /// Every kept artifact original, by page id.
     pub(crate) async fn export_original_records(
         &self,

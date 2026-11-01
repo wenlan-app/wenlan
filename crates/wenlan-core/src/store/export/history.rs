@@ -12,23 +12,36 @@
 //! other column as stored, so replaying the log gives back each row
 //! exactly. The column moved into `text` is not repeated in `row`.
 //!
-//! Who made a page version comes from `edited_by` as section 4 maps it:
-//! the person's edits, restores and accepted revisions are the person's,
-//! distills and refreshes the AI's, anything else (`migration_87` among
-//! them) unknown, which is protected like the person's.
+//! Who made a page version is what the app itself says
+//! ([`authorship::version_author`]), with a plain `create` decided by the
+//! page's creation kind the way the sentence view decides it. A writer the
+//! app does not know (`migration_87` among them) is unknown, which is
+//! protected like the person's. A `page_truth_state` row is `page.approve`
+//! when the person reviewed it and `page.review_state` otherwise.
+//! `data.text_column` names the column that moved into `text`, so the
+//! rebuild needs no table list of its own.
+//!
+//! The log is synced once at the end rather than per entry: the export
+//! writes a new folder and can start over, and a real database has up to a
+//! million read rows. Seq order is export order (time, then table, then
+//! the table's key order); the rebuild orders rows by their own keys.
 //!
 //! `thing_sessions` is current state and is already in
 //! `settings/things.json`.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde_json::{json, Map, Value};
 
 use super::settings::cell;
 use super::{ExportDirs, Manifest};
+use crate::authorship::{self, VersionAuthor};
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
-use crate::store::history::{Actor, ActorKind, HistoryLog, NewEntry, Receipt, Target};
+use crate::store::history::{
+    Actor, ActorKind, HistoryConfig, HistoryLog, NewEntry, Receipt, Target,
+};
 
 /// Which log a table's rows go to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,7 +120,7 @@ pub const HISTORY_TABLES: &[HistoryTable] = &[
     table(
         "page_draft_create_requests",
         Log::Main,
-        Some("draft.request"),
+        Some("draft.discard"),
         None,
     ),
     table(
@@ -158,6 +171,9 @@ pub async fn export_history(
     dirs: &ExportDirs,
     manifest: &mut Manifest,
 ) -> Result<HistoryExported, WenlanError> {
+    let births = db.export_page_births().await?;
+    let page_rows = db.export_table("page_history").await?;
+    let first_kinds = birth_kinds(&births, page_rows.as_ref());
     let mut main = Vec::new();
     let mut reads = Vec::new();
     for spec in HISTORY_TABLES {
@@ -171,7 +187,7 @@ pub async fn export_history(
                 .cloned()
                 .zip(values.iter().map(cell))
                 .collect();
-            let entry = entry_of(spec, row);
+            let entry = entry_of(spec, row, &first_kinds);
             let key = (entry.ts.unwrap_or(0), spec.table, order);
             match spec.log {
                 Log::Main => main.push((key, entry)),
@@ -199,10 +215,15 @@ fn write_log(root: &Path, mut entries: Vec<Keyed>) -> Result<(), WenlanError> {
     // Time order, so each month's file holds that month; rows with the same
     // time keep their table and row order.
     entries.sort_by(|a, b| a.0.cmp(&b.0));
-    let (mut log, _) = HistoryLog::open(root)?;
+    let config = HistoryConfig {
+        sync_each_entry: false,
+        ..HistoryConfig::default()
+    };
+    let (mut log, _) = HistoryLog::open_with(root, config)?;
     for (_, entry) in entries {
         log.write(entry)?;
     }
+    log.sync()?;
     drop(log);
     // The lock file is the daemon's, not part of the export.
     let _ = std::fs::remove_file(root.join(".lock"));
@@ -238,7 +259,55 @@ fn list_files(export_root: &Path, dir: &Path, manifest: &mut Manifest) -> Result
     Ok(())
 }
 
-fn entry_of(spec: &HistoryTable, mut row: Map<String, Value>) -> NewEntry {
+/// Each page's creation kind as the sentence view reads it for a first
+/// version recorded as plain `create` (`sentences::birth_kind`).
+fn birth_kinds(
+    births: &HashMap<String, (String, bool)>,
+    page_history: Option<&crate::db::export_reads::ExportTable>,
+) -> HashMap<String, String> {
+    let mut person_later = std::collections::HashSet::new();
+    if let Some(table) = page_history {
+        let column = |name: &str| table.columns.iter().position(|c| c == name);
+        if let (Some(page), Some(version), Some(by)) =
+            (column("page_id"), column("version"), column("edited_by"))
+        {
+            for row in &table.rows {
+                let (
+                    libsql::Value::Text(page),
+                    libsql::Value::Integer(version),
+                    libsql::Value::Text(by),
+                ) = (&row[page], &row[version], &row[by])
+                else {
+                    continue;
+                };
+                if *version > 1 && authorship::version_author(by, "") == VersionAuthor::Person {
+                    person_later.insert(page.clone());
+                }
+            }
+        }
+    }
+    births
+        .iter()
+        .map(|(id, (kind, user_edited))| {
+            let birth = if kind != "authored" {
+                kind.clone()
+            } else if !user_edited {
+                "agent_authored".to_string()
+            } else if person_later.contains(id) {
+                "legacy_authored".to_string()
+            } else {
+                "authored".to_string()
+            };
+            (id.clone(), birth)
+        })
+        .collect()
+}
+
+fn entry_of(
+    spec: &HistoryTable,
+    mut row: Map<String, Value>,
+    first_kinds: &HashMap<String, String>,
+) -> NewEntry {
     let text_of = |row: &Map<String, Value>, column: &str| {
         row.get(column).and_then(Value::as_str).map(str::to_string)
     };
@@ -246,12 +315,14 @@ fn entry_of(spec: &HistoryTable, mut row: Map<String, Value>) -> NewEntry {
         .time
         .and_then(|column| row.get(column))
         .and_then(seconds);
-    let op = spec
-        .op
-        .map(str::to_string)
-        .or_else(|| text_of(&row, "op"))
-        .unwrap_or_else(|| format!("{}.row", spec.table));
-    let mut entry = NewEntry::new(actor_of(spec.table, &row), op);
+    let reviewed = row.get("human_reviewed").and_then(Value::as_i64) == Some(1);
+    let op = match spec.table {
+        "page_truth_state" if !reviewed => Some("page.review_state".to_string()),
+        _ => spec.op.map(str::to_string),
+    }
+    .or_else(|| text_of(&row, "op"))
+    .unwrap_or_else(|| format!("{}.row", spec.table));
+    let mut entry = NewEntry::new(actor_of(spec.table, &row, first_kinds), op);
     entry.ts = Some(ts.unwrap_or(0));
     let text_column = match spec.table {
         "page_history" => {
@@ -325,7 +396,11 @@ fn entry_of(spec: &HistoryTable, mut row: Map<String, Value>) -> NewEntry {
             None => {}
         }
     }
-    entry.data = Some(json!({ "table": spec.table, "row": Value::Object(row) }));
+    let mut data = json!({ "table": spec.table, "row": Value::Object(row) });
+    if let (Some(column), Some(_)) = (text_column, &entry.text) {
+        data["text_column"] = json!(column);
+    }
+    entry.data = Some(data);
     entry
 }
 
@@ -340,7 +415,7 @@ fn receipt_of(row: &Map<String, Value>, request_digest: Option<String>) -> Optio
     })
 }
 
-fn actor_of(table: &str, row: &Map<String, Value>) -> Actor {
+fn actor_of(table: &str, row: &Map<String, Value>, first_kinds: &HashMap<String, String>) -> Actor {
     let text = |column: &str| row.get(column).and_then(Value::as_str);
     let named = |kind: ActorKind, agent: Option<&str>| Actor {
         agent: agent.map(str::to_string),
@@ -349,11 +424,16 @@ fn actor_of(table: &str, row: &Map<String, Value>) -> Actor {
     match table {
         "page_history" => {
             let edited_by = text("edited_by");
-            let kind = match edited_by.unwrap_or("") {
-                "fs_edit" | "manual_edit" | "revision_accept" | "restore" => ActorKind::Person,
-                "distill" | "re_distill" | "agent_refresh" | "page_growth"
-                | "citation_backfill" => ActorKind::Ai,
-                _ => ActorKind::Unknown,
+            let birth = text("page_id")
+                .and_then(|page| first_kinds.get(page))
+                .map(String::as_str)
+                .unwrap_or("");
+            let kind = match authorship::version_author(edited_by.unwrap_or(""), birth) {
+                VersionAuthor::Person => ActorKind::Person,
+                VersionAuthor::Ai => ActorKind::Ai,
+                VersionAuthor::Original => ActorKind::Original,
+                VersionAuthor::System => ActorKind::System,
+                VersionAuthor::Unknown => ActorKind::Unknown,
             };
             Actor {
                 name: edited_by.map(str::to_string),
