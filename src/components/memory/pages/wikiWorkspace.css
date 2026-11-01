@@ -159,6 +159,9 @@
   cursor: pointer;
 }
 
+/* New page and New folder sit together at the end of the row. */
+.wiki-workspace-new-page + .wiki-workspace-new-folder { margin-left: 0; }
+
 .wiki-workspace-new-folder:hover:not(:disabled) { background: var(--mem-hover); color: var(--mem-text); }
 .wiki-workspace-new-folder:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 1px; }
 .wiki-workspace-new-folder:disabled { opacity: .45; cursor: default; }
@@ -338,7 +341,6 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
 .secondary-note-group-mount, .secondary-note-group-root { display:flex; flex:1; min-width:0; min-height:0; height:100%; }
 .note-group-content { overflow:auto; padding:0; }
 .note-group-content > .wiki-overview { padding:28px; }
-.wiki-primary-note-group:not(.is-full-bleed) .note-group-content > .page-draft-editor { padding:24px; }
 @container wiki-main (max-width: 640px) {
   .wiki-workspace-reading.is-split { flex-direction:column; }
   .wiki-workspace-reading.is-split > div { flex:1 1 50%; max-height:50%; }

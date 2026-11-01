@@ -156,18 +156,21 @@ test("the home button returns to the Wiki home while the open page keeps its tab
   await openWiki(page, createFirstRunFixture());
   const home = page.getByRole("button", { name: "Wiki home", exact: true });
   const overviewTitle = page.locator(".wiki-overview").getByRole("heading", { name: "Open a page", exact: true });
-  // On the home the button has nowhere to go, so it is not shown.
+  // On the home the button stays in its place and shows it is the current view.
   await expect(overviewTitle).toBeVisible();
-  await expect(home).toBeHidden();
+  await expect(home).toBeVisible();
+  await expect(home).toHaveAttribute("aria-current", "page");
 
   await page.locator(".note-tab-create").click();
   await expect(page.getByRole("textbox", { name: "Content", exact: true })).toBeVisible();
   await expect(home).toBeVisible();
   await expect(page.getByRole("tablist").getByRole("tab")).toHaveCount(1);
 
+  await expect(home).not.toHaveAttribute("aria-current");
   await home.click();
   await expect(overviewTitle).toBeVisible();
-  await expect(home).toBeHidden();
+  await expect(home).toBeVisible();
+  await expect(home).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("tablist").getByRole("tab")).toHaveCount(1);
 });
 

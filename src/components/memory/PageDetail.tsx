@@ -3240,6 +3240,7 @@ export default function PageDetail({
               sources={pageSources}
               inbound={inboundLinks}
               revisions={pageRevisionEntries}
+              history={pageRevisions?.history}
               revisionsLoading={revisionsLoading}
               revisionsError={revisionsError}
               onRetryRevisions={() => void refetchRevisions()}

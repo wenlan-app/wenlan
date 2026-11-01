@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -47,6 +49,13 @@ describe("NoteTabs", () => {
     rerender(<NoteTabs {...props} onHome={onHome} homeActive={false} />);
     expect(screen.getByRole("button", { name: "Wiki home" })).not.toHaveAttribute("aria-current");
     expect(screen.getByRole("button", { name: "Wiki home" })).toHaveAttribute("data-active", "false");
+  });
+
+  it("keeps the home button in place while the home is showing, marked as the current view", () => {
+    const css = readFileSync(resolve("src/components/memory/pages/noteTabs.css"), "utf8");
+    const activeRule = css.match(/\.note-tab-home\[data-active="true"\]\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
+    expect(activeRule).toContain("background: var(--mem-hover)");
+    expect(css).not.toMatch(/\.note-tab-home\[data-active="true"\][^{]*\{[^}]*(visibility:\s*hidden|display:\s*none)/);
   });
 
   it("keeps the home button when no page is open and out of the tab arrow-key order", async () => {

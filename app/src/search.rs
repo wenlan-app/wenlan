@@ -5549,12 +5549,15 @@ pub async fn get_page_code_basis_cited(
 pub async fn get_page_revisions(
     state: tauri::State<'_, State>,
     page_id: String,
+    include_text: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
-    client.get_page_revisions(&page_id).await
+    client
+        .get_page_revisions(&page_id, include_text.unwrap_or(false))
+        .await
 }
 
 #[tauri::command]

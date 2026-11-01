@@ -1779,10 +1779,17 @@ impl WenlanClient {
         .await
     }
 
-    pub async fn get_page_revisions(&self, page_id: &str) -> Result<serde_json::Value, String> {
+    /// `include_text` puts each version's whole text on its history entry,
+    /// so every change can be opened (UX-HIST-2).
+    pub async fn get_page_revisions(
+        &self,
+        page_id: &str,
+        include_text: bool,
+    ) -> Result<serde_json::Value, String> {
         let path = format!(
-            "/api/pages/{}/revisions",
-            percent_encode_path_segment(page_id)
+            "/api/pages/{}/revisions{}",
+            percent_encode_path_segment(page_id),
+            if include_text { "?include=text" } else { "" }
         );
         self.get_json(&path).await
     }

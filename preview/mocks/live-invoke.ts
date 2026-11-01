@@ -790,7 +790,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   },
   remove_page_code_basis: (a) => http("DELETE", `/api/pages/${enc(a.pageId)}/code-basis`, a.locator),
   get_page_code_basis_cited: (a) => post(`/api/pages/${enc(a.pageId)}/code-basis/cited`, a.locator),
-  get_page_revisions: (a) => get(`/api/pages/${enc(a.pageId)}/revisions`),
+  get_page_revisions: (a) => get(`/api/pages/${enc(a.pageId)}/revisions${a.includeText ? "?include=text" : ""}`),
   redistill_page: (a) => post(`/api/distill/${enc(a.pageId)}`, {}),
   // Mirrors app/src/search.rs `export_pages_okf_checked`: an older daemon
   // gets no export request, and no Space header means every Space.

@@ -14,6 +14,7 @@ import {
   type Page,
 } from "../../../lib/tauri";
 import { WorkspaceDocumentToolsHostContext } from "../navigation/WorkspacePaneHost";
+import { RECENT_PAGES_CHANGED_EVENT, RECENT_PAGES_STORAGE_KEY, readRecentPageHistory } from "../../../lib/recentPages";
 import {
   PageDraftEditor,
   type PageDraftEditorHandle,
@@ -117,6 +118,26 @@ describe("PageDraftEditor", () => {
     expect(onPublished).not.toHaveBeenCalled();
   });
 
+  it("puts the new page in Recently used as soon as it is saved as a page", async () => {
+    localStorage.removeItem(RECENT_PAGES_STORAGE_KEY);
+    const changed = vi.fn();
+    window.addEventListener(RECENT_PAGES_CHANGED_EVENT, changed);
+    vi.mocked(createPageDraft).mockResolvedValue(page({ version: 1, title: "Yes", content: "" }));
+    vi.mocked(publishPageDraft).mockResolvedValue(page({ title: "Yes", status: "active", version: 2 }));
+    const ref = createRef<PageDraftEditorHandle>();
+    renderEditor({ ref });
+    try {
+      await userEvent.type(await screen.findByRole("textbox", { name: "Title" }), "Yes");
+      await act(async () => expect(await ref.current!.flush()).toBe(true));
+
+      expect(readRecentPageHistory().entries[0]).toMatchObject({ id: "draft-1", title: "Yes" });
+      expect(changed).toHaveBeenCalled();
+    } finally {
+      window.removeEventListener(RECENT_PAGES_CHANGED_EVENT, changed);
+      localStorage.removeItem(RECENT_PAGES_STORAGE_KEY);
+    }
+  });
+
   it("opens draft info from the document tools host and Escape closes without publishing", async () => {
     vi.mocked(createPageDraft).mockResolvedValue(page({ version: 1, title: "Saved draft", content: "Draft body" }));
     const host = document.createElement("div");
@@ -168,15 +189,20 @@ describe("PageDraftEditor", () => {
     },
   );
 
-  it("keeps the existing Page detail object-title typography", () => {
+  it("uses the Page detail title typography and reading column, so a new page lines up with a saved one", () => {
     const css = readFileSync(resolve("src/components/memory/pages/pageDraftEditor.css"), "utf8");
     const titleRule = css.match(/\.page-draft-title\s*\{(?<body>[^}]*)\}/)?.groups?.body;
 
     expect(titleRule).toContain("font-family: var(--mem-font-heading);");
-    expect(titleRule).toContain("font-size: clamp(24px, 1.6vw + 14px, 30px);");
+    expect(titleRule).toContain("font-size: var(--reading-title-size);");
     expect(titleRule).toContain("font-weight: 500;");
     expect(titleRule).toContain("line-height: 1.22;");
     expect(titleRule).toContain("letter-spacing: -0.01em;");
+    const editorRule = css.match(/\.page-draft-editor\s*\{(?<body>[^}]*)\}/)?.groups?.body;
+    expect(editorRule).toContain("width: min(var(--reading-frame-max-width), 100%);");
+    expect(editorRule).toContain("padding: var(--reading-frame-padding-block) var(--reading-frame-padding-inline) 72px;");
+    const workspaceCss = readFileSync(resolve("src/components/memory/pages/wikiWorkspace.css"), "utf8");
+    expect(workspaceCss).not.toMatch(/\.page-draft-editor\s*\{\s*padding/);
   });
 
   it.each([
