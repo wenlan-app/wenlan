@@ -483,6 +483,26 @@ pub(super) async fn prepare_startup_state(
                         Err(e) => tracing::warn!("[reconcile] list archived pages failed: {e}"),
                     }
 
+                    // A database put back to an older snapshot can leave an
+                    // archive marker newer than an active page, and the marker
+                    // would refuse that page's projection for good.
+                    match db_arc.list_pages("active", 10_000, 0).await {
+                        Ok(active) => {
+                            let pages: Vec<(String, i64)> = active
+                                .into_iter()
+                                .map(|page| (page.id, page.version))
+                                .collect();
+                            match projection.forget_stale_archive_markers(&pages) {
+                                Ok(0) => {}
+                                Ok(dropped) => tracing::info!(
+                                    "[reconcile] dropped {dropped} stale archive marker(s)"
+                                ),
+                                Err(e) => tracing::warn!("[reconcile] archive markers: {e}"),
+                            }
+                        }
+                        Err(e) => tracing::warn!("[reconcile] list active pages failed: {e}"),
+                    }
+
                     // A cutover ceremony that was killed mid-flight left the
                     // fence at `preparing`, and `preparing` refuses every page
                     // write. The ceremony cannot run while this daemon is up

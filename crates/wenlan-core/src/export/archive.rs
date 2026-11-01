@@ -191,12 +191,31 @@ fn put_back(
         // Not a plain file (or already gone): nothing a visible name helps.
         return;
     }
-    match place_held(archive, held, filename, before_place) {
-        Ok(()) => log::warn!("[archive] kept the file that was at {filename} in archive/ instead"),
-        Err(error) => log::warn!(
-            "[archive] the file that was at {filename} stays in archive/ as {held}: {error}"
-        ),
+    // Atomic renames only here as well: a probing rename could replace a
+    // file a sync client just put in `archive/`.
+    let (stem, extension) = archive_basename(filename);
+    for attempt in 1..=MAX_ARCHIVE_ATTEMPTS {
+        let target = if attempt == 1 {
+            format!("{stem}{extension}")
+        } else {
+            format!("{stem}-{attempt}{extension}")
+        };
+        before_place(&target);
+        match vault_fs::rename_noreplace_atomic(archive, held, archive, &target) {
+            Ok(()) => {
+                log::warn!("[archive] kept the file that was at {filename} as archive/{target}");
+                return;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                log::warn!(
+                    "[archive] the file that was at {filename} stays in archive/ as {held}: {error}"
+                );
+                return;
+            }
+        }
     }
+    log::warn!("[archive] the file that was at {filename} stays in archive/ as {held}");
 }
 
 fn place_held(
