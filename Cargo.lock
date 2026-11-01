@@ -9218,7 +9218,6 @@ dependencies = [
  "tokio",
  "toml 0.8.2",
  "unicode-normalization",
- "unicode-properties",
  "uuid",
  "wenlan-types",
  "zip 2.4.2",

@@ -1121,11 +1121,6 @@ carrying the authority of agreement.
 | `core/lint/semantic_candidates.rs::load_entities` | `private` | no | no | — | — |
 | `core/lint/semantic_candidates.rs::load_pages` | `private` | yes | no | — | — |
 | `core/lint/serving/query.rs::load` | `pub(super)` | yes | no | — | — |
-| `core/m6/independence.rs::distinct_group_count` | `pub` | no | no | — | — |
-| `core/m6/signals.rs::containing_revisions` | `private` | no | no | — | — |
-| `core/m6/signals.rs::orphan_candidate_pages` | `private` | no | no | — | — |
-| `core/m6/signals.rs::scoped_group_ids` | `private` | no | no | — | — |
-| `core/m6/signals.rs::scoped_root_ids` | `private` | no | no | — | — |
 | `core/repair.rs::capture_rename_page_row_on_snapshot` | `private` | no | no | — | — |
 | `core/repair.rs::prepare_rename_page_title` | `private` | no | no | — | — |
 | `core/repair.rs::projection_page_receipt_sql` | `private` | no | no | — | — |
@@ -1211,11 +1206,6 @@ carrying the authority of agreement.
 | `core/lint/deep.rs::run` | `pub(super)` | yes | no | — | `core/lint/deep.rs::observation_duplicates`, `core/lint/deep.rs::page_body_result`, `core/lint/deep.rs::page_duplicates` |
 | `core/lint/kg/query.rs::load` | `pub(super)` | yes | no | — | `core/lint/kg/query.rs::entity_integrity`, `core/lint/kg/query.rs::observation_integrity`, `core/lint/kg/query/aggregate.rs::advisory_metrics` |
 | `core/lint/semantic_candidates.rs::load` | `pub(super)` | yes | no | — | `core/lint/semantic_candidates.rs::load_entities` |
-| `core/m6/signals.rs::community_overview` | `pub` | no | no | — | `core/m6/independence.rs::distinct_group_count`, `core/m6/signals.rs::scoped_root_ids` |
-| `core/m6/signals.rs::evidence_cluster` | `pub` | no | no | — | `core/m6/independence.rs::distinct_group_count`, `core/m6/signals.rs::scoped_group_ids`, `core/m6/signals.rs::scoped_root_ids` |
-| `core/m6/signals.rs::orphan_wikilink` | `pub` | no | no | — | `core/m6/signals.rs::orphan_candidate_pages` |
-| `core/m6/signals.rs::orphan_wikilink_slot` | `private` | no | no | — | `core/m6/independence.rs::distinct_group_count`, `core/m6/signals.rs::containing_revisions`, `core/m6/signals.rs::scoped_root_ids` |
-| `core/m6/signals.rs::space_overview` | `pub` | no | no | — | `core/m6/independence.rs::distinct_group_count`, `core/m6/signals.rs::scoped_root_ids` |
 | `core/maintenance.rs::run_maintenance_stage_slice` | `pub` | no | **yes** | `server/scheduler.rs::fire_maintenance_stage_safe` | `core/db.rs::get_stale_page_after`, `core/db/maintenance_duplicate_reads.rs::scan_near_duplicate_slice`, `core/db/maintenance_retro_scan.rs::scan_automatic_retro_stub_slice` |
 | `core/onboarding.rs::check_first_page` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db.rs::oldest_active_page` |
 | `core/page_map_improve.rs::source_suggestions` | `private` | no | no | — | `core/db.rs::find_active_page_id_by_title` |
@@ -1382,8 +1372,6 @@ carrying the authority of agreement.
 | `core/kg/reweave.rs::reweave_entity_links` | `pub` | no | no | — | `core/db.rs::search_entities_by_vector` |
 | `core/kg_quality.rs::entity_self_retrieval` | `pub` | no | no | — | `core/db.rs::search_entities_by_vector` |
 | `core/kg_quality.rs::run_rethink` | `pub` | no | no | — | `core/kg_quality.rs::find_merge_candidates`, `core/kg_quality.rs::refresh_stale_entity_embeddings`, `core/kg_quality.rs::scan_contradictions` |
-| `core/m6/oracle.rs::recompute_full` | `pub` | no | no | — | `core/m6/signals.rs::community_overview`, `core/m6/signals.rs::evidence_cluster`, `core/m6/signals.rs::orphan_wikilink`, `core/m6/signals.rs::space_overview` |
-| `core/m6/shadow.rs::admitted_proposals` | `private` | no | no | — | `core/m6/signals.rs::community_overview`, `core/m6/signals.rs::evidence_cluster`, `core/m6/signals.rs::orphan_wikilink`, `core/m6/signals.rs::space_overview` |
 | `core/maintenance/page_merge_order.rs::load_candidate` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/onboarding.rs::check_after_refinery_pass` | `pub` | no | no | — | `core/onboarding.rs::check_first_page` |
 | `core/page_history.rs::build_page_history` | `pub` | no | **yes** | `server/page_routes.rs::handle_get_page_revisions` | `core/db.rs::get_page` |
@@ -1545,8 +1533,6 @@ carrying the authority of agreement.
 | `core/export/knowledge.rs::run_truth_cutover` | `pub` | no | **yes** | `server/cmd_cutover.rs::run` | `core/export/knowledge.rs::plan_truth_cutover` |
 | `core/kg_quality.rs::verify_entity` | `pub` | no | no | — | `core/kg_quality.rs::entity_self_retrieval` |
 | `core/lint/semantic.rs::run_agent_submit` | `private` | no | no | — | `core/truth_adapter.rs::verdicts` |
-| `core/m6/shadow.rs::prepare` | `private` | yes | no | — | `core/m6/shadow.rs::admitted_proposals` |
-| `core/m6/shadow.rs::sample_oracle` | `private` | no | no | — | `core/m6/oracle.rs::recompute_full` |
 | `core/maintenance/page_merge_order.rs::order_survivor` | `pub(super)` | no | no | — | `core/maintenance/page_merge_order.rs::load_candidate` |
 | `core/post_ingest.rs::write_grown_page` | `private` | no | no | — | `core/db.rs::find_page_by_source_memory` |
 | `core/post_write.rs::links_to_retitled_page` | `private` | no | no | — | `core/post_write/page_link_rename.rs::update_links_to_renamed_page` |
