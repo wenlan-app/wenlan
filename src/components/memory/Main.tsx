@@ -289,7 +289,8 @@ export default function Main({
   const [view, setView] = useState<View>(
     initialMemoryId ? { kind: "memory", sourceId: initialMemoryId }
     : initialPageId ? { kind: "page", pageId: initialPageId }
-    : initialView ?? { kind: "home" },
+    // The example wiki is a wiki to browse, so it opens on its pages.
+    : initialView ?? (exampleWikiActive() ? { kind: "pages" } : { kind: "home" }),
   );
   const [noteTabs, setNoteTabs] = useState<NoteTab[]>(() => isNoteView(view) ? upsertNoteTab([], view) : []);
   const noteTabsRef = useRef(noteTabs);
@@ -1063,7 +1064,9 @@ export default function Main({
       setPageInventoryFilter("");
       dismissSearch();
       focusPrimaryGroup();
-      showView({ kind: "home" }, false);
+      // The example is a wiki to browse, so it opens on its pages; leaving it
+      // comes back Home.
+      showView(active ? { kind: "pages" } : { kind: "home" }, false);
       // Starting your own opens "Add your material" on the way back.
       if (startOwn) setStartIntent("material");
       if (active) exampleWikiSwitch.open(); else exampleWikiSwitch.close();

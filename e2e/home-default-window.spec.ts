@@ -136,10 +136,12 @@ test("a new user's home keeps one column and fits 1280x800 while getting started
   await expect(checklist.getByRole("listitem")).toHaveCount(1);
   await expect(checklist.getByRole("button", { name: "Ask in Claude Code" })).toBeVisible();
 
-  // Hiding the card brings the directory back.
+  // Hiding the card leaves Home without a directory; every page is in the Wiki.
   await checklist.getByRole("button", { name: "Hide getting started" }).click();
-  await expect(page.locator(".wiki-workspace-directory")).toBeVisible();
   await expect(page.locator(".wiki-reading-start")).not.toHaveAttribute("data-onboarding");
+  await expect(page.locator(".wiki-workspace-directory")).toBeHidden();
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true }).click();
+  await expect(page.locator(".wiki-workspace-directory")).toBeVisible();
 });
 
 test("empty pages can start writing without AI setup", async ({ page }) => {

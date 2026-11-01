@@ -99,7 +99,7 @@ for (const copy of languages) {
     // A real reload must retain the user's choices, not reseed them through the fixture.
     await page.reload();
     await expect.poll(railNames).toEqual(["Home", "Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.more]);
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("wenlan-navigation-v1")!))).toEqual({ version: 1, visible: ["pages", "spaces", "graph", "sources", "memories"], sidebar: { visible: true, mode: "labels" } });
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("wenlan-navigation-v1")!))).toEqual({ version: 1, visible: ["home", "pages", "spaces", "graph", "sources", "memories"], sidebar: { visible: true, mode: "labels" } });
     await nav.getByRole("button", { name: copy.graph, exact: true }).click();
     await expect(page.getByTestId("atlas-view")).toBeVisible();
     await expect(nav.locator(`.notes-primary-link[aria-label="${copy.graph}"]`)).toHaveAttribute("aria-current", "page");

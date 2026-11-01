@@ -366,6 +366,8 @@ test("supports keyboard-only drawer and dossier navigation with visible focus", 
   const spaces = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Spaces", exact: true });
   await expect(search).toBeFocused();
   await page.keyboard.press("Tab");
+  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Home", exact: true })).toBeFocused();
+  await page.keyboard.press("Tab");
   await expect(wiki).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(spaces).toBeFocused();

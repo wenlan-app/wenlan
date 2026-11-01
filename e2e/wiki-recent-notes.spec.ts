@@ -2,16 +2,19 @@
 import { expect, test } from "@playwright/test";
 import { installTauriMock, collectBrowserErrors } from "./tauriMock";
 import { createReviewDecisionFixture } from "./fixtures/reviewDecisions";
-import { openWikiNote } from "./helpers/wikiWorkspace";
+import { leaveHomeForWiki, openWikiNote } from "./helpers/wikiWorkspace";
 
 for (const width of [1280,375]) test(`recent pages replace default hierarchy and open safely ${width}`,async({page})=>{
  await page.setViewportSize({width,height:900});
  const errors=collectBrowserErrors(page);
  const runtime=await installTauriMock(page,{locale:"en",rawActions:[],fixture:createReviewDecisionFixture("wiki-folders")});
  await page.goto("/");
+ await leaveHomeForWiki(page);
  const directory=page.locator(".wiki-workspace-directory");
  if(width===375)await page.locator(".wiki-workspace-folders-toggle").click();
- await expect(directory.getByRole("combobox")).toHaveValue("recent");
+ // The Wiki opens on its folders; Recently used is one choice away.
+ await expect(directory.getByRole("combobox")).toHaveValue("folders");
+ await directory.getByRole("combobox").selectOption("recent");
  await expect(directory).toContainText("Pages you open appear here");
  await expect(directory.locator(".notes-inventory-root")).toHaveCount(0);
  await openWikiNote(page,"Fixture architecture");
@@ -57,7 +60,7 @@ for (const mode of ["recent", "custom"]) test(`${mode} navigation honors failed 
 });
 
 test("recent panel and Search align in either rail mode",async({page})=>{
- await page.setViewportSize({width:1440,height:900});await installTauriMock(page,{locale:"en",rawActions:[]});await page.goto("/");
+ await page.setViewportSize({width:1440,height:900});await installTauriMock(page,{locale:"en",rawActions:[]});await page.goto("/");await leaveHomeForWiki(page);
  for(const width of [240,64]){
   const separator=page.getByRole("separator",{name:/sidebar/i});
   if(width===64){await separator.focus();for(let i=0;i<3;i++)await page.keyboard.press("ArrowLeft");}

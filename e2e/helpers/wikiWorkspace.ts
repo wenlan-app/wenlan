@@ -9,8 +9,10 @@ export async function leaveHomeForWiki(page: Page) {
   const workspace = page.locator(".wiki-workspace");
   await expect(workspace.first()).toBeAttached();
   if (await page.locator('.wiki-workspace[data-directory-hidden="true"]').count() === 0) return;
-  const wiki = page.locator('.notes-rail-nav .notes-primary-link[aria-label="Wiki"]');
-  if (!(await wiki.isVisible())) await page.locator("[data-sidebar-toggle]").click();
+  const wiki = page.locator('.notes-rail-nav [aria-label="Wiki"]');
+  // A narrow window, or a hidden sidebar, keeps the rail closed until asked.
+  const show = page.locator('[data-sidebar-toggle][title="Show sidebar"]');
+  if (await show.count() && !(await wiki.isVisible())) await show.click();
   await wiki.click();
   await expect(page.locator('.wiki-workspace[data-directory-hidden="true"]')).toHaveCount(0);
 }
