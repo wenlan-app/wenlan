@@ -182,6 +182,7 @@ const en = {
   pageLayers: {"length": "Length", "short": "Short", "full": "Full", "aiDetails": "Details for AI", "showFull": "Show the full page", "beta": "Beta"},
   pageLock: {"title": "Lock this page", "offHint": "AI keeps the sentences it wrote up to date. Changes to yours wait for you.", "onHint": "Every AI change waits for your OK."},
   sentenceProposals: {"suggests": "AI suggests:", "suggestsRemoving": "AI suggests removing this sentence.", "accept": "Accept", "reject": "No", "waiting_one": "{{count}} suggestion waiting", "waiting_other": "{{count}} suggestions waiting", "acceptFailed": "Couldn't accept the suggestion. The sentence may have changed; try again.", "rejectFailed": "Couldn't turn the suggestion down. Try again."},
+  aiUpdate: {"updated_one": "AI updated {{count}} sentence {{time}}", "updated_other": "AI updated {{count}} sentences {{time}}", "undo": "Undo", "undone_one": "Put back {{count}} sentence.", "undone_other": "Put back {{count}} sentences.", "skipped_one": "{{count}} sentence changed again since, so it stays as it is.", "skipped_other": "{{count}} sentences changed again since, so they stay as they are.", "nothing": "Nothing to put back: those sentences changed again since.", "failed": "Couldn't undo the AI's update. Try again."},
   pageInspector: {"label": "Page views", "info": "Info", "open": "Open page sidebar", "close": "Close page sidebar"},
   knowledgeContext: {
     "noteKind": "Page",
@@ -3279,6 +3280,7 @@ const zhHans = {
   pageLayers: {"length": "长度", "short": "短", "full": "全文", "aiDetails": "往下是给 AI 读的细节", "showFull": "展开全文", "beta": "Beta"},
   pageLock: {"title": "锁定这篇笔记", "offHint": "AI 会更新它自己写的句子；要改你的句子，会先问你。", "onHint": "AI 的每个修改都等你点头。"},
   sentenceProposals: {"suggests": "AI 建议改成：", "suggestsRemoving": "AI 建议删掉这一句。", "accept": "收下", "reject": "不要", "waiting_one": "{{count}} 个建议等你看", "waiting_other": "{{count}} 个建议等你看", "acceptFailed": "没能收下这个建议。这一句可能已经改过了，再试一次。", "rejectFailed": "没能拒绝这个建议，再试一次。"},
+  aiUpdate: {"updated_one": "AI {{time}}更新了 {{count}} 句", "updated_other": "AI {{time}}更新了 {{count}} 句", "undo": "还原", "undone_one": "已还原 {{count}} 句。", "undone_other": "已还原 {{count}} 句。", "skipped_one": "{{count}} 句之后又改过，保持原样。", "skipped_other": "{{count}} 句之后又改过，保持原样。", "nothing": "没有可以还原的：那些句子之后又改过。", "failed": "没能还原 AI 的更新，再试一次。"},
   pageInspector: {"label": "笔记检视", "info": "信息", "open": "打开笔记侧栏", "close": "关闭笔记侧栏"},
   knowledgeContext: {
     "noteKind": "笔记",
@@ -6315,6 +6317,7 @@ const zhHant = {
   pageLayers: {"length": "長度", "short": "短", "full": "全文", "aiDetails": "往下是給 AI 讀的細節", "showFull": "展開全文", "beta": "Beta"},
   pageLock: {"title": "鎖定這篇筆記", "offHint": "AI 會更新它自己寫的句子；要改你的句子，會先問你。", "onHint": "AI 的每個修改都等你點頭。"},
   sentenceProposals: {"suggests": "AI 建議改成：", "suggestsRemoving": "AI 建議刪掉這一句。", "accept": "收下", "reject": "不要", "waiting_one": "{{count}} 個建議等你看", "waiting_other": "{{count}} 個建議等你看", "acceptFailed": "沒能收下這個建議。這一句可能已經改過了，再試一次。", "rejectFailed": "沒能拒絕這個建議，再試一次。"},
+  aiUpdate: {"updated_one": "AI {{time}}更新了 {{count}} 句", "updated_other": "AI {{time}}更新了 {{count}} 句", "undo": "還原", "undone_one": "已還原 {{count}} 句。", "undone_other": "已還原 {{count}} 句。", "skipped_one": "{{count}} 句之後又改過，保持原樣。", "skipped_other": "{{count}} 句之後又改過，保持原樣。", "nothing": "沒有可以還原的：那些句子之後又改過。", "failed": "沒能還原 AI 的更新，再試一次。"},
   pageInspector: {"label": "筆記檢視", "info": "資訊", "open": "開啟筆記側欄", "close": "關閉筆記側欄"},
   knowledgeContext: {
     "noteKind": "筆記",

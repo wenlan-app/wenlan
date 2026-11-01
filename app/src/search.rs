@@ -5455,6 +5455,16 @@ pub async fn reject_sentence_proposal(
 }
 
 #[tauri::command]
+pub async fn revert_page_sentences(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    version: i64,
+) -> Result<wenlan_types::authorship::SentenceRevertResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.revert_page_sentences(&page_id, version).await
+}
+
+#[tauri::command]
 pub async fn mark_page_basis(
     state: tauri::State<'_, State>,
     page_id: String,

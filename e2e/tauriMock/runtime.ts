@@ -322,6 +322,10 @@ export class TauriMockRuntime {
       case "reject_sentence_proposal":
         requiredString(command, args, "pageId");
         throw new TauriMockArgumentError(command, "proposalId");
+      // The fixture records no AI write, so there is nothing to undo.
+      case "revert_page_sentences":
+        requiredString(command, args, "pageId");
+        throw new TauriMockArgumentError(command, "version");
       case "mark_page_basis":
         return this.pageBasis.mark(
           requiredString(command, args, "pageId"),

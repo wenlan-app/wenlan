@@ -74,6 +74,7 @@ import KnowledgeContext from "./context/KnowledgeContext";
 import { pageReviewNotice, type PageReviewNotice } from "./page/pageReviewNotice";
 import { RailPanelTitle } from "./MemoryDetailPrimitives";
 import { PageLockSwitch } from "./page/PageLockSwitch";
+import { AiUpdateLine } from "./page/AiUpdateLine";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
 import { folderName } from "../../lib/dateFormat";
 import { stripLedeLabel } from "../../lib/pageLede";
@@ -3173,6 +3174,16 @@ export default function PageDetail({
                   {t("pageDetail.dateline.sourceMemories", { count: sourceCount })}
                 </span>}
             </div>
+            <AiUpdateLine
+              key={page.id}
+              pageId={page.id}
+              update={pageSentences?.page_id === page.id ? pageSentences.last_ai_update : null}
+              humanEditedAt={page.human_edited_at}
+              time={pageSentences?.last_ai_update
+                ? relativeTimeFromISO(new Date(pageSentences.last_ai_update.at * 1000).toISOString(), t)
+                : ""}
+              disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"}
+            />
           <div className="flex flex-wrap gap-2">
             {page.stale_reason && <span style={datelineBlocked || page.stale_reason === "source_conflict"
               ? { color: "var(--mem-accent-amber)" }
