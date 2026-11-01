@@ -27,7 +27,10 @@ pub use claim_derivation::{
     DerivationJob, PromotionTurn, SupportOutcome, EXTRACTOR_VERSION, LEASE_SECS, MAX_ATTEMPTS,
     SUPPORT_THRESHOLD,
 };
+mod activity_counts;
+mod agent_presence;
 mod claim_identity;
+mod code_basis;
 mod community_grouping_state;
 mod count;
 mod derived_artifact_sweep;
@@ -38,14 +41,6 @@ mod eval_paired_guard;
 mod eval_pipeline_reads;
 mod eval_substrate_guard;
 mod eval_temporal_seed;
-mod genesis_schema;
-/// Migration 108's shipped DDL, re-exported so the M6 fixtures install the
-/// real substrate. Text, not a `libsql` handle — see the constant's own note.
-#[cfg(test)]
-pub(crate) use genesis_schema::GENESIS_SUBSTRATE_DDL;
-mod activity_counts;
-mod agent_presence;
-mod code_basis;
 mod kg_quality_diagnostics;
 mod kg_quality_duplicate_candidates;
 mod kg_quality_embedding_refresh;
@@ -54,7 +49,6 @@ mod legacy_directory_copies;
 mod lint_snapshot;
 #[cfg(feature = "eval-harness")]
 mod m5_page_size_snapshot;
-mod m6_shadow;
 mod maintenance_duplicate_reads;
 mod maintenance_queue;
 mod maintenance_retro_scan;
@@ -164,8 +158,6 @@ mod eval_substrate_guard_test;
 #[cfg(test)]
 mod eval_temporal_seed_test;
 #[cfg(test)]
-mod genesis_schema_test;
-#[cfg(test)]
 mod kg_quality_diagnostics_test;
 #[cfg(test)]
 mod kg_quality_duplicate_candidates_test;
@@ -177,8 +169,6 @@ mod kg_quality_vocabulary_test;
 mod legacy_directory_copies_test;
 #[cfg(test)]
 mod lint_snapshot_test;
-#[cfg(test)]
-mod m6_followup_schema_test;
 #[cfg(test)]
 mod maintenance_duplicate_reads_test;
 #[cfg(test)]
@@ -1558,7 +1548,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 150;
+pub const SCHEMA_VERSION: u32 = 151;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -3026,40 +3016,6 @@ fn community_leiden_enabled_value(value: Option<&str>) -> bool {
         matches!(
             value.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes"
-        )
-    })
-}
-
-/// Gate for the M6 genesis shadow lane (spec §4.1). Opt-in: default OFF; enable
-/// with WENLAN_ENABLE_GENESIS_SHADOW=1/true/yes/on. Read once by
-/// `wenlan-server`'s runtime, which does not spawn the lane's task at all when
-/// it is false — the loop is absent rather than idling, so an OFF daemon pays
-/// nothing.
-///
-/// **Default OFF because the lane is unmeasured, not because it is unsafe.**
-/// The turn writes only `genesis_*` state, never `genesis_enabled`, and has no
-/// publish path; that is a safety argument and safety is not the question here.
-/// The question is contention: a turn polls every 1s idle / 100ms working and
-/// takes the single `MemoryDB` connection mutex each time, and neither its RSS
-/// nor its foreground-request-latency cost has been measured on a real corpus.
-/// The sibling ambient lane [`edge_grounding_promote_enabled`] is
-/// default-OFF for exactly this reason at a 30-minute cadence; this one polls
-/// three orders of magnitude faster. (Two other siblings that shared this
-/// reasoning, `edges_reconcile_enabled` and `entity_page_reconcile_enabled`,
-/// retired in G6 Stage 2 PR 2a along with the sweeps they gated.)
-///
-/// It is also what makes spec §10.3's rollback executable: PR-B rollback is
-/// "a flag flip plus a lease sweep", and with no flag there is no flip.
-pub fn genesis_shadow_enabled() -> bool {
-    let value = std::env::var("WENLAN_ENABLE_GENESIS_SHADOW").ok();
-    genesis_shadow_enabled_value(value.as_deref())
-}
-
-fn genesis_shadow_enabled_value(value: Option<&str>) -> bool {
-    value.is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
         )
     })
 }
@@ -10312,22 +10268,11 @@ impl MemoryDB {
                 self.migrate_107_page_kind_repair(version).await?;
             }
 
-            // Migration 108 (M6 PR-A): the genesis substrate — five empty
-            // tables and the two partial unique indexes that are D4's whole
-            // exclusion mechanism. Nothing in this build writes to any of
-            // them; the writers are later rungs. PARTIAL BY DESIGN, see
-            // migrate_108_genesis_substrate. See ensure_genesis_tables.
-            if version < 108 {
-                self.migrate_108_genesis_substrate(version).await?;
-            }
-
-            // Migration 109 (M6 PR-A follow-up): the fourteen remaining
-            // durable tables plus the per-space mutation counter whose shapes
-            // were blocked on the D1-D8 contract-defect rulings. The tables
-            // start empty and the counter backfills to zero, so no M6 writer or
-            // reader is enabled by this migration.
+            // Migrations 108 and 109 created the tables of the default-off M6
+            // genesis lane. The lane is gone; migration 151 drops what they
+            // made, so a fresh chain only steps the version past them.
             if version < 109 {
-                self.migrate_109_m6_substrate_followup(version).await?;
+                self.migrate_108_109_retired_genesis_lane(version).await?;
             }
 
             // Migration 110 (M5 truth safety): exact judge-triple eligibility,
@@ -10777,6 +10722,15 @@ impl MemoryDB {
             }
             if version < 150 {
                 self.migrate_150_drop_retired_tables(version).await?;
+            }
+
+            // Migration 151 drops the tables of the retired M6 genesis lane
+            // and its projection outbox. See db/table_classes.rs.
+            if ceiling < 151 {
+                return Ok(());
+            }
+            if version < 151 {
+                self.migrate_151_drop_genesis_lane(version).await?;
             }
         }
 
@@ -13213,13 +13167,9 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// M4's community substrate, as the bytes both the migration and the M6
-    /// fixtures execute. `grouping_leases` is the ONE durable lease registry
-    /// (D6, I-6) and `m6::leases` is a facade over it, so a fixture that
-    /// created its own copy of the table could not notice a second lease
-    /// system — which is the thing the facade exists to prevent. Shipped as
-    /// text because R4 forbids a DB-owned item from handing out a `libsql`
-    /// handle at crate visibility.
+    /// M4's community substrate. `grouping_leases` is the one durable lease
+    /// registry (D6, I-6). Shipped as text because R4 forbids a DB-owned item
+    /// from handing out a `libsql` handle at crate visibility.
     pub(crate) const COMMUNITY_SUBSTRATE_DDL: &str = "CREATE TABLE IF NOT EXISTS communities (
                 community_id TEXT PRIMARY KEY,
                 space TEXT NOT NULL,
@@ -14950,82 +14900,16 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// Migration 108 (M6 PR-A): the genesis substrate.
-    ///
-    /// Additive `IF NOT EXISTS` DDL, same shape as 101 and for the same
-    /// reason: the tables have to exist before the first writer can, and a
-    /// control that appears at the same moment as the thing it controls has a
-    /// window where it does not. Every table starts empty, and an empty
-    /// `genesis_coverage_state` means genesis is disabled for every space
-    /// (state-machines §7, D1) — so this migration changes no behavior.
-    ///
-    /// **This is PARTIAL BY DESIGN and is not the complete genesis
-    /// substrate.** It creates exactly five objects' worth of tables —
-    /// `genesis_candidates`, `genesis_candidate_roots`,
-    /// `genesis_coverage_state`, `genesis_group_coverage`, `genesis_frontier`
-    /// — plus the two partial unique indexes of §5. Those are the objects
-    /// whose shape the Stage-0 artifacts actually fix. Everything else the M6
-    /// contracts name is deliberately absent, including the durable homes for
-    /// machine F's `suppressed` and `quarantined` states and every `m6_*`
-    /// table of the relevance, overview, and refresh contracts: their column
-    /// types, keys, or liveness rules are unresolved or mutually contradictory
-    /// across artifacts. They land in a later additive migration once those
-    /// questions are adjudicated — see the PR-A schema-questions triage in the
-    /// drive record. Do not read this migration as the finished substrate.
-    ///
-    /// Number 108 follows the merged M5 Truth migrations 105/106 and the
-    /// page-kind repair at 107.
-    async fn migrate_108_genesis_substrate(&self, _prior: i64) -> Result<(), WenlanError> {
+    /// Migrations 108 and 109 created the empty tables of the M6 genesis
+    /// lane, which was off by default and is removed. Migration 151 drops the
+    /// tables from a database that has them; nothing between 109 and 151
+    /// reads them, so the chain only steps the version here.
+    async fn migrate_108_109_retired_genesis_lane(&self, _prior: i64) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
-        let tx = conn
-            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m108 begin: {error}")))?;
-        Self::ensure_genesis_tables(&tx).await?;
-        tx.commit()
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m108 commit: {error}")))?;
-
-        conn.execute("PRAGMA user_version = 108", ())
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m108 bump: {error}")))?;
-        log::info!("[migration] Migration 108 applied: M6 genesis substrate (partial by design)");
-        Ok(())
-    }
-
-    /// Migration 109 (M6 PR-A follow-up): complete the inert M6 substrate.
-    ///
-    /// The preceding migration deliberately stopped at the five objects whose
-    /// Stage-0 contracts were internally coherent. The user has since ratified
-    /// the D1-D8 amendment that fixes the remaining liveness, identity, and
-    /// readiness contradictions. All fourteen new tables and the one added
-    /// `genesis_coverage_state.m6_mutation_count` column land in one additive
-    /// transaction. Nothing here schedules work or changes a reader/writer
-    /// fence; later M6 rungs remain responsible for every behavior switch.
-    async fn migrate_109_m6_substrate_followup(&self, _prior: i64) -> Result<(), WenlanError> {
-        let conn = self.conn.lock().await;
-        let tx = conn
-            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m109 begin: {error}")))?;
-
-        crate::m6::frontier_policy::ensure_frontier_policy_tables(&tx)
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m109 frontier: {error}")))?;
-        crate::m6::overview_subscriptions::ensure_overview_subscription_tables(&tx).await?;
-        crate::m6::refresh_readiness::ensure_refresh_readiness_tables(&tx)
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m109 refresh: {error}")))?;
-        crate::m6::relevance::ensure_relevance_tables(&tx).await?;
-        crate::m6::remaining_substrate::ensure_remaining_substrate(&tx).await?;
-
-        tx.commit()
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m109 commit: {error}")))?;
         conn.execute("PRAGMA user_version = 109", ())
             .await
             .map_err(|error| WenlanError::VectorDb(format!("m109 bump: {error}")))?;
-        log::info!("[migration] Migration 109 applied: M6 substrate follow-up (inert)");
+        log::info!("[migration] Migrations 108-109 skipped: the M6 genesis lane is retired");
         Ok(())
     }
 
@@ -25372,9 +25256,8 @@ impl MemoryDB {
                 WenlanError::VectorDb(format!("update_space cascade pages scope: {}", e))
             })?;
 
-            // S0-162: close the rename over the community and genesis substrate
-            // too, so no M6-reachable row is left naming a space that does not
-            // resolve.
+            // S0-162: close the rename over the community substrate too, so no
+            // grouping row is left naming a space that does not resolve.
             space_rename::cascade_space_rename(&tx, name, new_name).await?;
 
             #[cfg(test)]
@@ -25737,7 +25620,7 @@ impl MemoryDB {
                 page_basis::refresh_basis_all(&tx)
                     .await
                     .map_err(|e| WenlanError::VectorDb(format!("delete_space move basis: {e}")))?;
-                // Fold the community/genesis substrate into the target too, so
+                // Fold the community substrate into the target too, so
                 // the moved entities keep their `relates` edges for grouping and
                 // no control row keeps naming the space deleted below.
                 space_rename::cascade_space_merge(&tx, name, target).await?;
@@ -25876,7 +25759,7 @@ impl MemoryDB {
         page_basis::refresh_basis_all(&tx)
             .await
             .map_err(|e| WenlanError::VectorDb(format!("reassign basis: {e}")))?;
-        // Fold the community/genesis substrate into the target too, so the
+        // Fold the community substrate into the target too, so the
         // moved entities keep their `relates` edges for grouping and the
         // source's community rows do not outlive its content.
         space_rename::cascade_space_merge(&tx, from, to).await?;
