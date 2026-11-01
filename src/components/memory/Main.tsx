@@ -54,7 +54,7 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
-import { PagesOverview } from "./pages/PagesOverview";
+import { PagesOverview, WikiStart } from "./pages/PagesOverview";
 import { BASIS_UPDATES_REVIEW_ID } from "./page/useBasisActions";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
 import { useLibraryInventory } from "./pages/useLibraryInventory";
@@ -138,10 +138,8 @@ function scrollDestinationKey(view: View): string {
 // Compare destinations rather than object identity. A fresh unsaved draft is
 // always a new intent; persisted drafts retain their session through history.
 function sameDestination(current: View, next: View): boolean {
-  if ((current.kind === "home" || current.kind === "pages")
-    && (next.kind === "home" || next.kind === "pages")) {
-    return (current.kind === "pages" ? current.inventoryScope ?? "all" : "all")
-      === (next.kind === "pages" ? next.inventoryScope ?? "all" : "all");
+  if (current.kind === "pages" && next.kind === "pages") {
+    return (current.inventoryScope ?? "all") === (next.inventoryScope ?? "all");
   }
   if (current.kind !== next.kind) return false;
   switch (current.kind) {
@@ -291,7 +289,7 @@ export default function Main({
   const [view, setView] = useState<View>(
     initialMemoryId ? { kind: "memory", sourceId: initialMemoryId }
     : initialPageId ? { kind: "page", pageId: initialPageId }
-    : initialView ?? { kind: "pages" },
+    : initialView ?? { kind: "home" },
   );
   const [noteTabs, setNoteTabs] = useState<NoteTab[]>(() => isNoteView(view) ? upsertNoteTab([], view) : []);
   const noteTabsRef = useRef(noteTabs);
@@ -373,7 +371,7 @@ export default function Main({
     viewRef.current = next;
     setView(next);
     setReadySourceView(null);
-    if (next.kind === "pages" || next.kind === "home") setActiveTab("pages");
+    if (next.kind === "pages" || next.kind === "home") setActiveTab(next.kind);
     else if (next.kind === "activity") setActiveTab("activity");
   };
   // Identity promotion and completed workflows replace the current entry.
@@ -396,7 +394,7 @@ export default function Main({
   const contextSpace = viewHistory.slice().reverse().find(
     (item): item is Extract<View, { kind: "space" }> => item.kind === "space",
   );
-  const [activeTab, setActiveTab] = useState<"pages" | "activity">(view.kind === "activity" ? "activity" : "pages");
+  const [activeTab, setActiveTab] = useState<"home" | "pages" | "activity">(view.kind === "activity" || view.kind === "pages" ? view.kind : "home");
   const [aboutOpen, setAboutOpen] = useState(false);
   const [pageSavePending, setPageSavePending] = useState(false);
   const [pageEditDirty, setPageEditDirty] = useState(false);
@@ -704,7 +702,7 @@ export default function Main({
       if (isNoteView(viewRef.current) || viewRef.current.kind === "pages" || viewRef.current.kind === "home") {
         setOwnershipNotice({ side: "secondary", note: ownedNote });
       }
-      else afterNavigationGuards(() => { showView({ kind: "pages" }); void secondaryGroupRef.current?.open(ownedNote); }, onRefused, true);
+      else afterNavigationGuards(() => { showView({ kind: "home" }); void secondaryGroupRef.current?.open(ownedNote); }, onRefused, true);
       return;
     }
     if (next.kind === "page-draft" && next.draftId) {
@@ -742,7 +740,7 @@ export default function Main({
       primaryDraftIdentityByTab.current.delete(tab.key);
       updateNoteTabs(remaining);
       if (active) {
-        const next = remaining[Math.min(index, remaining.length - 1)]?.view ?? { kind: "pages" } as View;
+        const next = remaining[Math.min(index, remaining.length - 1)]?.view ?? { kind: "home" } as View;
         lastNoteViewRef.current = isNoteView(next) ? next : null;
         showView(next);
       } else if (lastNoteViewRef.current && isNoteView(lastNoteViewRef.current) && matchesNote(tab, lastNoteViewRef.current)) {
@@ -789,7 +787,7 @@ export default function Main({
         updateHistory(viewHistoryRef.current.filter(retained), viewForwardRef.current.filter(retained));
         if (lastNoteViewRef.current && isNoteView(lastNoteViewRef.current) && matchesNote(current, lastNoteViewRef.current)) lastNoteViewRef.current = null;
         if (active) {
-          const next = remaining[Math.min(index, remaining.length - 1)]?.view ?? { kind: "pages" } as View;
+          const next = remaining[Math.min(index, remaining.length - 1)]?.view ?? { kind: "home" } as View;
           lastNoteViewRef.current = isNoteView(next) ? next : null;
           showView(next);
         }
@@ -827,7 +825,7 @@ export default function Main({
   const noteTabStrip = <NoteTabs tabs={noteTabs}
     activeKey={isNoteView(view) ? noteTabs.find(tab => matchesNote(tab, view))?.key : undefined}
     onSelect={tab => { focusPrimaryGroup(); navigateTo(tab.view); }} onClose={closeNoteTab}
-    onHome={() => { focusPrimaryGroup(); navigatePages(); }} homeActive={view.kind === "pages" || view.kind === "home"}
+    onHome={() => { focusPrimaryGroup(); navigateHome(); }} homeActive={view.kind === "home"}
     onMoveToOtherGroup={moveToSecondary} moveLabel={t("pages.groups.moveToRight")}
     onCreate={exampleWiki ? undefined : () => navigateTo({
       kind: "page-draft",
@@ -840,6 +838,7 @@ export default function Main({
   const navigateSpaces = (create: boolean) => navigateTo(create
     ? { kind: "spaces", create: true } : { kind: "spaces" });
   const navigatePages = () => navigateTo({ kind: "pages" });
+  const navigateHome = () => navigateTo({ kind: "home" });
   // Every import finish inside this window hands new material on through
   // these. Stable, so the cards under it do not re-render with the shell.
   const navigateToRef = useRef(navigateTo);
@@ -851,7 +850,7 @@ export default function Main({
     onSelectPage: (pageId) => navigateToRef.current({ kind: "page", pageId }),
   }), []);
   const navigateSettingsHome = () => {
-    navigatePages();
+    navigateHome();
     if (responsiveSidebar.presentation === "overlay") responsiveSidebar.close();
   };
   const navigateNotes = () => {
@@ -1064,7 +1063,7 @@ export default function Main({
       setPageInventoryFilter("");
       dismissSearch();
       focusPrimaryGroup();
-      showView({ kind: "pages" }, false);
+      showView({ kind: "home" }, false);
       // Starting your own opens "Add your material" on the way back.
       if (startOwn) setStartIntent("material");
       if (active) exampleWikiSwitch.open(); else exampleWikiSwitch.close();
@@ -1170,7 +1169,7 @@ export default function Main({
     if (lastNoteViewRef.current && isGone(lastNoteViewRef.current)) lastNoteViewRef.current = null;
     if (!wasOnScreen) return;
     const remaining = noteTabsRef.current;
-    const next: View = remaining[Math.min(Math.max(firstIndex, 0), remaining.length - 1)]?.view ?? { kind: "pages" };
+    const next: View = remaining[Math.min(Math.max(firstIndex, 0), remaining.length - 1)]?.view ?? { kind: "home" };
     lastNoteViewRef.current = isNoteView(next) ? next : null;
     showView(next);
   };
@@ -1497,6 +1496,7 @@ export default function Main({
             onNavigateActivity={() => navigateTo({ kind: "activity" })}
             activityCurrent={view.kind === "activity"}
             onConnectTool={() => navigateTo({ kind: "connect-agent" })}
+            onNavigateHome={navigateHome}
             onNavigatePages={navigateNotes}
             onNavigateEntities={() => navigateTo({ kind: "entities" })}
             onNavigateGraph={() => navigateTo({ kind: "graph" })}
@@ -1532,7 +1532,7 @@ export default function Main({
                     showKnowledge: true,
                     batchId: result.imported > 0 ? result.batch_id : undefined,
                   });
-                  updateHistory([{ kind: "pages" }], []);
+                  updateHistory([{ kind: "home" }], []);
                 } else {
                   replaceView({ kind: "stream" });
                 }
@@ -1551,7 +1551,9 @@ export default function Main({
             />
           ) : (view.kind === "pages" || view.kind === "home") ? (
             <WikiWorkspace key={exampleWiki ? "example" : "own"}
-              directoryHidden={directoryHidden}
+              // Home holds what is in motion; the directory of every page
+              // belongs to the Wiki.
+              directoryHidden={view.kind === "home" || directoryHidden}
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
@@ -1572,23 +1574,23 @@ export default function Main({
               onArchiveOpenPage={archiveOpenPage}
               onRestorePage={handlePageRestored}
             >
-              <PagesOverview
+              {view.kind === "pages" ? <WikiStart /> : <PagesOverview
                 onBrowseArchived={() => {
                   // A browse mode for now only: the app never reopens in it.
                   setWikiInventoryMode("archived");
                   setWikiDirectoryOpenRequest(request => request + 1);
                 }}
-                inventoryScope={view.kind === "pages" ? view.inventoryScope : undefined}
                 onBrowseAll={() => {
                   // The home lists only the newest pages; every page is in the
-                  // directory beside it, by folder.
+                  // Wiki, by folder.
                   writeWikiInventoryMode("folders");
                   setWikiInventoryMode("folders");
+                  navigatePages();
                 }}
                 onBrowseFolder={(inventoryScope) => navigateTo({ kind: "pages", inventoryScope })}
-                onCreatePage={(space, folderPath) => navigateTo({ kind: "page-draft", space, folderPath, inventoryScope: view.kind === "pages" ? view.inventoryScope : undefined })}
+                onCreatePage={(space, folderPath) => navigateTo({ kind: "page-draft", space, folderPath })}
                 onSelectDraft={openWikiDraft}
-                onSelectPage={(id) => navigateTo({ kind: "page", pageId: id, inventoryScope: view.kind === "pages" ? view.inventoryScope : undefined })}
+                onSelectPage={(id) => navigateTo({ kind: "page", pageId: id })}
                 onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
                 onOpenThing={(thingId) => navigateTo({ kind: "thing", thingId })}
                 onConnectTool={() => navigateTo({ kind: "connect-agent" })}
@@ -1600,7 +1602,7 @@ export default function Main({
                   setSourceLibraryState({ search: "", filter: "all", container });
                   navigateTo({ kind: "sources" });
                 }}
-              />
+              />}
             </WikiWorkspace>
           ) : view.kind === "entities" ? (
             <EntitiesView

@@ -279,7 +279,7 @@ test("switches exactly at the management and dossier breakpoints", async ({ page
   await page.setViewportSize({ width: 899, height: 900 });
   await openSidebar(page);
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  for (const name of ["Wiki", "Spaces", "Graph", "More"]) {
+  for (const name of ["Home", "Wiki", "Spaces", "Graph", "More"]) {
     await expect(primaryNavigation.getByRole("button", { name, exact: true })).toBeVisible();
   }
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);

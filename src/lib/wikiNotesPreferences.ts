@@ -14,6 +14,8 @@ const LIMIT = 50;
 // Modes remembered across restarts. Archived pages is deliberately not one.
 const MODES = new Set<WikiInventoryMode>(["recent", "custom", "folders"]);
 type StoredPreferences = { readonly version: 1; readonly mode: WikiInventoryMode; readonly customOrder: readonly string[] };
+// The Wiki holds every page, by folder. What was used lately lives on Home.
+const DEFAULT_MODE: WikiInventoryMode = "folders";
 
 function resolveStorage(storage?: WikiNotesStorage | null): WikiNotesStorage | null {
   if (storage !== undefined) return storage;
@@ -22,20 +24,20 @@ function resolveStorage(storage?: WikiNotesStorage | null): WikiNotesStorage | n
 
 function readPreferences(storage?: WikiNotesStorage | null): StoredPreferences {
   const resolved = resolveStorage(storage);
-  if (resolved === null) return { version: VERSION, mode: "recent", customOrder: [] };
+  if (resolved === null) return { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
   try {
     const raw = resolved.getItem(STORAGE_KEY);
-    if (raw === null) return { version: VERSION, mode: "recent", customOrder: [] };
+    if (raw === null) return { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
     const value: unknown = JSON.parse(raw);
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return { version: VERSION, mode: "recent", customOrder: [] };
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
     const record = value as Record<string, unknown>;
-    const mode = MODES.has(record["mode"] as WikiInventoryMode) ? record["mode"] as WikiInventoryMode : "recent";
+    const mode = MODES.has(record["mode"] as WikiInventoryMode) ? record["mode"] as WikiInventoryMode : DEFAULT_MODE;
     const customOrder = Array.isArray(record["customOrder"])
       ? [...new Set(record["customOrder"].filter((id): id is string => typeof id === "string" && id.length > 0))].slice(0, LIMIT)
       : [];
-    return record["version"] === VERSION ? { version: VERSION, mode, customOrder } : { version: VERSION, mode: "recent", customOrder: [] };
+    return record["version"] === VERSION ? { version: VERSION, mode, customOrder } : { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
   } catch {
-    return { version: VERSION, mode: "recent", customOrder: [] };
+    return { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
   }
 }
 

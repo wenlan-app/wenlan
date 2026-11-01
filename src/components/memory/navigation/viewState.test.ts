@@ -2,14 +2,15 @@ import { describe, expect, it } from "vitest";
 import { activeNavigationForView } from "./viewState";
 
 describe("activeNavigationForView", () => {
-  it("keeps the first-use guide and legacy Home alias in Wiki navigation", () => {
-    expect(activeNavigationForView({ kind: "home" })).toBe("pages");
-    expect(activeNavigationForView({ kind: "first-use" })).toBe("pages");
+  it("keeps Home, the first-use guide and things under Home, apart from the Wiki", () => {
+    expect(activeNavigationForView({ kind: "home" })).toBe("home");
+    expect(activeNavigationForView({ kind: "first-use" })).toBe("home");
     expect(activeNavigationForView({
       kind: "first-use",
       showKnowledge: true,
       batchId: "batch-1",
-    })).toBe("pages");
+    })).toBe("home");
+    expect(activeNavigationForView({ kind: "thing", thingId: "thing-1" })).toBe("home");
   });
   it("keeps the Page library and Page detail first-class instead of nesting them under Spaces", () => {
     expect(activeNavigationForView({ kind: "pages" })).toBe("pages");

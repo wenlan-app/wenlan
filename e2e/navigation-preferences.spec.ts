@@ -55,7 +55,7 @@ for (const copy of languages) {
     const pin = (name: string) => row(name).getByRole("button", { name: copy.pin(name), exact: true });
     const unpin = (name: string) => row(name).getByRole("button", { name: copy.unpin(name), exact: true });
     const revealPin = async (name: string) => row(name).hover();
-    const defaults = ["Wiki", copy.spaces, copy.graph, copy.sources, copy.more];
+    const defaults = ["Home", "Wiki", copy.spaces, copy.graph, copy.sources, copy.more];
     await expect.poll(railNames).toEqual(defaults);
     await nav.getByRole("button", { name: "Wiki", exact: true }).click();
     await expect(page.getByRole("heading", { name: copy.locale === "en" ? "Open a page" : copy.locale === "zh-Hant" ? "開啟筆記" : "打开笔记", level: 1 })).toBeVisible();
@@ -77,19 +77,19 @@ for (const copy of languages) {
     await expect(unpin(copy.memories)).toBeFocused();
     await expect(unpin(copy.memories)).toHaveAttribute("aria-pressed", "true");
     await expect(morePanel).toBeVisible();
-    await expect.poll(railNames).toEqual(["Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.more]);
+    await expect.poll(railNames).toEqual(["Home", "Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.more]);
     await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
 
     await unpin(copy.memories).click();
     await expect.poll(() => panelPosition(page)).toEqual(openedPosition);
-    await expect.poll(railNames).toEqual(["Wiki", copy.spaces, copy.graph, copy.sources, copy.more]);
+    await expect.poll(railNames).toEqual(["Home", "Wiki", copy.spaces, copy.graph, copy.sources, copy.more]);
     await expect(morePanel.getByRole("button", { name: copy.memories, exact: true })).toHaveAttribute("aria-current", "page");
     await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
     await expectPanelWithinViewport(page);
     await capture(page, `${copy.locale}-${copy.theme}-direct-pin`);
     await revealPin(copy.memories);
     await pin(copy.memories).click();
-    await expect.poll(railNames).toEqual(["Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.more]);
+    await expect.poll(railNames).toEqual(["Home", "Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.more]);
     await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
     await page.keyboard.press("Escape");
     await expect(morePanel).toHaveCount(0);
@@ -98,7 +98,7 @@ for (const copy of languages) {
 
     // A real reload must retain the user's choices, not reseed them through the fixture.
     await page.reload();
-    await expect.poll(railNames).toEqual(["Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.more]);
+    await expect.poll(railNames).toEqual(["Home", "Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.more]);
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem("wenlan-navigation-v1")!))).toEqual({ version: 1, visible: ["pages", "spaces", "graph", "sources", "memories"], sidebar: { visible: true, mode: "labels" } });
     await nav.getByRole("button", { name: copy.graph, exact: true }).click();
     await expect(page.getByTestId("atlas-view")).toBeVisible();
@@ -109,7 +109,7 @@ for (const copy of languages) {
     await expect(unpin(copy.memories)).toHaveAttribute("aria-pressed", "true");
     await revealPin(copy.topics);
     await pin(copy.topics).click();
-    await expect.poll(railNames).toEqual(["Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.topics, copy.more]);
+    await expect.poll(railNames).toEqual(["Home", "Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.topics, copy.more]);
     await page.setViewportSize({ width: 1280, height: 600 });
     await expectPanelWithinViewport(page);
     await capture(page, `${copy.locale}-${copy.theme}-all-pinned-short`);
@@ -124,7 +124,7 @@ for (const copy of languages) {
     for (const name of [copy.memories, copy.topics]) {
       await unpin(name).click();
     }
-    await expect.poll(railNames).toEqual(["Wiki", copy.spaces, copy.graph, copy.sources, copy.more]);
+    await expect.poll(railNames).toEqual(["Home", "Wiki", copy.spaces, copy.graph, copy.sources, copy.more]);
     await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
     await expectPanelWithinViewport(page);
     await capture(page, `${copy.locale}-${copy.theme}-all-unpinned-narrow`);
@@ -136,7 +136,7 @@ for (const copy of languages) {
     await moreButton.click();
     await revealPin(copy.memories);
     await pin(copy.memories).click();
-    await expect.poll(railNames).toEqual(["Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.more]);
+    await expect.poll(railNames).toEqual(["Home", "Wiki", copy.spaces, copy.graph, copy.sources, copy.memories, copy.more]);
     await expect(morePanel).toBeVisible();
     await capture(page, `${copy.locale}-${copy.theme}-narrow-direct-pin`);
     await page.keyboard.press("Escape");

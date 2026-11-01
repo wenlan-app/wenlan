@@ -59,7 +59,7 @@ async function openWiki(page: BrowserPage, fixture: SpacesNavigationFixture, { g
   await expect(page.locator(".note-tab-create")).toBeVisible();
   await expect(wiki.getByRole("table")).toHaveCount(0);
   await expect(wiki.locator(".asset-card, .wiki-page-link, .wiki-pagination")).toHaveCount(0);
-  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Home", exact: true })).toHaveAttribute("aria-current", "page");
   return browserErrors;
 }
 
@@ -151,10 +151,11 @@ test("empty pages can start writing without AI setup", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "Content", exact: true })).toBeVisible();
 });
 
-test("the home button returns to the Wiki home while the open page keeps its tab", async ({ page }) => {
+test("the home button returns to Home while the open page keeps its tab", async ({ page }) => {
   await page.setViewportSize({ ...DEFAULT_WINDOW });
   await openWiki(page, createFirstRunFixture());
-  const home = page.getByRole("button", { name: "Wiki home", exact: true });
+  const home = page.locator(".note-tab-home");
+  await expect(home).toHaveAccessibleName("Home");
   const overviewTitle = page.locator(".wiki-overview").getByRole("heading", { name: "Open a page", exact: true });
   // On the home the button stays in its place and shows it is the current view.
   await expect(overviewTitle).toBeVisible();

@@ -27,7 +27,7 @@ const entries = [
 describe("wiki notes preferences", () => {
   it("persists the selected inventory mode and custom order", () => {
     const cache = memoryStorage();
-    expect(readWikiInventoryMode(cache.storage)).toBe("recent");
+    expect(readWikiInventoryMode(cache.storage)).toBe("folders");
     writeWikiInventoryMode("custom", cache.storage);
     writeWikiCustomOrder(["b", "a"], cache.storage);
     expect(readWikiInventoryMode(cache.storage)).toBe("custom");
@@ -38,7 +38,7 @@ describe("wiki notes preferences", () => {
   it("defaults malformed or blocked storage safely and still returns current entries", () => {
     const corrupt = memoryStorage("not-json");
     const blocked: WikiNotesStorage = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
-    expect(readWikiInventoryMode(corrupt.storage)).toBe("recent");
+    expect(readWikiInventoryMode(corrupt.storage)).toBe("folders");
     expect(readWikiCustomOrder(corrupt.storage)).toEqual([]);
     expect(() => writeWikiInventoryMode("custom", blocked)).not.toThrow();
     expect(() => writeWikiCustomOrder(["c"], blocked)).not.toThrow();
@@ -59,7 +59,8 @@ describe("Archived pages browse mode", () => {
     writeWikiInventoryMode("folders", storage);
     writeWikiInventoryMode("archived", storage);
     expect(readWikiInventoryMode(storage)).toBe("folders");
+    writeWikiInventoryMode("recent", storage);
     store.set("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "archived", customOrder: [] }));
-    expect(readWikiInventoryMode(storage)).toBe("recent");
+    expect(readWikiInventoryMode(storage)).toBe("folders");
   });
 });
