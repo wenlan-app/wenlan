@@ -264,7 +264,7 @@ pub(crate) fn source_of(locator: &Locator) -> (String, String, Option<i64>) {
     }
 }
 
-fn take_text(other: &mut serde_yaml::Mapping, key: &str) -> Option<String> {
+pub(super) fn take_text(other: &mut serde_yaml::Mapping, key: &str) -> Option<String> {
     match other.shift_remove(key)? {
         serde_yaml::Value::String(text) => Some(text),
         value => serde_yaml::to_string(&value)
@@ -279,7 +279,7 @@ fn take_int(other: &mut serde_yaml::Mapping, key: &str) -> Option<i64> {
 
 /// Unix seconds from the export's `utc` text (or the number it wrote when
 /// the value was not a time).
-fn seconds_of(text: &str) -> Option<i64> {
+pub(super) fn seconds_of(text: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(text)
         .map(|at| at.timestamp())
         .ok()

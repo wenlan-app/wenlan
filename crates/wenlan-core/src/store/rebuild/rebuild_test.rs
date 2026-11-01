@@ -348,6 +348,76 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         "mem_cap",
     )
     .await;
+    sql(
+        &db,
+        "INSERT INTO spaces (id, name, created_at, updated_at) VALUES (?1, 'Work', 0, 0)",
+        "space_123456789",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO briefs (space_id, last_session_summary, last_handoff_at, version, \
+         updated_at) VALUES (?1, 'Left off here.', 1793404800, 7, 1793404900)",
+        "space_123456789",
+    )
+    .await;
+    for (id, state, gate) in [
+        ("item_a", "active", "NULL"),
+        ("item_b", "backlog", "'after the export'"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO brief_items (id, space_id, text, state, added_at, gate, version, \
+                 updated_at) VALUES ('{id}', ?1, 'Do {id}', '{state}', 5, {gate}, 2, 9)"
+            ),
+            "space_123456789",
+        )
+        .await;
+    }
+    for page_id in ["a", "shadow"] {
+        sql(
+            &db,
+            "INSERT INTO page_maps (page_id, revision, map_schema, viewport, generated_at, \
+             created_at, updated_at) VALUES (?1, 4, 1, '{\"zoom\":1.5}', NULL, \
+             '2026-01-01 00:00:00', '2026-01-02 00:00:00')",
+            page_id,
+        )
+        .await;
+    }
+    for (id, status, coordinates, parent) in [
+        ("n_placed", "active", "12.5, -40, 300, 80", "NULL"),
+        ("n_unplaced", "active", "NULL, 7, NULL, NULL", "'n_placed'"),
+        ("n_suggested", "suggested", "1, 2, 3, 4", "NULL"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO page_map_nodes (id, page_id, parent_id, rank, ref_kind, ref_id, \
+                 label, status, pinned, placed, collapsed, x, y, width, height, fingerprint, \
+                 provenance, created_at, updated_at) VALUES ('{id}', ?1, {parent}, 2, \
+                 'memory', 'mem:{id}', 'Label {id}', '{status}', 1, 0, 1, {coordinates}, \
+                 'fp_{id}', 'agent', 't0', 't1')"
+            ),
+            "a",
+        )
+        .await;
+    }
+    for (id, to, status) in [
+        ("e_shown", "n_unplaced", "active"),
+        ("e_hidden", "n_suggested", "suggested"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO page_map_edges (id, page_id, from_node, to_node, kind, label, \
+                 status, provenance, created_at) VALUES ('{id}', ?1, 'n_placed', '{to}', \
+                 'link', 'why', '{status}', NULL, 't0')"
+            ),
+            "a",
+        )
+        .await;
+    }
 
     let out = tempfile::tempdir().unwrap();
     let data_root = tempfile::tempdir().unwrap();
@@ -370,10 +440,18 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
     let diff = compare_exports(&first, &second).unwrap();
     assert!(diff.is_empty(), "{diff:#?}");
 
-    let mut tables: Vec<&'static str> = SETTINGS_FILES
-        .iter()
-        .flat_map(|(_, tables)| tables.iter().copied())
-        .collect();
+    let mut tables: Vec<&'static str> = vec![
+        "briefs",
+        "brief_items",
+        "page_maps",
+        "page_map_nodes",
+        "page_map_edges",
+    ];
+    tables.extend(
+        SETTINGS_FILES
+            .iter()
+            .flat_map(|(_, tables)| tables.iter().copied()),
+    );
     tables.extend(RECORD_TABLES.iter().copied());
     tables.extend(HISTORY_TABLES.iter().map(|spec| spec.table));
     let diffs = compare_tables(&db, &fresh, &tables).await.unwrap();

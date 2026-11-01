@@ -6,9 +6,13 @@
 //!
 //! So far: the tables copied whole (`settings/`, `records/`), every
 //! history table, replayed from the log, and pages and entities from their
-//! files ([`pages::rebuild_pages`]). Memories, originals, Briefs and
-//! canvases follow. [`rebuild`] runs every part in order.
+//! files ([`pages::rebuild_pages`]), memories and originals
+//! ([`memories::rebuild_memories`]), Briefs ([`briefs::rebuild_briefs`]) and
+//! canvases ([`canvases::rebuild_canvases`]). [`rebuild`] runs every part
+//! in order; [`export_again`] and [`compare_exports`] check the result.
 
+pub mod briefs;
+pub mod canvases;
 pub mod compare;
 pub mod memories;
 pub mod pages;
@@ -159,8 +163,8 @@ pub async fn rebuild_tables(from: &Path, into: &MemoryDB) -> Result<Rebuilt, Wen
 }
 
 /// Rebuilds every part the export folder `from` holds into `into` (a
-/// fresh database): file rows first, then whole tables and history, then
-/// the state seeds on the file rows.
+/// fresh database): whole tables and history, then the file rows, then the
+/// state seeds on the file rows.
 pub async fn rebuild(from: &Path, into: &MemoryDB) -> Result<Rebuilt, WenlanError> {
     let manifest = read_manifest(from)?;
     if manifest.format != crate::store::export::EXPORT_FORMAT {
@@ -171,9 +175,15 @@ pub async fn rebuild(from: &Path, into: &MemoryDB) -> Result<Rebuilt, WenlanErro
         )));
     }
     let mut problems = Vec::new();
+    // Settings first: Brief rows name their space.
+    let mut rebuilt = rebuild_tables(from, into).await?;
     let pages = pages::rebuild_pages(from, &manifest, into, &mut problems).await?;
     let memories = memories::rebuild_memories(from, &manifest, into, &mut problems).await?;
-    let mut rebuilt = rebuild_tables(from, into).await?;
+    let (briefs, items) = briefs::rebuild_briefs(from, &manifest, into, &mut problems).await?;
+    let canvases = canvases::rebuild_canvases(from, &manifest, into, &mut problems).await?;
+    rebuilt.tables.insert("briefs".to_string(), briefs);
+    rebuilt.tables.insert("brief_items".to_string(), items);
+    rebuilt.tables.insert("page_maps".to_string(), canvases);
     rebuilt.tables.insert("pages".to_string(), pages);
     rebuilt.tables.insert("memories".to_string(), memories.rows);
     rebuilt
@@ -213,8 +223,8 @@ fn read_manifest(from: &Path) -> Result<crate::store::export::Manifest, WenlanEr
 }
 
 /// Exports `rebuilt` into `out` the way `first` was laid out: each page in
-/// the folder `first` put it, artifacts and layout read from `first`'s
-/// backstage. With [`compare_exports`], the fixpoint check:
+/// the folder `first` put it, with the layout and artifact files `first`
+/// copied. With [`compare_exports`], the fixpoint check:
 /// export(rebuild(export(db))) == export(db).
 pub async fn export_again(
     rebuilt: &MemoryDB,
@@ -236,9 +246,29 @@ pub async fn export_again(
             recorded.insert(file.id.clone(), path);
         }
     }
+    // A data folder holding only what the first export copied from one:
+    // the palace layout and artifact files. (`backstage/layout/` also holds
+    // canvases the export wrote itself, which must not be copied again.)
+    let data_root = tempfile::tempdir()?;
+    for file in &manifest.files {
+        let inner = match file.file_type.as_str() {
+            "layout" => file
+                .path
+                .strip_prefix("backstage/layout/")
+                .map(|rest| format!("layout/{rest}")),
+            "artifact" => file.path.strip_prefix("backstage/").map(str::to_string),
+            _ => None,
+        };
+        if let Some(inner) = inner {
+            let target = data_root.path().join(&inner);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(first.join(&file.path), target)?;
+        }
+    }
     let folder = crate::store::export::run::PagesFolder::recorded(recorded);
-    crate::store::export::run::export_lossless(rebuilt, &folder, &first.join("backstage"), out)
-        .await
+    crate::store::export::run::export_lossless(rebuilt, &folder, data_root.path(), out).await
 }
 
 /// Compares two exports' manifests file by file (path and digest).
