@@ -86,7 +86,7 @@ impl Locator {
         Locator::Other(text.to_string())
     }
 
-    fn render(&self) -> String {
+    pub(crate) fn render(&self) -> String {
         match self {
             Locator::Wenlan { id, version } => format!("wenlan:{id}@{version}"),
             Locator::Other(text) => text.clone(),

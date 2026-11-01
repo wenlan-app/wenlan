@@ -46,6 +46,7 @@ pub(crate) use genesis_schema::GENESIS_SUBSTRATE_DDL;
 mod activity_counts;
 mod agent_presence;
 mod code_basis;
+pub(crate) mod export_reads;
 mod kg_quality_diagnostics;
 mod kg_quality_duplicate_candidates;
 mod kg_quality_embedding_refresh;

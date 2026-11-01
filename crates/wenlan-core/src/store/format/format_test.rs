@@ -376,6 +376,7 @@ fn every_entity_reads_back_unchanged() {
     let mut gen = Gen(13);
     for round in 0..1000 {
         let mut entity = EntityFile::new(format!("ent_{}", gen.next()), one_line(&mut gen));
+        entity.page = gen.chance().then(|| format!("page_{}", gen.next()));
         entity.entity_type = maybe(&mut gen);
         entity.aliases = (0..gen.next() % 3).map(|_| one_line(&mut gen)).collect();
         entity.confirmed = gen.chance();
