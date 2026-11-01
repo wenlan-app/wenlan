@@ -8,19 +8,17 @@ const copies = [
   { locale: "en", open: "Open Fixture architecture", editor: "Page editor", actions: "Page actions", info: "Page info", map: "Mind map", note: "Page", close: "Close", pane: "Page views", toggle: "Open page sidebar", untoggle: "Close page sidebar" },
 ] as const;
 
-async function expectDocumentToolsAligned(page: Page, actionsName: string): Promise<void> {
+async function expectDocumentToolsAligned(page: Page, actionsName: string, toggleName: string): Promise<void> {
   const actions = page.getByRole("button", { name: actionsName, exact: true });
   await expect(actions).toBeInViewport();
-  // The matching H1 is rendered by the writing editor; other documents use
-  // the outer title. Both place the overflow trigger alongside that title.
-  const title = page.locator(
-    ".page-detail-title:visible, .page-document-editor--title .cm-content > .cm-line:first-child",
-  );
-  await expect(title).toHaveCount(1);
-  const titleBox = (await title.boundingBox())!;
+  // Page actions sit in the top bar, just left of the page sidebar toggle,
+  // so the title line holds only the title.
+  await expect(page.locator(".note-group-document-tools").getByRole("button", { name: actionsName, exact: true })).toBeVisible();
+  const toggle = page.getByRole("button", { name: toggleName, exact: true });
   const actionsBox = (await actions.boundingBox())!;
-  expect(Math.abs(actionsBox.y - titleBox.y)).toBeLessThanOrEqual(12);
-  expect(actionsBox.x).toBeGreaterThan(titleBox.x);
+  const toggleBox = (await toggle.boundingBox())!;
+  expect(Math.abs(actionsBox.y + actionsBox.height / 2 - (toggleBox.y + toggleBox.height / 2))).toBeLessThanOrEqual(1);
+  expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(toggleBox.x + 1);
   expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(
     await page.evaluate(() => innerWidth),
   );
@@ -42,7 +40,7 @@ for (const copy of copies) for (const width of [1280, 375]) {
     }
     await expect(page.locator(".page-detail-top-row, .page-detail-view-controls, .page-detail-canvas-toggle")).toHaveCount(0);
     await expect(page.getByRole("tab", { name: copy.map, exact: true })).toHaveCount(0);
-    await expectDocumentToolsAligned(page, copy.actions);
+    await expectDocumentToolsAligned(page, copy.actions, copy.toggle);
     await page.screenshot({ path: testInfo.outputPath("note-title-tools.png") });
 
     await openPageTool(page, copy.info, copy.actions);

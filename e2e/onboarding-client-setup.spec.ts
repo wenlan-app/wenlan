@@ -37,7 +37,7 @@ for (const locale of cases) for (const width of [1440, 375]) {
     // The example opens the app itself, as a separate wiki with its own line at the foot.
     await expect(page.getByTestId('example-wiki-banner')).toBeVisible();
     expect(completed).toBe(true);
-    await expect(page.locator('main').getByText('v2 launch plan', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('main').getByText('v2 launch plan', { exact: true }).filter({ visible: true }).first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath('example-wiki.png'), fullPage: true, animations: 'disabled' });
     await page.getByTestId('example-wiki-start').click();
@@ -120,7 +120,7 @@ test('See example saves the right group\'s unsaved draft first, creates nothing 
   await expect(right).toHaveCount(0);
   await expect(left.getByRole('tab')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'New page', exact: true })).toHaveCount(0);
-  await expect(page.locator('main').getByText('v2 launch plan', { exact: true }).first()).toBeVisible();
+  await expect(page.locator('main').getByText('v2 launch plan', { exact: true }).filter({ visible: true }).first()).toBeVisible();
   const draftsInExample = runtime.calls().filter(call => call.command === 'create_page_draft').length;
   await page.getByTestId('example-wiki-back').click();
   await expect(page.getByTestId('example-wiki-banner')).toHaveCount(0);
