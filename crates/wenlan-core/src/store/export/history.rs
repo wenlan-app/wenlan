@@ -288,9 +288,9 @@ fn birth_kinds(
     }
     births
         .iter()
-        .map(|(id, (kind, user_edited))| {
-            let birth = if kind != "authored" {
-                kind.clone()
+        .map(|(id, (creation_kind, user_edited))| {
+            let birth = if creation_kind != "authored" {
+                creation_kind.clone()
             } else if !user_edited {
                 "agent_authored".to_string()
             } else if person_later.contains(id) {
