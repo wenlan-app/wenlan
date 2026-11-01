@@ -699,6 +699,14 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/reject`, {}),
   revert_page_sentences: (a) =>
     post(`/api/pages/${enc(a.pageId)}/sentences/revert`, { version: a.version }),
+  flag_page_sentence: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/flag`, {
+      sentence_hash: a.sentenceHash,
+      ...(a.askAi ? { ask_ai: true } : {}),
+      ...(a.why ? { why: a.why } : {}),
+    }),
+  recheck_page_sentence: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/recheck`, { sentence_hash: a.sentenceHash }),
   get_source_annotation: (a) => get(`/api/source-annotations${qs({
     source: a?.source,
     source_id: a?.sourceId,

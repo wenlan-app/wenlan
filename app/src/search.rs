@@ -5465,6 +5465,30 @@ pub async fn revert_page_sentences(
 }
 
 #[tauri::command]
+pub async fn flag_page_sentence(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    sentence_hash: String,
+    ask_ai: bool,
+    why: Option<String>,
+) -> Result<wenlan_types::authorship::SentenceFlagResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client
+        .flag_page_sentence(&page_id, &sentence_hash, ask_ai, why)
+        .await
+}
+
+#[tauri::command]
+pub async fn recheck_page_sentence(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    sentence_hash: String,
+) -> Result<wenlan_types::authorship::SentenceRecheckResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.recheck_page_sentence(&page_id, &sentence_hash).await
+}
+
+#[tauri::command]
 pub async fn mark_page_basis(
     state: tauri::State<'_, State>,
     page_id: String,

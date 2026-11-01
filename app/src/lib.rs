@@ -1847,6 +1847,8 @@ pub fn run() {
             search::accept_sentence_proposal,
             search::reject_sentence_proposal,
             search::revert_page_sentences,
+            search::flag_page_sentence,
+            search::recheck_page_sentence,
             search::mark_page_basis,
             search::unmark_page_basis,
             search::confirm_page_basis,
