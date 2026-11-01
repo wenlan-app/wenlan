@@ -218,6 +218,7 @@ fn page(id: &str) -> Page {
         relevance_score: 0.0,
         last_edited_by: None,
         last_edited_at: None,
+        human_edited_at: None,
         last_delta_summary: Some("what changed last time".to_string()),
         changelog: Some("[]".to_string()),
         workspace: None,

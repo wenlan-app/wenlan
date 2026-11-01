@@ -30,8 +30,9 @@ use wenlan_types::authorship::{
     PageSentencesResponse, SentenceAcceptResponse, SentenceAuthor, SentenceAuthorship,
     SentenceCitation, SentenceFlagResponse, SentenceProposal, SentenceProposalStatus,
     SentenceRecheckResponse, WeakReason, OP_SENTENCE_ACCEPT, OP_SENTENCE_FLAG, OP_SENTENCE_PROPOSE,
-    OP_SENTENCE_REJECT,
+    OP_SENTENCE_REJECT, OP_SENTENCE_REVERT,
 };
+use wenlan_types::authorship::{LastAiUpdate, SentenceRevertResponse};
 use wenlan_types::pages::PageCitation;
 
 use crate::authorship::{self, GatePlan, SentenceUnit, VersionText};
@@ -139,15 +140,32 @@ pub async fn page_authorship(
         });
     }
     let mut accepted: HashMap<i64, HashSet<String>> = HashMap::new();
+    let mut restored: HashMap<i64, HashSet<String>> = HashMap::new();
     for entry in db.list_sentence_history("page", &page.id).await? {
-        if entry.op != OP_SENTENCE_ACCEPT {
+        let Some(version) = entry.version else {
             continue;
-        }
-        if let (Some(version), Some(hash)) = (entry.version, str_field(&entry, "accepted_hash")) {
-            accepted
-                .entry(version)
-                .or_default()
-                .insert(hash.to_string());
+        };
+        match entry.op.as_str() {
+            OP_SENTENCE_ACCEPT => {
+                if let Some(hash) = str_field(&entry, "accepted_hash") {
+                    accepted
+                        .entry(version)
+                        .or_default()
+                        .insert(hash.to_string());
+                }
+            }
+            OP_SENTENCE_REVERT => {
+                let hashes = entry
+                    .data
+                    .get("restored_hashes")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string);
+                restored.entry(version).or_default().extend(hashes);
+            }
+            _ => {}
         }
     }
     Ok(authorship::derive_authorship(
@@ -155,6 +173,7 @@ pub async fn page_authorship(
         birth_kind(page, &history),
         &versions,
         &accepted,
+        &restored,
         truncated,
     ))
 }
@@ -818,12 +837,276 @@ pub async fn page_sentences(
             }
         })
         .collect();
+    let last_ai_update = last_ai_update(db, &page).await?;
     Ok(PageSentencesResponse {
         page_id: page.id,
         version: page.version,
         ai_edits: mode,
         sentences,
         proposals: pending,
+        last_ai_update,
+    })
+}
+
+/// Is this history version an AI write (not the person's, not a mechanical
+/// rewrite, not unknown)?
+fn is_ai_write(
+    entry: &crate::db::PageHistoryEntry,
+    page: &Page,
+    history: &[crate::db::PageHistoryEntry],
+) -> bool {
+    authorship::version_author(&entry.edited_by, birth_kind(page, history))
+        == authorship::VersionAuthor::Ai
+}
+
+/// The page's newest AI write in its recorded history.
+async fn last_ai_update(db: &MemoryDB, page: &Page) -> Result<Option<LastAiUpdate>, WenlanError> {
+    let history = db.list_page_history(&page.id, HISTORY_LIMIT).await?;
+    let Some(at) = history
+        .iter()
+        .position(|entry| is_ai_write(entry, page, &history))
+    else {
+        return Ok(None);
+    };
+    let before = history
+        .get(at + 1)
+        .map_or("", |entry| entry.content.as_str());
+    let changes = authorship::sentence_changes(before, &history[at].content);
+    Ok(Some(LastAiUpdate {
+        version: history[at].version,
+        changed_sentences: u32::try_from(changes.len()).unwrap_or(u32::MAX),
+        at: history[at].created_at,
+        changes,
+    }))
+}
+
+/// One text edit of a revert, on byte ranges of the current body.
+struct RevertEdit {
+    start: usize,
+    end: usize,
+    text: String,
+}
+
+/// The byte range `body_with` removes for a deleted unit.
+fn removal_range(content: &str, unit: &SentenceUnit) -> (usize, usize) {
+    if unit.whole_line {
+        let start = content[..unit.start].rfind('\n').map_or(0, |i| i + 1);
+        let end = content[unit.end..]
+            .find('\n')
+            .map_or(content.len(), |i| unit.end + i + 1);
+        (start, end)
+    } else {
+        let rest = &content[unit.end..];
+        let trailing = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        (unit.start, unit.end + trailing)
+    }
+}
+
+/// The person undoes the sentence changes one AI write made. Only the
+/// sentences that write added or changed, and that nobody touched since, go
+/// back to how they read before it; a sentence it removed comes back after
+/// the sentence it followed. The undo lands as the person's write, but the
+/// sentences it puts back keep the author they had before (the AI's), so
+/// undoing never makes text "yours".
+pub async fn revert_ai_write(
+    db: &MemoryDB,
+    page_id: &str,
+    version: i64,
+    knowledge_path: Option<&std::path::Path>,
+) -> Result<SentenceRevertResponse, WenlanError> {
+    let page = load_page(db, page_id).await?;
+    let history = db.list_page_history(page_id, HISTORY_LIMIT).await?;
+    let Some(at) = history.iter().position(|entry| entry.version == version) else {
+        let truncated = i64::try_from(history.len()).unwrap_or(i64::MAX) >= HISTORY_LIMIT;
+        let oldest = history.last().map_or(0, |entry| entry.version);
+        if truncated && version < oldest {
+            return Err(WenlanError::Validation(format!(
+                "version_out_of_window: v{version} is older than the page history kept for undo"
+            )));
+        }
+        return Err(WenlanError::NotFound(format!(
+            "page {page_id} has no version {version}"
+        )));
+    };
+    if !is_ai_write(&history[at], &page, &history) {
+        return Err(WenlanError::Conflict(format!(
+            "not_an_ai_write: v{version} was written by {}, not the AI",
+            history[at].edited_by
+        )));
+    }
+    let before_text = history
+        .get(at + 1)
+        .map_or("", |entry| entry.content.as_str());
+    let before = authorship::sentence_units(before_text);
+    let written = authorship::sentence_units(&history[at].content);
+    let ops = authorship::align(
+        &before.iter().map(|u| u.norm.as_str()).collect::<Vec<_>>(),
+        &written.iter().map(|u| u.norm.as_str()).collect::<Vec<_>>(),
+    );
+
+    let current = authorship::sentence_units(&page.content);
+    let rows = page_authorship(db, &page).await?;
+    // A sentence that write made, still exactly as it made it.
+    let untouched = |hash: &str| {
+        current.iter().zip(&rows).position(|(unit, row)| {
+            unit.hash == hash && row.since_version == version && row.author == SentenceAuthor::Ai
+        })
+    };
+
+    let mut edits: Vec<RevertEdit> = Vec::new();
+    let mut restored: Vec<String> = Vec::new();
+    let (mut reverted, mut skipped) = (0u32, 0u32);
+    // The current unit the last sentence of the write's body maps to.
+    let mut anchor: Option<usize> = None;
+    let mut anchor_seen = false;
+    for op in &ops {
+        match *op {
+            authorship::AlignOp::Equal(_, n) => {
+                anchor = current.iter().position(|u| u.hash == written[n].hash);
+                anchor_seen = true;
+            }
+            authorship::AlignOp::Replace(o, n) => match untouched(&written[n].hash) {
+                Some(idx) => {
+                    let text = crate::citations::strip_markers(&before[o].text);
+                    edits.push(RevertEdit {
+                        start: current[idx].start,
+                        end: current[idx].end,
+                        text: text.trim().to_string(),
+                    });
+                    restored.push(before[o].hash.clone());
+                    reverted += 1;
+                    anchor = Some(idx);
+                    anchor_seen = true;
+                }
+                None => {
+                    skipped += 1;
+                    anchor = current.iter().position(|u| u.hash == written[n].hash);
+                    anchor_seen = true;
+                }
+            },
+            authorship::AlignOp::Insert(n) => match untouched(&written[n].hash) {
+                Some(idx) => {
+                    let (start, end) = removal_range(&page.content, &current[idx]);
+                    edits.push(RevertEdit {
+                        start,
+                        end,
+                        text: String::new(),
+                    });
+                    reverted += 1;
+                }
+                None => {
+                    skipped += 1;
+                    anchor = current.iter().position(|u| u.hash == written[n].hash);
+                    anchor_seen = true;
+                }
+            },
+            authorship::AlignOp::Delete(o) => {
+                let unit = &before[o];
+                if current.iter().any(|u| u.norm == unit.norm) {
+                    continue;
+                }
+                let text = crate::citations::strip_markers(&unit.text);
+                let text = text.trim();
+                let separator = if unit.blank_before { "\n\n" } else { "\n" };
+                let insertion = match (anchor, anchor_seen, unit.whole_line) {
+                    (Some(idx), _, true) => {
+                        let end = current[idx].end;
+                        let line_end = page.content[end..]
+                            .find('\n')
+                            .map_or(page.content.len(), |i| end + i);
+                        (line_end, format!("{separator}{text}"))
+                    }
+                    (Some(idx), _, false) => (current[idx].end, format!(" {text}")),
+                    (None, false, true) => (0, format!("{text}{separator}")),
+                    (None, false, false) => (0, format!("{text} ")),
+                    // The sentence it followed is gone: nowhere to put it.
+                    (None, true, _) => {
+                        skipped += 1;
+                        continue;
+                    }
+                };
+                edits.push(RevertEdit {
+                    start: insertion.0,
+                    end: insertion.0,
+                    text: insertion.1,
+                });
+                restored.push(unit.hash.clone());
+                reverted += 1;
+            }
+        }
+    }
+    if edits.is_empty() {
+        return Ok(SentenceRevertResponse {
+            page_id: page.id,
+            version: page.version,
+            reverted: 0,
+            skipped,
+        });
+    }
+    // Apply back to front so earlier ranges stay valid; an insertion at the
+    // same place as a replacement goes after it.
+    edits.sort_by(|a, b| b.start.cmp(&a.start).then(b.end.cmp(&a.end)));
+    let mut content = page.content.clone();
+    for edit in &edits {
+        content.replace_range(edit.start..edit.end, &edit.text);
+    }
+    if content.trim().is_empty() {
+        return Err(WenlanError::Validation(
+            "undoing this AI write would leave the page empty".into(),
+        ));
+    }
+    let result = crate::post_write::page_write(
+        db,
+        crate::post_write::PageWrite::UpdatePreservingSources {
+            page_id,
+            req: wenlan_types::requests::UpdatePageRequest {
+                content,
+                source_memory_ids: vec![],
+                expected_version: Some(page.version),
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "manual_edit",
+            knowledge_path,
+            basis: crate::db::BasisWrite {
+                actor: "human".to_string(),
+                ..crate::db::BasisWrite::default()
+            },
+        },
+    )
+    .await?;
+    if result.outcome != crate::post_write::WriteOutcome::Wrote {
+        return Err(WenlanError::Conflict(format!(
+            "the undo of v{version} was not applied: {}",
+            result.warnings.join("; ")
+        )));
+    }
+    let new_version = load_page(db, page_id).await?.version;
+    let data = serde_json::json!({
+        "reverted_version": version,
+        "restored_hashes": restored,
+        "reverted": reverted,
+        "skipped": skipped,
+    });
+    db.append_sentence_history(NewHistoryEntry {
+        ts: chrono::Utc::now().timestamp(),
+        tx: &format!("tx_{}", uuid::Uuid::new_v4().simple()),
+        actor: &person(),
+        op: OP_SENTENCE_REVERT,
+        target: &page_target(page_id),
+        version: Some(new_version),
+        why: None,
+        text: None,
+        digest_before: None,
+        digest_after: None,
+        data: &data,
+    })
+    .await?;
+    Ok(SentenceRevertResponse {
+        page_id: page_id.to_string(),
+        version: new_version,
+        reverted,
+        skipped,
     })
 }
 

@@ -28,6 +28,23 @@ pub fn kind_of_edit(edited_by: &str) -> PageHistoryKind {
     }
 }
 
+/// How many sentences the write that produced `version` added, changed or
+/// removed against the version before it. `rows` is the page's history,
+/// newest first. `None` when `version` or the one before it is not in `rows`
+/// (the first version counts every sentence as added).
+pub fn changed_sentences_at(rows: &[PageHistoryEntry], version: i64) -> Option<u32> {
+    let at = rows.iter().position(|row| row.version == version)?;
+    let before = match rows.get(at + 1) {
+        Some(row) => row.content.as_str(),
+        None if version <= 1 => "",
+        None => return None,
+    };
+    Some(crate::authorship::changed_sentence_count(
+        before,
+        &rows[at].content,
+    ))
+}
+
 fn texts_by_version(rows: &[PageHistoryEntry]) -> HashMap<i64, &str> {
     rows.iter()
         .map(|row| (row.version, row.content.as_str()))
@@ -68,9 +85,11 @@ pub async fn build_page_history(
     visible_bases: &HashSet<String>,
     include_text: bool,
 ) -> Result<Vec<PageHistoryItem>, WenlanError> {
+    let own = db.list_page_history(page_id, HISTORY_SCAN).await?;
     let mut items: Vec<PageHistoryItem> = entries
         .iter()
         .map(|entry| PageHistoryItem {
+            changed_sentences: changed_sentences_at(&own, entry.version),
             kind: kind_of_edit(&entry.edited_by),
             at: entry.at,
             version: Some(entry.version),
@@ -123,6 +142,7 @@ pub async fn build_page_history(
                     pending: row.version > basis.confirmed_version,
                     text: include_text.then(|| row.content.clone()),
                 }),
+                changed_sentences: None,
             });
         }
     }

@@ -56,6 +56,12 @@ pub struct Page {
     pub last_edited_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_edited_at: Option<i64>,
+    /// When the person last edited the page (their own save, a vault edit, a
+    /// restore, an accepted sentence, an undo), unix seconds, from the
+    /// changelog's recent entries. `None` when no recent edit is theirs, so
+    /// "Recently edited" can leave out pages only the AI touched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_edited_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_delta_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

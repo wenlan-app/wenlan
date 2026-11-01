@@ -15,7 +15,7 @@ use wenlan_core::db::MemoryDB;
 use wenlan_types::authorship::{
     AiEditMode, PageSentencesResponse, SentenceAcceptResponse, SentenceAuthor,
     SentenceFlagResponse, SentenceProposalResponse, SentenceProposalStatus,
-    SentenceRecheckResponse,
+    SentenceRecheckResponse, SentenceRevertResponse,
 };
 
 /// Every test points `WENLAN_DATA_DIR` (and so the knowledge path and
@@ -523,4 +523,86 @@ async fn the_page_lock_is_the_only_ai_change_setting() {
     let (status, body) = call(&router, Method::GET, "/api/config", None, Caller::Person).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.get("ai_direct_edit").is_none(), "{body}");
+}
+
+#[tokio::test]
+async fn the_person_undoes_one_ai_write_and_an_agent_cannot() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let id = page_with_my_line(&router, &db).await;
+    let version = db.get_page(&id).await.unwrap().unwrap().version;
+    let rewrite = format!(
+        "Tokio runs async tasks on a pooled runtime.\n\n\
+         The runtime uses a work-stealing scheduler.\n\n{MY_LINE}"
+    );
+    let (status, body) = call(
+        &router,
+        Method::PUT,
+        &format!("/api/pages/{id}"),
+        Some(json!({
+            "content": rewrite,
+            "source_memory_ids": SOURCES,
+            "expected_version": version,
+        })),
+        Caller::Agent("refresh-agent"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let view = sentences(&router, &id).await;
+    let last = view
+        .last_ai_update
+        .expect("the agent's write is the last AI write");
+    assert_eq!(last.changed_sentences, 1);
+
+    let revert = format!("/api/pages/{id}/sentences/revert");
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &revert,
+        Some(json!({ "version": last.version })),
+        Caller::Agent("x"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "only the person undoes"
+    );
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &revert,
+        Some(json!({ "version": last.version })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let undone: SentenceRevertResponse = typed(body);
+    assert_eq!((undone.reverted, undone.skipped), (1, 0));
+    let page = db.get_page(&id).await.unwrap().unwrap();
+    assert!(page
+        .content
+        .starts_with("Tokio runs async tasks on a runtime."));
+    assert!(page.human_edited_at.is_some());
+
+    // The undo itself is the person's write, not an AI write.
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &revert,
+        Some(json!({ "version": undone.version })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &revert,
+        Some(json!({ "version": 9999 })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

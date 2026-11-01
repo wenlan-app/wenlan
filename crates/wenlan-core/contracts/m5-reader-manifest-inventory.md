@@ -683,6 +683,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/pages/{id}/sentences/proposals/{proposal_id}/accept` | main | yes | automatic | `none` | `handle_accept_sentence_proposal` | SentenceProposal.before, SentenceProposal.after: require_visible_page under the mutation grant |
 | `POST` | `/api/pages/{id}/sentences/proposals/{proposal_id}/reject` | main | yes | automatic | `none` | `handle_reject_sentence_proposal` | SentenceProposal.before, SentenceProposal.after: require_visible_page under the mutation grant |
 | `POST` | `/api/pages/{id}/sentences/flag` | main | no | not_applicable | `none` | — | receipt only: page id, version, sentence hash and history seq, no prose |
+| `POST` | `/api/pages/{id}/sentences/revert` | main | no | not_applicable | `none` | — | receipt only: page id, new version, reverted and skipped counts, no prose |
 | `POST` | `/api/pages/{id}/sentences/recheck` | main | yes | automatic | `none` | `handle_recheck_sentence` | PageSentence.text: require_visible_page under the truth view before the recheck reads it |
 | `POST` | `/api/pages/code-basis/recheck` | main | yes | automatic | `none` | `handle_code_basis_recheck` | CodeBasisRecheckEntry.title: visible_ids filter on the notes |
 | `POST` | `/api/pages/{id}/code-basis/cited` | main | no | not_applicable | `none` | — | git blob id of the cited file, read from the stored row: no note prose; require_page_visible before the read |
@@ -1453,7 +1454,7 @@ carrying the authority of agreement.
 | `server/routes.rs::handle_recent_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_pages_with_badges_scoped` |
 | `server/routes.rs::handle_search_inner` | `private` | no | no | `server/routes.rs::handle_search` | `core/db.rs::search_memory` |
 | `server/scheduler.rs::fire_maintenance_stage_safe` | `private` | no | no | `server/scheduler.rs::spawn_scheduler` | `core/maintenance.rs::run_maintenance_stage_slice` |
-| `server/sentence_routes.rs::require_visible_page` | `private` | no | no | `server/sentence_routes.rs::handle_accept_sentence_proposal`, `server/sentence_routes.rs::handle_flag_sentence`, `server/sentence_routes.rs::handle_get_page_sentences`, `server/sentence_routes.rs::handle_propose_sentence`, `server/sentence_routes.rs::handle_recheck_sentence`, `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/db.rs::get_page` |
+| `server/sentence_routes.rs::require_visible_page` | `private` | no | no | `server/sentence_routes.rs::handle_accept_sentence_proposal`, `server/sentence_routes.rs::handle_flag_sentence`, `server/sentence_routes.rs::handle_get_page_sentences`, `server/sentence_routes.rs::handle_propose_sentence`, `server/sentence_routes.rs::handle_recheck_sentence`, `server/sentence_routes.rs::handle_reject_sentence_proposal`, `server/sentence_routes.rs::handle_revert_sentences` | `core/db.rs::get_page` |
 | `server/steep_new_routes.rs::handle_steep_new_commit` | `pub` | no | no | — | `core/db.rs::get_page`, `core/onboarding.rs::check_first_page`, `core/steep_new.rs::commit_new` |
 | `server/steep_new_routes.rs::handle_steep_new_list` | `pub` | no | no | — | `core/steep_new.rs::list_new` |
 | `server/steep_routes.rs::handle_steep_commit` | `pub` | no | no | — | `core/db.rs::get_page` |
@@ -1554,6 +1555,7 @@ carrying the authority of agreement.
 | `core/sentences.rs::propose_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_propose_sentence` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::recheck_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_recheck_sentence` | `core/db/sentence_history.rs::set_page_citations_at_page_version`, `core/sentences.rs::load_page`, `core/sentences.rs::source_states` |
 | `core/sentences.rs::reject_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/sentences.rs::load_page` |
+| `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
 | `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep.rs::claim` | `pub` | yes | no | — | `core/steep.rs::claim_as` |
@@ -1606,6 +1608,7 @@ carrying the authority of agreement.
 | `server/sentence_routes.rs::handle_propose_sentence` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_recheck_sentence` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
+| `server/sentence_routes.rs::handle_revert_sentences` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/source_routes.rs::sync_directory_source` | `pub(crate)` | no | no | `server/scheduler.rs::sync_directory_sources_in_scope`, `server/source_routes.rs::handle_sync_source` | `core/db.rs::rebind_source_id_with_source_page` |
 | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `pub(super)` | no | no | `server/source_routes/okf_sync.rs::sync_okf_source` | `core/db.rs::rebind_source_id_with_source_page`, `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |
 | `server/steep_new_routes.rs::handle_steep_new_claim` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
