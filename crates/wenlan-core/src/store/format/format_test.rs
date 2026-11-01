@@ -275,3 +275,235 @@ fn every_page_wenlan_can_write_reads_back_unchanged() {
         assert_eq!(page::render(&read), text, "round {round}: render is stable");
     }
 }
+
+use super::brief::{self, BriefFile, BriefItem};
+use super::entity::{self, EntityFile};
+use super::memory::{self, MemoryFile};
+use super::original::{self, Message, OriginalFile};
+
+fn maybe(gen: &mut Gen) -> Option<String> {
+    gen.chance().then(|| gen.pick(WORDS).to_string())
+}
+
+fn person_keys(gen: &mut Gen) -> serde_yaml::Mapping {
+    let mut other = serde_yaml::Mapping::new();
+    if gen.chance() {
+        other.insert("rating".into(), serde_yaml::Value::Number(4.into()));
+        other.insert("note".into(), gen.pick(WORDS).into());
+    }
+    other
+}
+
+/// One line, no line end at the end: the shape the formats keep exactly.
+fn one_line(gen: &mut Gen) -> String {
+    gen.pick(WORDS).to_string()
+}
+
+#[test]
+fn a_memory_file_reads_back_as_written() {
+    let mut memory = MemoryFile::new("mem_1", "Prefers window seats.");
+    memory.kind = Some("preference".to_string());
+    memory.space = Some("Travel".to_string());
+    memory.agent = Some("claude-code".to_string());
+    memory.created = Some("2026-11-01T10:00:00Z".to_string());
+    memory.pinned = true;
+    memory.importance = Some(7);
+    memory.about = vec!["Lufthansa".to_string()];
+    let text = memory::render(&memory);
+    assert_eq!(
+        text,
+        "---
+id: mem_1
+type: memory
+kind: preference
+space: Travel
+agent: claude-code
+created: 2026-11-01T10:00:00Z
+pinned: true
+importance: 7
+about:
+- '[[Lufthansa]]'
+---
+
+Prefers window seats.
+"
+    );
+    assert_eq!(memory::parse(&text).unwrap(), memory);
+    assert!(memory::parse("---\ntype: memory\n---\nno id\n").is_err());
+    assert!(memory::parse("---\nid: x\ntype: page\n---\n").is_err());
+}
+
+#[test]
+fn every_memory_reads_back_unchanged() {
+    let mut gen = Gen(11);
+    for round in 0..1000 {
+        let mut memory = MemoryFile::new(format!("mem_{}", gen.next()), text_block(&mut gen));
+        memory.kind = maybe(&mut gen);
+        memory.space = maybe(&mut gen);
+        memory.agent = maybe(&mut gen);
+        memory.created = maybe(&mut gen);
+        memory.pinned = gen.chance();
+        memory.confirmed = gen.chance();
+        memory.supersedes = maybe(&mut gen);
+        memory.supersede_mode = maybe(&mut gen);
+        memory.episode_of = maybe(&mut gen);
+        memory.event_date = maybe(&mut gen);
+        memory.importance = gen.chance().then(|| (gen.next() % 11) as i64);
+        memory.about = (0..gen.next() % 3).map(|_| one_line(&mut gen)).collect();
+        memory.other = person_keys(&mut gen);
+        let text = memory::render(&memory);
+        let read = memory::parse(&text).unwrap_or_else(|error| panic!("{round}: {error}\n{text}"));
+        assert_eq!(read, memory, "round {round}:\n{text}");
+        assert_eq!(memory::render(&read), text, "round {round}");
+    }
+}
+
+#[test]
+fn every_entity_reads_back_unchanged() {
+    let mut gen = Gen(13);
+    for round in 0..1000 {
+        let mut entity = EntityFile::new(format!("ent_{}", gen.next()), one_line(&mut gen));
+        entity.entity_type = maybe(&mut gen);
+        entity.aliases = (0..gen.next() % 3).map(|_| one_line(&mut gen)).collect();
+        entity.confirmed = gen.chance();
+        entity.established_by = maybe(&mut gen);
+        entity.space = maybe(&mut gen);
+        entity.other = person_keys(&mut gen);
+        entity.description = text_block(&mut gen);
+        let text = entity::render(&entity);
+        let read = entity::parse(&text).unwrap_or_else(|error| panic!("{round}: {error}\n{text}"));
+        assert_eq!(read, entity, "round {round}:\n{text}");
+        assert_eq!(entity::render(&read), text, "round {round}");
+    }
+}
+
+#[test]
+fn a_brief_reads_as_a_checklist() {
+    let brief = BriefFile {
+        id: "brief_1".to_string(),
+        space: "Work".to_string(),
+        version: 7,
+        other: serde_yaml::Mapping::new(),
+        summary: "Left off at the export.".to_string(),
+        active: vec![BriefItem {
+            id: "item_1".to_string(),
+            text: "Ship the export".to_string(),
+            added: 1_793_491_200,
+            version: 3,
+            gate: None,
+        }],
+        backlog: vec![BriefItem {
+            id: "item_2".to_string(),
+            text: "Try <the> new --> parser\nnext week".to_string(),
+            added: 1_793_491_300,
+            version: 5,
+            gate: Some("after the export".to_string()),
+        }],
+    };
+    let text = brief::render(&brief);
+    assert!(text.contains(
+        "## Active\n- [ ] Ship the export <!-- wenlan {\"id\":\"item_1\",\"added\":1793491200,\"version\":3} -->\n"
+    ), "{text}");
+    assert!(
+        text.contains("- [ ] Try <the> new --> parser next week <!-- wenlan "),
+        "{text}"
+    );
+    assert_eq!(
+        text.matches("-->").count(),
+        3,
+        "only the item comments close: {text}"
+    );
+    assert_eq!(brief::parse(&text).unwrap(), brief);
+}
+
+#[test]
+fn every_brief_reads_back_unchanged() {
+    let mut gen = Gen(17);
+    let item = |gen: &mut Gen| BriefItem {
+        id: format!("item_{}", gen.next()),
+        text: if gen.chance() {
+            text_block(gen)
+        } else {
+            one_line(gen)
+        },
+        added: gen.next() as i64,
+        version: (gen.next() % 9) as i64,
+        gate: maybe(gen),
+    };
+    for round in 0..1000 {
+        let brief = BriefFile {
+            id: format!("brief_{}", gen.next()),
+            space: one_line(&mut gen),
+            version: (gen.next() % 50) as i64,
+            other: person_keys(&mut gen),
+            summary: text_block(&mut gen),
+            active: (0..gen.next() % 3).map(|_| item(&mut gen)).collect(),
+            backlog: (0..gen.next() % 3).map(|_| item(&mut gen)).collect(),
+        };
+        let text = brief::render(&brief);
+        let read = brief::parse(&text).unwrap_or_else(|error| panic!("{round}: {error}\n{text}"));
+        assert_eq!(read, brief, "round {round}:\n{text}");
+        assert_eq!(brief::render(&read), text, "round {round}");
+    }
+}
+
+#[test]
+fn an_original_keeps_each_message_and_a_heading_inside_one() {
+    let original = OriginalFile {
+        id: "orig_1".to_string(),
+        vendor: "chatgpt".to_string(),
+        external_id: "6720-abc".to_string(),
+        title: Some("Trip ideas".to_string()),
+        imported: Some("2026-11-01T10:00:00Z".to_string()),
+        url: Some("https://chatgpt.com/c/6720-abc".to_string()),
+        other: serde_yaml::Mapping::new(),
+        messages: vec![
+            Message {
+                role: "user".to_string(),
+                at: Some("2026-10-30T09:12:00Z".to_string()),
+                text: "Where should we go in May?".to_string(),
+            },
+            Message {
+                role: "assistant".to_string(),
+                at: None,
+                text: "## Options\n\n- Lisbon\n- Kyoto".to_string(),
+            },
+        ],
+    };
+    let text = original::render(&original);
+    assert!(text.contains("author: original\n"));
+    assert_eq!(original::parse(&text).unwrap(), original);
+    let edited = text.replace("author: original", "author: person");
+    assert!(
+        original::parse(&edited).is_err(),
+        "an original is never the person's"
+    );
+}
+
+#[test]
+fn every_original_reads_back_unchanged() {
+    let mut gen = Gen(19);
+    for round in 0..1000 {
+        let original = OriginalFile {
+            id: format!("orig_{}", gen.next()),
+            vendor: gen.pick(&["chatgpt", "claude", "gemini"]).to_string(),
+            external_id: one_line(&mut gen),
+            title: maybe(&mut gen),
+            imported: maybe(&mut gen),
+            url: maybe(&mut gen),
+            other: person_keys(&mut gen),
+            messages: (0..gen.next() % 4)
+                .map(|_| Message {
+                    role: gen.pick(&["user", "assistant", "tool"]).to_string(),
+                    at: gen.chance().then(|| "2026-10-30T09:12:00Z".to_string()),
+                    text: text_block(&mut gen),
+                })
+                .collect(),
+        };
+        let text = original::render(&original);
+        let read =
+            original::parse(&text).unwrap_or_else(|error| panic!("{round}: {error}\n{text}"));
+        assert_eq!(read, original, "round {round}:\n{text}");
+        assert_eq!(original::render(&read), text, "round {round}");
+    }
+}
