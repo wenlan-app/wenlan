@@ -392,8 +392,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // restore adds one PageWorkspace-scoped single-id route. The palace
     // layout read adds one Global reader. The sentence view, proposal,
     // accept, reject and recheck routes add five more. The in-chat
-    // decision check and its context read add two scoped readers.
-    assert_eq!(rows.len(), 97);
+    // decision check and its context read add two scoped readers, and a
+    // kept original's provenance (`/api/pages/{id}/original`) one more.
+    assert_eq!(rows.len(), 98);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -404,7 +405,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        73
+        74
     );
     assert_eq!(
         rows.iter()

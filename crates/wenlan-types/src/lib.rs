@@ -22,6 +22,7 @@ pub mod memory;
 pub mod memory_type;
 pub mod narrative;
 pub mod onboarding;
+pub mod originals;
 pub mod outbox;
 pub mod page_basis;
 pub mod page_map;

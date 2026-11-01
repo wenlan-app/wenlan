@@ -5,7 +5,8 @@
 //! section "Format details — ChatGPT" for the schema reference.
 
 use crate::chat_import::types::{
-    ChatExportParser, ImportError, MessageRole, ParsedConversation, ParsedMessage, Vendor,
+    ChatExportParser, ImportError, MessageRole, ParsedArtifact, ParsedConversation, ParsedMessage,
+    Vendor,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer};
@@ -99,10 +100,12 @@ impl ChatExportParser for ChatGptParser {
                 if raw_conv.is_do_not_remember {
                     continue;
                 }
-                let messages = walk_current_branch(&raw_conv);
+                let branch = current_branch(&raw_conv);
+                let messages = branch_messages(&branch);
                 if messages.is_empty() {
                     continue;
                 }
+                let artifacts = branch_canvases(&branch);
                 out.push(ParsedConversation {
                     external_id: raw_conv.id,
                     vendor: Vendor::ChatGpt,
@@ -110,6 +113,7 @@ impl ChatExportParser for ChatGptParser {
                     created_at: float_to_utc(raw_conv.create_time),
                     summary: None,
                     messages,
+                    artifacts,
                 });
             }
         }
@@ -319,11 +323,12 @@ fn extract_content(content: &RawChatGptContent) -> String {
 }
 
 /// Walk the parent chain from `current_node` backward through the mapping,
-/// producing messages in chronological order for the current conversation branch.
+/// producing the nodes of the current conversation branch in chronological
+/// order.
 ///
 /// ChatGPT exports use a tree structure where `current_node` identifies the
 /// leaf of the active branch. Nodes with `message: null` act as root sentinels.
-fn walk_current_branch(raw: &RawChatGptConversation) -> Vec<ParsedMessage> {
+fn current_branch(raw: &RawChatGptConversation) -> Vec<&RawChatGptNode> {
     let current_node_id = match &raw.current_node {
         Some(id) => id,
         None => return Vec::new(),
@@ -387,10 +392,13 @@ fn walk_current_branch(raw: &RawChatGptConversation) -> Vec<ParsedMessage> {
 
     // Walked backward — reverse for chronological order.
     chain.reverse();
+    chain
+}
 
-    // Convert to ParsedMessage, filtering by role and content.
+/// The branch's chat text as memory pairs, filtered by role and content.
+fn branch_messages(chain: &[&RawChatGptNode]) -> Vec<ParsedMessage> {
     let individual: Vec<ParsedMessage> = chain
-        .into_iter()
+        .iter()
         .filter_map(|node| {
             let msg = node.message.as_ref()?;
             let role = match msg.author.role.as_str() {
@@ -413,6 +421,122 @@ fn walk_current_branch(raw: &RawChatGptConversation) -> Vec<ParsedMessage> {
     super::pair_messages(individual)
 }
 
+/// The tool ChatGPT creates a canvas with, and the one it edits one with.
+const CANVAS_CREATE: &str = "canmore.create_textdoc";
+const CANVAS_UPDATE: &str = "canmore.update_textdoc";
+
+/// The canvases the assistant made on this branch, each in its final state.
+///
+/// A canvas is an assistant message addressed to `canmore.create_textdoc`
+/// whose text is JSON `{name, type, content}`; the tool's reply carries the
+/// canvas id in `metadata.canvas.textdoc_id`. Edits are messages addressed
+/// to `canmore.update_textdoc` with `{updates: [{pattern, multiple,
+/// replacement}]}` and apply to the canvas made last (ChatGPT edits the open
+/// canvas). Patterns are regular expressions; one that does not compile or
+/// match leaves the canvas as it was, so the kept file is always a state
+/// the export holds.
+fn branch_canvases(chain: &[&RawChatGptNode]) -> Vec<ParsedArtifact> {
+    let mut canvases: Vec<ParsedArtifact> = Vec::new();
+    // Index into `canvases` of the canvas whose id the next tool reply names.
+    let mut awaiting_id: Option<usize> = None;
+    for node in chain {
+        let Some(msg) = node.message.as_ref() else {
+            continue;
+        };
+        let at = float_to_utc(msg.create_time);
+        if msg.author.role == "tool" {
+            let textdoc_id = msg
+                .metadata
+                .as_ref()
+                .and_then(|m| m.pointer("/canvas/textdoc_id"))
+                .and_then(|v| v.as_str());
+            if let (Some(index), Some(id)) = (awaiting_id.take(), textdoc_id) {
+                canvases[index].id = id.to_string();
+            }
+            continue;
+        }
+        if msg.author.role != "assistant" {
+            continue;
+        }
+        let Some(payload) = message_json(&msg.content) else {
+            continue;
+        };
+        match msg.recipient.as_deref() {
+            Some(CANVAS_CREATE) => {
+                let field = |name: &str| payload.get(name).and_then(|v| v.as_str());
+                let Some(content) = field("content") else {
+                    continue;
+                };
+                let kind = field("type").unwrap_or("document").to_string();
+                let language = kind.strip_prefix("code/").map(str::to_string);
+                canvases.push(ParsedArtifact {
+                    id: node.id.clone().unwrap_or_default(),
+                    title: field("name").map(str::to_string),
+                    kind,
+                    language,
+                    content: content.to_string(),
+                    created_at: at,
+                });
+                awaiting_id = Some(canvases.len() - 1);
+            }
+            Some(CANVAS_UPDATE) => {
+                let Some(canvas) = canvases.last_mut() else {
+                    continue;
+                };
+                let updates = payload
+                    .get("updates")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let mut text = canvas.content.clone();
+                let mut applied = false;
+                for update in &updates {
+                    let pattern = update.get("pattern").and_then(|v| v.as_str());
+                    let replacement = update.get("replacement").and_then(|v| v.as_str());
+                    let (Some(pattern), Some(replacement)) = (pattern, replacement) else {
+                        continue;
+                    };
+                    let Ok(re) = regex::Regex::new(pattern) else {
+                        continue;
+                    };
+                    if !re.is_match(&text) {
+                        continue;
+                    }
+                    let multiple = update
+                        .get("multiple")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let replacement = regex::NoExpand(replacement);
+                    text = if multiple {
+                        re.replace_all(&text, replacement).into_owned()
+                    } else {
+                        re.replace(&text, replacement).into_owned()
+                    };
+                    applied = true;
+                }
+                if applied {
+                    canvas.content = text;
+                    canvas.created_at = at.or(canvas.created_at);
+                }
+            }
+            _ => {}
+        }
+    }
+    canvases
+        .into_iter()
+        .filter(|c| !c.id.is_empty() && !c.content.trim().is_empty())
+        .collect()
+}
+
+/// The JSON a tool-addressed message carries, in `text` or its first part.
+fn message_json(content: &RawChatGptContent) -> Option<serde_json::Value> {
+    let text = content
+        .text
+        .as_deref()
+        .or_else(|| content.parts.first().and_then(|v| v.as_str()))?;
+    serde_json::from_str(text).ok()
+}
+
 // ---- Raw types matching the ChatGPT export JSON schema ----
 
 #[derive(Deserialize)]
@@ -432,6 +556,8 @@ struct RawChatGptConversation {
 #[derive(Deserialize)]
 struct RawChatGptNode {
     #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
     parent: Option<String>,
     #[serde(default)]
     message: Option<RawChatGptMessage>,
@@ -443,6 +569,12 @@ struct RawChatGptMessage {
     content: RawChatGptContent,
     #[serde(default)]
     create_time: Option<f64>,
+    /// The tool an assistant message is addressed to (`canmore.*` for a
+    /// canvas); absent or `all` for chat text.
+    #[serde(default)]
+    recipient: Option<String>,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -455,7 +587,6 @@ struct RawChatGptContent {
     content_type: String,
     #[serde(default, deserialize_with = "vec_from_null_or_absent")]
     parts: Vec<serde_json::Value>,
-    #[allow(dead_code)]
     #[serde(default)]
     text: Option<String>,
 }
@@ -1788,5 +1919,84 @@ mod tests {
         // message, which pair_messages keeps on its own.
         assert_eq!(conversations.len(), 1);
         assert_eq!(conversations[0].messages[0].content, "User: hi");
+    }
+
+    #[test]
+    fn canvases_on_the_current_branch_are_kept_in_their_final_state() {
+        let create = serde_json::json!({
+            "name": "Pitch page", "type": "code/html", "content": "<h1>Pitch</h1><p>v1</p>"
+        })
+        .to_string();
+        let update = serde_json::json!({
+            "updates": [
+                {"pattern": "v1", "multiple": false, "replacement": "v2 $0"},
+                {"pattern": "(unclosed", "replacement": "x"}
+            ]
+        })
+        .to_string();
+        let json = serde_json::json!([{
+            "id": "conv-canvas",
+            "title": "Canvas",
+            "create_time": 1_700_000_000.0_f64,
+            "current_node": "asst-done",
+            "mapping": {
+                "root": {"id": "root", "parent": null, "message": null},
+                "user1": {"id": "user1", "parent": "root", "message": {
+                    "author": {"role": "user"},
+                    "content": {"content_type": "text", "parts": ["make a pitch page"]},
+                    "create_time": 1_700_000_001.0_f64}},
+                "asst-create": {"id": "asst-create", "parent": "user1", "message": {
+                    "author": {"role": "assistant"}, "recipient": "canmore.create_textdoc",
+                    "content": {"content_type": "code", "language": "json", "text": create},
+                    "create_time": 1_700_000_002.0_f64}},
+                "tool-create": {"id": "tool-create", "parent": "asst-create", "message": {
+                    "author": {"role": "tool", "name": "canmore.create_textdoc"},
+                    "content": {"content_type": "text", "parts": ["Created"]},
+                    "metadata": {"canvas": {"textdoc_id": "td_123", "version": 1}},
+                    "create_time": 1_700_000_003.0_f64}},
+                "asst-update": {"id": "asst-update", "parent": "tool-create", "message": {
+                    "author": {"role": "assistant"}, "recipient": "canmore.update_textdoc",
+                    "content": {"content_type": "code", "text": update},
+                    "create_time": 1_700_000_004.0_f64}},
+                "asst-done": {"id": "asst-done", "parent": "asst-update", "message": {
+                    "author": {"role": "assistant"},
+                    "content": {"content_type": "text", "parts": ["Made the page."]},
+                    "create_time": 1_700_000_005.0_f64}}
+            }
+        }])
+        .to_string();
+        let zip_bytes = make_zip(&[
+            ("conversations.json", json.as_bytes()),
+            ("message_feedback.json", b"[]"),
+        ]);
+        let conversations = parse_zip(&zip_bytes).expect("parse should succeed");
+        assert_eq!(conversations.len(), 1);
+        let conv = &conversations[0];
+        assert_eq!(conv.messages.len(), 1, "{:?}", conv.messages);
+        assert_eq!(
+            conv.messages[0].content,
+            "User: make a pitch page\nAssistant: Made the page."
+        );
+        assert!(conv.messages.iter().all(|m| !m.content.contains("textdoc")));
+        assert_eq!(conv.artifacts.len(), 1);
+        let canvas = &conv.artifacts[0];
+        assert_eq!(canvas.id, "td_123", "the tool reply names the canvas");
+        assert_eq!(canvas.title.as_deref(), Some("Pitch page"));
+        assert_eq!(canvas.kind, "code/html");
+        assert_eq!(canvas.extension(), "html");
+        // `$0` is literal: replacements are not expanded.
+        assert_eq!(canvas.content, "<h1>Pitch</h1><p>v2 $0</p>");
+        assert_eq!(canvas.created_at, float_to_utc(Some(1_700_000_004.0)));
+    }
+
+    #[test]
+    fn a_conversation_without_canvases_keeps_none() {
+        let json = min_chatgpt_conversations_json();
+        let zip_bytes = make_zip(&[
+            ("conversations.json", json.as_bytes()),
+            ("message_feedback.json", b"[]"),
+        ]);
+        let conversations = parse_zip(&zip_bytes).expect("parse should succeed");
+        assert!(conversations[0].artifacts.is_empty());
     }
 }
