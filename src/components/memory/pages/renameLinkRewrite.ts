@@ -10,6 +10,8 @@ export interface TextEdit {
   readonly from: number;
   readonly to: number;
   readonly insert: string;
+  /** The whole link, `[[` to `]]`, this edit retargets. */
+  readonly scope?: readonly [from: number, to: number];
 }
 
 /** The daemon's wikilink pattern (`sources::obsidian::WIKILINK_RE`). */
@@ -99,7 +101,7 @@ export function renamedLinkEdits(content: string, oldTitle: string, newTitle: st
     if (!trimmed || TARGET_BREAKERS.test(trimmed) || pageTitleKey(trimmed) !== oldKey) continue;
     if (trimmed === target) continue;
     const from = open + 2 + raw.indexOf(trimmed);
-    edits.push({ from, to: from + trimmed.length, insert: target });
+    edits.push({ from, to: from + trimmed.length, insert: target, scope: [start, start + match[0].length] });
   }
   return edits;
 }

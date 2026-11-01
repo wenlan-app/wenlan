@@ -7,6 +7,7 @@ import { isolateHistory, redo, undo, undoDepth } from "@codemirror/commands";
 import { SearchQuery, replaceAll, setSearchQuery } from "@codemirror/search";
 import { i18n } from "../../../i18n";
 import { CodeMirrorMarkdownEditor } from "./CodeMirrorMarkdownEditor";
+import { renamedLinkEdits } from "../pages/renameLinkRewrite";
 import type {
   MarkdownEditorHandle,
   MarkdownEditorProps,
@@ -108,6 +109,45 @@ describe("CodeMirrorMarkdownEditor", () => {
     act(() => { view.dispatch({ changes: { from: 0, to: 8 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
     act(() => { undo(view); });
     expect(view.state.doc.toString()).toBe("[[New]] Keep. See [[Old]].");
+  });
+
+  it("rewrites a link that undo completes by restoring part of it", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "[[Old]] [[Old]]" })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    // Delete only the "d" of the first link, then rename Old to New.
+    act(() => { view.dispatch({ changes: { from: 4, to: 5 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    act(() => { expect(ref.current?.applyExternalEdits((doc) => renamedLinkEdits(doc, "Old", "New"))).toBe(true); });
+    expect(view.state.doc.toString()).toBe("[[Ol]] [[New]]");
+    // Undo puts back one letter, inside the target: the link names Old again.
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("[[New]] [[New]]");
+    // The old check wanted the whole target inside the restored text; here
+    // the restored "d" (4..5) does not hold the target (2..5).
+    const target = renamedLinkEdits("[[Old]] [[New]]", "Old", "New")[0];
+    expect(target.from >= 4 && target.to <= 5).toBe(false);
+  });
+
+  it("rewrites a link that undo completes by restoring its closing bracket", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "[[Old]] x" })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    act(() => { view.dispatch({ changes: { from: 6, to: 7 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    act(() => { expect(ref.current?.applyExternalEdits((doc) => renamedLinkEdits(doc, "Old", "New"))).toBe(true); });
+    expect(view.state.doc.toString()).toBe("[[Old] x");
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("[[New]] x");
+  });
+
+  it("negative control: without the link's whole span, a restored bracket leaves the old title", async () => {
+    const ref = createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({ initialDocument: "[[Old]] x" })} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    act(() => { view.dispatch({ changes: { from: 6, to: 7 }, userEvent: "delete", annotations: isolateHistory.of("full") }); });
+    const targetOnly = (doc: string) => renamedLinkEdits(doc, "Old", "New").map(({ from, to, insert }) => ({ from, to, insert }));
+    act(() => { expect(ref.current?.applyExternalEdits(targetOnly)).toBe(true); });
+    act(() => { undo(view); });
+    expect(view.state.doc.toString()).toBe("[[Old]] x");
   });
 
   it("leaves text undo brings back as it was when no outside rewrite applies", async () => {

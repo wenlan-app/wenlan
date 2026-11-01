@@ -174,8 +174,12 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     const specs: TransactionSpec[] = [];
     for (const edits of externalEditsRef.current) {
       if (restored.length === 0) break;
-      const changes = edits(doc.toString()).filter(({ from, to }) =>
-        restored.some(([start, end]) => from >= start && to <= end));
+      // A link counts when any restored character falls inside it: undo may
+      // put back a single letter that makes "[[Ol]]" name the old title again.
+      const changes = edits(doc.toString()).filter(({ from, to, scope }) => {
+        const [linkFrom, linkTo] = scope ?? [from, to];
+        return restored.some(([start, end]) => start < linkTo && end > linkFrom);
+      });
       if (changes.length === 0) continue;
       const set = ChangeSet.of(changes.map(({ from, to, insert }) => ({ from, to, insert })), doc.length);
       specs.push({ changes: set, sequential: true });
