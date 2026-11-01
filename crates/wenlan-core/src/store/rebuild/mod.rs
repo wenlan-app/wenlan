@@ -4,11 +4,13 @@
 //! field by field against the database it came from. Only ever writes the
 //! fresh database it is given.
 //!
-//! So far: the tables copied whole (`settings/`, `records/`) and every
-//! history table, replayed from the log. Pages, entities, memories,
-//! originals, Briefs and canvases follow, read from their files.
+//! So far: the tables copied whole (`settings/`, `records/`), every
+//! history table, replayed from the log, and pages and entities from their
+//! files ([`pages::rebuild_pages`]). Memories, originals, Briefs and
+//! canvases follow. [`rebuild`] runs every part in order.
 
 pub mod compare;
+pub mod pages;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -152,6 +154,31 @@ pub async fn rebuild_tables(from: &Path, into: &MemoryDB) -> Result<Rebuilt, Wen
             .await?;
         rebuilt.tables.insert(table, values.len());
     }
+    Ok(rebuilt)
+}
+
+/// Rebuilds every part the export folder `from` holds into `into` (a
+/// fresh database): file rows first, then whole tables and history, then
+/// the state seeds on the file rows.
+pub async fn rebuild(from: &Path, into: &MemoryDB) -> Result<Rebuilt, WenlanError> {
+    let text = std::fs::read_to_string(from.join(crate::store::export::MANIFEST_FILE))?;
+    let manifest: crate::store::export::Manifest = serde_json::from_str(&text)
+        .map_err(|error| WenlanError::Validation(format!("export manifest: {error}")))?;
+    if manifest.format != crate::store::export::EXPORT_FORMAT {
+        return Err(WenlanError::Validation(format!(
+            "export format {} is not {}",
+            manifest.format,
+            crate::store::export::EXPORT_FORMAT
+        )));
+    }
+    let mut problems = Vec::new();
+    let pages = pages::rebuild_pages(from, &manifest, into, &mut problems).await?;
+    let mut rebuilt = rebuild_tables(from, into).await?;
+    rebuilt.tables.insert("pages".to_string(), pages);
+    let (_, unset) = apply_states(from, into).await?;
+    problems.extend(unset);
+    problems.append(&mut rebuilt.problems);
+    rebuilt.problems = problems;
     Ok(rebuilt)
 }
 

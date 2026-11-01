@@ -168,3 +168,100 @@ async fn state_seeds_put_back_the_columns_no_file_holds() {
         .unwrap();
     assert!(diffs.is_empty(), "{diffs:#?}");
 }
+
+#[tokio::test]
+async fn pages_and_entities_rebuild_from_their_files() {
+    use super::compare::compare_keyed;
+    use crate::store::export::DEFERRED_COLUMNS;
+
+    let (db, _db_dir) = test_db().await;
+    let page = |id: &'static str, title: &'static str, content: &'static str| {
+        let db = &db;
+        async move {
+            db.insert_page_with_kind(
+                id,
+                title,
+                None,
+                content,
+                None,
+                Some("sp"),
+                &[],
+                "2026-10-31T00:00:00Z",
+                "authored",
+                "confirmed",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+    };
+    page(
+        "p1",
+        "Alpha",
+        "The launch moved [1]. Again [1], and see [2].",
+    )
+    .await;
+    sql(
+        &db,
+        "UPDATE pages SET summary = 'Short.', version = 3, user_edited = 1, \
+         citations = '[{\"occurrence\":1,\"marker\":1,\"source_kind\":\"memory\",\"locator\":\"mem_1\",\
+         \"score\":0.8,\"status\":\"verified\",\"scope\":\"sentence\",\"cited_version\":2},\
+         {\"occurrence\":2,\"marker\":1,\"source_kind\":\"memory\",\"locator\":\"mem_1\",\
+         \"score\":0.5,\"status\":\"verified\",\"scope\":\"sentence\",\"cited_version\":2},\
+         {\"occurrence\":3,\"marker\":2,\"source_kind\":\"url\",\"locator\":\"https://a.example/x\",\
+         \"score\":0.1,\"status\":\"unverified\",\"scope\":\"paragraph\"}]' WHERE id = ?1",
+        "p1",
+    )
+    .await;
+    page("p2", "Beta", "About Bob.").await;
+    sql(
+        &db,
+        "UPDATE pages SET entity_id = 'ent_bob', status = 'archived' WHERE id = ?1",
+        "p2",
+    )
+    .await;
+    page("p3", "Gamma", "Odd status.").await;
+    sql(
+        &db,
+        "UPDATE pages SET status = 'failed' WHERE id = ?1",
+        "p3",
+    )
+    .await;
+    page("shadow", "Bob", "Bob runs the launch.").await;
+    sql(
+        &db,
+        "UPDATE pages SET kind = 'entity', entity_id = 'ent_bob', entity_type = 'person', \
+         entity_confirmed = 1, aliases = '[\"Robert\"]', established_by = 'human', \
+         entity_created_at = 1793404800, entity_updated_at = 1793404900 WHERE id = ?1",
+        "shadow",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let data_root = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    export_lossless(
+        &db,
+        &crate::store::export::run::PagesFolder::default(),
+        data_root.path(),
+        &target,
+    )
+    .await
+    .unwrap();
+
+    let (fresh, _fresh_dir) = test_db().await;
+    let rebuilt = super::rebuild(&target, &fresh).await.unwrap();
+    assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
+    assert_eq!(rebuilt.tables["pages"], 4);
+
+    let cache: Vec<&str> = DEFERRED_COLUMNS
+        .iter()
+        .filter(|(table, to, _)| *table == "pages" && *to == "cache")
+        .flat_map(|(_, _, columns)| columns.iter().copied())
+        .collect();
+    let diff = compare_keyed(&db, &fresh, "pages", &["id"], &cache)
+        .await
+        .unwrap();
+    assert!(diff.is_empty(), "{diff:#?}");
+}

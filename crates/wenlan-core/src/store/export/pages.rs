@@ -112,6 +112,11 @@ pub async fn export_pages(
             file.other.insert("summary".into(), summary.as_str().into());
         }
         entity_keys(&mut file.other, row);
+        // Archived pages are told by their folder; any other status is kept.
+        if !matches!(row.status.as_str(), "active" | "archived") {
+            file.other
+                .insert("status".into(), row.status.as_str().into());
+        }
         file.citations = citation_lines(row, &memory_texts, &stems, manifest);
         // A basis whose page is gone is not a line; every basis row, state
         // and confirmation is in `records/page_basis.json`.
