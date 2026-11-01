@@ -100,6 +100,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "get_page_sentences",
     "accept_sentence_proposal",
     "reject_sentence_proposal",
+    "revert_page_sentences",
     "mark_page_basis",
     "unmark_page_basis",
     "confirm_page_basis",
