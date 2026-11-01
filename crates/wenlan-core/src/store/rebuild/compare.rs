@@ -97,11 +97,9 @@ impl KeyedDiff {
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct ColumnDiff {
     pub rows: usize,
-    /// Keys of the first few rows that differ.
-    pub examples: Vec<String>,
+    /// Keys of the rows that differ.
+    pub keys: Vec<String>,
 }
-
-const EXAMPLES: usize = 5;
 
 /// Compares `table` row by row, matching rows on `key`, every column but
 /// `skip`. Values are compared as stored, except where [`normalized`] says
@@ -136,9 +134,7 @@ pub async fn compare_keyed(
             if left != right {
                 let entry = diff.columns.entry(column.clone()).or_default();
                 entry.rows += 1;
-                if entry.examples.len() < EXAMPLES {
-                    entry.examples.push(row_key.clone());
-                }
+                entry.keys.push(row_key.clone());
             }
         }
     }

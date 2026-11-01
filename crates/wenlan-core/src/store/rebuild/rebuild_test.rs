@@ -471,4 +471,11 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
     tables.extend(HISTORY_TABLES.iter().map(|spec| spec.table));
     let diffs = compare_tables(&db, &fresh, &tables).await.unwrap();
     assert!(diffs.is_empty(), "{diffs:#?}");
+
+    // The one-call check agrees, and reports nothing.
+    let report = super::check::check_export(&db, &first, &out.path().join("work"))
+        .await
+        .unwrap();
+    assert!(report.is_clean(), "{}", report.summary());
+    assert!(report.summary().starts_with("CLEAN"));
 }

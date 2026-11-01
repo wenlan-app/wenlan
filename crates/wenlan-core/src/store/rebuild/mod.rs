@@ -13,6 +13,7 @@
 
 pub mod briefs;
 pub mod canvases;
+pub mod check;
 pub mod compare;
 pub mod memories;
 pub mod pages;
