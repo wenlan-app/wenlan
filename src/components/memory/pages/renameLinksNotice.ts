@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { toast } from "sonner";
 import type { RenamePageResponse } from "../../../lib/tauri";
+import { recordRenamedLinks } from "./renameLinkRewrite";
 
 /** What a rename did to other pages' links, in one line; null when it touched none. */
 export function renameLinksMessage(t: TFunction, renamed: RenamePageResponse): string | null {
@@ -17,13 +18,17 @@ export function renameLinksMessage(t: TFunction, renamed: RenamePageResponse): s
 }
 
 /** After a rename: refresh pages whose links the daemon rewrote, so an open
- *  editor sees the newer version, and tell the person what changed. */
+ *  editor sees the newer version, and tell the person what changed. The
+ *  rename is recorded first, so an editor holding unsaved text on one of those
+ *  pages takes the link rewrite into its draft instead of a conflict. */
 export function finishRenameLinks(
   t: TFunction,
   queryClient: QueryClient,
   renamed: RenamePageResponse,
+  previousTitle: string,
 ): void {
   if ((renamed.links_updated ?? 0) > 0 || (renamed.links_pending_review ?? 0) > 0) {
+    recordRenamedLinks(previousTitle, renamed.title);
     for (const queryKey of [["page"], ["page-revisions"], ["pending-revisions"]]) {
       void queryClient.invalidateQueries({ queryKey });
     }
