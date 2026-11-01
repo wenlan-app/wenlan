@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: Apache-2.0
+use super::compare::compare_tables;
+use super::rebuild_tables;
+use crate::db::tests::test_db;
+use crate::store::export::history::HISTORY_TABLES;
+use crate::store::export::records::RECORD_TABLES;
+use crate::store::export::run::export_lossless;
+use crate::store::export::settings::SETTINGS_FILES;
+
+async fn sql(db: &crate::db::MemoryDB, statement: &str, id: &str) {
+    db.export_fixture_sql(statement, id).await;
+}
+
+#[tokio::test]
+async fn whole_tables_and_history_rebuild_field_for_field() {
+    let (db, _db_dir) = test_db().await;
+    sql(
+        &db,
+        "INSERT INTO spaces (id, name, created_at, updated_at) VALUES (?1, 'Work', 1.5, 2)",
+        "space_w",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO app_metadata (key, value) VALUES (?1, X'00ff')",
+        "rebuild_bytes",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO source_annotations (source, source_id, context_key, notes, page_ids, \
+         version, updated_at) VALUES ('memory', ?1, 'space:sp', 'Check.', '[]', 2, 9)",
+        "mem_1",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO thing_history (ts, actor, op, thing_id, session_id, data) \
+         VALUES (1793404800, 'person', 'thing.rename', ?1, NULL, '{}')",
+        "thing_1",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO access_log (source_id, accessed_at) VALUES (?1, 1793404801)",
+        "mem_1",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO rejected_memories (id, content, source_agent, rejection_reason, \
+         created_at) VALUES (?1, 'dup', 'codex', 'duplicate', 1793404802)",
+        "rej_1",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let data_root = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    export_lossless(&db, &Default::default(), data_root.path(), &target)
+        .await
+        .unwrap();
+
+    let (fresh, _fresh_dir) = test_db().await;
+    let rebuilt = rebuild_tables(&target, &fresh).await.unwrap();
+    assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
+
+    let mut tables: Vec<&'static str> = SETTINGS_FILES
+        .iter()
+        .flat_map(|(_, tables)| tables.iter().copied())
+        .collect();
+    tables.extend(RECORD_TABLES.iter().copied());
+    tables.extend(HISTORY_TABLES.iter().map(|spec| spec.table));
+    let diffs = compare_tables(&db, &fresh, &tables).await.unwrap();
+    assert!(diffs.is_empty(), "{diffs:#?}");
+}

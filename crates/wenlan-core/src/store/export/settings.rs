@@ -98,7 +98,7 @@ pub(super) fn table_value(table: &ExportTable) -> Value {
     })
 }
 
-pub(super) fn cell(value: &libsql::Value) -> Value {
+pub(crate) fn cell(value: &libsql::Value) -> Value {
     match value {
         libsql::Value::Null => Value::Null,
         libsql::Value::Integer(number) => json!(number),

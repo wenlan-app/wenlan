@@ -8,3 +8,4 @@
 pub mod export;
 pub mod format;
 pub mod history;
+pub mod rebuild;
