@@ -1008,12 +1008,48 @@ async fn start_after_graceful_stop() -> Result<()> {
 async fn request_daemon_shutdown() -> Result<DaemonShutdownRequest> {
     let base_url = local_daemon_base_url()?;
     let root = wenlan_core::config::data_root();
-    request_daemon_shutdown_at(&base_url, Some(&root)).await
+    request_daemon_shutdown_at(&base_url, Some(&root), &prove_legacy_daemon_owner).await
+}
+
+/// Daemons before 0.20.4 never report a data-root identity, so the in-app
+/// upgrade from one of them could not restart it. Prove ownership through the
+/// supervisor instead: the loaded launchd job is running from the selected
+/// root, and its PID is the process listening on the daemon port. Returns that
+/// PID, which the daemon's own shutdown response must echo.
+#[cfg(target_os = "macos")]
+fn prove_legacy_daemon_owner() -> Result<u32> {
+    let refuse = || -> anyhow::Error {
+        OwnershipRefusal("legacy daemon does not report its data root and its launchd job could not prove it; stop the verified old instance manually before upgrading".into()).into()
+    };
+    let Some(job) = loaded_launchd_job()? else {
+        return Err(refuse());
+    };
+    let pid =
+        service_binding::verify_launchd_running_root(&job, &wenlan_core::config::data_root())?;
+    let port = configured_bind_addr()?.port();
+    let output = std::process::Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
+        .output()
+        .context("read daemon port listener")?;
+    let listeners: Vec<&str> = std::str::from_utf8(&output.stdout)
+        .map_err(|_| refuse())?
+        .split_whitespace()
+        .collect();
+    if listeners != [pid.to_string()] {
+        return Err(refuse());
+    }
+    Ok(pid)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn prove_legacy_daemon_owner() -> Result<u32> {
+    Err(OwnershipRefusal("legacy daemon does not report its data root; stop the verified old instance manually before upgrading".into()).into())
 }
 
 async fn request_daemon_shutdown_at(
     base_url: &str,
     selected_root: Option<&Path>,
+    prove_legacy_owner: &dyn Fn() -> Result<u32>,
 ) -> Result<DaemonShutdownRequest> {
     let shutdown_url = format!("{base_url}/api/shutdown");
     let shutdown_client = reqwest::Client::builder()
@@ -1022,9 +1058,14 @@ async fn request_daemon_shutdown_at(
         .build()
         .context("build daemon shutdown client")?;
 
+    let mut legacy_pid = None;
     let expected_root = if let Some(root) = selected_root {
-        match verify_daemon_data_root(&shutdown_client, base_url, root).await {
-            Ok(identity) => Some(identity),
+        match daemon_data_root_identity(&shutdown_client, base_url, root).await {
+            Ok(Some(identity)) => Some(identity),
+            Ok(None) => {
+                legacy_pid = Some(prove_legacy_owner()?);
+                None
+            }
             Err(error)
                 if error
                     .downcast_ref::<reqwest::Error>()
@@ -1062,8 +1103,13 @@ async fn request_daemon_shutdown_at(
                 .parse::<u32>()
                 .context("daemon shutdown process id header is not a valid PID")
         })
-        .transpose()?
-        .map(DaemonProcessIdentity::capture);
+        .transpose()?;
+    if legacy_pid.is_some() && process != legacy_pid {
+        anyhow::bail!(
+            "legacy daemon at {base_url} answered shutdown from process {process:?}, not the verified launchd job {legacy_pid:?}"
+        );
+    }
+    let process = process.map(DaemonProcessIdentity::capture);
     response
         .bytes()
         .await
@@ -1077,6 +1123,17 @@ async fn verify_daemon_data_root(
     base_url: &str,
     root: &Path,
 ) -> Result<String> {
+    daemon_data_root_identity(client, base_url, root)
+        .await?
+        .ok_or_else(|| OwnershipRefusal(format!("legacy daemon at {base_url} does not report its data root; stop the verified old instance manually before upgrading")).into())
+}
+
+/// `None` is a legacy daemon that predates the identity field.
+async fn daemon_data_root_identity(
+    client: &reqwest::Client,
+    base_url: &str,
+    root: &Path,
+) -> Result<Option<String>> {
     let health: wenlan_types::responses::HealthResponse = client
         .get(format!("{base_url}/api/health"))
         .timeout(OWNERSHIP_PROBE_TIMEOUT)
@@ -1087,11 +1144,10 @@ async fn verify_daemon_data_root(
         .await?;
     let expected = wenlan_core::config::data_root_identity(root)?;
     match health.data_root_identity.as_deref() {
-        Some(identity) if identity == expected => {}
-        Some(_) => return Err(OwnershipRefusal(format!("daemon at {base_url} does not prove the selected data root; check WENLAN_DATA_DIR and WENLAN_BIND_ADDR")).into()),
-        None => return Err(OwnershipRefusal(format!("legacy daemon at {base_url} does not report its data root; stop the verified old instance manually before upgrading")).into()),
+        Some(identity) if identity == expected => Ok(Some(expected)),
+        Some(_) => Err(OwnershipRefusal(format!("daemon at {base_url} does not prove the selected data root; check WENLAN_DATA_DIR and WENLAN_BIND_ADDR")).into()),
+        None => Ok(None),
     }
-    Ok(expected)
 }
 
 fn build_shutdown_request(client: &reqwest::Client, shutdown_url: &str) -> reqwest::RequestBuilder {
@@ -1431,10 +1487,83 @@ mod tests {
         let address = listener.local_addr().unwrap();
         drop(listener);
         let root = tempfile::tempdir().unwrap();
-        let result = request_daemon_shutdown_at(&format!("http://{address}"), Some(root.path()))
+        let result = request_daemon_shutdown_at(
+            &format!("http://{address}"),
+            Some(root.path()),
+            &unproven_legacy,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, DaemonShutdownRequest::NotRunning));
+    }
+
+    fn unproven_legacy() -> Result<u32> {
+        Err(OwnershipRefusal("legacy daemon does not report its data root".into()).into())
+    }
+
+    /// Serves a legacy health body, then answers one shutdown POST with
+    /// `answering_pid`. Returns whether the POST carried a root header.
+    async fn legacy_daemon(listener: tokio::net::TcpListener, answering_pid: u32) -> bool {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let reply = |body: &str, extra: &str| {
+            format!(
+                "HTTP/1.1 200 OK\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0u8; 4096];
+        let size = stream.read(&mut request).await.unwrap();
+        assert!(String::from_utf8_lossy(&request[..size]).starts_with("GET /api/health "));
+        let body = r#"{"status":"ok","db_initialized":true,"version":"0.20.3"}"#;
+        stream.write_all(reply(body, "").as_bytes()).await.unwrap();
+        drop(stream);
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let size = stream.read(&mut request).await.unwrap();
+        let post = String::from_utf8_lossy(&request[..size]).to_ascii_lowercase();
+        assert!(post.starts_with("post /api/shutdown "));
+        let header = format!("x-wenlan-process-id: {answering_pid}\r\n");
+        stream
+            .write_all(reply("shutting down", &header).as_bytes())
             .await
             .unwrap();
-        assert!(matches!(result, DaemonShutdownRequest::NotRunning));
+        post.contains("x-wenlan-expected-root")
+    }
+
+    #[tokio::test]
+    async fn supervisor_proven_legacy_daemon_is_asked_to_shut_down() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(legacy_daemon(listener, 4242));
+        let root = tempfile::tempdir().unwrap();
+        let result =
+            request_daemon_shutdown_at(&format!("http://{address}"), Some(root.path()), &|| {
+                Ok(4242)
+            })
+            .await
+            .unwrap();
+        assert!(matches!(result, DaemonShutdownRequest::Requested(_)));
+        assert!(
+            !server.await.unwrap(),
+            "a legacy daemon has no root to echo"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_shutdown_from_another_process_is_an_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(legacy_daemon(listener, 7));
+        let root = tempfile::tempdir().unwrap();
+        let error =
+            request_daemon_shutdown_at(&format!("http://{address}"), Some(root.path()), &|| {
+                Ok(4242)
+            })
+            .await
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("not the verified launchd job"));
+        server.await.unwrap();
     }
 
     #[tokio::test]
@@ -1475,10 +1604,14 @@ mod tests {
             );
         });
         let root = tempfile::tempdir().unwrap();
-        let error = request_daemon_shutdown_at(&format!("http://{address}"), Some(root.path()))
-            .await
-            .err()
-            .unwrap();
+        let error = request_daemon_shutdown_at(
+            &format!("http://{address}"),
+            Some(root.path()),
+            &unproven_legacy,
+        )
+        .await
+        .err()
+        .unwrap();
         assert!(error.downcast_ref::<OwnershipRefusal>().is_some());
         assert!(error.to_string().contains("Legacy service upgrade"));
         server.await.unwrap();
@@ -1504,8 +1637,12 @@ mod tests {
             );
         });
         let root = tempfile::tempdir().unwrap();
-        let result =
-            request_daemon_shutdown_at(&format!("http://{address}"), Some(root.path())).await;
+        let result = request_daemon_shutdown_at(
+            &format!("http://{address}"),
+            Some(root.path()),
+            &unproven_legacy,
+        )
+        .await;
         assert!(result.is_err());
         server.await.unwrap();
     }

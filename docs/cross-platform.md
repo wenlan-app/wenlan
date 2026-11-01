@@ -97,7 +97,11 @@ and running-instance count, Linux checks ActiveState and MainPID, and macOS chec
 the loaded job's state and effective launch root. Queued or unknown states refuse
 control. A missing identity from an older daemon or an
 unmarked old service is an explicit refusal, never permission to stop an unknown
-instance. New Linux registrations persist `WENLAN_DATA_DIR` and `WENLAN_BIND_ADDR`.
+instance. The one exception is a macOS daemon from before 0.20.4, which never
+reports its identity: the CLI asks it to shut down only when the loaded
+`com.wenlan.server` job is running with exactly one PID, its effective launch
+root is the selected root, and that PID is the only listener on the daemon port;
+the command still fails if the shutdown response names a different PID. New Linux registrations persist `WENLAN_DATA_DIR` and `WENLAN_BIND_ADDR`.
 
 macOS updates require the previous job to be unloaded, even after its daemon has
 exited. The CLI writes the confirmed plist and uses `bootstrap` without implicit

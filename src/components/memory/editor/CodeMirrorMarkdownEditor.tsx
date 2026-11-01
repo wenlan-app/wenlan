@@ -15,7 +15,7 @@ import {
 import { closeSearchPanel, findNext, findPrevious, openSearchPanel, search } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Compartment, EditorState, Transaction } from "@codemirror/state";
+import { ChangeSet, Compartment, EditorState, Transaction, type TransactionSpec } from "@codemirror/state";
 import {
   drawSelection,
   dropCursor,
@@ -46,6 +46,8 @@ import {
 } from "./writingPresentation";
 import { pageLayersEditing, setPageLayers } from "./pageLayersEditing";
 import { sentenceProposals, setSentenceProposals } from "./sentenceProposals";
+
+type ExternalEdits = Parameters<MarkdownEditorHandle["applyExternalEdits"]>[0];
 
 // The writer's last choice between a saved link and its preview card, for the next paste.
 const SOURCE_LINK_PREVIEW_KEY = "wenlan-source-link-preview";
@@ -147,6 +149,49 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     callback(status);
   };
 
+  /** Edits made from outside this session, replayed after undo and redo. */
+  const externalEditsRef = useRef<ExternalEdits[]>([]);
+
+  /** Not the person's own step: undo leaves it in place. */
+  const applyOutsideHistory = (view: EditorView, edits: ExternalEdits): void => {
+    const changes = edits(view.state.doc.toString());
+    if (changes.length === 0) return;
+    view.dispatch({
+      changes: changes.map(({ from, to, insert }) => ({ from, to, insert })),
+      annotations: [Transaction.addToHistory.of(false), Transaction.remote.of(true)],
+    });
+  };
+
+  const withExternalEditsReplayed = (tr: Transaction): Transaction => {
+    if (!tr.docChanged || externalEditsRef.current.length === 0 ||
+        !(tr.isUserEvent("undo") || tr.isUserEvent("redo"))) return tr;
+    // Only the text this undo or redo put back can predate the edit. Links
+    // typed since then stay as typed, even one that names the old title.
+    let restored: Array<[number, number]> = [];
+    tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+      if (toB > fromB) restored.push([fromB, toB]);
+    });
+    let doc = tr.newDoc;
+    const specs: TransactionSpec[] = [];
+    for (const edits of externalEditsRef.current) {
+      if (restored.length === 0) break;
+      // A link counts when any restored character falls inside it: undo may
+      // put back a single letter that makes "[[Ol]]" name the old title again.
+      const changes = edits(doc.toString()).filter(({ from, to, scope }) => {
+        const [linkFrom, linkTo] = scope ?? [from, to];
+        return restored.some(([start, end]) => start < linkTo && end > linkFrom);
+      });
+      if (changes.length === 0) continue;
+      const set = ChangeSet.of(changes.map(({ from, to, insert }) => ({ from, to, insert })), doc.length);
+      specs.push({ changes: set, sequential: true });
+      restored = restored.map(([start, end]) => [set.mapPos(start, -1), set.mapPos(end, 1)]);
+      doc = set.apply(doc);
+    }
+    if (specs.length === 0) return tr;
+    // A Transaction is a valid first spec: its history annotation carries over.
+    return tr.startState.update(tr as unknown as TransactionSpec, ...specs);
+  };
+
   const actionsBlocked = (view: EditorView): boolean =>
     view.state.readOnly || compositionActiveRef.current || view.compositionStarted;
 
@@ -184,13 +229,10 @@ export const CodeMirrorMarkdownEditor = forwardRef<
       applyExternalEdits(edits): boolean {
         const view = viewRef.current;
         if (!view || actionsBlocked(view)) return false;
-        const changes = edits(view.state.doc.toString());
-        if (changes.length === 0) return true;
-        // Not the person's own step: undo leaves it in place.
-        view.dispatch({
-          changes: changes.map(({ from, to, insert }) => ({ from, to, insert })),
-          annotations: [Transaction.addToHistory.of(false), Transaction.remote.of(true)],
-        });
+        // Undo can bring back text from before this edit (a deleted
+        // paragraph that still names the old title); see the filter below.
+        externalEditsRef.current = [...externalEditsRef.current.slice(-7), edits];
+        applyOutsideHistory(view, edits);
         publishStatus(view);
         return true;
       },
@@ -272,10 +314,19 @@ export const CodeMirrorMarkdownEditor = forwardRef<
 
     let view: EditorView;
     compositionActiveRef.current = false;
+    externalEditsRef.current = [];
     lastStatusRef.current = null;
     try {
       view = new EditorView({
         parent: mount,
+        // Text that undo or redo brings back can predate an outside edit (a
+        // deleted paragraph that still names a renamed page). The edit is
+        // replayed inside that same transaction, so history keeps the pair
+        // as one step and redo takes back exactly what undo restored. Undo
+        // transactions skip transaction filters, hence this seam.
+        dispatchTransactions: (transactions, target) => {
+          target.update(transactions.map(withExternalEditsReplayed));
+        },
         state: EditorState.create({
           doc: props.initialDocument,
           selection: props.initialSelection && {

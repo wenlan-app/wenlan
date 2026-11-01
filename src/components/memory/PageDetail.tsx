@@ -1508,7 +1508,9 @@ export default function PageDetail({
       if (canonicalPage && linkRewrite && autosave.rebaseOnto(
         canonicalPage,
         (text) => applyTextEdits(text, linkRewrite(text)),
-        () => editorRef.current?.applyExternalEdits(linkRewrite) ?? false,
+        // The editor rewrites its own document once; that document,
+        // serialized, is what autosave keeps and saves.
+        () => editorRef.current?.applyExternalEdits(linkRewrite) ? currentDraftSource() : null,
       )) {
         editorPageRef.current = canonicalPage;
         return;

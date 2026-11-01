@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { getPage, restorePage, RestorePageApiError, type Page } from "../../../lib/tauri";
 import { pageSpaceContext } from "./pagePresentation";
 import { refreshPageStatus } from "./archiveWikiPage";
+import { finishRenameLinks } from "./renameLinksNotice";
 import "./archivedNotes.css";
 
 /** Which message a refused restore shows. Keyed by the daemon's typed code, never its text. */
@@ -52,6 +53,10 @@ export function RestorePageDialog({ page, onClose, onRestored }: {
       if (result.projection_status === "pending") toast.warning(t("pages.archive.filePending"));
       else if (result.projection_status === "hidden") toast.warning(t("pages.archive.fileHidden"));
       else toast.success(t("pages.archive.restored"));
+      // Under a new title the daemon also updated links to the old one; an
+      // open editor on one of those pages rebases its draft from the
+      // archived title, as after a rename.
+      finishRenameLinks(t, queryClient, result, snapshot.title);
       finish();
     },
     onError: () => { void queryClient.invalidateQueries({ queryKey: ["pages", "archived"] }); },

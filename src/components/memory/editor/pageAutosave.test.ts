@@ -290,7 +290,8 @@ describe("PageAutosave", () => {
     const rewritten = page("Read [[New]] and [[New|the old one]].\nBody", 4);
     const rewrite = renameRewriteExplaining(saver.snapshot().baseline!.content, rewritten.content);
     expect(rewrite).not.toBeNull();
-    const editor = vi.fn(() => true);
+    // The editor rewrites its own document and hands back that text.
+    const editor = vi.fn(() => "Read [[New]] and [[New|the old one]].\nBody, typed here");
     expect(saver.rebaseOnto(rewritten, (text) => applyTextEdits(text, rewrite!(text)), editor)).toBe(true);
     expect(editor).toHaveBeenCalledOnce();
     expect(saver.snapshot()).toMatchObject({
@@ -308,6 +309,24 @@ describe("PageAutosave", () => {
     saver.dispose();
   });
 
+  it("saves exactly the editor's rewritten document, not a second rewrite of the stored source", async () => {
+    vi.useFakeTimers();
+    const { saver, write } = setup();
+    saver.reset(page("Read [[Old]].\r\nBody", 3));
+    saver.setSource("Read [[Old]].\r\nBody `[[Old]]");
+    const rewritten = page("Read [[New]].\r\nBody", 4);
+    // A raw-source rewrite here would also touch the typed link; the editor's
+    // document is the one the person sees, so its text is what is kept.
+    const rewrite = (text: string) => text.replaceAll("[[Old]]", "[[New]]");
+    const shown = "Read [[New]].\r\nBody `[[Old]]";
+    expect(saver.rebaseOnto(rewritten, rewrite, () => shown)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: shown, expectedVersion: 4 }));
+    // Negative control: the stored-source rewrite would have saved something else.
+    expect(rewrite("Read [[Old]].\r\nBody `[[Old]]")).not.toBe(shown);
+    saver.dispose();
+  });
+
   it("still reports a conflict when a rename and a real edit elsewhere both changed the page", () => {
     const { saver } = setup();
     saver.reset(page("Read [[Old]].\nBody", 3));
@@ -316,7 +335,7 @@ describe("PageAutosave", () => {
     const edited = page("Read [[New]].\nBody, edited in Obsidian", 4);
     expect(renameRewriteExplaining(saver.snapshot().baseline!.content, edited.content)).toBeNull();
     // Even a caller holding the rename's rewrite cannot rebase onto it.
-    const editor = vi.fn(() => true);
+    const editor = vi.fn(() => "unused");
     const rewrite = (text: string) => text.replace("[[Old]]", "[[New]]");
     expect(saver.rebaseOnto(edited, rewrite, editor)).toBe(false);
     expect(editor).not.toHaveBeenCalled();
@@ -331,7 +350,7 @@ describe("PageAutosave", () => {
     saver.setSource("Read [[Old]]. Typed");
     const rewritten = page("Read [[New]].", 4);
     const rewrite = (text: string) => text.replace("[[Old]]", "[[New]]");
-    expect(saver.rebaseOnto(rewritten, rewrite, () => false)).toBe(false);
+    expect(saver.rebaseOnto(rewritten, rewrite, () => null)).toBe(false);
     expect(saver.snapshot().baseline).toMatchObject({ version: 3 });
     expect(saver.observeCanonical(rewritten)).toBeUndefined();
     expect(saver.snapshot().state.phase).toBe("conflict");

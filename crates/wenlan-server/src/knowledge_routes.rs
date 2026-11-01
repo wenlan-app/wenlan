@@ -19,6 +19,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             get(handle_list_knowledge_folders).post(handle_create_knowledge_folder),
         )
         .route("/api/attachments", post(handle_attach_file))
+        .route("/api/attachments/resolve", get(handle_resolve_embed))
 }
 
 /// POST /api/attachments
@@ -53,6 +54,68 @@ pub async fn handle_attach_file(
         kind: stored.kind.as_str().to_string(),
         bytes: stored.bytes,
         created: stored.created,
+    }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ResolveEmbedQuery {
+    /// What the page wrote inside `![[...]]`, such as `cat.png` or
+    /// `trips/cat.png|300`.
+    pub name: String,
+    /// The page the embed is in, so a file in that page's own folder wins.
+    #[serde(default)]
+    pub page_id: Option<String>,
+}
+
+/// GET /api/attachments/resolve?name=[&page_id=]
+///
+/// The image or video an `![[name]]` embed shows: an exact path from the
+/// pages folder, else (with `page_id`) the same path from that page's folder,
+/// else a file of that name, in the page's folder first, then the one with
+/// the shortest path. Never a hidden folder, a symbolic link, or anything
+/// outside the pages folder. 404 when nothing matches, or when `page_id` names
+/// a page the caller cannot see.
+pub async fn handle_resolve_embed(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    view: crate::truth_guard::TruthView,
+    axum::extract::Query(query): axum::extract::Query<ResolveEmbedQuery>,
+) -> Result<Json<wenlan_types::responses::ResolveEmbedResponse>, ServerError> {
+    let (db, root) = {
+        let s = state.read().await;
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.lint_config.page_root().map(std::path::Path::to_path_buf),
+        )
+    };
+    let root =
+        root.unwrap_or_else(|| wenlan_core::config::load_config().knowledge_path_or_default());
+    let not_found = || ServerError::NotFound("embed not found".to_string());
+    if let Some(id) = query.page_id.as_deref() {
+        let scope =
+            crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+        let ids = [id.to_string()];
+        let visible = crate::page_basis_routes::visible_ids(&db, &view.grant, &scope, &ids).await?;
+        match db.get_page(id).await? {
+            Some(page) if visible.contains(id) && page.kind != "entity" => {}
+            _ => return Err(not_found()),
+        }
+    }
+    let resolved = tokio::task::spawn_blocking(move || {
+        let page_file = query.page_id.as_deref().and_then(|id| {
+            wenlan_core::export::knowledge::KnowledgeWriter::new(root.clone(), &db)
+                .live_page_filenames(&[id])
+                .remove(id)
+        });
+        wenlan_core::page_markdown::resolve_embed(&root, page_file.as_deref(), &query.name)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .ok_or_else(not_found)?;
+    Ok(Json(wenlan_types::responses::ResolveEmbedResponse {
+        path: resolved.absolute.to_string_lossy().to_string(),
+        relative: resolved.relative,
+        kind: resolved.kind.as_str().to_string(),
     }))
 }
 

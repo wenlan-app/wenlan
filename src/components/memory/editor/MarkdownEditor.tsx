@@ -38,6 +38,12 @@ export interface MarkdownEditorTextEdit {
   readonly from: number;
   readonly to: number;
   readonly insert: string;
+  /**
+   * The whole construct the edit belongs to (a link's `[[` to `]]`), when it
+   * is wider than `from`..`to`. Replayed after undo or redo when the
+   * restored text touches any of it. Defaults to `from`..`to`.
+   */
+  readonly scope?: readonly [from: number, to: number];
 }
 
 export type MarkdownEditorCommand =

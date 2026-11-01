@@ -492,6 +492,15 @@ pub struct RestorePageResponse {
     pub projection_status: PageProjectionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection_error: Option<String>,
+    /// When the restore gave the page a new title, the other pages whose
+    /// `[[links]]` named its old one, counted as in [`RenamePageResponse`].
+    /// All 0 for a restore under the same title, and from an older daemon.
+    #[serde(default)]
+    pub links_updated: u32,
+    #[serde(default)]
+    pub links_pending_review: u32,
+    #[serde(default)]
+    pub links_not_updated: u32,
 }
 
 /// Why `POST /api/pages/{id}/restore` refused, sent as `code` in the error
@@ -601,6 +610,11 @@ pub struct PageInventoryEntry {
     /// The code bases of this note that are not `ok`; empty for most notes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
+    /// The page's tags: its front matter `tags:` and every `#tag` in its body,
+    /// in any language, as Obsidian reads them. Read from the text each time,
+    /// never stored. Older daemons omit it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// `GET /api/pages` inventory response. Search keeps `SearchPagesResponse`.
@@ -1058,6 +1072,18 @@ pub struct KnowledgePathResponse {
     /// Why the last move stopped. The pages stayed at `path`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub move_error: Option<String>,
+}
+
+/// `GET /api/attachments/resolve?name=` response: the file an `![[name]]`
+/// embed shows, found in the pages folder the way Obsidian finds it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveEmbedResponse {
+    /// Absolute path of the file.
+    pub path: String,
+    /// Path from the pages folder, with `/` between folders.
+    pub relative: String,
+    /// `image` or `video`.
+    pub kind: String,
 }
 
 /// A file copied into the pages folder's `_attachments/` so pages can show it.

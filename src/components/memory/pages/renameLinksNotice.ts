@@ -5,8 +5,11 @@ import { toast } from "sonner";
 import type { RenamePageResponse } from "../../../lib/tauri";
 import { recordRenamedLinks } from "./renameLinkRewrite";
 
+/** The link counts a rename, or a restore under a new title, reports. */
+type LinkCounts = Pick<RenamePageResponse, "id" | "title" | "links_updated" | "links_pending_review" | "links_not_updated">;
+
 /** What a rename did to other pages' links, in one line; null when it touched none. */
-export function renameLinksMessage(t: TFunction, renamed: RenamePageResponse): string | null {
+export function renameLinksMessage(t: TFunction, renamed: LinkCounts): string | null {
   const parts: string[] = [];
   const updated = renamed.links_updated ?? 0;
   const pending = renamed.links_pending_review ?? 0;
@@ -24,7 +27,7 @@ export function renameLinksMessage(t: TFunction, renamed: RenamePageResponse): s
 export function finishRenameLinks(
   t: TFunction,
   queryClient: QueryClient,
-  renamed: RenamePageResponse,
+  renamed: LinkCounts,
   previousTitle: string,
 ): void {
   if ((renamed.links_updated ?? 0) > 0 || (renamed.links_pending_review ?? 0) > 0) {
