@@ -74,14 +74,9 @@
 /* What you're working on (UX-HOME-1): the home's first section, in the same
    column as the newest pages. Cards are told apart by their surface and the
    space between them, not by lines. */
-/* Home: soft white cards on a quiet dotted board. What you're working on is
+/* Home: white cards. What you're working on is
    a grid of cards; the pages edited last are one row of preview cards that
    scrolls sideways, so neither section pushes the other down. */
-.note-group-content:has(> .wiki-reading-start[data-home="true"]), .wiki-workspace-reading:has(.wiki-reading-start[data-home="true"]) {
-  background-color:var(--mem-bg);
-  background-image:radial-gradient(circle at 1px 1px,color-mix(in srgb,var(--mem-text) 10%,transparent) 1px,transparent 0);
-  background-size:20px 20px;
-}
 .home-columns { display:flex;flex-direction:column;gap:40px;width:100%;max-width:min(100%,1000px);margin:40px auto 0;min-width:0; }
 .home-columns:empty { display:none; }
 .home-columns > .wiki-working-on, .home-columns > .wiki-new-pages { max-width:none;margin:0; }
@@ -92,10 +87,10 @@
 .wiki-working-on-card, .wiki-new-pages-row {
   border:1px solid color-mix(in srgb,var(--mem-text) 8%,transparent);border-radius:16px;
   background:var(--mem-surface);color:var(--mem-text);text-align:left;cursor:pointer;
-  box-shadow:0 1px 2px color-mix(in srgb,#141820 6%,transparent),0 6px 18px color-mix(in srgb,#141820 6%,transparent);
-  transition:box-shadow .15s ease,transform .15s ease;
+  box-shadow:0 1px 2px color-mix(in srgb,#141820 4%,transparent);
+  transition:box-shadow .15s ease,border-color .15s ease;
 }
-.wiki-working-on-card:hover, .wiki-new-pages-row:hover { transform:translateY(-1px);box-shadow:0 2px 4px color-mix(in srgb,#141820 8%,transparent),0 10px 26px color-mix(in srgb,#141820 9%,transparent); }
+.wiki-working-on-card:hover, .wiki-new-pages-row:hover { border-color:color-mix(in srgb,var(--mem-text) 16%,transparent);box-shadow:0 2px 8px color-mix(in srgb,#141820 6%,transparent); }
 .wiki-working-on-card:focus-visible, .wiki-new-pages-row:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
 .wiki-working-on-card { display:flex;flex-direction:column;gap:6px;width:100%;min-width:0;padding:16px 18px 14px; }
 .wiki-working-on-title { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 15px/1.4 var(--mem-font-body); }
