@@ -87,7 +87,7 @@ pub(super) async fn write_tables(
     Ok(rows)
 }
 
-fn table_value(table: &ExportTable) -> Value {
+pub(super) fn table_value(table: &ExportTable) -> Value {
     json!({
         "columns": table.columns,
         "rows": table
@@ -98,7 +98,7 @@ fn table_value(table: &ExportTable) -> Value {
     })
 }
 
-fn cell(value: &libsql::Value) -> Value {
+pub(super) fn cell(value: &libsql::Value) -> Value {
     match value {
         libsql::Value::Null => Value::Null,
         libsql::Value::Integer(number) => json!(number),
