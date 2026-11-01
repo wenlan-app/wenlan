@@ -230,6 +230,23 @@ pub(crate) fn require_frontmatter(text: &str, kind: &str) -> Result<(Fields, Str
     Ok((Fields::new(split.frontmatter), body.to_string()))
 }
 
+/// `---` frontmatter, a blank line, then `text` byte for byte and one line
+/// end; [`exact_text`] reads it back.
+pub(crate) fn render_exact(frontmatter: &serde_yaml::Mapping, text: &str) -> String {
+    let mut out = render_frontmatter(frontmatter);
+    out.push('\n');
+    if !text.is_empty() {
+        out.push_str(text);
+        out.push('\n');
+    }
+    out
+}
+
+/// The text [`render_exact`] wrote.
+pub(crate) fn exact_text(body: &str) -> String {
+    body.strip_suffix('\n').unwrap_or(body).to_string()
+}
+
 /// `---` frontmatter, a blank line, then the body with one line end.
 pub(crate) fn render_file(frontmatter: &serde_yaml::Mapping, body: &str) -> String {
     let mut out = render_frontmatter(frontmatter);

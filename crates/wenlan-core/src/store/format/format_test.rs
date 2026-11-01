@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::names::{collision_stem, file_stem, same_file_name, MAX_STEM_BYTES};
-use super::page::{self, Basis, Citation, Details, Locator, PageFile, PageKind};
+use super::page::{self, Basis, Citation, Locator, PageFile, PageKind};
 
 #[test]
 fn a_stem_is_safe_on_every_system() {
@@ -42,16 +42,12 @@ fn a_taken_name_gets_the_end_of_the_id() {
 fn sample() -> PageFile {
     let mut page = PageFile::new(
         "Trip planning",
-        "We fly on Friday [1].\n\nThe hotel is booked.",
+        "We fly on Friday [1].\n\nThe hotel is booked.\n\n<!-- wenlan:details -->\n## Details for AI\n\nFlight LH 454, seat 32A.",
     );
     page.id = Some("page_abc".to_string());
     page.tags = vec!["Travel".to_string()];
     page.created = Some("2026-11-01T10:00:00Z".to_string());
     page.modified = Some("2026-11-01T12:00:00Z".to_string());
-    page.details = Some(Details {
-        heading: "Details for AI".to_string(),
-        text: "Flight LH 454, seat 32A.".to_string(),
-    });
     page.citations = vec![Citation {
         marker: 1,
         label: "[[Flights]]".to_string(),
@@ -201,6 +197,19 @@ fn text_block(gen: &mut Gen) -> String {
     out.join("\n").trim_end_matches('\n').to_string()
 }
 
+/// `text` with, sometimes, line ends or spaces at either end and a CRLF.
+fn edged(gen: &mut Gen, text: String) -> String {
+    if !gen.chance() {
+        return text;
+    }
+    format!(
+        "{}{}{}",
+        gen.pick(&["", "\n", "\n\n", "  "]),
+        text,
+        gen.pick(&["", "\n", "\n\n", " \n", "\r\nx\r\n"]),
+    )
+}
+
 fn random_page(gen: &mut Gen) -> PageFile {
     let mut page = PageFile::new(gen.pick(WORDS), text_block(gen));
     if gen.chance() {
@@ -226,13 +235,15 @@ fn random_page(gen: &mut Gen) -> PageFile {
             .insert("rating".into(), serde_yaml::Value::Number(4.into()));
         page.other.insert("note".into(), gen.pick(WORDS).into());
     }
+    // The body is kept byte for byte: line ends at either end, CRLF, and
+    // the details marker are all just text.
+    page.body = edged(gen, std::mem::take(&mut page.body));
     if gen.chance() {
-        page.details = Some(Details {
-            heading: gen
-                .pick(&["Details for AI", "給 AI 的細節", ""])
-                .to_string(),
-            text: text_block(gen),
-        });
+        page.body.push_str(&format!(
+            "\n\n<!-- wenlan:details -->\n{}\n\n{}",
+            gen.pick(&["## Details for AI", "## 給 AI 的細節", ""]),
+            text_block(gen)
+        ));
     }
     for marker in 1..=(gen.next() % 3) as u32 {
         page.citations.push(Citation {
@@ -337,7 +348,9 @@ Prefers window seats.
 fn every_memory_reads_back_unchanged() {
     let mut gen = Gen(11);
     for round in 0..1000 {
-        let mut memory = MemoryFile::new(format!("mem_{}", gen.next()), text_block(&mut gen));
+        let text = text_block(&mut gen);
+        let text = edged(&mut gen, text);
+        let mut memory = MemoryFile::new(format!("mem_{}", gen.next()), text);
         memory.kind = maybe(&mut gen);
         memory.space = maybe(&mut gen);
         memory.agent = maybe(&mut gen);
@@ -369,7 +382,8 @@ fn every_entity_reads_back_unchanged() {
         entity.established_by = maybe(&mut gen);
         entity.space = maybe(&mut gen);
         entity.other = person_keys(&mut gen);
-        entity.description = text_block(&mut gen);
+        let description = text_block(&mut gen);
+        entity.description = edged(&mut gen, description);
         let text = entity::render(&entity);
         let read = entity::parse(&text).unwrap_or_else(|error| panic!("{round}: {error}\n{text}"));
         assert_eq!(read, entity, "round {round}:\n{text}");
@@ -588,4 +602,22 @@ fn a_file_that_is_not_a_canvas_is_refused() {
     assert!(canvas::parse("{\"nodes\":[{\"id\":\"x\"}]}").is_err());
     assert!(canvas::parse("not json").is_err());
     assert_eq!(canvas::parse("{}").unwrap().nodes.len(), 0);
+}
+
+#[test]
+fn a_body_page_body_joined_reads_back_byte_for_byte() {
+    let joined = crate::page_body::join_body(
+        "We fly on Friday.\n",
+        "Flight LH 454.\n\n```\n## not a heading\n```\n",
+        Some("en"),
+    );
+    let page = PageFile::new("Trip", joined.clone());
+    let read = page::parse(&page::render(&page), "Trip").unwrap();
+    assert_eq!(read.body, joined);
+    let split = crate::page_body::split_body(&read.body).expect("the parts are still there");
+    assert_eq!(
+        split,
+        crate::page_body::split_body(&joined).unwrap(),
+        "page_body splits the file's body as it split the database's"
+    );
 }

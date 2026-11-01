@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The entity file, `entities/<slug>-<id6>.md` in the backstage (spec
-//! section 3). The body is the entity's description.
+//! section 3). The body is the entity's description byte for byte.
 
-use super::{render_file, require_frontmatter, required, Keys};
+use super::{exact_text, render_exact, require_frontmatter, required, Keys};
 use crate::error::WenlanError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,7 +46,7 @@ pub fn parse(text: &str) -> Result<EntityFile, WenlanError> {
     entity.established_by = fields.text("established_by");
     entity.space = fields.text("space");
     entity.other = fields.rest();
-    entity.description = body.trim_end_matches('\n').to_string();
+    entity.description = exact_text(&body);
     Ok(entity)
 }
 
@@ -61,5 +61,5 @@ pub fn render(entity: &EntityFile) -> String {
         .some("established_by", entity.established_by.as_deref())
         .some("space", entity.space.as_deref())
         .finish(&entity.other);
-    render_file(&frontmatter, &entity.description)
+    render_exact(&frontmatter, &entity.description)
 }

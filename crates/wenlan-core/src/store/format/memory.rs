@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The memory file, `memories/YYYY-MM/<id>.md` in the backstage (spec
-//! section 3). The body is the memory's text; `kind`, `event_date` and
+//! section 3). The body is the memory's text byte for byte; `kind`, `event_date` and
 //! `importance` are written only when someone stated them.
 
-use super::{render_file, require_frontmatter, required, Keys};
+use super::{exact_text, render_exact, require_frontmatter, required, Keys};
 use crate::error::WenlanError;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,7 +54,7 @@ pub fn parse(text: &str) -> Result<MemoryFile, WenlanError> {
     let (mut fields, body) = require_frontmatter(text, "memory")?;
     let id = required(fields.text("id"), "memory", "id")?;
     fields.expect_type("memory")?;
-    let mut memory = MemoryFile::new(id, body.trim_end_matches('\n'));
+    let mut memory = MemoryFile::new(id, exact_text(&body));
     memory.kind = fields.text("kind");
     memory.space = fields.text("space");
     memory.agent = fields.text("agent");
@@ -97,7 +97,7 @@ pub fn render(memory: &MemoryFile) -> String {
         .int("importance", memory.importance)
         .list("about", &about)
         .finish(&memory.other);
-    render_file(&frontmatter, &memory.text)
+    render_exact(&frontmatter, &memory.text)
 }
 
 /// `[[name]]` → `name`; anything else as it is.
