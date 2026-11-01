@@ -106,6 +106,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "renew_remote_access": return { status: "off" };
     case "get_profile": case "get_pending_revision": return null;
     case "list_working_on": return workingOn();
+    // The fixture has no things of its own yet, so home shows Brief items.
+    case "list_things": return [];
     case "get_briefing": return { content: "", new_today: 0, primary_agent: null, generated_at: 1_783_728_000, is_stale: false };
     case "get_enrichment_status": return { source_id: optionalString(args, "sourceId") ?? "", summary: "", steps: [] };
     case "get_version_chain_cmd": return [];

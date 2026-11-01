@@ -932,6 +932,69 @@ export async function listWorkingOn(): Promise<WorkingOnItem[]> {
   return invoke("list_working_on");
 }
 
+/** One thing (一件事): a line of work that conversations are sorted into
+ *  (docs/ux/spec.md, UX-THING-1). Times are in seconds. */
+export interface ThingSummary {
+  id: string;
+  /** Null until the AI or the person names it. */
+  title: string | null;
+  /** Who gave the current title: the AI names new things, the person can rename. */
+  title_by: "ai" | "person";
+  /** One line on where the work stands: the newest handoff summary of one of
+   *  its conversations, else its Brief item text. */
+  status_line: string | null;
+  spaces: string[];
+  last_activity_at: number;
+}
+
+export interface ThingSession {
+  id: string;
+  tool: string;
+  title: string | null;
+  last_write_at: number;
+}
+
+export interface ThingPage {
+  id: string;
+  title: string;
+  /** Whether its conversations wrote the page or read it. */
+  via: "wrote" | "read";
+  at: number;
+}
+
+export interface ThingDetail extends ThingSummary {
+  sessions: ThingSession[];
+  pages: ThingPage[];
+}
+
+/** Things with recent activity first. Empty until things have their own record. */
+export async function listThings(): Promise<ThingSummary[]> {
+  return invoke("list_things");
+}
+
+export async function getThing(id: string): Promise<ThingDetail> {
+  return invoke("get_thing", { id });
+}
+
+export async function renameThing(id: string, title: string): Promise<ThingSummary> {
+  return invoke("rename_thing", { id, title });
+}
+
+/** Move a conversation out of one thing into another, or into a new thing
+ *  named `newTitle`, in one step (UX-THING-1). Its other things stay. */
+export async function moveSessionThing(
+  sessionId: string,
+  fromThingId: string,
+  target: { thingId: string } | { newTitle: string },
+): Promise<ThingSummary> {
+  return invoke("move_session_thing", {
+    sessionId,
+    fromThingId,
+    toThingId: "thingId" in target ? target.thingId : null,
+    newTitle: "newTitle" in target ? target.newTitle : null,
+  });
+}
+
 export async function getSpace(name: string): Promise<Space | null> {
   return invoke("get_space", { name });
 }
