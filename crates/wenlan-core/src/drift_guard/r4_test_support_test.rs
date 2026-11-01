@@ -3231,10 +3231,11 @@ fn repository_module_graph_matches_r4_25_group_6_census() {
     // additional calls: one primary session, query and next, plus two row gets.
     // Every call remains individually pinned in the support manifest.
     // The merged page-history tests seed legacy rows with two more calls:
-    // one primary session and one execute.
+    // one primary session and one execute. The in-chat decision check test
+    // seeds memories with two more: a primary session and one execute.
     assert_eq!(
         analysis.support_calls.len(),
-        1208,
+        1210,
         "PR-D integration must expose the frozen 967 support calls, the 6 PR-D test identities, \
          the 5 M5 derivation-marker fixture calls, the 10 M6 shadow-promoter fixture calls, \
          the 7 G6 BindPageLink repair-test calls (G6 Stage 2 PR 2b, item 3: \
