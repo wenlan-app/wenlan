@@ -317,6 +317,11 @@ export class TauriMockRuntime {
         this.pages[index] = required ? { ...rest, review_required: true } : rest;
         return { page_id: pageId, review_required: required };
       }
+      // The fixture stages no sentence proposals, so none can be decided.
+      case "accept_sentence_proposal":
+      case "reject_sentence_proposal":
+        requiredString(command, args, "pageId");
+        throw new TauriMockArgumentError(command, "proposalId");
       case "mark_page_basis":
         return this.pageBasis.mark(
           requiredString(command, args, "pageId"),

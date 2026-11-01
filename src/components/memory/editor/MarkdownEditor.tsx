@@ -11,6 +11,7 @@ import {
 import type { ComponentType, RefAttributes } from "react";
 import { NativeMarkdownEditor } from "./NativeMarkdownEditor";
 import type { PageLayersSettings } from "./pageLayersEditing";
+import type { SentenceProposalSettings } from "./sentenceProposals";
 import { loadCodeMirrorEditor } from "./loadCodeMirrorEditor";
 
 import type { EditorReferenceContext } from "./wikiLinkEditing";
@@ -23,6 +24,20 @@ export interface MarkdownEditorHandle {
   runCommand(command: MarkdownEditorCommand): boolean;
   requestSave(): boolean;
   requestCancel(): boolean;
+  /**
+   * Apply a change made outside this editor (a rename's link rewrite) to the
+   * live document, keeping the cursor and the person's own undo steps.
+   * `edits` reads the current document. False when the editor cannot take it
+   * now (still loading, disabled, or mid composition).
+   */
+  applyExternalEdits(edits: (document: string) => readonly MarkdownEditorTextEdit[]): boolean;
+}
+
+/** Replace `from`..`to` of the document with `insert`. */
+export interface MarkdownEditorTextEdit {
+  readonly from: number;
+  readonly to: number;
+  readonly insert: string;
 }
 
 export type MarkdownEditorCommand =
@@ -95,6 +110,9 @@ export interface MarkdownEditorProps {
   /** Short or full and the folded part for AI (UX-VIEW-2, UX-VIEW-3). The
    *  plain-text fallback editor shows the whole text. */
   pageLayers?: PageLayersSettings;
+  /** The AI's proposals for the person's sentences, each under its sentence
+   *  (UX-WHO-2). The plain-text fallback editor does not draw them. */
+  sentenceProposals?: SentenceProposalSettings;
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
@@ -138,6 +156,9 @@ const MarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
         },
         requestSave(): boolean {
           return editorRef.current?.requestSave() ?? false;
+        },
+        applyExternalEdits(edits): boolean {
+          return editorRef.current?.applyExternalEdits(edits) ?? false;
         },
         requestCancel(): boolean {
           if (editorRef.current) return editorRef.current.requestCancel();

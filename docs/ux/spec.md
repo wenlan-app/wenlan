@@ -108,8 +108,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   touched; each update is recorded and can be undone. It cannot change your
   sentences: it proposes, one sentence at a time, with accept or no under that
   sentence, never a whole-page card. Each page has one Lock switch, off by
-  default; there is no "may edit directly" mode.
-  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）
+  default; there is no "may edit directly" mode. The AI proposes a change to
+  your sentence only when the facts changed: a source no longer supports it or
+  it has gone out of date. It never proposes a rewording.
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。
 - **UX-WHO-3** `planned` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。

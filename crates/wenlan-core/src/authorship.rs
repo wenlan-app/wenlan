@@ -11,9 +11,10 @@
 //! Rules, in the order the derivation applies them:
 //!
 //! - A page body splits into sentence units: every line, then
-//!   [`crate::faithfulness::sentence_spans`] inside the line (the one sentence
-//!   boundary the citation checker uses). The boundary only knows `.!?`, so a
-//!   CJK paragraph without ASCII punctuation is one unit per line.
+//!   [`crate::faithfulness::sentence_spans`] inside the line (the sentence
+//!   boundary the citation checker uses), refined so a common abbreviation's
+//!   full stop (`a.m.`) does not end a sentence and Chinese or Japanese
+//!   `。！？` does.
 //! - Each version is aligned with the one before it by LCS over normalized
 //!   units (citation markers removed, whitespace collapsed), so re-wrapping
 //!   or re-citing a sentence keeps its author. A unit that reappears with the
@@ -145,9 +146,9 @@ fn line_unit_ranges(line: &str) -> Vec<(usize, usize)> {
         i += ch.len_utf8();
     }
     raw_at.push(line.len());
-    let starts: Vec<usize> = crate::faithfulness::sentence_spans(&bare)
+    let starts: Vec<usize> = sentence_starts(&bare)
         .into_iter()
-        .map(|(start, _)| raw_at[start])
+        .map(|start| raw_at[start])
         .collect();
     starts
         .iter()
@@ -155,6 +156,76 @@ fn line_unit_ranges(line: &str) -> Vec<(usize, usize)> {
         .map(|(k, &start)| (start, starts.get(k + 1).copied().unwrap_or(line.len())))
         .filter(|(start, end)| start < end)
         .collect()
+}
+
+/// Where each sentence of `bare` (one line, markers removed) starts.
+///
+/// The base boundary is [`crate::faithfulness::sentence_spans`]. Two
+/// refinements apply to sentence units only, because the citation checker
+/// and claim identity pin that boundary's offsets:
+///
+/// - A full stop that ends a common abbreviation (`a.m.`, `e.g.`, `Dr.`)
+///   does not end the sentence.
+/// - Chinese and Japanese end sentences with `。！？` and need no space
+///   after them, so each one (plus any closing quote or bracket after it)
+///   ends a sentence too.
+fn sentence_starts(bare: &str) -> Vec<usize> {
+    let mut starts: Vec<usize> = crate::faithfulness::sentence_spans(bare)
+        .into_iter()
+        .map(|(start, _)| start)
+        .filter(|&start| start == 0 || !ends_with_abbreviation(&bare[..start]))
+        .collect();
+    starts.extend(cjk_sentence_starts(bare));
+    starts.sort_unstable();
+    starts.dedup();
+    starts
+}
+
+/// Words whose full stop does not end a sentence, lowercase, without the
+/// final `.`.
+const ABBREVIATIONS: &[&str] = &[
+    "a.m", "p.m", "e.g", "i.e", "vs", "mr", "mrs", "ms", "dr", "prof", "st", "jr", "sr", "fig",
+    "approx", "u.s", "u.k",
+];
+
+/// `before` (the text up to a sentence start) ends with an abbreviation and
+/// its full stop, then whitespace.
+fn ends_with_abbreviation(before: &str) -> bool {
+    let trimmed = before.trim_end();
+    let Some(word) = trimmed.strip_suffix('.') else {
+        return false;
+    };
+    let token = word
+        .rsplit(|c: char| c.is_whitespace() || c == '(')
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    ABBREVIATIONS.contains(&token.as_str())
+}
+
+/// Sentence starts after `。！？` (and any closing quotes or brackets right
+/// after them) that the ASCII boundary does not see.
+fn cjk_sentence_starts(bare: &str) -> Vec<usize> {
+    const ENDS: &[char] = &['。', '！', '？'];
+    const CLOSERS: &[char] = &['」', '』', '”', '’', '）', ')', '】', '"', '\''];
+    let mut starts = Vec::new();
+    let mut chars = bare.char_indices().peekable();
+    while let Some((_, ch)) = chars.next() {
+        if !ENDS.contains(&ch) {
+            continue;
+        }
+        while let Some(&(_, next)) = chars.peek() {
+            if ENDS.contains(&next) || CLOSERS.contains(&next) || next.is_whitespace() {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if let Some(&(start, _)) = chars.peek() {
+            starts.push(start);
+        }
+    }
+    starts
 }
 
 /// One step of an alignment between an old and a new unit list.

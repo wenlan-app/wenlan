@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
-import { attachBytesToPage, pageAttachmentsDir, type AttachedFile } from "./tauri";
+import { attachBytesToPage, attachImageUrlToPage, pageAttachmentsDir, resolvePageEmbed, type AttachedFile } from "./tauri";
 
 /**
  * Images and videos placed in pages live in the pages folder's
@@ -134,4 +134,72 @@ export function uploadName(file: File): string {
 export async function uploadAttachment(file: File): Promise<AttachedFile> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   return attachBytesToPage(uploadName(file), bytes);
+}
+
+/** Download an image a paste names only by its web address into the pages folder. */
+export function uploadImageUrl(url: string): Promise<AttachedFile> {
+  return attachImageUrlToPage(url);
+}
+
+/** An Obsidian embed, `![[name]]` or `![[name|300]]`, that shows an image or video. */
+export interface MediaEmbed {
+  /** The file as written, without `|size` or `#anchor`; may carry a folder. */
+  readonly name: string;
+  readonly kind: AttachmentKind;
+  /** `|300` or `|300x200` sets the width in pixels. */
+  readonly width?: number;
+  /** Any other `|text` is the image's alt text. */
+  readonly alt: string;
+}
+
+/** Reads the inside of `![[...]]`; null when it is not an image or video. */
+export function parseMediaEmbed(inner: string): MediaEmbed | null {
+  const [target, ...rest] = inner.split("|");
+  const name = target.split("#")[0].trim();
+  if (!name || name.startsWith(".")) return null;
+  const kind = attachmentKind(name.split("/").pop() ?? name);
+  if (!kind) return null;
+  const option = rest.join("|").trim();
+  const size = /^(\d{1,4})(?:x\d{1,4})?$/.exec(option);
+  return {
+    name,
+    kind,
+    ...(size ? { width: Number(size[1]) } : {}),
+    alt: size || !option ? (name.split("/").pop() ?? name) : option,
+  };
+}
+
+/** `![[...]]` in running text. */
+export const MEDIA_EMBED = /!\[\[([^\]\n]+)\]\]/g;
+
+const embedPaths = new Map<string, string | null>();
+const embedLookups = new Set<string>();
+
+/**
+ * The webview URL for an embed. The daemon finds the file anywhere in the
+ * pages folder the way Obsidian does; until it answers, or when it finds
+ * nothing, a bare name falls back to `_attachments/<name>`. Listeners of
+ * {@link subscribeAttachmentsDir} hear when an answer arrives.
+ */
+export function mediaEmbedUrl(embed: MediaEmbed): string | null {
+  const resolved = embedPaths.get(embed.name);
+  if (resolved) return convertFileSrc(resolved);
+  if (resolved === undefined && !embedLookups.has(embed.name)) {
+    embedLookups.add(embed.name);
+    void resolvePageEmbed(embed.name)
+      .then((path) => { embedPaths.set(embed.name, typeof path === "string" && path ? path : null); })
+      .catch(() => { embedPaths.set(embed.name, null); })
+      .finally(() => {
+        embedLookups.delete(embed.name);
+        if (embedPaths.get(embed.name)) listeners.forEach((listener) => listener());
+      });
+  }
+  if (embed.name.includes("/")) return null;
+  return attachmentUrl(`${ATTACHMENTS_PREFIX}${encodeURIComponent(embed.name)}`);
+}
+
+/** For tests: forget resolved embeds. */
+export function resetMediaEmbedsForTest(): void {
+  embedPaths.clear();
+  embedLookups.clear();
 }
