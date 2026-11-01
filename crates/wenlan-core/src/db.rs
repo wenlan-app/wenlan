@@ -5772,7 +5772,7 @@ impl MemoryDB {
         // that one guarantee, and it lives here rather than in the constructors
         // because the chain replay is what needs it.
         ensure_legacy_entities_table(&conn).await?;
-        // Same for the tables migration 146 drops. See db/table_classes.rs.
+        // Same for the tables migration 150 drops. See db/table_classes.rs.
         table_classes::ensure_dropped_tables_for_replay(&conn, version).await?;
 
         if version < 1 {
@@ -19125,6 +19125,20 @@ pub struct BackupReceipt {
     pub backup_pages: i64,
     pub integrity_ok: bool,
     pub created_at: i64,
+}
+
+/// The `page_history.edited_by` of a page's first version. An authored page
+/// records who made it, so a later edit by the person never makes the AI
+/// tool's sentences theirs: `person_create` for the person in the app (no
+/// agent name), `agent_create` for an AI tool. Other pages, and internal
+/// callers that name no actor, keep `create`.
+fn create_label(creation_kind: &str, actor: &str) -> &'static str {
+    match (creation_kind, actor) {
+        ("authored", "unknown") => "person_create",
+        ("authored", "") => "create",
+        ("authored", _) => "agent_create",
+        _ => "create",
+    }
 }
 
 impl MemoryDB {
@@ -52447,9 +52461,9 @@ impl MemoryDB {
             .execute(
                 "INSERT OR IGNORE INTO page_history \
                    (page_id, version, title, content, source_memory_ids, edited_by, created_at) \
-                 SELECT id, version, title, content, source_memory_ids, 'create', ?2 \
+                 SELECT id, version, title, content, source_memory_ids, ?3, ?2 \
                  FROM pages WHERE id = ?1",
-                libsql::params![id, linked_at],
+                libsql::params![id, linked_at, create_label(creation_kind, basis_actor)],
             )
             .await
         {

@@ -47,6 +47,7 @@ import {
 } from "./writingPresentation";
 import { pageLayersEditing, setPageLayers } from "./pageLayersEditing";
 import { sentenceProposals, setSentenceProposals } from "./sentenceProposals";
+import { aiChangeMarks, setAiChangeMarks } from "./aiChangeMarks";
 
 type ExternalEdits = Parameters<MarkdownEditorHandle["applyExternalEdits"]>[0];
 
@@ -267,6 +268,10 @@ export const CodeMirrorMarkdownEditor = forwardRef<
   }, [props.sentenceProposals]);
 
   useLayoutEffect(() => {
+    viewRef.current?.dispatch({ effects: setAiChangeMarks.of(props.aiChangeMarks ?? null) });
+  }, [props.aiChangeMarks]);
+
+  useLayoutEffect(() => {
     linkNotesRef.current = props.linkNotes ?? [];
     viewRef.current?.dispatch({ effects: refreshLinkCompletion.of(null) });
   }, [props.linkNotes]);
@@ -340,6 +345,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             pageLayersEditing(props.pageLayers ?? null),
             sentenceProposals(props.sentenceProposals ?? null),
             writingPageId.of(props.pageId ?? null),
+            aiChangeMarks(props.aiChangeMarks ?? null),
             searchPhrasesCompartmentRef.current.of(EditorState.phrases.of(searchPhrases(t))),
             drawSelection(),
             dropCursor(),

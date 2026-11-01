@@ -51970,7 +51970,7 @@ async fn migration_81_creates_edges_and_provenance_schema() {
         let mut rows = conn.query("PRAGMA user_version", ()).await.unwrap();
         rows.next().await.unwrap().unwrap().get(0).unwrap()
     };
-    // Stopped before migration 146, which drops `edges_migration_state`.
+    // Stopped before migration 150, which drops `edges_migration_state`.
     assert_eq!(uv, 145);
 }
 

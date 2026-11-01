@@ -5455,6 +5455,16 @@ pub async fn reject_sentence_proposal(
 }
 
 #[tauri::command]
+pub async fn revert_page_sentences(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    version: i64,
+) -> Result<wenlan_types::authorship::SentenceRevertResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.revert_page_sentences(&page_id, version).await
+}
+
+#[tauri::command]
 pub async fn mark_page_basis(
     state: tauri::State<'_, State>,
     page_id: String,
@@ -5549,12 +5559,15 @@ pub async fn get_page_code_basis_cited(
 pub async fn get_page_revisions(
     state: tauri::State<'_, State>,
     page_id: String,
+    include_text: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
-    client.get_page_revisions(&page_id).await
+    client
+        .get_page_revisions(&page_id, include_text.unwrap_or(false))
+        .await
 }
 
 #[tauri::command]

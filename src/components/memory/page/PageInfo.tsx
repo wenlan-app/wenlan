@@ -8,14 +8,17 @@ import type {
   MemoryItem,
   PageChangelogEntry,
   PageCitation,
+  PageHistoryItem,
   PageLinkInbound,
   PageSourceWithMemory,
 } from "../../../lib/tauri";
 import type { CitationState } from "../../../lib/pageCitations";
-import { basisCountLabel, prettyAgent, relativeMs, revisionSummary, revisionWriterLabel } from "./format";
+import { basisCountLabel, prettyAgent, relativeMs, revisionSummary } from "./format";
 import { sourceLocatorLabel } from "../sources/sourcePresentation";
 import PageInfoCode from "./PageInfoCode";
 import PageInfoNotes from "./PageInfoNotes";
+import { HistoryChangeDialog } from "./HistoryChangeDialog";
+import { historyItemLabel, historyRows } from "./historyItems";
 import "./NoteInfo.css";
 
 interface PageInfoProps {
@@ -25,6 +28,8 @@ interface PageInfoProps {
   sources: PageSourceWithMemory[] | undefined;
   inbound: PageLinkInbound[];
   revisions: PageChangelogEntry[];
+  /** The page's one history (UX-HIST-1): edits plus new versions of the pages it relies on. */
+  history?: PageHistoryItem[];
   revisionsLoading?: boolean;
   revisionsError?: boolean;
   onRetryRevisions?: () => void;
@@ -99,6 +104,7 @@ export default function PageInfo({
   sources,
   inbound,
   revisions,
+  history,
   revisionsLoading = false,
   revisionsError = false,
   onRetryRevisions,
@@ -125,11 +131,13 @@ export default function PageInfo({
   const [showAllSources, setShowAllSources] = useState(false);
   const [showAllRevisions, setShowAllRevisions] = useState(false);
   const visibleRows = showAllSources ? rows : rows.slice(0, SOURCES_SHOWN);
-  // Daemon order varies; newest revision is what the panel is opened for.
-  const revisionsDesc = [...revisions].sort((a, b) => b.version - a.version);
-  const visibleRevisions = showAllRevisions
-    ? revisionsDesc
-    : revisionsDesc.slice(0, REVISIONS_SHOWN);
+  const [openHistoryItem, setOpenHistoryItem] = useState<PageHistoryItem | null>(null);
+  // Daemon order varies; newest change is what the panel is opened for.
+  const historyDesc = historyRows(history, revisions);
+  const visibleHistory = showAllRevisions
+    ? historyDesc
+    : historyDesc.slice(0, REVISIONS_SHOWN);
+  const entryByVersion = new Map(revisions.map((entry) => [entry.version, entry]));
   const seenInboundIds = new Set<string>();
   const uniqueInbound = inbound.filter((link) => {
     if (seenInboundIds.has(link.source_page_id)) return false;
@@ -228,7 +236,7 @@ export default function PageInfo({
             </div>
           </div>
         )}
-        {(revisions.length > 0 || revisionsLoading || revisionsError) && (
+        {(historyDesc.length > 0 || revisionsLoading || revisionsError) && (
           <div>
             <h4 className={embedded ? "note-info-section-heading" : "mb-1"} style={embedded ? undefined : groupHeading}>
               {t("pageInfo.revisions")}
@@ -250,7 +258,7 @@ export default function PageInfo({
                   </button>
                 </div>
               )}
-              {!revisionsError && revisions.length === 0 && revisionsLoading && (
+              {!revisionsError && historyDesc.length === 0 && revisionsLoading && (
                 <p
                   style={{
                     fontFamily: "var(--mem-font-body)",
@@ -262,30 +270,50 @@ export default function PageInfo({
                 </p>
               )}
               <ol className="note-revision-list" aria-label={t("pageInfo.revisions")}>
-                {visibleRevisions.map((entry) => {
-                  const incomingCount = entry.incoming_source_ids?.length ?? 0;
-                  const summary = revisionSummary(t, entry, i18n.language);
+                {visibleHistory.map((item) => {
+                  const entry = item.kind === "source_update" || item.version == null
+                    ? undefined
+                    : entryByVersion.get(item.version);
+                  const incomingCount = entry?.incoming_source_ids?.length ?? 0;
+                  const summary = entry ? revisionSummary(t, entry, i18n.language) : null;
+                  const label = historyItemLabel(t, item);
                   return (
-                    <li key={`${entry.version}-${entry.at}`} className="note-revision-entry">
-                      <div className="note-revision-meta">
-                        <span className="note-revision-version">v{entry.version}</span>
-                        <span>{revisionWriterLabel(t, entry.edited_by, entry.agent)}</span>
-                        <span className="note-revision-time">
-                          {relativeMs(entry.at * 1000, relativeLocale)}
+                    <li
+                      key={`${item.kind}-${item.version ?? ""}-${item.source?.page_id ?? ""}-${item.source?.version ?? ""}-${item.at}`}
+                      className="note-revision-entry"
+                    >
+                      <button
+                        type="button"
+                        className="note-revision-open"
+                        aria-label={t("pageHistory.open", { change: label })}
+                        disabled={!currentPageId}
+                        onClick={() => setOpenHistoryItem(item)}
+                      >
+                        <span className="note-revision-meta">
+                          {item.kind !== "source_update" && item.version != null && (
+                            <span className="note-revision-version">v{item.version}</span>
+                          )}
+                          <span>{label}</span>
+                          <span className="note-revision-time">
+                            {relativeMs(item.at * 1000, relativeLocale)}
+                          </span>
                         </span>
-                      </div>
-                      {summary && <p className="note-revision-summary">{summary}</p>}
-                      {(incomingCount > 0 || entry.citations_summary) && (
-                        <div className="note-revision-provenance">
-                          {incomingCount > 0 && <span>{t("pageInfo.incoming", { count: incomingCount })}</span>}
-                          {entry.citations_summary && <span>{entry.citations_summary}</span>}
-                        </div>
-                      )}
+                        {item.kind === "source_update" && item.source?.pending && (
+                          <span className="note-revision-summary">{t("pageHistory.notChecked")}</span>
+                        )}
+                        {summary && <span className="note-revision-summary">{summary}</span>}
+                        {(incomingCount > 0 || entry?.citations_summary) && (
+                          <span className="note-revision-provenance">
+                            {incomingCount > 0 && <span>{t("pageInfo.incoming", { count: incomingCount })}</span>}
+                            {entry?.citations_summary && <span>{entry.citations_summary}</span>}
+                          </span>
+                        )}
+                      </button>
                     </li>
                   );
                 })}
               </ol>
-              {revisions.length > REVISIONS_SHOWN && (
+              {historyDesc.length > REVISIONS_SHOWN && (
                 <button
                   type="button"
                   className="note-revision-toggle"
@@ -294,7 +322,7 @@ export default function PageInfo({
                 >
                   {showAllRevisions
                     ? t("pageInfo.showLessRevisions")
-                    : t("pageInfo.showAllRevisions", { count: revisions.length })}
+                    : t("pageInfo.showAllRevisions", { count: historyDesc.length })}
                 </button>
               )}
             </div>
@@ -449,6 +477,13 @@ export default function PageInfo({
           </p>
         )}
       </div>
+      {openHistoryItem && currentPageId && (
+        <HistoryChangeDialog
+          pageId={currentPageId}
+          item={openHistoryItem}
+          onClose={() => setOpenHistoryItem(null)}
+        />
+      )}
     </Wrapper>
   );
 }

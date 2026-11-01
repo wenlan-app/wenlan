@@ -3,6 +3,8 @@ import type { Page } from "./tauri";
 import { exampleWikiActive } from "./exampleWiki/mode";
 
 export const RECENT_PAGES_STORAGE_KEY = "wenlan:recent-pages:v1";
+/** Fired on `window` after the history changes, so lists that show it can redraw. */
+export const RECENT_PAGES_CHANGED_EVENT = "wenlan:recent-pages-changed";
 
 const HISTORY_VERSION = 1 as const;
 const HISTORY_LIMIT = 50;
@@ -132,6 +134,10 @@ function writeHistory(
     storage.setItem(RECENT_PAGES_STORAGE_KEY, JSON.stringify(history));
   } catch {
     return;
+  }
+  // Every open Recently used list redraws, whichever editor or group wrote the visit.
+  if (runtime?.storage === undefined && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(RECENT_PAGES_CHANGED_EVENT));
   }
 }
 

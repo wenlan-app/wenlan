@@ -1761,6 +1761,24 @@ impl WenlanClient {
         .await
     }
 
+    /// The person undoes one AI write's sentence changes. The app never sends
+    /// an agent name, so the daemon counts this as the person's undo.
+    pub async fn revert_page_sentences(
+        &self,
+        page_id: &str,
+        version: i64,
+    ) -> Result<wenlan_types::authorship::SentenceRevertResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences/revert",
+            percent_encode_path_segment(page_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::authorship::SentenceRevertRequest { version },
+        )
+        .await
+    }
+
     /// The person turns one sentence proposal down; the sentence stays.
     pub async fn reject_sentence_proposal(
         &self,
@@ -1779,10 +1797,17 @@ impl WenlanClient {
         .await
     }
 
-    pub async fn get_page_revisions(&self, page_id: &str) -> Result<serde_json::Value, String> {
+    /// `include_text` puts each version's whole text on its history entry,
+    /// so every change can be opened (UX-HIST-2).
+    pub async fn get_page_revisions(
+        &self,
+        page_id: &str,
+        include_text: bool,
+    ) -> Result<serde_json::Value, String> {
         let path = format!(
-            "/api/pages/{}/revisions",
-            percent_encode_path_segment(page_id)
+            "/api/pages/{}/revisions{}",
+            percent_encode_path_segment(page_id),
+            if include_text { "?include=text" } else { "" }
         );
         self.get_json(&path).await
     }

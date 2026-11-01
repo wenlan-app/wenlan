@@ -1353,12 +1353,45 @@ export interface PageChangelogEntry {
   sources_removed?: number | null;
 }
 
+export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update";
+
+/** The page a `source_update` history item is about. */
+export interface PageHistorySource {
+  page_id: string;
+  title: string;
+  /** The version the source got. */
+  version: number;
+  /** The source version this page was last checked against. */
+  relied_on_version: number;
+  /** True while this page has not been checked against `version` yet. */
+  pending: boolean;
+  /** The source's text at `version`, with `includeText`. */
+  text?: string | null;
+}
+
+/** One change in a page's one history (UX-HIST-1), newest first. */
+export interface PageHistoryItem {
+  kind: PageHistoryKind;
+  /** Unix seconds. */
+  at: number;
+  version?: number | null;
+  edited_by?: string | null;
+  agent?: string | null;
+  delta_summary?: string | null;
+  /** The page text after an edit, with `includeText`. */
+  text?: string | null;
+  source?: PageHistorySource | null;
+  changed_sentences?: number | null;
+}
+
 export interface ListPageRevisionsResponse {
   page_id: string;
   current_version: number;
   user_edited: boolean;
   stale_reason?: string | null;
   entries: PageChangelogEntry[];
+  /** The page's one history: your edits, the AI's, and new versions of the pages it relies on. */
+  history?: PageHistoryItem[];
 }
 
 // ── Memory Page ─────────────────────────────────────────────────────
@@ -1674,6 +1707,9 @@ export interface Page {
    */
   refresh_blocked_reason?: string | null;
   user_edited?: boolean;
+  /** When the person last edited the page, unix seconds; null or missing when
+   *  no recent edit is theirs. */
+  human_edited_at?: number | null;
   /** Review lock: machine writes wait as revision cards. Omitted while false. */
   review_required?: boolean;
   /**
@@ -2137,12 +2173,45 @@ export interface PageSentence {
   proposals?: string[];
 }
 
+/** The page's newest AI write, for "AI updated N sentences" and its Undo. */
+export interface LastAiUpdate {
+  /** The page version that write produced; what an undo takes. */
+  version: number;
+  /** Sentences that write added, changed or removed. */
+  changed_sentences: number;
+  /** Unix seconds. */
+  at: number;
+  /** What that write did to each sentence, in page order. */
+  changes?: SentenceChange[];
+}
+
+/** One sentence an AI write added, changed or removed. */
+export interface SentenceChange {
+  kind: "changed" | "added" | "removed";
+  /** The sentence's hash as that write left it; null for removed. A hash no
+   *  longer in the sentences list means the sentence changed again since. */
+  hash: string | null;
+  /** Its text before that write; null for added. */
+  before: string | null;
+}
+
 export interface PageSentencesResponse {
   page_id: string;
   version: number;
   ai_edits: "propose" | "locked";
   sentences: PageSentence[];
   proposals: SentenceProposal[];
+  last_ai_update?: LastAiUpdate | null;
+}
+
+export interface SentenceRevertResponse {
+  page_id: string;
+  /** The page's version after the undo; unchanged when nothing was put back. */
+  version: number;
+  /** Sentences put back as they were before that AI write. */
+  reverted: number;
+  /** Sentences that write changed but that changed again since; left as they are. */
+  skipped: number;
 }
 
 export async function getPageSentences(pageId: string): Promise<PageSentencesResponse> {
@@ -2154,6 +2223,11 @@ export async function acceptSentenceProposal(
   proposalId: string,
 ): Promise<{ proposal: SentenceProposal; version: number }> {
   return invoke("accept_sentence_proposal", { pageId, proposalId });
+}
+
+/** The person undoes one AI write's sentence changes (UX-WHO-2). */
+export async function revertPageSentences(pageId: string, version: number): Promise<SentenceRevertResponse> {
+  return invoke("revert_page_sentences", { pageId, version });
 }
 
 export async function rejectSentenceProposal(
@@ -2847,10 +2921,12 @@ export async function getMemoryRevisions(
   return invoke("get_memory_revisions", { sourceId });
 }
 
+/** `includeText` adds each version's whole text, so a change can be opened (UX-HIST-2). */
 export async function getPageRevisions(
   pageId: string,
+  includeText = false,
 ): Promise<ListPageRevisionsResponse> {
-  return invoke("get_page_revisions", { pageId });
+  return invoke("get_page_revisions", { pageId, includeText });
 }
 
 export async function listPendingRevisions(limit?: number): Promise<PendingRevisionItem[]> {

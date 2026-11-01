@@ -209,7 +209,10 @@ pub async fn handle_reject_sentence_proposal(
 /// POST /api/pages/{id}/sentences/flag
 ///
 /// The person's 「不對」 on one sentence. The fix, by the person or by the AI
-/// (as a proposal), comes after.
+/// (as a proposal), comes after. With `ask_ai`, the AI's fix is worked out
+/// after this answer, off the request: it arrives as a pending proposal on
+/// the sentence, or not at all when no model is there or the sources show no
+/// fix. The flag itself never waits for or fails on the model.
 pub async fn handle_flag_sentence(
     State(state): State<Arc<RwLock<ServerState>>>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
@@ -226,10 +229,65 @@ pub async fn handle_flag_sentence(
         &id,
     )
     .await?;
-    Ok(Json(
+    let mut receipt =
         wenlan_core::sentences::flag_sentence(&db, &id, &req.sentence_hash, req.why.as_deref())
-            .await?,
-    ))
+            .await?;
+    if req.ask_ai {
+        receipt.ai_fix_queued = spawn_ai_fix(&state, db, &receipt, req.why).await;
+    }
+    Ok(Json(receipt))
+}
+
+/// Start the AI's fix for a flagged sentence in the background. False when no
+/// model can do it, which leaves the flag as it is.
+async fn spawn_ai_fix(
+    state: &Arc<RwLock<ServerState>>,
+    db: Arc<MemoryDB>,
+    receipt: &SentenceFlagResponse,
+    why: Option<String>,
+) -> bool {
+    // Snapshot the model slots and drop the guard before anything awaits.
+    let (api_llm, external_llm, on_device) = {
+        let s = state.read().await;
+        (s.api_llm.clone(), s.external_llm.clone(), s.llm.clone())
+    };
+    let config = wenlan_core::config::load_config();
+    let pin = wenlan_core::refinery::EverydaySource::parse(config.everyday_source.as_deref());
+    let Some(llm) = wenlan_core::sentences::fix_provider(
+        pin,
+        api_llm.as_ref(),
+        external_llm.as_ref(),
+        on_device.as_ref(),
+    )
+    .cloned() else {
+        tracing::debug!(
+            "[sentences] no everyday model for the AI fix of {}/{}; the flag stays",
+            receipt.page_id,
+            receipt.sentence_hash
+        );
+        return false;
+    };
+    let page_id = receipt.page_id.clone();
+    let hash = receipt.sentence_hash.clone();
+    tokio::spawn(async move {
+        match wenlan_core::sentences::ask_ai_to_fix(
+            &db,
+            llm.as_ref(),
+            &page_id,
+            &hash,
+            why.as_deref(),
+        )
+        .await
+        {
+            Ok(outcome) => {
+                tracing::debug!("[sentences] AI fix of {page_id}/{hash}: {outcome:?}");
+            }
+            Err(error) => {
+                tracing::warn!("[sentences] AI fix of {page_id}/{hash} failed: {error}");
+            }
+        }
+    });
+    true
 }
 
 /// POST /api/pages/{id}/sentences/revert
