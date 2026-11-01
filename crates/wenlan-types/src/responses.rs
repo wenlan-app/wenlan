@@ -492,6 +492,15 @@ pub struct RestorePageResponse {
     pub projection_status: PageProjectionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection_error: Option<String>,
+    /// When the restore gave the page a new title, the other pages whose
+    /// `[[links]]` named its old one, counted as in [`RenamePageResponse`].
+    /// All 0 for a restore under the same title, and from an older daemon.
+    #[serde(default)]
+    pub links_updated: u32,
+    #[serde(default)]
+    pub links_pending_review: u32,
+    #[serde(default)]
+    pub links_not_updated: u32,
 }
 
 /// Why `POST /api/pages/{id}/restore` refused, sent as `code` in the error

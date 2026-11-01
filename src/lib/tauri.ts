@@ -1722,6 +1722,12 @@ export interface RestorePageResponse {
   status: "active";
   projection_status: "synced" | "pending" | "hidden" | "not_configured";
   projection_error?: string;
+  /** Restored under a new title: pages whose [[links]] now name it, as for a rename. */
+  links_updated?: number;
+  /** Pages set to "Ask me first" whose link update waits for review. */
+  links_pending_review?: number;
+  /** Pages that still link by the old title. */
+  links_not_updated?: number;
 }
 
 /** Why the daemon refused a restore. Switch on this, never on the text. */

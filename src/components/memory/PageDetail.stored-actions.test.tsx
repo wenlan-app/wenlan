@@ -389,7 +389,9 @@ describe("PageDetail stored actions in seamless editing", () => {
   await waitFor(()=>expect(archiveItem).toBeEnabled());
   let pending!:Promise<boolean>;
   await act(async()=>{pending=archive!();});
-  await waitFor(()=>expect(tauriMocks.archivePage).toHaveBeenCalledOnce());
+  // Archive first waits for the editor to settle after the composition; the
+  // default 1 s wait has too little room for that on a busy CI runner.
+  await waitFor(()=>expect(tauriMocks.archivePage).toHaveBeenCalledOnce(),{timeout:5_000});
   expect(await flush!()).toBe(false);
   await waitFor(()=>expect(editor).toHaveAttribute('contenteditable','false'));
   await act(async()=>{expect(await archive!()).toBe(false);});

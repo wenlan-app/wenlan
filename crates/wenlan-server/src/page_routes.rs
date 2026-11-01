@@ -478,10 +478,11 @@ pub async fn handle_archive_page(
 
 /// POST /api/pages/{id}/restore
 ///
-/// Put an archived page back. The database row is restored first; the
-/// projected Markdown file is then rewritten from that durable row, and a
-/// projection failure is reported as `projection_status: pending` rather than
-/// undoing the restore. Refusals carry a typed `code`
+/// Put an archived page back. The database row is restored first (and,
+/// under a new title, other pages' `[[links]]` to the old title are updated
+/// as a rename updates them); the projected Markdown file is then rewritten
+/// from that durable row, and a projection failure is reported as
+/// `projection_status: pending` rather than undoing the restore. Refusals carry a typed `code`
 /// ([`wenlan_types::responses::RestorePageErrorCode`]).
 pub async fn handle_restore_page(
     State(state): State<Arc<RwLock<ServerState>>>,
@@ -511,10 +512,18 @@ pub async fn handle_restore_page(
     {
         return Err(ServerError::NotFound("page not found".into()));
     }
-    let mut response = db
-        .restore_page(&id, req.title.as_deref(), req.expected_version, &scope)
-        .await
-        .map_err(restore_error)?;
+    // Under a new title this also updates other pages' links to the old one,
+    // as a rename does; the counts ride the response.
+    let mut response = wenlan_core::post_write::restore_page(
+        &db,
+        &id,
+        req.title.as_deref(),
+        req.expected_version,
+        &scope,
+        page_root.as_deref(),
+    )
+    .await
+    .map_err(restore_error)?;
     if let Some(root) = page_root {
         // Use the current durable row rather than request/saved editor text.
         let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
