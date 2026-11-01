@@ -58,10 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let system = prompts.classify_memory.clone();
     let user = "I prefer tabs over spaces for indentation.";
 
-    let prompt = format!(
-        "<|im_start|>system\n{}\n<|im_end|>\n<|im_start|>user\n{}\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
-        system, user
-    );
+    // The same prompt writer the daemon uses: ChatML for Qwen, the model's
+    // own chat template for families like Gemma.
+    let prompt = engine.format_prompt(Some(&system), user);
 
     println!("=== Probe: CLASSIFY_MEMORY ===");
     println!("Input: {}", user);
