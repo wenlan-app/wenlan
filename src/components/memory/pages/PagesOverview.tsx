@@ -143,8 +143,6 @@ export function PagesOverview({
       data-onboarding={onboarding ? "true" : undefined}
       data-lists-pages={listsPages ? "true" : undefined}
     >
-      {/* What you're working on leads the home (UX-HOME-1). */}
-      {example ? null : <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onSelectPage={onSelectPage} />}
       {onOpenBasisUpdates && <BasisUpdatesSummary onOpen={onOpenBasisUpdates} />}
       {onOpenNoteSuggestion && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}
@@ -173,7 +171,13 @@ export function PagesOverview({
       )}
       {/* The pages come first and the card (or its "show" line) follows;
           the everyday overlay floats over both. */}
-      {newPages}
+      {/* What you're working on leads (UX-HOME-1), with the pages edited last
+          beside it on a wide window and under it on a narrow one, so neither
+          list pushes the other down. */}
+      <div className="home-columns">
+        {example ? null : <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} />}
+        {newPages}
+      </div>
       {gettingStarted}
       {everyday}
       {/* No count beside it: home counts nothing (UX-HOME-2). */}

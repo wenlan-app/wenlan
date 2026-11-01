@@ -52,19 +52,18 @@
 @media (max-width:639px) { .wiki-reading-start-panel { flex-basis:clamp(240px,42vh,420px);padding:24px 8px; }.wiki-reading-start-panel h1 { font-size:19px; } }
 /* Same width and left edge as the write-pages line and the one-line card, so
    the home reads as one column. */
-.wiki-new-pages { margin:32px auto 24px;max-width:min(100%,640px);width:100%;min-width:0; }
+.wiki-new-pages { margin:32px auto 24px;max-width:min(100%,720px);width:100%;min-width:0; }
 .write-pages-line + .wiki-new-pages,.getting-started--compact + .wiki-new-pages { margin-top:8px; }
-.wiki-new-pages-header { display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 6px;padding:0 8px; }
-.wiki-new-pages-header h2 { color:var(--mem-text);font:600 16px/1.4 var(--mem-font-body);margin:0; }
-.wiki-new-pages-all { border:0;background:none;padding:2px 0;color:var(--mem-text-secondary);font:13px var(--mem-font-body);cursor:pointer;white-space:nowrap; }
+.wiki-new-pages-header { display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 6px; }
+.wiki-new-pages-all { border:0;background:none;padding:2px 0;color:var(--mem-text-tertiary);font:12.5px var(--mem-font-body);cursor:pointer;white-space:nowrap; }
 .wiki-new-pages-all:hover { color:var(--mem-accent-page); }
 .wiki-new-pages ul { list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px; }
-.wiki-new-pages-row { display:flex;align-items:center;gap:10px;width:100%;min-width:0;padding:9px 8px;border:0;border-radius:6px;background:none;color:var(--mem-text);text-align:left;cursor:pointer; }
+.wiki-new-pages-row { display:flex;align-items:center;gap:12px;width:calc(100% + 24px);min-width:0;margin:0 -12px;padding:10px 12px;border:0;border-radius:8px;background:none;color:var(--mem-text);text-align:left;cursor:pointer; }
 .wiki-new-pages-row:hover { background:var(--mem-hover); }
 .wiki-new-pages-all:focus-visible,.wiki-new-pages-row:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
 .wiki-new-pages-icon { flex:none;color:var(--mem-text-tertiary); }
 .wiki-new-pages-icon--fresh { color:var(--mem-status-success-text); }
-.wiki-new-pages-title { flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 15px/1.35 var(--mem-font-body); }
+.wiki-new-pages-title { flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 14.5px/1.4 var(--mem-font-body); }
 .wiki-new-pages-by { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
 .wiki-new-pages-meta { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body);font-variant-numeric:tabular-nums; }
 
@@ -75,22 +74,29 @@
 /* What you're working on (UX-HOME-1): the home's first section, in the same
    column as the newest pages. Cards are told apart by their surface and the
    space between them, not by lines. */
-.wiki-working-on { margin:32px auto 8px;max-width:min(100%,640px);width:100%;min-width:0; }
-.wiki-working-on h2 { color:var(--mem-text);font:600 16px/1.4 var(--mem-font-body);margin:0 0 10px;padding:0 8px; }
-.wiki-working-on ul { list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px; }
-.wiki-working-on-thing { display:flex;flex-direction:column;min-width:0;border-radius:10px;background:var(--mem-surface); }
-.wiki-working-on-thing:hover { background:var(--mem-hover); }
-.wiki-working-on-card { display:flex;flex-direction:column;gap:4px;width:100%;min-width:0;padding:12px 14px;border:0;border-radius:10px;background:transparent;color:var(--mem-text);text-align:left;cursor:pointer; }
-.wiki-working-on ul > li:not(.wiki-working-on-thing) > .wiki-working-on-card { background:var(--mem-surface); }
-.wiki-working-on ul > li:not(.wiki-working-on-thing) > .wiki-working-on-card:hover { background:var(--mem-hover); }
-.wiki-working-on-card:focus-visible, .wiki-working-on-page:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
-.wiki-working-on-head { display:flex;align-items:baseline;gap:12px;min-width:0; }
-.wiki-working-on-title { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 14px/1.45 var(--mem-font-body); }
-.wiki-working-on-when { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
-.wiki-working-on-text { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;font:500 14px/1.5 var(--mem-font-body); }
-.wiki-working-on-head + .wiki-working-on-text { -webkit-line-clamp:2;color:var(--mem-text-secondary);font:400 13.5px/1.5 var(--mem-font-body); }
-.wiki-working-on-meta { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
-.wiki-working-on-pages { display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 12px;margin-top:-4px; }
-.wiki-working-on-page { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 10px;border:0;border-radius:999px;background:var(--mem-bg, transparent);color:var(--mem-text-secondary);font:500 12px/1.5 var(--mem-font-body);cursor:pointer; }
-.wiki-working-on-page:hover { color:var(--mem-text); }
-.wiki-working-on + .wiki-new-pages { margin-top:24px; }
+/* Home: two sections on one 720px column, one heading style, one inset. */
+.wiki-working-on { margin:40px auto 0;max-width:min(100%,720px);width:100%;min-width:0; }
+.wiki-working-on h2, .wiki-new-pages-header h2 { color:var(--mem-text-secondary);font:600 13px/1.4 var(--mem-font-body);letter-spacing:.02em;margin:0; }
+.wiki-working-on h2 { margin:0 0 12px; }
+.wiki-working-on ul { list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:10px; }
+.wiki-working-on li { display:flex;min-width:0; }
+.wiki-working-on-card { display:flex;flex-direction:column;gap:4px;width:100%;min-width:0;padding:14px 16px 12px;border:0;border-radius:12px;background:color-mix(in srgb,var(--mem-text) 4%,var(--mem-bg));color:var(--mem-text);text-align:left;cursor:pointer;transition:background-color .12s ease; }
+.wiki-working-on-card:hover { background:color-mix(in srgb,var(--mem-text) 7%,var(--mem-bg)); }
+.wiki-working-on-card:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.wiki-working-on-title { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 15px/1.4 var(--mem-font-body); }
+.wiki-working-on-text { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;color:var(--mem-text-secondary);font:400 13.5px/1.55 var(--mem-font-body); }
+.wiki-working-on-foot { display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0;margin-top:auto;padding-top:4px; }
+.wiki-working-on-meta { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
+.wiki-working-on-when { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body);font-variant-numeric:tabular-nums; }
+.wiki-working-on + .wiki-new-pages { margin-top:40px; }
+/* Wide: what you're working on and the pages edited last side by side, each
+   growing down its own column. Narrow, or with only one of them: one column. */
+.home-columns { display:flex;flex-direction:column;width:100%;max-width:min(100%,720px);margin:0 auto;min-width:0; }
+.home-columns:empty { display:none; }
+.home-columns + .getting-started-reopen, .home-columns + * > .getting-started-reopen { margin-top:32px; }
+.home-columns > .wiki-working-on, .home-columns > .wiki-new-pages { max-width:none;margin:40px 0 0; }
+@media (min-width:1180px) {
+  .home-columns:has(> .wiki-working-on + .wiki-new-pages) { display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);align-items:start;column-gap:56px;max-width:min(100%,1000px); }
+  .home-columns > .wiki-working-on + .wiki-new-pages { margin-top:40px; }
+  .home-columns:has(> .wiki-new-pages) > .wiki-working-on ul { grid-template-columns:minmax(0,1fr); }
+}

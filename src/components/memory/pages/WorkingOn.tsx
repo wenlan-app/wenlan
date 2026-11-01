@@ -43,12 +43,9 @@ export function whereItStands(t: TFunction, thing: ThingSummary, detail?: ThingD
 export function WorkingOn({
   onSelectSpace,
   onOpenThing,
-  onSelectPage,
 }: {
   readonly onSelectSpace: (spaceName: string) => void;
   readonly onOpenThing?: (thingId: string) => void;
-  /** Opens a page a thing's conversations wrote, straight from its card. */
-  readonly onSelectPage?: (pageId: string) => void;
 }) {
   const { t, i18n } = useTranslation();
   const things = useQuery({
@@ -82,38 +79,28 @@ export function WorkingOn({
         {thingItems.map((thing, index) => {
           const detail = details[index]?.data;
           const line = whereItStands(t, thing, detail);
-          const wrote = (detail?.pages ?? []).filter((page) => page.via === "wrote").sort((a, b) => b.at - a.at).slice(0, 2);
           const tools = [...new Set((detail?.sessions ?? []).map((session) => agentDisplayName(session.tool)).filter(Boolean))];
+          const where = [...tools, ...thing.spaces].join(" · ");
           return (
-            <li key={thing.id} className="wiki-working-on-thing">
+            <li key={thing.id}>
               <button type="button" className="wiki-working-on-card" onClick={() => onOpenThing?.(thing.id)}>
-                <span className="wiki-working-on-head">
-                  <span className="wiki-working-on-title">{thing.title ?? t("thing.untitled")}</span>
+                <span className="wiki-working-on-title">{thing.title ?? t("thing.untitled")}</span>
+                <span className="wiki-working-on-text">{line ?? ""}</span>
+                <span className="wiki-working-on-foot">
+                  <span className="wiki-working-on-meta">{where}</span>
                   <span className="wiki-working-on-when">{addedWhen(i18n.language, thing.last_activity_at)}</span>
                 </span>
-                {line ? <span className="wiki-working-on-text">{line}</span> : null}
-                {tools.length > 0 || thing.spaces.length > 0 ? (
-                  <span className="wiki-working-on-meta">{[...tools, ...thing.spaces].join(" · ")}</span>
-                ) : null}
               </button>
-              {onSelectPage && wrote.length > 0 && thing.status_line ? (
-                <span className="wiki-working-on-pages">
-                  {wrote.map((page) => (
-                    <button key={page.id} type="button" className="wiki-working-on-page" onClick={() => onSelectPage(page.id)}>
-                      {page.title}
-                    </button>
-                  ))}
-                </span>
-              ) : null}
             </li>
           );
         })}
         {briefItems.map((item) => (
           <li key={`${item.space}\u0000${item.id}`}>
             <button type="button" className="wiki-working-on-card" onClick={() => onSelectSpace(item.space)}>
-              <span className="wiki-working-on-text">{item.text}</span>
-              <span className="wiki-working-on-meta">
-                {item.space} · {addedWhen(i18n.language, item.added_at)}
+              <span className="wiki-working-on-title">{item.text}</span>
+              <span className="wiki-working-on-foot">
+                <span className="wiki-working-on-meta">{item.space}</span>
+                <span className="wiki-working-on-when">{addedWhen(i18n.language, item.added_at)}</span>
               </span>
             </button>
           </li>
