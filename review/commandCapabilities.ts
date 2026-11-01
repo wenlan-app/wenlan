@@ -100,6 +100,9 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "get_page_sentences",
     "accept_sentence_proposal",
     "reject_sentence_proposal",
+    "revert_page_sentences",
+    "flag_page_sentence",
+    "recheck_page_sentence",
     "mark_page_basis",
     "unmark_page_basis",
     "confirm_page_basis",
@@ -116,6 +119,11 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // Fixtures have no AI conversations; both answer with the quiet shape.
     "get_page_sessions",
     "get_session_detail",
+    // Fixtures have no things: the list is empty and no id resolves.
+    "list_things",
+    "get_thing",
+    "rename_thing",
+    "move_session_thing",
     "list_registered_sources",
   ],
   pageDrafts: [

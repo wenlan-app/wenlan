@@ -30,7 +30,8 @@ export type View =
   | { readonly kind: "source-document"; readonly file: IndexedFileInfo }
   | { readonly kind: "space"; readonly spaceId: string | null; readonly spaceName: string }
   | { readonly kind: "spaces"; readonly create?: boolean }
-  | { readonly kind: "stream" };
+  | { readonly kind: "stream" }
+  | { readonly kind: "thing"; readonly thingId: string };
 
 export type GlobalNavigation = "home" | "memories" | "pages" | "entities" | "spaces" | "graph" | "sources";
 
@@ -42,6 +43,7 @@ export function activeNavigationForView(view: View): GlobalNavigation | null {
   switch (view.kind) {
     case "home":
     case "first-use":
+    case "thing":
       return "pages";
     case "activity":
       return null;

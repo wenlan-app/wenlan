@@ -82,5 +82,7 @@
 .wiki-working-on-card:hover { background:var(--mem-hover); }
 .wiki-working-on-card:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
 .wiki-working-on-text { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;font:500 14px/1.5 var(--mem-font-body); }
+.wiki-working-on-title { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;font:600 14px/1.45 var(--mem-font-body); }
+.wiki-working-on-title + .wiki-working-on-text { -webkit-line-clamp:2;color:var(--mem-text-secondary);font:400 13px/1.5 var(--mem-font-body); }
 .wiki-working-on-meta { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
 .wiki-working-on + .wiki-new-pages { margin-top:24px; }

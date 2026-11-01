@@ -391,6 +391,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/pages/drafts", "/api/pages/drafts/{id}", "/api/pages/drafts/{id}/publish",
     // Records which agent session wrote; metadata only, no user data read.
     "/api/sessions",
+    // The person moves a conversation between things; returns the target
+    // thing's summary, which the scoped GET /api/things/{id} also guards.
+    "/api/sessions/{id}/things/move",
     "/api/refinery/queue/{id}/reject", "/api/refinery/queue/{id}/accept", "/api/sources/{id}", "/api/sources/{id}/sync",
     "/api/config", "/api/config/routing", "/api/setup/status", "/api/setup/anthropic-key", "/api/on-device-model",
     "/api/on-device-model/download", "/api/outbox/drain", "/api/outbox/status", "/api/chunks/{id}/update", "/api/chunks/time-range", "/api/chunks/delete-bulk",
@@ -422,8 +425,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // reads (`basis-pending`, `diff`) are in the sensitive catalog instead.
     "/api/pages/{id}/basis/{basis_id}", "/api/pages/{id}/basis/{basis_id}/confirm",
     // The person's 「不對」 on one sentence returns a receipt only (hash,
-    // version, history seq); the sentence reads and proposals are in the
-    // sensitive catalog instead.
+    // version, history seq, whether an AI fix was queued); the AI's fix
+    // arrives later as a proposal, and the sentence reads and proposals are
+    // in the sensitive catalog instead.
     "/api/pages/{id}/sentences/flag",
     // Undoing one AI write's sentence changes returns counts and the new
     // version only; re-reading the page is a sensitive read.
@@ -464,6 +468,8 @@ const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
     (RegisteredMethod::Post, "/api/notes/proposals"),
     (RegisteredMethod::Delete, "/api/notes/proposals/{id}"),
     (RegisteredMethod::Patch, "/api/brief"),
+    // Renaming a thing; its read is the sensitive GET row.
+    (RegisteredMethod::Patch, "/api/things/{id}"),
     (RegisteredMethod::Put, "/api/profile"),
     (RegisteredMethod::Post, "/api/agents"),
     (RegisteredMethod::Put, "/api/agents/{name}"),

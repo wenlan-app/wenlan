@@ -69,6 +69,15 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         runCommand(): boolean {
           return false;
         },
+        selectText(text): boolean {
+          const textarea = textareaRef.current;
+          const needle = text.trim();
+          const from = textarea && needle ? documentRef.current.indexOf(needle) : -1;
+          if (!textarea || from < 0) return false;
+          textarea.focus();
+          textarea.setSelectionRange(from, from + needle.length);
+          return true;
+        },
         applyExternalEdits(edits): boolean {
           const textarea = textareaRef.current;
           if (!textarea || disabledRef.current || composingRef.current) return false;

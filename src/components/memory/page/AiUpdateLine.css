@@ -1,0 +1,78 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* A quiet grey line: the AI's own update needs nobody, so it stays small. */
+.ai-update-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 8px 0 0;
+  color: var(--mem-text-secondary);
+  font-family: var(--mem-font-body);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-update-show {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mem-text-secondary);
+  font: inherit;
+  text-align: start;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.ai-update-show:hover,
+.ai-update-show[aria-pressed="true"] {
+  color: var(--mem-text);
+}
+
+.ai-update-show:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.ai-update-removed {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--mem-text-tertiary);
+}
+
+.ai-update-undo {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mem-text-secondary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ai-update-undo:hover:not(:disabled) {
+  color: var(--mem-text);
+}
+
+.ai-update-undo:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.ai-update-undo:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.ai-update-error {
+  flex-basis: 100%;
+  color: var(--mem-accent-amber);
+}

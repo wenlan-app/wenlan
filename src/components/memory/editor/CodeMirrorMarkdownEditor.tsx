@@ -47,6 +47,8 @@ import {
 } from "./writingPresentation";
 import { pageLayersEditing, setPageLayers } from "./pageLayersEditing";
 import { sentenceProposals, setSentenceProposals } from "./sentenceProposals";
+import { aiChangeMarks, setAiChangeMarks } from "./aiChangeMarks";
+import { sentenceAuthorship, setSentenceAuthorship } from "./sentenceAuthorship";
 
 type ExternalEdits = Parameters<MarkdownEditorHandle["applyExternalEdits"]>[0];
 
@@ -237,6 +239,19 @@ export const CodeMirrorMarkdownEditor = forwardRef<
         publishStatus(view);
         return true;
       },
+      selectText(text): boolean {
+        const view = viewRef.current;
+        if (!view) return false;
+        const needle = text.trim();
+        const from = needle ? view.state.doc.toString().indexOf(needle) : -1;
+        if (from < 0) return false;
+        view.dispatch({
+          selection: { anchor: from, head: from + needle.length },
+          effects: EditorView.scrollIntoView(from, { y: "center" }),
+        });
+        view.focus();
+        return true;
+      },
       requestSave,
       requestCancel,
     }),
@@ -265,6 +280,14 @@ export const CodeMirrorMarkdownEditor = forwardRef<
   useLayoutEffect(() => {
     viewRef.current?.dispatch({ effects: setSentenceProposals.of(props.sentenceProposals ?? null) });
   }, [props.sentenceProposals]);
+
+  useLayoutEffect(() => {
+    viewRef.current?.dispatch({ effects: setAiChangeMarks.of(props.aiChangeMarks ?? null) });
+  }, [props.aiChangeMarks]);
+
+  useLayoutEffect(() => {
+    viewRef.current?.dispatch({ effects: setSentenceAuthorship.of(props.sentenceAuthorship ?? null) });
+  }, [props.sentenceAuthorship]);
 
   useLayoutEffect(() => {
     linkNotesRef.current = props.linkNotes ?? [];
@@ -340,6 +363,8 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             pageLayersEditing(props.pageLayers ?? null),
             sentenceProposals(props.sentenceProposals ?? null),
             writingPageId.of(props.pageId ?? null),
+            aiChangeMarks(props.aiChangeMarks ?? null),
+            sentenceAuthorship(props.sentenceAuthorship ?? null),
             searchPhrasesCompartmentRef.current.of(EditorState.phrases.of(searchPhrases(t))),
             drawSelection(),
             dropCursor(),

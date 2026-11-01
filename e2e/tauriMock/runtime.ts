@@ -322,6 +322,15 @@ export class TauriMockRuntime {
       case "reject_sentence_proposal":
         requiredString(command, args, "pageId");
         throw new TauriMockArgumentError(command, "proposalId");
+      // The fixture records no AI write, so there is nothing to undo.
+      case "revert_page_sentences":
+        requiredString(command, args, "pageId");
+        throw new TauriMockArgumentError(command, "version");
+      // The fixture's pages have no sentence hashes to flag or recheck.
+      case "flag_page_sentence":
+      case "recheck_page_sentence":
+        requiredString(command, args, "pageId");
+        throw new TauriMockArgumentError(command, "sentenceHash");
       case "mark_page_basis":
         return this.pageBasis.mark(
           requiredString(command, args, "pageId"),

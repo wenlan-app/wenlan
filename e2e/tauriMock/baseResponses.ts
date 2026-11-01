@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { UnknownTauriCommandError } from "./errors";
+import { TauriMockArgumentError, UnknownTauriCommandError } from "./errors";
 
 // Mirrors `COMMUNITY_READ_SCHEMA_VERSION` in src/lib/tauri.ts; kept as a
 // literal here for the same reason runtime.ts keeps PAGE_EDIT_DAEMON_FLOOR —
@@ -106,6 +106,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "renew_remote_access": return { status: "off" };
     case "get_profile": case "get_pending_revision": return null;
     case "list_working_on": return workingOn();
+    // The fixture has no things of its own yet, so home shows Brief items.
+    case "list_things": return [];
     case "get_briefing": return { content: "", new_today: 0, primary_agent: null, generated_at: 1_783_728_000, is_stale: false };
     case "get_enrichment_status": return { source_id: optionalString(args, "sourceId") ?? "", summary: "", steps: [] };
     case "get_version_chain_cmd": return [];
@@ -118,6 +120,9 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     // The fixture has no AI conversations: no note lists one, no id resolves.
     case "get_page_sessions": return { sessions: [] };
     case "get_session_detail": return null;
+    // The fixture has no things, so no thing id resolves.
+    case "get_thing": case "rename_thing": throw new TauriMockArgumentError(command, "id");
+    case "move_session_thing": throw new TauriMockArgumentError(command, "fromThingId");
     case "list_communities": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, communities: [], next_cursor: null };
     case "list_community_members": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, members: [], next_cursor: null };
     case "get_page_revisions": return { page_id: optionalString(args, "pageId") ?? "", current_version: 1, user_edited: false, entries: [] };

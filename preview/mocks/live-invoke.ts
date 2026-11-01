@@ -58,6 +58,7 @@ const get = (p: string, headers?: Record<string, string>) => http("GET", p, unde
 const post = (p: string, b: unknown = {}, headers?: Record<string, string>) => http("POST", p, b, headers);
 const put = (p: string, b: unknown = {}) => http("PUT", p, b);
 const del = (p: string) => http("DELETE", p);
+const patch = (p: string, b: unknown = {}) => http("PATCH", p, b);
 
 // M5 truth axes: the same two-header marker app/src/api.rs attaches on its
 // `*_explicit_browse` client methods. Only ever pass this to a route the
@@ -697,6 +698,16 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/accept`, {}),
   reject_sentence_proposal: (a) =>
     post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/reject`, {}),
+  revert_page_sentences: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/revert`, { version: a.version }),
+  flag_page_sentence: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/flag`, {
+      sentence_hash: a.sentenceHash,
+      ...(a.askAi ? { ask_ai: true } : {}),
+      ...(a.why ? { why: a.why } : {}),
+    }),
+  recheck_page_sentence: (a) =>
+    post(`/api/pages/${enc(a.pageId)}/sentences/recheck`, { sentence_hash: a.sentenceHash }),
   get_source_annotation: (a) => get(`/api/source-annotations${qs({
     source: a?.source,
     source_id: a?.sourceId,
@@ -790,7 +801,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   },
   remove_page_code_basis: (a) => http("DELETE", `/api/pages/${enc(a.pageId)}/code-basis`, a.locator),
   get_page_code_basis_cited: (a) => post(`/api/pages/${enc(a.pageId)}/code-basis/cited`, a.locator),
-  get_page_revisions: (a) => get(`/api/pages/${enc(a.pageId)}/revisions`),
+  get_page_revisions: (a) => get(`/api/pages/${enc(a.pageId)}/revisions${a.includeText ? "?include=text" : ""}`),
   redistill_page: (a) => post(`/api/distill/${enc(a.pageId)}`, {}),
   // Mirrors app/src/search.rs `export_pages_okf_checked`: an older daemon
   // gets no export request, and no Space header means every Space.
@@ -1052,6 +1063,16 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     }
     return items.sort((a, b) => Number(b.added_at) - Number(a.added_at) || String(a.id).localeCompare(String(b.id)));
   },
+  // Things (一件事). An older daemon without the route has none yet, so home
+  // falls back to Brief items.
+  list_things: () => get("/api/things").then((r) => r?.things ?? []).catch(() => []),
+  get_thing: (a) => get(`/api/things/${enc(String(a?.id ?? ""))}`),
+  rename_thing: (a) => patch(`/api/things/${enc(String(a?.id ?? ""))}`, { title: a?.title }),
+  move_session_thing: (a) => post(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/things/move`, {
+    from_thing_id: a?.fromThingId,
+    ...(a?.toThingId == null ? {} : { to_thing_id: a.toThingId }),
+    ...(a?.newTitle == null ? {} : { new_title: a.newTitle }),
+  }),
   // A Space bound to a git repository. The daemon runs git and gh itself, so
   // the preview passes these straight through.
   get_repo_wiki: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`),

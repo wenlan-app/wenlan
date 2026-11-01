@@ -1,0 +1,15 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Info's "this sentence" (UX-WHO-1/3/4). No divider lines; space separates. */
+.this-sentence { display:grid;gap:6px;margin-top:16px;min-width:0; }
+.this-sentence-title { margin:0;color:var(--mem-text-tertiary);font:500 12px/1.4 var(--mem-font-body); }
+.this-sentence-text { margin:0;color:var(--mem-text);font:14px/1.6 var(--mem-font-body);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;overflow-wrap:anywhere; }
+.this-sentence-line { margin:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;color:var(--mem-text-secondary);font:13px/1.5 var(--mem-font-body); }
+.this-sentence-who--you { color:var(--mem-accent-sage); }
+.this-sentence-who--ai { color:var(--mem-accent-amber); }
+.this-sentence-weak { color:var(--mem-accent-amber); }
+.this-sentence-actions { display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:4px; }
+.this-sentence-button { min-height:30px;padding:0 12px;border:1px solid var(--mem-border);border-radius:8px;background:transparent;color:var(--mem-text);font:13px/1 var(--mem-font-body);cursor:pointer; }
+.this-sentence-button:hover:not(:disabled) { background:var(--mem-hover); }
+.this-sentence-button:disabled { opacity:.55;cursor:default; }
+.this-sentence-hint { color:var(--mem-text-tertiary);font:12px/1.5 var(--mem-font-body); }
+.this-sentence-error { margin:0;color:var(--mem-danger);font:13px/1.4 var(--mem-font-body); }

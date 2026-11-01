@@ -49,6 +49,8 @@ import {
   type PageReviewOutcome,
   type IndexedFileInfo,
   type UpdatePageFailureKind,
+  recheckPageSentence,
+  type WeakReason,
 } from "../../lib/tauri";
 // Imported from its own module, not the lib/tauri barrel: tests mock that
 // barrel, and a mocked module would shadow the value this must stay bound to.
@@ -62,6 +64,8 @@ import { PageLengthSwitch, PageReadingLayers, usePageLength } from "./page/PageR
 import { pageLayerOffsets } from "./page/pageLayers";
 import type { PageLayersSettings } from "./editor/pageLayersEditing";
 import type { SentenceProposalSettings } from "./editor/sentenceProposals";
+import type { AiChangeMarkSettings } from "./editor/aiChangeMarks";
+import type { SentenceAuthorshipSettings } from "./editor/sentenceAuthorship";
 import { proposalsInFolds } from "./page/proposalsInFolds";
 import RelatedPages from "./page/RelatedPages";
 import PageInfo from "./page/PageInfo";
@@ -74,6 +78,8 @@ import KnowledgeContext from "./context/KnowledgeContext";
 import { pageReviewNotice, type PageReviewNotice } from "./page/pageReviewNotice";
 import { RailPanelTitle } from "./MemoryDetailPrimitives";
 import { PageLockSwitch } from "./page/PageLockSwitch";
+import { AiUpdateLine } from "./page/AiUpdateLine";
+import { ThisSentence } from "./page/ThisSentence";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
 import { folderName } from "../../lib/dateFormat";
 import { stripLedeLabel } from "../../lib/pageLede";
@@ -947,6 +953,69 @@ export default function PageDetail({
       setProposalBusyId(null);
     }
   }, [flushEditor, pageId, queryClient, t]);
+  // The sentences the AI's newest write changed, marked only after the person
+  // asks from Info (UX-WHO-2, Qi-Xuan's 2026-11-01 choice).
+  const [aiChangesShownFor, setAiChangesShownFor] = useState<string | null>(null);
+  const lastAiUpdate = pageSentences?.page_id === pageId ? pageSentences.last_ai_update ?? null : null;
+  const aiChangesShown = aiChangesShownFor === pageId && !!lastAiUpdate;
+  const removedByAi = useMemo(
+    () => (lastAiUpdate?.changes ?? []).flatMap((change) =>
+      change.kind === "removed" && change.before ? [change.before] : []),
+    [lastAiUpdate],
+  );
+  const editorAiChangeMarks = useMemo<AiChangeMarkSettings | null>(() => {
+    if (!aiChangesShown || !lastAiUpdate || !pageSentences) return null;
+    const textByHash = new Map(pageSentences.sentences.map((sentence) => [sentence.hash, sentence.text]));
+    const marks = (lastAiUpdate.changes ?? []).flatMap((change) => {
+      const text = change.hash ? textByHash.get(change.hash) : undefined;
+      return text ? [{ text, before: change.kind === "changed" ? change.before : null }] : [];
+    });
+    return { marks, beforeLabel: t("aiUpdate.before") };
+  }, [aiChangesShown, lastAiUpdate, pageSentences, t]);
+
+  // Who said each sentence and which can't be backed up (UX-WHO-1, UX-WHO-4),
+  // plus the sentence the cursor is in for Info's "this sentence" (UX-WHO-3).
+  const [cursorSentenceHash, setCursorSentenceHash] = useState<string | null>(null);
+  const [recheckingHash, setRecheckingHash] = useState<string | null>(null);
+  const recheckSentence = useCallback(async (hash: string) => {
+    const originPageId = pageId;
+    setRecheckingHash(hash);
+    try {
+      await recheckPageSentence(originPageId, hash);
+    } catch {
+      if (activePageIdRef.current === originPageId) setActionErrorMessage(t("thisSentence.recheckFailed"));
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ["page-sentences", originPageId] });
+      setRecheckingHash(null);
+    }
+  }, [pageId, queryClient, t]);
+  const currentSentences = pageSentences?.page_id === pageId ? pageSentences.sentences : null;
+  const cursorSentence = useMemo(
+    () => currentSentences?.find((sentence) => sentence.hash === cursorSentenceHash) ?? null,
+    [currentSentences, cursorSentenceHash],
+  );
+  const editorSentenceAuthorship = useMemo<SentenceAuthorshipSettings | null>(() => {
+    if (!currentSentences) return null;
+    return {
+      sentences: currentSentences.map((sentence) => ({
+        hash: sentence.hash,
+        text: sentence.text,
+        said: sentence.author === "original" ? null : sentence.protected ? "you" : sentence.author === "ai" ? "ai" : null,
+        weak: sentence.weak ?? [],
+      })),
+      labels: {
+        you: t("thisSentence.who.you"),
+        ai: t("thisSentence.who.ai"),
+        weak: (reason: WeakReason) => t("thisSentence.weak", { reason: t(`weakReason.${reason}`) }),
+        recheck: t("thisSentence.recheck"),
+        rechecking: t("thisSentence.rechecking"),
+      },
+      busyHash: recheckingHash,
+      onRecheck: (hash) => void recheckSentence(hash),
+      onCursorSentence: setCursorSentenceHash,
+    };
+  }, [currentSentences, recheckingHash, recheckSentence, t]);
+
   const editorSentenceProposals = useMemo<SentenceProposalSettings>(() => ({
     proposals: pendingProposals,
     labels: {
@@ -3018,6 +3087,8 @@ export default function PageDetail({
                   pageLayers={editorPageLayers}
                   sentenceProposals={editorSentenceProposals}
                   pageId={page.id}
+                  aiChangeMarks={editorAiChangeMarks}
+                  sentenceAuthorship={editorSentenceAuthorship}
                   initialDocument={editInitialDocument}
                   initialSelection={initialSelection}
                   onSelectionChange={onSelectionChange}
@@ -3183,6 +3254,26 @@ export default function PageDetail({
                   {t("pageDetail.dateline.sourceMemories", { count: sourceCount })}
                 </span>}
             </div>
+            <AiUpdateLine
+              key={page.id}
+              pageId={page.id}
+              update={lastAiUpdate}
+              shown={aiChangesShown}
+              onToggleShown={() => setAiChangesShownFor((current) => current === page.id ? null : page.id)}
+              removed={removedByAi}
+              humanEditedAt={page.human_edited_at}
+              time={pageSentences?.last_ai_update
+                ? relativeTimeFromISO(new Date(pageSentences.last_ai_update.at * 1000).toISOString(), t)
+                : ""}
+              disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"}
+            />
+            <ThisSentence
+              key={`${page.id}:${cursorSentence?.hash ?? ""}`}
+              pageId={page.id}
+              sentence={cursorSentence}
+              onFixMyself={(text) => { editorRef.current?.selectText(text); }}
+              disabled={storedActionBlocked}
+            />
           <div className="flex flex-wrap gap-2">
             {page.stale_reason && <span style={datelineBlocked || page.stale_reason === "source_conflict"
               ? { color: "var(--mem-accent-amber)" }
@@ -3250,6 +3341,7 @@ export default function PageDetail({
               sources={pageSources}
               inbound={inboundLinks}
               revisions={pageRevisionEntries}
+              history={pageRevisions?.history}
               revisionsLoading={revisionsLoading}
               revisionsError={revisionsError}
               onRetryRevisions={() => void refetchRevisions()}

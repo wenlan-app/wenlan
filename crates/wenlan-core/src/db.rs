@@ -74,6 +74,7 @@ mod page_summary_backfill;
 mod presence_review;
 mod quick_capture_repair;
 pub(crate) mod relation_write;
+pub mod table_classes;
 pub(crate) use relation_write::RelationWriteInput;
 pub(crate) mod repair_deterministic;
 mod repair_memory_cas;
@@ -99,6 +100,7 @@ mod space_context;
 mod space_rename;
 mod steep;
 pub(crate) mod steep_new;
+pub mod things;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
@@ -236,6 +238,8 @@ pub(crate) mod steep_code_test;
 #[cfg(test)]
 #[path = "db/test_support_test.rs"]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod things_test;
 #[cfg(test)]
 mod tx_rollback_test;
 
@@ -1554,7 +1558,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 148;
+pub const SCHEMA_VERSION: u32 = 150;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -5768,6 +5772,8 @@ impl MemoryDB {
         // that one guarantee, and it lives here rather than in the constructors
         // because the chain replay is what needs it.
         ensure_legacy_entities_table(&conn).await?;
+        // Same for the tables migration 150 drops. See db/table_classes.rs.
+        table_classes::ensure_dropped_tables_for_replay(&conn, version).await?;
 
         if version < 1 {
             // Migration 1: reserved (initial schema — no-op since CREATE TABLE IF NOT EXISTS handles it)
@@ -10754,6 +10760,23 @@ impl MemoryDB {
             }
             if version < 148 {
                 self.migrate_148_sentence_revert(version).await?;
+            }
+            // Migration 149 adds things (一件事): `things`, `thing_sessions`
+            // and `thing_history`. See migrate_149_things.
+            if ceiling < 149 {
+                return Ok(());
+            }
+            if version < 149 {
+                self.migrate_149_things(version).await?;
+            }
+            // Migration 150 drops tables no live code reads any more, the
+            // first step of the move to Markdown files. See
+            // db/table_classes.rs.
+            if ceiling < 150 {
+                return Ok(());
+            }
+            if version < 150 {
+                self.migrate_150_drop_retired_tables(version).await?;
             }
         }
 
@@ -19104,6 +19127,20 @@ pub struct BackupReceipt {
     pub created_at: i64,
 }
 
+/// The `page_history.edited_by` of a page's first version. An authored page
+/// records who made it, so a later edit by the person never makes the AI
+/// tool's sentences theirs: `person_create` for the person in the app (no
+/// agent name), `agent_create` for an AI tool. Other pages, and internal
+/// callers that name no actor, keep `create`.
+fn create_label(creation_kind: &str, actor: &str) -> &'static str {
+    match (creation_kind, actor) {
+        ("authored", "unknown") => "person_create",
+        ("authored", "") => "create",
+        ("authored", _) => "agent_create",
+        _ => "create",
+    }
+}
+
 impl MemoryDB {
     /// Insert one backfilled edge (`ON CONFLICT(edge_id) DO NOTHING` --
     /// content-addressed retry identity, spec §6.1). `grounded=0`, `root_id`
@@ -21360,85 +21397,6 @@ impl MemoryDB {
             .ok()?;
         let row = rows.next().await.ok()??;
         Some((row.get::<String>(0).ok()?, row.get::<String>(1).ok()?))
-    }
-
-    // ===== M2 PR-2 dual-write epoch bookkeeping =====
-    //
-    // G6 Stage 2 PR 2a retired the reader-cutover gate and lever
-    // (`reader_uses_edges`/`set_reader_cutover`) that used to live in this
-    // section, along with the `edges_reader_cutover` table (dropped in
-    // migration 120) -- see the doc comment on `detect_communities`'s
-    // `adjacency_sql` for the collapse this made possible and why keeping
-    // the gate, not retiring it, was the broken option. The epoch
-    // bookkeeping below persists: it is still consulted by
-    // `compute_edges_parity_report` (the test-only extraction of the
-    // retired sweep's pure computation) and stays live production
-    // machinery until Stage 3.
-
-    /// The current dual-write coverage epoch (spec v3 §7 M2 row). Lives on the
-    /// single `edges_migration_state` row (created + seeded to 1 by PR-1's
-    /// migration 81). A parity proof is only trustworthy under the epoch it was
-    /// taken in: a coverage lapse bumps the epoch (`bump_dual_write_epoch`),
-    /// which retires every older watermark. Returns `None` when there is no
-    /// trustworthy current epoch -- a missing state row OR an undecodable
-    /// `epoch` column (NULL/corrupt). `None` is NOT epoch 1: callers must treat
-    /// it as "gate closed / cannot prove", never fabricate a generation, so a
-    /// deleted or corrupt `edges_migration_state` can never silently reopen a
-    /// reader cutover.
-    async fn current_dual_write_epoch(
-        conn: &libsql::Connection,
-    ) -> Result<Option<i64>, libsql::Error> {
-        let mut rows = conn
-            .query("SELECT epoch FROM edges_migration_state WHERE id = 1", ())
-            .await?;
-        match rows.next().await? {
-            Some(row) => Ok(row.get::<i64>(0).ok()),
-            None => Ok(None),
-        }
-    }
-
-    /// Bump the dual-write coverage epoch (spec v3 §7 M2 row: the "durable
-    /// dual-write epoch"). Call this whenever dual-write coverage MAY have
-    /// lapsed -- i.e. legacy rows could have been written without their `edges`
-    /// twin outside the atomic same-transaction dual-write. Bumping retires
-    /// every parity watermark taken under the previous epoch, so no reader can
-    /// flip again until a fresh reconciliation re-proves parity at the new
-    /// epoch. Returns the new epoch.
-    ///
-    /// In the CURRENT build there is no live lapse path: dual-write is
-    /// unconditional and shares the legacy write's transaction (PR-1), and the
-    /// §6.9 refuse-newer-schema guard (`db.rs`, the `version > SCHEMA_VERSION`
-    /// check) stops an older, non-dual-writing daemon from ever opening this
-    /// schema and writing behind our back. So this is the durable guard the
-    /// spec mandates, exercised directly by the epoch-guard test; its
-    /// production trigger is a future rung that makes dual-write conditional
-    /// (or an operator-initiated coverage reset). It is kept real and tested
-    /// rather than stubbed.
-    pub async fn bump_dual_write_epoch(&self) -> Result<i64, WenlanError> {
-        let conn = self.conn.lock().await;
-        let affected = conn
-            .execute(
-                "UPDATE edges_migration_state SET epoch = epoch + 1 WHERE id = 1",
-                (),
-            )
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("bump_dual_write_epoch: {e}")))?;
-        // A zero-row UPDATE means the state row is gone -- there is no epoch to
-        // bump. Fail loud: fabricating one (the old `Ok(1)` path) would falsely
-        // "retire" nothing and could leave a stale watermark looking current.
-        if affected == 0 {
-            return Err(WenlanError::VectorDb(
-                "bump_dual_write_epoch: no edges_migration_state row to bump".to_string(),
-            ));
-        }
-        Self::current_dual_write_epoch(&conn)
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("bump_dual_write_epoch read: {e}")))?
-            .ok_or_else(|| {
-                WenlanError::VectorDb(
-                    "bump_dual_write_epoch: state row vanished after bump".to_string(),
-                )
-            })
     }
 
     /// Record intent to move one community consumer onto the durable M4
@@ -52503,9 +52461,9 @@ impl MemoryDB {
             .execute(
                 "INSERT OR IGNORE INTO page_history \
                    (page_id, version, title, content, source_memory_ids, edited_by, created_at) \
-                 SELECT id, version, title, content, source_memory_ids, 'create', ?2 \
+                 SELECT id, version, title, content, source_memory_ids, ?3, ?2 \
                  FROM pages WHERE id = ?1",
-                libsql::params![id, linked_at],
+                libsql::params![id, linked_at, create_label(creation_kind, basis_actor)],
             )
             .await
         {

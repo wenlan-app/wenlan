@@ -1693,6 +1693,42 @@ impl WenlanClient {
         self.get_optional_json(&path).await
     }
 
+    /// `GET /api/things`: things with the newest activity first.
+    pub async fn list_things(&self) -> Result<wenlan_types::ThingsResponse, String> {
+        self.get_json("/api/things").await
+    }
+
+    /// `GET /api/things/{id}`: one thing with its conversations and pages.
+    pub async fn get_thing(&self, id: &str) -> Result<wenlan_types::ThingDetailResponse, String> {
+        let path = format!("/api/things/{}", percent_encode_path_segment(id));
+        self.get_json(&path).await
+    }
+
+    /// `PATCH /api/things/{id}`: the person renames a thing.
+    pub async fn rename_thing(
+        &self,
+        id: &str,
+        title: String,
+    ) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!("/api/things/{}", percent_encode_path_segment(id));
+        self.patch_json(&path, &wenlan_types::ThingRenameRequest { title })
+            .await
+    }
+
+    /// `POST /api/sessions/{id}/things/move`: the person moves a conversation
+    /// into another thing, or into a new one they name.
+    pub async fn move_session_thing(
+        &self,
+        session_id: &str,
+        request: wenlan_types::ThingMoveRequest,
+    ) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!(
+            "/api/sessions/{}/things/move",
+            percent_encode_path_segment(session_id)
+        );
+        self.post_json(&path, &request).await
+    }
+
     /// `GET /api/pages/{id}/sessions`.
     pub async fn get_page_sessions(
         &self,
@@ -1761,6 +1797,67 @@ impl WenlanClient {
         .await
     }
 
+    /// The person undoes one AI write's sentence changes. The app never sends
+    /// an agent name, so the daemon counts this as the person's undo.
+    pub async fn revert_page_sentences(
+        &self,
+        page_id: &str,
+        version: i64,
+    ) -> Result<wenlan_types::authorship::SentenceRevertResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences/revert",
+            percent_encode_path_segment(page_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::authorship::SentenceRevertRequest { version },
+        )
+        .await
+    }
+
+    /// The person says 「不對」 about one sentence; with `ask_ai` the daemon
+    /// has the AI propose a fix, which lands only on accept.
+    pub async fn flag_page_sentence(
+        &self,
+        page_id: &str,
+        sentence_hash: &str,
+        ask_ai: bool,
+        why: Option<String>,
+    ) -> Result<wenlan_types::authorship::SentenceFlagResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences/flag",
+            percent_encode_path_segment(page_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::authorship::SentenceFlagRequest {
+                sentence_hash: sentence_hash.to_string(),
+                why,
+                ask_ai,
+            },
+        )
+        .await
+    }
+
+    /// Recheck only this sentence against its sources' current versions.
+    pub async fn recheck_page_sentence(
+        &self,
+        page_id: &str,
+        sentence_hash: &str,
+    ) -> Result<wenlan_types::authorship::SentenceRecheckResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sentences/recheck",
+            percent_encode_path_segment(page_id)
+        );
+        self.post_json(
+            &path,
+            &wenlan_types::authorship::SentenceRecheckRequest {
+                sentence_hash: sentence_hash.to_string(),
+            },
+        )
+        .await
+    }
+
     /// The person turns one sentence proposal down; the sentence stays.
     pub async fn reject_sentence_proposal(
         &self,
@@ -1779,10 +1876,17 @@ impl WenlanClient {
         .await
     }
 
-    pub async fn get_page_revisions(&self, page_id: &str) -> Result<serde_json::Value, String> {
+    /// `include_text` puts each version's whole text on its history entry,
+    /// so every change can be opened (UX-HIST-2).
+    pub async fn get_page_revisions(
+        &self,
+        page_id: &str,
+        include_text: bool,
+    ) -> Result<serde_json::Value, String> {
         let path = format!(
-            "/api/pages/{}/revisions",
-            percent_encode_path_segment(page_id)
+            "/api/pages/{}/revisions{}",
+            percent_encode_path_segment(page_id),
+            if include_text { "?include=text" } else { "" }
         );
         self.get_json(&path).await
     }
