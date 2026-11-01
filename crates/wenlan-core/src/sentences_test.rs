@@ -979,3 +979,327 @@ async fn migration_148_keeps_every_sentence_history_row_and_admits_revert() {
         .unwrap();
     }
 }
+
+// ---------------------------------------------------------------------------
+// 「不對」 → ask the AI (UX-WHO-3): the AI's fix is still a proposal.
+// ---------------------------------------------------------------------------
+
+/// A model that answers one fixed text and keeps every prompt it was sent.
+struct FixModel {
+    answer: Option<String>,
+    prompts: std::sync::Mutex<Vec<String>>,
+}
+
+impl FixModel {
+    fn answering(answer: &str) -> Self {
+        Self {
+            answer: Some(answer.to_string()),
+            prompts: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.prompts.lock().unwrap().len()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::llm_provider::LlmProvider for FixModel {
+    async fn generate(
+        &self,
+        request: crate::llm_provider::LlmRequest,
+    ) -> Result<String, crate::llm_provider::LlmError> {
+        self.prompts.lock().unwrap().push(request.user_prompt);
+        self.answer
+            .clone()
+            .ok_or_else(|| crate::llm_provider::LlmError::InferenceFailed("boom".into()))
+    }
+    fn is_available(&self) -> bool {
+        true
+    }
+    fn name(&self) -> &str {
+        "fix-model"
+    }
+    fn backend(&self) -> crate::llm_provider::LlmBackend {
+        crate::llm_provider::LlmBackend::OnDevice
+    }
+}
+
+/// An AI page whose first sentence cites a verified memory.
+async fn cited_ai_page(db: &MemoryDB, id: &str) -> Page {
+    seed_memory(db, "mem-port", "The daemon binds port 7878 by default").await;
+    db.insert_page_with_kind(
+        id,
+        "Ports",
+        None,
+        "The daemon binds port 7979 by default.[1] It starts at login.",
+        None,
+        None,
+        &["mem-port"],
+        &chrono::Utc::now().to_rfc3339(),
+        "distilled",
+        "confirmed",
+        None,
+        Some(&citation("mem-port", "verified")),
+    )
+    .await
+    .unwrap();
+    db.get_page(id).await.unwrap().unwrap()
+}
+
+fn pending_for<'a>(view: &'a PageSentencesResponse, hash: &str) -> Vec<&'a SentenceProposal> {
+    view.proposals
+        .iter()
+        .filter(|p| p.sentence_hash == hash && p.status == SentenceProposalStatus::Pending)
+        .collect()
+}
+
+#[tokio::test]
+async fn asking_the_ai_files_one_pending_proposal_grounded_in_the_cited_source() {
+    let (db, _dir) = test_db().await;
+    let page = cited_ai_page(&db, "p").await;
+    let hash = crate::authorship::sentence_units(&page.content)[0]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &hash, Some("wrong port"))
+        .await
+        .unwrap();
+    let model = FixModel::answering(
+        "<think>check</think>```json\n{\"action\":\"rewrite\",\
+         \"text\":\"The daemon binds port 7878 by default.\"}\n```",
+    );
+
+    let outcome = ask_ai_to_fix(&db, &model, "p", &hash, Some("wrong port"))
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, FlagFixOutcome::Proposed(_)),
+        "{outcome:?}"
+    );
+    let prompt = model.prompts.lock().unwrap()[0].clone();
+    assert!(
+        prompt.contains("The daemon binds port 7878 by default"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("wrong port"), "{prompt}");
+    assert!(
+        !prompt.contains("[1]"),
+        "markers stay out of the prompt: {prompt}"
+    );
+
+    let view = page_sentences(&db, "p").await.unwrap();
+    let pending = pending_for(&view, &hash);
+    assert_eq!(pending.len(), 1, "{:?}", view.proposals);
+    let proposal = pending[0];
+    assert_eq!(proposal.after, "The daemon binds port 7878 by default.[1]");
+    assert_eq!(proposal.why.as_deref(), Some("wrong port"));
+    assert_eq!(proposal.actor.kind, ActorKind::Ai);
+    assert_eq!(proposal.reason, None);
+    // Nothing landed: the page is as it was until the person accepts.
+    assert_eq!(view.version, page.version);
+    assert_eq!(
+        view.sentences[0].text,
+        "The daemon binds port 7979 by default.[1]"
+    );
+    assert!(view.sentences[0].flagged);
+
+    // Asking again for the same fix files nothing twice.
+    let again = ask_ai_to_fix(&db, &model, "p", &hash, Some("wrong port"))
+        .await
+        .unwrap();
+    assert_eq!(again, FlagFixOutcome::Skipped("already_proposed"));
+    assert_eq!(
+        pending_for(&page_sentences(&db, "p").await.unwrap(), &hash).len(),
+        1
+    );
+
+    // Accepting it lands the fix with its citation kept.
+    let accepted = accept_sentence_proposal(&db, "p", &proposal.id, None, None)
+        .await
+        .unwrap();
+    let page = db.get_page("p").await.unwrap().unwrap();
+    assert!(accepted.version > view.version);
+    assert!(page
+        .content
+        .starts_with("The daemon binds port 7878 by default.[1] "));
+}
+
+#[tokio::test]
+async fn the_fix_uses_a_fixed_why_when_the_person_gave_none_and_may_propose_deleting() {
+    let (db, _dir) = test_db().await;
+    let page = cited_ai_page(&db, "p").await;
+    let hash = crate::authorship::sentence_units(&page.content)[0]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &hash, None).await.unwrap();
+    let model = FixModel::answering("{\"action\":\"delete\"}");
+    let outcome = ask_ai_to_fix(&db, &model, "p", &hash, None).await.unwrap();
+    assert!(
+        matches!(outcome, FlagFixOutcome::ProposedDeletion(_)),
+        "{outcome:?}"
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    let pending = pending_for(&view, &hash);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].after, "");
+    assert_eq!(pending[0].why.as_deref(), Some(fix::DEFAULT_FIX_WHY));
+}
+
+#[tokio::test]
+async fn no_model_or_no_supported_fix_leaves_only_the_flag() {
+    let (db, _dir) = test_db().await;
+    let page = cited_ai_page(&db, "p").await;
+    let hash = crate::authorship::sentence_units(&page.content)[0]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &hash, Some("wrong port"))
+        .await
+        .unwrap();
+
+    // No model configured: the route finds no provider at all.
+    assert!(fix_provider(None, None, None, None).is_none());
+    // A model that is there but not available, one that fails, one that says
+    // the sources show no fix, and one that answers nonsense.
+    let unavailable = crate::llm_provider::MockProvider::unavailable();
+    assert_eq!(
+        ask_ai_to_fix(&db, &unavailable, "p", &hash, None)
+            .await
+            .unwrap(),
+        FlagFixOutcome::Skipped("model_unavailable")
+    );
+    let failing = FixModel {
+        answer: None,
+        prompts: std::sync::Mutex::new(Vec::new()),
+    };
+    assert_eq!(
+        ask_ai_to_fix(&db, &failing, "p", &hash, None)
+            .await
+            .unwrap(),
+        FlagFixOutcome::Skipped("model_error")
+    );
+    let none = FixModel::answering("{\"action\":\"none\"}");
+    assert_eq!(
+        ask_ai_to_fix(&db, &none, "p", &hash, None).await.unwrap(),
+        FlagFixOutcome::NoFix
+    );
+    let two = FixModel::answering(
+        "{\"action\":\"rewrite\",\"text\":\"Port 7878.\\nIt also says hello.\"}",
+    );
+    assert_eq!(
+        ask_ai_to_fix(&db, &two, "p", &hash, None).await.unwrap(),
+        FlagFixOutcome::Skipped("unusable_answer")
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    assert!(view.proposals.is_empty(), "{:?}", view.proposals);
+    assert!(view.sentences[0].flagged, "the flag stays as it is");
+
+    // An uncited sentence flagged with no note gives the model nothing to
+    // ground a fix on, so it is not asked.
+    let other = crate::authorship::sentence_units(&page.content)[1]
+        .hash
+        .clone();
+    flag_sentence(&db, "p", &other, None).await.unwrap();
+    let model = FixModel::answering("{\"action\":\"rewrite\",\"text\":\"It starts at boot.\"}");
+    assert_eq!(
+        ask_ai_to_fix(&db, &model, "p", &other, None).await.unwrap(),
+        FlagFixOutcome::Skipped("nothing_to_ground")
+    );
+    assert_eq!(model.calls(), 0);
+}
+
+#[tokio::test]
+async fn a_flagged_sentence_of_the_persons_gets_the_fix_without_a_facts_changed_reason() {
+    let (db, _dir) = test_db().await;
+    let page = page_with_my_line(&db, "p").await;
+    let mine = crate::authorship::sentence_units(&page.content)[2]
+        .hash
+        .clone();
+    let model = FixModel::answering(
+        "{\"action\":\"rewrite\",\"text\":\"I prefer the multi-thread runtime.\"}",
+    );
+    let note = "I switched to the multi-thread runtime";
+
+    // Not flagged yet: no fix is asked for, and a reasonless proposal from an
+    // agent is still refused.
+    assert_eq!(
+        ask_ai_to_fix(&db, &model, "p", &mine, Some(note))
+            .await
+            .unwrap(),
+        FlagFixOutcome::Skipped("not_flagged")
+    );
+    assert_eq!(model.calls(), 0);
+    let agent_ask = SentenceProposeRequest {
+        sentence_hash: mine.clone(),
+        text: "I prefer the multi-thread runtime.".into(),
+        why: None,
+        reason: None,
+        expected_version: None,
+    };
+    assert!(matches!(
+        propose_sentence(&db, "p", &agent_ask, "claude-code").await,
+        Err(WenlanError::Validation(m)) if m.starts_with("reason_required")
+    ));
+
+    flag_sentence(&db, "p", &mine, Some(note)).await.unwrap();
+    // The flag opens the way for the AI's fix only, never for any agent.
+    assert!(matches!(
+        propose_sentence(&db, "p", &agent_ask, "claude-code").await,
+        Err(WenlanError::Validation(m)) if m.starts_with("reason_required")
+    ));
+    let outcome = ask_ai_to_fix(&db, &model, "p", &mine, Some(note))
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, FlagFixOutcome::Proposed(_)),
+        "{outcome:?}"
+    );
+    let view = page_sentences(&db, "p").await.unwrap();
+    let sentence = &view.sentences[2];
+    assert!(sentence.protected && sentence.author == SentenceAuthor::Person);
+    let pending = pending_for(&view, &mine);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].after, "I prefer the multi-thread runtime.");
+    assert_eq!(pending[0].why.as_deref(), Some(note));
+    assert_eq!(view.version, page.version, "nothing lands before accept");
+
+    // Once the sentence changes, the old flag no longer stands.
+    let edited = format!("{AI_BODY} I prefer no runtime at all.");
+    assert!(write(&db, "p", &edited, "manual_edit", None).await.wrote);
+    let changed = crate::authorship::sentence_units(&edited)[2].hash.clone();
+    assert_eq!(
+        ask_ai_to_fix(&db, &model, "p", &changed, Some(note))
+            .await
+            .unwrap(),
+        FlagFixOutcome::Skipped("not_flagged")
+    );
+}
+
+#[tokio::test]
+async fn the_fix_follows_a_pinned_everyday_source_and_never_crosses_it() {
+    use crate::llm_provider::{LlmProvider, MockProvider};
+    use crate::refinery::EverydaySource;
+    let api: Arc<dyn LlmProvider> = Arc::new(MockProvider::new("api"));
+    let local: Arc<dyn LlmProvider> = Arc::new(MockProvider::new("local"));
+    let down: Arc<dyn LlmProvider> = Arc::new(MockProvider::unavailable());
+    let picked = fix_provider(None, Some(&down), None, Some(&local)).unwrap();
+    assert!(Arc::ptr_eq(picked, &local), "no pin: first available");
+    let picked = fix_provider(None, Some(&api), None, Some(&local)).unwrap();
+    assert!(Arc::ptr_eq(picked, &api));
+    let picked = fix_provider(
+        Some(EverydaySource::OnDevice),
+        Some(&api),
+        None,
+        Some(&local),
+    );
+    assert!(Arc::ptr_eq(picked.unwrap(), &local), "the pin wins");
+    assert!(
+        fix_provider(
+            Some(EverydaySource::External),
+            Some(&api),
+            None,
+            Some(&local)
+        )
+        .is_none(),
+        "a pinned source that is not there means no fix"
+    );
+}

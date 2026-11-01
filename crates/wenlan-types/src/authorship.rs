@@ -200,8 +200,10 @@ pub struct SentenceProposal {
     /// Why the facts behind the sentence changed: `unsupported` (its source
     /// does not back it), `stale` (its source changed since it was cited) or
     /// `disproven`. A protected sentence only gets a proposal with one; a
-    /// rewording alone never does. `None` on proposals made before the rule,
-    /// and on a proposal for a sentence that is not protected.
+    /// rewording alone never does. The one exception is the AI's fix for a
+    /// sentence the person flagged (「不對」) and asked the AI to fix: the
+    /// person asked, so it may carry none. `None` on proposals made before the
+    /// rule, and on a proposal for a sentence that is not protected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<WeakReason>,
     pub actor: HistoryActor,
@@ -258,6 +260,11 @@ pub struct SentenceFlagRequest {
     pub sentence_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+    /// Also ask the AI to fix this one sentence. The fix is worked out after
+    /// the flag is answered and arrives as a pending sentence proposal (with
+    /// `why` as its why); nothing lands until the person accepts it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ask_ai: bool,
 }
 
 /// `POST /api/pages/{id}/sentences/revert`: undo the sentence changes of one
@@ -346,6 +353,11 @@ pub struct SentenceFlagResponse {
     pub version: i64,
     pub sentence_hash: String,
     pub seq: i64,
+    /// The flag asked the AI for a fix and a model is there to try. The fix,
+    /// if the sources support one, appears later as a pending proposal on
+    /// this sentence; false when no model is configured or available.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ai_fix_queued: bool,
 }
 
 /// Answer to a one-sentence recheck.
@@ -449,6 +461,36 @@ mod tests {
         assert!(value.get("why").is_none());
         let back: HistoryEntry = serde_json::from_value(value).unwrap();
         assert_eq!(back, entry);
+    }
+
+    #[test]
+    fn a_flag_without_ask_ai_keeps_its_old_wire_shape() {
+        let old: SentenceFlagRequest =
+            serde_json::from_value(serde_json::json!({"sentence_hash": "h"})).unwrap();
+        assert!(!old.ask_ai);
+        assert_eq!(
+            serde_json::to_value(&old).unwrap(),
+            serde_json::json!({"sentence_hash": "h"})
+        );
+        let asked: SentenceFlagRequest =
+            serde_json::from_value(serde_json::json!({"sentence_hash": "h", "ask_ai": true}))
+                .unwrap();
+        assert!(asked.ask_ai);
+        assert!(serde_json::from_value::<SentenceFlagRequest>(
+            serde_json::json!({"sentence_hash": "h", "fix": true})
+        )
+        .is_err());
+        let receipt = SentenceFlagResponse {
+            page_id: "p".into(),
+            version: 1,
+            sentence_hash: "h".into(),
+            seq: 3,
+            ai_fix_queued: false,
+        };
+        assert!(serde_json::to_value(&receipt)
+            .unwrap()
+            .get("ai_fix_queued")
+            .is_none());
     }
 
     #[test]

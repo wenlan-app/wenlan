@@ -425,8 +425,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // reads (`basis-pending`, `diff`) are in the sensitive catalog instead.
     "/api/pages/{id}/basis/{basis_id}", "/api/pages/{id}/basis/{basis_id}/confirm",
     // The person's 「不對」 on one sentence returns a receipt only (hash,
-    // version, history seq); the sentence reads and proposals are in the
-    // sensitive catalog instead.
+    // version, history seq, whether an AI fix was queued); the AI's fix
+    // arrives later as a proposal, and the sentence reads and proposals are
+    // in the sensitive catalog instead.
     "/api/pages/{id}/sentences/flag",
     // Undoing one AI write's sentence changes returns counts and the new
     // version only; re-reading the page is a sensitive read.
