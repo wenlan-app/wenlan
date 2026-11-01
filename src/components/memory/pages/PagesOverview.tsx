@@ -142,6 +142,7 @@ export function PagesOverview({
       data-library-empty={empty ? "true" : undefined}
       data-onboarding={onboarding ? "true" : undefined}
       data-lists-pages={listsPages ? "true" : undefined}
+      data-home="true"
     >
       {onOpenBasisUpdates && <BasisUpdatesSummary onOpen={onOpenBasisUpdates} />}
       {onOpenNoteSuggestion && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
@@ -171,9 +172,9 @@ export function PagesOverview({
       )}
       {/* The pages come first and the card (or its "show" line) follows;
           the everyday overlay floats over both. */}
-      {/* What you're working on leads (UX-HOME-1), with the pages edited last
-          beside it on a wide window and under it on a narrow one, so neither
-          list pushes the other down. */}
+      {/* What you're working on leads (UX-HOME-1); the pages edited last sit
+          under it as one row of cards that scrolls sideways, so neither pushes
+          the other down. */}
       <div className="home-columns">
         {example ? null : <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} />}
         {newPages}

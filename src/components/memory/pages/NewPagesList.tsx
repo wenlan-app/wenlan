@@ -16,6 +16,29 @@ export function newestPages(pages: readonly Page[], limit = NEW_PAGES_LISTED): P
     .slice(0, limit);
 }
 
+/**
+ * The page's opening words for its card on Home: its first paragraph (a
+ * page's short form), without Markdown marks or a heading that repeats the
+ * title. Empty when the page has no prose yet.
+ */
+export function pagePreview(page: Pick<Page, "title" | "content" | "summary">): string {
+  const body = (page.content ?? "").replace(/^---\n[\s\S]*?\n---\n?/, "");
+  for (const block of body.split(/\n\s*\n/)) {
+    const text = block
+      .split("\n")
+      .filter((line) => !/^\s*#{1,6}\s/.test(line) && !/^\s*(```|~~~|!\[)/.test(line))
+      .join(" ")
+      .replace(/!?\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, label) => label ?? target)
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/[*_`>~]+/g, "")
+      .replace(/^\s*[-+]\s+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (text && text !== page.title.trim()) return text;
+  }
+  return page.summary?.trim() ?? "";
+}
+
 /** A row of the home's recent list: whether the AI wrote the page, so the
  *  row can say so quietly. */
 export interface RecentPage {
@@ -76,6 +99,7 @@ export function NewPagesList({
       <ul>
         {rows.map(({ page, byAi }) => {
           const fresh = justWritten?.has(page.id) === true;
+          const preview = pagePreview(page);
           return (
             <li key={page.id}>
               <button
@@ -84,15 +108,18 @@ export function NewPagesList({
                 data-fresh={fresh ? "true" : undefined}
                 onClick={() => onSelectPage(page.id)}
               >
-                {fresh ? (
-                  <CheckCircle aria-hidden="true" weight="fill" size={16} className="wiki-new-pages-icon wiki-new-pages-icon--fresh" />
-                ) : (
-                  <PageIcon className="wiki-new-pages-icon" size={16} />
-                )}
-                <span className="wiki-new-pages-title">{page.title}</span>
-                {byAi && !fresh ? <span className="wiki-new-pages-by">{t("pages.overview.aiWrote")}</span> : null}
+                <span className="wiki-new-pages-head">
+                  {fresh ? (
+                    <CheckCircle aria-hidden="true" weight="fill" size={16} className="wiki-new-pages-icon wiki-new-pages-icon--fresh" />
+                  ) : (
+                    <PageIcon className="wiki-new-pages-icon" size={16} />
+                  )}
+                  <span className="wiki-new-pages-title">{page.title}</span>
+                </span>
+                <span className="wiki-new-pages-preview">{preview}</span>
                 {/* Home counts nothing, sources included (UX-HOME-2). */}
-                {fresh ? <span className="wiki-new-pages-meta">{t("pages.overview.justWritten")}</span> : null}
+                {fresh ? <span className="wiki-new-pages-meta">{t("pages.overview.justWritten")}</span>
+                  : byAi ? <span className="wiki-new-pages-by">{t("pages.overview.aiWrote")}</span> : null}
               </button>
             </li>
           );

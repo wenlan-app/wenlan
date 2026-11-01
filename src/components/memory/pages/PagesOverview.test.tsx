@@ -207,12 +207,14 @@ describe("PagesOverview reading workspace", () => {
       expect(screen.getByRole("heading", { level: 2, name: "What you're working on" })).toBeInTheDocument();
       expect(container.querySelector(".wiki-overview .home-columns")?.firstElementChild).toBe(section);
       const cards = [...section.querySelectorAll(".wiki-working-on-card")];
-      expect(cards.map((card) => card.querySelector(".wiki-working-on-text")?.textContent)).toEqual([
+      expect(cards.map((card) => card.querySelector(".wiki-working-on-title")?.textContent)).toEqual([
         "Storage: files become the source of truth",
         "Launch page: drop the PH badge",
       ]);
-      expect(cards[0]).toHaveTextContent("wenlan · today");
-      expect(cards[1]).toHaveTextContent("wenlan-site · 3 days ago");
+      expect(cards.map((card) => [card.querySelector(".wiki-working-on-meta")?.textContent, card.querySelector(".wiki-working-on-when")?.textContent])).toEqual([
+        ["wenlan", "today"],
+        ["wenlan-site", "3 days ago"],
+      ]);
 
       fireEvent.click(cards[1]);
       expect(onSelectSpace).toHaveBeenCalledWith("wenlan-site");

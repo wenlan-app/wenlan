@@ -74,29 +74,41 @@
 /* What you're working on (UX-HOME-1): the home's first section, in the same
    column as the newest pages. Cards are told apart by their surface and the
    space between them, not by lines. */
-/* Home: two sections on one 720px column, one heading style, one inset. */
-.wiki-working-on { margin:40px auto 0;max-width:min(100%,720px);width:100%;min-width:0; }
+/* Home: soft white cards on a quiet dotted board. What you're working on is
+   a grid of cards; the pages edited last are one row of preview cards that
+   scrolls sideways, so neither section pushes the other down. */
+.note-group-content:has(> .wiki-reading-start[data-home="true"]), .wiki-workspace-reading:has(.wiki-reading-start[data-home="true"]) {
+  background-color:var(--mem-bg);
+  background-image:radial-gradient(circle at 1px 1px,color-mix(in srgb,var(--mem-text) 10%,transparent) 1px,transparent 0);
+  background-size:20px 20px;
+}
+.home-columns { display:flex;flex-direction:column;gap:40px;width:100%;max-width:min(100%,1000px);margin:40px auto 0;min-width:0; }
+.home-columns:empty { display:none; }
+.home-columns > .wiki-working-on, .home-columns > .wiki-new-pages { max-width:none;margin:0; }
 .wiki-working-on h2, .wiki-new-pages-header h2 { color:var(--mem-text-secondary);font:600 13px/1.4 var(--mem-font-body);letter-spacing:.02em;margin:0; }
 .wiki-working-on h2 { margin:0 0 12px; }
-.wiki-working-on ul { list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:10px; }
+.wiki-working-on ul { list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:14px; }
 .wiki-working-on li { display:flex;min-width:0; }
-.wiki-working-on-card { display:flex;flex-direction:column;gap:4px;width:100%;min-width:0;padding:14px 16px 12px;border:0;border-radius:12px;background:color-mix(in srgb,var(--mem-text) 4%,var(--mem-bg));color:var(--mem-text);text-align:left;cursor:pointer;transition:background-color .12s ease; }
-.wiki-working-on-card:hover { background:color-mix(in srgb,var(--mem-text) 7%,var(--mem-bg)); }
-.wiki-working-on-card:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.wiki-working-on-card, .wiki-new-pages-row {
+  border:1px solid color-mix(in srgb,var(--mem-text) 8%,transparent);border-radius:16px;
+  background:var(--mem-surface);color:var(--mem-text);text-align:left;cursor:pointer;
+  box-shadow:0 1px 2px color-mix(in srgb,#141820 6%,transparent),0 6px 18px color-mix(in srgb,#141820 6%,transparent);
+  transition:box-shadow .15s ease,transform .15s ease;
+}
+.wiki-working-on-card:hover, .wiki-new-pages-row:hover { transform:translateY(-1px);box-shadow:0 2px 4px color-mix(in srgb,#141820 8%,transparent),0 10px 26px color-mix(in srgb,#141820 9%,transparent); }
+.wiki-working-on-card:focus-visible, .wiki-new-pages-row:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.wiki-working-on-card { display:flex;flex-direction:column;gap:6px;width:100%;min-width:0;padding:16px 18px 14px; }
 .wiki-working-on-title { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 15px/1.4 var(--mem-font-body); }
-.wiki-working-on-text { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;color:var(--mem-text-secondary);font:400 13.5px/1.55 var(--mem-font-body); }
-.wiki-working-on-foot { display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0;margin-top:auto;padding-top:4px; }
+.wiki-working-on-text { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;min-height:calc(2 * 1.55em);color:var(--mem-text-secondary);font:400 13.5px/1.55 var(--mem-font-body); }
+.wiki-working-on-foot { display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0;margin-top:auto;padding-top:6px; }
 .wiki-working-on-meta { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
 .wiki-working-on-when { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body);font-variant-numeric:tabular-nums; }
-.wiki-working-on + .wiki-new-pages { margin-top:40px; }
-/* Wide: what you're working on and the pages edited last side by side, each
-   growing down its own column. Narrow, or with only one of them: one column. */
-.home-columns { display:flex;flex-direction:column;width:100%;max-width:min(100%,720px);margin:0 auto;min-width:0; }
-.home-columns:empty { display:none; }
-.home-columns + .getting-started-reopen, .home-columns + * > .getting-started-reopen { margin-top:32px; }
-.home-columns > .wiki-working-on, .home-columns > .wiki-new-pages { max-width:none;margin:40px 0 0; }
-@media (min-width:1180px) {
-  .home-columns:has(> .wiki-working-on + .wiki-new-pages) { display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);align-items:start;column-gap:56px;max-width:min(100%,1000px); }
-  .home-columns > .wiki-working-on + .wiki-new-pages { margin-top:40px; }
-  .home-columns:has(> .wiki-new-pages) > .wiki-working-on ul { grid-template-columns:minmax(0,1fr); }
-}
+.home-columns .wiki-new-pages ul { display:grid;grid-auto-flow:column;grid-auto-columns:max(200px,calc((100% - 3 * 14px) / 4));gap:14px;overflow-x:auto;padding:2px 2px 10px;margin:0 -2px;scroll-snap-type:x proximity; }
+.home-columns .wiki-new-pages li { display:flex;min-width:0;scroll-snap-align:start; }
+.home-columns .wiki-new-pages-row { display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%;margin:0;padding:14px 16px;min-height:132px; }
+.home-columns .wiki-new-pages-row:hover { background:var(--mem-surface); }
+.wiki-new-pages-head { display:flex;align-items:center;gap:8px;min-width:0; }
+.home-columns .wiki-new-pages-title { font:600 14px/1.4 var(--mem-font-body); }
+.wiki-new-pages-preview { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;color:var(--mem-text-secondary);font:400 12.5px/1.55 var(--mem-font-body); }
+.home-columns .wiki-new-pages-by, .home-columns .wiki-new-pages-meta { margin-top:auto; }
+.home-columns ~ .getting-started-reopen { margin-top:28px; }
