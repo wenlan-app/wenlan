@@ -2253,7 +2253,8 @@ export async function acceptSentenceProposal(
 /** Say 「不對」 about one sentence; with `askAi` the AI proposes a fix, which
  *  still lands only when you accept it (UX-WHO-3). */
 export async function flagPageSentence(pageId: string, sentenceHash: string, askAi: boolean, why?: string) {
-  return invoke<{ page_id: string; version: number; sentence_hash: string; seq: number }>("flag_page_sentence", {
+  // `ai_fix_queued` is true only when a model took the request; absent otherwise.
+  return invoke<{ page_id: string; version: number; sentence_hash: string; seq: number; ai_fix_queued?: boolean }>("flag_page_sentence", {
     pageId,
     sentenceHash,
     askAi,

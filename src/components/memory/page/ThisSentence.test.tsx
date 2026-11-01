@@ -66,10 +66,18 @@ describe("ThisSentence", () => {
   });
 
   it("UX-WHO-3: 「不對」 asks the AI, whose fix is still a proposal", async () => {
+    vi.mocked(flagPageSentence).mockResolvedValue({ page_id: "page-1", version: 2, sentence_hash: "h3", seq: 1, ai_fix_queued: true });
     renderIt(sentence());
     fireEvent.click(screen.getByRole("button", { name: "Not right" }));
     fireEvent.click(screen.getByRole("button", { name: "Let AI fix it" }));
     await waitFor(() => expect(flagPageSentence).toHaveBeenCalledWith("page-1", "h3", true));
     expect(await screen.findByText(/Nothing changes until you accept/)).toBeTruthy();
+  });
+
+  it("UX-WHO-3: says so when no AI model can fix it", async () => {
+    renderIt(sentence());
+    fireEvent.click(screen.getByRole("button", { name: "Not right" }));
+    fireEvent.click(screen.getByRole("button", { name: "Let AI fix it" }));
+    expect(await screen.findByText("No AI model is set up to fix it. You can fix it yourself.")).toBeTruthy();
   });
 });

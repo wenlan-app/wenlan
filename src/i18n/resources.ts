@@ -1888,6 +1888,8 @@ const en = {
     cancel: "Cancel",
     aiWillPropose: "AI will propose a fix under this sentence. Nothing changes until you accept.",
     proposalReady: "AI proposed a fix under this sentence.",
+    noModel: "No AI model is set up to fix it. You can fix it yourself.",
+    flagged: "You marked this sentence as not right.",
     flagFailed: "Could not send it. Try again.",
   },
   weakReason: {
@@ -4974,6 +4976,8 @@ const zhHans = {
     cancel: "取消",
     aiWillPropose: "AI 会在这句下面提一个改法，你收下才会改。",
     proposalReady: "AI 在这句下面提了一个改法。",
+    noModel: "还没有能改它的 AI 模型，你可以自己改。",
+    flagged: "你标了这句不对。",
     flagFailed: "没送出去，再试一次。",
   },
   weakReason: {
@@ -8035,6 +8039,8 @@ const zhHant = {
     cancel: "取消",
     aiWillPropose: "AI 會在這句下面提一個改法，你收下才會改。",
     proposalReady: "AI 在這句下面提了一個改法。",
+    noModel: "還沒有能改它的 AI 模型，你可以自己改。",
+    flagged: "你標了這句不對。",
     flagFailed: "沒送出去，再試一次。",
   },
   weakReason: {

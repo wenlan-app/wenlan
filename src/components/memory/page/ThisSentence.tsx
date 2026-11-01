@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { flagPageSentence, recheckPageSentence, type PageSentence } from "../../../lib/tauri";
@@ -51,9 +51,24 @@ export function ThisSentence({ pageId, sentence, onFixMyself, disabled }: ThisSe
     mutationFn: (hash: string) => recheckPageSentence(pageId, hash),
     onSuccess: () => void refresh(),
   });
+  const askedAi = !!sentence && flag.isSuccess && flag.variables === sentence.hash;
+  const aiQueued = askedAi && flag.data?.ai_fix_queued === true;
+  const proposalCount = sentence?.proposals?.length ?? 0;
+  // The AI's fix arrives a few seconds after the flag, off the request; look
+  // again for a while until it shows up.
+  useEffect(() => {
+    if (!aiQueued || proposalCount > 0) return;
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      tries += 1;
+      void refresh();
+      if (tries >= 15) window.clearInterval(timer);
+    }, 4000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiQueued, proposalCount, pageId]);
   if (!sentence || sentence.author === "original") return null;
   const weak = leadingWeakReason(sentence.weak ?? []);
-  const askedAi = flag.isSuccess && flag.variables === sentence.hash;
   return (
     <section className="this-sentence" aria-labelledby="this-sentence-title" data-testid="this-sentence">
       <h3 id="this-sentence-title" className="this-sentence-title">{t("thisSentence.title")}</h3>
@@ -77,7 +92,13 @@ export function ThisSentence({ pageId, sentence, onFixMyself, disabled }: ThisSe
       {recheck.isError ? <p className="this-sentence-error" role="alert">{t("thisSentence.recheckFailed")}</p> : null}
       {askedAi || sentence.flagged ? (
         <p className="this-sentence-line" role="status">
-          {(sentence.proposals?.length ?? 0) > 0 ? t("thisSentence.proposalReady") : t("thisSentence.aiWillPropose")}
+          {proposalCount > 0
+            ? t("thisSentence.proposalReady")
+            : aiQueued
+              ? t("thisSentence.aiWillPropose")
+              : askedAi
+                ? t("thisSentence.noModel")
+                : t("thisSentence.flagged")}
         </p>
       ) : choosing ? (
         <div className="this-sentence-actions" role="group" aria-label={t("thisSentence.notRight")}>
