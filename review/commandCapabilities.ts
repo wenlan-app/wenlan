@@ -101,6 +101,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "accept_sentence_proposal",
     "reject_sentence_proposal",
     "revert_page_sentences",
+    "flag_page_sentence",
+    "recheck_page_sentence",
     "mark_page_basis",
     "unmark_page_basis",
     "confirm_page_basis",
