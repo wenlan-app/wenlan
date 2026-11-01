@@ -12,7 +12,7 @@ for (const width of [1280,375]) test(`recent pages replace default hierarchy and
  await leaveHomeForWiki(page);
  const directory=page.locator(".wiki-workspace-directory");
  if(width===375)await page.locator(".wiki-workspace-folders-toggle").click();
- // The Wiki opens on its folders; Recently used is one choice away.
+ // The whole library is the default list; Recently used is a choice.
  await expect(directory.getByRole("combobox")).toHaveValue("folders");
  await directory.getByRole("combobox").selectOption("recent");
  await expect(directory).toContainText("Pages you open appear here");

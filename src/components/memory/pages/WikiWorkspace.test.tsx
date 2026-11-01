@@ -25,9 +25,8 @@ vi.mock("./PageInventoryPanel", () => ({
 vi.mock("./ArchivedNotesPanel", () => ({ ArchivedNotesPanel: ({ onOpenPage }: { onOpenPage: (page: { id: string }) => void }) => <div data-testid="archived-notes"><button type="button" onClick={() => onOpenPage({ id: "archived-one" })}>Open archived note</button></div> }));
 
 describe("WikiWorkspace", () => {
-  // These tests start from a person who chose Recently used; the default
-  // (by folder) has its own test.
-  beforeEach(() => localStorage.setItem("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "recent", customOrder: [] })));
+  // Most cases start from a person who picked Recently used; the default is tested on its own.
+  beforeEach(() => localStorage.setItem("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "recent", customOrder: [], chosen: true })));
   it.each(["recent", "archived"] as const)("archive browse request opens the narrow drawer from %s, reopens it and closes on selection", async initialMode => {
     const onOpenPage = vi.fn();
     function BrowseArchive() {
@@ -72,8 +71,14 @@ describe("WikiWorkspace", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("defaults to every page by folder and switches modes without remounting the active editor", () => {
+  it("opens on Folders for a person who never picked a list", () => {
     localStorage.removeItem("wenlan:wiki-inventory:v1");
+    render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
+    expect(screen.getByRole("combobox")).toHaveValue("folders");
+    expect(screen.getByTestId("wiki-directory")).toBeInTheDocument();
+  });
+
+  it("keeps a chosen Recently used and switches modes without remounting the active editor", () => {
     const { getByTestId } = render(
       <WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}>
         <textarea data-testid="active-editor" defaultValue="unsaved text" />
@@ -82,11 +87,8 @@ describe("WikiWorkspace", () => {
     const editor = getByTestId("active-editor");
     const mode = screen.getByRole("combobox");
 
-    expect(mode).toHaveValue("folders");
-    expect(screen.getByTestId("wiki-directory")).toBeInTheDocument();
-    fireEvent.change(mode, { target: { value: "recent" } });
+    expect(mode).toHaveValue("recent");
     expect(screen.queryByTestId("wiki-directory")).not.toBeInTheDocument();
-    expect(getByTestId("active-editor")).toBe(editor);
     fireEvent.change(mode, { target: { value: "folders" } });
     expect(screen.getByTestId("wiki-directory")).toBeInTheDocument();
     expect(getByTestId("active-editor")).toBe(editor);

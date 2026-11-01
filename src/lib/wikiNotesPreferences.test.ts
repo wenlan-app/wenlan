@@ -45,6 +45,17 @@ describe("wiki notes preferences", () => {
     expect(orderWikiRecentEntries(entries, ["c", "missing"])).toEqual([entries[2], entries[0], entries[1]]);
   });
 
+  it("opens on Folders until the person picks a list, so it does not repeat the home's recent pages", () => {
+    // Saved before the person ever chose: the old default, not a choice.
+    const legacy = memoryStorage(JSON.stringify({ version: 1, mode: "recent", customOrder: ["a"] }));
+    expect(readWikiInventoryMode(legacy.storage)).toBe("folders");
+    expect(readWikiCustomOrder(legacy.storage)).toEqual(["a"]);
+    writeWikiInventoryMode("recent", legacy.storage);
+    expect(readWikiInventoryMode(legacy.storage)).toBe("recent");
+    writeWikiCustomOrder(["b"], legacy.storage);
+    expect(readWikiInventoryMode(legacy.storage)).toBe("recent");
+  });
+
   it("keeps existing custom positions and appends new visible entries", () => {
     expect(orderWikiRecentEntries(entries, ["c", "a"])).toEqual([entries[2], entries[0], entries[1]]);
     const refreshed = [{ ...entries[0], title: "Renamed" }, entries[1], entries[2]];
@@ -59,8 +70,7 @@ describe("Archived pages browse mode", () => {
     writeWikiInventoryMode("folders", storage);
     writeWikiInventoryMode("archived", storage);
     expect(readWikiInventoryMode(storage)).toBe("folders");
-    writeWikiInventoryMode("recent", storage);
-    store.set("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "archived", customOrder: [] }));
-    expect(readWikiInventoryMode(storage)).toBe("folders");
+    store.set("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "archived", customOrder: [], chosen: true }));
+    expect(readWikiInventoryMode(storage)).toBe("recent");
   });
 });

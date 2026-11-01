@@ -13,8 +13,10 @@ const VERSION = 1 as const;
 const LIMIT = 50;
 // Modes remembered across restarts. Archived pages is deliberately not one.
 const MODES = new Set<WikiInventoryMode>(["recent", "custom", "folders"]);
-type StoredPreferences = { readonly version: 1; readonly mode: WikiInventoryMode; readonly customOrder: readonly string[] };
-// The Wiki holds every page, by folder. What was used lately lives on Home.
+// `chosen` is set once the person picks a mode. Until then the list shows
+// Folders, the whole library as in Obsidian, so it does not repeat the
+// home's recent pages (Qi-Xuan 2026-11-01: left and right lists were the same).
+type StoredPreferences = { readonly version: 1; readonly mode: WikiInventoryMode; readonly customOrder: readonly string[]; readonly chosen?: boolean };
 const DEFAULT_MODE: WikiInventoryMode = "folders";
 
 function resolveStorage(storage?: WikiNotesStorage | null): WikiNotesStorage | null {
@@ -24,20 +26,20 @@ function resolveStorage(storage?: WikiNotesStorage | null): WikiNotesStorage | n
 
 function readPreferences(storage?: WikiNotesStorage | null): StoredPreferences {
   const resolved = resolveStorage(storage);
-  if (resolved === null) return { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
+  if (resolved === null) return { version: VERSION, mode: "recent", customOrder: [] };
   try {
     const raw = resolved.getItem(STORAGE_KEY);
-    if (raw === null) return { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
+    if (raw === null) return { version: VERSION, mode: "recent", customOrder: [] };
     const value: unknown = JSON.parse(raw);
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return { version: VERSION, mode: "recent", customOrder: [] };
     const record = value as Record<string, unknown>;
-    const mode = MODES.has(record["mode"] as WikiInventoryMode) ? record["mode"] as WikiInventoryMode : DEFAULT_MODE;
+    const mode = MODES.has(record["mode"] as WikiInventoryMode) ? record["mode"] as WikiInventoryMode : "recent";
     const customOrder = Array.isArray(record["customOrder"])
       ? [...new Set(record["customOrder"].filter((id): id is string => typeof id === "string" && id.length > 0))].slice(0, LIMIT)
       : [];
-    return record["version"] === VERSION ? { version: VERSION, mode, customOrder } : { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
+    return record["version"] === VERSION ? { version: VERSION, mode, customOrder, chosen: record["chosen"] === true } : { version: VERSION, mode: "recent", customOrder: [] };
   } catch {
-    return { version: VERSION, mode: DEFAULT_MODE, customOrder: [] };
+    return { version: VERSION, mode: "recent", customOrder: [] };
   }
 }
 
@@ -48,13 +50,14 @@ function writePreferences(preferences: StoredPreferences, storage?: WikiNotesSto
 }
 
 export function readWikiInventoryMode(storage?: WikiNotesStorage | null): WikiInventoryMode {
-  return readPreferences(storage).mode;
+  const preferences = readPreferences(storage);
+  return preferences.chosen ? preferences.mode : DEFAULT_MODE;
 }
 
 export function writeWikiInventoryMode(mode: WikiInventoryMode, storage?: WikiNotesStorage | null): void {
   if (!MODES.has(mode)) return;
   const current = readPreferences(storage);
-  writePreferences({ ...current, mode }, storage);
+  writePreferences({ ...current, mode, chosen: true }, storage);
 }
 
 export function readWikiCustomOrder(storage?: WikiNotesStorage | null): readonly string[] {

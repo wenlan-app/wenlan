@@ -5,4 +5,5 @@
 //! dual-write steps build on them, and the database stays the truth until the
 //! cutover.
 
+pub mod format;
 pub mod history;
