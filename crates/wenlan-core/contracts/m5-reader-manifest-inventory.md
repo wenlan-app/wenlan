@@ -1358,6 +1358,7 @@ carrying the authority of agreement.
 | `core/eval/runner.rs::run_eval` | `pub` | no | no | — | `core/db.rs::search_memory` |
 | `core/eval/shared.rs::enrich_db_for_eval_local` | `pub` | no | no | — | `core/post_ingest.rs::run_post_ingest_enrichment` |
 | `core/eval/shared.rs::enrich_post_ingest_batched` | `pub(crate)` | no | no | — | `core/post_ingest.rs::run_post_ingest_enrichment` |
+| `core/export/knowledge.rs::archive_page_if_still_archived` | `pub` | no | **yes** | `server/page_routes.rs::handle_archive_page` | `core/db.rs::get_page` |
 | `core/export/knowledge.rs::plan_truth_cutover` | `pub` | no | **yes** | `server/cmd_cutover.rs::run` | `core/db/truth_exposure.rs::page_truth_states` |
 | `core/importer.rs::resolve_entity_bulk` | `pub(crate)` | no | no | — | `core/db.rs::resolve_or_create_entity` |
 | `core/ingest.rs::run_canonical_enrichment` | `pub` | no | no | — | `core/post_ingest.rs::run_post_ingest_enrichment` |
@@ -1571,7 +1572,7 @@ carrying the authority of agreement.
 | `server/page_map_routes.rs::handle_patch_map_node` | `pub` | no | no | — | `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::wire_node` |
 | `server/page_map_routes.rs::handle_put_page_map_layout` | `pub` | no | no | — | `server/page_map_routes.rs::ensure_page_is_active` |
 | `server/page_map_routes.rs::handle_reset_page_map` | `pub` | no | no | — | `server/page_map_routes.rs::ensure_page_is_active` |
-| `server/page_routes.rs::handle_archive_page` | `pub` | no | no | — | `core/db.rs::archive_page_versioned`, `server/page_routes.rs::reject_entity_page_mutation` |
+| `server/page_routes.rs::handle_archive_page` | `pub` | no | no | — | `core/db.rs::archive_page_versioned`, `core/export/knowledge.rs::archive_page_if_still_archived`, `server/page_routes.rs::reject_entity_page_mutation` |
 | `server/page_routes.rs::handle_create_page` | `pub` | no | no | — | `server/page_routes.rs::handle_create_page_inner` |
 | `server/page_routes.rs::handle_delete_page` | `pub` | no | no | — | `server/page_routes.rs::reject_entity_page_mutation` |
 | `server/page_routes.rs::handle_review_page` | `pub` | no | no | — | `core/db/presence_review.rs::review_page_with_presence` |

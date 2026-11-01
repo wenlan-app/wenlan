@@ -113,6 +113,16 @@ struct PageFileState {
     space: Option<String>,
 }
 
+#[cfg(test)]
+type ArchiveMoveHook = Box<dyn FnMut(&str)>;
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam: runs just before each file an archive or eviction moves.
+    static BEFORE_ARCHIVE_MOVE: std::cell::RefCell<Option<ArchiveMoveHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// What [`KnowledgeWriter::move_projected_pages_to_archive`] did.
 #[derive(Debug, Default)]
 struct ArchiveMoves {
@@ -1419,9 +1429,14 @@ impl KnowledgeWriter {
     /// file is gone, unreadable, or carries no `origin_id`.
     fn read_origin_stamp(root: &Dir, filename: &str) -> Option<(String, i64)> {
         let (directory, name) = folders::page_parent(root, filename).ok()?;
+        Self::read_origin_stamp_in(&directory, &name)
+    }
+
+    /// [`Self::read_origin_stamp`] for `name` directly inside `directory`.
+    fn read_origin_stamp_in(directory: &Dir, name: &str) -> Option<(String, i64)> {
         let mut options = OpenOptions::new();
         options.read(true).follow(FollowSymlinks::No);
-        let mut file = directory.open_with(&name, &options).ok()?;
+        let mut file = directory.open_with(name, &options).ok()?;
         if !file.metadata().ok()?.is_file() {
             return None;
         }
@@ -1514,8 +1529,36 @@ impl KnowledgeWriter {
                 // copies loses both or the eviction did not happen.
                 let mut moved = 0usize;
                 for filename in &files {
-                    match Self::archive_projected_file(&capabilities.root, filename) {
+                    // The check above can be outrun by a file swapped in
+                    // before the move, so an archive re-checks what it moved.
+                    #[cfg(test)]
+                    BEFORE_ARCHIVE_MOVE.with(|hook| {
+                        if let Some(hook) = hook.borrow_mut().as_mut() {
+                            hook(filename);
+                        }
+                    });
+                    let outcome = match bound {
+                        None => Self::archive_projected_file(&capabilities.root, filename),
+                        Some(bound) => Self::archive_projected_file_if(
+                            &capabilities.root,
+                            filename,
+                            &|directory, name| {
+                                Self::read_origin_stamp_in(directory, name)
+                                    .is_some_and(|(id, version)| id == *page_id && version <= bound)
+                            },
+                        ),
+                    };
+                    match outcome {
                         Ok(()) => moved += 1,
+                        Err(WenlanError::Conflict(code))
+                            if code == "page_archive_identity_changed" =>
+                        {
+                            log::warn!(
+                                "[knowledge] {filename} changed before page {page_id} was archived; \
+                                 left it in place"
+                            );
+                            moves.not_ours.push(filename.to_string());
+                        }
                         Err(error) => {
                             // Do not abort. This is a disclosure boundary, and
                             // the cost of stopping is that every page after this
@@ -1588,6 +1631,18 @@ impl KnowledgeWriter {
     fn archive_projected_file(root: &Dir, filename: &str) -> Result<(), WenlanError> {
         let (directory, name) = folders::page_parent(root, filename)?;
         crate::export::archive::archive_file_from(root, &directory, &name)
+    }
+
+    /// [`Self::archive_projected_file`], keeping the move only if `belongs`
+    /// accepts the file that was actually moved (see
+    /// [`crate::export::archive::archive_file_from_if`]).
+    fn archive_projected_file_if(
+        root: &Dir,
+        filename: &str,
+        belongs: &dyn Fn(&Dir, &str) -> bool,
+    ) -> Result<(), WenlanError> {
+        let (directory, name) = folders::page_parent(root, filename)?;
+        crate::export::archive::archive_file_from_if(root, &directory, &name, belongs)
     }
 
     fn validate_guard(
@@ -5340,6 +5395,30 @@ impl KnowledgeProjectionWrite {
         self.writer.archive_pages(&self.guard, pages)
     }
 
+    /// Move the file of a page this caller just archived, but only while the
+    /// database still says the page is archived at `version`, the version
+    /// that archive produced. A restore that committed in between makes this
+    /// a no-op even when its own projection failed and left the old file
+    /// and state entry in place; moving them then would leave an active page
+    /// with no file.
+    ///
+    /// The check and the move are two steps, so the caller holds whatever
+    /// serializes this page's archive and restore (the daemon's page
+    /// lifecycle lock) across both.
+    pub async fn archive_page_if_still_archived(
+        &self,
+        database: &crate::db::MemoryDB,
+        page_id: &str,
+        version: i64,
+    ) -> Result<usize, WenlanError> {
+        match database.get_page(page_id).await? {
+            Some(page) if page.status == "archived" && page.version == version => {
+                self.archive_pages(&[(page_id.to_string(), version)])
+            }
+            _ => Ok(0),
+        }
+    }
+
     /// Repair the projection from the DB.
     ///
     /// Deliberately NOT truth-gated. It rewrites files for pages already on
@@ -8499,5 +8578,97 @@ mod tests {
             0
         );
         assert_eq!(std::fs::read(&live).unwrap(), restored_bytes);
+    }
+
+    /// Re-review of #1064: the identity check before the move can be outrun.
+    /// A sync client swaps another page's note in at the path between the
+    /// check and the rename; archive re-checks what it moved, puts the note
+    /// back, and keeps the page's state entry so a later pass retries.
+    #[test]
+    fn archive_puts_back_a_file_swapped_in_before_the_move() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        let live = writer.write_page_for_test(&page).unwrap();
+        let swapped = "---\norigin_id: page_someone_else\n---\nTheir note.\n";
+        let target = live.clone();
+        BEFORE_ARCHIVE_MOVE.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move |_| {
+                std::fs::write(&target, swapped).unwrap();
+            }));
+        });
+        let guard = writer.begin_test_write();
+        let result = writer.archive_pages(&guard, &[(page.id.clone(), page.version + 1)]);
+        BEFORE_ARCHIVE_MOVE.with(|hook| *hook.borrow_mut() = None);
+
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("rust-ownership.md"), "{error}");
+        assert_eq!(std::fs::read_to_string(&live).unwrap(), swapped);
+        let archived: Vec<_> = std::fs::read_dir(dir.path().join("archive"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(archived.is_empty(), "{archived:?}");
+        assert!(writer.load_state().pages.contains_key(&page.id));
+    }
+
+    /// Re-review of #1064: archive commits, a restore commits but its
+    /// projection fails, so the old file and state entry are still there.
+    /// The late archive move must see the page is active again and leave
+    /// both, or the restored page would have no file.
+    #[tokio::test]
+    async fn a_late_archive_move_leaves_a_page_restored_since() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db = crate::db::MemoryDB::new(
+            &tmp.path().join("test.db"),
+            std::sync::Arc::new(crate::events::NoopEmitter),
+        )
+        .await
+        .unwrap();
+        let draft = db
+            .create_page_draft("Late Archive", "Body text.\n", None, None)
+            .await
+            .unwrap();
+        let crate::pages::PageDraftPublishOutcome::Published(page) = db
+            .publish_page_draft(&draft.id, draft.version)
+            .await
+            .unwrap()
+        else {
+            panic!("fixture must publish")
+        };
+        let pages = tmp.path().join("pages");
+        let projection = KnowledgeProjectionWrite::new(pages.clone(), &db);
+        let live = projection.write_page(&page).unwrap();
+        let before = std::fs::read(&live).unwrap();
+
+        let archived = db.archive_page_versioned(&page.id).await.unwrap().unwrap();
+        db.restore_page(
+            &page.id,
+            None,
+            archived,
+            &crate::read_scope::ReadScope::Global,
+        )
+        .await
+        .unwrap();
+        // The restore's projection never ran.
+        let moved = projection
+            .archive_page_if_still_archived(&db, &page.id, archived)
+            .await
+            .unwrap();
+        assert_eq!(moved, 0);
+        assert_eq!(std::fs::read(&live).unwrap(), before);
+        assert!(!pages.join("archive").exists());
+        assert!(projection.writer.page_filename(&page.id).is_some());
+
+        // Still archived at that version: the move happens.
+        let archived = db.archive_page_versioned(&page.id).await.unwrap().unwrap();
+        assert_eq!(
+            projection
+                .archive_page_if_still_archived(&db, &page.id, archived)
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(!std::path::Path::new(&live).exists());
     }
 }
