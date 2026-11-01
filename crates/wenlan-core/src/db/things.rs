@@ -152,14 +152,23 @@ fn is_cjk(c: char) -> bool {
     matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF)
 }
 
-/// Lowercased words of a title, without stopwords; each CJK character is a
-/// word of its own.
+/// A plain plural folded to its singular ("trips" → "trip"), so two titles
+/// about the same thing still match.
+fn stem(word: &str) -> String {
+    match word.strip_suffix('s') {
+        Some(stem) if word.chars().count() > 3 && !stem.ends_with('s') => stem.to_string(),
+        _ => word.to_string(),
+    }
+}
+
+/// Lowercased words of a title, without stopwords and with plain plurals
+/// folded; each CJK character is a word of its own.
 fn title_words(text: &str) -> HashSet<String> {
     let mut out = HashSet::new();
     let mut word = String::new();
     let flush = |word: &mut String, out: &mut HashSet<String>| {
         if !word.is_empty() && !STOPWORDS.contains(&word.as_str()) {
-            out.insert(word.clone());
+            out.insert(stem(word));
         }
         word.clear();
     };

@@ -68,6 +68,11 @@ async fn history_ops(db: &MemoryDB, thing_id: &str) -> Vec<(String, String)> {
 fn titles_alike_share_words_beyond_stopwords() {
     assert!(title_likeness("New tagline for the site", "Site tagline, new").unwrap() >= 0.5);
     assert!(title_likeness("Fix the bug", "Fix the build").is_none());
+    assert!(
+        title_likeness("Plan the Lisbon trip", "Lisbon trip: day trips").unwrap() >= 0.5,
+        "plurals fold"
+    );
+    assert!(title_likeness("Class notes", "Glass notes").is_none());
     assert!(title_likeness("Wenlan", "wenlan").is_some());
     assert!(title_likeness("新的標語", "標語新的").unwrap() >= 0.5);
     assert!(title_likeness("", "anything").is_none());
@@ -319,7 +324,11 @@ async fn the_person_renames_a_thing_and_moves_a_conversation() {
         .unwrap();
     assert_eq!(fresh_thing.title.as_deref(), Some("Launch week"));
     assert_eq!(fresh_thing.title_by, ThingActor::Person);
-    assert_eq!(things_of(&db, &b).await, std::slice::from_ref(&other), "b stays");
+    assert_eq!(
+        things_of(&db, &b).await,
+        std::slice::from_ref(&other),
+        "b stays"
+    );
     let ops = history_ops(&db, &other).await;
     assert!(
         ops.contains(&("thing.unassign".into(), "person".into())),
