@@ -9,9 +9,13 @@
 //!   it keeps every sentence that is the person's (or of unknown origin on a
 //!   human-owned or review-locked page, or imported original text) and plans
 //!   one `sentence.propose` entry for each such sentence the write changed or
-//!   dropped. It applies to every page: there is no "AI may edit directly"
-//!   mode. A locked page (`review_required`) stages a whole-page card before
-//!   this gate is reached.
+//!   dropped, but only when the facts behind that sentence changed (its
+//!   source does not back it, changed since it was cited, or disproves it).
+//!   A rewording alone is dropped and the sentence stays as the person wrote
+//!   it, so the person reviews as little as possible. It applies to every
+//!   page: there is no "AI may edit directly" mode. On a locked page
+//!   (`review_required`) every sentence is protected; a locked write that
+//!   would add sentences still stages a whole-page card before this gate.
 //! - [`propose_sentence`], [`accept_sentence_proposal`],
 //!   [`reject_sentence_proposal`] and [`flag_sentence`] are the per-sentence
 //!   decisions, each one history entry. They sit beside the whole-page
@@ -153,16 +157,110 @@ pub(crate) async fn sentence_gate(
 ) -> Result<(Option<GatePlan>, bool), WenlanError> {
     let rows = page_authorship(db, page).await?;
     let guard = guarded(page);
-    let protected: HashSet<usize> = rows
+    let owned: HashSet<usize> = rows
         .iter()
         .enumerate()
         .filter(|(_, row)| authorship::is_protected(row.author, guard))
         .map(|(idx, _)| idx)
         .collect();
-    Ok((
-        authorship::plan_sentence_gate(&page.content, new_content, &protected),
-        !protected.is_empty(),
-    ))
+    // The lock protects every sentence, the AI's own included.
+    let protected: HashSet<usize> = if page.review_required {
+        (0..rows.len()).collect()
+    } else {
+        owned.clone()
+    };
+    let mut plan = authorship::plan_sentence_gate(&page.content, new_content, &protected);
+    if let Some(plan) = plan.as_mut() {
+        let units = authorship::sentence_units(&page.content);
+        let reasons = unit_reasons(db, page, &units).await?;
+        let by_hash: HashMap<&str, WeakReason> = units
+            .iter()
+            .zip(&reasons)
+            .filter_map(|(unit, reason)| Some((unit.hash.as_str(), (*reason)?)))
+            .collect();
+        plan.proposals.retain_mut(|proposal| {
+            proposal.reason = by_hash.get(proposal.sentence_hash.as_str()).copied();
+            proposal.reason.is_some()
+        });
+    }
+    Ok((plan, !owned.is_empty()))
+}
+
+/// Under the page lock, would this machine write only change sentences the
+/// page already has? Then every change is a sentence proposal (or dropped as
+/// a rewording) and nothing lands. A write that adds sentences is not, and
+/// still waits as a whole-page revision card.
+pub async fn locked_write_only_changes_sentences(
+    db: &MemoryDB,
+    page: &Page,
+    new_content: &str,
+) -> Result<bool, WenlanError> {
+    let (plan, _) = sentence_gate(db, page, new_content).await?;
+    let landing = plan
+        .as_ref()
+        .map_or(new_content, |plan| plan.content.as_str());
+    let norms = |body: &str| -> Vec<String> {
+        authorship::sentence_units(body)
+            .into_iter()
+            .map(|unit| unit.norm)
+            .collect()
+    };
+    Ok(norms(landing) == norms(&page.content))
+}
+
+/// The facts-changed reason of a sentence: the strongest of its citation
+/// problems. A missing citation is not one; nothing about the facts changed.
+fn facts_changed(weak: &[WeakReason]) -> Option<WeakReason> {
+    [
+        WeakReason::Disproven,
+        WeakReason::Unsupported,
+        WeakReason::Stale,
+    ]
+    .into_iter()
+    .find(|reason| weak.contains(reason))
+}
+
+/// Each unit's citations, in unit order.
+async fn unit_citations(
+    db: &MemoryDB,
+    page: &Page,
+    units: &[SentenceUnit],
+) -> Result<Vec<Vec<SentenceCitation>>, WenlanError> {
+    let states = source_states(db, &page.citations).await?;
+    let by_occurrence: HashMap<u32, &PageCitation> =
+        page.citations.iter().map(|c| (c.occurrence, c)).collect();
+    let markers = occurrence_units(&page.content, units);
+    Ok((0..units.len())
+        .map(|idx| {
+            markers
+                .iter()
+                .enumerate()
+                .filter(|(_, at)| **at == Some(idx))
+                .map(|(k, _)| {
+                    let occurrence = u32::try_from(k + 1).unwrap_or(u32::MAX);
+                    sentence_citation(
+                        occurrence,
+                        &page.content,
+                        by_occurrence.get(&occurrence).copied(),
+                        &states,
+                    )
+                })
+                .collect()
+        })
+        .collect())
+}
+
+/// Each unit's facts-changed reason, in unit order.
+async fn unit_reasons(
+    db: &MemoryDB,
+    page: &Page,
+    units: &[SentenceUnit],
+) -> Result<Vec<Option<WeakReason>>, WenlanError> {
+    Ok(unit_citations(db, page, units)
+        .await?
+        .iter()
+        .map(|citations| facts_changed(&weak_reasons(citations, false)))
+        .collect())
 }
 
 /// The proposals of a page, oldest first, with their state.
@@ -191,6 +289,10 @@ fn proposals_from(entries: &[HistoryEntry], page_id: &str) -> Vec<SentencePropos
                 before: str_field(entry, "before").unwrap_or_default().to_string(),
                 after: entry.text.clone().unwrap_or_default(),
                 why: entry.why.clone(),
+                reason: entry
+                    .data
+                    .get("reason")
+                    .and_then(|value| serde_json::from_value(value.clone()).ok()),
                 actor: entry.actor.clone(),
                 ts: entry.ts,
                 status: decided
@@ -242,7 +344,8 @@ pub(crate) async fn stage_gate_proposals(
             &proposal.sentence_hash,
             &proposal.before,
             &proposal.after,
-            Some("the AI changed a sentence that is yours, so it is a proposal"),
+            Some("the facts behind a sentence that is yours changed, so it is a proposal"),
+            proposal.reason,
         )
         .await?;
         ids.push(id);
@@ -262,12 +365,16 @@ async fn append_proposal(
     before: &str,
     after: &str,
     why: Option<&str>,
+    reason: Option<WeakReason>,
 ) -> Result<i64, WenlanError> {
-    let data = serde_json::json!({
+    let mut data = serde_json::json!({
         "proposal_id": id,
         "sentence_hash": sentence_hash,
         "before": before,
     });
+    if let Some(reason) = reason {
+        data["reason"] = serde_json::to_value(reason)?;
+    }
     let after_hash = (!after.is_empty())
         .then(|| authorship::sentence_hash(&authorship::normalize_sentence(after)));
     db.append_sentence_history(NewHistoryEntry {
@@ -328,6 +435,36 @@ pub async fn propose_sentence(
             "the proposed text is the sentence as it already reads".into(),
         ));
     }
+    // A protected sentence (the person's, imported, or any on a locked page)
+    // gets a proposal only when its facts changed, and the reason must be
+    // one it has now.
+    let idx = units
+        .iter()
+        .position(|u| u.hash == unit.hash)
+        .expect("unit came from units");
+    let rows = page_authorship(db, &page).await?;
+    let protected = page.review_required
+        || rows
+            .get(idx)
+            .is_some_and(|row| authorship::is_protected(row.author, guarded(&page)));
+    if protected {
+        let citations = unit_citations(db, &page, &units).await?;
+        let weak = weak_reasons(&citations[idx], false);
+        let Some(given) = req.reason else {
+            return Err(WenlanError::Validation(
+                "reason_required: this sentence is protected; propose a change only when \
+                 its facts changed (reason unsupported, stale or disproven)"
+                    .into(),
+            ));
+        };
+        if facts_changed(&[given]).is_none() || !weak.contains(&given) {
+            return Err(WenlanError::Validation(format!(
+                "reason_not_current: {} is not a facts-changed reason this sentence has now \
+                 (it has {weak:?})",
+                serde_json::to_string(&given)?
+            )));
+        }
+    }
     let actor = HistoryActor {
         kind: ActorKind::Ai,
         name: agent.to_string(),
@@ -347,6 +484,7 @@ pub async fn propose_sentence(
         &unit.text,
         after,
         req.why.as_deref(),
+        req.reason,
     )
     .await?;
     find_proposal(db, page_id, &id).await
