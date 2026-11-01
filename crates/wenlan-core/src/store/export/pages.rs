@@ -33,6 +33,8 @@ pub struct PagesExported {
     pub topics: usize,
     pub archived: usize,
     pub entities: usize,
+    /// Each entity id's file stem, for `[[stem]]` links to it.
+    pub entity_stems: HashMap<String, String>,
 }
 
 /// Writes every page row. `placement` maps a page id to its file's path
@@ -147,6 +149,7 @@ pub async fn export_pages(
         file.description = row.content.clone();
         let stem = format!("{}-{}", file_stem(&row.title), id_tail(&entity_id));
         let path = entity_paths.claim("", &stem, &entity_id);
+        done.entity_stems.insert(entity_id.clone(), stem_of(&path));
         manifest.files.push(dirs.write(
             &format!("backstage/entities/{path}"),
             &entity_id,
@@ -190,13 +193,13 @@ fn placement_of(placement: &HashMap<String, String>, id: &str) -> Option<(String
 /// Paths given out so far, so no two files share a name the way a
 /// case-insensitive file system compares them.
 #[derive(Default)]
-struct Paths {
+pub(super) struct Paths {
     taken: HashMap<String, Vec<String>>,
 }
 
 impl Paths {
     /// `folder/stem.md`, or `folder/stem-<id6>.md` when that name is taken.
-    fn claim(&mut self, folder: &str, stem: &str, id: &str) -> String {
+    pub(super) fn claim(&mut self, folder: &str, stem: &str, id: &str) -> String {
         let key = folder.to_lowercase();
         let names = self.taken.entry(key).or_default();
         let clash = |stem: &str| names.iter().any(|name| same_file_name(name, stem));

@@ -150,6 +150,11 @@ impl Fields {
         self.take(key, serde_yaml::Value::as_i64)
     }
 
+    /// Any value, as written.
+    pub(crate) fn value(&mut self, key: &str) -> Option<serde_yaml::Value> {
+        self.map.shift_remove(key)
+    }
+
     /// Errors when `type` names a different kind of file.
     pub(crate) fn expect_type(&mut self, kind: &str) -> Result<(), WenlanError> {
         match self.map.shift_remove("type") {
@@ -205,6 +210,13 @@ impl Keys {
     pub(crate) fn int(&mut self, key: &str, value: Option<i64>) -> &mut Self {
         if let Some(value) = value {
             self.0.insert(key.into(), value.into());
+        }
+        self
+    }
+
+    pub(crate) fn value(&mut self, key: &str, value: Option<&serde_yaml::Value>) -> &mut Self {
+        if let Some(value) = value {
+            self.0.insert(key.into(), value.clone());
         }
         self
     }

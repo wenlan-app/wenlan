@@ -8,13 +8,16 @@
 //! <out>/visible/…            pages and topics, in the folders they are in today
 //! <out>/backstage/entities/  entity files
 //! <out>/backstage/archive/   archived pages
+//! <out>/backstage/memories/  memory files, by month
 //! <out>/export-manifest.json every file written, and every value left out
 //! ```
 //!
-//! This part writes pages, topics, entities and archived pages
-//! ([`pages::export_pages`]). Memories, Briefs, originals, canvases, settings
-//! and history follow in their own parts and add to the same manifest.
+//! So far: pages, topics, entities and archived pages
+//! ([`pages::export_pages`]) and memories ([`memories::export_memories`]).
+//! Briefs, originals, canvases, settings and history follow in their own
+//! parts and add to the same manifest.
 
+pub mod memories;
 pub mod pages;
 
 use std::path::{Component, Path, PathBuf};
@@ -153,11 +156,20 @@ pub struct LeftOut {
     pub why: String,
 }
 
+/// Rows that are deliberately not files, counted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotFiles {
+    pub what: String,
+    pub count: usize,
+    pub why: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     pub format: u32,
     pub files: Vec<ExportedFile>,
     pub left_out: Vec<LeftOut>,
+    pub not_files: Vec<NotFiles>,
 }
 
 impl Manifest {
