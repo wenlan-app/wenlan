@@ -51,7 +51,8 @@ test("page title directly opens the existing guarded rename form", async ({ page
   await editor.press("ControlOrMeta+End");
   await page.keyboard.insertText("\nBody survives direct title rename.");
 
-  await page.getByRole("button", { name: "Rename page", exact: true }).click();
+  await page.getByRole("button", { name: "Page actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Rename page", exact: true }).click();
   const title = page.getByRole("textbox", { name: "Page title", exact: true });
   await expect(title).toBeFocused();
   await title.fill("Directly renamed fixture");
