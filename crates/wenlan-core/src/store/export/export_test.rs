@@ -1028,3 +1028,38 @@ async fn replaying_the_history_log_gives_back_every_row() {
         assert_eq!(got, want, "{} does not replay to its rows", spec.table);
     }
 }
+
+#[tokio::test]
+async fn one_call_exports_everything_and_writes_the_manifest_last() {
+    use super::run::export_lossless;
+    use super::MANIFEST_FILE;
+
+    let (db, _db_dir) = fixture().await;
+    let data_root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(data_root.path().join("layout/versions")).unwrap();
+    std::fs::write(data_root.path().join("layout/palace.json"), "{}\n").unwrap();
+    std::fs::write(data_root.path().join("layout/versions/1.json"), "{}\n").unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    let placement = HashMap::from([("a".to_string(), "Plans/a.md".to_string())]);
+    let summary = export_lossless(&db, &placement, data_root.path(), &target)
+        .await
+        .unwrap();
+    assert_eq!((summary.pages, summary.archived), (4, 1));
+    assert_eq!(summary.layout_files, 2);
+    assert!(target.join("visible/Plans/a.md").is_file());
+    assert!(target.join("backstage/layout/versions/1.json").is_file());
+    let manifest: Manifest =
+        serde_json::from_str(&std::fs::read_to_string(target.join(MANIFEST_FILE)).unwrap())
+            .unwrap();
+    assert_eq!(manifest.files.len(), summary.files);
+    assert!(!manifest.deferred.is_empty());
+    for file in &manifest.files {
+        let bytes = std::fs::read(target.join(&file.path)).unwrap();
+        assert_eq!(sha256(&bytes), file.sha256, "{}", file.path);
+    }
+    // A second run into the same folder is refused.
+    assert!(export_lossless(&db, &placement, data_root.path(), &target)
+        .await
+        .is_err());
+}

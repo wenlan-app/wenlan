@@ -16,6 +16,7 @@
 //! <out>/backstage/settings/  spaces, things, AI tools, profile, onboarding
 //! <out>/backstage/records/   records with no file shape of their own yet
 //! <out>/backstage/history/   the append-only log; reads under reads/
+//! <out>/backstage/layout/    the palace layout, copied as it is
 //! <out>/export-manifest.json every file written, and every value left out
 //! ```
 //!
@@ -27,8 +28,9 @@
 //! ([`settings::export_settings`]) and the remaining records
 //! ([`records::export_records`]). [`FILE_TABLE_HOMES`] names where every
 //! file-class table goes, and a test keeps it equal to the table classes.
-//! History ([`history::export_history`]) is the append-only log. Proposals
-//! follow in their own part and add to the same manifest. Every file is
+//! History ([`history::export_history`]) is the append-only log.
+//! [`run::export_lossless`] runs every part in order and writes the
+//! manifest. Proposals follow in their own part. Every file is
 //! read back after it is rendered; one that does not read back as written
 //! is listed.
 
@@ -39,6 +41,7 @@ pub mod history;
 pub mod memories;
 pub mod pages;
 pub mod records;
+pub mod run;
 pub mod settings;
 
 use std::path::{Component, Path, PathBuf};
