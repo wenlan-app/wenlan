@@ -37,6 +37,7 @@ mod source_paths;
 // outside tests. See the module doc comment.
 #[allow(dead_code)]
 mod presence;
+mod problem_report;
 mod quick_capture;
 pub mod remote_access;
 mod remote_access_platform;
@@ -1635,6 +1636,7 @@ pub fn run() {
             search::sync_registered_source,
             search::set_source_follow_changes,
             search::daemon_version,
+            problem_report::problem_report,
             search::upload_source_file,
             search::list_watch_paths,
             search::list_indexed_files,

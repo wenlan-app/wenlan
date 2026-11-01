@@ -122,6 +122,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "open_tool_with_prompt",
   "open_quick_capture",
   "position_quick_capture",
+  "problem_report",
   // Binding a Space to a git repository, and pushing to it, need a real
   // daemon with git and gh; the fixture answers only that none is bound.
   "publish_repo_wiki",

@@ -678,7 +678,7 @@ async fn migration_134_public_133_backfills_only_exact_snapshot_and_reopens_idem
     db.migrate_134_page_map_ideas().await.unwrap();
     assert_eq!(db_user_version(&db).await, 134);
 
-    let embedder = db.embedder.clone().expect("test database embedder");
+    let embedder = db.embedder.get().cloned().expect("test database embedder");
     drop(db);
     let reopened = MemoryDB::new_with_shared_embedder(
         dir.path(),
