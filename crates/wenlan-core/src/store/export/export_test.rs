@@ -816,6 +816,13 @@ async fn names_never_clash_and_page_and_entity_state_is_kept() {
         "p1",
     )
     .await;
+    // An entity column on an ordinary page has no place in its file.
+    sql(
+        &db,
+        "UPDATE pages SET entity_type = 'person' WHERE id = ?1",
+        "p2",
+    )
+    .await;
     page(&db, "shadow", "Bob", "Bob ran it.", "sp").await;
     sql(
         &db,
@@ -841,7 +848,12 @@ async fn names_never_clash_and_page_and_entity_state_is_kept() {
     assert_eq!(bob.other["status"], "archived");
     assert_eq!(bob.other["first_seen"], "2026-10-31T00:00:00Z");
     assert!(bob.other.contains_key("created"));
-    assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
+    let left: Vec<_> = manifest
+        .left_out
+        .iter()
+        .map(|l| (l.id.as_str(), l.field.as_str()))
+        .collect();
+    assert_eq!(left, [("p2", "entity_type")]);
 }
 
 #[tokio::test]
@@ -880,4 +892,139 @@ async fn every_column_of_a_field_by_field_table_is_written_or_deferred() {
         }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn every_history_class_table_has_a_place() {
+    use super::history::{HISTORY_ELSEWHERE, HISTORY_TABLES};
+    use crate::db::table_classes::{TableClass, TABLE_CLASSES};
+    use std::collections::BTreeSet;
+
+    let history: BTreeSet<&str> = TABLE_CLASSES
+        .iter()
+        .filter(|(_, class)| *class == TableClass::History)
+        .map(|(table, _)| *table)
+        .collect();
+    let placed: BTreeSet<&str> = HISTORY_TABLES
+        .iter()
+        .map(|spec| spec.table)
+        .chain(HISTORY_ELSEWHERE.iter().map(|(table, _)| *table))
+        .collect();
+    assert_eq!(
+        placed, history,
+        "a history-class table has no place in the export"
+    );
+}
+
+#[tokio::test]
+async fn replaying_the_history_log_gives_back_every_row() {
+    use super::history::{export_history, Log, HISTORY_TABLES};
+    use super::settings::cell;
+    use crate::store::history::{self, ActorKind};
+
+    let (db, _db_dir) = test_db().await;
+    page(&db, "p1", "Alpha", "Version one.", "sp").await;
+    let long = "x".repeat(40 * 1024);
+    for (version, content, edited_by) in [
+        (2, "Version two.", "manual_edit"),
+        (3, long.as_str(), "distill"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO page_history (page_id, version, content, edited_by, created_at, \
+                 title, minor) VALUES (?1, {version}, '{content}', '{edited_by}', \
+                 '2026-03-0{version}T00:00:00Z', 'Alpha', 0)"
+            ),
+            "p1",
+        )
+        .await;
+    }
+    sql(
+        &db,
+        "INSERT INTO thing_history (ts, actor, op, thing_id, session_id, data) \
+         VALUES (1793404800, 'person', 'thing.rename', ?1, NULL, '{\"title\":\"Trip\"}')",
+        "thing_1",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO access_log (source_id, accessed_at) VALUES (?1, 1793404801)",
+        "mem_1",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    let done = export_history(&db, &dirs, &mut manifest).await.unwrap();
+    assert!(done.entries >= 4 && done.reads >= 1, "{done:?}");
+    assert!(manifest
+        .files
+        .iter()
+        .any(|file| file.path.starts_with("backstage/history/blobs/")));
+    assert!(!manifest
+        .files
+        .iter()
+        .any(|file| file.path.ends_with(".lock")));
+
+    let root = dirs.backstage().join("history");
+    let mut rebuilt: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+    for (log_root, log) in [(root.clone(), Log::Main), (root.join("reads"), Log::Reads)] {
+        let replay = history::replay(&log_root).unwrap();
+        assert!(replay.report.is_clean(), "{:?}", replay.report);
+        for entry in &replay.entries {
+            let data = entry.data.as_ref().unwrap();
+            let table = data["table"].as_str().unwrap().to_string();
+            let spec = HISTORY_TABLES.iter().find(|s| s.table == table).unwrap();
+            assert_eq!(spec.log, log, "{table} is in the wrong log");
+            let mut row = data["row"].as_object().unwrap().clone();
+            if let Some(text) = history::read_text(&log_root, entry).unwrap() {
+                let column = if table == "page_history" {
+                    "content"
+                } else {
+                    "text"
+                };
+                row.insert(column.to_string(), serde_json::json!(text));
+            }
+            if table == "page_history" && row["edited_by"] == "manual_edit" {
+                assert_eq!(entry.actor.kind, ActorKind::Person);
+                assert_eq!(entry.op, "page.write");
+                assert_eq!(entry.version, Some(2));
+            }
+            if table == "page_history" && row["edited_by"] == "distill" {
+                assert_eq!(entry.actor.kind, ActorKind::Ai);
+                assert_eq!(data["text_column"], "content");
+            }
+            rebuilt
+                .entry(table)
+                .or_default()
+                .push(serde_json::Value::Object(row));
+        }
+    }
+    for spec in HISTORY_TABLES {
+        let Some(stored) = db.export_table(spec.table).await.unwrap() else {
+            continue;
+        };
+        let stored: Vec<serde_json::Value> = stored
+            .rows
+            .iter()
+            .map(|values| {
+                serde_json::Value::Object(
+                    stored
+                        .columns
+                        .iter()
+                        .cloned()
+                        .zip(values.iter().map(cell))
+                        .collect(),
+                )
+            })
+            .collect();
+        let mut got = rebuilt.remove(spec.table).unwrap_or_default();
+        let key = |row: &serde_json::Value| row.to_string();
+        let mut want = stored;
+        got.sort_by_key(key);
+        want.sort_by_key(key);
+        assert_eq!(got, want, "{} does not replay to its rows", spec.table);
+    }
 }

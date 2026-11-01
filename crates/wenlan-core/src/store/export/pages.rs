@@ -94,6 +94,24 @@ pub async fn export_pages(
     let memory_texts = db.export_memory_texts(&memory_ids).await?;
 
     for row in &pages {
+        unwritten(
+            manifest,
+            &row.id,
+            &[
+                ("entity_id", row.entity_id.is_some()),
+                ("entity_type", row.entity_type.is_some()),
+                ("entity_confirmed", row.entity_confirmed),
+                (
+                    "aliases",
+                    row.aliases
+                        .as_deref()
+                        .is_some_and(|a| !matches!(a.trim(), "" | "[]")),
+                ),
+                ("established_by", row.established_by.is_some()),
+                ("entity_created_at", row.entity_created_at.is_some()),
+                ("entity_updated_at", row.entity_updated_at.is_some()),
+            ],
+        );
         let (archived, path) = &paths[row.id.as_str()];
         let mut file = PageFile::new(&row.title, &row.content);
         file.id = Some(row.id.clone());
@@ -142,6 +160,14 @@ pub async fn export_pages(
 
     let mut entity_paths = Paths::default();
     for row in entities {
+        unwritten(
+            manifest,
+            &row.id,
+            &[
+                ("summary", row.summary.is_some()),
+                ("citations", citations_of(row).is_none_or(|c| !c.is_empty())),
+            ],
+        );
         let entity_id = match &row.entity_id {
             Some(id) => id.clone(),
             None => {
@@ -194,6 +220,20 @@ pub async fn export_pages(
         done.entities += 1;
     }
     Ok(done)
+}
+
+/// Lists each column that holds a value the file for this kind of row has
+/// no place for: entity columns on a page, page columns on an entity.
+fn unwritten(manifest: &mut Manifest, id: &str, columns: &[(&str, bool)]) {
+    for (column, set) in columns {
+        if *set {
+            manifest.left_out.push(LeftOut {
+                id: id.to_string(),
+                field: column.to_string(),
+                why: "a value this kind of file has no place for".to_string(),
+            });
+        }
+    }
 }
 
 /// A shadow page behind an entity.

@@ -55,6 +55,10 @@ const CRC_SUFFIX_LEN: usize = 8 + CRC_LEN + 2;
 pub struct HistoryConfig {
     pub rotate_bytes: u64,
     pub blob_threshold: usize,
+    /// Sync each entry to disk as it is written (the default). A bulk
+    /// writer that can start over, such as the lossless export into a new
+    /// folder, turns it off and calls [`HistoryLog::sync`] once at the end.
+    pub sync_each_entry: bool,
 }
 
 impl Default for HistoryConfig {
@@ -62,6 +66,7 @@ impl Default for HistoryConfig {
         Self {
             rotate_bytes: ROTATE_BYTES,
             blob_threshold: BLOB_THRESHOLD,
+            sync_each_entry: true,
         }
     }
 }
@@ -351,6 +356,15 @@ impl HistoryLog {
         replay(&self.root)
     }
 
+    /// Syncs the file being written. Needed only when
+    /// [`HistoryConfig::sync_each_entry`] is off.
+    pub fn sync(&mut self) -> Result<(), WenlanError> {
+        if let Some(open) = &self.current {
+            open.file.sync_data()?;
+        }
+        Ok(())
+    }
+
     pub fn read_text(&self, entry: &HistoryEntry) -> Result<Option<String>, WenlanError> {
         read_text(&self.root, entry)
     }
@@ -387,11 +401,15 @@ impl HistoryLog {
         };
         let line = encode_line(&entry)?;
         let month = month_of(ts);
+        let sync = self.config.sync_each_entry;
         let current = self.file_for(seq, &month)?;
-        let written = current
-            .file
-            .write_all(&line)
-            .and_then(|()| current.file.sync_data());
+        let written = current.file.write_all(&line).and_then(|()| {
+            if sync {
+                current.file.sync_data()
+            } else {
+                Ok(())
+            }
+        });
         if let Err(error) = written {
             // Never leave half a line for the next entry to follow.
             let _ = current.file.set_len(current.len);
@@ -409,6 +427,9 @@ impl HistoryLog {
         let fits = |m: &str, len: u64| m == month && len < rotate_bytes;
         if let Some(open) = &self.current {
             if !fits(&open.month, open.len) {
+                if !self.config.sync_each_entry {
+                    open.file.sync_data()?;
+                }
                 self.current = None;
             }
         }
