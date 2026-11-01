@@ -69,6 +69,21 @@ async fn fixture() -> (MemoryDB, tempfile::TempDir) {
     db.set_page_citations_for_test("b", &citations)
         .await
         .unwrap();
+    for (chunk, text) in [
+        (1, "second chunk"),
+        (0, "Prefers window seats · on long flights"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, \
+                 last_modified, chunk_type) VALUES ('c{chunk}', '{text}', 'memory', ?1, '', \
+                 {chunk}, 0, 'text')"
+            ),
+            "mem_one",
+        )
+        .await;
+    }
     page(&db, "c", "Rust", "A topic.", "sp").await;
     sql(&db, "UPDATE pages SET kind = 'concept' WHERE id = ?1", "c").await;
     page(&db, "x", "beta", "Same name as Beta, other case.", "sp").await;
@@ -150,6 +165,12 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
             ),
             (2, Locator::Other("wenlan:mem_two".into())),
         ]
+    );
+    let labels: Vec<_> = beta.citations.iter().map(|c| c.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["Prefers window seats · on long flights", "mem_two"],
+        "a memory's label is the start of its first chunk"
     );
     assert_eq!(beta.basis.len(), 1);
     assert_eq!(beta.basis[0].label, "[[Alpha]]");

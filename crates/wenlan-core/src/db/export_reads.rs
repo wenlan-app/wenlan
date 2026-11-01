@@ -72,7 +72,7 @@ impl MemoryDB {
         Ok(out)
     }
 
-    /// The text of each memory in `ids` that exists, for citation labels.
+    /// The start of each memory in `ids` that exists, for citation labels.
     pub(crate) async fn export_memory_texts(
         &self,
         ids: &[String],
@@ -81,7 +81,11 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         for chunk in ids.chunks(200) {
             let marks = vec!["?"; chunk.len()].join(", ");
-            let sql = format!("SELECT id, content FROM memories WHERE id IN ({marks})");
+            // A memory's id is its `source_id`; its first chunk starts its text.
+            let sql = format!(
+                "SELECT source_id, content FROM memories WHERE source_id IN ({marks}) \
+                 ORDER BY source_id, chunk_index DESC"
+            );
             let params: Vec<libsql::Value> = chunk
                 .iter()
                 .map(|id| libsql::Value::Text(id.clone()))
