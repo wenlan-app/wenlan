@@ -186,3 +186,22 @@ export function PagesOverview({
     </section>
   );
 }
+
+/**
+ * The Wiki beside its directory. Every page is in the directory, by folder;
+ * what is in motion lives on Home, so this side only invites opening a page.
+ */
+export function WikiStart() {
+  const { t } = useTranslation();
+  const daemonPhase = useDaemonStartupPhase();
+  const unavailable = daemonPhase === "failed";
+  return (
+    <section className="wiki-overview wiki-reading-start mx-auto w-full max-w-[1130px] pb-16" data-testid="wiki-start">
+      <div className={`wiki-reading-start-panel${unavailable ? " wiki-reading-start-panel--unavailable" : ""}`}>
+        <PageIcon className="wiki-reading-start-icon" size={32} />
+        <h1>{t(unavailable ? "pages.overview.unavailableTitle" : "pages.overview.readingStartTitle")}</h1>
+        <p>{t(unavailable ? "pages.overview.unavailableDescription" : "pages.overview.readingStartDescription")}</p>
+      </div>
+    </section>
+  );
+}

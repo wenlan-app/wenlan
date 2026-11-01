@@ -71,14 +71,13 @@ test.describe("Chinese interface localization", () => {
 
       const header = page.getByRole("banner");
       const primaryNavigation = page.getByRole("navigation", { name: labels.navigation });
-      await expect(primaryNavigation.getByRole("button", { name: labels.home, exact: true })).toHaveCount(0);
+      await expect(primaryNavigation.getByRole("button", { name: labels.home, exact: true })).toBeVisible();
       const moreButton = primaryNavigation.getByRole("button", { name: labels.more, exact: true });
       await expect(moreButton).toBeVisible();
       await moreButton.click();
       await expect(primaryNavigation.getByRole("button", { name: labels.sources, exact: true })).toBeVisible();
       await moreButton.click();
       await expect(primaryNavigation.getByRole("button", { name: labels.wiki, exact: true })).toBeVisible();
-      await expect(header.getByRole("button", { name: labels.home })).toHaveCount(0);
       await expect(header.getByRole("button", { name: labels.activity })).toHaveCount(0);
       await expect(page.getByRole("complementary", { name: labels.navigation }).getByRole("button", { name: labels.activity, exact: true })).toBeVisible();
       await expect(primaryNavigation.getByRole("button", { name: labels.spaces, exact: true })).toBeVisible();
