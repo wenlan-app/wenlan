@@ -83,8 +83,9 @@ pub(crate) fn page_embedding_text(title: &str, summary: Option<&str>, content: &
 /// skips any page the ledger already ruled on, leaves those rows where 89 put
 /// them. A page imported before 89 therefore still stores 'concept' while this
 /// rule says 'source'. Size the gap on a real vault with `SELECT COUNT(*) FROM
-/// pages p JOIN page_kind_fold_ledger l ON l.page_id = p.id WHERE
-/// p.creation_kind = 'source' AND p.kind = 'concept'`; closing it belongs with
+/// pages WHERE creation_kind = 'source' AND kind = 'concept'` (migration 107
+/// moved every later page off that pair, and migration 150 dropped the
+/// ledger itself); closing it belongs with
 /// M6's re-derivation of `kind` on the rename, archive, and replace paths,
 /// which have the same staleness for the same reason.
 ///
