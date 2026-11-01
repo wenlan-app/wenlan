@@ -875,6 +875,7 @@ const en = {
     notKept: "The text of this version wasn’t kept.",
     noEarlier: "No earlier version is kept, so this is the whole text as it was.",
     noTextChange: "The text didn’t change.",
+    firstVersion: "The page as it was first written.",
     close: "Close",
   },
   pageInfo: {
@@ -925,6 +926,9 @@ const en = {
       citationBackfill: "Wenlan filled in citations",
       linkRename: "Updated link after rename",
       other: "Updated",
+      personCreate: "You created this page",
+      agentCreate: "Created by an agent",
+      create: "Created",
     },
     summary: {
       chars_one: "{{sign}}{{count}} character",
@@ -4012,6 +4016,7 @@ const zhHans = {
     notKept: "这个版本的文字没有留下。",
     noEarlier: "没有更早的版本可以对照，这是当时的全文。",
     noTextChange: "文字没有变。",
+    firstVersion: "这篇刚写好时的样子。",
     close: "关闭",
   },
   pageInfo: {
@@ -4062,6 +4067,9 @@ const zhHans = {
       citationBackfill: "文澜补上引用",
       linkRename: "改名后更新了链接",
       other: "已更新",
+      personCreate: "你创建了这篇",
+      agentCreate: "Agent 创建",
+      create: "创建",
     },
     summary: {
       chars_one: "{{sign}}{{count}} 字",
@@ -7105,6 +7113,7 @@ const zhHant = {
     notKept: "這個版本的文字沒有留下。",
     noEarlier: "沒有更早的版本可以對照，這是當時的全文。",
     noTextChange: "文字沒有變。",
+    firstVersion: "這篇剛寫好時的樣子。",
     close: "關閉",
   },
   pageInfo: {
@@ -7155,6 +7164,9 @@ const zhHant = {
       citationBackfill: "文瀾補上引用",
       linkRename: "改名後更新了連結",
       other: "已更新",
+      personCreate: "你建立了這篇",
+      agentCreate: "Agent 建立",
+      create: "建立",
     },
     summary: {
       chars_one: "{{sign}}{{count}} 字",
