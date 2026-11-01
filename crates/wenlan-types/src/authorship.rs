@@ -82,11 +82,14 @@ pub struct SentenceAuthorship {
 pub enum AiEditMode {
     /// The default: the AI updates the sentences it wrote that the person
     /// has not touched (recorded, revertible); a change to a sentence the
-    /// person wrote, edited or accepted is staged as a sentence proposal.
+    /// person wrote, edited or accepted is staged as a sentence proposal, and
+    /// only when the facts changed (see [`SentenceProposal::reason`]).
     #[default]
     Propose,
-    /// The page is locked: every AI change waits for the person. Today that
-    /// is the whole-page revision card the lock already stages.
+    /// The page is locked: every sentence, the AI's included, is protected
+    /// like the person's, so an AI change to one is a sentence proposal (on
+    /// the same facts-changed rule). A write that would add new sentences
+    /// still waits as a whole-page revision card.
     Locked,
 }
 
@@ -190,6 +193,13 @@ pub struct SentenceProposal {
     pub after: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+    /// Why the facts behind the sentence changed: `unsupported` (its source
+    /// does not back it), `stale` (its source changed since it was cited) or
+    /// `disproven`. A protected sentence only gets a proposal with one; a
+    /// rewording alone never does. `None` on proposals made before the rule,
+    /// and on a proposal for a sentence that is not protected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<WeakReason>,
     pub actor: HistoryActor,
     pub ts: i64,
     pub status: SentenceProposalStatus,
@@ -216,6 +226,11 @@ pub struct SentenceProposeRequest {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
+    /// Required when the sentence is protected (the person's, imported, or
+    /// any sentence on a locked page): one of the facts-changed reasons the
+    /// sentence has right now (`unsupported`, `stale`, `disproven`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<WeakReason>,
     /// The page version the caller read. Refused when the page moved on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_version: Option<i64>,

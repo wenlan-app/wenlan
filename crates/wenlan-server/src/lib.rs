@@ -33,6 +33,7 @@ pub mod memory_revision_routes;
 pub mod memory_routes;
 pub mod note_routes;
 pub mod onboarding_routes;
+pub mod original_routes;
 pub mod outbox;
 pub mod outbox_routes;
 pub mod page_basis_routes;

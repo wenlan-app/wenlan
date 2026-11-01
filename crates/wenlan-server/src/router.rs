@@ -70,6 +70,7 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
     let router = page_basis_routes::register(router);
     let router = crate::sentence_routes::register(router);
     let router = code_basis_routes::register(router);
+    let router = crate::original_routes::register(router);
     let router = repo_wiki_routes::register(router);
     let router = steep_routes::register(router);
     let router = steep_new_routes::register(router);
