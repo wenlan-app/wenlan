@@ -55237,6 +55237,13 @@ impl MemoryDB {
 
     /// Archive a page (set status to 'archived').
     pub async fn archive_page(&self, id: &str) -> Result<(), WenlanError> {
+        self.archive_page_versioned(id).await.map(|_| ())
+    }
+
+    /// [`Self::archive_page`], returning the version the archive produced, or
+    /// `None` when the page was not active and nothing changed. The projection
+    /// uses it to tell the archived file from one a later restore wrote.
+    pub async fn archive_page_versioned(&self, id: &str) -> Result<Option<i64>, WenlanError> {
         let now = chrono::Utc::now();
         let now_rfc3339 = now.to_rfc3339();
         let now_ts = now.timestamp();
@@ -55252,12 +55259,27 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("archive_page: {e}")))?;
-        if affected == 1 {
-            Self::append_page_history(&conn, id, "archive", now_ts)
-                .await
-                .map_err(|e| WenlanError::VectorDb(format!("archive_page history: {e}")))?;
+        if affected != 1 {
+            return Ok(None);
         }
-        Ok(())
+        Self::append_page_history(&conn, id, "archive", now_ts)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page history: {e}")))?;
+        // Same connection guard as the update, so no other write lands between.
+        let mut rows = conn
+            .query(
+                "SELECT version FROM pages WHERE id = ?1",
+                libsql::params![id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page version: {e}")))?;
+        let row = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page version row: {e}")))?;
+        row.map(|row| row.get::<i64>(0))
+            .transpose()
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page version value: {e}")))
     }
 
     pub async fn accept_page_merge(

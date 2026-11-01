@@ -461,21 +461,62 @@ pub async fn handle_set_page_review_required(
     }))
 }
 
+/// Serializes page archive and restore. Each holds it from its database
+/// transition through its projection, so neither moves or writes a file
+/// against a state the other has already changed. Both are rare, deliberate
+/// actions, so one lock for all pages costs nothing.
+static PAGE_LIFECYCLE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// POST /api/pages/{id}/archive
+///
+/// Archives the database row, then moves the page's projected Markdown file
+/// out of the pages folder into `archive/`, bytes untouched, so no file there
+/// keeps posing as an active page. A failed move does not undo the archive:
+/// the response reports `projection_status: pending` and the next daemon start
+/// retries the move.
 pub async fn handle_archive_page(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ServerError> {
-    let db = {
+    let (db, page_root) = {
         let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.lint_config.page_root().map(std::path::Path::to_path_buf),
+        )
     };
     // Checked here, not left to the core fence, so the refusal can carry the
     // entity id as a field. The core fence still stands behind it for every
     // caller that does not come through this route.
     reject_entity_page_mutation(&db, &id).await?;
-    db.archive_page(&id).await.map_err(ServerError::from)?;
-    Ok(Json(serde_json::json!({"status": "archived"})))
+    let _lifecycle = PAGE_LIFECYCLE.lock().await;
+    let archived_version = db
+        .archive_page_versioned(&id)
+        .await
+        .map_err(ServerError::from)?;
+    let mut body = serde_json::json!({"status": "archived"});
+    // Only the call that archived the page moves its file, only while the
+    // page is still archived at the version this archive produced, and only
+    // files no newer than it. The lifecycle lock keeps a restore out until
+    // the move is done. A page that was already archived keeps whatever the
+    // startup sweep does.
+    if let Some((root, version)) = page_root.zip(archived_version) {
+        let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
+        match projection
+            .archive_page_if_still_archived(&db, &id, version)
+            .await
+        {
+            Ok(_) => body["projection_status"] = serde_json::json!(PageProjectionStatus::Synced),
+            Err(error) => {
+                tracing::warn!(
+                    "[page] archived {id} but its file stays in the pages folder: {error}"
+                );
+                body["projection_status"] = serde_json::json!(PageProjectionStatus::Pending);
+                body["projection_error"] = serde_json::json!(error.to_string());
+            }
+        }
+    }
+    Ok(Json(body))
 }
 
 /// POST /api/pages/{id}/restore
@@ -503,6 +544,8 @@ pub async fn handle_restore_page(
                 .map(std::path::Path::to_path_buf),
         )
     };
+    // Held through the projection below; see `PAGE_LIFECYCLE`.
+    let _lifecycle = PAGE_LIFECYCLE.lock().await;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Restore names one page, so it passes the same named-page truth filter
     // as `GET /api/pages/{id}`: a page this caller may not see is not there.
