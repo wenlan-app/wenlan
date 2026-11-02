@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use wenlan_types::pages::PageCitation;
 
+use super::memories::check;
 use super::{ExportDirs, LeftOut, Manifest};
 use crate::db::export_reads::ExportPageRow;
 use crate::db::MemoryDB;
@@ -114,9 +115,11 @@ pub async fn export_pages(
             done.pages += 1;
             (format!("visible/{path}"), "page")
         };
+        let text = page::render(&file);
+        check(manifest, &row.id, page::parse(&text, "").ok() == Some(file));
         manifest
             .files
-            .push(dirs.write(&relative, &row.id, file_type, &page::render(&file))?);
+            .push(dirs.write(&relative, &row.id, file_type, &text)?);
     }
 
     let mut entity_paths = Paths::default();
@@ -143,11 +146,17 @@ pub async fn export_pages(
         let stem = format!("{}-{}", file_stem(&row.title), id_tail(&entity_id));
         let path = entity_paths.claim("", &stem, &entity_id);
         done.entity_stems.insert(entity_id.clone(), stem_of(&path));
+        let text = entity::render(&file);
+        check(
+            manifest,
+            &entity_id,
+            entity::parse(&text).ok() == Some(file),
+        );
         manifest.files.push(dirs.write(
             &format!("backstage/entities/{path}"),
             &entity_id,
             "entity",
-            &entity::render(&file),
+            &text,
         )?);
         done.entities += 1;
     }
@@ -215,7 +224,7 @@ fn stem_of(path: &str) -> String {
     name.strip_suffix(".md").unwrap_or(name).to_string()
 }
 
-fn id_tail(id: &str) -> String {
+pub(super) fn id_tail(id: &str) -> String {
     let chars: Vec<char> = id.chars().collect();
     chars[chars.len().saturating_sub(6)..].iter().collect()
 }

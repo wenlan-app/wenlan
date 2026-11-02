@@ -234,4 +234,74 @@ impl MemoryDB {
         }
         Ok(out)
     }
+
+    /// Every Brief with its space's name, and every item, in list order.
+    pub(crate) async fn export_briefs(
+        &self,
+    ) -> Result<(Vec<ExportBriefRow>, Vec<ExportBriefItemRow>), WenlanError> {
+        let conn = self.conn.lock().await;
+        let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export_briefs: {e}"));
+        let mut briefs = Vec::new();
+        let mut rows = conn
+            .query(
+                "SELECT b.space_id, s.name, b.last_session_summary, b.last_handoff_at, \
+                        b.version, b.updated_at \
+                 FROM briefs b LEFT JOIN spaces s ON s.id = b.space_id ORDER BY b.space_id",
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            briefs.push(ExportBriefRow {
+                space_id: row.get(0).map_err(decode)?,
+                space_name: row.get(1).map_err(decode)?,
+                summary: row.get(2).map_err(decode)?,
+                last_handoff_at: row.get(3).map_err(decode)?,
+                version: row.get(4).map_err(decode)?,
+                updated_at: row.get(5).map_err(decode)?,
+            });
+        }
+        let mut items = Vec::new();
+        let mut rows = conn
+            .query(
+                "SELECT id, space_id, text, state, added_at, gate, version \
+                 FROM brief_items ORDER BY space_id, state, added_at, id",
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            items.push(ExportBriefItemRow {
+                id: row.get(0).map_err(decode)?,
+                space_id: row.get(1).map_err(decode)?,
+                text: row.get(2).map_err(decode)?,
+                state: row.get(3).map_err(decode)?,
+                added_at: row.get(4).map_err(decode)?,
+                gate: row.get(5).map_err(decode)?,
+                version: row.get(6).map_err(decode)?,
+            });
+        }
+        Ok((briefs, items))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ExportBriefRow {
+    pub space_id: String,
+    pub space_name: Option<String>,
+    pub summary: String,
+    pub last_handoff_at: Option<i64>,
+    pub version: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ExportBriefItemRow {
+    pub id: String,
+    pub space_id: String,
+    pub text: String,
+    pub state: String,
+    pub added_at: i64,
+    pub gate: Option<String>,
+    pub version: i64,
 }

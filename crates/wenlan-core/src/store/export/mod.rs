@@ -9,14 +9,19 @@
 //! <out>/backstage/entities/  entity files
 //! <out>/backstage/archive/   archived pages
 //! <out>/backstage/memories/  memory files, by month
+//! <out>/backstage/originals/ imported chats, by vendor
+//! <out>/backstage/briefs/    one Brief per space
 //! <out>/export-manifest.json every file written, and every value left out
 //! ```
 //!
 //! So far: pages, entities and archived pages ([`pages::export_pages`])
-//! and memories ([`memories::export_memories`]). Briefs, originals,
-//! canvases, settings and history follow in their own parts and add to the
-//! same manifest.
+//! memories and imported chats ([`memories::export_memories`]) and Briefs
+//! ([`briefs::export_briefs`]). Artifacts, canvases, settings and history
+//! follow in their own parts and add to the same manifest. Every file is
+//! read back after it is rendered; one that does not read back as written
+//! is listed.
 
+pub mod briefs;
 pub mod memories;
 pub mod pages;
 
