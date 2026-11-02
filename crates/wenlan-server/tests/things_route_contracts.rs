@@ -617,4 +617,37 @@ async fn ux_find_1_search_finds_what_was_said_with_the_lines_around_it() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A word inside Chinese text finds the page that contains it, and only
+    // the pages that contain it.
+    for (title, content) in [
+        ("京都住宿", "決定住在祇園附近，晚上散步方便。"),
+        ("Lisbon itinerary", "Five nights in Alfama."),
+    ] {
+        let (status, body) = call(
+            &router,
+            Method::POST,
+            "/api/pages",
+            Some(json!({ "title": title, "content": content, "creation_kind": "authored" })),
+            Caller::Agent("claude-code"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/pages/search",
+        Some(json!({ "query": "祇園", "limit": 5 })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let titles: Vec<&str> = body["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, vec!["京都住宿"]);
 }

@@ -38,6 +38,11 @@ interface SearchResultsProps {
   onOpenEntity: (entityId: string) => void;
 }
 
+/** What a line says, with Markdown links read as their text. */
+export function readable(text: string): string {
+  return text.replace(/\[([^\]]+)\]\([^)\s]+\)/g, "$1");
+}
+
 /** Every whitespace-separated word of `query` is in `text`, ignoring case. */
 export function matchesAllWords(text: string, query: string): boolean {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -131,7 +136,7 @@ export function SearchResults({
             onClick={() => setOpenHit(hit)}
             type="button"
           >
-            <span className="search-result-snippet">“{highlightTerms(hit.line.text, query, "search-result-match")}”</span>
+            <span className="search-result-snippet">{highlightTerms(readable(hit.line.text), query, "search-result-match")}</span>
             <span className="search-result-meta">
               <span>{speakerName(hit.line, hit.tool, t("main.search.you"))}</span>
               {hit.line.speaker === "you" && <span>{agentDisplayName(hit.tool)}</span>}
@@ -200,7 +205,7 @@ function ConversationQuote({ hit, query, onBack, onOpenThing }: {
       ref={focus ? focusRef : undefined}
     >
       <span className="search-quote-speaker">{speakerName(line, hit.tool, t("main.search.you"))}</span>
-      <span className="search-quote-text">{focus ? highlightTerms(line.text, query, "search-result-match") : line.text}</span>
+      <span className="search-quote-text">{focus ? highlightTerms(readable(line.text), query, "search-result-match") : readable(line.text)}</span>
     </p>
   );
   return (

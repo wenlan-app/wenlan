@@ -4,7 +4,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../i18n";
-import { SearchResults, matchingThings } from "./SearchResults";
+import { SearchResults, matchingThings, readable } from "./SearchResults";
 import type { ActivityResponse, ActivityStep, ConversationHit, EntitySearchResult, Page, SearchResult, ThingSummary } from "../../lib/tauri";
 
 const getActivityMock = vi.hoisted(() => vi.fn());
@@ -146,7 +146,7 @@ describe("UX-FIND-1 one search box", () => {
     const headings = (await screen.findAllByRole("region")).map((group) => group.getAttribute("aria-label"));
     expect(headings).toEqual(["Working on", "Pages", "Said in conversations", "Topics"]);
     const said = screen.getByRole("region", { name: "Said in conversations" });
-    expect(within(said).getByRole("button")).toHaveTextContent("“Decided: stay near Gion.”");
+    expect(within(said).getByRole("button")).toHaveTextContent("Decided: stay near Gion.");
     expect(within(said).getByRole("button")).toHaveTextContent("You");
   });
 
@@ -154,6 +154,10 @@ describe("UX-FIND-1 one search box", () => {
     const other = { ...thing, id: "thg_2", title: "Tagline", status_line: null };
     expect(matchingThings([thing, other], "gion ROOM").map((t) => t.id)).toEqual(["thg_1"]);
     expect(matchingThings([thing, other], "   ")).toEqual([]);
+  });
+
+  it("reads Markdown links in a line as their text", () => {
+    expect(readable("Saved in Wenlan: [Gion stay](wenlan://thing/thg_1) · done")).toBe("Saved in Wenlan: Gion stay · done");
   });
 });
 

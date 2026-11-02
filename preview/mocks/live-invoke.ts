@@ -983,7 +983,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   list_entities_cmd: (a) =>
     post("/api/memory/entities/list", { limit: a?.limit ?? 100 }).then((r) => r.entities ?? r),
   search_entities_cmd: (a) =>
-    post("/api/memory/entities/search", { query: a.query }).then((r) => r.entities ?? r),
+    post("/api/memory/entities/search", { query: a.query }).then((r) => r.entities ?? r.results ?? r),
   get_entity_detail_cmd: (a) => get(`/api/memory/entities/${enc(a.entityId)}`),
   change_entity_type_cmd: (a) =>
     put(`/api/memory/entities/${enc(a.entityId)}/type`, {
