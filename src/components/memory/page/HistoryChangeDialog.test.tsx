@@ -4,7 +4,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PageHistoryItem } from "../../../lib/tauri";
-import { historyTexts } from "./HistoryChangeDialog";
+import { HistoryChangeDialog, historyTexts } from "./HistoryChangeDialog";
 import PageInfo from "./PageInfo";
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -89,5 +89,24 @@ describe("page history", () => {
     expect(getPageRevisions).toHaveBeenCalledWith("page-1", true);
     await user.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("UX-HIST-2: the first edit compares with the page as it was created, which is listed as its birth", async () => {
+    const birth: PageHistoryItem = { kind: "person_edit", at: NOW - 60, version: 1, edited_by: "person_create", text: "Tram 28." };
+    const firstEdit: PageHistoryItem = { kind: "ai_edit", at: NOW - 50, version: 2, edited_by: "distill", text: "Tram 28 runs late." };
+    const withBirth = [firstEdit, birth];
+    expect(historyTexts(withBirth, firstEdit)).toEqual({ before: "Tram 28.", after: "Tram 28 runs late." });
+    expect(historyTexts(withBirth, birth)).toEqual({ before: null, after: "Tram 28." });
+
+    getPageRevisions.mockResolvedValueOnce({ page_id: "page-1", current_version: 2, user_edited: true, entries: [], history: withBirth });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <HistoryChangeDialog pageId="page-1" item={birth} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const dialog = await screen.findByRole("dialog", { name: "You created this page" });
+    expect(await within(dialog).findByText("The page as it was first written.")).toBeTruthy();
+    expect(within(dialog).getByTestId("history-change-text").textContent).toBe("Tram 28.");
   });
 });

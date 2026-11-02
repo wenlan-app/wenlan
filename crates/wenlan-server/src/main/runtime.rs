@@ -5,6 +5,60 @@ use super::*;
 /// Re-embed memory rows that have no embedding: once at boot, and again each
 /// time a big import stored rows without a vector
 /// ([`wenlan_server::embedding_backfill::request`]), until shutdown.
+/// First wait before retrying an embedding-model load the open could not do.
+const EMBEDDING_MODEL_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(30);
+/// Longest wait between retries.
+const EMBEDDING_MODEL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Load the embedding model the database open could not (first start offline,
+/// or huggingface.co unreachable), retrying with backoff until it loads. The
+/// daemon serves meanwhile: pages are written without a vector and searches
+/// use their keyword channel. Once loaded, pages get their vectors here and
+/// the memory worker is woken for the rest.
+async fn load_embedding_model_in_background(
+    db: Arc<wenlan_core::db::MemoryDB>,
+    data_dir: std::path::PathBuf,
+    maintenance: wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    tracing::warn!(
+        "[memory_db] serving without the embedding model; search is keyword-only until it loads"
+    );
+    let mut delay = EMBEDDING_MODEL_RETRY_FIRST;
+    loop {
+        if lifecycle::sleep_or_shutdown(&mut shutdown, delay).await {
+            return;
+        }
+        let loaded = tokio::select! {
+            biased;
+            _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
+            loaded = db.load_embedder(&data_dir) => loaded,
+        };
+        match loaded {
+            Ok(_) => break,
+            Err(error) => {
+                delay = (delay * 2).min(EMBEDDING_MODEL_RETRY_MAX);
+                tracing::warn!(
+                    "[memory_db] embedding model still unavailable, retrying in {}s: {error}",
+                    delay.as_secs()
+                );
+            }
+        }
+    }
+    tracing::info!("[memory_db] embedding model loaded; embedding rows written without it");
+    let guard = tokio::select! {
+        biased;
+        _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
+        guard = maintenance.begin_background() => guard,
+    };
+    match db.backfill_page_embeddings().await {
+        Ok(count) => tracing::info!("[memory_db] embedded {count} pages written without the model"),
+        Err(error) => tracing::warn!("[memory_db] page embedding backfill failed: {error}"),
+    }
+    drop(guard);
+    wenlan_server::embedding_backfill::request();
+}
+
 async fn recover_null_memory_embeddings_in_background(
     db: Arc<wenlan_core::db::MemoryDB>,
     maintenance: wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
@@ -40,6 +94,11 @@ async fn recover_null_memory_embeddings_run(
     maintenance: &wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
     shutdown: &tokio::sync::watch::Receiver<bool>,
 ) -> bool {
+    // No model yet: nothing can be embedded. The model loader requests a run
+    // once it loads.
+    if !db.embedder_ready() {
+        return true;
+    }
     // The run's one full count: Activity's live counters start from it, so
     // the route never counts rows without a vector itself.
     let mut pending = match db.count_null_memory_embeddings().await {
@@ -123,6 +182,7 @@ pub(super) async fn register_optional_runtime_workers(
     reranker_cache_dir: Option<std::path::PathBuf>,
     config: wenlan_core::config::Config,
     db_arc: Arc<wenlan_core::db::MemoryDB>,
+    data_dir: std::path::PathBuf,
 ) {
     if optional_runtime_workers_allowed(repair_recovery_pending) {
         let shared_for_outbox = shared.clone();
@@ -343,8 +403,15 @@ pub(super) async fn register_optional_runtime_workers(
             maintenance_for_ready.clone(),
             shutdown_for_reconcile.subscribe(),
         ));
+        if !db_arc.embedder_ready() {
+            tokio::spawn(load_embedding_model_in_background(
+                db_arc.clone(),
+                data_dir,
+                maintenance_for_ready.clone(),
+                shutdown_for_reconcile.subscribe(),
+            ));
+        }
         let maintenance_for_reconcile = maintenance_for_ready.clone();
-        let maintenance_for_genesis = maintenance_for_ready.clone();
         let emitter_for_ready: Arc<dyn wenlan_core::events::EventEmitter> =
             Arc::new(wenlan_core::events::NoopEmitter);
         let handle = tokio::runtime::Handle::current();
@@ -497,135 +564,6 @@ pub(super) async fn register_optional_runtime_workers(
                 }
             }
         });
-
-        // The M6 genesis shadow (spec §4.1). A second, *sibling* task rather
-        // than a stage inside the loop above: the two must be able to fail,
-        // back off, and be disabled independently, and folding them together
-        // would make one loop's error backoff throttle the other's work.
-        //
-        // 3s of startup delay rather than M5's 1s so the two do not contend for
-        // the single DB connection mutex while the daemon is still opening.
-        //
-        // **No `ServerState` snapshot appears below, and that is deliberate.**
-        // The M5 loop re-reads `state.llm` every turn because it needs a
-        // provider; the shadow needs none, so there is no guard to hold across
-        // an await and no provider that could be threaded in later without the
-        // reviewer noticing a new read appear here. It is the loop-level half
-        // of the same structural proof `finalize.rs` makes at the module level.
-        //
-        // Bounds per turn are the driver's (§4.2): the startup recovery scan
-        // once, then at most one of — one space's frontier reconciliation,
-        // one candidate prepare, one dry-run finalization. Nothing runs while
-        // `genesis_enabled = 0` in the sense that matters: the flag gates
-        // publication, and this lane has no publish path at all.
-        //
-        // **Gated OFF by default on `WENLAN_ENABLE_GENESIS_SHADOW`, and gated at
-        // the spawn rather than inside the loop.** An OFF daemon has no task at
-        // all — not a task that wakes to find itself disabled — so the lane
-        // costs literally nothing until an operator opts in. Safety is not the
-        // reason (see the flag's docs): the reason is that a sub-second poll on
-        // the shared connection mutex has no measured RSS or foreground-latency
-        // ceiling yet, and every sibling ambient lane defaults OFF at a far
-        // slower cadence for the same reason. It also makes §10.3's rollback —
-        // "a flag flip plus a lease sweep" — an operation that exists.
-        //
-        // A guarded *block*, not an early `return`. The spawn below happens to
-        // be the last registration in this function today, so a `return` would
-        // be correct — but only by accident of ordering, and it would silently
-        // drop anything appended after it. On the DEFAULT path, since the
-        // default here is OFF. A block cannot acquire that failure mode.
-        if wenlan_core::db::genesis_shadow_enabled() {
-            tracing::info!(
-                "[genesis] M6 genesis shadow is ON: a bounded read-mostly turn runs every 1s \
-             (100ms while working), building genesis_* state only. It publishes nothing and \
-             never writes genesis_enabled. Unset WENLAN_ENABLE_GENESIS_SHADOW to disable."
-            );
-
-            let db_for_genesis = db_arc.clone();
-            let mut genesis_shutdown = shutdown_for_reconcile.subscribe();
-            tokio::spawn(async move {
-                if lifecycle::sleep_or_shutdown(
-                    &mut genesis_shutdown,
-                    std::time::Duration::from_secs(3),
-                )
-                .await
-                {
-                    return;
-                }
-
-                let mut genesis_state = wenlan_core::m6::shadow::ShadowState::default();
-                let mut recovery_logged = false;
-                let mut last_genesis_error: Option<String> = None;
-                loop {
-                    // Dropping this future on shutdown prevents the turn from
-                    // making any later writes; its durable lease is left for a
-                    // later process to reclaim, exactly as the M5 loop does.
-                    let turn = tokio::select! {
-                        biased;
-                        _ = lifecycle::wait_for_shutdown(genesis_shutdown.clone()) => return,
-                        result = async {
-                            let _maintenance_guard = maintenance_for_genesis.begin_background().await;
-                            db_for_genesis.run_genesis_shadow_turn(&mut genesis_state).await
-                        } => result,
-                    };
-
-                    let next_delay = match turn {
-                        Ok(turn) => {
-                            if lifecycle::shutdown_requested(&genesis_shutdown) {
-                                return;
-                            }
-                            if last_genesis_error.take().is_some() {
-                                tracing::info!("[genesis] shadow loop resumed");
-                            }
-                            if !recovery_logged {
-                                if let Some(report) = genesis_state.recovery_report() {
-                                    tracing::info!(
-                                    "[genesis] startup recovery reaped {} lease(s), staled {} \
-                                     candidate(s), left {} on a live lease, and found {} handed-off \
-                                     projection(s)",
-                                    report.leases_reaped,
-                                    report.candidates_staled.len(),
-                                    report.candidates_lease_live,
-                                    report.projections_handed_off,
-                                );
-                                    recovery_logged = true;
-                                }
-                            }
-                            let did_work = turn.did_work();
-                            if did_work {
-                                tracing::debug!(?turn, "[genesis] shadow turn");
-                            }
-                            if did_work {
-                                std::time::Duration::from_millis(100)
-                            } else {
-                                std::time::Duration::from_secs(1)
-                            }
-                        }
-                        Err(error) => {
-                            let error = error.to_string();
-                            // De-duplicated: the first occurrence and each change,
-                            // never every tick. A shadow that logged a warning ten
-                            // times a second would be its own outage.
-                            if last_genesis_error.as_deref() != Some(error.as_str()) {
-                                tracing::warn!(
-                                "[genesis] shadow loop backing off after an error; genesis state \
-                                 is durable and the next turn resumes where this one stopped: \
-                                 {error}"
-                            );
-                                last_genesis_error = Some(error);
-                            }
-                            std::time::Duration::from_secs(5)
-                        }
-                    };
-
-                    if lifecycle::sleep_or_shutdown(&mut genesis_shutdown, next_delay).await {
-                        return;
-                    }
-                }
-            });
-        } else {
-            tracing::info!("[genesis] M6 genesis shadow is OFF (WENLAN_ENABLE_GENESIS_SHADOW).");
-        }
     }
 }
 

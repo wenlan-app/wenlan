@@ -93,7 +93,9 @@ for (const cfg of [
     await readable(".page-detail-document", ".note-group-content");
     const wikiStart = (await page.locator(".page-detail-document").boundingBox())!.x;
     await balancedStart(".page-detail-document");
-    expect(await titleAndTools(".page-detail-document", ".page-document-editor--title .cm-line:first-child", ".page-detail-actions-menu-trigger")).toEqual(headingType);
+    expect(await titleAndTools(".page-detail-document", ".page-document-editor--title .cm-line:first-child")).toEqual(headingType);
+    // A Wiki page's actions sit in the top bar beside the Info toggle, not on the title line.
+    await expect(page.locator(".note-group-document-tools .page-detail-actions-menu-trigger")).toBeVisible();
     await capture("wiki-info-closed");
     // Info and the note list open and close independently.
     const directory = page.locator(".wiki-workspace-directory");

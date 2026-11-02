@@ -50,7 +50,6 @@ pub mod kg;
 pub mod kg_quality;
 pub mod lint;
 pub mod llm_provider;
-pub mod m6;
 pub mod maintenance;
 pub mod migrate_rename;
 pub mod migrations;

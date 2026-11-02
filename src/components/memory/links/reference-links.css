@@ -88,3 +88,22 @@
 .cm-wiki-page-link[data-reference-resource-icon="webpage"]::before {
   mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20fill%3D%22black%22%20viewBox%3D%220%200%20256%20256%22%3E%3Cpath%20d%3D%22M128%2C24h0A104%2C104%2C0%2C1%2C0%2C232%2C128%2C104.12%2C104.12%2C0%2C0%2C0%2C128%2C24Zm88%2C104a87.61%2C87.61%2C0%2C0%2C1-3.33%2C24H174.16a157.44%2C157.44%2C0%2C0%2C0%2C0-48h38.51A87.61%2C87.61%2C0%2C0%2C1%2C216%2C128ZM102%2C168H154a115.11%2C115.11%2C0%2C0%2C1-26%2C45A115.27%2C115.27%2C0%2C0%2C1%2C102%2C168Zm-3.9-16a140.84%2C140.84%2C0%2C0%2C1%2C0-48h59.88a140.84%2C140.84%2C0%2C0%2C1%2C0%2C48ZM40%2C128a87.61%2C87.61%2C0%2C0%2C1%2C3.33-24H81.84a157.44%2C157.44%2C0%2C0%2C0%2C0%2C48H43.33A87.61%2C87.61%2C0%2C0%2C1%2C40%2C128ZM154%2C88H102a115.11%2C115.11%2C0%2C0%2C1%2C26-45A115.27%2C115.27%2C0%2C0%2C1%2C154%2C88Zm52.33%2C0H170.71a135.28%2C135.28%2C0%2C0%2C0-22.3-45.6A88.29%2C88.29%2C0%2C0%2C1%2C206.37%2C88ZM107.59%2C42.4A135.28%2C135.28%2C0%2C0%2C0%2C85.29%2C88H49.63A88.29%2C88.29%2C0%2C0%2C1%2C107.59%2C42.4ZM49.63%2C168H85.29a135.28%2C135.28%2C0%2C0%2C0%2C22.3%2C45.6A88.29%2C88.29%2C0%2C0%2C1%2C49.63%2C168Zm98.78%2C45.6a135.28%2C135.28%2C0%2C0%2C0%2C22.3-45.6h35.66A88.29%2C88.29%2C0%2C0%2C1%2C148.41%2C213.6Z%22%3E%3C%2Fpath%3E%3C%2Fsvg%3E");
 }
+
+/* `[[Name]]` with nowhere to go: the page's own name reads as plain text,
+   and a page not written yet as a quiet dotted name. */
+.cm-wiki-page-self,
+.cm-wiki-page-self * {
+  color: inherit;
+  text-decoration: none;
+}
+
+.cm-wiki-page-missing,
+.cm-wiki-page-missing * {
+  color: var(--mem-text-secondary);
+}
+
+.cm-wiki-page-missing {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--mem-text-tertiary);
+  text-underline-offset: 0.2em;
+}

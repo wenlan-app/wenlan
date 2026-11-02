@@ -34,8 +34,7 @@ export function usePageLength(): readonly [PageLength, (next: PageLength) => voi
   return [length, choose] as const;
 }
 
-/** Short or full, for a page whose two lengths differ (UX-VIEW-2). Marked
- *  Beta while how the two lengths should work is still being learned. */
+/** Short or full, for a page whose two lengths differ (UX-VIEW-2). */
 export function PageLengthSwitch({
   length,
   onChoose,
@@ -58,7 +57,6 @@ export function PageLengthSwitch({
           </button>
         ))}
       </div>
-      <span className="page-length-beta">{t("pageLayers.beta")}</span>
     </div>
   );
 }

@@ -12,8 +12,9 @@ const PAGE_TITLE = "Slash editor fixture";
 const INITIAL_SOURCE = `# ${PAGE_TITLE}\n\nExisting paragraph.\n\n`;
 const labels = resources.en.translation.slashEditing;
 const OPTION_LABELS = [
-  labels.heading1, labels.heading2, labels.bulletList, labels.numberedList,
-  labels.taskList, labels.blockquote, labels.fencedCode,
+  labels.heading1, labels.heading2, labels.heading3, labels.bulletList,
+  labels.numberedList, labels.taskList, labels.pageLink, labels.blockquote,
+  labels.callout, labels.fencedCode,
 ];
 const AUTOSAVE_TIMEOUT = { timeout: 10_000 };
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -154,7 +155,7 @@ test("keyboard slash selection replaces one slash and autosaves on the confirmed
   await expect(menu).toBeVisible();
   expect(await sameSession(editor)).toBe(true);
   await expect(menu.getByRole("option", { name: labels.heading1, exact: true })).toHaveAttribute("aria-selected", "true");
-  for (let step = 0; step < 4; step++) await editor.press("ArrowDown");
+  for (let step = 0; step < 5; step++) await editor.press("ArrowDown");
   const selected = menu.getByRole("option", { name: labels.taskList, exact: true });
   await expect(selected).toHaveAttribute("aria-selected", "true");
   await expect(editor).toHaveAttribute("aria-activedescendant", await selected.getAttribute("id") as string);
