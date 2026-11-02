@@ -32,6 +32,9 @@ pub const RESTORE_REPORT: &str = "restore-report.txt";
 /// Where the files are kept when a restore fails, so the empty database
 /// the daemon then starts with cannot overwrite them.
 pub const KEPT_PREFIX: &str = "files-kept-";
+/// Where the files a restore read are kept: a file the rebuild could not
+/// read would otherwise be removed by the next refresh.
+pub const RESTORED_PREFIX: &str = "files-restored-";
 
 /// What [`restore_missing_database`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +48,9 @@ pub enum Restore {
         rows: usize,
         problems: Vec<String>,
         ms: u64,
+        /// Where the files read now are, or `None` when they could not be
+        /// moved aside (then the daemon must not refresh over them).
+        set_aside: Option<PathBuf>,
     },
 }
 
@@ -59,14 +65,18 @@ pub fn restore_source(data_root: &Path) -> Option<PathBuf> {
 }
 
 /// Builds `<db_dir>/origin_memory.db` from the file copy under
-/// `data_root` when it is missing. On success the new file is in place;
-/// on failure nothing in `db_dir` changed.
+/// `data_root` when it is missing or empty (0 bytes: SQLite would open it
+/// as a new database). On success the new file is in place and the files
+/// it was built from are moved to `files-restored-<now>`; on failure
+/// nothing in `db_dir` changed but an empty file moved aside.
 pub async fn restore_missing_database(
     data_root: &Path,
     db_dir: &Path,
+    now: i64,
 ) -> Result<Restore, WenlanError> {
     let db_file = db_dir.join(DATABASE_FILE);
-    if db_file.exists() {
+    let empty = std::fs::metadata(&db_file).is_ok_and(|meta| meta.is_file() && meta.len() == 0);
+    if db_file.exists() && !empty {
         return Ok(Restore::NotNeeded);
     }
     let Some(from) = restore_source(data_root) else {
@@ -80,6 +90,9 @@ pub async fn restore_missing_database(
     }
     let rebuilt_dir = work.join("rebuilt");
     std::fs::create_dir_all(&rebuilt_dir)?;
+    if empty {
+        std::fs::rename(&db_file, work.join("empty.db"))?;
+    }
     let fresh = MemoryDB::new_with_embedding_recovery(
         &rebuilt_dir,
         Arc::new(NoopEmitter),
@@ -100,6 +113,12 @@ pub async fn restore_missing_database(
         ));
     }
     std::fs::create_dir_all(db_dir)?;
+    // The rebuild took a while: if a database appeared meanwhile, it wins
+    // and the rebuilt copy stays in the work folder.
+    if db_file.exists() {
+        log::warn!("[restore] a database appeared during the rebuild; it is kept");
+        return Ok(Restore::NotNeeded);
+    }
     // A log or shared-memory file with no database is from a database that
     // is gone; next to the new file it would be read as its log.
     for suffix in ["-wal", "-shm"] {
@@ -114,10 +133,13 @@ pub async fn restore_missing_database(
     let report = report_text(&from, &rebuilt.tables, &rebuilt.problems, ms);
     let _ = std::fs::write(mirror_root(data_root).join(RESTORE_REPORT), report);
     let _ = std::fs::remove_dir_all(rebuilt_dir);
+    let aside = mirror_root(data_root).join(format!("{RESTORED_PREFIX}{now}"));
+    let set_aside = std::fs::rename(&from, &aside).ok().map(|_| aside);
     Ok(Restore::Restored {
         rows,
         problems: rebuilt.problems,
         ms,
+        set_aside,
     })
 }
 

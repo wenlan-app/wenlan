@@ -86,40 +86,77 @@ fn due(status: &FilesMirrorStatus, db_changed_at: i64, now: i64) -> bool {
 /// daemon then starts with cannot overwrite them, and the status says so.
 pub async fn restore_missing_database(data_root: &Path, db_dir: &Path) {
     use wenlan_core::store::restore::{self, Restore};
+    let mirror = mirror::mirror_root(data_root);
     if turned_off() {
+        if !db_dir.join(restore::DATABASE_FILE).exists()
+            && restore::restore_source(data_root).is_some()
+        {
+            tracing::warn!(
+                "[files_mirror] the database is missing and {} holds a file copy, but \
+                 WENLAN_FILES_MIRROR=0: starting with an empty database. Unset it and \
+                 restart to rebuild the database from the files.",
+                mirror.display()
+            );
+        }
         return;
     }
-    let mirror = mirror::mirror_root(data_root);
-    match restore::restore_missing_database(data_root, db_dir).await {
+    match restore::restore_missing_database(data_root, db_dir, now()).await {
         Ok(Restore::NotNeeded) | Ok(Restore::NoFiles) => {}
-        Ok(Restore::Restored { rows, problems, ms }) => {
+        Ok(Restore::Restored {
+            rows,
+            problems,
+            ms,
+            set_aside,
+        }) => {
             tracing::warn!(
-                "[files_mirror] the database was missing: rebuilt it from {} in {ms} ms \
-                 ({rows} rows, {} problems, see {})",
-                mirror.join(mirror::FILES_DIR).display(),
+                "[files_mirror] the database was missing: rebuilt it from the file copy in \
+                 {ms} ms ({rows} rows, {} problems, see {})",
                 problems.len(),
                 mirror.join(restore::RESTORE_REPORT).display()
             );
+            let where_ = match &set_aside {
+                Some(path) => format!("kept in {}", path.display()),
+                None => {
+                    // The files could not be moved: a refresh from the
+                    // rebuilt database must not replace them.
+                    hold();
+                    "left in place; the copy is not refreshed until restart".to_string()
+                }
+            };
             note(
                 &mirror,
-                format!("the database was rebuilt from these files at {}", now()),
+                format!(
+                    "the database was rebuilt from the file copy at {}; those files are {where_}",
+                    now()
+                ),
             );
         }
         Err(error) => {
             let kept = restore::keep_files_after_failure(data_root, now());
+            if kept.is_none() {
+                hold();
+            }
             tracing::error!(
                 "[files_mirror] the database was missing and could not be rebuilt from the \
                  files: {error}; files kept in {}",
                 kept.as_deref()
                     .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "place".to_string())
+                    .unwrap_or_else(|| "place, and the copy is not refreshed".to_string())
             );
             note(
                 &mirror,
-                format!("the database could not be rebuilt from these files: {error}"),
+                format!("the database could not be rebuilt from the file copy: {error}"),
             );
         }
     }
+}
+
+/// Set when files a restore needed could not be moved aside: the copy is
+/// then left alone until the daemon restarts.
+static HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn hold() {
+    HELD.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 fn note(mirror: &Path, text: String) {
@@ -133,7 +170,7 @@ fn note(mirror: &Path, text: String) {
 }
 
 pub fn start(shared: SharedState, shutdown: tokio::sync::watch::Receiver<bool>) {
-    if turned_off() {
+    if turned_off() || HELD.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
     tokio::spawn(run(shared, shutdown));
