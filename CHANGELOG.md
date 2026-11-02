@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.20.7](https://github.com/wenlan-app/wenlan/compare/v0.20.6...v0.20.7) (2026-11-02)
+
+
+### Features
+
+* **app:** Home cards say where each thing stands, with tool marks ([#1106](https://github.com/wenlan-app/wenlan/issues/1106)) ([e6a0c91](https://github.com/wenlan-app/wenlan/commit/e6a0c914a2d8362ea4444b6223a260dac7ed797a))
+* **app:** name a page's first version in its history ([#1102](https://github.com/wenlan-app/wenlan/issues/1102)) ([e55a0e3](https://github.com/wenlan-app/wenlan/commit/e55a0e3592683206e771ed863571bf1ca9918fd5))
+* **app:** open 「正在做的事」 into one thing, with its conversations and pages ([#1084](https://github.com/wenlan-app/wenlan/issues/1084)) ([c8ff286](https://github.com/wenlan-app/wenlan/commit/c8ff2862c6cafe33e6d9d6e51f8711da59e18674))
+* **app:** open any page history entry to see what it changed ([#1076](https://github.com/wenlan-app/wenlan/issues/1076)) ([1931d69](https://github.com/wenlan-app/wenlan/commit/1931d69605c7eb2b0b934b4f3ff145503f772478))
+* **app:** page actions in the top bar, searchable slash menu, Folders as the default list ([#1078](https://github.com/wenlan-app/wenlan/issues/1078)) ([ea24188](https://github.com/wenlan-app/wenlan/commit/ea2418856ce72792a9bf29e2fa3d083346509b98))
+* **app:** say quietly when the AI updated its own sentences, with Undo and a way to see which ([#1081](https://github.com/wenlan-app/wenlan/issues/1081)) ([39c3622](https://github.com/wenlan-app/wenlan/commit/39c3622934e6b9040f630ab1b4f36a8c54f82084))
+* **app:** show who wrote each sentence and let the person question one ([#1083](https://github.com/wenlan-app/wenlan/issues/1083)) ([c1343ea](https://github.com/wenlan-app/wenlan/commit/c1343eacc6cc3519899f4c8011b952d631b326a2))
+* **app:** split the sidebar into Home and Wiki ([#1086](https://github.com/wenlan-app/wenlan/issues/1086)) ([4a77749](https://github.com/wenlan-app/wenlan/commit/4a777492ae3b08e7d8ff044a21f8877211edc263))
+* **app:** tell Home's visitors with no AI tool what connecting one adds ([#1111](https://github.com/wenlan-app/wenlan/issues/1111)) ([c64f049](https://github.com/wenlan-app/wenlan/commit/c64f049ad5a3c6d4175744b274465f0d7d297fb9))
+* **core:** append-only history log for the move to files ([#1079](https://github.com/wenlan-app/wenlan/issues/1079)) ([9533636](https://github.com/wenlan-app/wenlan/commit/95336362921fd3b4175633b8d72b65d09e39953e))
+* **core:** ask the AI for a one-sentence fix when the person flags a sentence ([#1082](https://github.com/wenlan-app/wenlan/issues/1082)) ([efdece3](https://github.com/wenlan-app/wenlan/commit/efdece39f85830528fcd55e1be55345f7122c9e4))
+* **core:** list a page's first version in its history, with its text ([#1085](https://github.com/wenlan-app/wenlan/issues/1085)) ([f049b11](https://github.com/wenlan-app/wenlan/commit/f049b11870801a8911578dd91c71a223b970616e))
+* **core:** lossless export part 1, pages, entities and archived pages as files ([#1092](https://github.com/wenlan-app/wenlan/issues/1092)) ([6f13c57](https://github.com/wenlan-app/wenlan/commit/6f13c57b3aa2eec18f5bd3a89b754dc07dc92ae0))
+* **core:** lossless export part 2, memories as files ([#1093](https://github.com/wenlan-app/wenlan/issues/1093)) ([e791e36](https://github.com/wenlan-app/wenlan/commit/e791e3605c2ffedf535f160fd74fd35120bb55ec))
+* **core:** store::format part 1, safe file names and the page file ([#1090](https://github.com/wenlan-app/wenlan/issues/1090)) ([24ad44e](https://github.com/wenlan-app/wenlan/commit/24ad44e657f33ec6c9801855d9fd2b54b010f608))
+* **core:** store::format part 2, memory, Brief, entity, original and canvas files ([#1091](https://github.com/wenlan-app/wenlan/issues/1091)) ([daf1aa3](https://github.com/wenlan-app/wenlan/commit/daf1aa3fc37ec165075918a562edcb9d389e20f0))
+* **db:** classify every table for the move to files and drop four retired ones ([#1059](https://github.com/wenlan-app/wenlan/issues/1059)) ([6356792](https://github.com/wenlan-app/wenlan/commit/6356792c0286a5dd4dee1b82ac40c8d4eaf5669f))
+* sort every conversation into a thing, and let the person rename a thing or move a conversation ([#1075](https://github.com/wenlan-app/wenlan/issues/1075)) ([1a13428](https://github.com/wenlan-app/wenlan/commit/1a13428e7c037a5a8c8f9ccc30e4e485dd3d48eb))
+* undo one AI write's sentence changes, and know when the person last edited a page ([#1072](https://github.com/wenlan-app/wenlan/issues/1072)) ([99756c0](https://github.com/wenlan-app/wenlan/commit/99756c071c7dd38e37542dabbfe579171a8aab65))
+
+
+### Bug Fixes
+
+* an AI tool's page stays the AI's after the person edits one line ([#1077](https://github.com/wenlan-app/wenlan/issues/1077)) ([1e2dc0b](https://github.com/wenlan-app/wenlan/commit/1e2dc0bce00fc40ed88278577f8795e6261de7ef))
+* **app:** new pages line up, lists stay lists while typing, and New page is in the page list ([#1074](https://github.com/wenlan-app/wenlan/issues/1074)) ([9c14b39](https://github.com/wenlan-app/wenlan/commit/9c14b397f239e98f635568afc6f8e9f8e836c250))
+* **app:** relaunch through Launch Services after an update on macOS ([#1094](https://github.com/wenlan-app/wenlan/issues/1094)) ([0c0c175](https://github.com/wenlan-app/wenlan/commit/0c0c175cf058392e181edea639233976a7eb9028))
+* **app:** show tables, code blocks and page links as they read ([#1112](https://github.com/wenlan-app/wenlan/issues/1112)) ([ed4ff42](https://github.com/wenlan-app/wenlan/commit/ed4ff42728a26d851c02de87f502792e4661236f))
+* **core:** keep history lines a newer build wrote instead of cutting them ([#1088](https://github.com/wenlan-app/wenlan/issues/1088)) ([0c7504a](https://github.com/wenlan-app/wenlan/commit/0c7504a615199d735b799e846b5eb5457ff02f91))
+* **daemon:** open without the embedding model when its download fails ([#1089](https://github.com/wenlan-app/wenlan/issues/1089)) ([060cc76](https://github.com/wenlan-app/wenlan/commit/060cc762256ee56fe731d2e4bd1083e8f46496c8))
+* **pages:** move an archived page's file into archive/ and project it back on restore ([#1064](https://github.com/wenlan-app/wenlan/issues/1064)) ([542fdcd](https://github.com/wenlan-app/wenlan/commit/542fdcd3087b0340132decb16ef8cbe5383cbc40))
+
 ## [0.20.6](https://github.com/wenlan-app/wenlan/compare/v0.20.5...v0.20.6) (2026-11-01)
 
 
