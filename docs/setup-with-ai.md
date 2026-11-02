@@ -7,7 +7,7 @@ Use this guide when an AI assistant is setting up Wenlan on the user's behalf. C
 Setup is complete only when:
 
 1. The Wenlan runtime is healthy.
-2. The current AI client has either the Wenlan plugin or an MCP connection.
+2. The current AI client has the Wenlan plugin, an MCP connection, or a working `wenlan` CLI on the machine where the runtime runs.
 3. A small capture can be recalled from the same client.
 
 Do not report success after editing configuration alone. A live round trip is the proof.
@@ -67,6 +67,58 @@ codex plugin add wenlan@7xuanlu-wenlan
 
 Start a new Codex task so the plugin and MCP server load, then type `$wenlan` (or the exact form `$wenlan:wenlan`). Detailed workflows: [Codex plugin](../plugin-codex/README.md).
 
+## Grok Bot
+
+Grok Bot reads and writes the user's Wenlan library by running the `wenlan` CLI on the user's computer. It can also use `wenlan-mcp` when that process starts on the same computer as the daemon.
+
+There is no `wenlan connect grok-bot` target, and **Add a tool** does not set Grok Bot up. Grok Bot does not keep a local MCP config file this command can update.
+
+### CLI on the user's computer
+
+Install the runtime with the host-specific path above, on the computer that holds the library. When Grok Bot runs commands on the user's Mac, that computer is the Mac. Pass `--agent-name grok-bot` on each command, or export `WENLAN_AGENT_NAME=grok-bot` for the shell. Without a name, the daemon records the caller as `unknown`.
+
+```bash
+wenlan --agent-name grok-bot recall "what we decided"
+wenlan --agent-name grok-bot memories
+wenlan --agent-name grok-bot spaces list
+wenlan --agent-name grok-bot capture "the decision, in one sentence"
+```
+
+`recall` searches memories and the pages that match. `memories` lists recent memories. `spaces list` lists Spaces. `capture` stores one memory and prints its id (`Stored memory <id>`).
+
+A command run on Grok Bot's own Linux computer talks to a daemon on that computer. It does not see the library on the user's Mac.
+
+### MCP on the same computer
+
+Use this when the client starts `wenlan-mcp` on the same computer as the daemon. The connector calls `http://127.0.0.1:7878` on the machine where its process runs.
+
+```json
+{
+  "mcpServers": {
+    "wenlan": {
+      "command": "wenlan-mcp",
+      "args": ["--agent-name", "grok-bot"]
+    }
+  }
+}
+```
+
+When `wenlan-mcp` is not on `PATH`, set `command` to `~/.wenlan/bin/wenlan-mcp` and keep the same `args`. Or set `command` to `npx` and `args` to `["-y", "wenlan-mcp", "--agent-name", "grok-bot"]`.
+
+A stdio server that starts on Grok Bot's Linux computer cannot open the daemon on the user's Mac. For that library, use the CLI on the Mac.
+
+### Verify
+
+On the computer where the daemon runs:
+
+```bash
+wenlan status
+wenlan --agent-name grok-bot capture "Wenlan Grok Bot setup check. Disposable."
+wenlan --agent-name grok-bot recall "Wenlan Grok Bot setup check"
+```
+
+The round trip is proven when `wenlan status` reports a healthy runtime and `recall` returns the captured sentence. `capture` prints `Stored memory <id>`. Delete that memory with the MCP `forget` tool, with `memory_id` set to `<id>`. The `wenlan` CLI has no forget command.
+
 ## MCP-only setup and other clients
 
 Install the runtime using the host-specific path above, then configure only the client the user named:
@@ -75,7 +127,7 @@ Install the runtime using the host-specific path above, then configure only the 
 wenlan connect <client>
 ```
 
-Use `claude-code` or `codex` when the user wants MCP without the plugin. Supported values are `claude-code`, `codex`, `cursor`, `claude-desktop`, `vscode`, and `gemini`. The CLI makes a backup before replacing an existing JSON configuration. Full command reference: [CLI and MCP setup](../crates/wenlan-cli/README.md).
+Use `claude-code` or `codex` when the user wants MCP without the plugin. Supported values are `claude-code`, `codex`, `cursor`, `claude-desktop`, `vscode`, and `gemini`. For Grok Bot, follow [Grok Bot](#grok-bot). The CLI makes a backup before replacing an existing JSON configuration. Full command reference: [CLI and MCP setup](../crates/wenlan-cli/README.md).
 
 The desktop App connects more tools than the CLI: **Add a tool** in its Settings also sets up GitHub Copilot, Antigravity, Windsurf, Kiro, OpenCode, and Muse Code, and copies Wenlan's skills to the tools that read them. If the user has the App, point them there for those tools instead of editing their configuration by hand.
 
@@ -87,4 +139,4 @@ First confirm the local runtime:
 wenlan status
 ```
 
-Then use the current client's Wenlan tools to capture a disposable sentence and recall it. Delete the test memory afterward if the client exposes `forget`. If the tools are not visible, start a new client session and verify again before declaring setup complete.
+Then use the current client's Wenlan tools to capture a disposable sentence and recall it. Delete the test memory afterward if the client exposes `forget`. If the tools are not visible, start a new client session and verify again before declaring setup complete. For Grok Bot, run the CLI round trip in [Grok Bot](#grok-bot).
