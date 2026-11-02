@@ -57,6 +57,7 @@ function renderOverview({
   onBrowseArchived = undefined as (() => void) | undefined,
   inventoryScope = "all" as WikiInventoryScope,
   checklist = false,
+  onConnectTool = undefined as (() => void) | undefined,
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
 } = {}) {
   const overview = (
@@ -69,7 +70,7 @@ function renderOverview({
         onSelectDraft={onSelectDraft}
         onSelectPage={onSelectPage}
         onSelectSpace={onSelectSpace}
-        onConnectTool={checklist ? vi.fn() : undefined}
+        onConnectTool={onConnectTool ?? (checklist ? vi.fn() : undefined)}
         onSeeExample={checklist ? vi.fn() : undefined}
       />
     </QueryClientProvider>
@@ -205,14 +206,16 @@ describe("PagesOverview reading workspace", () => {
 
       const section = await screen.findByTestId("wiki-working-on");
       expect(screen.getByRole("heading", { level: 2, name: "What you're working on" })).toBeInTheDocument();
-      expect(container.querySelector(".wiki-overview")?.firstElementChild).toBe(section);
+      expect(container.querySelector(".wiki-overview .home-columns")?.firstElementChild).toBe(section);
       const cards = [...section.querySelectorAll(".wiki-working-on-card")];
-      expect(cards.map((card) => card.querySelector(".wiki-working-on-text")?.textContent)).toEqual([
+      expect(cards.map((card) => card.querySelector(".wiki-working-on-title")?.textContent)).toEqual([
         "Storage: files become the source of truth",
         "Launch page: drop the PH badge",
       ]);
-      expect(cards[0]).toHaveTextContent("wenlan · today");
-      expect(cards[1]).toHaveTextContent("wenlan-site · 3 days ago");
+      expect(cards.map((card) => [card.querySelector(".wiki-working-on-meta")?.textContent, card.querySelector(".wiki-working-on-when")?.textContent])).toEqual([
+        ["wenlan", "today"],
+        ["wenlan-site", "3 days ago"],
+      ]);
 
       fireEvent.click(cards[1]);
       expect(onSelectSpace).toHaveBeenCalledWith("wenlan-site");
@@ -284,6 +287,22 @@ describe("PagesOverview reading workspace", () => {
       await new Promise(resolve => setTimeout(resolve, 0));
       expect(container.querySelector(".wiki-reading-start")).not.toHaveAttribute("data-onboarding");
       expect(screen.queryByTestId("getting-started")).not.toBeInTheDocument();
+    });
+
+    it("says what connecting an AI tool adds while none is connected", async () => {
+      const onConnectTool = vi.fn();
+      renderOverview({ onConnectTool });
+      fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
+      expect(onConnectTool).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Connect an AI tool, and what you work on with it shows up here.")).toBeInTheDocument();
+    });
+
+    it("drops the connect line once a tool is connected", async () => {
+      vi.mocked(listAgents).mockResolvedValue([{ id: "agent-claude-code", name: "claude-code", display_name: null, agent_type: "", description: null, enabled: true, trust_level: "full", last_seen_at: 1_790_000_000, memory_count: 0, created_at: 1_790_000_000, updated_at: 1_790_000_000 } as never]);
+      renderOverview({ onConnectTool: vi.fn() });
+      await waitFor(() => expect(listAgents).toHaveBeenCalled());
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     });
 
     it("opens the add-source dialog in place instead of leaving the Wiki", async () => {

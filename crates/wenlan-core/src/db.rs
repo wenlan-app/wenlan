@@ -27,7 +27,10 @@ pub use claim_derivation::{
     DerivationJob, PromotionTurn, SupportOutcome, EXTRACTOR_VERSION, LEASE_SECS, MAX_ATTEMPTS,
     SUPPORT_THRESHOLD,
 };
+mod activity_counts;
+mod agent_presence;
 mod claim_identity;
+mod code_basis;
 mod community_grouping_state;
 mod count;
 mod derived_artifact_sweep;
@@ -38,14 +41,6 @@ mod eval_paired_guard;
 mod eval_pipeline_reads;
 mod eval_substrate_guard;
 mod eval_temporal_seed;
-mod genesis_schema;
-/// Migration 108's shipped DDL, re-exported so the M6 fixtures install the
-/// real substrate. Text, not a `libsql` handle — see the constant's own note.
-#[cfg(test)]
-pub(crate) use genesis_schema::GENESIS_SUBSTRATE_DDL;
-mod activity_counts;
-mod agent_presence;
-mod code_basis;
 pub(crate) mod export_reads;
 mod kg_quality_diagnostics;
 mod kg_quality_duplicate_candidates;
@@ -55,7 +50,6 @@ mod legacy_directory_copies;
 mod lint_snapshot;
 #[cfg(feature = "eval-harness")]
 mod m5_page_size_snapshot;
-mod m6_shadow;
 mod maintenance_duplicate_reads;
 mod maintenance_queue;
 mod maintenance_retro_scan;
@@ -165,8 +159,6 @@ mod eval_substrate_guard_test;
 #[cfg(test)]
 mod eval_temporal_seed_test;
 #[cfg(test)]
-mod genesis_schema_test;
-#[cfg(test)]
 mod kg_quality_diagnostics_test;
 #[cfg(test)]
 mod kg_quality_duplicate_candidates_test;
@@ -178,8 +170,6 @@ mod kg_quality_vocabulary_test;
 mod legacy_directory_copies_test;
 #[cfg(test)]
 mod lint_snapshot_test;
-#[cfg(test)]
-mod m6_followup_schema_test;
 #[cfg(test)]
 mod maintenance_duplicate_reads_test;
 #[cfg(test)]
@@ -1559,7 +1549,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 150;
+pub const SCHEMA_VERSION: u32 = 151;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -2055,6 +2045,53 @@ pub(crate) fn init_text_embedding(options: InitOptions) -> anyhow::Result<TextEm
 /// The message a user sees when the embedding model cannot be loaded. The raw
 /// fastembed error ("Failed to retrieve model_optimized.onnx") does not say
 /// that this is a one-time download, where it goes, or what to do next.
+/// Load the daemon's text embedder from the per-database FastEmbed cache,
+/// downloading it from huggingface.co on the first start. Runs on a dedicated
+/// thread; see the comment at its call in `MemoryDB::new_with_embedding_recovery`.
+pub(crate) async fn load_daemon_text_embedding(
+    db_path: &Path,
+) -> Result<TextEmbedding, WenlanError> {
+    if std::env::var_os("HF_HOME").is_some_and(|value| value.is_empty()) {
+        return Err(WenlanError::Embedding(
+            "HF_HOME is set but empty, so the embedding model would download into the working directory; unset it or point it at a writable directory".into(),
+        ));
+    }
+    let embed_cache_dir = daemon_fastembed_cache_dir(db_path);
+    std::fs::create_dir_all(&embed_cache_dir).map_err(|e| {
+        WenlanError::Embedding(format!(
+            "create the embedding-model cache directory {}: {e}",
+            embed_cache_dir.display()
+        ))
+    })?;
+    log::info!(
+        "[memory_db] starting embedder init (std::thread), cache={}",
+        embed_cache_dir.display()
+    );
+    let embed_cache_label = embed_cache_dir.clone();
+    let (embed_tx, embed_rx) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("embedder-init".into())
+        .spawn(move || {
+            log::info!("[memory_db] embedder thread: loading ONNX model...");
+            let opts = InitOptions::new(EmbeddingModel::BGEBaseENV15Q)
+                .with_show_download_progress(true)
+                .with_cache_dir(embed_cache_dir);
+            let result = init_text_embedding(opts);
+            let _ = embed_tx.send(result);
+        })
+        .map_err(|e| WenlanError::Embedding(format!("spawn embedder thread: {}", e)))?;
+    embed_rx
+        .await
+        .map_err(|_| WenlanError::Embedding("embedder thread panicked".into()))?
+        .map_err(|e| embedder_init_error(&e, Some(embed_cache_label.as_path())))
+}
+
+/// The error every embedding call returns while no model is loaded (repair
+/// mode, or a daemon still waiting for its first download).
+fn embedding_model_unavailable() -> WenlanError {
+    WenlanError::Embedding("embedding_model_unavailable".to_string())
+}
+
 pub(crate) fn embedder_init_error(
     error: &anyhow::Error,
     cache: Option<&std::path::Path>,
@@ -3027,40 +3064,6 @@ fn community_leiden_enabled_value(value: Option<&str>) -> bool {
         matches!(
             value.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes"
-        )
-    })
-}
-
-/// Gate for the M6 genesis shadow lane (spec §4.1). Opt-in: default OFF; enable
-/// with WENLAN_ENABLE_GENESIS_SHADOW=1/true/yes/on. Read once by
-/// `wenlan-server`'s runtime, which does not spawn the lane's task at all when
-/// it is false — the loop is absent rather than idling, so an OFF daemon pays
-/// nothing.
-///
-/// **Default OFF because the lane is unmeasured, not because it is unsafe.**
-/// The turn writes only `genesis_*` state, never `genesis_enabled`, and has no
-/// publish path; that is a safety argument and safety is not the question here.
-/// The question is contention: a turn polls every 1s idle / 100ms working and
-/// takes the single `MemoryDB` connection mutex each time, and neither its RSS
-/// nor its foreground-request-latency cost has been measured on a real corpus.
-/// The sibling ambient lane [`edge_grounding_promote_enabled`] is
-/// default-OFF for exactly this reason at a 30-minute cadence; this one polls
-/// three orders of magnitude faster. (Two other siblings that shared this
-/// reasoning, `edges_reconcile_enabled` and `entity_page_reconcile_enabled`,
-/// retired in G6 Stage 2 PR 2a along with the sweeps they gated.)
-///
-/// It is also what makes spec §10.3's rollback executable: PR-B rollback is
-/// "a flag flip plus a lease sweep", and with no flag there is no flip.
-pub fn genesis_shadow_enabled() -> bool {
-    let value = std::env::var("WENLAN_ENABLE_GENESIS_SHADOW").ok();
-    genesis_shadow_enabled_value(value.as_deref())
-}
-
-fn genesis_shadow_enabled_value(value: Option<&str>) -> bool {
-    value.is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
         )
     })
 }
@@ -5074,7 +5077,13 @@ pub struct MemoryDB {
     pub(crate) lint_freshness: Arc<crate::lint::snapshot::LintFreshnessClock>,
     page_projection_tracker: Arc<crate::page_projection_tracker::PageProjectionTracker>,
     pub(crate) derived_artifact_state: Arc<crate::derived_artifact_state::DerivedArtifactState>,
-    embedder: Option<Arc<std::sync::Mutex<TextEmbedding>>>,
+    /// Empty until the embedding model loads. The daemon may open without it
+    /// (first start offline, or huggingface.co unreachable) and install it
+    /// later with [`Self::install_embedder`]; until then writes store no
+    /// vector and searches use their keyword channel only.
+    embedder: std::sync::OnceLock<SharedEmbedder>,
+    /// Why the model last failed to load, while `embedder` is empty.
+    embedder_load_error: std::sync::Mutex<Option<String>>,
     chunker: ChunkingEngine,
     embedding_cache: std::sync::Mutex<EmbeddingCache>,
     pub(crate) community_dirty_nodes:
@@ -5241,7 +5250,8 @@ impl MemoryDB {
             lint_freshness,
             page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
             derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
-            embedder: None,
+            embedder: std::sync::OnceLock::new(),
+            embedder_load_error: std::sync::Mutex::new(None),
             chunker: ChunkingEngine::default(),
             embedding_cache: std::sync::Mutex::new(EmbeddingCache::new(200)),
             community_dirty_nodes: std::sync::Mutex::new(BTreeMap::new()),
@@ -5437,39 +5447,18 @@ impl MemoryDB {
         // model_optimized.onnx" (first-run gauntlet finding F4).
         // fastembed treats an empty HF_HOME as set and resolves it against the
         // working directory, which is exactly the launchd failure above.
-        if std::env::var_os("HF_HOME").is_some_and(|value| value.is_empty()) {
-            return Err(WenlanError::Embedding(
-                "HF_HOME is set but empty, so the embedding model would download into the working directory; unset it or point it at a writable directory".into(),
-            ));
-        }
-        let embed_cache_dir = daemon_fastembed_cache_dir(db_path);
-        std::fs::create_dir_all(&embed_cache_dir).map_err(|e| {
-            WenlanError::Embedding(format!(
-                "create the embedding-model cache directory {}: {e}",
-                embed_cache_dir.display()
-            ))
-        })?;
-        log::info!(
-            "[memory_db] starting embedder init (std::thread), cache={}",
-            embed_cache_dir.display()
-        );
-        let embed_cache_label = embed_cache_dir.clone();
-        let (embed_tx, embed_rx) = tokio::sync::oneshot::channel();
-        std::thread::Builder::new()
-            .name("embedder-init".into())
-            .spawn(move || {
-                log::info!("[memory_db] embedder thread: loading ONNX model...");
-                let opts = InitOptions::new(EmbeddingModel::BGEBaseENV15Q)
-                    .with_show_download_progress(true)
-                    .with_cache_dir(embed_cache_dir);
-                let result = init_text_embedding(opts);
-                let _ = embed_tx.send(result);
-            })
-            .map_err(|e| WenlanError::Embedding(format!("spawn embedder thread: {}", e)))?;
-        let embedder = embed_rx
-            .await
-            .map_err(|_| WenlanError::Embedding("embedder thread panicked".into()))?
-            .map_err(|e| embedder_init_error(&e, Some(embed_cache_label.as_path())))?;
+        let (embedder, embedder_load_error) = match load_daemon_text_embedding(db_path).await {
+            Ok(embedder) => (Some(embedder), None),
+            // The daemon (`Deferred`) serves without the model: pages stay
+            // readable and writable, and it retries the load itself through
+            // `MemoryDB::install_embedder`. Every other caller still needs a
+            // complete vector index before it returns, so the error stands.
+            Err(error) if recovery == MemoryEmbeddingRecovery::Deferred => {
+                log::warn!("[memory_db] opening without the embedding model: {error}");
+                (None, Some(error.to_string()))
+            }
+            Err(error) => return Err(error),
+        };
 
         log::info!("[memory_db] initialized at {}", db_file.display());
 
@@ -5486,7 +5475,13 @@ impl MemoryDB {
             lint_freshness,
             page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
             derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
-            embedder: Some(Arc::new(std::sync::Mutex::new(embedder))),
+            embedder: match embedder {
+                Some(embedder) => {
+                    std::sync::OnceLock::from(Arc::new(std::sync::Mutex::new(embedder)))
+                }
+                None => std::sync::OnceLock::new(),
+            },
+            embedder_load_error: std::sync::Mutex::new(embedder_load_error),
             chunker: build_chunker(db_path),
             embedding_cache: std::sync::Mutex::new(EmbeddingCache::new(200)),
             community_dirty_nodes: std::sync::Mutex::new(BTreeMap::new()),
@@ -5604,7 +5599,8 @@ impl MemoryDB {
             lint_freshness,
             page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
             derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
-            embedder: Some(embedder),
+            embedder: std::sync::OnceLock::from(embedder),
+            embedder_load_error: std::sync::Mutex::new(None),
             chunker: build_chunker(db_path),
             embedding_cache: std::sync::Mutex::new(EmbeddingCache::new(200)),
             community_dirty_nodes: std::sync::Mutex::new(BTreeMap::new()),
@@ -10313,22 +10309,11 @@ impl MemoryDB {
                 self.migrate_107_page_kind_repair(version).await?;
             }
 
-            // Migration 108 (M6 PR-A): the genesis substrate — five empty
-            // tables and the two partial unique indexes that are D4's whole
-            // exclusion mechanism. Nothing in this build writes to any of
-            // them; the writers are later rungs. PARTIAL BY DESIGN, see
-            // migrate_108_genesis_substrate. See ensure_genesis_tables.
-            if version < 108 {
-                self.migrate_108_genesis_substrate(version).await?;
-            }
-
-            // Migration 109 (M6 PR-A follow-up): the fourteen remaining
-            // durable tables plus the per-space mutation counter whose shapes
-            // were blocked on the D1-D8 contract-defect rulings. The tables
-            // start empty and the counter backfills to zero, so no M6 writer or
-            // reader is enabled by this migration.
+            // Migrations 108 and 109 created the tables of the default-off M6
+            // genesis lane. The lane is gone; migration 151 drops what they
+            // made, so a fresh chain only steps the version past them.
             if version < 109 {
-                self.migrate_109_m6_substrate_followup(version).await?;
+                self.migrate_108_109_retired_genesis_lane(version).await?;
             }
 
             // Migration 110 (M5 truth safety): exact judge-triple eligibility,
@@ -10778,6 +10763,15 @@ impl MemoryDB {
             }
             if version < 150 {
                 self.migrate_150_drop_retired_tables(version).await?;
+            }
+
+            // Migration 151 drops the tables of the retired M6 genesis lane
+            // and its projection outbox. See db/table_classes.rs.
+            if ceiling < 151 {
+                return Ok(());
+            }
+            if version < 151 {
+                self.migrate_151_drop_genesis_lane(version).await?;
             }
         }
 
@@ -13214,13 +13208,9 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// M4's community substrate, as the bytes both the migration and the M6
-    /// fixtures execute. `grouping_leases` is the ONE durable lease registry
-    /// (D6, I-6) and `m6::leases` is a facade over it, so a fixture that
-    /// created its own copy of the table could not notice a second lease
-    /// system — which is the thing the facade exists to prevent. Shipped as
-    /// text because R4 forbids a DB-owned item from handing out a `libsql`
-    /// handle at crate visibility.
+    /// M4's community substrate. `grouping_leases` is the one durable lease
+    /// registry (D6, I-6). Shipped as text because R4 forbids a DB-owned item
+    /// from handing out a `libsql` handle at crate visibility.
     pub(crate) const COMMUNITY_SUBSTRATE_DDL: &str = "CREATE TABLE IF NOT EXISTS communities (
                 community_id TEXT PRIMARY KEY,
                 space TEXT NOT NULL,
@@ -14951,82 +14941,16 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// Migration 108 (M6 PR-A): the genesis substrate.
-    ///
-    /// Additive `IF NOT EXISTS` DDL, same shape as 101 and for the same
-    /// reason: the tables have to exist before the first writer can, and a
-    /// control that appears at the same moment as the thing it controls has a
-    /// window where it does not. Every table starts empty, and an empty
-    /// `genesis_coverage_state` means genesis is disabled for every space
-    /// (state-machines §7, D1) — so this migration changes no behavior.
-    ///
-    /// **This is PARTIAL BY DESIGN and is not the complete genesis
-    /// substrate.** It creates exactly five objects' worth of tables —
-    /// `genesis_candidates`, `genesis_candidate_roots`,
-    /// `genesis_coverage_state`, `genesis_group_coverage`, `genesis_frontier`
-    /// — plus the two partial unique indexes of §5. Those are the objects
-    /// whose shape the Stage-0 artifacts actually fix. Everything else the M6
-    /// contracts name is deliberately absent, including the durable homes for
-    /// machine F's `suppressed` and `quarantined` states and every `m6_*`
-    /// table of the relevance, overview, and refresh contracts: their column
-    /// types, keys, or liveness rules are unresolved or mutually contradictory
-    /// across artifacts. They land in a later additive migration once those
-    /// questions are adjudicated — see the PR-A schema-questions triage in the
-    /// drive record. Do not read this migration as the finished substrate.
-    ///
-    /// Number 108 follows the merged M5 Truth migrations 105/106 and the
-    /// page-kind repair at 107.
-    async fn migrate_108_genesis_substrate(&self, _prior: i64) -> Result<(), WenlanError> {
+    /// Migrations 108 and 109 created the empty tables of the M6 genesis
+    /// lane, which was off by default and is removed. Migration 151 drops the
+    /// tables from a database that has them; nothing between 109 and 151
+    /// reads them, so the chain only steps the version here.
+    async fn migrate_108_109_retired_genesis_lane(&self, _prior: i64) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
-        let tx = conn
-            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m108 begin: {error}")))?;
-        Self::ensure_genesis_tables(&tx).await?;
-        tx.commit()
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m108 commit: {error}")))?;
-
-        conn.execute("PRAGMA user_version = 108", ())
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m108 bump: {error}")))?;
-        log::info!("[migration] Migration 108 applied: M6 genesis substrate (partial by design)");
-        Ok(())
-    }
-
-    /// Migration 109 (M6 PR-A follow-up): complete the inert M6 substrate.
-    ///
-    /// The preceding migration deliberately stopped at the five objects whose
-    /// Stage-0 contracts were internally coherent. The user has since ratified
-    /// the D1-D8 amendment that fixes the remaining liveness, identity, and
-    /// readiness contradictions. All fourteen new tables and the one added
-    /// `genesis_coverage_state.m6_mutation_count` column land in one additive
-    /// transaction. Nothing here schedules work or changes a reader/writer
-    /// fence; later M6 rungs remain responsible for every behavior switch.
-    async fn migrate_109_m6_substrate_followup(&self, _prior: i64) -> Result<(), WenlanError> {
-        let conn = self.conn.lock().await;
-        let tx = conn
-            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m109 begin: {error}")))?;
-
-        crate::m6::frontier_policy::ensure_frontier_policy_tables(&tx)
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m109 frontier: {error}")))?;
-        crate::m6::overview_subscriptions::ensure_overview_subscription_tables(&tx).await?;
-        crate::m6::refresh_readiness::ensure_refresh_readiness_tables(&tx)
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m109 refresh: {error}")))?;
-        crate::m6::relevance::ensure_relevance_tables(&tx).await?;
-        crate::m6::remaining_substrate::ensure_remaining_substrate(&tx).await?;
-
-        tx.commit()
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m109 commit: {error}")))?;
         conn.execute("PRAGMA user_version = 109", ())
             .await
             .map_err(|error| WenlanError::VectorDb(format!("m109 bump: {error}")))?;
-        log::info!("[migration] Migration 109 applied: M6 substrate follow-up (inert)");
+        log::info!("[migration] Migrations 108-109 skipped: the M6 genesis lane is retired");
         Ok(())
     }
 
@@ -25373,9 +25297,8 @@ impl MemoryDB {
                 WenlanError::VectorDb(format!("update_space cascade pages scope: {}", e))
             })?;
 
-            // S0-162: close the rename over the community and genesis substrate
-            // too, so no M6-reachable row is left naming a space that does not
-            // resolve.
+            // S0-162: close the rename over the community substrate too, so no
+            // grouping row is left naming a space that does not resolve.
             space_rename::cascade_space_rename(&tx, name, new_name).await?;
 
             #[cfg(test)]
@@ -25738,7 +25661,7 @@ impl MemoryDB {
                 page_basis::refresh_basis_all(&tx)
                     .await
                     .map_err(|e| WenlanError::VectorDb(format!("delete_space move basis: {e}")))?;
-                // Fold the community/genesis substrate into the target too, so
+                // Fold the community substrate into the target too, so
                 // the moved entities keep their `relates` edges for grouping and
                 // no control row keeps naming the space deleted below.
                 space_rename::cascade_space_merge(&tx, name, target).await?;
@@ -25877,7 +25800,7 @@ impl MemoryDB {
         page_basis::refresh_basis_all(&tx)
             .await
             .map_err(|e| WenlanError::VectorDb(format!("reassign basis: {e}")))?;
-        // Fold the community/genesis substrate into the target too, so the
+        // Fold the community substrate into the target too, so the
         // moved entities keep their `relates` edges for grouping and the
         // source's community rows do not outlive its content.
         space_rename::cascade_space_merge(&tx, from, to).await?;
@@ -26024,6 +25947,16 @@ impl MemoryDB {
         s
     }
 
+    /// The query as a SQL vector literal for a vector channel, or `None` while
+    /// no model is loaded; callers then run their keyword channel alone.
+    fn query_vector_sql(&self, query: &str) -> Result<Option<String>, WenlanError> {
+        if !self.embedder_ready() {
+            return Ok(None);
+        }
+        let embedding = self.get_or_compute_embedding(query)?;
+        Ok(Some(Self::vec_to_sql(&embedding)))
+    }
+
     /// Get embedding from cache, or compute and cache it.
     fn get_or_compute_embedding(&self, text: &str) -> Result<Vec<f32>, WenlanError> {
         {
@@ -26032,9 +25965,10 @@ impl MemoryDB {
                 return Ok(cached);
             }
         }
-        let embedder = self.embedder.as_ref().ok_or_else(|| {
-            WenlanError::Embedding("embedding_unavailable_in_repair_mode".to_string())
-        })?;
+        let embedder = self
+            .embedder
+            .get()
+            .ok_or_else(embedding_model_unavailable)?;
         let mut embedder = embedder.lock().unwrap();
         let embeddings = embedder
             .embed(vec![text], None)
@@ -26064,7 +25998,7 @@ impl MemoryDB {
                 return Ok(Some(cached));
             }
         }
-        let Some(embedder) = self.embedder.as_ref() else {
+        let Some(embedder) = self.embedder.get() else {
             return Ok(None);
         };
         let mut embedder = match embedder.try_lock() {
@@ -26087,9 +26021,58 @@ impl MemoryDB {
         Ok(Some(embedding))
     }
 
+    /// True once the embedding model is loaded. A daemon opened without it
+    /// (see [`MemoryEmbeddingRecovery::Deferred`]) serves keyword-only search
+    /// and stores rows with no vector until [`Self::load_embedder`] succeeds.
+    pub fn embedder_ready(&self) -> bool {
+        self.embedder.get().is_some()
+    }
+
+    /// Why the embedding model last failed to load, while it is not loaded.
+    pub fn embedder_load_error(&self) -> Option<String> {
+        if self.embedder_ready() {
+            return None;
+        }
+        self.embedder_load_error
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Load the embedding model for a database opened without it. `db_path`
+    /// is the directory the database was opened at, whose FastEmbed cache the
+    /// open used. Returns `Ok(true)` when this call installed the model and
+    /// `Ok(false)` when it was already loaded. Rows written meanwhile have no
+    /// vector; the caller then requests the null-embedding recovery.
+    pub async fn load_embedder(&self, db_path: &Path) -> Result<bool, WenlanError> {
+        if self.embedder_ready() {
+            return Ok(false);
+        }
+        match load_daemon_text_embedding(db_path).await {
+            Ok(embedder) => {
+                let installed = self
+                    .embedder
+                    .set(Arc::new(std::sync::Mutex::new(embedder)))
+                    .is_ok();
+                *self
+                    .embedder_load_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+                Ok(installed)
+            }
+            Err(error) => {
+                *self
+                    .embedder_load_error
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn shared_embedder_for_test(&self) -> Option<Arc<std::sync::Mutex<TextEmbedding>>> {
-        self.embedder.clone()
+        self.embedder.get().cloned()
     }
 
     #[cfg(test)]
@@ -26103,9 +26086,10 @@ impl MemoryDB {
             return Ok(vec![]);
         }
         let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-        let embedder = self.embedder.as_ref().ok_or_else(|| {
-            WenlanError::Embedding("embedding_unavailable_in_repair_mode".to_string())
-        })?;
+        let embedder = self
+            .embedder
+            .get()
+            .ok_or_else(embedding_model_unavailable)?;
         let mut embedder = embedder.lock().unwrap();
         embedder
             .embed(text_refs, None)
@@ -26123,9 +26107,11 @@ impl MemoryDB {
         if texts.is_empty() {
             return Ok(vec![]);
         }
-        let embedder = self.embedder.clone().ok_or_else(|| {
-            WenlanError::Embedding("embedding_unavailable_in_repair_mode".to_string())
-        })?;
+        let embedder = self
+            .embedder
+            .get()
+            .cloned()
+            .ok_or_else(embedding_model_unavailable)?;
         tokio::task::spawn_blocking(move || {
             let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
             let mut embedder = embedder
@@ -26876,6 +26862,12 @@ impl MemoryDB {
             exclude_source_ids.len(),
             "check_novelty_batch: contents and exclude_source_ids must be parallel"
         );
+        // No model loaded yet (first start offline): the near-duplicate check
+        // cannot run, and failing closed would refuse every write until the
+        // download succeeds. Writes go through; duplicates are caught later.
+        if !self.embedder_ready() {
+            return Ok(vec![None; contents.len()]);
+        }
         let embeddings = self.generate_embeddings(contents).map_err(|e| {
             log::error!(
                 "[quality_gate] batch embedding failed for {} docs (fail closed): {e}",
@@ -26939,6 +26931,10 @@ impl MemoryDB {
         content: &str,
         exclude_source_id: Option<&str>,
     ) -> Result<Option<(String, f64)>, WenlanError> {
+        // See `check_novelty_batch`: no model yet means no duplicate check.
+        if !self.embedder_ready() {
+            return Ok(None);
+        }
         let embedding = self.get_or_compute_embedding(content).map_err(|e| {
             log::error!("[quality_gate] embedding failed (fail closed): {e}");
             e
@@ -27686,7 +27682,11 @@ impl MemoryDB {
         }
 
         // Generate embeddings for all memory rows
-        let embeddings: Vec<Option<Vec<f32>>> = if defer_embeddings {
+        // Without a loaded model (a daemon still waiting for its first
+        // download) rows are stored with no vector, exactly like a deferred
+        // import, and the null-embedding recovery fills them in later.
+        let model_ready = self.embedder_ready();
+        let embeddings: Vec<Option<Vec<f32>>> = if defer_embeddings || !model_ready {
             vec![None; memory_rows.len()]
         } else {
             self.generate_embeddings(&chunk_texts)?
@@ -27703,6 +27703,12 @@ impl MemoryDB {
         }
 
         // Embed all child texts in ONE model pass (T15a; empty when flag OFF).
+        // The opt-in fact channel's child vectors have no recovery pass; a
+        // write with no model skips them rather than failing the parent row.
+        if !model_ready {
+            child_rows.clear();
+            child_texts.clear();
+        }
         let child_embeddings = if child_texts.is_empty() {
             Vec::new()
         } else {
@@ -28293,8 +28299,7 @@ impl MemoryDB {
         source_filter: Option<&str>,
         scope: &ReadScope,
     ) -> Result<Vec<SearchResult>, WenlanError> {
-        let embedding = self.get_or_compute_embedding(query)?;
-        let vec_str = Self::vec_to_sql(&embedding);
+        let query_vector = self.query_vector_sql(query)?;
         let fetch_limit = (limit * 3) as i64;
 
         let conn = self.conn.lock().await;
@@ -28326,9 +28331,9 @@ impl MemoryDB {
             "AND c.pending_revision = 0 AND COALESCE(c.supersede_mode, '') <> 'evicted' AND {hidden_by_superseder}"
         );
 
-        // --- Vector search ---
+        // --- Vector search (skipped while no model is loaded) ---
         let mut vector_results: Vec<SearchResult> = Vec::new();
-        {
+        if let Some(vec_str) = query_vector.as_ref() {
             // Renumber placeholders: ?1 = vec_str, ?2 = fetch_limit, ?3.. = filters.
             let mut vec_where_parts: Vec<String> = Vec::new();
             let mut param_idx = 3usize;
@@ -28616,14 +28621,19 @@ impl MemoryDB {
         allow_graph_stream: bool,
     ) -> Result<Vec<SearchResult>, WenlanError> {
         let t_embed = std::time::Instant::now();
-        let embedding = self.get_or_compute_embedding(query)?;
+        let query_vector = self.query_vector_sql(query)?;
         let embed_ms = t_embed.elapsed().as_millis();
         log::warn!(
             "[memory_db] timing: embed={}ms ({})",
             embed_ms,
-            if embed_ms > 5 { "miss" } else { "hit" }
+            if query_vector.is_none() {
+                "no model"
+            } else if embed_ms > 5 {
+                "miss"
+            } else {
+                "hit"
+            }
         );
-        let vec_str = Self::vec_to_sql(&embedding);
         let fetch_limit = (limit * 3) as i64;
 
         let t_lock = std::time::Instant::now();
@@ -28708,9 +28718,9 @@ impl MemoryDB {
              AND {hidden_by_superseder}"
         );
 
-        // --- Vector search ---
+        // --- Vector search (skipped while no model is loaded) ---
         let mut vector_results: Vec<SearchResult> = Vec::new();
-        {
+        if let Some(vec_str) = query_vector {
             // Renumber placeholders: ?1 = vector, ?2 = limit, ?3.. = filters
             // Each condition may have multiple ? placeholders (e.g. IN (?,?,?))
             let mut vec_where_parts: Vec<String> = Vec::new();
@@ -29556,15 +29566,14 @@ impl MemoryDB {
         limit: usize,
         scope: &ReadScope,
     ) -> Result<Vec<SearchResult>, WenlanError> {
-        let embedding = self.get_or_compute_embedding(query)?;
-        let vec_str = Self::vec_to_sql(&embedding);
+        let query_vector = self.query_vector_sql(query)?;
         let fetch_limit = (limit * 3) as i64;
 
         let conn = self.conn.lock().await;
 
-        // --- Vector search (episode-scoped) ---
+        // --- Vector search (episode-scoped; skipped while no model is loaded) ---
         let mut vector_results: Vec<SearchResult> = Vec::new();
-        {
+        if let Some(vec_str) = query_vector.as_ref() {
             let projection =
                 "SELECT c.id, c.content, c.source, c.source_id, c.title, c.summary, c.url, c.chunk_index, c.last_modified, c.chunk_type, c.language, c.byte_start, c.byte_end, c.semantic_unit, c.memory_type, c.space, c.source_agent, c.confidence, c.confirmed, c.stability, c.supersedes, c.entity_id, c.quality, c.is_recap, c.supersede_mode, c.structured_fields, c.retrieval_cue, c.source_text, c.version, c.pending_revision,
                         vector_distance_cos(c.embedding, vector32(?1)),
@@ -29735,6 +29744,10 @@ impl MemoryDB {
     ) -> Result<Vec<SearchResult>, WenlanError> {
         use crate::retrieval::fact_channel::{max_pool_by_parent, ChildHit};
 
+        // Vector-only channel: nothing to add while no model is loaded.
+        if !self.embedder_ready() {
+            return Ok(Vec::new());
+        }
         let embedding = self.get_or_compute_embedding(query)?;
         let vec_str = Self::vec_to_sql(&embedding);
         let fetch_limit = (pool * 3) as i64;
@@ -31765,6 +31778,10 @@ impl MemoryDB {
         query: &str,
         limit: usize,
     ) -> Result<Vec<EntitySearchResult>, WenlanError> {
+        // Vector-only: no matches while no model is loaded.
+        if !self.embedder_ready() {
+            return Ok(Vec::new());
+        }
         let embedding = self.get_or_compute_embedding(query)?;
         self.search_entities_by_embedding(&embedding, limit).await
     }
@@ -32396,6 +32413,10 @@ impl MemoryDB {
         k: usize,
         scope: &ReadScope,
     ) -> Result<Vec<SummaryNode>, WenlanError> {
+        // Vector-only: no summary nodes while no model is loaded.
+        if !self.embedder_ready() {
+            return Ok(Vec::new());
+        }
         let embedding = self.get_or_compute_embedding(query)?;
         let vec_str = Self::vec_to_sql(&embedding);
         let fetch_limit = (k.max(1) * 3) as i64;
@@ -36782,8 +36803,9 @@ impl MemoryDB {
         let now = chrono::Utc::now().timestamp();
         let now_iso = chrono::Utc::now().to_rfc3339();
 
-        let embedding = self.get_or_compute_embedding(name)?;
-        let vec_str = Self::vec_to_sql(&embedding);
+        // No vector while no model is loaded; the page-embedding backfill
+        // fills the shadow page in once it is.
+        let vec_str = self.query_vector_sql(name)?;
 
         let conn = self.conn.lock().await;
         conn.execute("BEGIN", ())
@@ -36814,7 +36836,7 @@ impl MemoryDB {
                 entity_type,
                 confidence,
                 false,
-                Some(&vec_str),
+                vec_str.as_deref(),
                 space,
                 source_agent,
                 &aliases_json,
@@ -55238,6 +55260,13 @@ impl MemoryDB {
 
     /// Archive a page (set status to 'archived').
     pub async fn archive_page(&self, id: &str) -> Result<(), WenlanError> {
+        self.archive_page_versioned(id).await.map(|_| ())
+    }
+
+    /// [`Self::archive_page`], returning the version the archive produced, or
+    /// `None` when the page was not active and nothing changed. The projection
+    /// uses it to tell the archived file from one a later restore wrote.
+    pub async fn archive_page_versioned(&self, id: &str) -> Result<Option<i64>, WenlanError> {
         let now = chrono::Utc::now();
         let now_rfc3339 = now.to_rfc3339();
         let now_ts = now.timestamp();
@@ -55253,12 +55282,27 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("archive_page: {e}")))?;
-        if affected == 1 {
-            Self::append_page_history(&conn, id, "archive", now_ts)
-                .await
-                .map_err(|e| WenlanError::VectorDb(format!("archive_page history: {e}")))?;
+        if affected != 1 {
+            return Ok(None);
         }
-        Ok(())
+        Self::append_page_history(&conn, id, "archive", now_ts)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page history: {e}")))?;
+        // Same connection guard as the update, so no other write lands between.
+        let mut rows = conn
+            .query(
+                "SELECT version FROM pages WHERE id = ?1",
+                libsql::params![id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page version: {e}")))?;
+        let row = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page version row: {e}")))?;
+        row.map(|row| row.get::<i64>(0))
+            .transpose()
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page version value: {e}")))
     }
 
     pub async fn accept_page_merge(
@@ -56030,7 +56074,8 @@ impl MemoryDB {
         workspace: Option<&str>,
         limit: usize,
     ) -> Result<Vec<(String, String)>, WenlanError> {
-        if limit == 0 {
+        // Vector-only: no suggestions while no model is loaded.
+        if limit == 0 || !self.embedder_ready() {
             return Ok(vec![]);
         }
 
@@ -56960,8 +57005,7 @@ impl MemoryDB {
         strict_scan: bool,
     ) -> Result<Vec<Page>, WenlanError> {
         // Embed query before acquiring conn lock (same pattern as search_memory)
-        let embedding = self.get_or_compute_embedding(query)?;
-        let vec_str = Self::vec_to_sql(&embedding);
+        let query_vector = self.query_vector_sql(query)?;
         let fetch_limit = (limit * 3) as i64;
 
         let conn = self.conn.lock().await;
@@ -57012,57 +57056,60 @@ impl MemoryDB {
              WHERE c.status = 'active'{type_clause}{entity_clause}",
             concept_select,
         );
-        let vec_result = if let Some(pt) = page_type {
-            conn.query(
-                &vec_sql,
-                libsql::params![vec_str.clone(), fetch_limit, pt.to_string()],
-            )
-            .await
-        } else {
-            conn.query(&vec_sql, libsql::params![vec_str, fetch_limit])
+        // Skipped while no model is loaded; the FTS channel below still runs.
+        if let Some(vec_str) = query_vector {
+            let vec_result = if let Some(pt) = page_type {
+                conn.query(
+                    &vec_sql,
+                    libsql::params![vec_str.clone(), fetch_limit, pt.to_string()],
+                )
                 .await
-        };
-        match vec_result {
-            Ok(mut rows) => loop {
-                let row = match rows.next().await {
-                    Ok(Some(row)) => row,
-                    Ok(None) => break,
-                    Err(e) if strict_scan => {
-                        return Err(WenlanError::VectorDb(format!(
-                            "search_pages vector row scan: {e}"
-                        )));
+            } else {
+                conn.query(&vec_sql, libsql::params![vec_str, fetch_limit])
+                    .await
+            };
+            match vec_result {
+                Ok(mut rows) => loop {
+                    let row = match rows.next().await {
+                        Ok(Some(row)) => row,
+                        Ok(None) => break,
+                        Err(e) if strict_scan => {
+                            return Err(WenlanError::VectorDb(format!(
+                                "search_pages vector row scan: {e}"
+                            )));
+                        }
+                        Err(e) => {
+                            log::warn!("[search_pages] row scan aborted early: {e}");
+                            break;
+                        }
+                    };
+                    match Self::row_to_page(&row) {
+                        Ok(page) => {
+                            let distance: f64 = match row.get(23) {
+                                Ok(d) => d,
+                                Err(e) if strict_scan => {
+                                    return Err(WenlanError::VectorDb(format!(
+                                        "search_pages vector distance: {e}"
+                                    )));
+                                }
+                                Err(_) => 1.0,
+                            };
+                            let id = page.id.clone();
+                            vector_results.push((id, distance, page));
+                        }
+                        Err(e) if strict_scan => {
+                            return Err(WenlanError::VectorDb(format!(
+                                "search_pages vector row decode: {e}"
+                            )));
+                        }
+                        Err(e) => {
+                            log::warn!("[search_pages] skipping malformed vector row: {e}")
+                        }
                     }
-                    Err(e) => {
-                        log::warn!("[search_pages] row scan aborted early: {e}");
-                        break;
-                    }
-                };
-                match Self::row_to_page(&row) {
-                    Ok(page) => {
-                        let distance: f64 = match row.get(23) {
-                            Ok(d) => d,
-                            Err(e) if strict_scan => {
-                                return Err(WenlanError::VectorDb(format!(
-                                    "search_pages vector distance: {e}"
-                                )));
-                            }
-                            Err(_) => 1.0,
-                        };
-                        let id = page.id.clone();
-                        vector_results.push((id, distance, page));
-                    }
-                    Err(e) if strict_scan => {
-                        return Err(WenlanError::VectorDb(format!(
-                            "search_pages vector row decode: {e}"
-                        )));
-                    }
-                    Err(e) => {
-                        log::warn!("[search_pages] skipping malformed vector row: {e}")
-                    }
+                },
+                Err(e) => {
+                    log::warn!("[search_pages] vector search failed: {e}");
                 }
-            },
-            Err(e) => {
-                log::warn!("[search_pages] vector search failed: {e}");
             }
         }
 
@@ -57187,14 +57234,15 @@ impl MemoryDB {
 
     /// Backfill embeddings for pages with NULL embedding column.
     ///
-    /// Called by migration 42 and can be run manually for maintenance.
-    /// Computes embeddings from title + summary (same as insert_page).
+    /// Called by migration 42, and by the daemon once an embedding model that
+    /// was missing at open has loaded. Embeds the same text as `insert_page`
+    /// and never replaces a vector a concurrent write already stored.
     pub async fn backfill_page_embeddings(&self) -> Result<usize, WenlanError> {
         let needs_embed: Vec<(String, String)> = {
             let conn = self.conn.lock().await;
             let mut rows = conn
                 .query(
-                    "SELECT id, title, summary FROM pages \
+                    "SELECT id, title, summary, content FROM pages \
                      WHERE embedding IS NULL AND status != 'draft'",
                     (),
                 )
@@ -57210,10 +57258,12 @@ impl MemoryDB {
                 let id: String = row.get(0).unwrap_or_default();
                 let title: String = row.get(1).unwrap_or_default();
                 let summary: Option<String> = row.get::<String>(2).ok();
-                let embed_text = match summary {
-                    Some(s) if !s.is_empty() => format!("{} {}", title, s),
-                    _ => title,
-                };
+                let content: String = row.get(3).unwrap_or_default();
+                let embed_text = crate::pages::page_embedding_text(
+                    &title,
+                    summary.as_deref().filter(|summary| !summary.is_empty()),
+                    &content,
+                );
                 out.push((id, embed_text));
             }
             out
@@ -57237,7 +57287,7 @@ impl MemoryDB {
             if conn
                 .execute(
                     "UPDATE pages SET embedding = vector32(?1) \
-                     WHERE id = ?2 AND status != 'draft'",
+                     WHERE id = ?2 AND status != 'draft' AND embedding IS NULL",
                     libsql::params![emb_sql, id.clone()],
                 )
                 .await

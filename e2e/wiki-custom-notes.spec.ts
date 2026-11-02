@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {test,expect,type Page} from '@playwright/test';
 import {installTauriMock,collectBrowserErrors} from './tauriMock';
-import {openWikiNote} from './helpers/wikiWorkspace';
+import {leaveHomeForWiki,openWikiNote} from './helpers/wikiWorkspace';
 const titles=['Fixture architecture','Why fixtures stay deterministic','Weekly fixture recap'];
 const ids=['page-architecture','page-errors','page-keyboard'];
 const orderKey='wenlan:wiki-inventory:v1';
-async function boot(page:Page){await page.setViewportSize({width:1280,height:840});const errors=collectBrowserErrors(page);const runtime=await installTauriMock(page,{locale:'en',rawActions:[],preserveLocalStorage:true,localStorage:{'wenlan-theme':'dark','wenlan:recent-pages:v1':JSON.stringify({version:1,entries:ids.map((id,i)=>({id,title:titles[i],visitedAt:Date.now()-i*1000}))})}});await page.goto('/');return {runtime,errors};}
+async function boot(page:Page){await page.setViewportSize({width:1280,height:840});const errors=collectBrowserErrors(page);const runtime=await installTauriMock(page,{locale:'en',rawActions:[],preserveLocalStorage:true,localStorage:{'wenlan-theme':'dark','wenlan:recent-pages:v1':JSON.stringify({version:1,entries:ids.map((id,i)=>({id,title:titles[i],visitedAt:Date.now()-i*1000}))})}});await page.goto('/');await leaveHomeForWiki(page);return {runtime,errors};}
 async function storedOrder(page:Page){return page.evaluate(key=>JSON.parse(localStorage.getItem(key)??'{}').customOrder,orderKey);}
 const rows=(page:Page)=>page.locator('.wiki-recent-note');
 test('custom keeps the selected lower page in place, supports drag and persists after reload',async({page},info)=>{
@@ -15,7 +15,7 @@ test('custom keeps the selected lower page in place, supports drag and persists 
  await page.mouse.move(b.x+b.width/2,b.y+b.height/2);await page.mouse.down();await page.mouse.move(b.x+b.width/2,target.y+5,{steps:8});
  await expect(source).toHaveClass(/is-dragging/);expect((await source.boundingBox())!.y).toBeLessThan(sb.y-20);expect(await storedOrder(page)).toEqual(ids);await page.screenshot({path:info.outputPath('drag.png')});await page.mouse.up();
  await expect(rows(page)).toHaveText([titles[2],titles[0],titles[1]]);await expect.poll(()=>storedOrder(page)).toEqual([ids[2],ids[0],ids[1]]);await expect(rows(page).last()).toHaveAttribute('aria-current','page');
- await page.reload();await expect(mode).toHaveValue('custom');await expect(rows(page)).toHaveText([titles[2],titles[0],titles[1]]);
+ await page.reload();await leaveHomeForWiki(page);await expect(mode).toHaveValue('custom');await expect(rows(page)).toHaveText([titles[2],titles[0],titles[1]]);
  const firstGrip=page.locator('.wiki-recent-note-grip').first();await firstGrip.focus();await page.keyboard.press('ArrowDown');await expect(rows(page)).toHaveText([titles[0],titles[2],titles[1]]);await expect(page.locator('.note-tabs-list')).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Drag to reorder Weekly fixture recap',exact:true})).toBeFocused();
  await page.keyboard.press('ArrowUp');await expect(rows(page)).toHaveText([titles[2],titles[0],titles[1]]);await page.keyboard.press('ArrowDown');await expect(rows(page)).toHaveText([titles[0],titles[2],titles[1]]);

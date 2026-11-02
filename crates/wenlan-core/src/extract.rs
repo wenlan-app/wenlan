@@ -202,16 +202,22 @@ impl LlmEngine {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let prompt = format!(
-            "<|im_start|>system\n\
-             {sys}\n\
-             <|im_end|>\n\
-             <|im_start|>user\n\
-             {numbered}\n\
-             <|im_end|>\n\
-             <|im_start|>assistant\n",
-            sys = self.prompts().extract_knowledge_graph,
-        );
+        let system = &self.prompts().extract_knowledge_graph;
+        // Models with their own chat template need it; the ChatML text below
+        // stays byte-for-byte what the measured Qwen models have always seen.
+        let prompt = if self.uses_model_template() {
+            self.format_prompt(Some(system), &numbered)
+        } else {
+            format!(
+                "<|im_start|>system\n\
+                 {system}\n\
+                 <|im_end|>\n\
+                 <|im_start|>user\n\
+                 {numbered}\n\
+                 <|im_end|>\n\
+                 <|im_start|>assistant\n"
+            )
+        };
 
         let empty_result = |idx: usize| KgExtractionResult {
             index: idx,

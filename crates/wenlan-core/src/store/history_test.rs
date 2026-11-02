@@ -304,3 +304,54 @@ fn every_field_round_trips() {
     assert_eq!(replayed.receipt, entry.receipt);
     assert_eq!(replayed.data, entry.data);
 }
+
+/// A line as a newer Wenlan would write it: it passes its check, but its
+/// actor kind is one this build does not know.
+fn newer_line(seq: u64) -> Vec<u8> {
+    let json = serde_json::to_vec(&serde_json::json!({
+        "seq": seq,
+        "ts": NOV,
+        "tx": seq,
+        "actor": {"kind": "robot"},
+        "op": "page.write",
+    }))
+    .unwrap();
+    let mut line = json.clone();
+    line.pop();
+    line.extend_from_slice(CRC_PREFIX);
+    line.extend_from_slice(crc_of(&json).as_bytes());
+    line.extend_from_slice(b"\"}\n");
+    line
+}
+
+#[test]
+fn a_line_a_newer_build_wrote_is_kept_and_the_log_will_not_append() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut log, _) = HistoryLog::open(dir.path()).unwrap();
+    log.write(page_write("page_a", 1, "First sentence.", NOV))
+        .unwrap();
+    drop(log);
+
+    let path = log_files(dir.path()).remove(0);
+    let mut bytes = fs::read(&path).unwrap();
+    bytes.extend_from_slice(&newer_line(3));
+    fs::write(&path, &bytes).unwrap();
+
+    let refused = HistoryLog::open(dir.path()).err().expect("open is refused");
+    assert!(
+        matches!(refused, WenlanError::Conflict(ref message) if message.contains("newer Wenlan")),
+        "{refused:?}"
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        bytes,
+        "the newer line is not cut off"
+    );
+
+    let replay = replay(dir.path()).unwrap();
+    assert_eq!(replay.entries.len(), 1, "the older entry still replays");
+    assert_eq!(replay.report.newer_lines.len(), 1);
+    assert_eq!(replay.report.newer_lines[0].line, 3);
+    assert!(replay.report.bad_lines.is_empty());
+    assert!(!replay.report.is_clean());
+}

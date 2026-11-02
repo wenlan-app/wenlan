@@ -30,7 +30,7 @@ test("Wiki -> Spaces -> Space -> Page -> back and Space -> global Topics -> Topi
   await more.click();
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
   await expect(wiki).toHaveAttribute("aria-current", "page");
-  await expect(primaryNavigation.getByRole("button", { name: "Home", exact: true })).toHaveCount(0);
+  await expect(primaryNavigation.getByRole("button", { name: "Home", exact: true })).not.toHaveAttribute("aria-current");
   await expect(more).not.toHaveAttribute("aria-current");
   await page.keyboard.press("Escape");
   await expect(wiki).toHaveAttribute("aria-current", "page");

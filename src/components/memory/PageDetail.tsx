@@ -29,8 +29,6 @@ import {
   recordPageEditorDiagnostic,
   deletePage,
   clipboardWrite,
-  exportPageToObsidian,
-  listRegisteredSources,
   getPageSources,
   reviewPage,
   pageReviewSupported,
@@ -60,7 +58,7 @@ import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
 import ContentRenderer, { EmbedPageContext } from "./ContentRenderer";
-import { PageLengthSwitch, PageReadingLayers, usePageLength } from "./page/PageReadingLayers";
+import { PageReadingLayers, usePageLength } from "./page/PageReadingLayers";
 import { pageLayerOffsets } from "./page/pageLayers";
 import type { PageLayersSettings } from "./editor/pageLayersEditing";
 import type { SentenceProposalSettings } from "./editor/sentenceProposals";
@@ -81,7 +79,6 @@ import { PageLockSwitch } from "./page/PageLockSwitch";
 import { AiUpdateLine } from "./page/AiUpdateLine";
 import { ThisSentence } from "./page/ThisSentence";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
-import { folderName } from "../../lib/dateFormat";
 import { stripLedeLabel } from "../../lib/pageLede";
 import CitationChip from "./page/CitationChip";
 import { PageTour } from "../onboarding/PageTour";
@@ -310,8 +307,6 @@ export default function PageDetail({
   const [wikiLinkPreview, setWikiLinkPreview] = useState<ReferencePreviewRequest | null>(null);
   const wikiLinkPreviewLeaveTimerRef = useRef<number | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
-  const [exported, setExported] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   useEffect(() => setRestoreOpen(false), [pageId]);
@@ -415,6 +410,7 @@ export default function PageDetail({
     setDeleteGuardEntityId(entityId);
   };
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [actionMenuPlacement, setActionMenuPlacement] = useState<{ top: number; right: number } | null>(null);
   const [redistillNotice, setRedistillNotice] = useState<{
     kind: "success" | "warning" | "error";
     message: string;
@@ -622,16 +618,6 @@ export default function PageDetail({
     };
   }, [dismissWikiLinkPreview, editing, pageId]);
 
-  const { data: registeredSources = [] } = useQuery({
-    queryKey: ["registeredSources"],
-    queryFn: () => listRegisteredSources(),
-    staleTime: 30000,
-  });
-
-  const obsidianSources = useMemo(
-    () => registeredSources.filter((s) => s.source_type === "obsidian"),
-    [registeredSources],
-  );
 
   const { data: pageSources, isPending: pageSourcesLoading } = useQuery({
     queryKey: ["page-sources", pageId],
@@ -664,8 +650,9 @@ export default function PageDetail({
       ? [[source.source.memory_source_id, source.memory] as const] : [])),
     sourcesLoading: pageSourcesLoading,
     labels: { page: t("references.page"), memory: t("citation.kind.memory"), source: t("references.source"),
-      authored: t("citation.kind.authored"), unverified: t("citation.unverified") },
-  }), [page?.citations, pageSources, pageSourcesLoading, t]);
+      authored: t("citation.kind.authored"), unverified: t("citation.unverified"), missing: t("references.missingPage") },
+    selfTitle: page?.title,
+  }), [page?.citations, page?.title, pageSources, pageSourcesLoading, t]);
   useEffect(() => {
     // A save can clear or replace the evidence map. Never keep a stale citation open.
     setWikiLinkPreview((current) => current?.target.kind === "citation" ? null : current);
@@ -812,7 +799,6 @@ export default function PageDetail({
     setRedistillNotice(null);
     setReviewNotice(null);
     setActionErrorMessage(null);
-    setExported(false);
     // Inspector open/selected state belongs to the workspace, not this note.
     setCanvasSwitchPending(false);
     canvasSwitchPendingRef.current = false;
@@ -1280,25 +1266,6 @@ export default function PageDetail({
     },
   });
 
-  const handleExportToVault = useCallback(
-    async (vaultPath: string) => {
-      const originPageId = pageId;
-      setActionErrorMessage(null);
-      setExporting(true);
-      try {
-        await exportPageToObsidian(originPageId, `${vaultPath}/Wenlan/pages`);
-        if (activePageIdRef.current !== originPageId) return;
-        setExported(true);
-        setTimeout(() => setExported(false), 2000);
-      } catch {
-        if (activePageIdRef.current !== originPageId) return;
-        setActionErrorMessage(t("pageDetail.exportError"));
-      } finally {
-        setExporting(false);
-      }
-    },
-    [pageId, t],
-  );
 
   const clearConfirmIntent = () => {
     confirmIntentRef.current = null;
@@ -1954,6 +1921,10 @@ export default function PageDetail({
 
   const openActionMenu = (initialFocus: MenuInitialFocus) => {
     actionMenuInitialFocusRef.current = initialFocus;
+    // In the top bar the menu drops below the trigger on its own layer, since
+    // the bar clips (and would scroll to) anything that hangs out of it.
+    const trigger = documentToolsHost ? actionMenuTriggerRef.current?.getBoundingClientRect() : undefined;
+    setActionMenuPlacement(trigger ? { top: trigger.bottom + 4, right: Math.max(8, window.innerWidth - trigger.right) } : null);
     setActionMenuOpen(true);
   };
 
@@ -2462,31 +2433,10 @@ export default function PageDetail({
     <SidebarSimple aria-hidden="true" size={18} style={{transform:"scaleX(-1)"}} />
   </button>;
 
-  const documentTools = (
-    <div className="page-document-tools">
-      {!documentToolsHost && inspectorToggle}
-      {hideOuterTitleWhileEditing && canRenamePage && (
-        <button
-          aria-label={t("pageDetail.renamePage")}
-          className="mem-icon-action page-detail-title-action"
-          disabled={titleRenameDisabled || renaming}
-          onClick={() => void renameFromTitle()}
-          title={t("pageDetail.renamePage")}
-          type="button"
-        >
-          <PencilSimple aria-hidden="true" size={16} />
-        </button>
-      )}
-      <WorkspaceBackButton
-          aria-label={t("main.back")}
-          className="mem-icon-action"
-          onClick={requestBack}
-          type="button"
-        >
-          <ArrowLeft aria-hidden="true" size={16} />
-        </WorkspaceBackButton>
-      {/* The example wiki is for looking at: nothing in it can be moved, renamed or deleted. */}
-      {!exampleWiki && (
+  // The example wiki is for looking at: nothing in it can be moved, renamed or deleted.
+  // Page actions sit in the top bar beside the page sidebar toggle, as Obsidian's
+  // view header does; the title row keeps only the title.
+  const actionsMenu = exampleWiki ? null : (
       <div className="page-detail-actions-anchor" ref={actionMenuRef}>
                 <button
                   ref={actionMenuTriggerRef}
@@ -2520,6 +2470,7 @@ export default function PageDetail({
                   <div
                     aria-label={t("pageDetail.actions")}
                     className="mem-popover-surface page-detail-actions-menu"
+                    style={actionMenuPlacement ? { position: "fixed", top: actionMenuPlacement.top, right: actionMenuPlacement.right } : undefined}
                     data-keyboard-navigation={actionMenuKeyboardNavigation ? "true" : "false"}
                     onKeyDown={(event) => {
                       setActionMenuKeyboardNavigation(true);
@@ -2540,17 +2491,28 @@ export default function PageDetail({
                         {t("pageDetail.editPage")}
                       </button>
                     ) : null}
-                    {!editing && !showCanvas && canRenamePage ? (
+                    {!showCanvas && canRenamePage && (!editing || hideOuterTitleWhileEditing) ? (
                       <button
-                        disabled={renaming || renameDisabled}
+                        disabled={renaming || (editing ? titleRenameDisabled : renameDisabled)}
                         onClick={() => {
                           closeActionMenu();
-                          startRename();
+                          if (editing) void renameFromTitle(); else startRename();
                         }}
                         role="menuitem"
                         type="button"
                       >
                         {t("pageDetail.renamePage")}
+                      </button>
+                    ) : null}
+                    {pageHasTwoLengths && !showCanvas ? (
+                      <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={pageLength === "short"}
+                        onClick={() => { closeActionMenu(); choosePageLength(pageLength === "short" ? "full" : "short"); }}
+                      >
+                        {t("pageLayers.summaryView")}
+                        <span aria-hidden="true" className="page-detail-menu-check">{pageLength === "short" ? "✓" : ""}</span>
                       </button>
                     ) : null}
                     {/* Re-distill rebuilds a page from its sources; a page
@@ -2570,34 +2532,6 @@ export default function PageDetail({
                           ? t("pageDetail.redistillingPage")
                           : t("pageDetail.redistillPage")}
                     </button> : null}
-                    {obsidianSources.length === 0 ? (
-                      <button
-                        className="page-detail-mobile-menu-item"
-                        disabled
-                        role="menuitem"
-                        type="button"
-                      >
-                        {t("pageDetail.exportToObsidian")}
-                      </button>
-                    ) : (
-                      obsidianSources.map((source) => (
-                        <button
-                          className="page-detail-mobile-menu-item"
-                          disabled={storedActionPending || exporting || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive}
-                          key={source.id}
-                          onClick={() => {
-                            setActionMenuOpen(false);
-                            void handleExportToVault(source.path);
-                          }}
-                          role="menuitem"
-                          type="button"
-                        >
-                          {exported ? t("pageDetail.exported") : obsidianSources.length === 1
-                            ? t("pageDetail.exportToObsidian")
-                            : t("pageDetail.exportToVault", { vault: folderName(source.path) })}
-                        </button>
-                      ))
-                    )}
                     {canArchivePage(page) && (
                       <button
                         className="page-detail-mobile-menu-item"
@@ -2623,14 +2557,39 @@ export default function PageDetail({
                   </div>
                 ) : null}
               </div>
+  );
+
+  const documentTools = (
+    <div className="page-document-tools">
+      {!documentToolsHost && inspectorToggle}
+      {!documentToolsHost && hideOuterTitleWhileEditing && canRenamePage && (
+        <button
+          aria-label={t("pageDetail.renamePage")}
+          className="mem-icon-action page-detail-title-action"
+          disabled={titleRenameDisabled || renaming}
+          onClick={() => void renameFromTitle()}
+          title={t("pageDetail.renamePage")}
+          type="button"
+        >
+          <PencilSimple aria-hidden="true" size={16} />
+        </button>
       )}
+      <WorkspaceBackButton
+          aria-label={t("main.back")}
+          className="mem-icon-action"
+          onClick={requestBack}
+          type="button"
+        >
+          <ArrowLeft aria-hidden="true" size={16} />
+        </WorkspaceBackButton>
+      {!documentToolsHost && actionsMenu}
     </div>
   );
 
 
   return (
     <div className={`page-detail document-context-host${infoOpen || showCanvas ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && (infoOpen || showCanvas) ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
-      {documentToolsHost && createPortal(inspectorToggle, documentToolsHost)}
+      {documentToolsHost && createPortal(<>{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
       {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
         {page.status === "archived" && <div className="wiki-archive-notice" role="status">
@@ -3071,7 +3030,6 @@ export default function PageDetail({
               {editorSessionId && (
                 <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}>
                 {hideOuterTitleWhileEditing && <><h1 className="sr-only">{page.title}</h1>{documentTools}</>}
-                {pageHasTwoLengths && <PageLengthSwitch length={pageLength} onChoose={choosePageLength} />}
                 <MarkdownEditor
                   ref={editorRef}
                   pageLayers={editorPageLayers}
@@ -3169,6 +3127,8 @@ export default function PageDetail({
               )}
               <PageReadingLayers
                 content={displayContent}
+                length={pageLength}
+                onChoose={choosePageLength}
                 renderBody={(markdown) => (
                   <ContentRenderer
                     content={markdown}

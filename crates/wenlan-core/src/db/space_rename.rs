@@ -1,16 +1,15 @@
-//! S0-162: renaming a space closes over every space-keyed row M6 genesis can
-//! reach.
+//! S0-162: renaming a space closes over every space-keyed grouping row.
 //!
 //! `update_space` cascades over `memories`, `entities`, and `pages`/`workspace`
-//! and historically stopped there, while the M4 community substrate and the M6
-//! genesis substrate key on the same mutable string. A stale name is not
+//! and historically stopped there, while the M4 community substrate keys on
+//! the same mutable string. A stale name is not
 //! self-healing: the scheduler claims dirty spaces with
 //! `SELECT space FROM space_graph_state WHERE dirty = 1` and no join to a live
 //! `spaces` row (`db/community_grouping_state.rs:84`), so an orphaned row can be
 //! selected indefinitely.
 //!
 //! The postcondition is S0-162's, stated over rows rather than over statements:
-//! after a rename, no M6-reachable row names a space that does not resolve.
+//! after a rename, no grouping row names a space that does not resolve.
 //! Every row keyed by the old name is either updated to the new name or retired.
 //!
 //! One space-keyed table is deliberately excluded and the exclusion is the scope
@@ -51,11 +50,7 @@ use crate::WenlanError;
 ///
 /// Rows that predate the rename are orphans by construction. `spaces.name` is
 /// UNIQUE, so a rename to a live space fails before the cascade runs and any
-/// surviving community row under that name names no live space. The genesis
-/// rows are different: they carry permanent provenance/coverage and may never
-/// be retired merely because their space name does not currently resolve. The
-/// destination fence below therefore refuses the entire rename when any such
-/// row exists.
+/// surviving community row under that name names no live space.
 const CLOSURE: &[(&str, bool)] = &[
     ("communities", false),
     ("community_members", true),
@@ -77,72 +72,6 @@ const CLOSURE: &[(&str, bool)] = &[
     ("community_reader_space_proof", true),
     ("community_publication_receipts", true),
     ("edges", false),
-    // PR-A's own genesis substrate (migration 108). Empty in this build, but
-    // the postcondition is stated over M6-reachable rows and these are the most
-    // M6-reachable rows there are; leaving them out would mean the rung that
-    // starts writing them has to remember to come back.
-    ("genesis_candidates", false),
-    ("genesis_coverage_state", true),
-    ("genesis_group_coverage", true),
-    ("genesis_frontier", true),
-    // Migration 109 completes the M6 substrate. Relevance rows and refresh
-    // jobs are re-derivable; human decisions, readiness evidence, exact
-    // dependency snapshots, retained subscriptions, and monotone counters are
-    // permanent and are fenced below before any destination cleanup occurs.
-    ("m6_pair_stats", true),
-    ("m6_adjacency", true),
-    ("genesis_refresh_jobs", false),
-    ("m6_refresh_dependencies", true),
-    ("m6_readiness", true),
-    ("m6_readiness_soak_receipts", true),
-    ("genesis_suppression", true),
-    ("genesis_card_binding", true),
-    ("genesis_quarantine", true),
-    ("m6_overview_subscriptions", false),
-    ("m6_counters", false),
-];
-
-const PERMANENT_GENESIS_TABLES: &[&str] = &[
-    "genesis_candidates",
-    "genesis_coverage_state",
-    "genesis_group_coverage",
-    "genesis_frontier",
-    "m6_refresh_dependencies",
-    "m6_readiness",
-    "m6_readiness_soak_receipts",
-    "genesis_suppression",
-    "genesis_card_binding",
-    "genesis_quarantine",
-    "m6_overview_subscriptions",
-    "m6_counters",
-];
-
-/// Re-derivable rows whose `space` is not part of their primary key. They do
-/// not collide mechanically with the renamed source row, but leaving an orphan
-/// under the destination name would make unrelated stale work live when the
-/// space rename creates that name.
-const DESTINATION_ORPHANS_TO_RETIRE: &[&str] = &["genesis_refresh_jobs"];
-
-/// Permanent M6 rows a merge leaves under the source name (a rename still
-/// moves them). `genesis_coverage_state` and `m6_counters` carry `spaces.id`:
-/// migration 109's identity triggers (`m6/remaining_substrate.rs`) refuse an
-/// `UPDATE … SET space` to a name whose `spaces.id` differs from the row's
-/// `space_id`, and refuse every `DELETE`, so a merge into a live space can
-/// neither move nor retire them. `m6_readiness` and its soak receipts are
-/// per-space operational phase, not history: the genesis shadow loop stamps
-/// an epoch-0 `off` readiness row on every space it visits
-/// (`m6/evidence.rs` `note_shadow_readiness`), so refusing on it would refuse
-/// nearly every merge, and moving the source's phase onto a target that
-/// already runs its own would be wrong either way (the soak-receipt fence in
-/// `m6/refresh_readiness.rs` keys receipts to their readiness row, so both
-/// stay together). Leaving them is the retained-proof posture
-/// `delete_space(_, "keep")` already has, locked by
-/// `delete_keep_cannot_authorize_proof_parking_and_zero_reset`.
-const MERGE_RETAINED_TABLES: &[&str] = &[
-    "genesis_coverage_state",
-    "m6_counters",
-    "m6_readiness",
-    "m6_readiness_soak_receipts",
 ];
 
 /// Rewrite every space-keyed row from `old_name` to `new_name` inside the
@@ -156,45 +85,6 @@ pub(super) async fn cascade_space_rename(
 ) -> Result<(), WenlanError> {
     // Table names come from `CLOSURE`, never from a caller; the space names are
     // parameterized.
-    for table in PERMANENT_GENESIS_TABLES {
-        let mut rows = tx
-            .query(
-                &format!("SELECT 1 FROM {table} WHERE space = ?1 LIMIT 1"),
-                libsql::params![new_name],
-            )
-            .await
-            .map_err(|e| {
-                WenlanError::VectorDb(format!(
-                    "update_space inspect destination genesis {table}: {e}"
-                ))
-            })?;
-        if rows
-            .next()
-            .await
-            .map_err(|e| {
-                WenlanError::VectorDb(format!(
-                    "update_space inspect destination genesis {table}: {e}"
-                ))
-            })?
-            .is_some()
-        {
-            return Err(WenlanError::Validation(format!(
-                "destination genesis table {table} already has rows for space {new_name:?}"
-            )));
-        }
-    }
-
-    for table in DESTINATION_ORPHANS_TO_RETIRE {
-        tx.execute(
-            &format!("DELETE FROM {table} WHERE space = ?1"),
-            libsql::params![new_name],
-        )
-        .await
-        .map_err(|e| {
-            WenlanError::VectorDb(format!("update_space retire orphan {table} rows: {e}"))
-        })?;
-    }
-
     for (table, space_in_primary_key) in CLOSURE {
         if !space_in_primary_key {
             continue;
@@ -222,7 +112,7 @@ pub(super) async fn cascade_space_rename(
 /// `agent_sessions.space` is the Space of a session's first write, and
 /// `session_reads.space` the Space a read was scoped to. They follow a rename
 /// or merge like the rows they describe, outside `CLOSURE` because they hold
-/// no grouping or genesis state.
+/// no grouping state.
 async fn cascade_agent_sessions(
     tx: &libsql::Transaction,
     old_name: &str,
@@ -249,32 +139,14 @@ async fn cascade_agent_sessions(
 /// destination has rows of its own that must survive, so nothing under
 /// `target_name` is retired. Over the same `CLOSURE`, per table: `edges` are
 /// re-keyed to the target; `communities` are retired the way
-/// `finalize_community_grouping` retires a superseded generation; re-derivable
-/// community/genesis control rows are dropped; permanent genesis rows move
-/// only when the target holds none (a merge must not splice two spaces'
-/// histories, so both sides carrying rows refuses the whole operation before
-/// anything is written); `MERGE_RETAINED_TABLES` stay under the source name.
-/// Finally the target
-/// is marked dirty so grouping re-runs over the merged input.
+/// `finalize_community_grouping` retires a superseded generation; the
+/// re-derivable community control rows are dropped. Finally the target is
+/// marked dirty so grouping re-runs over the merged input.
 pub(super) async fn cascade_space_merge(
     tx: &libsql::Transaction,
     old_name: &str,
     target_name: &str,
 ) -> Result<(), WenlanError> {
-    for table in PERMANENT_GENESIS_TABLES {
-        if MERGE_RETAINED_TABLES.contains(table) {
-            continue;
-        }
-        if has_rows_naming(tx, table, old_name).await?
-            && has_rows_naming(tx, table, target_name).await?
-        {
-            return Err(WenlanError::Validation(format!(
-                "both {old_name:?} and {target_name:?} carry permanent genesis rows in {table}; \
-                 refusing to merge their histories"
-            )));
-        }
-    }
-
     // `edges` goes first, out of CLOSURE order: `m4_grouping_edge_update`
     // (db.rs `m4_grouping_edge_update`) re-materialises the `space_graph_state`
     // row of OLD.space when a grounded edge changes space, so that row can only
@@ -301,22 +173,9 @@ pub(super) async fn cascade_space_merge(
                     WenlanError::VectorDb(format!("space merge retire communities: {e}"))
                 })?;
             }
-            table if MERGE_RETAINED_TABLES.contains(&table) => {}
-            table if PERMANENT_GENESIS_TABLES.contains(&table) => {
-                tx.execute(
-                    &format!("UPDATE {table} SET space = ?1 WHERE space = ?2"),
-                    libsql::params![target_name, old_name],
-                )
-                .await
-                .map_err(|e| WenlanError::VectorDb(format!("space merge cascade {table}: {e}")))?;
-            }
             // Everything else in CLOSURE is re-derivable control state
-            // (memberships, route inputs, leases, receipts, pair stats, jobs):
-            // dropped, and rebuilt by the target's next grouping pass. A new
-            // CLOSURE table that must survive a merge belongs in
-            // `PERMANENT_GENESIS_TABLES` (or `MERGE_RETAINED_TABLES`), which
-            // `permanent_destination_fence_covers_retained_migration_109_history`
-            // pins.
+            // (memberships, route inputs, leases, receipts): dropped, and
+            // rebuilt by the target's next grouping pass.
             table => {
                 tx.execute(
                     &format!("DELETE FROM {table} WHERE space = ?1"),
@@ -344,40 +203,8 @@ pub(super) async fn cascade_space_merge(
     cascade_agent_sessions(tx, old_name, target_name).await
 }
 
-async fn has_rows_naming(
-    tx: &libsql::Transaction,
-    table: &str,
-    space: &str,
-) -> Result<bool, WenlanError> {
-    let mut rows = tx
-        .query(
-            &format!("SELECT 1 FROM {table} WHERE space = ?1 LIMIT 1"),
-            libsql::params![space],
-        )
-        .await
-        .map_err(|e| WenlanError::VectorDb(format!("space merge inspect {table}: {e}")))?;
-    Ok(rows
-        .next()
-        .await
-        .map_err(|e| WenlanError::VectorDb(format!("space merge inspect {table}: {e}")))?
-        .is_some())
-}
-
 /// Every table the closure covers, for the teeth.
 #[cfg(test)]
 pub(super) fn closed_tables() -> Vec<&'static str> {
     CLOSURE.iter().map(|(table, _)| *table).collect()
-}
-
-/// Permanent M6 rows for which a destination-name orphan refuses the rename
-/// instead of being silently discarded.
-#[cfg(test)]
-pub(super) fn permanent_tables() -> Vec<&'static str> {
-    PERMANENT_GENESIS_TABLES.to_vec()
-}
-
-/// Permanent M6 rows a merge leaves under the source name.
-#[cfg(test)]
-pub(super) fn merge_retained_tables() -> Vec<&'static str> {
-    MERGE_RETAINED_TABLES.to_vec()
 }

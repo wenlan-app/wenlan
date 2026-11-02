@@ -87,6 +87,35 @@ pub(crate) fn rename_noreplace(
     }
 }
 
+/// [`rename_noreplace`] without its last-resort probing fallback: only a
+/// native no-replace rename or a hard link, both atomic. Where neither exists
+/// this fails with `Unsupported` instead of risking a replace, for callers
+/// that must never overwrite what a person saved meanwhile.
+pub(crate) fn rename_noreplace_atomic(
+    src_dir: &Dir,
+    src: &str,
+    dst_dir: &Dir,
+    dst: &str,
+) -> io::Result<()> {
+    single_component(src)?;
+    single_component(dst)?;
+    match rename_noreplace_native(src_dir, src, dst_dir, dst) {
+        Err(error) if native_noreplace_unsupported(&error) => {}
+        other => return other,
+    }
+    match rename_noreplace_via_hard_link(src_dir, src, dst_dir, dst) {
+        Err(error)
+            if !matches!(
+                error.kind(),
+                io::ErrorKind::AlreadyExists | io::ErrorKind::NotFound
+            ) =>
+        {
+            Err(io::Error::new(io::ErrorKind::Unsupported, error))
+        }
+        other => other,
+    }
+}
+
 /// `renameat2(RENAME_NOREPLACE)` on Linux and Android, `renameatx_np(RENAME_EXCL)`
 /// on macOS: one syscall that renames only if the destination is absent.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]

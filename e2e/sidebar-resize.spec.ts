@@ -58,7 +58,7 @@ test('drag resize is shared by Wiki Spaces Graph Settings and persists only afte
   await page.locator('[data-sidebar-toggle]').click(); await widthMatches(page, 0);
   await page.locator('[data-sidebar-toggle]').click(); await widthMatches(page, 280);
   await page.reload(); await widthMatches(page, 280);
-  expect((await stored(page)).visible).toEqual(['pages','spaces','graph','sources']);
+  expect((await stored(page)).visible).toEqual(['home','pages','spaces','graph','sources']);
   expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
 

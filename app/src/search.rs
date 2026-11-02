@@ -6966,6 +6966,7 @@ mod status_response_tests {
             },
             reranker_mode: "lite".to_string(),
             on_device_inference: Default::default(),
+            embedding_model: Default::default(),
             capabilities: Vec::new(),
             truth: None,
         };

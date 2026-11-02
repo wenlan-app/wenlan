@@ -55,6 +55,7 @@ import { OWN_IDENTITY, resolveAgentDisplayName } from "../lib/agents";
 import { PlugsConnected } from "@phosphor-icons/react";
 import { ConnectedHint } from "./memory/askAi/ConnectedHint";
 import { rememberAddedFolder } from "./memory/sources/FolderImportOrganize";
+import { reportProblem } from "../lib/problemReport";
 
 // Module-level so each is a stable reference across renders — AnyProviderCard
 // memoizes its preset list on these, and a fresh array literal per render
@@ -249,112 +250,71 @@ function StepShell({
 
 // ── Welcome Step ────────────────────────────────────────────────────────
 
+// Shown only when the boot gate never got an answer from the daemon (a first
+// run goes to NotesWelcome). Whoever lands here has one question, "what do I
+// do now", so it says what happened and offers two ways forward: try again,
+// or report it with the logs that explain why.
 function WelcomeStep({
   onNext,
   hideDots,
-  daemonGateErrored,
 }: {
   onNext: () => void;
   hideDots: boolean;
-  daemonGateErrored: boolean;
 }) {
   const { t } = useTranslation();
+  const [reported, setReported] = useState<"copied" | "opened" | null>(null);
+
+  const report = () => {
+    void reportProblem(t("boot.connectionTitle"))
+      .then((copied) => setReported(copied ? "copied" : "opened"))
+      .catch(() => setReported(null));
+  };
 
   return (
     <StepShell
       hideDots={hideDots}
       activeStep="welcome"
+      leftActions={[{ label: t("boot.reportProblem"), onClick: report }]}
       primaryAction={{ label: t("setup.notesFirst.checkConnection"), onClick: onNext }}
     >
     <div
       className="flex flex-col items-center text-center"
-      style={{ gap: "32px", paddingTop: "80px" }}
+      style={{ gap: "12px", paddingTop: "80px" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-        <h1
-          style={{
-            fontFamily: "var(--mem-font-body)",
-            fontSize: "var(--mem-text-2xl)",
-            fontWeight: 600,
-            color: "var(--mem-text)",
-            letterSpacing: "-0.02em",
-          }}
-        >
-          {daemonGateErrored ? t("boot.connectionTitle") : t("setup.welcomeTitle")}
-        </h1>
-        <p
-          style={{
-            fontFamily: "var(--mem-font-body)",
-            fontSize: "var(--mem-text-lg)",
-            color: "var(--mem-text-secondary)",
-            lineHeight: "1.5",
-          }}
-        >
-          {t("setup.notesFirst.hint")}
-        </p>
-        {/* The title carries the news, because this user may well have years
-            of memories and the only true thing we know is that we could not
-            reach the service holding them. The body below still explains what
-            Wenlan is: a first-run user who arrives here needs both. */}
-        {daemonGateErrored && (
-          <p
-            data-testid="welcome-connection-problem"
-            style={{
-              fontFamily: "var(--mem-font-body)",
-              fontSize: "var(--mem-text-lg)",
-              color: "var(--mem-status-warning-text)",
-              lineHeight: "1.5",
-            }}
-          >
-            {t("boot.connectionProblem")}
-          </p>
-        )}
-        <p
-          style={{
-            fontFamily: "var(--mem-font-body)",
-            fontSize: "var(--mem-text-lg)",
-            color: "var(--mem-text-secondary)",
-            lineHeight: "1.5",
-          }}
-        >
-          {t("setup.notesFirst.body")}
-        </p>
-      </div>
-
-      {/* Privacy badge */}
-      <div
-        className="flex items-center gap-2"
+      <h1
         style={{
-          padding: "10px 16px",
-          borderRadius: "10px",
-          backgroundColor: "var(--mem-surface)",
-          border: "1px solid var(--mem-border)",
+          fontFamily: "var(--mem-font-body)",
+          fontSize: "var(--mem-text-2xl)",
+          fontWeight: 600,
+          color: "var(--mem-text)",
+          letterSpacing: "-0.02em",
         }}
       >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="var(--mem-text-secondary)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-          <path d="M7 11V7a5 5 0 0110 0v4" />
-        </svg>
-        <span
+        {t("boot.connectionTitle")}
+      </h1>
+      <p
+        data-testid="welcome-connection-problem"
+        style={{
+          fontFamily: "var(--mem-font-body)",
+          fontSize: "var(--mem-text-lg)",
+          color: "var(--mem-text-secondary)",
+          lineHeight: "1.5",
+        }}
+      >
+        {t("boot.connectionNext")}
+      </p>
+      {reported && (
+        <p
+          role="status"
           style={{
             fontFamily: "var(--mem-font-body)",
-            fontSize: "13px",
-            color: "var(--mem-text-secondary)",
+            fontSize: "var(--mem-text-sm)",
+            color: "var(--mem-text-tertiary)",
           }}
         >
-          {t("setup.privacyTitle")}
-        </span>
-      </div>
+          {t(reported === "copied" ? "boot.reportCopied" : "boot.reportOpened")}
+        </p>
+      )}
     </div>
     </StepShell>
   );
@@ -2672,7 +2632,6 @@ function SetupWizardFlow({
     return (
       <WelcomeStep
         hideDots
-        daemonGateErrored={daemonGateErrored}
         onNext={() => setStep("setting-up")}
       />
     );

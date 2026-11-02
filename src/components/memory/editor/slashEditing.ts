@@ -5,21 +5,26 @@ import { EditorSelection, Prec, StateEffect, StateField, type EditorState, type 
 import { EditorView, keymap, showTooltip, tooltips, type Tooltip } from "@codemirror/view";
 import { setWritingCompositionActive } from "./writingPresentation";
 
+// The basic blocks Obsidian's editor offers, in the order people reach for them.
+// `keywords` lets "/h3", "/todo" or "/link" find an item in any interface language.
 export const slashItems = [
-  { id: "heading1", insert: "# ", caret: 2, syntax: "#" },
-  { id: "heading2", insert: "## ", caret: 3, syntax: "##" },
-  { id: "bulletList", insert: "- ", caret: 2, syntax: "-" },
-  { id: "numberedList", insert: "1. ", caret: 3, syntax: "1." },
-  { id: "taskList", insert: "- [ ] ", caret: 6, syntax: "- [ ]" },
-  { id: "blockquote", insert: "> ", caret: 2, syntax: ">" },
-  { id: "fencedCode", insert: "```\n\n```", caret: 4, syntax: "```" },
+  { id: "heading1", insert: "# ", caret: 2, syntax: "#", keywords: "h1 heading title" },
+  { id: "heading2", insert: "## ", caret: 3, syntax: "##", keywords: "h2 heading" },
+  { id: "heading3", insert: "### ", caret: 4, syntax: "###", keywords: "h3 heading" },
+  { id: "bulletList", insert: "- ", caret: 2, syntax: "-", keywords: "bullet list ul" },
+  { id: "numberedList", insert: "1. ", caret: 3, syntax: "1.", keywords: "numbered ordered list ol" },
+  { id: "taskList", insert: "- [ ] ", caret: 6, syntax: "- [ ]", keywords: "todo task checkbox" },
+  { id: "pageLink", insert: "[", caret: 1, syntax: "[[", keywords: "link page wiki" },
+  { id: "blockquote", insert: "> ", caret: 2, syntax: ">", keywords: "quote blockquote" },
+  { id: "callout", insert: "> [!note]\n> ", caret: 12, syntax: "> [!]", keywords: "callout note tip warning" },
+  { id: "fencedCode", insert: "```\n\n```", caret: 4, syntax: "```", keywords: "code block" },
 ] as const;
 export type SlashItemId = typeof slashItems[number]["id"];
 export type SlashLabels = Record<SlashItemId | "label", string>;
 export const closeSlashEditing = StateEffect.define<null>();
 export const refreshSlashLabels = StateEffect.define<null>();
 const selectSlashItem = StateEffect.define<number>();
-interface SlashMenu { from: number; to: number; active: number }
+interface SlashMenu { from: number; to: number; active: number; query: string }
 interface SlashState { menu: SlashMenu | null; composing: boolean }
 let nextMenuId = 0;
 
@@ -40,7 +45,7 @@ function permittedContext(state: EditorState, position: number): boolean {
   return true;
 }
 
-export function typedSlashRange(transaction: Transaction): Omit<SlashMenu, "active"> | null {
+export function typedSlashRange(transaction: Transaction): Omit<SlashMenu, "active" | "query"> | null {
   if (!transaction.isUserEvent("input.type") || transaction.isUserEvent("input.type.compose")) return null;
   const previous = transaction.startState;
   const range = previous.selection.main;
@@ -58,11 +63,21 @@ export function typedSlashRange(transaction: Transaction): Omit<SlashMenu, "acti
   return { from: range.head, to: range.head + 1 };
 }
 
-function validMenu(state: EditorState, menu: SlashMenu): boolean {
+/** The items whose label, id or keywords contain the typed query (after "/"). */
+export function matchingSlashItems(labels: SlashLabels, query: string): (typeof slashItems)[number][] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [...slashItems];
+  return slashItems.filter((item) => `${labels[item.id]} ${item.id} ${item.keywords}`.toLowerCase().includes(needle));
+}
+
+/** The slash and what has been typed after it, while the caret stays at its end. */
+function menuQuery(state: EditorState, menu: SlashMenu): string | null {
   const selection = state.selection;
-  return !state.readOnly && selection.ranges.length === 1 && selection.main.empty
-    && selection.main.head === menu.to && state.doc.lineAt(menu.from).text === "/"
-    && state.sliceDoc(menu.from, menu.to) === "/";
+  if (state.readOnly || selection.ranges.length !== 1 || !selection.main.empty) return null;
+  const line = state.doc.lineAt(menu.from);
+  if (line.from !== menu.from || selection.main.head !== line.to) return null;
+  const match = /^\/([^\s/]{0,24})$/.exec(line.text);
+  return match ? match[1] : null;
 }
 
 export function createSlashEditing(options: {
@@ -83,10 +98,22 @@ export function createSlashEditing(options: {
         if (effect.is(closeSlashEditing)) { menu = null; explicitlyClosed = true; }
         if (effect.is(selectSlashItem) && menu) menu = { ...menu, active: effect.value };
       }
-      if (menu && (composing || !validMenu(transaction.state, menu))) menu = null;
+      if (menu && transaction.docChanged) menu = { ...menu, from: transaction.changes.mapPos(menu.from, -1) };
+      if (menu && !composing) {
+        // Typing after the slash narrows the list; a space, a second slash or
+        // no match closes it and leaves the text as typed.
+        const query = menuQuery(transaction.state, menu);
+        const count = query === null ? 0 : matchingSlashItems(options.labels(), query).length;
+        menu = query === null || count === 0 ? null : {
+          ...menu,
+          to: transaction.state.selection.main.head,
+          query,
+          active: query === menu.query ? Math.min(menu.active, count - 1) : 0,
+        };
+      } else if (composing) menu = null;
       if (!menu && !composing && !explicitlyClosed && !transaction.state.readOnly) {
         const range = typedSlashRange(transaction);
-        if (range) menu = { ...range, active: 0 };
+        if (range) menu = { ...range, active: 0, query: "" };
       }
       return { menu, composing };
     },
@@ -98,23 +125,31 @@ export function createSlashEditing(options: {
   };
   const accept = (view: EditorView): boolean => {
     const menu = view.state.field(state).menu;
-    if (!menu || options.blocked(view) || !validMenu(view.state, menu)) return false;
-    const item = slashItems[menu.active];
+    if (!menu || options.blocked(view) || menuQuery(view.state, menu) === null) return false;
+    const item = matchingSlashItems(options.labels(), menu.query)[menu.active];
+    if (!item) return false;
     view.dispatch({
       changes: { from: menu.from, to: menu.to, insert: item.insert },
       selection: EditorSelection.cursor(menu.from + item.caret),
       effects: closeSlashEditing.of(null),
-      annotations: isolateHistory.of("full"),
+      // "Link to page" finishes in a second step below; both undo together.
+      annotations: isolateHistory.of(item.id === "pageLink" ? "before" : "full"),
       userEvent: "input.complete",
       scrollIntoView: true,
     });
+    // "Link to page" types the second "[" so the page picker opens as if typed.
+    if (item.id === "pageLink") {
+      const at = view.state.selection.main.head;
+      view.dispatch({ changes: { from: at, insert: "[" }, selection: EditorSelection.cursor(at + 1), userEvent: "input.type", annotations: isolateHistory.of("after") });
+    }
     view.focus();
     return true;
   };
   const move = (view: EditorView, delta: number): boolean => {
     const menu = view.state.field(state).menu;
     if (!menu || options.blocked(view)) return false;
-    view.dispatch({ effects: selectSlashItem.of((menu.active + delta + slashItems.length) % slashItems.length) });
+    const count = matchingSlashItems(options.labels(), menu.query).length;
+    view.dispatch({ effects: selectSlashItem.of((menu.active + delta + count) % count) });
     return true;
   };
   const createTooltip = (view: EditorView) => {
@@ -122,7 +157,8 @@ export function createSlashEditing(options: {
       dom.id = menuId;
       dom.className = "cm-slash-menu";
       dom.setAttribute("role", "listbox");
-      const rows = slashItems.map((item, index) => {
+      const shown = () => matchingSlashItems(options.labels(), view.state.field(state).menu?.query ?? "");
+      const rows = slashItems.map((item) => {
         const row = document.createElement("div");
         const label = document.createElement("span");
         const syntax = document.createElement("span");
@@ -135,15 +171,17 @@ export function createSlashEditing(options: {
         row.append(label, syntax);
         row.addEventListener("pointerenter", () => {
           const menu = view.state.field(state).menu;
-          if (!options.blocked(view) && menu && menu.active !== index) view.dispatch({ effects: selectSlashItem.of(index) });
+          const index = shown().indexOf(item);
+          if (!options.blocked(view) && menu && index >= 0 && menu.active !== index) view.dispatch({ effects: selectSlashItem.of(index) });
         });
         row.addEventListener("click", () => {
-          if (options.blocked(view) || !view.state.field(state).menu) return;
+          const index = shown().indexOf(item);
+          if (options.blocked(view) || !view.state.field(state).menu || index < 0) return;
           view.dispatch({ effects: selectSlashItem.of(index) });
           accept(view);
         });
         dom.append(row);
-        return { row, label };
+        return { item, row, label };
       });
       const retainFocus = (event: Event) => event.preventDefault();
       dom.addEventListener("pointerdown", retainFocus);
@@ -152,18 +190,21 @@ export function createSlashEditing(options: {
         const labels = options.labels();
         dom.setAttribute("aria-label", labels.label);
         const active = view.state.field(state).menu?.active;
-        rows.forEach(({ row, label }, index) => {
-          const accessibleLabel = labels[slashItems[index].id];
+        const visible = shown();
+        rows.forEach(({ item, row, label }) => {
+          const accessibleLabel = labels[item.id];
+          const index = visible.indexOf(item);
           label.textContent = accessibleLabel;
+          row.hidden = index < 0;
           row.setAttribute("aria-label", accessibleLabel);
-          row.setAttribute("aria-selected", String(index === active));
+          row.setAttribute("aria-selected", String(index >= 0 && index === active));
         });
       };
       update();
       return { dom, update };
   };
   const tooltip = (value: SlashState): Tooltip | null => value.menu ? {
-    pos: value.menu.to,
+    pos: value.menu.from + 1,
     above: false,
     create: createTooltip,
   } : null;
@@ -175,7 +216,8 @@ export function createSlashEditing(options: {
       tooltips({ parent: document.body, position: "fixed", tooltipSpace: () => ({ left: 8, right: document.documentElement.clientWidth - 8, top: 60, bottom: window.innerHeight - 8 }) }),
       EditorView.contentAttributes.compute([state], (editorState): Record<string, string> => {
         const menu = editorState.field(state).menu;
-        return menu ? { "aria-autocomplete": "list", "aria-controls": menuId, "aria-activedescendant": `${menuId}-${slashItems[menu.active].id}` } : {};
+        const item = menu ? matchingSlashItems(options.labels(), menu.query)[menu.active] : undefined;
+        return menu && item ? { "aria-autocomplete": "list", "aria-controls": menuId, "aria-activedescendant": `${menuId}-${item.id}` } : {};
       }),
       Prec.highest(keymap.of([
         { key: "ArrowDown", run: (view) => move(view, 1) },
@@ -187,7 +229,8 @@ export function createSlashEditing(options: {
       ])),
       EditorView.domEventHandlers({ blur: (_event, view) => { close(view); return false; } }),
       EditorView.theme({
-        ".cm-slash-menu": { padding: "4px", border: "1px solid var(--mem-border)", borderRadius: "var(--mem-radius-md)", backgroundColor: "var(--mem-detail-surface)", color: "var(--mem-text)", boxShadow: "0 6px 24px rgba(0,0,0,0.12)", width: "220px", maxWidth: "calc(100vw - 16px)", maxHeight: "min(320px, calc(100vh - 76px))", overflowY: "auto", fontFamily: "var(--mem-font-body, system-ui, sans-serif)", fontSize: "var(--mem-text-sm)", zIndex: "1200" },
+        ".cm-slash-menu": { padding: "4px", border: "1px solid var(--mem-border)", borderRadius: "var(--mem-radius-md)", backgroundColor: "var(--mem-detail-surface)", color: "var(--mem-text)", boxShadow: "0 6px 24px rgba(0,0,0,0.12)", width: "220px", maxWidth: "calc(100vw - 16px)", maxHeight: "min(400px, calc(100vh - 76px))", overflowY: "auto", fontFamily: "var(--mem-font-body, system-ui, sans-serif)", fontSize: "var(--mem-text-sm)", zIndex: "1200" },
+        ".cm-slash-option[hidden]": { display: "none" },
         ".cm-slash-option": { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "8px 10px", borderRadius: "var(--mem-radius-sm)", cursor: "pointer" },
         ".cm-slash-option-syntax": { flex: "0 0 auto", fontFamily: "var(--mem-font-mono)", fontSize: "var(--mem-text-label)", color: "var(--mem-text-tertiary)" },
         ".cm-slash-option-syntax::after": { content: "attr(data-syntax)" },

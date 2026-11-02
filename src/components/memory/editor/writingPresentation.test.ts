@@ -8,6 +8,7 @@ import { Decoration, EditorView } from "@codemirror/view";
 import { installCodeMirrorDomPolyfills } from "./editorTestUtils";
 import { prepareMarkdownSource, serializeMarkdownSource } from "./markdownSourceContract";
 import {
+  filePathName,
   setWritingCompositionActive,
   writingPresentation,
 } from "./writingPresentation";
@@ -112,6 +113,32 @@ function rangeFor(source: string, text: string, offset = 0): PresentationRange {
 }
 
 describe("writingPresentation", () => {
+  it("names a file path by its file and leaves other code alone", () => {
+    expect(filePathName("~/.wenlan/specs/wenlan/2026-09-04-launch-day-runbook.md")).toBe("2026-09-04-launch-day-runbook.md");
+    expect(filePathName("/Users/me/notes.txt")).toBe("notes.txt");
+    expect(filePathName("docs/plan.md")).toBe("plan.md");
+    expect(filePathName("specs/wenlan/archive/")).toBe("archive/");
+    expect(filePathName("DESIGN.md")).toBe("DESIGN.md");
+    for (const code of ["main", "a/b", "and/or", "https://x.y/a.md", "npm run build", "a//b.md", "Arc<dyn LlmProvider>", ".html", "lib.rs", "v1.2"]) {
+      expect(filePathName(code)).toBeNull();
+    }
+  });
+
+  it("shows an inline file path as its file name, with the whole path on hover, until the caret reaches it", () => {
+    const source = "The runbook is `~/.wenlan/specs/run.md` here and `code` stays.";
+    const view = makeView(source, { selection: EditorSelection.single(0), focused: true });
+    const chip = view.contentDOM.querySelector(".cm-writing-file-path");
+    expect(chip?.textContent).toBe("run.md");
+    expect(chip?.getAttribute("title")).toBe("~/.wenlan/specs/run.md");
+    expect(view.contentDOM.textContent).not.toContain("~/.wenlan");
+    expect(view.contentDOM.querySelector(".cm-writing-inline-code")?.textContent).toContain("code");
+
+    view.dispatch({ selection: EditorSelection.single(source.indexOf("run.md")) });
+    expect(view.contentDOM.querySelector(".cm-writing-file-path")).toBeNull();
+    expect(view.contentDOM.textContent).toContain("~/.wenlan/specs/run.md");
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
   it("renders common parsed Markdown as live preview and keeps unknown syntax literal", () => {
     const source = [
       "# Heading #   ",

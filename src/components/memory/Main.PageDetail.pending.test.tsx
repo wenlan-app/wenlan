@@ -126,6 +126,7 @@ vi.mock("../SetupWizard", () => ({ SetupWizard: () => <div /> }));
 vi.mock("./Sidebar", () => ({
   default: (props: {
     onNavigatePages: () => void;
+    onNavigateHome: () => void;
     onOpenSearch?: (trigger: HTMLButtonElement) => void;
     searchDisabled?: boolean;
     searchOpen?: boolean;
@@ -138,6 +139,9 @@ vi.mock("./Sidebar", () => ({
         type="button"
       >
         Search
+      </button>
+      <button type="button" onClick={props.onNavigateHome}>
+        Sidebar Home
       </button>
       <button type="button" onClick={props.onNavigatePages}>
         Sidebar Wiki
@@ -190,6 +194,7 @@ vi.mock("./pages/WikiWorkspace", () => ({
   ),
 }));
 vi.mock("./pages/PagesOverview", () => ({
+  WikiStart: () => <div data-testid="wiki-start" />,
   PagesOverview: ({ onSelectPage, onBrowseArchived }: { onSelectPage: (id: string) => void; onBrowseArchived?: () => void }) => (
     <div data-testid="pages-overview">
       <button type="button" onClick={onBrowseArchived}>Browse archived notes</button>
@@ -408,7 +413,7 @@ describe("Main published PageDetail navigation guards", () => {
     const initialView = { kind: "source-document", file: { source: "webpage", source_id: "https://example.com", title: "Source", chunk_count: 0, last_modified: 0 } } as never;
     const { user } = renderMain({ initialView, onRegisterQuitGuard: (guard) => { quitGuard = guard; } });
     await screen.findByTestId("source-document");
-    await user.click(screen.getByRole("button", { name: "Sidebar Wiki" }));
+    await user.click(screen.getByRole("button", { name: "Sidebar Home" }));
     expect(screen.getByTestId("source-document")).toBeInTheDocument();
     expect(routeFlushHarness.flush).toHaveBeenCalledOnce();
     const quitting = quitGuard!();
@@ -623,7 +628,7 @@ describe("Main published PageDetail navigation guards", () => {
     const { user } = renderMain();
     await user.click(screen.getByRole("button", { name: "Make page dirty" }));
     await user.click(screen.getByRole("button", { name: "Start page save" }));
-    await user.click(screen.getByRole("button", { name: "Sidebar Wiki" }));
+    await user.click(screen.getByRole("button", { name: "Sidebar Home" }));
     expect(screen.getByText("Pending page")).toBeInTheDocument();
     expect(flushHarness.flush).toHaveBeenCalledOnce();
     await act(async () => settle(true));
@@ -656,7 +661,7 @@ describe("Main published PageDetail navigation guards", () => {
     let quitGuard: (() => Promise<boolean>) | null = null;
     const { user } = renderMain({ initialPageId: "page-one", onRegisterQuitGuard: (guard) => { quitGuard = guard; } });
     await user.click(screen.getByRole("button", { name: "Make page dirty" }));
-    await user.click(screen.getByRole("button", { name: "Sidebar Wiki" }));
+    await user.click(screen.getByRole("button", { name: "Sidebar Home" }));
     expect(screen.getByText("Pending page")).toBeInTheDocument();
     await expect(quitGuard!()).resolves.toBe(false);
   });
@@ -707,7 +712,7 @@ describe("Main published PageDetail navigation guards", () => {
     expect(searchAction).toBeDisabled();
     expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Sidebar Wiki" }));
+    await user.click(screen.getByRole("button", { name: "Sidebar Home" }));
     expect(screen.getByText("Pending page")).toBeInTheDocument();
 
     eventListeners.get("focus-search")?.();
@@ -742,7 +747,7 @@ describe("Main published PageDetail navigation guards", () => {
   it("does not replay the consumed initial page after internal navigation", async () => {
     const { user } = renderMain();
     expect(await screen.findByText("Pending page")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Sidebar Wiki" }));
+    await user.click(screen.getByRole("button", { name: "Sidebar Home" }));
     await user.click(screen.getByRole("button", { name: "Open second page" }));
     expect(await screen.findByText("Second page")).toBeInTheDocument();
 
@@ -850,7 +855,7 @@ describe("Main published PageDetail navigation guards", () => {
     expect(search).toHaveValue("");
     expect(confirmSpy).toHaveBeenCalledOnce();
 
-    await user.click(screen.getByRole("button", { name: "Sidebar Wiki" }));
+    await user.click(screen.getByRole("button", { name: "Sidebar Home" }));
     expect(confirmSpy).toHaveBeenCalledTimes(2);
     expect(screen.getByText("Pending page")).toBeInTheDocument();
 

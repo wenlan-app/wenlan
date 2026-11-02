@@ -759,7 +759,7 @@ async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow:
         deep_bgebase_pending,
     } = startup::prepare_startup_state(
         wenlan_root,
-        data_dir,
+        data_dir.clone(),
         brief_status_root,
         &startup_repair_claim,
         startup_repair_claimed,
@@ -780,6 +780,7 @@ async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow:
         reranker_cache_dir,
         config,
         db_arc,
+        data_dir,
     )
     .await;
 

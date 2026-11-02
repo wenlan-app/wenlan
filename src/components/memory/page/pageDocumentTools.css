@@ -71,4 +71,9 @@
   display: block;
 }
 /* These actions no longer have a duplicate desktop toolbar. */
-.page-document-tools .page-detail-actions-menu .page-detail-mobile-menu-item { display: block; }
+.page-detail-actions-anchor .page-detail-actions-menu .page-detail-mobile-menu-item { display: block; }
+.page-detail-actions-anchor .page-detail-actions-menu[style*="fixed"] { z-index: 60; }
+/* A narrow group keeps room for its tab beside the page actions. */
+@container note-group (max-width: 600px) {
+  .note-group-document-tools { --mem-icon-action-size: 28px; }
+}

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Files, PushPin, Stack } from "@phosphor-icons/react";
+import { Files, House, PushPin, Stack } from "@phosphor-icons/react";
 import { TopicIcon } from "../entities/TopicIcon";
 import type { GlobalNavigation } from "./viewState";
 import { SpaceMark } from "./SpaceMark";
@@ -8,6 +8,7 @@ import { NAVIGATION_DESTINATION_ORDER, readNavigationPreferences, REQUIRED_NAVIG
 type PrimaryNavigationLabels = {
   readonly entities: string;
   readonly graph: string;
+  readonly home: string;
   readonly memories: string;
   readonly more: string;
   readonly navigation: string;
@@ -24,6 +25,7 @@ type PrimaryNavigationProps = {
   readonly labels: PrimaryNavigationLabels;
   readonly onNavigateEntities?: () => void;
   readonly onNavigateGraph?: () => void;
+  readonly onNavigateHome?: () => void;
   readonly onNavigateLog?: () => void;
   readonly onNavigatePages?: () => void;
   readonly onNavigateSources?: () => void;
@@ -58,6 +60,7 @@ function NavButton({ active, compact = false, icon, label, moreItem = false, onC
 }
 
 const iconStyle = { color: "currentColor" } as const;
+const homeIcon = <House aria-hidden="true" data-navigation-icon="home" focusable="false" size={16} style={iconStyle} weight="regular" />;
 const pageIcon = <Stack aria-hidden="true" data-navigation-icon="wiki-stack" focusable="false" size={16} style={iconStyle} weight="regular" />;
 const entityIcon = <TopicIcon data-navigation-icon="entities" size={16} style={iconStyle} />;
 const graphIcon = <svg aria-hidden="true" data-navigation-icon="graph" height="16" style={iconStyle} viewBox="0 0 24 24" width="16"><circle cx="5" cy="6" fill="none" r="2" stroke="currentColor" strokeWidth="2" /><circle cx="19" cy="6" fill="none" r="2" stroke="currentColor" strokeWidth="2" /><circle cx="12" cy="18" fill="none" r="2" stroke="currentColor" strokeWidth="2" /><path d="M7 6h10M6 8l5 8M18 8l-5 8" fill="none" stroke="currentColor" strokeWidth="2" /></svg>;
@@ -77,6 +80,7 @@ export function PrimaryNavigation({
   labels,
   onNavigateEntities,
   onNavigateGraph,
+  onNavigateHome,
   onNavigateLog,
   onNavigatePages,
   onNavigateSources,
@@ -90,6 +94,7 @@ export function PrimaryNavigation({
   const panelRef = useRef<HTMLDivElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const options = {
+    home: { icon: homeIcon, onClick: onNavigateHome },
     pages: { icon: pageIcon, onClick: onNavigatePages },
     spaces: { icon: <SpaceMark active={active === "spaces"} inheritColor />, onClick: () => onNavigateSpaces(false) },
     graph: { icon: graphIcon, onClick: onNavigateGraph },

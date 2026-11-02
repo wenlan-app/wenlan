@@ -73,7 +73,7 @@ describe("slash editing", () => {
     const menu = document.getElementById(id)!;
     expect(editor.view.dom.contains(menu)).toBe(false);
     for (const themeClass of editor.view.themeClasses.split(" ")) expect(menu.parentElement?.classList.contains(themeClass)).toBe(true);
-    expect(menu.querySelectorAll('[role="option"]')).toHaveLength(7);
+    expect(menu.querySelectorAll('[role="option"]')).toHaveLength(slashItems.length);
     editor.onChange.mockClear();
     editor.relabel({ ...labels, label: "基本編輯", heading2: "二級標題" });
     expect(document.getElementById(id)).toBe(menu);
@@ -94,7 +94,7 @@ describe("slash editing", () => {
     expect(editor.onChange.mock.calls).toEqual([["## "]]);
   });
 
-  it.each(slashItems)("accepts $id as one source change with isolated undo and redo", (item) => {
+  it.each(slashItems.filter((item) => item.id !== "pageLink"))("accepts $id as one source change with isolated undo and redo", (item) => {
     const editor = make("before\n\nafter", 7);
     editor.type("/");
     for (let i = 0; i < slashItems.indexOf(item); i++) pressKey(editor.view.contentDOM, "ArrowDown");
@@ -117,13 +117,47 @@ describe("slash editing", () => {
     expect(editor.view.state.doc.toString()).toBe(`before\n${item.insert}\nafter`);
   });
 
+  it("Link to page types [[ so the page picker opens, and one undo brings back the slash", () => {
+    const editor = make("before\n\nafter", 7);
+    editor.type("/");
+    editor.type("link");
+    expect(editor.menu()?.query).toBe("link");
+    expect(pressKey(editor.view.contentDOM, "Enter").defaultPrevented).toBe(true);
+    expect(editor.view.state.doc.toString()).toBe("before\n[[\nafter");
+    expect(editor.view.state.selection.main.head).toBe(9);
+    undo(editor.view);
+    expect(editor.view.state.doc.toString()).toBe("before\n/link\nafter");
+  });
+
+  it("narrows the list as you type after the slash and closes when nothing matches", async () => {
+    const editor = make();
+    editor.type("/");
+    editor.type("head");
+    const id = editor.view.contentDOM.getAttribute("aria-controls")!;
+    await waitFor(() => expect(document.getElementById(id)).not.toBeNull());
+    const visible = [...document.getElementById(id)!.querySelectorAll<HTMLElement>('[role="option"]')].filter((row) => !row.hidden).map((row) => row.textContent);
+    expect(visible).toEqual(["heading1", "heading2", "heading3"]);
+    pressKey(editor.view.contentDOM, "ArrowUp");
+    expect(pressKey(editor.view.contentDOM, "Enter").defaultPrevented).toBe(true);
+    expect(editor.view.state.doc.toString()).toBe("### ");
+    const none = make();
+    none.type("/");
+    none.type("zzz");
+    expect(none.menu()).toBeNull();
+    expect(none.view.state.doc.toString()).toBe("/zzz");
+    const spaced = make();
+    spaced.type("/");
+    spaced.type(" ");
+    expect(spaced.menu()).toBeNull();
+  });
+
   it("navigates and dismisses without changing document or history and stays dismissed", () => {
     const editor = make();
     editor.type("/");
     const depth = undoDepth(editor.view.state);
     editor.onChange.mockClear();
     pressKey(editor.view.contentDOM, "ArrowUp");
-    expect(editor.menu()?.active).toBe(6);
+    expect(editor.menu()?.active).toBe(slashItems.length - 1);
     expect(pressKey(editor.view.contentDOM, "Escape").defaultPrevented).toBe(true);
     editor.view.dispatch({});
     expect(editor.menu()).toBeNull();

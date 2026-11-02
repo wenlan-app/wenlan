@@ -7,9 +7,11 @@ import {
   getApiKey,
   getModelChoice,
   getOnDeviceModel,
+  getResolvedRouting,
   getSystemInfo,
   setApiKey,
   setModelChoice,
+  type OnDeviceModelEntry,
 } from "../../lib/tauri";
 import { fillUnsetPinsAfterSave } from "../../lib/routingPins";
 import { ACTIVITY_QUERY_KEY } from "../../lib/useActivity";
@@ -554,21 +556,46 @@ export function OnDeviceModelCard({
 /** Settings-only manager for the installed on-device model catalog. Several
  *  models may remain downloaded, while the daemon has one active model slot.
  *  The wizard keeps using OnDeviceModelCard and its existing single-pick flow. */
+/** Which models the on-device list shows: the computer's shortlist (plus the
+ * model in use, wherever it sits), or every model once "Show all" is open or
+ * when the daemon gave no shortlist (an older daemon, or memory unreadable). */
+export function visibleDeviceModels(models: OnDeviceModelEntry[], loadedId: string | null, showAll: boolean): OnDeviceModelEntry[] {
+  const hasShortlist = models.some((model) => model.shortlisted);
+  if (showAll || !hasShortlist) return models;
+  return models.filter((model) => model.shortlisted || model.id === loadedId);
+}
+
+const deviceTextStyle = { fontFamily: "var(--mem-font-body)" } as const;
+
 export function OnDeviceModelManager() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [activatingId, setActivatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const modelQuery = useQuery({
     queryKey: ["onDeviceModel"],
     queryFn: getOnDeviceModel,
   });
-  const { data: systemInfo } = useQuery({
-    queryKey: ["systemInfo"],
-    queryFn: getSystemInfo,
-  });
+  // Which jobs run on the on-device model, so the row in use says so in the
+  // same words as the task rows above. null = an older daemon without
+  // per-job routing; the row then just says "In use".
+  const routingQuery = useQuery({ queryKey: ["resolvedRouting"], queryFn: getResolvedRouting });
   const models = modelQuery.data?.models ?? [];
   const loadedId = modelQuery.data?.loaded ?? null;
+  const totalRam = modelQuery.data?.total_ram_gb ?? null;
+  const routing = routingQuery.data;
+  const onDeviceJobs = routing
+    ? [
+        routing.everyday.source === "on_device" ? t("intelligence.everydayWork") : null,
+        routing.synthesis.source === "on_device" ? t("intelligence.synthesisWork") : null,
+      ].filter((job): job is string => job !== null)
+    : null;
+  const inUseLabel = onDeviceJobs === null
+    ? t("intelligence.modelInUse")
+    : onDeviceJobs.length > 0
+      ? t("intelligence.modelUsedFor", { jobs: onDeviceJobs.join(t("intelligence.jobListSeparator")) })
+      : null;
 
   const activate = async (modelId: string) => {
     const model = models.find((item) => item.id === modelId);
@@ -594,81 +621,77 @@ export function OnDeviceModelManager() {
 
   if (models.length === 0) {
     return (
-      <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-sm)", color: "var(--mem-text-secondary)" }}>
+      <p style={{ ...deviceTextStyle, fontSize: "var(--mem-text-sm)", color: "var(--mem-text-secondary)" }}>
         {modelQuery.isPending ? t("intelligence.loading") : t("intelligence.modelCatalogUnavailable")}
       </p>
     );
   }
 
+  const visible = visibleDeviceModels(models, loadedId, showAll);
+  const canToggle = models.some((model) => model.shortlisted) && models.length > visibleDeviceModels(models, loadedId, false).length;
+
   return (
-    <div className="flex flex-col">
-      {models.map((model) => {
-        const enabled = loadedId === model.id;
-        const ramOk = !systemInfo || systemInfo.total_ram_gb + 0.5 >= model.ram_required_gb;
-        const busy = activatingId !== null;
+    <div className="settings-device-models flex flex-col gap-1">
+      {totalRam !== null && (
+        <p className="pb-2" style={{ ...deviceTextStyle, fontSize: "var(--mem-text-sm)", color: "var(--mem-text-secondary)" }}>
+          {t("intelligence.thisComputerRam", { ram: Math.round(totalRam) })}
+        </p>
+      )}
+      {visible.map((model) => {
+        const inUse = loadedId === model.id;
+        const activating = activatingId === model.id;
+        const fits = model.fits !== false;
+        const canUse = fits && !model.no_disk_space;
         return (
-          <div key={model.id} className="settings-row flex flex-wrap items-center justify-between gap-4 border-b last:border-b-0 border-[var(--mem-border)] py-4" style={{ paddingInline: 0 }}>
+          <div key={model.id} className="settings-device-model flex items-center justify-between gap-4 py-2.5" data-model={model.id} data-fits={canUse}>
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 500, color: "var(--mem-text)" }}>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span style={{ ...deviceTextStyle, fontSize: "var(--mem-text-md)", fontWeight: 500, color: canUse ? "var(--mem-text)" : "var(--mem-text-tertiary)" }}>
                   {model.display_name}
                 </span>
-                <SettingsHelp
-                  title={model.display_name}
-                  details={t("intelligence.modelDetails", {
-                    params: model.param_count,
-                    downloadSize: model.file_size_gb.toFixed(1),
-                    ram: model.ram_required_gb.toFixed(0),
-                  })}
-                />
               </div>
-              {!ramOk && (
-                <p className="mt-1" style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-status-warning-text)" }}>
-                  {t("intelligence.ramWarning", {
-                    model: model.display_name,
-                    required: model.ram_required_gb.toFixed(0),
-                    available: systemInfo?.total_ram_gb.toFixed(0),
-                  })}
-                </p>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <StatusChip
-                state={enabled ? { kind: "up" } : { kind: "idle" }}
-                label={
-                  activatingId === model.id
-                    ? t(model.cached ? "intelligence.loading" : "intelligence.downloading")
-                    : enabled
-                      ? t("intelligence.enabled")
-                      : model.cached
-                        ? t("intelligence.downloaded")
-                        : t("intelligence.notDownloadedStatus")
-                }
-              />
-              {!enabled && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={busy || !ramOk}
-                  loading={activatingId === model.id}
-                  onClick={() => activate(model.id)}
-                  className="whitespace-nowrap"
-                  title={!ramOk ? t("intelligence.notEnoughRamTitle") : undefined}
-                >
-                  {model.cached ? t("intelligence.enable") : t("intelligence.downloadAndEnable")}
-                </Button>
-              )}
-            </div>
-            {activatingId === model.id && !model.cached && (
-              <p className="basis-full" style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-                {t("intelligence.downloadMayTake", { size: model.file_size_gb.toFixed(1) })}
+              <p style={{ ...deviceTextStyle, fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
+                {activating && !model.cached
+                  ? t("intelligence.downloadMayTake", { size: model.file_size_gb.toFixed(1) })
+                  : !fits
+                    ? t("intelligence.modelNeedsRam", { ram: model.ram_required_gb.toFixed(0) })
+                    : model.no_disk_space
+                      ? t("intelligence.modelNeedsDisk", { size: model.file_size_gb.toFixed(1) })
+                      : model.may_be_slow
+                        ? t("intelligence.modelSizeMaybeSlow", { size: model.file_size_gb.toFixed(1) })
+                        : t("intelligence.modelSize", { size: model.file_size_gb.toFixed(1) })}
               </p>
-            )}
+            </div>
+            {inUse ? (
+              inUseLabel && (
+                <span className="shrink-0" style={{ ...deviceTextStyle, fontSize: "var(--mem-text-sm)", fontWeight: 500, color: "var(--mem-accent-sage-text)" }}>
+                  {inUseLabel}
+                </span>
+              )
+            ) : canUse ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={activatingId !== null}
+                loading={activating}
+                onClick={() => activate(model.id)}
+                className="shrink-0 whitespace-nowrap"
+              >
+                {model.cached ? t("intelligence.modelUse") : t("intelligence.modelDownload")}
+              </Button>
+            ) : null}
           </div>
         );
       })}
+      {canToggle && (
+        <div className="-ml-3 pt-1">
+          <Button variant="ghost" size="sm" onClick={() => setShowAll((open) => !open)} aria-expanded={showAll}>
+            {showAll ? t("intelligence.showFewerModels") : t("intelligence.showAllModels", { count: models.length })}
+          </Button>
+        </div>
+      )}
       {error && (
-        <p role="alert" className="px-5 pb-4" style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-status-danger-text)" }}>
+        <p role="alert" className="pt-2" style={{ ...deviceTextStyle, fontSize: "var(--mem-text-xs)", color: "var(--mem-status-danger-text)" }}>
           {error}
         </p>
       )}
