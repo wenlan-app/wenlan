@@ -102,6 +102,21 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-VIEW-4** `shipped` The mind map keeps today's rule: the AI proposes,
   and nothing counts until you accept it.
   原文：心智圖現在「AI 提議、你收下才算」的做法留著。
+- **UX-VIEW-6** `planned` A thing's short text is a recap in a fixed order:
+  where it stands and the next step (at most two sentences), what is decided,
+  what is still open, then the background. A group with nothing in it is not
+  shown. Each point is one sentence; each group shows its newest three and
+  folds the rest. Opening a point shows the lines of conversation it came
+  from. What an AI reads about a thing is a separate, fuller version; the
+  person sees only the recap.
+  原文：「肯定是要 structure 的嘛」「有点像 recap 这样的概念」（2026-11-01 17:34）「AI 跟人看的，我不确定是不是要一样的」（2026-11-01 18:43）
+- **UX-VIEW-7** `planned` A thing's mind map takes its shape from the
+  conversation, not from fixed groups. The AI picks the shape: working toward a
+  decision or fixing a problem becomes questions, options, reasons, and what
+  was decided, left open or dropped; exploring or learning becomes a topic
+  tree; anything that fits neither becomes a topic tree. The set of shapes
+  stays open, so a new one can be added without changing the others.
+  原文：「心智图应该要表达的是整个对话的它的那个就是抽象的结构，或是帮助你思考的结构」「我觉得它应该是根据对话的形式去决定的」（2026-11-01 18:10）「总之就是保留对未来的那个弹性吧」「我希望它是大方向定好之后下面都可以」（2026-11-01 19:52）
 
 ## Who said each sentence
 

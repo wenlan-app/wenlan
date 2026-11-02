@@ -80,16 +80,16 @@ export function ThingViews({
   );
 }
 
-type RecapKey = "decided" | "watch" | "background";
+type RecapKey = "decided" | "background";
 
-/** A recap, not a wall of text: what is decided, what to watch out for, and
- *  the background. Each point already carries its kind, so nothing is
- *  rewritten to sort it. */
-type RecapLabel = "thing.recapDecided" | "thing.recapWatch" | "thing.recapBackground";
+/** A recap in a fixed order (docs/ux/spec.md, UX-VIEW-6): where it stands and
+ *  the next step first, then what is decided, then the background. Each point
+ *  already carries its kind, so nothing is rewritten to sort it. "Still open"
+ *  joins between decided and background once points can say they are open. */
+type RecapLabel = "thing.recapDecided" | "thing.recapBackground";
 
 const RECAP_GROUPS: readonly { readonly key: RecapKey; readonly label: RecapLabel }[] = [
   { key: "decided", label: "thing.recapDecided" },
-  { key: "watch", label: "thing.recapWatch" },
   { key: "background", label: "thing.recapBackground" },
 ];
 
@@ -99,9 +99,6 @@ function groupOf(point: ThingMemory): RecapKey {
   switch (point.memory_type) {
     case "decision":
       return "decided";
-    case "gotcha":
-    case "lesson":
-      return "watch";
     default:
       return "background";
   }

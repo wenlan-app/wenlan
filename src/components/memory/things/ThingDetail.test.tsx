@@ -65,13 +65,26 @@ describe("ThingDetail", () => {
     expect(onOpenPage).toHaveBeenCalledWith("page-1");
   });
 
+  it("UX-VIEW-6: the short text is a recap in a fixed order: where it stands, decided, background", async () => {
+    vi.mocked(getThing).mockResolvedValue({
+      ...tagline,
+      memories: [
+        ...(tagline.memories ?? []),
+        { source_id: "mem_3", title: "The old line still ships in the PH gallery", memory_type: "gotcha", created_at: now - 120 },
+      ],
+    });
+    renderThing();
+    const short = await screen.findByTestId("thing-short");
+    expect(short.firstElementChild).toHaveTextContent(/Picked the X wording/);
+    expect(within(short).getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(["Decided", "Background"]);
+    expect(within(short).getByRole("region", { name: "Background" })).toHaveTextContent("The old line still ships in the PH gallery.");
+  });
+
   it("UX-VIEW-1: short text and mind map show the same points, and the last view is remembered", async () => {
     const { onOpenPage } = renderThing();
     const short = await screen.findByTestId("thing-short");
-    // A recap: decided first, then the background, each point under its kind.
     expect(within(short).getByRole("region", { name: "Decided" })).toHaveTextContent("Lead with the X wording.");
     expect(within(short).getByRole("region", { name: "Background" })).toHaveTextContent("The hero line stays under eight words.");
-    expect(within(short).queryByRole("region", { name: "Watch out" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Mind map" }));
     const map = screen.getByTestId("thing-map");
     expect(map).toHaveTextContent("Lead with the X wording.");
