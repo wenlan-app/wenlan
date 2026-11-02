@@ -15,8 +15,9 @@ use axum::Json;
 use wenlan_core::db::things::MoveTarget;
 use wenlan_core::db::MemoryDB;
 use wenlan_types::{
-    SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingDetailResponse,
-    ThingMapResponse, ThingMoveRequest, ThingRenameRequest, ThingSummary, ThingsResponse,
+    SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingDetailResponse, ThingMapAuthor,
+    ThingMapOpsRequest, ThingMapOpsResponse, ThingMapResponse, ThingMoveRequest,
+    ThingRenameRequest, ThingSummary, ThingsResponse,
 };
 
 use crate::error::ServerError;
@@ -33,6 +34,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             get(handle_get_thing).patch(handle_rename_thing),
         )
         .route("/api/things/{id}/map", get(handle_get_thing_map))
+        .route("/api/things/{id}/map/ops", post(handle_thing_map_ops))
         .route(
             "/api/sessions/{id}/things/move",
             post(handle_move_session_thing),
@@ -114,9 +116,9 @@ pub async fn handle_get_thing(
 
 /// GET /api/things/{id}/map
 ///
-/// The thing's map of points, which its recap and mind map read. Nothing
-/// writes maps yet, so a known thing answers an empty map at revision 0; the
-/// page then falls back to grouping its memories. 404 when the thing is unknown or out of scope.
+/// The thing's map of points, which its recap and mind map read, with the
+/// changes waiting for the person. A thing nothing wrote a map for answers an
+/// empty map at revision 0. 404 when the thing is unknown or out of scope.
 pub async fn handle_get_thing_map(
     State(state): State<SharedState>,
     SpaceHeader(header_space): SpaceHeader,
@@ -124,12 +126,34 @@ pub async fn handle_get_thing_map(
 ) -> Result<Json<ThingMapResponse>, ServerError> {
     let db = open_db(&state).await?;
     visible_thing(&db, header_space.as_deref(), &id).await?;
-    Ok(Json(ThingMapResponse {
-        thing_id: id,
-        revision: 0,
-        nodes: Vec::new(),
-        edges: Vec::new(),
-    }))
+    Ok(Json(db.get_thing_map(&id).await?))
+}
+
+/// POST /api/things/{id}/map/ops
+///
+/// Change the map: ops apply in order, all or none, against the revision the
+/// caller read (409 otherwise). An agent (a request with `x-agent-name`)
+/// writes as the AI, and its changes to points the person wrote wait as
+/// proposals (UX-WHO-2); anyone else is the person, who also answers
+/// proposals. 404 when the thing is unknown or out of scope, 422 for a bad op.
+pub async fn handle_thing_map_ops(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<ThingMapOpsRequest>,
+) -> Result<Json<ThingMapOpsResponse>, ServerError> {
+    let by = if extract_agent_name(&headers, None) == "unknown" {
+        ThingMapAuthor::You
+    } else {
+        ThingMapAuthor::Ai
+    };
+    let db = open_db(&state).await?;
+    visible_thing(&db, header_space.as_deref(), &id).await?;
+    let (map, proposed) = db
+        .apply_thing_map_ops(&id, by, request.expected_revision, &request.ops)
+        .await?;
+    Ok(Json(ThingMapOpsResponse { map, proposed }))
 }
 
 /// POST /api/sessions/{id}/saved-in
