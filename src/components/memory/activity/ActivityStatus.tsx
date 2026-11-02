@@ -3,22 +3,45 @@ import { useEffect, useId, useRef, useState } from "react";
 import ActivitySummaryPopover from "./ActivitySummaryPopover";
 import { Pulse, WarningCircle } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import { useActivity } from "../../../lib/useActivity";
+import { listRegisteredSources, type RegisteredSource } from "../../../lib/tauri";
+
+/** A folder Wenlan follows that it cannot read: moved, its drive gone, or a
+ *  read that failed. Paused is the person's own choice and is not broken. */
+export function brokenSources(sources: readonly RegisteredSource[] | undefined): RegisteredSource[] {
+  return (sources ?? []).filter((source) =>
+    typeof source.status === "object" && ("Unavailable" in source.status || "Error" in source.status));
+}
 
 interface ActivityStatusProps {
   readonly onOpenActivity: () => void;
   readonly current?: boolean;
   readonly compact?: boolean;
+  /** Opens a source that cannot be reached. Without it, Activity does not
+   *  check sources. */
+  readonly onOpenSource?: (source: RegisteredSource) => void;
 }
 
 export default function ActivityStatus({
   onOpenActivity,
   current = false,
   compact = false,
+  onOpenSource,
 }: ActivityStatusProps) {
   const { t } = useTranslation();
   const query = useActivity();
   const { data: activity, isError } = query;
+  // A source that cannot be reached needs the person, so it is said here, in
+  // Activity's place, and never on Home (UX-HOME-4).
+  const sourcesQuery = useQuery({
+    queryKey: ["registeredSources"],
+    queryFn: () => listRegisteredSources(),
+    enabled: onOpenSource !== undefined,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const broken = onOpenSource ? brokenSources(sourcesQuery.data) : [];
   const [expanded, setExpanded] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const firstActionRef = useRef<HTMLButtonElement>(null);
@@ -50,9 +73,13 @@ export default function ActivityStatus({
     : running
       ? t("activityStatus.state.organizing")
       : undefined;
-  const label = stateWord === undefined
+  const brokenLabel = broken.length > 0
+    ? t("activityStatus.sourcesBroken", { count: broken.length })
+    : undefined;
+  const attention = failed || brokenLabel !== undefined;
+  const label = brokenLabel ?? (stateWord === undefined
     ? t("main.activity")
-    : t("activityStatus.buttonLabel", { state: stateWord });
+    : t("activityStatus.buttonLabel", { state: stateWord }));
 
   return (
     <div
@@ -87,7 +114,7 @@ export default function ActivityStatus({
         ref={triggerRef}
         type="button"
         data-testid="activity-status"
-        data-state={failed ? "failed" : running ? "organizing" : undefined}
+        data-state={failed ? "failed" : brokenLabel ? "source" : running ? "organizing" : undefined}
         aria-current={current ? "page" : undefined}
         aria-label={label}
         title={label}
@@ -101,7 +128,7 @@ export default function ActivityStatus({
         }}
         className={`mem-activity-status${compact ? " mem-activity-status--compact" : ""}`}
       >
-        {failed ? (
+        {attention ? (
           <WarningCircle
             aria-hidden="true"
             className="mem-activity-status-icon"
@@ -122,7 +149,7 @@ export default function ActivityStatus({
             weight="regular"
           />
         )}
-        {!compact && <span aria-hidden="true" className="mem-activity-status-label">{t("main.activity")}</span>}
+        {!compact && <span aria-hidden="true" className="mem-activity-status-label">{brokenLabel ?? t("main.activity")}</span>}
       </button>
       {expanded && (
         <ActivitySummaryPopover
@@ -130,6 +157,11 @@ export default function ActivityStatus({
           activity={measuredActivity}
           isError={isError}
           firstActionRef={firstActionRef}
+          brokenSources={broken}
+          onOpenSource={(source) => {
+            setExpanded(false);
+            onOpenSource?.(source);
+          }}
           onReadAgain={() => void query.refetch()}
           onOpenActivity={() => {
             setExpanded(false);

@@ -3,7 +3,7 @@ import type { CSSProperties, Ref } from "react";
 import { ArrowRight } from "@phosphor-icons/react";
 import "./activitySummary.css";
 import { useTranslation } from "react-i18next";
-import type { ActivityResponse } from "../../../lib/tauri";
+import type { ActivityResponse, RegisteredSource } from "../../../lib/tauri";
 import { relativeTime } from "../../../lib/relativeTime";
 import { assetCount, assetProgress, assetSentence, knownAssets, onDemandPagesWaiting, type KnownActivityAsset, type KnownActivityAssetKind } from "../../../lib/activitySentence";
 
@@ -51,20 +51,41 @@ interface Props {
   readonly activity?: ActivityResponse;
   readonly isError: boolean;
   readonly firstActionRef: Ref<HTMLButtonElement>;
+  /** Sources Wenlan cannot reach, said first because they need the person. */
+  readonly brokenSources?: readonly RegisteredSource[];
+  readonly onOpenSource?: (source: RegisteredSource) => void;
   readonly onReadAgain: () => void;
   readonly onOpenActivity: () => void;
 }
 
-export default function ActivitySummaryPopover({ id, activity, isError, firstActionRef, onReadAgain, onOpenActivity }: Props) {
+export default function ActivitySummaryPopover({ id, activity, isError, firstActionRef, brokenSources = [], onOpenSource, onReadAgain, onOpenActivity }: Props) {
   const { t, i18n } = useTranslation();
+  const sourceFirst = brokenSources.length > 0 && onOpenSource !== undefined;
   const byKind = new Map(activity ? knownAssets(activity).map((asset) => [asset.kind, asset]) : []);
   return (
     <div id={id} className="mem-popover-surface mem-activity-popover" data-testid="activity-summary" role="dialog" aria-label={t("activityStatus.statusLabel")}>
       <h2 className="mem-activity-summary-title">{t("main.activity")}</h2>
+      {sourceFirst && (
+        <ul className="mem-activity-summary-sources" data-testid="activity-summary-sources">
+          {brokenSources.map((source, index) => (
+            <li key={source.id} className="mem-activity-summary-source">
+              <span className="mem-activity-summary-source-name">{sourceName(source.path)}</span>
+              <span className="mem-activity-summary-description">
+                {typeof source.status === "object" && "Unavailable" in source.status
+                  ? t("activityStatus.sourceUnavailable")
+                  : t("activityStatus.sourceError")}
+              </span>
+              <button ref={index === 0 ? firstActionRef : undefined} type="button" className="mem-activity-popover-action" onClick={() => onOpenSource(source)}>
+                {t("activityStatus.sourceOpen")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {isError ? (
         <div>
           <p role="alert">{t("activityStatus.nowError")}</p>
-          <button ref={firstActionRef} type="button" className="mem-activity-popover-action" onClick={onReadAgain}>{t("activityStatus.readAgain")}</button>
+          <button ref={sourceFirst ? undefined : firstActionRef} type="button" className="mem-activity-popover-action" onClick={onReadAgain}>{t("activityStatus.readAgain")}</button>
         </div>
       ) : activity === undefined ? (
         <p role="status">{t("activityStatus.nowLoading")}</p>
@@ -90,12 +111,17 @@ export default function ActivitySummaryPopover({ id, activity, isError, firstAct
             {activity.last_activity_at === null ? t("activityStatus.neverActive") : t("activityStatus.lastActivity", { time: relativeTime(activity.last_activity_at, t, i18n.language) })}
           </span>
         )}
-        <button ref={isError ? undefined : firstActionRef} type="button" className="mem-activity-popover-action mem-activity-summary-link" data-testid="activity-summary-open" onClick={onOpenActivity}>
+        <button ref={isError || sourceFirst ? undefined : firstActionRef} type="button" className="mem-activity-popover-action mem-activity-summary-link" data-testid="activity-summary-open" onClick={onOpenActivity}>
           {t("activityStatus.openActivity")}<ArrowRight size={14} aria-hidden="true" />
         </button>
       </footer>
     </div>
   );
+}
+
+function sourceName(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  return trimmed.split(/[\\/]/).pop() || path;
 }
 
 /** On demand, the user's AI tool steeps waiting pages; this names the command

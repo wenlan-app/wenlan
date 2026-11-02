@@ -1518,6 +1518,10 @@ export default function Main({
             mode={effectiveSidebar.mode}
             onEntityClick={handleEntityClick}
             onNavigateActivity={() => navigateTo({ kind: "activity" })}
+            onOpenSource={(source) => {
+              setSourceLibraryState((state) => ({ ...state, container: { sourceId: source.id, path: source.path } }));
+              navigateTo({ kind: "sources" });
+            }}
             activityCurrent={view.kind === "activity"}
             onConnectTool={() => navigateTo({ kind: "connect-agent" })}
             onNavigateHome={navigateHome}
