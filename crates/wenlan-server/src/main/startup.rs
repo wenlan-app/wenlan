@@ -459,6 +459,50 @@ pub(super) async fn prepare_startup_state(
                         Err(e) => tracing::warn!("[reconcile] pass failed: {e}"),
                     }
 
+                    // Reconcile repairs active pages only. An archived page's
+                    // file belongs in `archive/`, not the pages folder: one
+                    // left there (archived before archive moved files, by a
+                    // path that does not project, or whose move failed) looks
+                    // like a live page whose edits the watcher then ignores.
+                    // Moving it keeps its bytes, edits included.
+                    match db_arc.list_pages("archived", 10_000, 0).await {
+                        Ok(archived) if !archived.is_empty() => {
+                            let pages: Vec<(String, i64)> = archived
+                                .into_iter()
+                                .map(|page| (page.id, page.version))
+                                .collect();
+                            match projection.archive_pages(&pages) {
+                                Ok(0) => {}
+                                Ok(moved) => tracing::info!(
+                                    "[reconcile] moved {moved} archived page file(s) into archive/"
+                                ),
+                                Err(e) => tracing::warn!("[reconcile] archived page files: {e}"),
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("[reconcile] list archived pages failed: {e}"),
+                    }
+
+                    // A database put back to an older snapshot can leave an
+                    // archive marker newer than an active page, and the marker
+                    // would refuse that page's projection for good.
+                    match db_arc.list_pages("active", 10_000, 0).await {
+                        Ok(active) => {
+                            let pages: Vec<(String, i64)> = active
+                                .into_iter()
+                                .map(|page| (page.id, page.version))
+                                .collect();
+                            match projection.forget_stale_archive_markers(&pages) {
+                                Ok(0) => {}
+                                Ok(dropped) => tracing::info!(
+                                    "[reconcile] dropped {dropped} stale archive marker(s)"
+                                ),
+                                Err(e) => tracing::warn!("[reconcile] archive markers: {e}"),
+                            }
+                        }
+                        Err(e) => tracing::warn!("[reconcile] list active pages failed: {e}"),
+                    }
+
                     // A cutover ceremony that was killed mid-flight left the
                     // fence at `preparing`, and `preparing` refuses every page
                     // write. The ceremony cannot run while this daemon is up

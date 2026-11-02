@@ -763,6 +763,27 @@ async fn check_once_after_begin(
     }
 
     tokio::time::sleep(Duration::from_millis(800)).await;
+    restart_into_installed_bundle(app);
+}
+
+/// Start the freshly installed version and exit this one.
+///
+/// On macOS `AppHandle::restart` spawns the new binary as a child of this
+/// process and exits at once. Launch Services then keeps this process's
+/// record as `exited-with-subordinates` (the new app is its subordinate), and
+/// the Dock shows that dead record as a second Wenlan icon until logout. So
+/// macOS reopens the bundle through `open` once this process is gone, the same
+/// way a manual upgrade hands over, and the new app is a normal launch.
+fn restart_into_installed_bundle(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| crate::handover::bundle_root(&exe))
+    {
+        crate::handover::relaunch_after_exit(&bundle);
+        app.exit(0);
+        return;
+    }
     app.restart();
 }
 

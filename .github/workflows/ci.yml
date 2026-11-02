@@ -453,6 +453,8 @@ jobs:
               # or in the focused MCP platform-compile filter.
               # Folder alias regressions use real Unix symlinks; prove both platform branches.
               - 'crates/wenlan-core/src/document_enrichment.rs'
+              # Local model fit treats Mac memory as unified (no separate GPU memory check).
+              - 'crates/wenlan-core/src/on_device_models.rs'
               - 'crates/wenlan-server/src/ingest_routes_regression_tests.rs'
               - 'crates/wenlan-server/src/source_routes.rs'
               - 'scripts/first-run/macos-app.sh'

@@ -289,6 +289,9 @@ function Harness() {
                 }
               : null
           }
+          // ?gate=error: the app's boot gate never got an answer from the
+          // daemon (App.tsx passes daemonGateErrored).
+          daemonGateErrored={params.get("gate") === "error"}
           onComplete={() => console.log("[preview] onComplete")}
         />
       ) : mode === "settings" ? (

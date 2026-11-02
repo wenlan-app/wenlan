@@ -8,6 +8,8 @@ import { relativeTime } from "../../../lib/relativeTime";
 import { DetailReadingFrame } from "../DetailLayout";
 import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
 import { THINGS_QUERY_KEY } from "../pages/WorkingOn";
+import { hasToolMark, ToolMark } from "../assets/toolMarks";
+import { ThingViews } from "./ThingViews";
 import "./thingDetail.css";
 
 export const thingQueryKey = (id: string) => ["thing", id] as const;
@@ -58,15 +60,14 @@ export function ThingDetail({ thingId, onBack, onOpenPage, onOpenThing }: ThingD
   const when = relativeTime(thing.last_activity_at, t, i18n.language);
   return (
     <div className="page-detail thing-detail" aria-label={t("thing.label")}>
-      <DetailReadingFrame variant="compact" className="page-detail-document">
+      <DetailReadingFrame className="page-detail-document">
         <header className="page-document-title-row">
           <ThingTitle key={thing.title ?? ""} thing={thing} />
           <div className="page-document-tools">
             <BackButton onBack={onBack} label={t("thing.back")} />
           </div>
         </header>
-        {thing.status_line ? <p className="thing-detail-where">{thing.status_line}</p> : null}
-        <p className="thing-detail-meta">{[...thing.spaces, when].join(" · ")}</p>
+        <ThingViews thing={thing} meta={[...thing.spaces, when].join(" · ")} onOpenPage={onOpenPage} />
 
         <section className="thing-detail-section" aria-labelledby="thing-conversations">
           <h2 id="thing-conversations">{t("thing.conversations")}</h2>
@@ -108,7 +109,10 @@ export function ThingDetail({ thingId, onBack, onOpenPage, onOpenThing }: ThingD
               {thing.pages.map((page) => (
                 <li key={page.id}>
                   <button type="button" className="thing-detail-page" onClick={() => onOpenPage(page.id)}>
-                    {page.title}
+                    <span className="thing-detail-page-title">{page.title}</span>
+                    <span className="thing-detail-row-meta">
+                      {t(page.via === "wrote" ? "thing.pageWrote" : "thing.pageRead")} · {relativeTime(page.at, t, i18n.language)}
+                    </span>
                   </button>
                 </li>
               ))}
@@ -206,11 +210,12 @@ function ConversationRow({
       <div className="thing-detail-row-main">
         <span className="thing-detail-row-title">{title}</span>
         <span className="thing-detail-row-meta">
-          {sessionToolLabel(session.tool)} · {relativeTime(session.last_write_at, t, i18n.language)}
+          {hasToolMark(session.tool) ? <ToolMark tool={session.tool} /> : <span>{sessionToolLabel(session.tool)}</span>}
+          <span>{relativeTime(session.last_write_at, t, i18n.language)}</span>
         </span>
       </div>
       {choosing ? null : (
-        <button type="button" className="memory-detail-text-button" onClick={() => setChoosing(true)}>
+        <button type="button" className="memory-detail-text-button thing-detail-row-action" onClick={() => setChoosing(true)}>
           {t("thing.move")}
         </button>
       )}

@@ -28,7 +28,7 @@ describe("NoteTabs", () => {
   it("renders no home button unless the strip is given a home action", () => {
     renderTabs();
 
-    expect(screen.queryByRole("button", { name: "Wiki home" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
     expect(document.querySelector(".note-tab-home")).not.toBeInTheDocument();
   });
 
@@ -36,7 +36,7 @@ describe("NoteTabs", () => {
     const user = userEvent.setup();
     const onHome = vi.fn();
     const { rerender, props } = renderTabs({ onHome, homeActive: true, activeKey: undefined });
-    const home = screen.getByRole("button", { name: "Wiki home" });
+    const home = screen.getByRole("button", { name: "Home" });
 
     expect(home).toHaveAttribute("aria-current", "page");
     expect(home).toHaveAttribute("data-active", "true");
@@ -47,8 +47,8 @@ describe("NoteTabs", () => {
     expect(onHome).toHaveBeenCalledTimes(1);
 
     rerender(<NoteTabs {...props} onHome={onHome} homeActive={false} />);
-    expect(screen.getByRole("button", { name: "Wiki home" })).not.toHaveAttribute("aria-current");
-    expect(screen.getByRole("button", { name: "Wiki home" })).toHaveAttribute("data-active", "false");
+    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("button", { name: "Home" })).toHaveAttribute("data-active", "false");
   });
 
   it("keeps the home button in place while the home is showing, marked as the current view", () => {
@@ -61,7 +61,7 @@ describe("NoteTabs", () => {
   it("keeps the home button when no page is open and out of the tab arrow-key order", async () => {
     const user = userEvent.setup();
     renderTabs({ tabs: [], activeKey: undefined, onHome: vi.fn(), homeActive: true });
-    expect(screen.getByRole("button", { name: "Wiki home" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Home" })).toBeInTheDocument();
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     cleanup();
 
@@ -146,6 +146,6 @@ describe("NoteTabs window dragging", () => {
     expect(document.querySelector(".note-tabs")).toHaveAttribute("data-tauri-drag-region");
     expect(screen.getByRole("tablist")).toHaveAttribute("data-tauri-drag-region");
     expect(screen.getByRole("tab", { name: "First page" })).not.toHaveAttribute("data-tauri-drag-region");
-    expect(screen.getByRole("button", { name: "Wiki home" })).not.toHaveAttribute("data-tauri-drag-region");
+    expect(screen.getByRole("button", { name: "Home" })).not.toHaveAttribute("data-tauri-drag-region");
   });
 });

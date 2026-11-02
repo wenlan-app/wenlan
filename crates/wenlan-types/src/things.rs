@@ -105,3 +105,108 @@ pub struct ThingRef {
     pub id: String,
     pub title: Option<String>,
 }
+
+/// Who wrote a point on a thing's map (UX-WHO-2: the AI proposes rather than
+/// edits a point the person wrote or edited).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThingMapAuthor {
+    /// The person.
+    You,
+    /// The AI tool in the conversation.
+    Ai,
+    /// Wenlan's own local model, when no AI tool is connected.
+    Local,
+}
+
+/// Where a point stands. Kept apart from `kind`, since an option can be
+/// decided or dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThingMapState {
+    Open,
+    Decided,
+    Dropped,
+}
+
+/// The conversation lines a point came from. `from` and `to` are message
+/// positions in that conversation (0-based, inclusive); older points know
+/// only the conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingMapSource {
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_id: Option<String>,
+}
+
+/// One point on a thing's map.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThingMapNode {
+    pub id: String,
+    /// `None` only for the root.
+    pub parent_id: Option<String>,
+    /// Order among siblings, ascending.
+    pub rank: f64,
+    /// An open set the AI picks, such as `question`, `option`, `reason` or
+    /// `topic`. A client shows a kind it does not know as a plain point.
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<ThingMapState>,
+    pub label: String,
+    pub by: ThingMapAuthor,
+    #[serde(default)]
+    pub sources: Vec<ThingMapSource>,
+}
+
+/// A link between two points beyond parent and child, such as one point
+/// answering a question. `kind` is an open set like the node's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingMapEdge {
+    pub from: String,
+    pub to: String,
+    pub kind: String,
+}
+
+/// `GET /api/things/{id}/map`: the thing's map. Empty (`revision` 0, no
+/// nodes) until something writes it; the recap and the mind map read the same
+/// nodes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThingMapResponse {
+    pub thing_id: String,
+    pub revision: i64,
+    pub nodes: Vec<ThingMapNode>,
+    pub edges: Vec<ThingMapEdge>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_map_point_keeps_an_unknown_kind_and_optional_fields() {
+        let wire = serde_json::json!({
+            "thing_id": "thg_a",
+            "revision": 3,
+            "nodes": [
+                {"id": "n1", "parent_id": null, "rank": 0.0, "kind": "question",
+                 "state": "open", "label": "Which tagline?", "by": "you",
+                 "sources": [{"session_id": "s1", "from": 4, "to": 6}]},
+                {"id": "n2", "parent_id": "n1", "rank": 1.0, "kind": "a_future_kind",
+                 "label": "Option B", "by": "local"}
+            ],
+            "edges": [{"from": "n2", "to": "n1", "kind": "answers"}]
+        });
+        let map: ThingMapResponse = serde_json::from_value(wire).unwrap();
+        assert_eq!(map.nodes[0].state, Some(ThingMapState::Open));
+        assert_eq!(map.nodes[0].sources[0].memory_id, None);
+        assert_eq!(map.nodes[1].kind, "a_future_kind");
+        assert!(map.nodes[1].sources.is_empty());
+        let back = serde_json::to_value(&map.nodes[1]).unwrap();
+        assert!(back.get("state").is_none(), "{back}");
+        assert_eq!(back["by"], "local");
+    }
+}

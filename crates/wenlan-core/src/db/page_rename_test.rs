@@ -17,7 +17,7 @@ async fn fixture() -> Fixture {
     let (mut db, db_dir) = test_db().await;
     // Keep the fallback-embedding assertions deterministic: `test_db()` loads
     // the shared model, while this suite explicitly exercises rename without it.
-    db.embedder = None;
+    db.embedder = std::sync::OnceLock::new();
     db.conn
         .lock()
         .await

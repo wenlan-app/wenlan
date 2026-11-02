@@ -13,7 +13,7 @@
 //
 // Register note: the spec drafts said "on this Mac". Wenlan ships on Windows
 // and Linux too, so the lane copy says "this machine", matching the wording
-// already used by setup.privacyTitle and setup.intelligence.deviceNote.
+// already used by setup.intelligence.deviceNote.
 // Vendor names (Anthropic, OpenAI) stay literal in every locale.
 //
 // No Retry copy. The spec asks for a Retry that reruns only the failed steps,

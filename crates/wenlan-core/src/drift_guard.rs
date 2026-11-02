@@ -9652,7 +9652,7 @@ fn doc_path_references_resolve() {
         // load-bearing test fixtures, but their prose cross-references point
         // into the untracked design history they were promoted out of. Their
         // real integrity is enforced by the tests that parse them
-        // (`truth_manifest_test`, `m6::catalog_test`,
+        // (`truth_manifest_test`,
         // `scripts/m5-reader-sweep.py --check`), not by this path resolver.
         if f.starts_with("docs/plans/")
             || f.starts_with("docs/superpowers/")
@@ -10083,7 +10083,7 @@ fn doc_section_references_resolve() {
         // load-bearing test fixtures, but their prose cross-references point
         // into the untracked design history they were promoted out of. Their
         // real integrity is enforced by the tests that parse them
-        // (`truth_manifest_test`, `m6::catalog_test`,
+        // (`truth_manifest_test`,
         // `scripts/m5-reader-sweep.py --check`), not by this path resolver.
         if f.starts_with("docs/plans/")
             || f.starts_with("docs/superpowers/")

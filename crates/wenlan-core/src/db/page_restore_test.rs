@@ -23,7 +23,7 @@ const BODY: &str = "\n\n    indented code\n\n| a | b |\n| --- | --- |\n| 1 | 2 |
 
 async fn fixture() -> (MemoryDB, tempfile::TempDir) {
     let (mut db, dir) = test_db().await;
-    db.embedder = None;
+    db.embedder = std::sync::OnceLock::new();
     {
         let conn = db.conn.lock().await;
         conn.execute_batch(
