@@ -61,10 +61,10 @@ describe("PageDetail export", () => {
     return { user, trigger, menu: screen.getByRole("menu", { name: "Page actions" }) };
   }
 
-  it("keeps the export menu item disabled when no Obsidian source exists", async () => {
+  it("leaves export out of the menu when no Obsidian vault is connected", async () => {
     vi.mocked(tauri.listRegisteredSources).mockResolvedValue([]);
     await renderMenu();
-    expect(screen.getByRole("menuitem", { name: "Export to Obsidian" })).toBeDisabled();
+    expect(screen.queryByRole("menuitem", { name: "Export to Obsidian" })).toBeNull();
     expect(tauri.exportPageToObsidian).not.toHaveBeenCalled();
   });
 

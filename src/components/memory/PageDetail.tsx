@@ -2567,17 +2567,8 @@ export default function PageDetail({
                           ? t("pageDetail.redistillingPage")
                           : t("pageDetail.redistillPage")}
                     </button> : null}
-                    {obsidianSources.length === 0 ? (
-                      <button
-                        className="page-detail-mobile-menu-item"
-                        disabled
-                        role="menuitem"
-                        type="button"
-                      >
-                        {t("pageDetail.exportToObsidian")}
-                      </button>
-                    ) : (
-                      obsidianSources.map((source) => (
+                    {/* Export appears only once an Obsidian vault is connected. */}
+                    {obsidianSources.map((source) => (
                         <button
                           className="page-detail-mobile-menu-item"
                           disabled={storedActionPending || exporting || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive}
@@ -2593,8 +2584,7 @@ export default function PageDetail({
                             ? t("pageDetail.exportToObsidian")
                             : t("pageDetail.exportToVault", { vault: folderName(source.path) })}
                         </button>
-                      ))
-                    )}
+                      ))}
                     {canArchivePage(page) && (
                       <button
                         className="page-detail-mobile-menu-item"
