@@ -17,15 +17,23 @@ fn leftovers(mirror: &Path) -> Vec<String> {
 
 #[tokio::test]
 async fn a_run_writes_the_files_from_a_snapshot_and_checks_them() {
-    let (db, _dir) = fixture().await;
+    let (db, dir) = fixture().await;
+    let db_file = dir.path().join("origin_memory.db");
     let data_root = tempfile::tempdir().unwrap();
     let mirror = mirror_root(data_root.path());
     let embedder = db.shared_embedder().expect("the test database has a model");
     let memories_before = db.export_memory_rows().await.unwrap();
 
-    let run = run_once(&db, &pages(), data_root.path(), &mirror, embedder, true)
-        .await
-        .unwrap();
+    let run = run_once(
+        &db_file,
+        &pages(),
+        data_root.path(),
+        &mirror,
+        embedder,
+        true,
+    )
+    .await
+    .unwrap();
 
     assert!(run.files > 0);
     assert_eq!(run.check_clean, Some(true), "{}", {
@@ -47,12 +55,13 @@ async fn a_run_writes_the_files_from_a_snapshot_and_checks_them() {
 
 #[tokio::test]
 async fn the_next_run_replaces_the_files_whole() {
-    let (db, _dir) = fixture().await;
+    let (db, dir) = fixture().await;
+    let db_file = dir.path().join("origin_memory.db");
     let data_root = tempfile::tempdir().unwrap();
     let mirror = mirror_root(data_root.path());
     let embedder = db.shared_embedder().unwrap();
     run_once(
-        &db,
+        &db_file,
         &pages(),
         data_root.path(),
         &mirror,
@@ -67,9 +76,16 @@ async fn the_next_run_replaces_the_files_whole() {
     std::fs::create_dir_all(mirror.join("snapshot").join("memorydb")).unwrap();
     std::fs::create_dir_all(mirror.join("files.next")).unwrap();
 
-    let run = run_once(&db, &pages(), data_root.path(), &mirror, embedder, false)
-        .await
-        .unwrap();
+    let run = run_once(
+        &db_file,
+        &pages(),
+        data_root.path(),
+        &mirror,
+        embedder,
+        false,
+    )
+    .await
+    .unwrap();
     assert_eq!(run.check_clean, None);
     assert!(!stale.exists(), "the new files replace the old folder");
     assert_eq!(leftovers(&mirror), [FILES_DIR]);
@@ -77,12 +93,13 @@ async fn the_next_run_replaces_the_files_whole() {
 
 #[tokio::test]
 async fn a_failed_run_keeps_the_previous_files() {
-    let (db, _dir) = fixture().await;
+    let (db, dir) = fixture().await;
+    let db_file = dir.path().join("origin_memory.db");
     let data_root = tempfile::tempdir().unwrap();
     let mirror = mirror_root(data_root.path());
     let embedder = db.shared_embedder().unwrap();
     run_once(
-        &db,
+        &db_file,
         &pages(),
         data_root.path(),
         &mirror,
@@ -93,11 +110,19 @@ async fn a_failed_run_keeps_the_previous_files() {
     .unwrap();
     let manifest = mirror.join(FILES_DIR).join("export-manifest.json");
     let before = std::fs::read(&manifest).unwrap();
-    // A file where the run keeps its snapshot folder: the run stops.
-    std::fs::write(mirror.join("snapshot"), "in the way").unwrap();
-
-    let failed = run_once(&db, &pages(), data_root.path(), &mirror, embedder, false).await;
+    // The database cannot be copied: the run stops.
+    let missing = dir.path().join("gone.db");
+    let failed = run_once(
+        &missing,
+        &pages(),
+        data_root.path(),
+        &mirror,
+        embedder,
+        false,
+    )
+    .await;
     assert!(failed.is_err());
+    assert!(!missing.exists(), "a missing database is not created");
     assert_eq!(std::fs::read(&manifest).unwrap(), before);
 }
 
@@ -108,6 +133,7 @@ fn the_status_counts_checks_and_keeps_the_last_good_files_on_failure() {
         write_ms: 30,
         check_clean: Some(true),
         check_ms: 40,
+        cleanup: None,
     };
     let status = after_run(FilesMirrorStatus::default(), &run, 100);
     assert_eq!(status.state, FilesMirrorState::Ok);
@@ -140,4 +166,44 @@ fn the_status_counts_checks_and_keeps_the_last_good_files_on_failure() {
     let dir = tempfile::tempdir().unwrap();
     write_status(dir.path(), &failed).unwrap();
     assert_eq!(read_status(dir.path()), Some(failed));
+}
+
+#[tokio::test]
+async fn files_left_half_swapped_are_put_back_first() {
+    let (db, dir) = fixture().await;
+    let db_file = dir.path().join("origin_memory.db");
+    let data_root = tempfile::tempdir().unwrap();
+    let mirror = mirror_root(data_root.path());
+    let embedder = db.shared_embedder().unwrap();
+    run_once(
+        &db_file,
+        &pages(),
+        data_root.path(),
+        &mirror,
+        embedder.clone(),
+        false,
+    )
+    .await
+    .unwrap();
+    let manifest = std::fs::read(mirror.join(FILES_DIR).join("export-manifest.json")).unwrap();
+    // A run stopped after `files` became `files.old` and before the new
+    // files took its place; then the next run fails early.
+    std::fs::rename(mirror.join(FILES_DIR), mirror.join("files.old")).unwrap();
+
+    let missing = dir.path().join("gone.db");
+    let failed = run_once(
+        &missing,
+        &pages(),
+        data_root.path(),
+        &mirror,
+        embedder,
+        false,
+    )
+    .await;
+    assert!(failed.is_err());
+    assert_eq!(
+        std::fs::read(mirror.join(FILES_DIR).join("export-manifest.json")).unwrap(),
+        manifest,
+        "the last good files are back in place"
+    );
 }

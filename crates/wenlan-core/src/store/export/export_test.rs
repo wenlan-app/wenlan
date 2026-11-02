@@ -1199,6 +1199,7 @@ async fn the_pages_folder_is_read_and_nothing_in_it_is_lost() {
         dir: Some(pages.path().to_path_buf()),
         recorded,
         digests,
+        skip_unclaimed: false,
     };
     let data_root = tempfile::tempdir().unwrap();
     let out = tempfile::tempdir().unwrap();
@@ -1238,6 +1239,26 @@ async fn the_pages_folder_is_read_and_nothing_in_it_is_lost() {
     );
     assert!(target.join("backstage/.pages-folder/deleted.md").is_file());
     assert!(!target.join("backstage/.pages-folder/.wenlan").exists());
+
+    // The daily file copy leaves unclaimed files where they are and counts
+    // them; an edited page file is still copied.
+    let skipping = PagesFolder {
+        skip_unclaimed: true,
+        ..folder
+    };
+    let lean = out.path().join("lean");
+    let summary = export_lossless(&db, &skipping, data_root.path(), &lean)
+        .await
+        .unwrap();
+    assert_eq!(summary.folder_only, 0);
+    assert!(!lean
+        .join("backstage/.pages-folder/external-compile-topic-001.md")
+        .exists());
+    assert!(lean
+        .join("backstage/.pages-folder/edited/Rust.md")
+        .is_file());
+    let manifest = std::fs::read_to_string(lean.join(super::MANIFEST_FILE)).unwrap();
+    assert!(manifest.contains("pages-folder files no page claims"));
 }
 
 /// Every file under `dir` with its bytes and modified time.

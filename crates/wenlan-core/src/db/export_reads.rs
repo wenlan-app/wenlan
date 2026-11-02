@@ -676,20 +676,41 @@ pub(crate) struct ExportCanvasEdgeRow {
     pub created_at: Option<String>,
 }
 
-impl MemoryDB {
-    /// Writes a consistent copy of the whole database into `file`, which must
-    /// not exist (`VACUUM INTO`). Reads only; the copy is a new file.
-    pub async fn copy_into(&self, file: &std::path::Path) -> Result<(), WenlanError> {
-        let target = file.to_str().ok_or_else(|| {
-            WenlanError::Validation(format!("not a UTF-8 path: {}", file.display()))
-        })?;
-        let conn = self.conn.lock().await;
-        conn.execute("VACUUM INTO ?1", libsql::params![target])
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("copy the database: {error}")))?;
-        Ok(())
+/// Writes a consistent copy of the database file `source` into `into`,
+/// which must not exist (`VACUUM INTO`). The copy runs on a connection of
+/// its own: in WAL mode it is a reader, so the daemon's connection and its
+/// writers are not held up while a large database is copied.
+pub async fn copy_database_file(
+    source: &std::path::Path,
+    into: &std::path::Path,
+) -> Result<(), WenlanError> {
+    let utf8 = |path: &std::path::Path| {
+        path.to_str()
+            .map(str::to_string)
+            .ok_or_else(|| WenlanError::Validation(format!("not a UTF-8 path: {}", path.display())))
+    };
+    // Opening a missing file would create an empty database.
+    if !source.is_file() {
+        return Err(WenlanError::Validation(format!(
+            "no database at {}",
+            source.display()
+        )));
     }
+    let (source, target) = (utf8(source)?, utf8(into)?);
+    let database = libsql::Builder::new_local(&source)
+        .build()
+        .await
+        .map_err(|error| WenlanError::VectorDb(format!("open the database to copy: {error}")))?;
+    let conn = database
+        .connect()
+        .map_err(|error| WenlanError::VectorDb(format!("connect to copy: {error}")))?;
+    conn.execute("VACUUM INTO ?1", libsql::params![target])
+        .await
+        .map_err(|error| WenlanError::VectorDb(format!("copy the database: {error}")))?;
+    Ok(())
+}
 
+impl MemoryDB {
     /// The loaded embedding model, to open another database with it instead
     /// of loading a second copy. `None` until the model is loaded.
     pub fn shared_embedder(&self) -> Option<super::SharedEmbedder> {

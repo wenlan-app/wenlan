@@ -2,9 +2,11 @@
 //! Storage migration step 3 in the daemon: keep the file copy of the
 //! database current (`wenlan_core::store::mirror`) and check it once a day.
 //!
-//! The copy is rewritten at most once an hour, and only after the database
-//! changed. It starts ten minutes after the daemon does, so a short-lived
-//! daemon (a test, a quick restart) never runs it. `WENLAN_FILES_MIRROR=0`
+//! A run copies the database, writes the files and checks them: once a day,
+//! and only when the database changed since the last run. (Measured on a
+//! 600 MB database: about 70 s for the files and 70 s for the check, so not
+//! hourly.) The first run is ten minutes after the daemon starts, so a
+//! short-lived daemon (a test, a quick restart) never runs it. `WENLAN_FILES_MIRROR=0`
 //! turns it off. The files are never read back: the database stays the
 //! truth, and nothing the person sees changes.
 
@@ -19,10 +21,8 @@ use crate::state::SharedState;
 
 const FIRST_RUN_AFTER: Duration = Duration::from_secs(10 * 60);
 const TICK: Duration = Duration::from_secs(10 * 60);
-/// Least time between two writes of the files.
-const WRITE_EVERY: i64 = 60 * 60;
-/// Least time between two checks.
-const CHECK_EVERY: i64 = 24 * 60 * 60;
+/// Least time between two runs, counted from when the last one started.
+const RUN_EVERY: i64 = 24 * 60 * 60;
 /// Free space a run needs beyond three times the database's size (the
 /// snapshot, the rebuilt database and the files).
 const SPARE_BYTES: u64 = 512 * 1024 * 1024;
@@ -71,24 +71,12 @@ fn database_files(db_dir: &Path) -> (u64, i64) {
     (size, changed)
 }
 
-/// What the next tick should do.
-#[derive(Debug, PartialEq, Eq)]
-enum Due {
-    Nothing,
-    Write,
-    WriteAndCheck,
-}
-
-fn due(status: &FilesMirrorStatus, db_changed_at: i64, now: i64) -> Due {
-    let check_due = status.checked_at.is_none_or(|at| now - at >= CHECK_EVERY);
-    let write_due = match status.written_at {
+/// Whether a run is due: never run, or a day since the last one started
+/// and the database changed since then.
+fn due(status: &FilesMirrorStatus, db_changed_at: i64, now: i64) -> bool {
+    match status.tried_at.or(status.written_at) {
         None => true,
-        Some(at) => db_changed_at > at && now - at >= WRITE_EVERY,
-    };
-    match (write_due, check_due) {
-        (_, true) => Due::WriteAndCheck,
-        (true, false) => Due::Write,
-        (false, false) => Due::Nothing,
+        Some(at) => now - at >= RUN_EVERY && db_changed_at > at,
     }
 }
 
@@ -124,8 +112,7 @@ async fn tick(shared: &SharedState) -> anyhow::Result<()> {
     let data_root = wenlan_core::config::data_root();
     let (db_size, db_changed_at) = database_files(&data_root.join("memorydb"));
     let now = now();
-    let todo = due(&status, db_changed_at, now);
-    if todo == Due::Nothing {
+    if !due(&status, db_changed_at, now) {
         return Ok(());
     }
     let wait = |note: &str| -> anyhow::Result<()> {
@@ -156,9 +143,30 @@ async fn tick(shared: &SharedState) -> anyhow::Result<()> {
         dir: Some(pages),
         recorded: writer.page_files(),
         digests: writer.page_file_digests(),
+        skip_unclaimed: true,
     };
-    let check = todo == Due::WriteAndCheck;
-    let next = match mirror::run_once(&db, &folder, &data_root, &dir, embedder, check).await {
+    let status = FilesMirrorStatus {
+        tried_at: Some(now),
+        ..status
+    };
+    mirror::write_status(&dir, &status)?;
+    let db_file = data_root.join("memorydb").join("origin_memory.db");
+    // libsql runs each statement on the calling thread, and a run takes a
+    // minute or more: keep it off the async workers that serve requests.
+    let handle = tokio::runtime::Handle::current();
+    let (root, mirror_dir) = (data_root.clone(), dir.clone());
+    let result = tokio::task::spawn_blocking(move || {
+        handle.block_on(mirror::run_once(
+            &db_file,
+            &folder,
+            &root,
+            &mirror_dir,
+            embedder,
+            true,
+        ))
+    })
+    .await?;
+    let next = match result {
         Ok(run) => {
             tracing::info!(
                 "[files_mirror] wrote {} files in {} ms{}",
@@ -183,27 +191,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_first_tick_writes_and_checks_then_waits_for_a_change_and_a_day() {
-        let fresh = FilesMirrorStatus::default();
-        assert_eq!(due(&fresh, 0, 1_000), Due::WriteAndCheck);
-
-        let written = FilesMirrorStatus {
-            written_at: Some(10_000),
-            checked_at: Some(10_000),
+    fn a_run_is_due_once_a_day_and_only_after_a_change() {
+        assert!(due(&FilesMirrorStatus::default(), 0, 1_000));
+        let ran = FilesMirrorStatus {
+            tried_at: Some(10_000),
             ..FilesMirrorStatus::default()
         };
-        // No change since the last write.
-        assert_eq!(due(&written, 9_000, 10_000 + 2 * WRITE_EVERY), Due::Nothing);
-        // Changed, but within the hour.
-        assert_eq!(
-            due(&written, 10_500, 10_000 + WRITE_EVERY - 1),
-            Due::Nothing
-        );
-        assert_eq!(due(&written, 10_500, 10_000 + WRITE_EVERY), Due::Write);
-        // A day later the check is due, changed or not.
-        assert_eq!(
-            due(&written, 9_000, 10_000 + CHECK_EVERY),
-            Due::WriteAndCheck
-        );
+        // Changed, but within the day.
+        assert!(!due(&ran, 10_500, 10_000 + RUN_EVERY - 1));
+        assert!(due(&ran, 10_500, 10_000 + RUN_EVERY));
+        // A day later with no change since: nothing to do.
+        assert!(!due(&ran, 9_000, 10_000 + 2 * RUN_EVERY));
+        // A failed run counts from when it started, so it is not retried
+        // every tick.
+        let failed = FilesMirrorStatus {
+            tried_at: Some(20_000),
+            written_at: Some(10_000),
+            state: FilesMirrorState::Failed,
+            ..FilesMirrorStatus::default()
+        };
+        assert!(!due(&failed, 30_000, 20_000 + 600));
     }
 }

@@ -42,6 +42,7 @@ mod eval_pipeline_reads;
 mod eval_substrate_guard;
 mod eval_temporal_seed;
 pub(crate) mod export_reads;
+pub use export_reads::copy_database_file;
 mod kg_quality_diagnostics;
 mod kg_quality_duplicate_candidates;
 mod kg_quality_embedding_refresh;

@@ -67,6 +67,7 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
         dir: Some(pages.clone()),
         recorded,
         digests,
+        skip_unclaimed: false,
     };
 
     let summary = export_lossless(&db, &folder, &root, &out)

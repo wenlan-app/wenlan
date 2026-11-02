@@ -78,16 +78,21 @@ pub struct MirrorRun {
     /// `Some(clean)` when the run also checked the files.
     pub check_clean: Option<bool>,
     pub check_ms: u64,
+    /// A leftover folder that could not be removed after the files were
+    /// written (on Windows, another program may hold a file open). The run
+    /// still worked; the next run tries again.
+    pub cleanup: Option<String>,
 }
 
-/// One run: snapshot `db`, export the snapshot into `files/` (replacing the
-/// previous files only once the new ones are complete), and, when `check`,
+/// One run: snapshot the database file `db_file`, export the snapshot into
+/// `files/` (replacing the previous files only once the new ones are
+/// complete), and, when `check`,
 /// rebuild the files and compare. `pages` is today's pages folder (read
 /// only); `data_root` holds the artifact originals and `layout/` (read
 /// only). `embedder` opens the snapshot and the rebuilt database without
 /// loading the model again.
 pub async fn run_once(
-    db: &MemoryDB,
+    db_file: &Path,
     pages: &PagesFolder,
     data_root: &Path,
     mirror: &Path,
@@ -98,8 +103,15 @@ pub async fn run_once(
     let snapshot_dir = mirror.join(SNAPSHOT_DIR);
     let next = mirror.join(NEXT_DIR);
     let work = mirror.join(CHECK_DIR);
+    let files = mirror.join(FILES_DIR);
+    let old = mirror.join(OLD_DIR);
+    // A run that stopped between its two renames left the last good files
+    // in `files.old`: put them back before anything else.
+    if !files.exists() && old.exists() {
+        std::fs::rename(&old, &files)?;
+    }
     // Leftovers of a run that stopped part way.
-    for dir in [&snapshot_dir, &next, &work, &mirror.join(OLD_DIR)] {
+    for dir in [&snapshot_dir, &next, &work, &old] {
         remove_dir(dir)?;
     }
 
@@ -107,7 +119,7 @@ pub async fn run_once(
         let started = Instant::now();
         let db_dir = snapshot_dir.join("memorydb");
         std::fs::create_dir_all(&db_dir)?;
-        db.copy_into(&db_dir.join("origin_memory.db")).await?;
+        crate::db::copy_database_file(db_file, &db_dir.join("origin_memory.db")).await?;
         // Deferred: the snapshot is exported as it is, rows without a
         // vector included, never re-embedded.
         let snapshot = MemoryDB::new_with_shared_embedder_and_recovery(
@@ -118,13 +130,14 @@ pub async fn run_once(
         )
         .await?;
         let summary = export_lossless(&snapshot, pages, data_root, &next).await?;
-        let files = mirror.join(FILES_DIR);
-        let old = mirror.join(OLD_DIR);
         if files.exists() {
             std::fs::rename(&files, &old)?;
         }
-        std::fs::rename(&next, &files)?;
-        remove_dir(&old)?;
+        if let Err(error) = std::fs::rename(&next, &files) {
+            // Keep the last good files.
+            let _ = std::fs::rename(&old, &files);
+            return Err(error.into());
+        }
         let mut run = MirrorRun {
             files: summary.files,
             write_ms: started.elapsed().as_millis() as u64,
@@ -146,11 +159,13 @@ pub async fn run_once(
 
     // The snapshot and the rebuilt database are as large as the database;
     // never keep them.
-    let cleanup = [&snapshot_dir, &next, &work]
+    let cleanup = [&snapshot_dir, &next, &work, &old]
         .into_iter()
         .try_for_each(|dir| remove_dir(dir));
-    let run = result?;
-    cleanup?;
+    let mut run = result?;
+    if let Err(error) = cleanup {
+        run.cleanup = Some(format!("could not remove a leftover folder: {error}"));
+    }
     Ok(run)
 }
 
@@ -159,7 +174,7 @@ pub fn after_run(mut status: FilesMirrorStatus, run: &MirrorRun, now: i64) -> Fi
     status.written_at = Some(now);
     status.files = run.files;
     status.write_ms = run.write_ms;
-    status.note = None;
+    status.note = run.cleanup.clone();
     if let Some(clean) = run.check_clean {
         status.checked_at = Some(now);
         status.check_clean = Some(clean);

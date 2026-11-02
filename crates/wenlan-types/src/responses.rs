@@ -340,6 +340,9 @@ pub enum FilesMirrorState {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilesMirrorStatus {
     pub state: FilesMirrorState,
+    /// Unix seconds when the last run started, whether or not it worked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tried_at: Option<i64>,
     /// Unix seconds when the files were last written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub written_at: Option<i64>,
