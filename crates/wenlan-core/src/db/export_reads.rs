@@ -675,3 +675,24 @@ pub(crate) struct ExportCanvasEdgeRow {
     pub provenance: Option<String>,
     pub created_at: Option<String>,
 }
+
+impl MemoryDB {
+    /// Writes a consistent copy of the whole database into `file`, which must
+    /// not exist (`VACUUM INTO`). Reads only; the copy is a new file.
+    pub async fn copy_into(&self, file: &std::path::Path) -> Result<(), WenlanError> {
+        let target = file.to_str().ok_or_else(|| {
+            WenlanError::Validation(format!("not a UTF-8 path: {}", file.display()))
+        })?;
+        let conn = self.conn.lock().await;
+        conn.execute("VACUUM INTO ?1", libsql::params![target])
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("copy the database: {error}")))?;
+        Ok(())
+    }
+
+    /// The loaded embedding model, to open another database with it instead
+    /// of loading a second copy. `None` until the model is loaded.
+    pub fn shared_embedder(&self) -> Option<super::SharedEmbedder> {
+        self.embedder.get().cloned()
+    }
+}

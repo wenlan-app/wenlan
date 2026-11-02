@@ -19,6 +19,7 @@ pub mod decisions_routes;
 pub mod embedding_backfill;
 pub mod entity_graph_routes;
 pub mod error;
+pub mod files_mirror;
 mod host_activity;
 pub mod import_routes;
 pub mod indexed_files_routes;

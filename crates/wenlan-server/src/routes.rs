@@ -189,6 +189,7 @@ pub async fn handle_status(
         embedding_model,
         capabilities: vec!["default_save_space".to_string()],
         truth,
+        files_mirror: crate::files_mirror::read_status(),
     }))
 }
 
