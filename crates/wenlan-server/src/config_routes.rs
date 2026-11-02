@@ -538,25 +538,31 @@ pub async fn handle_clear_anthropic_key(
 
 // ── On-device model endpoints ──────────────────────────────────────────────
 
-/// Total memory of this computer in GB, or `None` when it cannot be read.
-fn total_ram_gb() -> Option<f64> {
-    let mut system = sysinfo::System::new();
-    system.refresh_memory();
-    let bytes = system.total_memory();
-    (bytes > 0).then(|| bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+/// This computer's hardware, read once per daemon run: memory and GPUs do
+/// not change while it runs. Free disk space is re-read on every call.
+fn local_hardware() -> Option<on_device_models::LocalHardware> {
+    static HARDWARE: std::sync::OnceLock<Option<on_device_models::LocalHardware>> =
+        std::sync::OnceLock::new();
+    let fixed = HARDWARE
+        .get_or_init(on_device_models::detect_local_hardware)
+        .clone()?;
+    let fresh = on_device_models::detect_local_hardware();
+    Some(on_device_models::LocalHardware {
+        free_disk_gb: fresh.and_then(|hw| hw.free_disk_gb),
+        ..fixed
+    })
 }
 
-/// The catalog as this computer sees it: which models fit, which one is
-/// recommended, and which few are offered before "Show all". Without a
-/// memory reading every model is offered and none is recommended.
+/// The catalog as this computer sees it: which models fit, which may be
+/// slow, and which few are offered before "Show all". Without a hardware
+/// reading every model is offered as fitting and none is shortlisted.
 fn model_entries(
-    total_ram_gb: Option<f64>,
+    hardware: Option<&on_device_models::LocalHardware>,
     cached: impl Fn(&OnDeviceModel) -> bool,
 ) -> Vec<OnDeviceModelEntry> {
-    let recommended = total_ram_gb.map(|ram| on_device_models::recommend_for_ram(ram).id);
-    let shortlist: Vec<&str> = total_ram_gb
-        .map(|ram| {
-            on_device_models::shortlist_for_ram(ram)
+    let shortlist: Vec<&str> = hardware
+        .map(|hw| {
+            on_device_models::shortlist(hw, &cached)
                 .iter()
                 .map(|m| m.id)
                 .collect()
@@ -564,16 +570,21 @@ fn model_entries(
         .unwrap_or_default();
     on_device_models::MODELS
         .iter()
-        .map(|model| OnDeviceModelEntry {
-            id: model.id.to_string(),
-            display_name: model.display_name.to_string(),
-            param_count: model.param_count.to_string(),
-            ram_required_gb: model.ram_required_gb,
-            file_size_gb: model.file_size_gb,
-            cached: cached(model),
-            fits: total_ram_gb.is_none_or(|ram| on_device_models::fits_ram(model, ram)),
-            recommended: recommended == Some(model.id),
-            shortlisted: shortlist.contains(&model.id),
+        .map(|model| {
+            let is_cached = cached(model);
+            let fit = hardware.map(|hw| on_device_models::model_fit(model, hw, is_cached));
+            OnDeviceModelEntry {
+                id: model.id.to_string(),
+                display_name: model.display_name.to_string(),
+                param_count: model.param_count.to_string(),
+                ram_required_gb: model.ram_required_gb,
+                file_size_gb: model.file_size_gb,
+                cached: is_cached,
+                fits: fit != Some(on_device_models::ModelFit::TooLarge),
+                may_be_slow: fit == Some(on_device_models::ModelFit::MaybeSlow),
+                no_disk_space: fit == Some(on_device_models::ModelFit::NoDiskSpace),
+                shortlisted: shortlist.contains(&model.id),
+            }
         })
         .collect()
 }
@@ -582,31 +593,39 @@ fn model_entries(
 mod model_entries_tests {
     use super::*;
 
-    #[test]
-    fn a_32_gb_computer_gets_three_offers_one_recommended_and_greyed_big_models() {
-        let entries = model_entries(Some(32.0), |_| false);
-        let shortlisted: Vec<_> = entries
-            .iter()
-            .filter(|e| e.shortlisted)
-            .map(|e| e.id.as_str())
-            .collect();
-        assert_eq!(shortlisted, vec!["qwen3.5-9b", "gemma4-12b", "qwen3.8-27b"]);
-        let recommended: Vec<_> = entries
-            .iter()
-            .filter(|e| e.recommended)
-            .map(|e| e.id.as_str())
-            .collect();
-        assert_eq!(recommended, vec!["gemma4-12b"]);
-        assert!(entries.iter().any(|e| !e.fits));
-        assert!(entries.iter().filter(|e| e.shortlisted).all(|e| e.fits));
+    fn pc(vram: Option<f64>) -> on_device_models::LocalHardware {
+        on_device_models::LocalHardware {
+            total_ram_gb: 16.0,
+            unified_memory: false,
+            dedicated_vram_gb: vram,
+            free_disk_gb: Some(6.0),
+        }
     }
 
     #[test]
-    fn without_a_memory_reading_everything_is_offered_and_nothing_recommended() {
+    fn a_16_gb_pc_gets_three_offers_and_marks_slow_too_large_and_no_disk() {
+        let hw = pc(Some(8.0));
+        let entries = model_entries(Some(&hw), |m| m.id == "qwen3-4b");
+        let by_id = |id: &str| entries.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(entries.iter().filter(|e| e.shortlisted).count(), 3);
+        assert!(by_id("qwen3-4b").fits && !by_id("qwen3-4b").may_be_slow);
+        assert!(by_id("gemma4-e4b").fits && !by_id("gemma4-e4b").may_be_slow);
+        assert!(!by_id("qwen3.6-35b-a3b").fits);
+        // 7.1 GB download, 6 GB free.
+        assert!(by_id("gemma4-12b").no_disk_space);
+        assert!(by_id("qwen3.5-9b").fits && !by_id("qwen3.5-9b").no_disk_space);
+        assert!(entries
+            .iter()
+            .filter(|e| e.shortlisted)
+            .all(|e| e.fits && !e.no_disk_space));
+    }
+
+    #[test]
+    fn without_a_hardware_reading_everything_is_offered_and_nothing_shortlisted() {
         let entries = model_entries(None, |_| false);
         assert!(entries
             .iter()
-            .all(|e| e.fits && !e.recommended && !e.shortlisted));
+            .all(|e| e.fits && !e.may_be_slow && !e.no_disk_space && !e.shortlisted));
     }
 }
 
@@ -619,8 +638,11 @@ pub async fn handle_get_on_device_model(
         let s = state.read().await;
         s.loaded_on_device_model.clone()
     };
-    let total_ram_gb = total_ram_gb();
-    let models = model_entries(total_ram_gb, on_device_models::is_cached);
+    let hardware = tokio::task::spawn_blocking(local_hardware)
+        .await
+        .map_err(|e| ServerError::Internal(format!("hardware read panicked: {e}")))?;
+    let total_ram_gb = hardware.as_ref().map(|hw| hw.total_ram_gb);
+    let models = model_entries(hardware.as_ref(), on_device_models::is_cached);
     // Resolve selected against registry so stale config values map to the default,
     // but keep local memory distinct from "default local model selected".
     let selected = cfg

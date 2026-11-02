@@ -818,13 +818,17 @@ pub struct OnDeviceModelEntry {
     pub ram_required_gb: f64,
     pub file_size_gb: f64,
     pub cached: bool,
-    /// Runs on this computer (enough total memory). Missing on an older
+    /// Enough memory for this model on this computer. Missing on an older
     /// daemon reads true, so nothing is hidden.
     #[serde(default = "crate::requests::default_true")]
     pub fits: bool,
-    /// The one model recommended for this computer.
+    /// Runs, but at least partly on the CPU (no discrete GPU, or a model larger
+    /// than its memory), so it may be slow.
     #[serde(default)]
-    pub recommended: bool,
+    pub may_be_slow: bool,
+    /// Not downloaded, and the disk has too little free space for it.
+    #[serde(default)]
+    pub no_disk_space: bool,
     /// Offered before "Show all" (at most three per computer).
     #[serde(default)]
     pub shortlisted: bool,
@@ -1673,7 +1677,8 @@ mod on_device_model_response_tests {
                 file_size_gb: 2.7,
                 cached: true,
                 fits: true,
-                recommended: true,
+                may_be_slow: false,
+                no_disk_space: false,
                 shortlisted: true,
             }],
             total_ram_gb: Some(16.0),
@@ -1711,7 +1716,7 @@ mod on_device_model_response_tests {
         )
         .unwrap();
         assert!(parsed.fits);
-        assert!(!parsed.recommended);
+        assert!(!parsed.may_be_slow);
         assert!(!parsed.shortlisted);
     }
 }

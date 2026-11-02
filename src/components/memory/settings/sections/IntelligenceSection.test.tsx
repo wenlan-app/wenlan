@@ -430,24 +430,38 @@ describe("IntelligenceSection", () => {
     expect(mocks.setSourcePin).not.toHaveBeenCalled();
   });
 
-  it("offers this computer's shortlist with one recommended model, and Show all expands the full list", async () => {
+  it("offers this computer's shortlist without a recommended badge, notes slow and no-disk models, and Show all expands the full list", async () => {
     const models = [
       { ...deviceModels[0], shortlisted: true },
-      { ...deviceModels[1], shortlisted: true, recommended: true, cached: false },
-      { ...deviceModels[2], shortlisted: false },
+      { ...deviceModels[1], shortlisted: true, may_be_slow: true, cached: false },
+      { ...deviceModels[2], shortlisted: false, no_disk_space: true },
     ];
     mocks.getOnDeviceModel.mockResolvedValue({ loaded: null, selected: null, models, total_ram_gb: 32 });
     renderSection();
     await userEvent.click(screen.getByRole("tab", { name: "Local" }));
     const panel = screen.getByRole("tabpanel");
-    const recommended = (await within(panel).findByText("Qwen3.5 9B")).closest(".settings-device-model") as HTMLElement;
-    expect(recommended).toHaveTextContent("Recommended");
-    expect(within(recommended).getByRole("button", { name: "Download" })).toBeEnabled();
+    const slow = (await within(panel).findByText("Qwen3.5 9B")).closest(".settings-device-model") as HTMLElement;
+    expect(panel).not.toHaveTextContent("Recommended");
+    expect(slow).toHaveTextContent("may be slow on this computer");
+    expect(within(slow).getByRole("button", { name: "Download" })).toBeEnabled();
     expect(within(panel).queryByText("Qwen3 14B")).not.toBeInTheDocument();
     await userEvent.click(within(panel).getByRole("button", { name: "Show all (3)" }));
-    expect(within(panel).getByText("Qwen3 14B")).toBeVisible();
+    const noDisk = within(panel).getByText("Qwen3 14B").closest(".settings-device-model") as HTMLElement;
+    expect(noDisk).toHaveTextContent("Needs 9.0 GB of free disk space");
+    expect(within(noDisk).queryByRole("button")).not.toBeInTheDocument();
     await userEvent.click(within(panel).getByRole("button", { name: "Show fewer" }));
     expect(within(panel).queryByText("Qwen3 14B")).not.toBeInTheDocument();
+  });
+
+  it("names the jobs that run on the model in use, in the task rows' words", async () => {
+    mocks.getResolvedRouting.mockResolvedValue(pinnedRouting({
+      everyday: { source: "on_device", model: "qwen3-4b-instruct-2507", mode: "pinned", pin: "on_device" },
+    }));
+    mocks.getOnDeviceModel.mockResolvedValue({ loaded: "qwen3-4b-instruct-2507", selected: "qwen3-4b-instruct-2507", models: [deviceModels[0]] });
+    renderSection();
+    const row = (await screen.findAllByText("Qwen3 4B")).map((el) => el.closest(".settings-device-model")).find(Boolean) as HTMLElement;
+    expect(await within(row).findByText("Used for Everyday work")).toBeVisible();
+    expect(within(row).queryByText("In use")).not.toBeInTheDocument();
   });
 
   it("reports a model activation error without showing it as in use", async () => {

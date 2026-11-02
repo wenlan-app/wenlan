@@ -716,8 +716,10 @@ export interface OnDeviceModelEntry {
   cached: boolean;
   /// Runs on this computer. Older daemons omit it; read missing as true.
   fits?: boolean;
-  /// The one model recommended for this computer.
-  recommended?: boolean;
+  /// Runs at least partly on the CPU here, so it may be slow.
+  may_be_slow?: boolean;
+  /// Not downloaded and the disk has too little free space for it.
+  no_disk_space?: boolean;
   /// Offered before "Show all" (at most three).
   shortlisted?: boolean;
 }

@@ -3,8 +3,7 @@
 //! Registry of on-device GGUF models Wenlan can download and run itself.
 //!
 //! The list spans several families and sizes, ordered by memory. Which ones a
-//! computer is offered, and which one is recommended, follows its total RAM
-//! ([`fits_ram`], [`recommend_for_ram`], [`shortlist_for_ram`]). Qwen 3 4B
+//! computer is offered follows its hardware ([`model_fit`], [`shortlist`]). Qwen 3 4B
 //! stays the default: it runs on any laptop. Only Qwen 3 4B and Qwen 3.5 9B
 //! have been quality-measured on Wenlan's jobs; the others are offered as
 //! choices and measured later.
@@ -229,60 +228,141 @@ pub fn resolve_or_default(id: Option<&str>) -> &'static OnDeviceModel {
 }
 
 /// Share of total RAM a model may use and still be offered on this computer.
-/// The rest stays for the system, the app, and the embedding model.
-const FIT_SHARE: f64 = 0.6;
-/// Share of total RAM the recommended model may use, so background steeping
-/// stays light while people keep working.
-const RECOMMEND_SHARE: f64 = 0.4;
+/// Jan's published rule: "Choose models that use less than 80% of your
+/// available RAM" (docs.jan.ai/desktop/troubleshooting).
+const FIT_SHARE: f64 = 0.8;
 
 /// Whether `model` can run on a computer with `total_ram_gb` of memory.
 pub fn fits_ram(model: &OnDeviceModel, total_ram_gb: f64) -> bool {
     model.ram_required_gb <= total_ram_gb * FIT_SHARE
 }
 
-/// Recommend a model based on total system RAM: the largest one that stays
-/// within [`RECOMMEND_SHARE`] of memory, or the default when none does.
+/// Recommend a model based on total system RAM (the measured tiers). Used
+/// only as the CLI's default answer; the app shows no "recommended" mark.
 pub fn recommend_for_ram(total_ram_gb: f64) -> &'static OnDeviceModel {
-    MODELS
-        .iter()
-        .rfind(|m| m.ram_required_gb <= total_ram_gb * RECOMMEND_SHARE)
-        .unwrap_or_else(get_default_model)
+    if total_ram_gb >= 16.0 {
+        &MODELS[2] // qwen3.5-9b
+    } else {
+        &MODELS[0] // qwen3-4b
+    }
 }
 
-/// The few models offered before "Show all": the recommended one, the next
-/// smaller one (faster), and the next larger one that still fits (smarter).
-/// Returned in registry order, at most three, every one fitting this computer
-/// (the default is the floor when nothing fits).
-pub fn shortlist_for_ram(total_ram_gb: f64) -> Vec<&'static OnDeviceModel> {
-    let recommended = recommend_for_ram(total_ram_gb);
-    let fitting: Vec<&'static OnDeviceModel> = MODELS
+/// What this computer offers a local model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalHardware {
+    pub total_ram_gb: f64,
+    /// CPU and GPU share one memory (Apple Silicon), so no separate VRAM
+    /// check applies.
+    pub unified_memory: bool,
+    /// Largest dedicated GPU memory in GB; `None` when there is no discrete
+    /// GPU (or it cannot be read).
+    pub dedicated_vram_gb: Option<f64>,
+    /// Free disk space where models are downloaded, in GB.
+    pub free_disk_gb: Option<f64>,
+}
+
+/// How well a model suits this computer, in the three states local-model
+/// apps commonly show (Jan: "Fits", "May be slow", "Won't fit").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelFit {
+    Fits,
+    /// Runs, but at least partly on the CPU: Windows/Linux without a discrete
+    /// GPU, or a model larger than its memory. LM Studio recommends at least
+    /// 4 GB of dedicated VRAM; Ollama runs what does not fit in VRAM on the CPU.
+    MaybeSlow,
+    /// Needs more than [`FIT_SHARE`] of memory.
+    TooLarge,
+    /// Not downloaded and the disk has too little free space for it.
+    NoDiskSpace,
+}
+
+impl ModelFit {
+    pub fn can_use(self) -> bool {
+        matches!(self, ModelFit::Fits | ModelFit::MaybeSlow)
+    }
+}
+
+/// Fit of `model` on `hardware`; `cached` models need no download space.
+pub fn model_fit(model: &OnDeviceModel, hardware: &LocalHardware, cached: bool) -> ModelFit {
+    if !fits_ram(model, hardware.total_ram_gb) {
+        return ModelFit::TooLarge;
+    }
+    if !cached
+        && hardware
+            .free_disk_gb
+            .is_some_and(|free| free < model.file_size_gb)
+    {
+        return ModelFit::NoDiskSpace;
+    }
+    if !hardware.unified_memory
+        && hardware
+            .dedicated_vram_gb
+            .is_none_or(|vram| vram < model.ram_required_gb)
+    {
+        return ModelFit::MaybeSlow;
+    }
+    ModelFit::Fits
+}
+
+/// The few models offered before "Show all": the three largest that fit
+/// this computer well, topped up with the smallest usable (slower) ones when
+/// fewer fit well. Returned in registry order.
+pub fn shortlist(
+    hardware: &LocalHardware,
+    cached: impl Fn(&OnDeviceModel) -> bool,
+) -> Vec<&'static OnDeviceModel> {
+    let fits: Vec<(usize, ModelFit)> = MODELS
         .iter()
-        .filter(|m| fits_ram(m, total_ram_gb) || m.id == recommended.id)
+        .enumerate()
+        .map(|(i, m)| (i, model_fit(m, hardware, cached(m))))
         .collect();
-    let at = fitting
+    let mut picked: Vec<usize> = fits
         .iter()
-        .position(|m| m.id == recommended.id)
-        .unwrap_or(0);
-    let mut picked = vec![at];
-    if at > 0 {
-        picked.push(at - 1);
-    }
-    if at + 1 < fitting.len() {
-        picked.push(at + 1);
-    }
-    // Near the top or bottom of the list, fill from the other side.
-    let mut step = 2;
-    while picked.len() < 3 && (at >= step || at + step < fitting.len()) {
-        if at + step < fitting.len() && picked.len() < 3 {
-            picked.push(at + step);
+        .rev()
+        .filter(|(_, fit)| *fit == ModelFit::Fits)
+        .map(|(i, _)| *i)
+        .take(3)
+        .collect();
+    for (i, fit) in fits.iter() {
+        if picked.len() >= 3 {
+            break;
         }
-        if at >= step && picked.len() < 3 {
-            picked.push(at - step);
+        if fit.can_use() && !picked.contains(i) {
+            picked.push(*i);
         }
-        step += 1;
     }
     picked.sort_unstable();
-    picked.into_iter().map(|i| fitting[i]).collect()
+    picked.into_iter().map(|i| &MODELS[i]).collect()
+}
+
+/// Read this computer's hardware: memory, the llama.cpp GPU devices, and
+/// free disk space in the model download cache's volume.
+pub fn detect_local_hardware() -> Option<LocalHardware> {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    let bytes = system.total_memory();
+    if bytes == 0 {
+        return None;
+    }
+    let gb = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
+    let unified_memory = cfg!(target_os = "macos");
+    let dedicated_vram_gb = if unified_memory {
+        None
+    } else {
+        crate::engine::discrete_gpu_memory_bytes().map(gb)
+    };
+    Some(LocalHardware {
+        total_ram_gb: gb(bytes),
+        unified_memory,
+        dedicated_vram_gb,
+        free_disk_gb: free_disk_bytes_for_models().map(gb),
+    })
+}
+
+/// Free bytes on the disk that holds the Hugging Face cache (the user's home).
+fn free_disk_bytes_for_models() -> Option<u64> {
+    let home = dirs::home_dir()?;
+    fs2::available_space(home).ok()
 }
 
 /// Check whether a model is already downloaded to the hf-hub cache.
@@ -411,28 +491,71 @@ mod tests {
         );
     }
 
-    #[test]
-    fn shortlist_offers_at_most_three_fitting_models_around_the_recommendation() {
-        for ram in [8.0, 16.0, 24.0, 32.0, 36.0, 48.0, 64.0, 128.0] {
-            let list = shortlist_for_ram(ram);
-            let recommended = recommend_for_ram(ram);
-            assert!(!list.is_empty() && list.len() <= 3, "{ram}: {}", list.len());
-            assert!(list.iter().any(|m| m.id == recommended.id), "{ram}");
-            assert!(list.iter().all(|m| fits_ram(m, ram)), "{ram}");
+    fn mac(ram: f64) -> LocalHardware {
+        LocalHardware {
+            total_ram_gb: ram,
+            unified_memory: true,
+            dedicated_vram_gb: None,
+            free_disk_gb: Some(500.0),
         }
-        let ids = |ram| {
-            shortlist_for_ram(ram)
+    }
+
+    #[test]
+    fn fit_follows_memory_disk_and_gpu() {
+        let small = get_model("qwen3-4b").unwrap();
+        let big = get_model("qwen3.6-35b-a3b").unwrap();
+        assert_eq!(model_fit(small, &mac(8.0), false), ModelFit::Fits);
+        assert_eq!(model_fit(big, &mac(16.0), false), ModelFit::TooLarge);
+        assert_eq!(model_fit(big, &mac(48.0), false), ModelFit::Fits);
+        let tight_disk = LocalHardware {
+            free_disk_gb: Some(10.0),
+            ..mac(48.0)
+        };
+        assert_eq!(model_fit(big, &tight_disk, false), ModelFit::NoDiskSpace);
+        assert_eq!(model_fit(big, &tight_disk, true), ModelFit::Fits);
+        let pc = LocalHardware {
+            total_ram_gb: 32.0,
+            unified_memory: false,
+            dedicated_vram_gb: Some(8.0),
+            free_disk_gb: Some(500.0),
+        };
+        assert_eq!(model_fit(small, &pc, false), ModelFit::Fits);
+        assert_eq!(
+            model_fit(get_model("gemma4-12b").unwrap(), &pc, false),
+            ModelFit::MaybeSlow
+        );
+        let no_gpu = LocalHardware {
+            dedicated_vram_gb: None,
+            ..pc
+        };
+        assert_eq!(model_fit(small, &no_gpu, false), ModelFit::MaybeSlow);
+    }
+
+    #[test]
+    fn shortlist_is_the_three_largest_that_fit_well() {
+        let ids = |hw: &LocalHardware| {
+            shortlist(hw, |_| false)
                 .iter()
                 .map(|m| m.id)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(ids(8.0), vec!["qwen3-4b"]);
-        assert_eq!(ids(16.0), vec!["gemma4-e4b", "qwen3.5-9b", "gemma4-12b"]);
-        assert_eq!(ids(32.0), vec!["qwen3.5-9b", "gemma4-12b", "qwen3.8-27b"]);
+        assert_eq!(ids(&mac(8.0)), vec!["qwen3-4b", "gemma4-e4b", "qwen3.5-9b"]);
         assert_eq!(
-            ids(64.0),
+            ids(&mac(16.0)),
+            vec!["gemma4-e4b", "qwen3.5-9b", "gemma4-12b"]
+        );
+        assert_eq!(
+            ids(&mac(48.0)),
             vec!["qwen3.8-27b", "gemma4-31b", "qwen3.6-35b-a3b"]
         );
+        let pc = LocalHardware {
+            total_ram_gb: 32.0,
+            unified_memory: false,
+            dedicated_vram_gb: Some(4.0),
+            free_disk_gb: Some(500.0),
+        };
+        // Only the smallest fits a 4 GB GPU; the next smallest top it up.
+        assert_eq!(ids(&pc), vec!["qwen3-4b", "gemma4-e4b", "qwen3.5-9b"]);
     }
 
     #[test]
@@ -458,8 +581,8 @@ mod tests {
         assert_eq!(recommend_for_ram(4.0).id, "qwen3-4b");
         assert_eq!(recommend_for_ram(8.0).id, "qwen3-4b");
         assert_eq!(recommend_for_ram(16.0).id, "qwen3.5-9b");
-        assert_eq!(recommend_for_ram(32.0).id, "gemma4-12b");
-        assert_eq!(recommend_for_ram(64.0).id, "qwen3.6-35b-a3b");
+        assert_eq!(recommend_for_ram(32.0).id, "qwen3.5-9b");
+        assert_eq!(recommend_for_ram(64.0).id, "qwen3.5-9b");
     }
 
     #[test]

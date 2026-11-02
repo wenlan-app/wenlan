@@ -1248,9 +1248,12 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   },
   get_on_device_model: async () => {
     const complete = downloadComplete();
-    const cachedFor = (id: string) => (id === downloadingModelId ? complete : id === PREVIEW_IN_USE_MODEL);
+    // With `?inuse=` only that model is on disk; otherwise every model reads as
+    // cached, as the setup wizard's download-ramp review expects.
+    const cachedFor = (id: string) =>
+      id === downloadingModelId ? complete : PREVIEW_IN_USE_MODEL ? id === PREVIEW_IN_USE_MODEL : true;
     // Mirrors crates/wenlan-core/src/on_device_models.rs (MODELS plus the
-    // fits / recommended / shortlist rules) for PREVIEW_TOTAL_RAM_GB.
+    // fit / shortlist rules) for PREVIEW_TOTAL_RAM_GB.
     const catalog = [
       { id: "qwen3-4b", display_name: "Qwen 3 4B", param_count: "4B", ram_required_gb: 3, file_size_gb: 2.5 },
       { id: "gemma4-e4b", display_name: "Gemma 4 E4B", param_count: "4B", ram_required_gb: 6, file_size_gb: 5.0 },
@@ -1261,21 +1264,19 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       { id: "qwen3.6-35b-a3b", display_name: "Qwen 3.6 35B-A3B", param_count: "35B", ram_required_gb: 24, file_size_gb: 22.1 },
     ];
     const ram = PREVIEW_TOTAL_RAM_GB;
-    const fits = (m: (typeof catalog)[number]) => m.ram_required_gb <= ram * 0.6;
-    const recommendedIndex = Math.max(0, catalog.map((m) => m.ram_required_gb <= ram * 0.4).lastIndexOf(true));
-    const fitting = catalog.map((m, i) => ({ m, i })).filter(({ m, i }) => fits(m) || i === recommendedIndex);
-    const at = Math.max(0, fitting.findIndex(({ i }) => i === recommendedIndex));
-    const picked = [at, at - 1, at + 1, at + 2, at - 2].filter((i) => i >= 0 && i < fitting.length).slice(0, 3);
-    const shortlist = new Set(picked.map((i) => fitting[i].m.id));
+    const fits = (m: (typeof catalog)[number]) => m.ram_required_gb <= ram * 0.8;
+    // A Mac (unified memory, plenty of disk): the three largest that fit.
+    const shortlist = new Set(catalog.filter(fits).slice(-3).map((m) => m.id));
     return {
       loaded: complete ? downloadingModelId : PREVIEW_IN_USE_MODEL,
       selected: downloadingModelId ?? PREVIEW_IN_USE_MODEL,
       total_ram_gb: ram,
-      models: catalog.map((m, i) => ({
+      models: catalog.map((m) => ({
         ...m,
         cached: cachedFor(m.id),
         fits: fits(m),
-        recommended: i === recommendedIndex,
+        may_be_slow: false,
+        no_disk_space: false,
         shortlisted: shortlist.has(m.id),
       })),
     };

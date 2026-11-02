@@ -391,6 +391,17 @@ pub struct LlmEngine {
     chat_template: Option<llama_cpp_2::model::LlamaChatTemplate>,
 }
 
+/// Total memory of the largest discrete GPU llama.cpp can use, or `None`
+/// when there is none. Initializes the shared llama.cpp backend if needed.
+pub fn discrete_gpu_memory_bytes() -> Option<u64> {
+    shared_backend().ok()?;
+    llama_cpp_2::list_llama_ggml_backend_devices()
+        .iter()
+        .filter(|device| matches!(device.device_type, LlamaBackendDeviceType::Gpu))
+        .map(|device| device.memory_total as u64)
+        .max()
+}
+
 /// OpenAI-style messages for a system/user pair, as the model's chat
 /// template expects them.
 fn template_messages_json(system_prompt: Option<&str>, prompt: &str) -> String {
