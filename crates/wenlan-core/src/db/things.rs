@@ -24,6 +24,7 @@ use std::collections::{HashMap, HashSet};
 use wenlan_types::{
     AgentSession, BriefAppliedMutation, BriefMutationKind, ThingActor, ThingDetailResponse,
     ThingPageEntry, ThingPageVia, ThingRef, ThingSessionEntry, ThingSummary,
+    THING_QUIET_AFTER_SECS,
 };
 
 const THINGS_DDL: &str = "
@@ -660,7 +661,9 @@ impl MemoryDB {
 
     /// Every thing a scoped caller may see, newest activity first, or just
     /// the one `only` names. A thing is listed while it has a conversation or
-    /// its Brief item is active, and never once merged. A Space-scoped caller
+    /// its Brief item is active, and never once merged. One with nothing new
+    /// for two weeks is still listed, marked `quiet`, so search finds it while
+    /// home leaves it out. A Space-scoped caller
     /// sees a thing when one of its conversations ran in that Space or its
     /// Brief item is there, and sees no other Space named.
     pub async fn list_things(
@@ -668,6 +671,7 @@ impl MemoryDB {
         scope: &ReadScope,
         only: Option<&str>,
     ) -> Result<Vec<ThingSummary>, WenlanError> {
+        let now = chrono::Utc::now().timestamp();
         let conn = self.conn.lock().await;
         let mut params = Vec::new();
         let only_sql = match only {
@@ -684,7 +688,8 @@ impl MemoryDB {
                             (SELECT MAX(a.last_write_at) FROM thing_sessions ts
                                JOIN agent_sessions a ON a.id = ts.session_id
                               WHERE ts.thing_id = t.id),
-                            (SELECT COUNT(*) FROM thing_sessions ts WHERE ts.thing_id = t.id)
+                            (SELECT COUNT(*) FROM thing_sessions ts WHERE ts.thing_id = t.id),
+                            bi.updated_at
                        FROM things t
                        LEFT JOIN brief_items bi ON bi.id = t.brief_item_id
                        LEFT JOIN spaces sp ON sp.id = bi.space_id
@@ -708,6 +713,12 @@ impl MemoryDB {
             }
             let created_at = row.get::<i64>(3).unwrap_or(0);
             let item_space = row.get::<Option<String>>(6).unwrap_or(None);
+            // The newest of its conversations and its Brief item. A thing made
+            // from an old Brief item is as old as the item, not as the sort
+            // pass that made it.
+            let chat_at = row.get::<Option<i64>>(7).unwrap_or(None);
+            let item_at = row.get::<Option<i64>>(9).unwrap_or(None);
+            let last_activity_at = chat_at.max(item_at).unwrap_or(created_at);
             things.push(Row {
                 summary: ThingSummary {
                     id: row.get::<String>(0).unwrap_or_default(),
@@ -715,10 +726,8 @@ impl MemoryDB {
                     title_by: parse_actor(&row.get::<String>(2).unwrap_or_default()),
                     status_line: None,
                     spaces: item_space.into_iter().collect(),
-                    last_activity_at: row
-                        .get::<Option<i64>>(7)
-                        .unwrap_or(None)
-                        .unwrap_or(created_at),
+                    last_activity_at,
+                    quiet: now - last_activity_at > THING_QUIET_AFTER_SECS,
                 },
                 item_text: row.get::<Option<String>>(4).unwrap_or(None),
                 unfiled: false,

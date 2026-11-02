@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -10,7 +11,7 @@ export const THINGS_QUERY_KEY = ["things"] as const;
 
 const RETRY_SOON = { retry: 5, retryDelay: (attempt: number) => Math.min(2_000 * 2 ** attempt, 15_000) } as const;
 
-/** How many lines of work home shows; the rest live in their Spaces. */
+/** How many lines of work home shows before "See all". */
 export const WORKING_ON_LISTED = 6;
 
 /** "Today", "yesterday", "3 days ago" in the interface language: when the
@@ -61,7 +62,13 @@ export function WorkingOn({
     enabled: !!onOpenThing,
     ...RETRY_SOON,
   });
-  const thingItems: ThingSummary[] = onOpenThing ? (things.data ?? []).slice(0, WORKING_ON_LISTED) : [];
+  const [showAll, setShowAll] = useState(false);
+  // A thing with nothing new for two weeks leaves this list; search still
+  // finds it, and its next conversation brings it back (UX-HOME-5). There is
+  // no cap: when more are current, "See all" opens the rest in place.
+  const current: ThingSummary[] = onOpenThing ? (things.data ?? []).filter((thing) => !thing.quiet) : [];
+  const more = current.length > WORKING_ON_LISTED;
+  const thingItems = showAll ? current : current.slice(0, WORKING_ON_LISTED);
   // Each card names the pages its work wrote and the tool it happened in.
   const details = useQueries({
     queries: thingItems.map((thing) => ({
@@ -71,8 +78,9 @@ export function WorkingOn({
     })),
   });
   // A failed things read is not "no things": wait for it instead of falling
-  // back to the Space Briefs.
-  const useBrief = !onOpenThing || (things.isSuccess && thingItems.length === 0);
+  // back to the Space Briefs. Things that have all gone quiet are not "no
+  // things" either: the Briefs they came from are just as old.
+  const useBrief = !onOpenThing || (things.isSuccess && (things.data ?? []).length === 0);
   const brief = useQuery({
     queryKey: WORKING_ON_QUERY_KEY,
     queryFn: listWorkingOn,
@@ -83,8 +91,15 @@ export function WorkingOn({
   const briefItems: WorkingOnItem[] = useBrief ? (brief.data ?? []).slice(0, WORKING_ON_LISTED) : [];
   if (thingItems.length === 0 && briefItems.length === 0) return null;
   return (
-    <section className="wiki-working-on" data-testid="wiki-working-on" aria-labelledby="wiki-working-on-title">
-      <h2 id="wiki-working-on-title">{t("pages.overview.workingOnTitle")}</h2>
+    <section className="wiki-working-on" data-testid="wiki-working-on" data-expanded={showAll ? "true" : undefined} aria-labelledby="wiki-working-on-title">
+      <header className="wiki-new-pages-header wiki-working-on-header">
+        <h2 id="wiki-working-on-title">{t("pages.overview.workingOnTitle")}</h2>
+        {more ? (
+          <button type="button" className="wiki-new-pages-all" aria-expanded={showAll} onClick={() => setShowAll((shown) => !shown)}>
+            {showAll ? t("pages.overview.workingOnFewer") : t("pages.overview.workingOnAll")}
+          </button>
+        ) : null}
+      </header>
       <ul>
         {thingItems.map((thing, index) => {
           const detail = details[index]?.data;

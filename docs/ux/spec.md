@@ -63,6 +63,11 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   原文（2026-10-31 選擇卡）：正在做的事 + 最近編輯，不放小圖。選擇卡「你改的 + AI 新写的」（2026-10-31 17:16）
 - **UX-HOME-4** `planned` Check results and source updates are not on home.
   原文：檢查結果和來源更新不放首頁。
+- **UX-HOME-5** `shipped` A thing with no new conversation and no Brief change
+  for two weeks leaves "what you're working on". It is not deleted: search
+  still finds it, and its next conversation brings it back. There is no cap:
+  home lists six, and "See all" opens the rest in place, without a count.
+  原文：選擇卡「显示，安静 2 周后离开」（2026-11-02 23:40）；「我很担心我设上限会出现什么问题」（2026-11-02 21:53）。
 
 ## Sorting conversations into things
 

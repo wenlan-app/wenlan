@@ -955,6 +955,10 @@ export interface ThingSummary {
   status_line: string | null;
   spaces: string[];
   last_activity_at: number;
+  /** Nothing new for two weeks: left out of "what you're working on", still
+   *  found by search, back on its own with the next conversation (UX-HOME-5).
+   *  Absent from an older daemon. */
+  quiet?: boolean;
 }
 
 export interface ThingSession {
