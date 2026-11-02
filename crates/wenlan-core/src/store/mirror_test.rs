@@ -130,6 +130,8 @@ async fn a_failed_run_keeps_the_previous_files() {
 fn the_status_counts_checks_and_keeps_the_last_good_files_on_failure() {
     let run = MirrorRun {
         files: 12,
+        written: 3,
+        removed: 1,
         write_ms: 30,
         check_clean: Some(true),
         check_ms: 40,
@@ -206,4 +208,131 @@ async fn files_left_half_swapped_are_put_back_first() {
         manifest,
         "the last good files are back in place"
     );
+}
+
+fn manifest_paths(files: &Path) -> Vec<String> {
+    crate::store::export::read_manifest(files)
+        .unwrap()
+        .files
+        .into_iter()
+        .map(|file| file.path)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_refresh_writes_only_what_changed_and_removes_what_is_gone() {
+    let (db, dir) = fixture().await;
+    let db_file = dir.path().join("origin_memory.db");
+    let data_root = tempfile::tempdir().unwrap();
+    let mirror = mirror_root(data_root.path());
+
+    let first = refresh(&db_file, &pages(), data_root.path(), &mirror)
+        .await
+        .unwrap();
+    assert!(first.files > 0);
+    assert_eq!(
+        first.written, first.files,
+        "a first refresh writes every file"
+    );
+    let files = mirror.join(FILES_DIR);
+    let before = manifest_paths(&files);
+
+    // Nothing changed: nothing is written or removed.
+    let again = refresh(&db_file, &pages(), data_root.path(), &mirror)
+        .await
+        .unwrap();
+    assert_eq!((again.written, again.removed), (0, 0));
+    assert_eq!(manifest_paths(&files), before);
+
+    // One page changes, one is deleted, and a refresh that stopped part
+    // way left a temporary file behind.
+    db.export_fixture_sql(
+        "UPDATE pages SET content = 'The launch moved to 2026-04-01.' WHERE id = ?1",
+        "a",
+    )
+    .await;
+    db.export_fixture_sql("DELETE FROM pages WHERE id = ?1", "x")
+        .await;
+    let leftover = files.join("visible").join("half.md.wenlan-tmp");
+    std::fs::write(&leftover, "half").unwrap();
+    let changed = refresh(&db_file, &pages(), data_root.path(), &mirror)
+        .await
+        .unwrap();
+    assert!(changed.written >= 1, "{changed:?}");
+    assert!(changed.written < first.written, "{changed:?}");
+    assert!(changed.removed >= 1, "{changed:?}");
+    assert!(!leftover.exists());
+    let after = manifest_paths(&files);
+    assert_eq!(after.len(), before.len() - 1);
+    let alpha = std::fs::read_to_string(files.join("visible").join("Alpha.md")).unwrap();
+    assert!(alpha.contains("2026-04-01"), "{alpha}");
+    // Every file the manifest lists is there; nothing else is.
+    for path in &after {
+        assert!(files.join(path).is_file(), "{path}");
+    }
+
+    // The refreshed files are a lossless export of the database now.
+    let work = tempfile::tempdir().unwrap();
+    let report = check_export_with(&db, &files, &work.path().join("check"), None)
+        .await
+        .unwrap();
+    assert!(report.is_clean(), "{}", report.summary());
+}
+
+#[tokio::test]
+async fn a_read_snapshot_sees_one_moment_while_the_database_changes() {
+    let (db, dir) = fixture().await;
+    let db_file = dir.path().join("origin_memory.db");
+    let snapshot = MemoryDB::open_read_snapshot(&db_file).await.unwrap();
+    let titles = |rows: Vec<crate::db::export_reads::ExportPageRow>| {
+        rows.into_iter()
+            .map(|row| row.title)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let seen = titles(snapshot.export_page_rows().await.unwrap());
+    db.export_fixture_sql("UPDATE pages SET title = 'Alpha two' WHERE id = ?1", "a")
+        .await;
+    assert_eq!(titles(snapshot.export_page_rows().await.unwrap()), seen);
+    assert!(titles(db.export_page_rows().await.unwrap()).contains("Alpha two"));
+    // It writes nothing.
+    assert!(snapshot
+        .export_fixture_sql_result("UPDATE pages SET title = 'no' WHERE id = ?1", "a")
+        .await
+        .is_err());
+    // A missing file is refused, not created.
+    let missing = dir.path().join("gone.db");
+    assert!(MemoryDB::open_read_snapshot(&missing).await.is_err());
+    assert!(!missing.exists());
+}
+
+#[test]
+fn a_refresh_keeps_the_last_check_and_clears_a_failure() {
+    let refreshed = MirrorRun {
+        files: 5,
+        written: 1,
+        write_ms: 9,
+        ..MirrorRun::default()
+    };
+    let checked = FilesMirrorStatus {
+        state: FilesMirrorState::Differences,
+        check_clean: Some(false),
+        checked_at: Some(100),
+        note: Some("waiting for the search model to load".into()),
+        ..FilesMirrorStatus::default()
+    };
+    let status = after_refresh(checked, &refreshed, 200);
+    assert_eq!(status.state, FilesMirrorState::Differences);
+    assert_eq!(
+        (status.written_at, status.checked_at),
+        (Some(200), Some(100))
+    );
+    assert!(status.note.is_some(), "a note on a waiting check stays");
+
+    let failed = after_failure(
+        FilesMirrorStatus::default(),
+        &WenlanError::Validation("disk full".into()),
+    );
+    let status = after_refresh(failed, &refreshed, 300);
+    assert_eq!(status.state, FilesMirrorState::Ok);
+    assert_eq!(status.note, None);
 }

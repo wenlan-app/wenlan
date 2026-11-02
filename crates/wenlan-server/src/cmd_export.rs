@@ -19,7 +19,7 @@ use anyhow::{bail, Context, Result};
 use wenlan_core::db::MemoryDB;
 use wenlan_core::events::NoopEmitter;
 use wenlan_core::export::knowledge::KnowledgeWriter;
-use wenlan_core::store::export::run::{export_lossless, PagesFolder};
+use wenlan_core::store::export::run::{export_lossless, refresh_lossless, PagesFolder};
 
 fn installed_root() -> PathBuf {
     dirs::data_local_dir()
@@ -34,7 +34,7 @@ fn same_folder(a: &Path, b: &Path) -> bool {
     }
 }
 
-pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
+pub async fn run(out: PathBuf, pages: Option<PathBuf>, refresh: bool) -> Result<()> {
     let Some(root) = std::env::var_os("WENLAN_DATA_DIR").map(PathBuf::from) else {
         bail!(
             "export-lossless runs on a copy of the data folder only. Copy it first, then pass \
@@ -70,9 +70,12 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
         skip_unclaimed: false,
     };
 
-    let summary = export_lossless(&db, &folder, &root, &out)
-        .await
-        .with_context(|| format!("exporting into {}", out.display()))?;
+    let summary = if refresh {
+        refresh_lossless(&db, &folder, &root, &out).await
+    } else {
+        export_lossless(&db, &folder, &root, &out).await
+    }
+    .with_context(|| format!("exporting into {}", out.display()))?;
     println!("Exported into {}:", out.display());
     println!(
         "  pages {} (archived {}), entities {}, memories {}, originals {}, briefs {}",
@@ -105,6 +108,10 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
     println!(
         "  {} files; {} values left out, listed in export-manifest.json",
         summary.files, summary.left_out
+    );
+    println!(
+        "  {} files written, {} removed",
+        summary.written, summary.removed
     );
     let timings: Vec<String> = summary
         .timings_ms
