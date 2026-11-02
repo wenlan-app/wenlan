@@ -200,14 +200,19 @@ function ConversationQuote({ hit, query, onBack, onOpenThing }: {
     enabled: all,
   });
   const focusRef = useRef<HTMLParagraphElement>(null);
+  const linesRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { backRef.current?.focus(); }, []);
   useEffect(() => {
-    if (all && lines.data) focusRef.current?.scrollIntoView?.({ block: "center" });
+    // Scroll only the conversation, so the way back stays in view.
+    const box = linesRef.current;
+    const line = focusRef.current;
+    if (all && lines.data && box && line) box.scrollTop = line.offsetTop - (box.clientHeight - line.offsetHeight) / 2;
   }, [all, lines.data]);
   const said = (line: ConversationLine, focus: boolean, key: string | number) => (
     <p
       className={focus ? "search-quote-line search-quote-line--hit" : "search-quote-line"}
+      data-speaker={line.speaker}
       key={key}
       ref={focus ? focusRef : undefined}
     >
@@ -218,7 +223,9 @@ function ConversationQuote({ hit, query, onBack, onOpenThing }: {
   return (
     <div className="search-quote" data-testid="conversation-quote">
       <button className="search-quote-back" onClick={onBack} ref={backRef} type="button">{t("main.search.backToResults")}</button>
-      <div className="search-quote-lines">
+      {/* The whole conversation reads like the AI tool it came from: the
+          person's words in a bubble on the right, the AI's across the width. */}
+      <div className={all && lines.data ? "search-quote-lines search-quote-lines--chat" : "search-quote-lines"} ref={linesRef}>
         {all && lines.data
           ? lines.data.lines.map((line, i) => {
             const at = i + (lines.data.first_index ?? 0);

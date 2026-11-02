@@ -2,7 +2,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
-import { openMemoryFromPage, openPrimaryDestination } from "./helpers/primaryNavigation";
+import { openMemoryFromPage, openPrimaryDestination, openSourceLibrary } from "./helpers/primaryNavigation";
 
 // Desktop detail views open Info without its toggle, so no focused control
 // opened the pane. Escape from inside it must still land on the toggle, the
@@ -74,7 +74,7 @@ test("source folder and document Info opened by default return Escape focus to t
     bridge.invoke = (command, args) => ["list_registered_sources", "list_indexed_files", "read_source_dir", "read_text_file"].includes(command)
       ? (window as unknown as { __containerInvoke: typeof original }).__containerInvoke(command, args) : original(command, args);
   });
-  await openPrimaryDestination(page, "Sources", "More");
+  await openSourceLibrary(page);
   await page.getByRole("button", { name: /Reading Vault/ }).first().click();
   const container = page.locator(".source-container-workspace").first();
   await expect(container).toBeVisible();

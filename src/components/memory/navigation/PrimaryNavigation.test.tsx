@@ -14,7 +14,6 @@ const labels = {
   navigation: "Primary navigation",
   pages: "Wiki",
   pinToSidebar: (name: string) => `Pin ${name} to sidebar`,
-  sources: "Sources",
   spaces: "Spaces",
   unpinFromSidebar: (name: string) => `Unpin ${name} from sidebar`,
 } as const;
@@ -22,7 +21,7 @@ const labels = {
 function renderNavigation(active: GlobalNavigation | null = null) {
   const callbacks = {
     entities: vi.fn(), graph: vi.fn(), home: vi.fn(),
-    pages: vi.fn(), sources: vi.fn(), spaces: vi.fn(),
+    pages: vi.fn(), spaces: vi.fn(),
   };
   const props = {
     active, labels, compact: true,
@@ -30,7 +29,6 @@ function renderNavigation(active: GlobalNavigation | null = null) {
     onNavigateGraph: callbacks.graph,
     onNavigateHome: callbacks.home,
     onNavigatePages: callbacks.pages,
-    onNavigateSources: callbacks.sources,
     onNavigateSpaces: callbacks.spaces,
   };
   return { callbacks, props, ...render(<PrimaryNavigation {...props} />) };
@@ -56,7 +54,7 @@ beforeEach(() => {
 });
 
 describe("PrimaryNavigation", () => {
-  it("defaults to Home, Wiki, Spaces and More, with Graph and Sources one step away in More", async () => {
+  it("defaults to Home, Wiki, Spaces and More, with Graph and Topics one step away and no Sources", async () => {
     const user = userEvent.setup();
     localStorage.clear();
     const { callbacks } = renderNavigation("pages");
@@ -74,11 +72,8 @@ describe("PrimaryNavigation", () => {
     expect(callbacks.spaces).toHaveBeenCalledExactlyOnceWith(false);
     await user.click(within(await openMore(user)).getByRole("button", { name: "Graph" }));
     expect(callbacks.graph).toHaveBeenCalledOnce();
-    const more = await openMore(user);
-    const sources = within(more).getByRole("button", { name: "Sources" });
-    expect(sources.querySelector('[data-navigation-icon="sources-library"]')).toHaveAttribute("aria-hidden", "true");
-    await user.click(sources);
-    expect(callbacks.sources).toHaveBeenCalledOnce();
+    // A source is what a sentence cites; the added files live in Settings.
+    expect(within(await openMore(user)).queryByRole("button", { name: "Sources" })).not.toBeInTheDocument();
   });
 
   it("lists only optional destinations in More and navigates from each stable row", async () => {
@@ -88,15 +83,15 @@ describe("PrimaryNavigation", () => {
     expect(moreButton).toHaveAttribute("aria-current", "page");
     const more = await openMore(user);
     expect(within(more).getAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label")))
-      .toEqual(["Sources", "Graph", "Topics"]);
-    for (const label of ["Wiki", "Spaces", "Memories"]) {
+      .toEqual(["Graph", "Topics"]);
+    for (const label of ["Wiki", "Spaces", "Memories", "Sources"]) {
       expect(within(more).queryByRole("button", { name: label })).not.toBeInTheDocument();
       expect(within(more).queryByRole("button", { name: `Unpin ${label} from sidebar` })).not.toBeInTheDocument();
     }
     expect(moreButton).not.toHaveAttribute("aria-current");
     expect(within(more).getByRole("button", { name: "Topics", current: "page" })).toBeInTheDocument();
     for (const [label, callback] of [
-      ["Sources", callbacks.sources], ["Graph", callbacks.graph], ["Topics", callbacks.entities],
+      ["Graph", callbacks.graph], ["Topics", callbacks.entities],
     ] as const) {
       await user.click(within(screen.getByRole("group", { name: "More" })).getByRole("button", { name: label }));
       expect(callback).toHaveBeenCalledOnce();
@@ -106,17 +101,17 @@ describe("PrimaryNavigation", () => {
   });
 
   it("restores required destinations from legacy-hidden data and keeps More optional", async () => {
-    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 1, visible: ["home", "sources"] }));
+    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 1, visible: ["home", "graph"] }));
     const user = userEvent.setup();
-    renderNavigation("sources");
+    renderNavigation("graph");
     expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "More"]);
     const more = await openMore(user);
     expect(within(more).queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
     expect(within(more).getAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label")))
-      .toEqual(["Sources", "Graph", "Topics"]);
-    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "sources"]);
-    writeNavigationPreferences(["home", "sources"]);
-    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces", "sources"]);
+      .toEqual(["Graph", "Topics"]);
+    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "graph"]);
+    writeNavigationPreferences(["home", "graph"]);
+    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces", "graph"]);
   });
 
   it("pins immediately without navigating, preserves focus, persists and keeps unpinned navigation reachable", async () => {
@@ -153,7 +148,7 @@ describe("PrimaryNavigation", () => {
     writeNavigationPreferences(NAVIGATION_DESTINATION_ORDER);
     renderNavigation("pages");
     const more = await openMore(user);
-    for (const label of ["Sources", "Graph", "Topics"]) {
+    for (const label of ["Graph", "Topics"]) {
       await user.click(pinButton(more, `Unpin ${label} from sidebar`));
     }
     expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "More"]);
@@ -231,16 +226,16 @@ describe("PrimaryNavigation", () => {
   it("omits unwired routes from both lists while preserving saved choices", async () => {
     const user = userEvent.setup();
     writeNavigationPreferences(NAVIGATION_DESTINATION_ORDER);
-    const { rerender } = render(<PrimaryNavigation active={null} compact labels={labels} onNavigateSpaces={() => {}} onNavigateSources={() => {}} />);
-    expect(railLabels()).toEqual(["Spaces", "Sources", "More"]);
+    const { rerender } = render(<PrimaryNavigation active={null} compact labels={labels} onNavigateSpaces={() => {}} onNavigateGraph={() => {}} />);
+    expect(railLabels()).toEqual(["Spaces", "Graph", "More"]);
     const more = await openMore(user);
-    expect(within(more).queryAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label"))).toEqual(["Sources"]);
+    expect(within(more).queryAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label"))).toEqual(["Graph"]);
     expect(within(more).queryByRole("button", { name: "Pin Wiki to sidebar" })).not.toBeInTheDocument();
     expect(within(more).queryByRole("button", { name: "Unpin Spaces from sidebar" })).not.toBeInTheDocument();
-    expect(within(more).getByRole("button", { name: "Unpin Sources from sidebar" })).toBeInTheDocument();
-    rerender(<PrimaryNavigation active={null} compact labels={labels} onNavigatePages={() => {}} onNavigateSpaces={() => {}} onNavigateSources={() => {}} />);
-    expect(railLabels()).toEqual(["Wiki", "Spaces", "Sources", "More"]);
-    expect(within(screen.getByRole("group", { name: "More" })).queryAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label"))).toEqual(["Sources"]);
+    expect(within(more).getByRole("button", { name: "Unpin Graph from sidebar" })).toBeInTheDocument();
+    rerender(<PrimaryNavigation active={null} compact labels={labels} onNavigatePages={() => {}} onNavigateSpaces={() => {}} onNavigateGraph={() => {}} />);
+    expect(railLabels()).toEqual(["Wiki", "Spaces", "Graph", "More"]);
+    expect(within(screen.getByRole("group", { name: "More" })).queryAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label"))).toEqual(["Graph"]);
   });
 
   it("keeps pinning usable when preference storage is unavailable", async () => {

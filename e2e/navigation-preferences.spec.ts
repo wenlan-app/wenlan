@@ -61,13 +61,14 @@ for (const copy of languages) {
     await expect(page.getByRole("heading", { name: copy.locale === "en" ? "Open a page" : copy.locale === "zh-Hant" ? "開啟筆記" : "打开笔记", level: 1 })).toBeVisible();
     await capture(page, `${copy.locale}-${copy.theme}-default`);
 
-    // Sources, the graph and topics wait under More; memories have no page of their own.
+    // The graph and topics wait under More; memories and sources have no page of their own.
     await moreButton.click();
     const moreRows = morePanel.locator(".notes-more-destination");
-    await expect(moreRows).toHaveCount(3);
+    await expect(moreRows).toHaveCount(2);
     expect(await morePanel.locator(".notes-more-destination-link").evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label"))))
-      .toEqual([copy.sources, copy.graph, copy.topics]);
+      .toEqual([copy.graph, copy.topics]);
     await expect(morePanel.getByRole("button", { name: copy.memories, exact: true })).toHaveCount(0);
+    await expect(morePanel.getByRole("button", { name: copy.sources, exact: true })).toHaveCount(0);
     await morePanel.getByRole("button", { name: copy.graph, exact: true }).click();
     await expect(page.getByTestId("atlas-view")).toBeVisible();
     await expect(moreButton).toHaveAttribute("aria-current", "page");

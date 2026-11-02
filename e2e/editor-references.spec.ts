@@ -4,7 +4,7 @@ import { installTauriMock } from './tauriMock';
 import { createSpacesNavigationFixture } from './fixtures/spacesNavigation';
 import { createReviewDecisionFixture } from './fixtures/reviewDecisions';
 import { showWikiFolders } from './helpers/wikiWorkspace';
-import { openPrimaryDestination } from './helpers/primaryNavigation';
+import { openPrimaryDestination, openSourceLibrary } from './helpers/primaryNavigation';
 
 const body = '# Three references\n\nRead [城市散步](#concept:linked-page), [討論記憶](#memory:linked-memory), and the imported source [1].\n';
 async function openReferences(page: Page) {
@@ -96,7 +96,7 @@ test('links inside an imported source use the same preview and guarded in-app na
     file: { source: 'file', source_id: 'reference-source.md', title: 'Reference source', chunk_count: 1, last_modified: 1, space: 'Wenlan' }, content: sourceText,
   }] } });
   await page.goto('/');
-  await openPrimaryDestination(page, 'Sources');
+  await openSourceLibrary(page);
   await page.locator('.source-library').getByRole('button', { name: /Reference source/ }).click();
   // Imported sources now open as a full reading page from the library.
   const source = page.locator('.source-document-page');
@@ -135,7 +135,7 @@ test.describe('touch reference opening', () => {
       content: 'Read [Linked memory](#memory:memory-1).',
     }] } });
     await page.goto('/');
-    await openPrimaryDestination(page, 'Sources');
+    await openSourceLibrary(page);
     await page.locator('.source-library').getByRole('button', { name: /Touch source/ }).click();
     const source = page.locator('.source-document-page');
     await expect(source.getByRole('heading', { name: 'Touch source', exact: true })).toBeVisible();

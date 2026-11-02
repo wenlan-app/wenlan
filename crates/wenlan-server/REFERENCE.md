@@ -43,7 +43,7 @@ These flags control ignored, target-Mac profiling tests; they are not daemon run
 
 | Flag | Contract |
 |---|---|
-| `WENLAN_FILES_MIRROR` | Set to `0` to stop `files_mirror.rs` from keeping `<data root>/files-mirror/`. When unset, the daemon copies the database (`VACUUM INTO`), exports the copy into `files-mirror/files/` and rebuild-checks it, first ten minutes after start, then at most once a day and only after the database changed. The files are never read back, so turning it off loses nothing; `/api/status` then reports `files_mirror.state: off`. |
+| `WENLAN_FILES_MIRROR` | Set to `0` to stop `files_mirror.rs` from keeping `<data root>/files-mirror/`. When unset, from two minutes after start the daemon brings `files-mirror/files/` up to date at most every two minutes after the database changed (longer when a refresh is slow: at most a tenth of the time goes to refreshing), writing only the files that changed (read from one snapshot of the database, no copy). Once a day, and only after a change, from ten minutes after start, it also copies the database (`VACUUM INTO`), refreshes the files from the copy and rebuild-checks them. At start, when `memorydb/origin_memory.db` is missing or empty and the copy has a manifest, the daemon rebuilds the database from it (`store/restore.rs`) and moves the files it read to `files-mirror/files-restored-<time>/`. With it off, nothing is refreshed or restored (a missing database with a copy present is logged); `/api/status` then reports `files_mirror.state: off`. |
 
 ### Local delivery observations
 

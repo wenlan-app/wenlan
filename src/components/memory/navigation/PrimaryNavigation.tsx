@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Files, House, PushPin, Stack } from "@phosphor-icons/react";
+import { House, PushPin, Stack } from "@phosphor-icons/react";
 import { TopicIcon } from "../entities/TopicIcon";
 import type { GlobalNavigation } from "./viewState";
 import { SpaceMark } from "./SpaceMark";
@@ -13,7 +13,6 @@ type PrimaryNavigationLabels = {
   readonly navigation: string;
   readonly pages: string;
   readonly pinToSidebar: (name: string) => string;
-  readonly sources: string;
   readonly spaces: string;
   readonly unpinFromSidebar: (name: string) => string;
 };
@@ -26,7 +25,6 @@ type PrimaryNavigationProps = {
   readonly onNavigateGraph?: () => void;
   readonly onNavigateHome?: () => void;
   readonly onNavigatePages?: () => void;
-  readonly onNavigateSources?: () => void;
   readonly onNavigateSpaces: (create: boolean) => void;
 };
 
@@ -62,7 +60,6 @@ const homeIcon = <House aria-hidden="true" data-navigation-icon="home" focusable
 const pageIcon = <Stack aria-hidden="true" data-navigation-icon="wiki-stack" focusable="false" size={16} style={iconStyle} weight="regular" />;
 const entityIcon = <TopicIcon data-navigation-icon="entities" size={16} style={iconStyle} />;
 const graphIcon = <svg aria-hidden="true" data-navigation-icon="graph" height="16" style={iconStyle} viewBox="0 0 24 24" width="16"><circle cx="5" cy="6" fill="none" r="2" stroke="currentColor" strokeWidth="2" /><circle cx="19" cy="6" fill="none" r="2" stroke="currentColor" strokeWidth="2" /><circle cx="12" cy="18" fill="none" r="2" stroke="currentColor" strokeWidth="2" /><path d="M7 6h10M6 8l5 8M18 8l-5 8" fill="none" stroke="currentColor" strokeWidth="2" /></svg>;
-const sourceIcon = <Files aria-hidden="true" data-navigation-icon="sources-library" focusable="false" size={16} style={iconStyle} weight="regular" />;
 
 export function PrimaryNavigation({
   active,
@@ -72,7 +69,6 @@ export function PrimaryNavigation({
   onNavigateGraph,
   onNavigateHome,
   onNavigatePages,
-  onNavigateSources,
   onNavigateSpaces,
 }: PrimaryNavigationProps) {
   const [visibleState, setVisibleState] = useState(readNavigationPreferences);
@@ -87,7 +83,6 @@ export function PrimaryNavigation({
     pages: { icon: pageIcon, onClick: onNavigatePages },
     spaces: { icon: <SpaceMark active={active === "spaces"} inheritColor />, onClick: () => onNavigateSpaces(false) },
     graph: { icon: graphIcon, onClick: onNavigateGraph },
-    sources: { icon: sourceIcon, onClick: onNavigateSources },
     entities: { icon: entityIcon, onClick: onNavigateEntities },
   };
   const destinations = NAVIGATION_DESTINATION_ORDER.map((key) => ({ key, label: labels[key], ...options[key] })).filter((destination) => destination.onClick !== undefined);

@@ -88,7 +88,8 @@ for (const cfg of [
         expect(sourceChunkCalls.length).toBeGreaterThan(0);
         expect(sourceChunkCalls.every(call => isRecord(call.args) && call.args.space === "讀書會")).toBe(true);
       }
-      if (cfg.width >= 1100) await expect(page.getByRole("navigation").getByRole("button", { name: t.sidebar.sources, exact: true })).toHaveAttribute("aria-current", "page");
+      // A source has no navigation item: nothing in the rail claims it.
+      if (cfg.width >= 1100) await expect(page.getByRole("navigation").getByRole("button", { name: t.sidebar.sources, exact: true })).toHaveCount(0);
       await capture(`${file.file.source}-destination.png`);
       await page.getByRole("button", { name: t.main.back, exact: true }).click();
       await expect(page.locator(".space-dossier")).toBeVisible();

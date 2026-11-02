@@ -4,7 +4,7 @@ import type { GlobalNavigation } from "./viewState";
 
 // The stream of memories is still a view (a memory opens there) but has no
 // place in the navigation.
-export type NavigationDestination = Exclude<GlobalNavigation, "memories">;
+export type NavigationDestination = Exclude<GlobalNavigation, "memories" | "sources">;
 export type SidebarMode = "icons" | "labels";
 export type SidebarPreferences = { readonly visible: boolean; readonly mode: SidebarMode; readonly width?: number };
 
@@ -12,11 +12,13 @@ export const NAVIGATION_PREFERENCE_KEY = "wenlan-navigation-v1";
 export const SIDEBAR_PREFERENCE_KEY = "wenlan-sidebar-collapsed";
 export const LEGACY_SIDEBAR_PREFERENCE_KEY = "origin-sidebar-collapsed";
 // Home is where the app opens (what you're working on); the Wiki holds every
-// page; Spaces split the work by project. Sources, the graph and topics wait
-// under More until you pin them. Memories have no page of their own: you meet
-// them through search and the things they belong to.
+// page; Spaces split the work by project. The graph and topics wait under More
+// until you pin them. Memories have no page of their own: you meet them through
+// search and the things they belong to. Sources have none either: a source is
+// what a sentence cites, read from the page that cites it, and the list of
+// added files and links lives in Settings → Sources.
 export const NAVIGATION_DESTINATION_ORDER: readonly NavigationDestination[] = [
-  "home", "pages", "spaces", "sources", "graph", "entities",
+  "home", "pages", "spaces", "graph", "entities",
 ];
 export const REQUIRED_NAVIGATION_DESTINATIONS: readonly NavigationDestination[] = ["home", "pages", "spaces"];
 export const DEFAULT_VISIBLE_NAVIGATION: readonly NavigationDestination[] = REQUIRED_NAVIGATION_DESTINATIONS;

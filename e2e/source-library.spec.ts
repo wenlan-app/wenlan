@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { installTauriMock, collectBrowserErrors } from "./tauriMock";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 import type { IndexedFileInfo } from "../src/lib/tauri";
-import { openPrimaryDestination } from "./helpers/primaryNavigation";
+import { openSourceLibrary, sourceLibraryLabels } from "./helpers/primaryNavigation";
 import { openWikiNote } from "./helpers/wikiWorkspace";
 
 async function capture(page: Page, filename: string) {
@@ -87,10 +87,12 @@ async function setup(page: Page, empty = false, dark = false) {
       return original(command, args);
     };
   });
-  await openPrimaryDestination(page, "來源", "更多");
+  await openSourceLibrary(page, HANT_SOURCE_LIBRARY);
   await expect(page.getByRole("heading", { name: "來源", exact: true })).toBeVisible();
   return { errors, writes, opens, nativeDialogCalls, fail: () => { unavailable = true; }, raceNextCreate: () => { concurrentCreate = true; }, savedText: (url: string) => documents.get(url) };
 }
+
+const HANT_SOURCE_LIBRARY = sourceLibraryLabels("zh-Hant");
 
 test("imported documents remain browsable without any registered folder", async ({ page }) => {
   const remoteImages: string[] = [];
@@ -106,7 +108,7 @@ test("imported documents remain browsable without any registered folder", async 
   await expect(preview.locator(".source-document-body")).toContainText("這是 閱讀與研究指南.pdf 的已保存內容。");
   await expect(preview.locator("img")).toHaveCount(0);
   expect(remoteImages).toEqual([]);
-  await openPrimaryDestination(page, "來源", "更多");
+  await openSourceLibrary(page, HANT_SOURCE_LIBRARY);
   await expect(preview).toHaveCount(0);
   await expect(library.getByRole("button", { name: /閱讀與研究指南/ })).toBeFocused();
   await page.getByRole("button", { name: "連結", exact: true }).click();
@@ -118,7 +120,7 @@ test("imported documents remain browsable without any registered folder", async 
   await expect(webpage.getByRole("alert")).toHaveCount(0);
   await page.getByRole("link", { name: "開啟原始網頁", exact: true }).click();
   expect(state.opens).toEqual([{ url: "https://example.org/article" }]);
-  await openPrimaryDestination(page, "來源", "更多");
+  await openSourceLibrary(page, HANT_SOURCE_LIBRARY);
   await page.getByRole("searchbox", { name: "篩選來源", exact: true }).fill("找不到的項目");
   await expect(page.getByRole("heading", { name: "沒有符合的來源" })).toBeVisible();
   await page.getByRole("button", { name: "清除搜尋與篩選" }).click();
@@ -218,9 +220,8 @@ test("navigation destinations keep one primary workspace and restore page contex
   const state = await setup(page);
   const sidebar = page.locator(".notes-workspace-sidebar");
   await expect(sidebar).toHaveCSS("width", "240px");
-  await expect(page.getByRole("navigation", { name: "主要導覽" }).locator('[aria-current="page"]')).toHaveCount(1);
-  // Sources waits under More, which marks where you are.
-  await expect(page.getByRole("navigation", { name: "主要導覽" }).getByRole("button", { name: "更多", exact: true })).toHaveAttribute("aria-current", "page");
+  // The list of added files and links has no navigation item: it opens from Settings.
+  await expect(page.getByRole("navigation", { name: "主要導覽" }).locator('[aria-current="page"]')).toHaveCount(0);
   await expect(page.locator("#workspace-context-browser")).toHaveCount(0);
   await page.getByRole("button", { name: "連結", exact: true }).click();
   await page.getByRole("searchbox", { name: "篩選來源", exact: true }).fill("知識");
@@ -238,7 +239,7 @@ test("navigation destinations keep one primary workspace and restore page contex
   await expect(main).toHaveCSS("overflow-y", "auto");
   await main.evaluate(element => { element.scrollTop = 600; });
   await expect.poll(() => main.evaluate(element => element.scrollTop)).toBe(600);
-  await openPrimaryDestination(page, "來源", "更多");
+  await openSourceLibrary(page, HANT_SOURCE_LIBRARY);
   await expect(page.getByRole("searchbox", { name: "篩選來源", exact: true })).toHaveValue("知識");
   await expect(page.getByRole("button", { name: "連結", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(sidebar).toHaveCSS("width", "240px");
@@ -256,7 +257,7 @@ test("navigation destinations keep one primary workspace and restore page contex
   await expect(page.locator("#workspace-context-browser")).toHaveCount(0);
   await expect(sidebar).toHaveCSS("width", "240px");
   await capture(page, "navigation-spaces-light.png");
-  await openPrimaryDestination(page, "來源", "更多");
+  await openSourceLibrary(page, HANT_SOURCE_LIBRARY);
   await expect(page.getByRole("searchbox", { name: "篩選來源", exact: true })).toHaveValue("知識");
   // The global toggle hides navigation, while page context remains independent.
   await page.locator("[data-sidebar-toggle]").click();
@@ -268,7 +269,7 @@ test("navigation destinations keep one primary workspace and restore page contex
 });
 
 
-test("Sources, the graph and topics wait in More on a narrow dark workspace (UX-FIND-4)", async ({ page }) => {
+test("the graph and topics wait in More on a narrow dark workspace, with no Sources (UX-FIND-4)", async ({ page }) => {
   const state = await setup(page, false, true);
   await page.setViewportSize({ width: 375, height: 812 });
   await page.locator("[data-sidebar-toggle]").click();
@@ -276,7 +277,8 @@ test("Sources, the graph and topics wait in More on a narrow dark workspace (UX-
   await expect(nav.getByRole("button", { name: "空間", exact: true })).toBeVisible();
   for (const name of ["來源", "圖譜", "主題"]) await expect(nav.getByRole("button", { name, exact: true })).toHaveCount(0);
   await nav.getByRole("button", { name: "更多", exact: true }).click();
-  for (const name of ["來源", "圖譜", "主題"]) await expect(nav.getByRole("button", { name, exact: true })).toBeVisible();
+  for (const name of ["圖譜", "主題"]) await expect(nav.getByRole("button", { name, exact: true })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "來源", exact: true })).toHaveCount(0);
   await capture(page, "navigation-more-dark-narrow.png");
   await nav.getByRole("button", { name: "主題", exact: true }).click();
   await expect(page.getByRole("heading", { name: "主題", exact: true })).toHaveClass(/sr-only/);
@@ -301,7 +303,7 @@ test("the Pages entry reopens a newly saved draft after browsing sources", async
   await page.locator(".page-draft-title").fill("A page to return to");
   await page.locator(".page-draft-content").getByRole("textbox").fill("Keep this draft when I look at sources.");
   // Leave before the debounce: navigation must flush and remember the assigned id.
-  await openPrimaryDestination(page, "來源", "更多");
+  await openSourceLibrary(page, HANT_SOURCE_LIBRARY);
   await expect(page.getByRole("heading", { name: "來源", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Wiki", exact: true }).click();
   await expect(page.getByRole("heading", { name: "A page to return to", exact: true })).toBeVisible();

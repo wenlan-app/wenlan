@@ -162,3 +162,74 @@ async fn an_empty_database_file_counts_as_missing() {
         .join("empty.db")
         .is_file());
 }
+
+/// The copy a refresh leaves when it stops part way, restored. The order
+/// in a refresh: changed files renamed over, then the manifest, then files
+/// it no longer lists removed.
+#[tokio::test]
+async fn a_copy_left_by_a_stopped_refresh_still_restores() {
+    for stopped_before_manifest in [true, false] {
+        let (db, source_dir, data_root) = files_of_fixture().await;
+        let files = mirror_root(data_root.path()).join(FILES_DIR);
+        let old_manifest = std::fs::read(files.join(MANIFEST_FILE)).unwrap();
+        let manifest = crate::store::export::read_manifest(&files).unwrap();
+        let x = manifest.files.iter().find(|file| file.id == "x").unwrap();
+        let x_path = files.join(&x.path);
+        let x_bytes = std::fs::read(&x_path).unwrap();
+
+        db.export_fixture_sql(
+            "UPDATE pages SET content = 'The launch moved to 2026-04-01.' WHERE id = ?1",
+            "a",
+        )
+        .await;
+        db.export_fixture_sql("DELETE FROM pages WHERE id = ?1", "x")
+            .await;
+        crate::store::mirror::refresh(
+            &source_dir.path().join(DATABASE_FILE),
+            &PagesFolder::default(),
+            data_root.path(),
+            &mirror_root(data_root.path()),
+        )
+        .await
+        .unwrap();
+        // Undo what the refresh did after the point it stopped at.
+        std::fs::write(&x_path, &x_bytes).unwrap();
+        if stopped_before_manifest {
+            std::fs::write(files.join(MANIFEST_FILE), &old_manifest).unwrap();
+        }
+
+        let db_dir = data_root.path().join("memorydb");
+        let outcome = restore_missing_database(data_root.path(), &db_dir, 1)
+            .await
+            .unwrap();
+        let Restore::Restored { problems, .. } = outcome else {
+            panic!("expected a restore, got {outcome:?}");
+        };
+        assert!(
+            !problems.iter().any(|problem| problem.contains("missing")),
+            "{problems:?}"
+        );
+        let restored = MemoryDB::new_with_embedding_recovery(
+            &db_dir,
+            Arc::new(NoopEmitter),
+            MemoryEmbeddingRecovery::Deferred,
+        )
+        .await
+        .unwrap();
+        let ids: Vec<String> = restored
+            .export_page_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
+        assert!(ids.contains(&"a".to_string()), "{ids:?}");
+        // Before the manifest, the old one still lists the deleted page and
+        // its file is still there; after it, the new one no longer does.
+        assert_eq!(
+            ids.contains(&"x".to_string()),
+            stopped_before_manifest,
+            "{ids:?}"
+        );
+    }
+}

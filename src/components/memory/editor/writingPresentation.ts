@@ -362,6 +362,20 @@ const writingTheme = EditorView.theme({
     fontWeight: "500",
     lineHeight: "1.4",
   },
+  // One body line above a heading, the space a blank source line gives;
+  // half a body line below it, whether or not a blank line is there.
+  ".cm-writing-heading-space-above": {
+    paddingTop: "calc(var(--reading-font-size, 15px) * var(--reading-line-height, 1.75))",
+  },
+  ".cm-writing-heading-space-below": {
+    paddingBottom: "calc(var(--reading-font-size, 15px) * var(--reading-line-height, 1.75) / 2)",
+  },
+  // The blank line under a heading keeps the body type; only its box is
+  // shortened to the same half line.
+  ".cm-writing-heading-gap": {
+    height: "calc(var(--reading-font-size, 15px) * var(--reading-line-height, 1.75) / 2)",
+    overflow: "hidden",
+  },
   ".cm-writing-heading-1": {
     fontSize: "20px",
   },
@@ -650,10 +664,22 @@ function buildWritingRanges(view: EditorView): WritingRanges {
 
         if (/^ATXHeading[1-6]$/.test(node.name)) {
           const level = node.name.slice("ATXHeading".length);
-          addLineClass(
-            state.doc.lineAt(node.from).from,
-            `cm-writing-heading cm-writing-heading-${level}`,
-          );
+          const line = state.doc.lineAt(node.from);
+          addLineClass(line.from, `cm-writing-heading cm-writing-heading-${level}`);
+          // A heading reads the same whether or not its source has a blank
+          // line around it: a full line of space above, half a line below,
+          // so the heading sits with the text it introduces.
+          if (line.number > 1 && line.from - 1 > frontmatterEnd
+            && state.doc.line(line.number - 1).text.trim() !== "") {
+            addLineClass(line.from, "cm-writing-heading-space-above");
+          }
+          if (line.number < state.doc.lines) {
+            const next = state.doc.line(line.number + 1);
+            addLineClass(
+              next.text.trim() === "" ? next.from : line.from,
+              next.text.trim() === "" ? "cm-writing-heading-gap" : "cm-writing-heading-space-below",
+            );
+          }
           return;
         }
 

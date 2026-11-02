@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test, type Page } from "@playwright/test";
 import { installTauriMock, collectBrowserErrors } from "./tauriMock";
-import { openPrimaryDestination } from "./helpers/primaryNavigation";
+import { openPrimaryDestination, openSourceLibrary } from "./helpers/primaryNavigation";
 
 export async function addSourceFixtures(page:Page){
  await page.evaluate(()=>{const bridge=window.__TAURI_INTERNALS__!;const original=bridge.invoke;bridge.invoke=(command,args)=>{
@@ -23,7 +23,7 @@ for(const width of [1280,375])test(`Space detail shares Cards/List across Pages 
 });
 
 for(const width of [1280,375])test(`Sources expose consistent collection lenses ${width}`,async({page})=>{
- await page.setViewportSize({width,height:900});const errors=collectBrowserErrors(page);await installTauriMock(page,{locale:"en",rawActions:[]});await page.goto("/");await addSourceFixtures(page);await openPrimaryDestination(page,"Sources");const library=page.locator(".source-library");
+ await page.setViewportSize({width,height:900});const errors=collectBrowserErrors(page);await installTauriMock(page,{locale:"en",rawActions:[]});await page.goto("/");await addSourceFixtures(page);await openSourceLibrary(page);const library=page.locator(".source-library");
  await expect(library.getByRole("button",{name:"New",exact:true})).toBeVisible();await expect(library.locator("h1")).toHaveClass("sr-only");await expect(library.locator(".source-library-row")).toHaveCount(2);
  await library.getByTestId("asset-lens-cards").click();await expect(library.locator(".source-library-list")).toHaveAttribute("data-lens","cards");await library.getByRole("searchbox").fill("Reading");await expect(library.locator(".source-library-row")).toHaveCount(1);await library.getByTestId("asset-lens-rows").click();await expect(library.locator(".source-library-row")).toHaveCount(1);await library.getByRole("searchbox").fill("");
  await expect(library.getByRole("button",{name:"More source actions",exact:true})).toHaveCount(0);await library.getByRole("button",{name:"New",exact:true}).click();await expect(page.getByRole("dialog")).toBeVisible();await page.keyboard.press("Escape");

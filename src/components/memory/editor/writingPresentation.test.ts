@@ -262,6 +262,27 @@ describe("writingPresentation", () => {
     expect(lines[0].style.textIndent).toMatch(/^calc\(-/);
   });
 
+  it("spaces a heading the same with or without blank source lines around it", () => {
+    const source = "Intro\n## Tight\nBody\n\n## Loose\n\nBody\n## Last";
+    const view = makeView(source, { selection: EditorSelection.single(0) });
+
+    const headings = [...view.contentDOM.querySelectorAll(".cm-writing-heading")];
+    expect(headings.map((line) => [
+      line.textContent,
+      line.classList.contains("cm-writing-heading-space-above"),
+      line.classList.contains("cm-writing-heading-space-below"),
+    ])).toEqual([
+      ["Tight", true, true],
+      ["Loose", false, false],
+      ["Last", true, false],
+    ]);
+    // The blank line under "Loose" is narrowed to the same half-line gap.
+    const gaps = [...view.contentDOM.querySelectorAll(".cm-writing-heading-gap")];
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].previousElementSibling).toHaveTextContent("Loose");
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
   it("marks only browser-bound links, labelled or bare, as external", () => {
     const source = [
       "See [docs](https://wenlan.app/docs) and [[Wiki]].",

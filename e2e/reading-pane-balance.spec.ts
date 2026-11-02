@@ -2,7 +2,7 @@
 import { test, expect } from "@playwright/test";
 import { installTauriMock, collectBrowserErrors } from "./tauriMock";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
-import { openPrimaryDestination } from "./helpers/primaryNavigation";
+import { openPrimaryDestination, openSourceLibrary } from "./helpers/primaryNavigation";
 import { openWikiNote } from "./helpers/wikiWorkspace";
 import { resources } from "../src/i18n/resources";
 
@@ -68,7 +68,7 @@ for (const cfg of [
       }
       return type;
     }
-    await openPrimaryDestination(page, t.sidebar.sources, t.sidebar.more);
+    await openSourceLibrary(page);
     await page.locator(".source-library-row").filter({ hasText: "Reading pages" }).click();
     const pane = page.locator(".page-info-drawer");
     await expect(pane).toBeVisible();
