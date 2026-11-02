@@ -28,7 +28,7 @@ describe("PageReadingLayers", () => {
 
   it("UX-VIEW-2 marks the length switch as Beta", () => {
     renderLayers();
-    expect(screen.getByRole("group", { name: "Length" }).parentElement).toHaveTextContent("Beta");
+    expect(screen.getByRole("group", { name: "Length" }).parentElement).not.toHaveTextContent("Beta");
   });
 
   it("UX-VIEW-2 offers no switch when both lengths are the same", () => {

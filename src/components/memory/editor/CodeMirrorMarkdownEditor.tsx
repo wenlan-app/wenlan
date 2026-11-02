@@ -45,6 +45,7 @@ import {
   writingPageId,
   writingPresentation,
 } from "./writingPresentation";
+import { markdownBlocks } from "./markdownBlocks";
 import { pageLayersEditing, setPageLayers } from "./pageLayersEditing";
 import { sentenceProposals, setSentenceProposals } from "./sentenceProposals";
 import { aiChangeMarks, setAiChangeMarks } from "./aiChangeMarks";
@@ -586,6 +587,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               },
             }),
             writingPresentation(),
+            markdownBlocks(),
             createSlashEditing({ labels: () => slashLabelsRef.current, blocked: actionsBlocked }).extension,
             mediaPaste({
               blocked: actionsBlocked,

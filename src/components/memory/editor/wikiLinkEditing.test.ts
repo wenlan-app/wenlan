@@ -118,10 +118,30 @@ describe("wiki link editing", () => {
     const anchors = [...view.contentDOM.querySelectorAll<HTMLAnchorElement>("a[data-wiki-page-id]")];
     expect(anchors.map((anchor) => anchor.textContent)).toEqual(["Target", "alias"]);
     expect(anchors[0].getAttribute("href")).toBe("#concept:page-target");
-    expect(view.contentDOM.textContent).toContain("[[Missing]]");
+    expect(view.contentDOM.textContent).not.toContain("[[Missing]]");
+    expect(view.contentDOM.querySelector(".cm-wiki-page-missing")?.textContent).toBe("Missing");
     expect(view.contentDOM.textContent).toContain("[[Target");
     expect(view.contentDOM.textContent).not.toContain("[[Target|alias]]");
     expect(view.state.doc.toString()).toBe(source);
+  });
+
+  it("shows a link to the page itself as plain text and a page not written yet as a quiet name, brackets hidden", () => {
+    const source = "[[Launch]] is the record. See [[Retro|the retro]] and `[[Code]]`.";
+    const { view } = make(source, targets, { selfTitle: "launch", labels: { page: "Page", memory: "Memory", source: "Source", authored: "Yours", unverified: "Unverified", missing: "No page yet" } });
+    expect(view.contentDOM.textContent).toBe("Launch is the record. See the retro and `[[Code]]`.");
+    expect(view.contentDOM.querySelector(".cm-wiki-page-self")?.textContent).toBe("Launch");
+    const missing = view.contentDOM.querySelector(".cm-wiki-page-missing")!;
+    expect(missing.textContent).toBe("the retro");
+    expect(missing.getAttribute("title")).toBe("No page yet");
+    expect(view.contentDOM.querySelectorAll("a")).toHaveLength(0);
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
+  it("keeps a page name that holds \" #\" whole instead of cutting it at the heading mark", () => {
+    const source = "See [[P0 #1 reranker]] and [[City Walk#day]].";
+    const { view } = make(source);
+    expect(view.contentDOM.querySelector(".cm-wiki-page-missing")?.textContent).toBe("P0 #1 reranker");
+    expect(view.contentDOM.querySelector("a")?.textContent).toBe("City Walk");
   });
 
   it("conceals resolved syntax unless its token is actively edited, including CJK aliases and blur", () => {
