@@ -125,7 +125,8 @@ pub use steep_new::{
 };
 pub use things::{
     SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingActor, ThingDetailResponse,
-    ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapResponse, ThingMapSource, ThingMapState,
+    ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapOp, ThingMapOpsRequest,
+    ThingMapOpsResponse, ThingMapProposal, ThingMapResponse, ThingMapSource, ThingMapState,
     ThingMoveRequest, ThingPageEntry, ThingPageVia, ThingRef, ThingRenameRequest,
     ThingSessionEntry, ThingSummary, ThingsResponse,
 };

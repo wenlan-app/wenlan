@@ -226,6 +226,103 @@ pub struct ThingMapResponse {
     pub revision: i64,
     pub nodes: Vec<ThingMapNode>,
     pub edges: Vec<ThingMapEdge>,
+    /// Changes the AI or Wenlan's model asked for on points the person
+    /// wrote (UX-WHO-2), oldest first. They wait for the person.
+    #[serde(default)]
+    pub proposals: Vec<ThingMapProposal>,
+}
+
+/// One change to a thing's map.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ThingMapOp {
+    /// A new point. `id` lets later ops in the same request name it; the
+    /// daemon makes one when it is left out. `parent_id` is `None` only for
+    /// the first point of an empty map. `rank` defaults to after the last
+    /// sibling.
+    Add {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        parent_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rank: Option<f64>,
+        kind: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<ThingMapState>,
+        label: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sources: Vec<ThingMapSource>,
+    },
+    /// Change a point's fields; a field left out keeps its value. `state`
+    /// can only be set, not cleared.
+    Edit {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<ThingMapState>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+        /// Replaces the point's sources.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sources: Option<Vec<ThingMapSource>>,
+    },
+    /// Put a point under another parent, or reorder it.
+    Move {
+        id: String,
+        parent_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rank: Option<f64>,
+    },
+    /// Remove a point and everything under it, with their links.
+    Remove {
+        id: String,
+    },
+    Link {
+        from: String,
+        to: String,
+        kind: String,
+    },
+    Unlink {
+        from: String,
+        to: String,
+        kind: String,
+    },
+    /// The person's answer to a proposal.
+    Accept {
+        proposal_id: String,
+    },
+    Reject {
+        proposal_id: String,
+    },
+}
+
+/// A change waiting for the person.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThingMapProposal {
+    pub id: String,
+    pub by: ThingMapAuthor,
+    pub change: ThingMapOp,
+    /// Unix seconds.
+    pub created_at: i64,
+}
+
+/// `POST /api/things/{id}/map/ops`: apply changes in order, all or none.
+/// `expected_revision` is the revision the caller read; a different one
+/// answers 409 so the caller reads again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThingMapOpsRequest {
+    pub expected_revision: i64,
+    pub ops: Vec<ThingMapOp>,
+}
+
+/// The map after the change, and how many ops waited as proposals.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThingMapOpsResponse {
+    #[serde(flatten)]
+    pub map: ThingMapResponse,
+    pub proposed: usize,
 }
 
 #[cfg(test)]

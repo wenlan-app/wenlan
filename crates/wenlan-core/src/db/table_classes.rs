@@ -60,6 +60,11 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         // Imported originals (the vendor's own text) and named things.
         ("originals", File),
         ("things", File),
+        // A thing's map of points, and changes to it waiting for the person.
+        ("thing_maps", File),
+        ("thing_map_nodes", File),
+        ("thing_map_edges", File),
+        ("thing_map_proposals", File),
         // History: versions, approvals, receipts, tombstones, sessions, reads.
         ("page_history", History),
         ("sentence_history", History),

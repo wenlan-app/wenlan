@@ -278,6 +278,11 @@ const markdownBlockTheme = EditorView.theme({
     textAlign: "left",
     verticalAlign: "top",
     borderBottom: "1px solid var(--mem-border)",
+    // Wrap between words only. A column too narrow for its longest word
+    // widens the table, which then scrolls in its own box, instead of
+    // breaking "Stars" into "St / ars".
+    overflowWrap: "normal",
+    wordBreak: "normal",
   },
   ".cm-md-table th": {
     fontWeight: "600",

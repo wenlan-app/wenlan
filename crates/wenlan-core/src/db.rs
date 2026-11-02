@@ -42,6 +42,7 @@ mod eval_pipeline_reads;
 mod eval_substrate_guard;
 mod eval_temporal_seed;
 pub(crate) mod export_reads;
+pub use export_reads::copy_database_file;
 mod kg_quality_diagnostics;
 mod kg_quality_duplicate_candidates;
 mod kg_quality_embedding_refresh;
@@ -97,6 +98,7 @@ mod space_context;
 mod space_rename;
 mod steep;
 pub(crate) mod steep_new;
+pub mod thing_map;
 pub mod things;
 mod truth_exposure;
 
@@ -231,6 +233,8 @@ pub(crate) mod steep_code_test;
 #[cfg(test)]
 #[path = "db/test_support_test.rs"]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod thing_map_test;
 #[cfg(test)]
 mod things_test;
 #[cfg(test)]
@@ -1551,7 +1555,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 151;
+pub const SCHEMA_VERSION: u32 = 152;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10774,6 +10778,14 @@ impl MemoryDB {
             }
             if version < 151 {
                 self.migrate_151_drop_genesis_lane(version).await?;
+            }
+
+            // Migration 152 adds a thing's map of points. See db/thing_map.rs.
+            if ceiling < 152 {
+                return Ok(());
+            }
+            if version < 152 {
+                self.migrate_152_thing_map(version).await?;
             }
         }
 

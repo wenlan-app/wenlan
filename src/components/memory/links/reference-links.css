@@ -107,3 +107,9 @@
   text-decoration-color: var(--mem-text-tertiary);
   text-underline-offset: 0.2em;
 }
+
+/* A memory cited by id reads as a number; numbers side by side
+   ("[[mem_a]][[mem_b]]") keep a little air between them. */
+.cm-memory-number {
+  margin-left: 0.2em;
+}
