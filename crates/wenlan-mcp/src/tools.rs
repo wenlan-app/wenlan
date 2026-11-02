@@ -1729,22 +1729,125 @@ fn format_save_source_success(resp: &wenlan_types::responses::IngestResponse) ->
     )
 }
 
-/// What the AI tool shows the person when a conversation is first saved into
-/// a thing (UX-CHAT-7): one quiet line in the person's language, linking into
-/// the app.
-fn format_saved_in_line(saved: &wenlan_types::SavedIn) -> String {
-    let (title, link) = (&saved.title, &saved.link);
-    format!(
+/// The page a steep write or commit changed, from its response: the page,
+/// its title when the response names the page written, and what happened.
+fn steep_page_change(
+    action: SteepAction,
+    value: &serde_json::Value,
+) -> Option<(String, Option<String>, wenlan_types::SavedPageChange)> {
+    use wenlan_types::SavedPageChange as Change;
+    let page_id = value.get("page_id")?.as_str()?.to_string();
+    let outcome = value.get("outcome")?.as_str()?;
+    let title = || {
+        value
+            .get("title")
+            .and_then(|title| title.as_str())
+            .map(str::to_string)
+    };
+    match (action, outcome) {
+        (SteepAction::Write, "created") => Some((page_id, title(), Change::New)),
+        // The sources went to a page that already existed: name that page.
+        (SteepAction::Write, "merged" | "attached") => Some((page_id, None, Change::Updated)),
+        (SteepAction::Commit, "written") => Some((page_id, None, Change::Updated)),
+        (SteepAction::Commit, "review_card") => Some((page_id, None, Change::Proposal)),
+        _ => None,
+    }
+}
+
+/// A page a write just changed, for the saved-in line.
+struct SavedPage {
+    title: String,
+    link: String,
+    change: wenlan_types::SavedPageChange,
+}
+
+/// The one closing line the AI tool shows the person (UX-CHAT-7), in each of
+/// the three wordings it may pick from. `thing` is where the conversation was
+/// saved, when that is news; `page` is a page change worth a mention. `None`
+/// when there is nothing to say.
+fn format_saved_in_line(
+    thing: Option<&wenlan_types::SavedIn>,
+    page: Option<&SavedPage>,
+) -> Option<String> {
+    use wenlan_types::SavedPageChange as Change;
+    if thing.is_none() && page.is_none() {
+        return None;
+    }
+    // (zh-Hant, zh-Hans, en): the page part on its own, then after the thing.
+    let page_words = |page: &SavedPage| {
+        let p = format!("[{}]({})", page.title, page.link);
+        match page.change {
+            Change::New => (
+                [
+                    format!("寫進文瀾：{p}"),
+                    format!("写进文澜：{p}"),
+                    format!("Written to Wenlan: {p}"),
+                ],
+                [format!("寫了{p}"), format!("写了{p}"), format!("wrote {p}")],
+            ),
+            Change::Updated => (
+                [
+                    format!("更新了文瀾：{p}"),
+                    format!("更新了文澜：{p}"),
+                    format!("Updated in Wenlan: {p}"),
+                ],
+                [
+                    format!("更新了{p}"),
+                    format!("更新了{p}"),
+                    format!("updated {p}"),
+                ],
+            ),
+            Change::Proposal => (
+                [
+                    format!("有 1 條建議等你看：{p}"),
+                    format!("有 1 条建议等你看：{p}"),
+                    format!("A suggestion waits for you in Wenlan: {p}"),
+                ],
+                [
+                    format!("{p} 有 1 條建議等你看"),
+                    format!("{p} 有 1 条建议等你看"),
+                    format!("a suggestion waits for you on {p}"),
+                ],
+            ),
+        }
+    };
+    let lines: [String; 3] = match (thing, page) {
+        (Some(thing), page) => {
+            let t = format!("[{}]({})", thing.title, thing.link);
+            let mut lines = [
+                format!("記在文瀾：{t}"),
+                format!("记在文澜：{t}"),
+                format!("Saved in Wenlan: {t}"),
+            ];
+            if let Some(page) = page {
+                let (_, after) = page_words(page);
+                for (line, words) in lines.iter_mut().zip(after) {
+                    line.push_str(" · ");
+                    line.push_str(&words);
+                }
+            }
+            lines
+        }
+        (None, Some(page)) => page_words(page).0,
+        (None, None) => return None,
+    };
+    let title = thing
+        .map(|thing| thing.title.as_str())
+        .or(page.map(|page| page.title.as_str()))
+        .unwrap_or_default();
+    Some(format!(
         "saved_in: {title}\n\
          Make this the last line of your reply, copied exactly, in the \
          conversation's language. Pick one and change nothing else:\n\
-         - 記在文瀾：[{title}]({link})\n\
-         - 记在文澜：[{title}]({link})\n\
-         - Saved in Wenlan: [{title}]({link})\n\
-         (Other languages: translate only the words before the colon.) Say \
-         nothing else about where this was saved, now or later in this \
-         conversation."
-    )
+         - {}\n\
+         - {}\n\
+         - {}\n\
+         (Other languages: translate only the words, keep the links.) If \
+         another Wenlan result in this reply gave such a line too, merge them \
+         into one line joined by \" · \". This line is new news even if an \
+         earlier reply had one. Add nothing else about it.",
+        lines[0], lines[1], lines[2]
+    ))
 }
 
 fn format_capture_success(resp: &StoreMemoryResponse) -> String {
@@ -2506,26 +2609,60 @@ impl WenlanMcpServer {
         output
     }
 
-    /// `output` with the saved-in line appended the first time this
-    /// conversation lands in a thing, or after it moves (UX-CHAT-7). The daemon
-    /// decides when; this only relays. Best effort: no session, an older
-    /// daemon or any error adds nothing.
-    async fn with_saved_in_line(&self, client: &WenlanClient, mut output: String) -> String {
-        let Some(session) = client.session() else {
-            return output;
-        };
+    /// The saved-in line for this conversation (UX-CHAT-7), if there is
+    /// anything to say. The daemon decides when; this only relays. `page` is
+    /// a page this call just changed, with its title when known. Best effort:
+    /// no session, an older daemon or any error says nothing.
+    async fn saved_in_line(
+        &self,
+        client: &WenlanClient,
+        page: Option<(&str, Option<&str>, wenlan_types::SavedPageChange)>,
+    ) -> Option<String> {
+        let session = client.session()?;
         let path = format!(
             "/api/sessions/{}/saved-in",
             url_encode_simple(&session.to_string())
         );
-        if let Ok(wenlan_types::SavedInResponse {
-            saved_in: Some(saved),
-        }) = client
-            .post::<_, wenlan_types::SavedInResponse>(&path, &serde_json::json!({}))
-            .await
-        {
+        let request = wenlan_types::SavedInRequest {
+            page_id: page.map(|(id, _, _)| id.to_string()),
+            change: page.map(|(_, _, change)| change),
+        };
+        let response: wenlan_types::SavedInResponse = client.post(&path, &request).await.ok()?;
+        let page = match page {
+            Some((page_id, title, change)) if response.report_page => {
+                let title = match title {
+                    Some(title) => Some(title.to_string()),
+                    None => client
+                        .get::<wenlan_types::responses::PageReadResponse>(&format!(
+                            "/api/pages/{page_id}"
+                        ))
+                        .await
+                        .ok()
+                        .map(|read| read.page.page.title),
+                };
+                title
+                    .filter(|title| !title.trim().is_empty())
+                    .map(|title| SavedPage {
+                        title,
+                        link: format!("wenlan://page/{page_id}"),
+                        change,
+                    })
+            }
+            _ => None,
+        };
+        format_saved_in_line(response.saved_in.as_ref(), page.as_ref())
+    }
+
+    /// `output` with the saved-in line appended when there is one.
+    async fn with_saved_in_line(
+        &self,
+        client: &WenlanClient,
+        mut output: String,
+        page: Option<(&str, Option<&str>, wenlan_types::SavedPageChange)>,
+    ) -> String {
+        if let Some(line) = self.saved_in_line(client, page).await {
             output.push_str("\n\n");
-            output.push_str(&format_saved_in_line(&saved));
+            output.push_str(&line);
         }
         output
     }
@@ -2579,7 +2716,7 @@ impl WenlanMcpServer {
         let output = self
             .with_steep_line(&client, space_arg.as_deref(), format_capture_success(&resp))
             .await;
-        let output = self.with_saved_in_line(&client, output).await;
+        let output = self.with_saved_in_line(&client, output, None).await;
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
 
@@ -3679,8 +3816,20 @@ impl WenlanMcpServer {
                 // Ownership gate (spec §5.2): a human-owned page is never overwritten
                 // in place; the daemon stages a revision card. Surface that so the
                 // caller does not believe the prose was rewritten.
+                let change = if resp.revision_card_id.is_some() {
+                    Some(wenlan_types::SavedPageChange::Proposal)
+                } else {
+                    resp.ok.then_some(wenlan_types::SavedPageChange::Updated)
+                };
                 let msg = format_update_page_response(&page_id, resp);
                 let msg = self.with_steep_line(&client, None, msg).await;
+                let msg = self
+                    .with_saved_in_line(
+                        &client,
+                        msg,
+                        change.map(|change| (page_id.as_str(), None, change)),
+                    )
+                    .await;
                 Ok(CallToolResult::success(vec![ContentBlock::text(msg)]))
             }
             None => {
@@ -3713,8 +3862,29 @@ impl WenlanMcpServer {
                             .unwrap_or_else(|| tool_error(e, "write_page")));
                     }
                 };
+                let page_id = resp.id.clone();
+                // A write that landed on a page already there names that
+                // page's own title, so it is read back.
+                let (title, change) = match resp.write_outcome {
+                    None | Some(wenlan_types::WriteOutcome::Created) => (
+                        Some(req.create.title.clone()),
+                        Some(wenlan_types::SavedPageChange::New),
+                    ),
+                    Some(
+                        wenlan_types::WriteOutcome::ResolvedExisting
+                        | wenlan_types::WriteOutcome::AttachedExisting,
+                    ) => (None, Some(wenlan_types::SavedPageChange::Updated)),
+                    Some(wenlan_types::WriteOutcome::Unknown) => (None, None),
+                };
                 let text = format_create_page_response(resp);
                 let text = self.with_steep_line(&client, None, text).await;
+                let text = self
+                    .with_saved_in_line(
+                        &client,
+                        text,
+                        change.map(|change| (page_id.as_str(), title.as_deref(), change)),
+                    )
+                    .await;
                 Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
             }
         }
@@ -3810,6 +3980,7 @@ impl WenlanMcpServer {
 
     pub async fn steep_impl(&self, params: SteepParams) -> Result<CallToolResult, McpError> {
         let action = params.action;
+        let session_arg = params.session.clone();
         // Claiming hands out source text and commit writes notes: both stay
         // on the machine running Wenlan.
         if !matches!(action, SteepAction::List | SteepAction::New)
@@ -4080,7 +4251,20 @@ impl WenlanMcpServer {
             }
         };
         match result {
-            Ok(value) => Ok(CallToolResult::structured(value?)),
+            Ok(value) => {
+                let mut value = value?;
+                if let Some((page_id, title, change)) = steep_page_change(action, &value) {
+                    let client = self.session_client(session_arg.as_deref()).await;
+                    if let (Some(line), Some(object)) = (
+                        self.saved_in_line(&client, Some((&page_id, title.as_deref(), change)))
+                            .await,
+                        value.as_object_mut(),
+                    ) {
+                        object.insert("tell_the_person".into(), line.into());
+                    }
+                }
+                Ok(CallToolResult::structured(value))
+            }
             Err(error) => Ok(steep_error_result(error, action)),
         }
     }
@@ -8478,11 +8662,12 @@ mod tests {
 
     #[test]
     fn ux_chat_7_saved_in_line_names_the_thing_and_links_into_the_app() {
-        let line = format_saved_in_line(&wenlan_types::SavedIn {
+        let thing = wenlan_types::SavedIn {
             thing_id: "thg_1".into(),
             title: "Plan the Lisbon trip".into(),
             link: "wenlan://thing/thg_1".into(),
-        });
+        };
+        let line = format_saved_in_line(Some(&thing), None).unwrap();
         assert!(
             line.starts_with("saved_in: Plan the Lisbon trip\n"),
             "{line}"
@@ -8494,6 +8679,91 @@ mod tests {
         ] {
             assert!(line.contains(&format!("\n- {choice}\n")), "{line}");
         }
+        assert_eq!(format_saved_in_line(None, None), None);
+    }
+
+    #[test]
+    fn ux_chat_7_a_page_change_gets_its_own_words_or_joins_the_thing() {
+        use wenlan_types::SavedPageChange as Change;
+        let page = |change| SavedPage {
+            title: "Gion stay".into(),
+            link: "wenlan://page/page_1".into(),
+            change,
+        };
+        let p = "[Gion stay](wenlan://page/page_1)";
+        for (change, alone) in [
+            (
+                Change::New,
+                [
+                    format!("寫進文瀾：{p}"),
+                    format!("写进文澜：{p}"),
+                    format!("Written to Wenlan: {p}"),
+                ],
+            ),
+            (
+                Change::Updated,
+                [
+                    format!("更新了文瀾：{p}"),
+                    format!("更新了文澜：{p}"),
+                    format!("Updated in Wenlan: {p}"),
+                ],
+            ),
+            (
+                Change::Proposal,
+                [
+                    format!("有 1 條建議等你看：{p}"),
+                    format!("有 1 条建议等你看：{p}"),
+                    format!("A suggestion waits for you in Wenlan: {p}"),
+                ],
+            ),
+        ] {
+            let line = format_saved_in_line(None, Some(&page(change))).unwrap();
+            for choice in alone {
+                assert!(line.contains(&format!("\n- {choice}\n")), "{line}");
+            }
+        }
+        // With the thing, the page joins the same single line.
+        let thing = wenlan_types::SavedIn {
+            thing_id: "thg_1".into(),
+            title: "Kyoto trip".into(),
+            link: "wenlan://thing/thg_1".into(),
+        };
+        let line = format_saved_in_line(Some(&thing), Some(&page(Change::New))).unwrap();
+        assert!(
+            line.contains(&format!(
+                "\n- 記在文瀾：[Kyoto trip](wenlan://thing/thg_1) · 寫了{p}\n"
+            )),
+            "{line}"
+        );
+        assert!(
+            line.contains(&format!(
+                "\n- Saved in Wenlan: [Kyoto trip](wenlan://thing/thg_1) · wrote {p}\n"
+            )),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn ux_chat_7_steep_names_the_page_it_wrote_or_staged() {
+        use wenlan_types::SavedPageChange as Change;
+        let created = serde_json::json!({"outcome": "created", "page_id": "p1", "title": "Gion"});
+        assert_eq!(
+            steep_page_change(SteepAction::Write, &created),
+            Some(("p1".into(), Some("Gion".into()), Change::New))
+        );
+        let merged = serde_json::json!({"outcome": "merged", "page_id": "p2", "title": "x"});
+        assert_eq!(
+            steep_page_change(SteepAction::Write, &merged),
+            Some(("p2".into(), None, Change::Updated))
+        );
+        let card = serde_json::json!({"outcome": "review_card", "page_id": "p3"});
+        assert_eq!(
+            steep_page_change(SteepAction::Commit, &card),
+            Some(("p3".into(), None, Change::Proposal))
+        );
+        let same = serde_json::json!({"outcome": "still_accurate", "page_id": "p4"});
+        assert_eq!(steep_page_change(SteepAction::StillAccurate, &same), None);
+        assert_eq!(steep_page_change(SteepAction::Commit, &same), None);
     }
 
     #[test]

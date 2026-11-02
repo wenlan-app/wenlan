@@ -460,4 +460,41 @@ async fn ux_chat_7_a_conversation_hears_once_where_it_was_saved() {
         .saved_in
         .expect("named once the conversation has a title");
     assert_eq!(named.title, "Porto stay in Ribeira");
+
+    // Page changes: a new page is always worth a mention; an update or a
+    // suggestion once per page in a conversation; a page the AI has just
+    // written is not news again when it revises it.
+    let page = |page_id: &str, change: &str| json!({ "page_id": page_id, "change": change });
+    for (body, expected) in [
+        (page("page_a", "updated"), true),
+        (page("page_a", "updated"), false),
+        (page("page_a", "proposal"), true),
+        (page("page_a", "proposal"), false),
+        (page("page_b", "new"), true),
+        (page("page_b", "updated"), false),
+        (page("page_b", "proposal"), true),
+    ] {
+        let (status, response) = call(
+            &router,
+            Method::POST,
+            porto,
+            Some(body.clone()),
+            Caller::Agent("claude-code"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        let response = typed::<SavedInResponse>(response);
+        assert_eq!(response.report_page, expected, "{body}");
+        assert_eq!(response.saved_in, None, "{body}");
+    }
+    // Another conversation hears about the same page again.
+    let (_, response) = call(
+        &router,
+        Method::POST,
+        &saved_in,
+        Some(page("page_a", "updated")),
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert!(typed::<SavedInResponse>(response).report_page);
 }

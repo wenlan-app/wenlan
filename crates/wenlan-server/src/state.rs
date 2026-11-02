@@ -183,6 +183,10 @@ pub struct ServerState {
     /// so the AI tool's "Saved in Wenlan" line shows once per thing. In-memory
     /// only; a restart just lets each conversation hear it once more.
     pub saved_in_reported: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+    /// Page changes each conversation has already been told about
+    /// (`session|page|change`), so an update or a suggestion is mentioned
+    /// once (UX-CHAT-7).
+    pub saved_in_pages: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Default for ServerState {
@@ -223,6 +227,7 @@ impl Default for ServerState {
             telemetry: Arc::new(Telemetry::disabled()),
             agent_presence: Arc::default(),
             saved_in_reported: Arc::default(),
+            saved_in_pages: Arc::default(),
         }
     }
 }
