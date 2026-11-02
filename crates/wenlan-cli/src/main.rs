@@ -73,7 +73,11 @@ enum Commands {
     /// Restart the Wenlan background process. Required after an update.
     Restart,
     /// Diagnose runtime, model, and API key setup.
-    Doctor,
+    Doctor {
+        /// Point older ~/.wenlan/bin copies at the app bundle. The previous file is renamed aside, not deleted.
+        #[arg(long)]
+        repair: bool,
+    },
     /// Check the health of memories, pages, and the running Wenlan; report, then resolve findings safely.
     Lint {
         #[arg(long)]
@@ -456,7 +460,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         Commands::Background { command } => commands::service::run_background(command).await?,
         Commands::Restart => commands::service::restart().await?,
-        Commands::Doctor => commands::setup::run_doctor().await?,
+        Commands::Doctor { repair } => commands::setup::run_doctor(repair).await?,
         Commands::Lint {
             profile,
             allow_external,

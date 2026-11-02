@@ -34,6 +34,11 @@ HTTP calls, and eval fixtures used by the app crate.
   `externalBin`; packaging can fail before app code runs. Native reverse
   transport does not require a tunnel sidecar. Retain legacy process-ownership
   cleanup without restoring that packaging dependency.
+- A release launch refreshes `~/.wenlan/bin` when those copies are older than
+  this bundle: the previous file is renamed aside (`.bak.<version>.<time>`),
+  then the name becomes a link to the bundled binary (a copy on Windows when
+  the OS refuses the link). Debug builds and any run with `WENLAN_DATA_DIR` /
+  `ORIGIN_DATA_DIR` must not touch that directory. See `wenlan_core::home_bin`.
 - `eval/fixtures/gen/` is generated-data territory.
 
 ## ANTI-PATTERNS
