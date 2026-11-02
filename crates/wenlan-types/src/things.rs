@@ -143,7 +143,7 @@ pub struct ThingMapSource {
     pub memory_id: Option<String>,
 }
 
-/// One point on a thing's map (UX-VIEW-7).
+/// One point on a thing's map.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThingMapNode {
     pub id: String,
@@ -172,7 +172,7 @@ pub struct ThingMapEdge {
 }
 
 /// `GET /api/things/{id}/map`: the thing's map. Empty (`revision` 0, no
-/// nodes) until something writes it; the recap (UX-VIEW-6) reads the same
+/// nodes) until something writes it; the recap and the mind map read the same
 /// nodes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThingMapResponse {

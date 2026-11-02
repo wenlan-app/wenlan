@@ -172,7 +172,7 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
     assert_eq!(detail.sessions.len(), 1);
     assert_eq!(detail.sessions[0].id, session_id);
 
-    // Its map is empty until something writes it (UX-VIEW-6/7).
+    // Its map is empty until something writes it.
     let (status, body) = call(
         &router,
         Method::GET,

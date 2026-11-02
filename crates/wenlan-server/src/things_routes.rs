@@ -113,9 +113,9 @@ pub async fn handle_get_thing(
 
 /// GET /api/things/{id}/map
 ///
-/// The thing's map of points (UX-VIEW-6/7). Nothing writes maps yet, so a
-/// known thing answers an empty map at revision 0; the page then falls back
-/// to grouping its memories. 404 when the thing is unknown or out of scope.
+/// The thing's map of points, which its recap and mind map read. Nothing
+/// writes maps yet, so a known thing answers an empty map at revision 0; the
+/// page then falls back to grouping its memories. 404 when the thing is unknown or out of scope.
 pub async fn handle_get_thing_map(
     State(state): State<SharedState>,
     SpaceHeader(header_space): SpaceHeader,
