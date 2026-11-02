@@ -613,3 +613,67 @@ async fn artifact_originals_are_copied_byte_for_byte_with_their_records() {
     assert_eq!(manifest.left_out.len(), 1);
     assert_eq!(manifest.left_out[0].id, "orig_lost");
 }
+
+#[tokio::test]
+async fn settings_tables_are_copied_whole_with_their_stored_types() {
+    use super::settings::{export_settings, SETTINGS_FILES};
+
+    let (db, _db_dir) = test_db().await;
+    sql(
+        &db,
+        "INSERT INTO spaces (id, name, created_at, updated_at) VALUES (?1, 'Work', 1.5, 2)",
+        "space_w",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO app_metadata (key, value) VALUES (?1, X'00ff')",
+        "export_test_bytes",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO agent_connections (id, name, trust_level, created_at, updated_at) \
+         VALUES (?1, 'codex', 'review', 1, 1)",
+        "agent_c",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    assert!(export_settings(&db, &dirs, &mut manifest).await.unwrap() >= 3);
+    assert_eq!(manifest.files.len(), SETTINGS_FILES.len());
+
+    let file = |name: &str| -> serde_json::Value {
+        serde_json::from_str(&read(&dirs, &format!("backstage/settings/{name}.json"))).unwrap()
+    };
+    let row = |value: &serde_json::Value, table: &str, key: &str| -> serde_json::Map<_, _> {
+        let table = &value["tables"][table];
+        let columns = table["columns"].as_array().unwrap();
+        let row = table["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row[0] == key)
+            .unwrap_or_else(|| panic!("{key} missing"));
+        columns
+            .iter()
+            .map(|c| c.as_str().unwrap().to_string())
+            .zip(row.as_array().unwrap().iter().cloned())
+            .collect()
+    };
+    let space = row(&file("spaces"), "spaces", "space_w");
+    // A real stays a real and an integer an integer.
+    assert_eq!(space["created_at"].to_string(), "1.5");
+    assert_eq!(space["sort_order"], serde_json::json!(0));
+    let agent = row(&file("agents"), "agent_connections", "agent_c");
+    assert_eq!(agent["trust_level"], "review");
+    let meta = row(&file("metadata"), "app_metadata", "export_test_bytes");
+    assert_eq!(meta["value"], serde_json::json!({"hex": "00ff"}));
+    assert!(file("things")["tables"]["thing_sessions"]["rows"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
+}
