@@ -2,7 +2,7 @@
 import { expect, test } from "@playwright/test";
 import type { MemoryItem } from "../src/lib/tauri";
 import { installTauriMock } from "./tauriMock";
-import { openPrimaryDestination } from "./helpers/primaryNavigation";
+import { openMemoryFromPage } from "./helpers/primaryNavigation";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 
 const SOURCE_ID = "reference-links-source";
@@ -31,15 +31,13 @@ test("canonical page and memory references preview automatically and navigate th
   const controller = await installTauriMock(page, {
     locale: "en",
     rawActions: [],
+    // A page cites the memory, so a person can open it from the page.
+    fixture: { ...fixture, pages: fixture.pages.map((p) => p.id === "page-history" ? { ...p, source_memory_ids: [SOURCE_ID] } : p) },
     memories: [sourceMemory, ...fixture.memories.filter((memory) => memory.source_id !== SOURCE_ID)],
   });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
-  await openPrimaryDestination(page, "Memories");
-
-  const row = page.getByRole("region", { name: "Memory list" })
-    .getByRole("article", { name: /Reference link fixture/ });
-  await row.getByRole("button", { name: "Open memory", exact: true }).click();
+  await openMemoryFromPage(page, "History semantics", /Reference link fixture/);
   const pageLink = page.getByRole("link", { name: "Fixture architecture", exact: true });
   await expect(pageLink).toHaveAttribute("href", `#concept:${PAGE_ID}`);
   await expect(pageLink).toHaveClass(/reference-link--page/);
@@ -54,10 +52,7 @@ test("canonical page and memory references preview automatically and navigate th
   await pageLink.click();
   await expect(page.getByRole("heading", { level: 1, name: "Fixture architecture", exact: true })).toBeVisible();
 
-  await openPrimaryDestination(page, "Memories");
-  const secondRow = page.getByRole("region", { name: "Memory list" })
-    .getByRole("article", { name: /Reference link fixture/ });
-  await secondRow.getByRole("button", { name: "Open memory", exact: true }).click();
+  await openMemoryFromPage(page, "History semantics", /Reference link fixture/);
   const memoryLink = page.getByRole("link", { name: "the related memory", exact: true });
   await expect(memoryLink).toHaveAttribute("href", `#memory:${MEMORY_ID}`);
   await memoryLink.hover();

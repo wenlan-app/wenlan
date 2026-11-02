@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from "@playwright/test";
 import { installTauriMock, collectBrowserErrors } from "./tauriMock";
-import { openPrimaryDestination } from "./helpers/primaryNavigation";
+import { openMemoryFromPage, openPrimaryDestination } from "./helpers/primaryNavigation";
 
 for (const width of [1280, 375]) {
   test(`one history entry spans pages, memories and spaces at ${width}px`, async ({ page }, testInfo) => {
@@ -20,13 +20,12 @@ for (const width of [1280, 375]) {
     await expect(page.getByRole("heading", { name: "Open a page", exact: true })).toBeVisible();
     await forward.press("Enter");
     await expect(page.getByRole("heading", { name: "Spaces", exact: true })).toBeVisible();
-    await openPrimaryDestination(page, "Memories");
-    await page.getByRole("button", { name: "Open memory", exact: true }).first().click();
+    await openMemoryFromPage(page, "Weekly fixture recap", /Fixture memory 3$/);
     await expect(page.locator(".memory-detail-reading")).toBeVisible();
     await expect(page.locator("main").getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Back to memories", exact: true })).toHaveCount(0);
     await back.click();
-    await expect(page.getByRole("region", { name: "Memory list", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Weekly fixture recap", exact: true })).toBeVisible();
     await forward.click();
     await expect(page.locator(".memory-detail-reading")).toBeVisible();
     await back.click();
