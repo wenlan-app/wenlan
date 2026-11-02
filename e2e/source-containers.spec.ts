@@ -2,7 +2,7 @@
 import { test, expect } from "@playwright/test";
 import { installTauriMock, collectBrowserErrors } from "./tauriMock";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
-import { openPrimaryDestination } from "./helpers/primaryNavigation";
+import { openSourceLibrary, sourceLibraryLabels } from "./helpers/primaryNavigation";
 import { resources } from "../src/i18n/resources";
 import type { RegisteredSource, IndexedFileInfo } from "../src/lib/tauri";
 
@@ -54,7 +54,7 @@ for (const cfg of [
       bridge.invoke = (command, args) => ["list_registered_sources", "list_indexed_files", "read_source_dir", "read_text_file", "sync_registered_source", "plugin:dialog|open"].includes(command)
         ? (window as any).__containerInvoke(command, args) : original(command, args);
     });
-    await openPrimaryDestination(page, t.sidebar.sources, t.sidebar.more);
+    await openSourceLibrary(page, sourceLibraryLabels(cfg.locale));
     const capture = async (name: string) => {
       await page.mouse.move(0, 0);
       await page.evaluate(() => document.fonts.ready);

@@ -94,15 +94,8 @@ test("keeps every enabled primary destination inside the Review command contract
   // lead, and the topic count is over what is drawn (the three connected ones).
   await expect(page.getByText(/^7 pages · 3 topics(?: · \d+ regions?)?$/)).toBeVisible();
 
-  await openPrimaryDestination(page, "Sources");
-  await expect(page.getByRole("heading", { level: 1, name: "Sources", exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("heading", { level: 2, name: "Bring your sources together", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("group", { name: "Filter sources", exact: true })).toBeVisible();
-  await expect(page.getByRole("searchbox", { name: "Filter sources", exact: true })).toBeVisible();
-  // Sources lives under More, so More carries the current mark while it is open.
-  await expect(navigation.getByRole("button", { name: "More", exact: true })).toHaveAttribute("aria-current", "page");
+  // Sources is no longer a primary destination: its list opens from Settings,
+  // which is outside this Review command contract. source-library.spec covers it.
 
   await openPrimaryDestination(page, "Wiki");
   await expect(page.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();

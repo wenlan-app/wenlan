@@ -25,6 +25,8 @@ interface SettingsPageProps {
    *  button that does nothing. Keep it required — that is a compile error,
    *  which is the point. */
   onImport: () => void;
+  /** Opens the list of files and links the person added. */
+  onOpenLibrary?: () => void;
 }
 
 export default function SettingsPage({
@@ -35,6 +37,7 @@ export default function SettingsPage({
   onOpenIntelligence,
   onOpenActivity,
   onImport,
+  onOpenLibrary,
   currentSpace,
 }: SettingsPageProps) {
   const { t } = useTranslation();
@@ -43,7 +46,7 @@ export default function SettingsPage({
   const content = (
     <>
       {section === "general" && <GeneralSection />}
-      {section === "sources" && <SourcesSection onImport={onImport} />}
+      {section === "sources" && <SourcesSection onImport={onImport} onOpenLibrary={onOpenLibrary} />}
       {section === "agents" && <AgentsSection onSetupAgent={onSetupAgent} currentSpace={currentSpace} />}
       {section === "intelligence" && <IntelligenceSection delay={0} />}
       {section === "diagnostics" && (

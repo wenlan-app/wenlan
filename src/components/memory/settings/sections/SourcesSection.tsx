@@ -10,7 +10,7 @@ import { SettingsHelp } from "../SettingsHelp";
 const CHATGPT_EXPORT_HELP_URL = "https://help.openai.com/en/articles/7260999-exporting-your-chatgpt-history-and-data";
 const CLAUDE_EXPORT_HELP_URL = "https://support.claude.com/en/articles/9450526-export-your-claude-data";
 
-export default function SourcesSection({ onImport }: { onImport: () => void }) {
+export default function SourcesSection({ onImport, onOpenLibrary }: { onImport: () => void; onOpenLibrary?: () => void }) {
   const { t } = useTranslation();
   const [helpLinkFailed, setHelpLinkFailed] = useState(false);
   const openHelpLink = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -26,6 +26,27 @@ export default function SourcesSection({ onImport }: { onImport: () => void }) {
         <SectionHeader label={t("settings.sources.connectedTitle")} />
         <SourcesList />
       </section>
+
+      {/* What was added has no place in the navigation: a source is what a
+          sentence cites, read from the page that cites it. The full list of
+          added files and links stays one step away, here. */}
+      {onOpenLibrary && <section className="mem-fade-up" style={{ animationDelay: "15ms" }}>
+        <SectionHeader label={t("settings.sources.libraryTitle")} />
+        <Card padding="rows">
+          <div className="px-5 py-4">
+            <div className="settings-import-row flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-sm)", color: "var(--mem-text-secondary)", marginTop: "2px", lineHeight: "1.5" }}>
+                  {t("settings.sources.libraryDescription")}
+                </p>
+              </div>
+              <Button variant="secondary" size="sm" className="shrink-0" onClick={onOpenLibrary}>
+                {t("settings.sources.openLibrary")}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </section>}
 
       {/* The group title appears once, matching the other settings groups. */}
       <section className="mem-fade-up" style={{ animationDelay: "30ms" }}>

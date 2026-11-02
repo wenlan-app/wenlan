@@ -889,9 +889,41 @@ html[data-theme="light"] .memory-shell {
   max-height: min(60vh, 520px);
   overflow-y: auto;
   padding: 12px 14px;
+  position: relative;
 }
 .search-quote-line { color: var(--mem-text-tertiary); display: flex; flex-direction: column; font-family: var(--mem-font-body); font-size: 13px; gap: 2px; line-height: 1.55; margin: 0; }
 .search-quote-line--hit { color: var(--mem-text); }
 .search-quote-speaker { font-family: var(--mem-font-mono); font-size: 10px; }
 .search-quote-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+/* The whole conversation: the person's words in a light bubble on the right,
+   the AI's replies across the width, as in the AI tools themselves. */
+.search-quote-lines--chat { background: transparent; gap: 12px; padding: 4px 2px; }
+.search-quote-lines--chat .search-quote-line { color: var(--mem-text); font-size: 13.5px; }
+.search-quote-lines--chat .search-quote-speaker {
+  clip: rect(0 0 0 0);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+.search-quote-lines--chat .search-quote-line[data-speaker="you"] {
+  align-self: flex-end;
+  background: var(--mem-hover);
+  border-radius: 14px;
+  max-width: 80%;
+  padding: 8px 12px;
+}
+.search-quote-lines--chat .search-quote-line--hit {
+  background: color-mix(in srgb, var(--mem-accent-page) 12%, transparent);
+  border-radius: 8px;
+  margin: 0 -8px;
+  padding: 6px 8px;
+}
+.search-quote-lines--chat .search-quote-line--hit[data-speaker="you"] {
+  background: color-mix(in srgb, var(--mem-accent-page) 18%, var(--mem-hover));
+  border-radius: 14px;
+  margin: 0;
+  padding: 8px 12px;
+}
 .search-quote-used { color: var(--mem-text-tertiary); font-family: var(--mem-font-body); font-size: 12px; margin: 0; }

@@ -18,7 +18,8 @@ for (const cfg of configs) test(`Space direct edits ${cfg.locale} ${cfg.theme} $
  await expect(page.getByRole('button',{name:t.spaces.overview.editSpace,exact:true})).toHaveCount(0);
  await expect(page.locator('.space-dossier-identity-editor')).toHaveCount(0);
  await expect(page.locator('[data-navigation-icon=wiki-stack]')).toHaveCount(1);
- await expect(page.locator('[data-navigation-icon=sources-library]')).toHaveCount(1);
+ // A stored Sources pin no longer shows: the list of added files opens from Settings.
+ await expect(page.locator('[data-navigation-icon=sources-library]')).toHaveCount(0);
  const create=page.getByRole('button',{name:t.pages.overview.newPage,exact:true}), menu=page.locator('.space-dossier-overflow-trigger');
  const cb=(await create.boundingBox())!,mb=(await menu.boundingBox())!;
  expect(mb.x).toBeGreaterThan(cb.x+cb.width);

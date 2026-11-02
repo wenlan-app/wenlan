@@ -13,7 +13,7 @@ const rawActions = [
 const localeCases: Record<Exclude<AppLocale, "en">, {
   home: string;
   wiki: string;
-  sources: string;
+  graph: string;
   more: string;
   navigation: string;
   activity: string;
@@ -24,7 +24,7 @@ const localeCases: Record<Exclude<AppLocale, "en">, {
 }> = {
   "zh-Hans": {
     home: "首页",
-    wiki: "Wiki", sources: "来源", more: "更多",
+    wiki: "Wiki", graph: "图谱", more: "更多",
     navigation: "主导航",
     activity: "活动",
     seeAllActivity: "查看全部活动",
@@ -39,7 +39,7 @@ const localeCases: Record<Exclude<AppLocale, "en">, {
   },
   "zh-Hant": {
     home: "首頁",
-    wiki: "Wiki", sources: "來源", more: "更多",
+    wiki: "Wiki", graph: "圖譜", more: "更多",
     navigation: "主要導覽",
     activity: "活動",
     seeAllActivity: "查看全部活動",
@@ -75,7 +75,7 @@ test.describe("Chinese interface localization", () => {
       const moreButton = primaryNavigation.getByRole("button", { name: labels.more, exact: true });
       await expect(moreButton).toBeVisible();
       await moreButton.click();
-      await expect(primaryNavigation.getByRole("button", { name: labels.sources, exact: true })).toBeVisible();
+      await expect(primaryNavigation.getByRole("button", { name: labels.graph, exact: true })).toBeVisible();
       await moreButton.click();
       await expect(primaryNavigation.getByRole("button", { name: labels.wiki, exact: true })).toBeVisible();
       await expect(header.getByRole("button", { name: labels.activity })).toHaveCount(0);
