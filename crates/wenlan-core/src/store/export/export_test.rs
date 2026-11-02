@@ -890,6 +890,43 @@ async fn names_never_clash_and_page_and_entity_state_is_kept() {
 }
 
 #[tokio::test]
+async fn a_name_belongs_to_the_visible_page_across_every_folder() {
+    // Obsidian finds `[[Launch]]` by file name anywhere in the vault, so an
+    // archived page or entity sharing a visible page's name must not take it.
+    let (db, _db_dir) = test_db().await;
+    page(&db, "aaa_old111", "Launch", "The old plan.", "sp").await;
+    sql(
+        &db,
+        "UPDATE pages SET status = 'archived' WHERE id = ?1",
+        "aaa_old111",
+    )
+    .await;
+    page(&db, "bbb_ent222", "launch", "The launch itself.", "sp").await;
+    sql(
+        &db,
+        "UPDATE pages SET kind = 'entity', entity_id = 'ent_lau333' WHERE id = ?1",
+        "bbb_ent222",
+    )
+    .await;
+    page(&db, "zzz_live44", "Launch", "The plan.", "sp").await;
+    let placement = HashMap::from([("zzz_live44".to_string(), "Work/Launch.md".to_string())]);
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    let done = export_pages(&db, &placement, &dirs, &mut manifest)
+        .await
+        .unwrap();
+    let live = page::parse(&read(&dirs, "visible/Work/Launch.md"), "").unwrap();
+    assert_eq!(live.id.as_deref(), Some("zzz_live44"));
+    let old = page::parse(&read(&dirs, "backstage/archive/Launch-old111.md"), "").unwrap();
+    assert_eq!(old.id.as_deref(), Some("aaa_old111"));
+    let entity = entity::parse(&read(&dirs, "backstage/entities/launch-lau333.md")).unwrap();
+    assert_eq!(entity.id, "ent_lau333");
+    assert_eq!(done.entity_stems["ent_lau333"], "launch-lau333");
+}
+
+#[tokio::test]
 async fn every_column_of_a_field_by_field_table_is_written_or_deferred() {
     use super::{DEFERRED_COLUMNS, FILE_COLUMNS};
     use std::collections::BTreeSet;

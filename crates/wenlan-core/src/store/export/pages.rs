@@ -3,8 +3,10 @@
 //!
 //! - A page keeps the folder it is in today (`placement`, from the pages
 //!   folder's own record); a page that has no file yet goes at the top.
-//!   Its file is named by its title (a clash adds the end of its id), so
-//!   the `[[Title]]` links pages already hold find it in Obsidian.
+//!   Its file is named by its title, so the `[[Title]]` links pages
+//!   already hold find it in Obsidian. Obsidian looks a name up anywhere in
+//!   the vault, so a name that another visible page, archived page or
+//!   entity already has adds the end of its id; visible pages choose first.
 //! - Its body is `pages.content` byte for byte. Today's `[x](concept_…)`
 //!   links stay as written; turning them into `[[stem]]` is a later edit
 //!   with its own history entry, not part of a lossless copy.
@@ -67,22 +69,28 @@ pub async fn export_pages(
 
     let (entities, pages): (Vec<&ExportPageRow>, Vec<&ExportPageRow>) =
         rows.iter().partition(|row| is_entity(row));
-    let mut visible = Paths::default();
-    let mut archive = Paths::default();
+    // Obsidian finds `[[Name]]` by file name anywhere in the vault, so pages,
+    // archived pages and entities share one set of names: a name two of
+    // them want goes to a visible page first, so links to it open the live
+    // page, and an archived page or entity with that name gets its id's end.
+    let mut names = Paths::vault_wide();
     let mut paths: HashMap<&str, (bool, String)> = HashMap::new();
-    // One pass in id order, so a page's name does not depend on whether
-    // another page with its title has a file yet.
-    for row in pages.iter().copied() {
-        let archived = row.status == "archived";
-        // The file is named by the page's title, so a `[[Title]]` link in
-        // another page finds it; the folder is the one it is in today.
-        let folder = placement_of(placement, &row.id)
-            .map(|(folder, _)| folder)
-            .unwrap_or_default();
-        let stem = file_stem(&row.title);
-        let taken = if archived { &mut archive } else { &mut visible };
-        let path = taken.claim(&folder, &stem, &row.id);
-        paths.insert(&row.id, (archived, path));
+    // In id order within each group, so a page's name does not depend on
+    // whether another page with its title has a file yet.
+    for archived in [false, true] {
+        for row in pages.iter().copied() {
+            if (row.status == "archived") != archived {
+                continue;
+            }
+            // The file is named by the page's title, so a `[[Title]]` link in
+            // another page finds it; the folder is the one it is in today.
+            let folder = placement_of(placement, &row.id)
+                .map(|(folder, _)| folder)
+                .unwrap_or_default();
+            let stem = file_stem(&row.title);
+            let path = names.claim(&folder, &stem, &row.id);
+            paths.insert(&row.id, (archived, path));
+        }
     }
     let stems: HashMap<&str, String> = paths
         .iter()
@@ -152,7 +160,6 @@ pub async fn export_pages(
             .push(dirs.write(&relative, &row.id, file_type, &text)?);
     }
 
-    let mut entity_paths = Paths::default();
     for row in entities {
         unwritten(
             manifest,
@@ -215,7 +222,7 @@ pub async fn export_pages(
             file.other.insert("last_seen".into(), utc(at).into());
         }
         let stem = file_stem(&row.title);
-        let path = entity_paths.claim("", &stem, &entity_id);
+        let path = names.claim("", &stem, &entity_id);
         done.entity_stems.insert(entity_id.clone(), stem_of(&path));
         let text = entity::render(&file);
         check(
@@ -310,9 +317,21 @@ fn placement_of(placement: &HashMap<String, String>, id: &str) -> Option<(String
 #[derive(Default)]
 pub(super) struct Paths {
     taken: HashMap<String, Vec<String>>,
+    /// Names clash across folders too, as Obsidian's `[[Name]]` links see
+    /// them.
+    vault_wide: bool,
 }
 
 impl Paths {
+    /// Paths whose names are unique across every folder, not just within
+    /// one.
+    pub(super) fn vault_wide() -> Self {
+        Self {
+            vault_wide: true,
+            ..Self::default()
+        }
+    }
+
     /// `folder/stem.md`, or `folder/stem-<id6>.md` when that name is taken,
     /// then `-2`, `-3`, … until a name is free.
     pub(super) fn claim(&mut self, folder: &str, stem: &str, id: &str) -> String {
@@ -327,7 +346,11 @@ impl Paths {
         id: &str,
         extension: &str,
     ) -> String {
-        let key = folder.to_lowercase();
+        let key = if self.vault_wide {
+            String::new()
+        } else {
+            folder.to_lowercase()
+        };
         let names = self.taken.entry(key).or_default();
         let clash = |stem: &str| names.iter().any(|name| same_file_name(name, stem));
         let mut chosen = stem.to_string();
