@@ -522,7 +522,7 @@ describe("PageDetail", () => {
     const trigger = screen.getByRole("button", { name: "Page actions" });
     trigger.focus();
     await user.keyboard("{ArrowDown}");
-    expect(screen.getByRole("menuitem", { name: "Update from sources" })).toHaveFocus();
+    expect(screen.getByRole("menuitemcheckbox", { name: "Summary view" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu", { name: "Page actions" })).toBeNull();
     expect(trigger).toHaveFocus();
@@ -763,13 +763,13 @@ describe("PageDetail", () => {
     expect(await screen.findByText(/from 2 memories/)).toBeTruthy();
   });
 
-  it("removes copy as context and keeps export in the title menu", async () => {
+  it("removes copy as context and per-page export from the title menu", async () => {
     const { user, container } = renderWithQuery(<PageDetail {...defaultProps} />);
     await screen.findByText("libSQL Architecture");
     expect(container.querySelector(".page-detail-header-actions")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Page actions" }));
     expect(screen.queryByRole("menuitem", { name: "Copy as context" })).toBeNull();
-    expect(screen.getByRole("menuitem", { name: "Export to Obsidian" })).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "Export to Obsidian" })).toBeNull();
   });
 
   it("offers one keyboard-safe title menu for all page tools", async () => {
@@ -1174,25 +1174,6 @@ describe("PageDetail", () => {
     await waitFor(() => expect(updatePage).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved"));
     expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
-  });
-
-  it("surfaces export failures and lets the user retry", async () => {
-    const { exportPageToObsidian } = await import("../../lib/tauri");
-    (exportPageToObsidian as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("vault unavailable"));
-    const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
-
-    await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Export to Obsidian" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not export this page. Try again.",
-    );
-
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Export to Obsidian" }));
-    await waitFor(() => expect(exportPageToObsidian).toHaveBeenCalledTimes(2));
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    expect(await screen.findByRole("menuitem", { name: "Exported!" })).toBeVisible();
   });
 
   it("keeps Page action menu keyboard events out of Main history and manages item focus", async () => {
