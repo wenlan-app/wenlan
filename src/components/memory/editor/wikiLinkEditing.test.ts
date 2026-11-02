@@ -125,6 +125,15 @@ describe("wiki link editing", () => {
     expect(view.state.doc.toString()).toBe(source);
   });
 
+  it("keeps links working on a line whose code mentions angle brackets", () => {
+    const source = "[[Target]] stores `Vec<Source>` at `<db_path>/cache` [[Missing]].";
+    const { view } = make(source);
+    const anchors = [...view.contentDOM.querySelectorAll<HTMLAnchorElement>("a[data-wiki-page-id]")];
+    expect(anchors.map((anchor) => anchor.textContent)).toEqual(["Target"]);
+    expect(view.contentDOM.querySelector(".cm-wiki-page-missing")?.textContent).toBe("Missing");
+    expect(view.contentDOM.textContent).not.toContain("[[");
+  });
+
   it("shows a link to the page itself as plain text and a page not written yet as a quiet name, brackets hidden", () => {
     const source = "[[Launch]] is the record. See [[Retro|the retro]] and `[[Code]]`.";
     const { view } = make(source, targets, { selfTitle: "launch", labels: { page: "Page", memory: "Memory", source: "Source", authored: "Yours", unverified: "Unverified", missing: "No page yet" } });

@@ -227,6 +227,17 @@ describe("writingPresentation", () => {
     expect(view.state.doc.toString()).toBe(source);
   });
 
+  it("lines an item's own continuation line up under its text, not a nested item", () => {
+    const source = "- clip.mp4\n  SHA-256: abc\n  - nested\n    more\n- next";
+    const view = makeView(source, { selection: EditorSelection.single(source.length) });
+
+    const continuations = [...view.contentDOM.querySelectorAll(".cm-writing-list-continuation")];
+    expect(continuations.map((node) => node.textContent)).toEqual(["  ", "  "]);
+    expect(continuations[0].closest(".cm-line")).toHaveTextContent("SHA-256: abc");
+    expect(continuations[1].closest(".cm-line")).toHaveTextContent("more");
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
   it("marks only browser-bound links, labelled or bare, as external", () => {
     const source = [
       "See [docs](https://wenlan.app/docs) and [[Wiki]].",

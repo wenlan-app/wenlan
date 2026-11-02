@@ -456,6 +456,11 @@ const writingTheme = EditorView.theme({
   ".cm-writing-list-indent": {
     letterSpacing: "0.4em",
   },
+  ".cm-writing-list-continuation": {
+    display: "inline-block",
+    minWidth: "1.35em",
+    whiteSpace: "pre",
+  },
   '.cm-writing-list-marker[data-writing-list-marker="bullet"]': {
     textAlign: "center",
   },
@@ -750,6 +755,20 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           // proportional font; widen them so each level is visible.
           if (/^[ \t]+$/.test(state.sliceDoc(itemLine.from, node.from))) {
             addMarkClass(itemLine.from, node.from, "cm-writing-list-indent");
+          }
+          // A wrapped item's own next lines ("- file\n  SHA-256: …") line up
+          // under the item's text, not at the left edge: their leading spaces
+          // take the same width as the indent and marker above them.
+          const indentLength = node.from - itemLine.from;
+          const contentColumn = markerTo - itemLine.from;
+          for (let at = itemLine.to + 1; at < parent.to && at <= state.doc.length;) {
+            const line = state.doc.lineAt(at);
+            at = line.to + 1;
+            if (!line.text.trim() || /^\s*(?:[-*+]|\d+[.)])(?:\s|$)|^\s*(?:```|~~~)/.test(line.text)) continue;
+            // Only the item's own lines: deeper ones belong to a nested item.
+            if ((/^[ \t]*/.exec(line.text)?.[0].length ?? 0) !== contentColumn) continue;
+            if (indentLength > 0) addMarkClass(line.from, line.from + indentLength, "cm-writing-list-indent");
+            addMarkClass(line.from + indentLength, line.from + contentColumn, "cm-writing-list-continuation");
           }
           // A list marker stays a bullet (or number) while the caret is on its
           // line, as in Obsidian: only a selection over the marker itself

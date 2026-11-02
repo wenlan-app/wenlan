@@ -83,6 +83,22 @@ function excludedRanges(source: string, tree: ReturnType<typeof syntaxTree>): Ar
   return ranges;
 }
 
+/**
+ * A line with inline HTML keeps its links as written. Code on the line is
+ * not HTML: `Vec<Source>` or `<db_path>` in backticks must not stop the
+ * line's links from reading as links.
+ */
+function lineHasHtml(line: { from: number; to: number; text: string }, excluded: ReadonlyArray<{ from: number; to: number }>): boolean {
+  let text = line.text;
+  for (const range of excluded) {
+    if (range.to <= line.from || range.from >= line.to) continue;
+    const from = Math.max(range.from, line.from) - line.from;
+    const to = Math.min(range.to, line.to) - line.from;
+    if (/^`/.test(line.text.slice(from, to))) text = text.slice(0, from) + " ".repeat(to - from) + text.slice(to);
+  }
+  return /<\/?[A-Za-z][^>]*>/.test(text);
+}
+
 export function parseResolvedWikiLinks(source: string, targets: ReadonlyMap<string, string>, baseOffset = 0): ParsedWikiLink[] {
   return parseWikiLinks(source, targets, baseOffset, "resolved");
 }
@@ -291,7 +307,7 @@ export function createWikiLinkEditing(
       const visibleLinks = resolvedLinks.filter((range) =>
         this.view.visibleRanges.some((visible) => overlap(range, visible))
         && !excluded.some((blocked) => overlap({ from: range.tokenFrom, to: range.tokenTo }, blocked)))
-        .filter((range) => !/<\/?[A-Za-z][^>]*>/.test(this.view.state.doc.lineAt(range.from).text));
+        .filter((range) => !lineHasHtml(this.view.state.doc.lineAt(range.from), excluded));
       this.references = new Map(visibleLinks.map((range) => [range.key, range]));
       const decorations: Array<Range<Decoration>> = [];
       const atomic: Array<Range<Decoration>> = [];
@@ -341,7 +357,7 @@ export function createWikiLinkEditing(
       for (const range of parseUnresolvedWikiLinks(source, this.view.state.field(links))) {
         if (!this.view.visibleRanges.some((visible) => overlap(range, visible))) continue;
         if (excluded.some((blocked) => overlap({ from: range.tokenFrom, to: range.tokenTo }, blocked))) continue;
-        if (/<\/?[A-Za-z][^>]*>/.test(this.view.state.doc.lineAt(range.from).text)) continue;
+        if (lineHasHtml(this.view.state.doc.lineAt(range.from), excluded)) continue;
         const self = selfLabel !== null && (normalized(range.targetLabel) === selfLabel || normalized(range.displayText) === selfLabel);
         decorations.push(Decoration.mark(self
           ? { class: "cm-wiki-page-self" }
