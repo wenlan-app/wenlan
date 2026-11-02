@@ -21,7 +21,9 @@ export interface EditorReferenceContext {
   citations?: PageCitation[];
   sourceMemories?: ReadonlyMap<string, MemoryItem>;
   sourcesLoading?: boolean;
-  labels?: { page: string; memory: string; source: string; authored: string; unverified: string };
+  labels?: { page: string; memory: string; source: string; authored: string; unverified: string; missing?: string };
+  /** The open page's own title: `[[it]]` reads as plain text, not a link. */
+  selfTitle?: string;
 }
 interface ResolvedReferenceRange extends ParsedWikiLink {
   target: ReferenceTarget;
@@ -82,6 +84,15 @@ function excludedRanges(source: string, tree: ReturnType<typeof syntaxTree>): Ar
 }
 
 export function parseResolvedWikiLinks(source: string, targets: ReadonlyMap<string, string>, baseOffset = 0): ParsedWikiLink[] {
+  return parseWikiLinks(source, targets, baseOffset, "resolved");
+}
+
+/** `[[Name]]` links with no page to open: the page itself, or one not written yet. */
+export function parseUnresolvedWikiLinks(source: string, targets: ReadonlyMap<string, string>, baseOffset = 0): ParsedWikiLink[] {
+  return parseWikiLinks(source, targets, baseOffset, "unresolved");
+}
+
+function parseWikiLinks(source: string, targets: ReadonlyMap<string, string>, baseOffset: number, which: "resolved" | "unresolved"): ParsedWikiLink[] {
   const matches: ParsedWikiLink[] = [];
   const pattern = /\[\[([^\]\n]+)\]\]/g;
   let match: RegExpExecArray | null;
@@ -93,16 +104,22 @@ export function parseResolvedWikiLinks(source: string, targets: ReadonlyMap<stri
     const inner = match[1];
     const pipe = inner.indexOf("|");
     const rawTarget = pipe >= 0 ? inner.slice(0, pipe) : inner;
+    // `[[Page#Heading]]` names a heading, unless a page's own title holds
+    // the "#" (an AI-written "P0 #1 reranker"). With no page to open, the
+    // name reads whole rather than cut at "#".
     const hash = rawTarget.indexOf("#");
-    const targetLabel = (hash >= 0 ? rawTarget.slice(0, hash) : rawTarget).trim();
+    const wholeTitle = hash >= 0 && targets.has(normalized(rawTarget));
+    const targetLabel = (hash >= 0 && !wholeTitle ? rawTarget.slice(0, hash) : rawTarget).trim();
     const alias = pipe >= 0 ? inner.slice(pipe + 1).trim() : "";
-    const displayText = alias || targetLabel || rawTarget.trim() || inner.trim();
+    const unresolvedName = hash >= 0 && !targets.has(normalized(targetLabel)) ? rawTarget.trim() : targetLabel;
+    const displayText = alias || unresolvedName || rawTarget.trim() || inner.trim();
     const id = targets.get(normalized(targetLabel));
-    if (!id || !targetLabel || !displayText) continue;
+    if (!targetLabel || !displayText) continue;
+    if ((which === "resolved") !== Boolean(id)) continue;
     const innerOffset = from + 2;
     const visibleFrom = alias
       ? innerOffset + pipe + 1 + inner.slice(pipe + 1).indexOf(alias)
-      : innerOffset + rawTarget.indexOf(targetLabel);
+      : innerOffset + rawTarget.indexOf(displayText);
     matches.push({
       from: baseOffset + visibleFrom,
       to: baseOffset + visibleFrom + displayText.length,
@@ -313,6 +330,30 @@ export function createWikiLinkEditing(
         }
         if (range.to < range.tokenTo) {
           const concealed = Decoration.replace({}).range(range.to, range.tokenTo);
+          decorations.push(concealed);
+          atomic.push(concealed);
+        }
+      }
+      // A link with nowhere to go still hides its brackets: the page's own
+      // name reads as plain text, and a page not written yet reads as a
+      // quiet name, so neither shows raw `[[ ]]` to the reader.
+      const selfLabel = currentContext.selfTitle ? normalized(currentContext.selfTitle) : null;
+      for (const range of parseUnresolvedWikiLinks(source, this.view.state.field(links))) {
+        if (!this.view.visibleRanges.some((visible) => overlap(range, visible))) continue;
+        if (excluded.some((blocked) => overlap({ from: range.tokenFrom, to: range.tokenTo }, blocked))) continue;
+        if (/<\/?[A-Za-z][^>]*>/.test(this.view.state.doc.lineAt(range.from).text)) continue;
+        const self = selfLabel !== null && (normalized(range.targetLabel) === selfLabel || normalized(range.displayText) === selfLabel);
+        decorations.push(Decoration.mark(self
+          ? { class: "cm-wiki-page-self" }
+          : { class: "cm-wiki-page-missing", attributes: currentContext.labels?.missing ? { title: currentContext.labels.missing } : {} },
+        ).range(range.from, range.to));
+        const editingToken = isEditing && activeRanges.some((selection) => selection.empty
+          ? selection.head >= range.tokenFrom && selection.head <= range.tokenTo
+          : selection.from < range.tokenTo && selection.to > range.tokenFrom);
+        if (compositionActive || editingToken) continue;
+        for (const [from, to] of [[range.tokenFrom, range.from], [range.to, range.tokenTo]] as const) {
+          if (from >= to) continue;
+          const concealed = Decoration.replace({}).range(from, to);
           decorations.push(concealed);
           atomic.push(concealed);
         }

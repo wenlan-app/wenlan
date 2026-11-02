@@ -29,7 +29,7 @@ const CLOUD_GROUPS: PresetGroup[] = ["cloud"];
 const LOCAL_GROUPS: PresetGroup[] = ["local", "custom"];
 
 type JobRowId = "everyday" | "synthesis";
-type SourceRowId = "cloud" | "local" | "onDevice";
+type SourceRowId = "local" | "cloud";
 type PinSource = "anthropic" | "external" | "on_device";
 const metaLineStyle = { fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-sm)", color: "var(--mem-text-secondary)", lineHeight: 1.5 } as const;
 const amberStyle = { ...metaLineStyle, color: "var(--mem-status-warning-text)" } as const;
@@ -315,14 +315,14 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
     ? t("intelligence.backgroundSetupRequired")
     : undefined;
   const servicesRef = useRef<HTMLDivElement>(null);
-  const [activeService, setActiveService] = useState<SourceRowId>("cloud");
-  const [visitedServices, setVisitedServices] = useState<Set<SourceRowId>>(() => new Set(["cloud"]));
+  const [activeService, setActiveService] = useState<SourceRowId>("local");
+  const [visitedServices, setVisitedServices] = useState<Set<SourceRowId>>(() => new Set(["local"]));
   const activateService = (id: SourceRowId) => {
     setVisitedServices((visited) => new Set(visited).add(id));
     setActiveService(id);
   };
   const setUpService = (job: JobRowId) => {
-    activateService(job === "everyday" ? "onDevice" : "cloud");
+    activateService(job === "everyday" ? "local" : "cloud");
     servicesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
@@ -386,9 +386,8 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
                 tabPanelId="intelligence-service-panel"
                 tabIdPrefix="intelligence-service-tab"
                 options={[
-                  { value: "cloud", label: t("intelligence.cloudTab") },
-                  { value: "onDevice", label: t("intelligence.deviceTab") },
                   { value: "local", label: t("intelligence.localTab") },
+                  { value: "cloud", label: t("intelligence.cloudTab") },
                 ]}
                 value={activeService}
                 onChange={activateService}
@@ -400,19 +399,20 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
               aria-labelledby={`intelligence-service-tab-${activeService}`}
               className="px-5 pb-5"
             >
+              {visitedServices.has("local") && (
+                <div hidden={activeService !== "local"} className="flex flex-col gap-6">
+                  <OnDeviceModelManager />
+                  <div className="flex flex-col gap-2">
+                    <p className="settings-other-local-title" style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-sm)", fontWeight: 600, color: "var(--mem-text-secondary)" }}>
+                      {t("intelligence.otherLocalApps")}
+                    </p>
+                    <AnyProviderCard bare settingsPresentation groups={LOCAL_GROUPS} showTaskModels={false} />
+                  </div>
+                </div>
+              )}
               {visitedServices.has("cloud") && (
                 <div hidden={activeService !== "cloud"}>
                   <AnyProviderCard bare settingsPresentation groups={CLOUD_GROUPS} showTaskModels={false} />
-                </div>
-              )}
-              {visitedServices.has("local") && (
-                <div hidden={activeService !== "local"}>
-                  <AnyProviderCard bare settingsPresentation groups={LOCAL_GROUPS} showTaskModels={false} />
-                </div>
-              )}
-              {visitedServices.has("onDevice") && (
-                <div hidden={activeService !== "onDevice"} className="flex flex-col gap-3">
-                  <OnDeviceModelManager />
                 </div>
               )}
             </div>

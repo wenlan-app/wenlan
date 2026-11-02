@@ -279,7 +279,7 @@ test("switches exactly at the management and dossier breakpoints", async ({ page
   await page.setViewportSize({ width: 899, height: 900 });
   await openSidebar(page);
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  for (const name of ["Wiki", "Spaces", "Graph", "More"]) {
+  for (const name of ["Home", "Wiki", "Spaces", "Graph", "More"]) {
     await expect(primaryNavigation.getByRole("button", { name, exact: true })).toBeVisible();
   }
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
@@ -365,6 +365,8 @@ test("supports keyboard-only drawer and dossier navigation with visible focus", 
   await page.keyboard.press("Enter");
   const spaces = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Spaces", exact: true });
   await expect(search).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Home", exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(wiki).toBeFocused();
   await page.keyboard.press("Tab");

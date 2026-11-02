@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Where every table goes when Markdown files become the source of truth,
-//! and migration 150, which drops the first retired tables.
+//! and migrations 150 and 151, which drop retired tables.
 //!
 //! [`TABLE_CLASSES`] is the allowlist the storage migration works from. It is
 //! read off `sqlite_master` of a fresh database (an upgraded one has the same
@@ -16,7 +16,9 @@
 //!
 //! [`DROPPED_TABLES`] had no live reader left: only the migration that filled
 //! them and the migration tests read them. Migration 150 drops them, after
-//! the usual pre-migration backup.
+//! the usual pre-migration backup. Migration 151 drops
+//! [`GENESIS_LANE_TABLES`], the tables of the default-off M6 genesis lane,
+//! removed together with the lane.
 use super::{commit_or_rollback, MemoryDB};
 use crate::error::WenlanError;
 
@@ -159,26 +161,6 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("community_reader_cutover", Retire),
         ("community_reader_space_proof", Retire),
         ("community_reader_watermark", Retire),
-        // The default-off M6/genesis lane (`WENLAN_ENABLE_GENESIS_SHADOW`).
-        ("genesis_candidate_roots", Retire),
-        ("genesis_candidates", Retire),
-        ("genesis_card_binding", Retire),
-        ("genesis_coverage_state", Retire),
-        ("genesis_frontier", Retire),
-        ("genesis_group_coverage", Retire),
-        ("genesis_quarantine", Retire),
-        ("genesis_refresh_jobs", Retire),
-        ("genesis_suppression", Retire),
-        ("m6_adjacency", Retire),
-        ("m6_counters", Retire),
-        ("m6_deploy_attestation", Retire),
-        ("m6_genesis_provenance", Retire),
-        ("m6_overview_subscriptions", Retire),
-        ("m6_pair_stats", Retire),
-        ("m6_readiness", Retire),
-        ("m6_readiness_soak_receipts", Retire),
-        ("m6_refresh_dependencies", Retire),
-        ("page_projection_outbox", Retire),
         // Guards the one-time import of legacy Brief files.
         ("brief_legacy_imports", Retire),
         // Legacy screen captures (`wenlan cleanup-legacy-captures`).
@@ -199,6 +181,33 @@ pub const DROPPED_TABLES: &[&str] = &[
     // Pre-fold values kept by the space fold (80) and the kind fold (81/107).
     "page_space_fold_ledger",
     "page_kind_fold_ledger",
+];
+
+/// Tables migration 151 drops: the M6 genesis lane (migrations 108 and 109)
+/// and its projection outbox. The lane was off unless
+/// `WENLAN_ENABLE_GENESIS_SHADOW` was set, and nothing outside it read them.
+/// `genesis_candidate_roots` comes first: its foreign key points at
+/// `genesis_candidates`, so the parent cannot go while it holds rows.
+pub const GENESIS_LANE_TABLES: &[&str] = &[
+    "genesis_candidate_roots",
+    "genesis_candidates",
+    "genesis_card_binding",
+    "genesis_coverage_state",
+    "genesis_frontier",
+    "genesis_group_coverage",
+    "genesis_quarantine",
+    "genesis_refresh_jobs",
+    "genesis_suppression",
+    "m6_adjacency",
+    "m6_counters",
+    "m6_deploy_attestation",
+    "m6_genesis_provenance",
+    "m6_overview_subscriptions",
+    "m6_pair_stats",
+    "m6_readiness",
+    "m6_readiness_soak_receipts",
+    "m6_refresh_dependencies",
+    "page_projection_outbox",
 ];
 
 /// The dropped tables as their migrations created them, with the migration
@@ -320,6 +329,47 @@ impl MemoryDB {
             "[migration] Migration 150 applied: dropped retired tables {}",
             DROPPED_TABLES.join(", ")
         );
+        Ok(())
+    }
+
+    pub(super) async fn migrate_151_drop_genesis_lane(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        // A database that ran 150 in this same start was backed up just
+        // before it, with these tables in it; one restore point is enough.
+        if prior_version >= 150 {
+            self.backup_before_migration(151, prior_version).await?;
+        } else {
+            log::info!(
+                "[migration] pre-migration 151 backup skipped: pre_migration_150_backup.db \
+                 from this start already holds the genesis lane tables"
+            );
+        }
+        let conn = self.conn.lock().await;
+        conn.execute("BEGIN IMMEDIATE", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m151 begin: {e}")))?;
+        let mut statements: Vec<String> = GENESIS_LANE_TABLES
+            .iter()
+            .map(|table| format!("DROP TABLE IF EXISTS {table}"))
+            .collect();
+        // The lane's leases in the shared registry and its scan cursors.
+        statements
+            .push("DELETE FROM grouping_leases WHERE phase IN ('genesis', 'frontier')".to_string());
+        statements
+            .push("DELETE FROM app_metadata WHERE key LIKE 'm6_frontier_cursor_v1:%'".to_string());
+        statements.push("PRAGMA user_version = 151".to_string());
+        for statement in &statements {
+            if let Err(error) = conn.execute(statement, ()).await {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::VectorDb(format!("m151 {statement}: {error}")));
+            }
+        }
+        commit_or_rollback(&conn)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m151 commit: {e}")))?;
+        log::info!("[migration] Migration 151 applied: dropped the M6 genesis lane tables");
         Ok(())
     }
 }

@@ -1,10 +1,10 @@
 //! Teeth for S0-162's rename closure — mutation-catalog gates `G8.11a`-`c`.
 //!
 //! One scenario asserted several ways: rename a space that carries community
-//! and genesis substrate, then check that identity is unchanged, that the new
+//! substrate, then check that identity is unchanged, that the new
 //! name resolves, and that no row still names the old space.
 
-use super::space_rename::{closed_tables, merge_retained_tables, permanent_tables};
+use super::space_rename::closed_tables;
 use crate::db::tests::test_db;
 use crate::db::MemoryDB;
 
@@ -26,25 +26,6 @@ const PRE_EXISTING_CASCADE: &[&str] = &[
 /// `page_draft_create_requests` is S0-162's one recorded exclusion: its stored
 /// name is replay history, not stale data (`db.rs:7771`).
 const DELIBERATE_EXCLUSIONS: &[&str] = &["page_draft_create_requests"];
-
-#[test]
-fn permanent_destination_fence_covers_retained_migration_109_history() {
-    for table in [
-        "genesis_suppression",
-        "genesis_card_binding",
-        "genesis_quarantine",
-        "m6_overview_subscriptions",
-        "m6_refresh_dependencies",
-        "m6_readiness",
-        "m6_readiness_soak_receipts",
-        "m6_counters",
-    ] {
-        assert!(
-            permanent_tables().contains(&table),
-            "retained M6 history in {table} would be deleted on a destination-name collision"
-        );
-    }
-}
 
 async fn seed_substrate(conn: &libsql::Connection, space: &str) {
     let stmts: Vec<(&str, Vec<libsql::Value>)> = vec![
@@ -159,151 +140,12 @@ async fn seed_substrate(conn: &libsql::Connection, space: &str) {
                      'assertion', 0, ?1, 1)",
             vec![space.into()],
         ),
-        (
-            "INSERT INTO genesis_candidates
-                 (candidate_id, slot_id, page_id, space, signal_kind, coverage_epoch,
-                  input_generation, active_root_digest, state, created_at, updated_at)
-             VALUES ('cand-1', 'slot-1', 'page-1', ?1, 'evidence-cluster', 1, 1,
-                     'rootdigest', 'observed', 1, 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT OR REPLACE INTO genesis_coverage_state (space, opened_at, space_id)
-             SELECT name, 1, id FROM spaces WHERE name = ?1",
-            vec![space.into()],
-        ),
-        (
-            "INSERT OR REPLACE INTO genesis_group_coverage
-                 (space, independence_group_id, coverage_epoch, page_id, candidate_id, covered_at)
-             VALUES (?1, 'grp-1', 1, 'page-1', 'cand-1', 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT OR REPLACE INTO genesis_frontier
-                 (space, independence_group_id, coverage_epoch, first_seen_at, next_scan_at)
-             VALUES (?1, 'grp-1', 1, 1, 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO m6_pair_stats
-                 (space, page_a, page_b, n11, n10, n01, n00,
-                  distinct_group_count, updated_generation)
-             VALUES (?1, 'page-a', 'page-b', 1.0, 0.0, 0.0, 1.0, 1, 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO m6_adjacency
-                 (space, endpoint_kind, endpoint_id, neighbor_id, rank)
-             VALUES (?1, 'page', 'page-a', 'neighbor-a', 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO genesis_refresh_jobs
-                 (job_id, page_id, base_page_version, base_source_revision, space,
-                  dependency_generation, active_root_digest, state, attempt,
-                  readiness_epoch, schema_version, reason, created_at, updated_at)
-             VALUES (1, 'page-refresh', 1, 1, ?1, 1, 'roots', 'finalized', 0,
-                     0, 109, 'source_updated', 1, 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO m6_refresh_dependencies
-                 (space, page_id, page_version, claim_revision_id, root_id, created_at)
-             VALUES (?1, 'page-refresh', 1, 'claim-1', 'root-1', 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO m6_readiness
-                 (space, stage, signal, epoch, phase, operation_state, updated_at)
-             VALUES (?1, 'A', '-', 0, 'off', 'active', 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO m6_readiness_soak_receipts
-                 (space, stage, signal, readiness_epoch, window_started_at,
-                  window_ended_at, observed_turns, daemon_starts,
-                  old_writer_mutations, work_bound_violations,
-                  support_regressions, recorded_at)
-             VALUES (?1, 'A', '-', 0, 0, 259200, 20, 1, 0, 0, 0, 259200)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO genesis_suppression
-                 (space, independence_group_id, coverage_epoch, page_id, reason,
-                  first_seen_at, suppressed_at, expires_at)
-             VALUES (?1, 'grp-suppressed', 1, 'page-suppressed', 'human choice',
-                     1, 1, 2)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO genesis_card_binding
-                 (space, independence_group_id, coverage_epoch, card_id, page_id,
-                  first_seen_at, created_at)
-             VALUES (?1, 'grp-card', 1, 'card-1', 'page-card', 1, 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO genesis_quarantine
-                 (space, independence_group_id, coverage_epoch, reason,
-                  first_seen_at, quarantined_at)
-             VALUES (?1, 'grp-quarantine', 1, 'needs review', 1, 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO m6_overview_subscriptions
-                 (subscription_id, scope_kind, scope_id, page_id, space, state,
-                  created_at)
-             VALUES ('subscription-1', 'community', 'com-1', 'page-overview',
-                     ?1, 'active', 1)",
-            vec![space.into()],
-        ),
-        (
-            "INSERT INTO m6_counters(space_id, space, name, value)
-             SELECT id, name, 'relevance_generation', 1 FROM spaces WHERE name = ?1",
-            vec![space.into()],
-        ),
     ];
     for (sql, params) in stmts {
         conn.execute(sql, params)
             .await
             .unwrap_or_else(|e| panic!("seed failed: {sql}\n{e}"));
     }
-}
-
-async fn seed_destination_genesis(conn: &libsql::Connection) {
-    let stmts = [
-        "INSERT INTO genesis_candidates
-             (candidate_id, slot_id, page_id, space, signal_kind, coverage_epoch,
-              input_generation, active_root_digest, state, created_at, updated_at)
-         VALUES ('cand-destination', 'slot-destination', 'page-destination', ?1,
-                 'evidence-cluster', 7, 11, 'destination-root', 'published', 2, 3)",
-        "INSERT INTO genesis_coverage_state
-             (space, coverage_epoch, epoch_state, opened_at, genesis_enabled, space_id)
-         SELECT name, 7, 'active', 2, 1, id FROM spaces WHERE name = ?1",
-        "INSERT INTO genesis_group_coverage
-             (space, independence_group_id, coverage_epoch, page_id, candidate_id, covered_at)
-         VALUES (?1, 'grp-destination', 7, 'page-destination', 'cand-destination', 4)",
-        "INSERT INTO genesis_frontier
-             (space, independence_group_id, coverage_epoch, first_seen_at, next_scan_at)
-         VALUES (?1, 'grp-destination', 7, 5, 6)",
-    ];
-    for sql in stmts {
-        conn.execute(sql, libsql::params![NEW])
-            .await
-            .unwrap_or_else(|e| panic!("seed destination genesis failed: {sql}\n{e}"));
-    }
-}
-
-async fn seed_source_evidence(conn: &libsql::Connection) {
-    conn.execute(
-        "INSERT INTO genesis_candidate_roots
-             (candidate_id, root_id, independence_group_id, coverage_epoch,
-              claim_role, consumed, retained, created_at)
-         VALUES ('cand-1', 'root-source', 'grp-source', 1, 'concept', 1, 1, 7)",
-        (),
-    )
-    .await
-    .expect("seed source genesis evidence");
 }
 
 async fn rows_naming(conn: &libsql::Connection, table: &str, space: &str) -> i64 {
@@ -421,291 +263,14 @@ async fn an_orphan_row_under_the_new_name_is_retired() {
 }
 
 #[tokio::test]
-async fn an_orphan_refresh_job_does_not_become_live_under_the_renamed_space() {
-    let (db, _dir) = seeded_db().await;
-    {
-        let conn = db.conn.lock().await;
-        conn.execute(
-            "INSERT INTO genesis_refresh_jobs
-                 (job_id, page_id, base_page_version, base_source_revision, space,
-                  dependency_generation, active_root_digest, state, attempt,
-                  readiness_epoch, schema_version, reason, created_at, updated_at)
-             VALUES (2, 'orphan-page', 1, 1, ?1, 1, 'orphan-roots', 'finalized', 0,
-                     0, 109, 'source_updated', 1, 1)",
-            libsql::params![NEW],
-        )
-        .await
-        .unwrap();
-    }
-
-    db.update_space(OLD, NEW, None).await.unwrap();
-
-    let conn = db.conn.lock().await;
-    let mut rows = conn
-        .query(
-            "SELECT COUNT(*), MIN(job_id), MAX(job_id)
-               FROM genesis_refresh_jobs WHERE space = ?1",
-            libsql::params![NEW],
-        )
-        .await
-        .unwrap();
-    let row = rows.next().await.unwrap().unwrap();
-    assert_eq!(row.get::<i64>(0).unwrap(), 1);
-    assert_eq!(row.get::<i64>(1).unwrap(), 1);
-    assert_eq!(row.get::<i64>(2).unwrap(), 1);
-}
-
-#[tokio::test]
-async fn delete_keep_cannot_authorize_proof_parking_and_zero_reset() {
-    let (db, _dir) = seeded_db().await;
-    let old_space_id = db.get_space(OLD).await.unwrap().unwrap().id;
-    db.create_space(NEW, None, false).await.unwrap();
-    {
-        let conn = db.conn.lock().await;
-        conn.execute(
-            "UPDATE genesis_coverage_state SET m6_mutation_count = 5 WHERE space = ?1",
-            libsql::params![OLD],
-        )
-        .await
-        .unwrap();
-        conn.execute(
-            "UPDATE m6_counters SET value = 5
-              WHERE space = ?1 AND name = 'relevance_generation'",
-            libsql::params![OLD],
-        )
-        .await
-        .unwrap();
-    }
-
-    db.delete_space(OLD, "keep").await.unwrap();
-
-    let conn = db.conn.lock().await;
-    let genesis_move = conn
-        .execute(
-            "UPDATE OR REPLACE genesis_coverage_state
-                SET space = ?1, m6_mutation_count = 6
-              WHERE space = ?2",
-            libsql::params![NEW, OLD],
-        )
-        .await;
-    let genesis_reset = conn
-        .execute(
-            "INSERT INTO genesis_coverage_state
-                 (space, opened_at, m6_mutation_count, space_id)
-             VALUES (?1, 100, 0, ?2)",
-            libsql::params![OLD, old_space_id.clone()],
-        )
-        .await;
-    let counter_move = conn
-        .execute(
-            "UPDATE OR REPLACE m6_counters
-                SET space = ?1, value = 6
-              WHERE space = ?2 AND name = 'relevance_generation'",
-            libsql::params![NEW, OLD],
-        )
-        .await;
-    let counter_reset = conn
-        .execute(
-            "INSERT INTO m6_counters(space_id, space, name, value)
-             VALUES (?1, ?2, 'relevance_generation', 0)",
-            libsql::params![old_space_id.clone(), OLD],
-        )
-        .await;
-
-    assert!(
-        genesis_move.is_err() && genesis_reset.is_err(),
-        "delete-keep must not turn an unrelated live space into proof-move authorization"
-    );
-    assert!(
-        counter_move.is_err() && counter_reset.is_err(),
-        "delete-keep must not permit a named counter to park and reset"
-    );
-
-    let mut rows = conn
-        .query(
-            "SELECT space, space_id, m6_mutation_count FROM genesis_coverage_state",
-            (),
-        )
-        .await
-        .unwrap();
-    let genesis = rows.next().await.unwrap().unwrap();
-    assert_eq!(genesis.get::<String>(0).unwrap(), OLD);
-    assert_eq!(genesis.get::<String>(1).unwrap(), old_space_id);
-    assert_eq!(genesis.get::<i64>(2).unwrap(), 5);
-    assert!(rows.next().await.unwrap().is_none());
-
-    let mut rows = conn
-        .query("SELECT space_id, space, name, value FROM m6_counters", ())
-        .await
-        .unwrap();
-    let counter = rows.next().await.unwrap().unwrap();
-    assert_eq!(counter.get::<String>(0).unwrap(), old_space_id);
-    assert_eq!(counter.get::<String>(1).unwrap(), OLD);
-    assert_eq!(counter.get::<String>(2).unwrap(), "relevance_generation");
-    assert_eq!(counter.get::<i64>(3).unwrap(), 5);
-    assert!(rows.next().await.unwrap().is_none());
-}
-
-#[tokio::test]
-async fn recreated_space_name_cannot_adopt_retained_proof_identity() {
-    let (db, _dir) = seeded_db().await;
-    let old_space_id = db.get_space(OLD).await.unwrap().unwrap().id;
-    {
-        let conn = db.conn.lock().await;
-        conn.execute(
-            "UPDATE genesis_coverage_state SET m6_mutation_count = 5 WHERE space = ?1",
-            libsql::params![OLD],
-        )
-        .await
-        .unwrap();
-        conn.execute(
-            "UPDATE m6_counters SET value = 5
-              WHERE space = ?1 AND name = 'relevance_generation'",
-            libsql::params![OLD],
-        )
-        .await
-        .unwrap();
-    }
-    db.delete_space(OLD, "keep").await.unwrap();
-    let recreated = db.create_space(OLD, None, false).await.unwrap();
-    assert_ne!(recreated.id, old_space_id);
-
-    let conn = db.conn.lock().await;
-    let genesis_replace = conn
-        .execute(
-            "INSERT OR REPLACE INTO genesis_coverage_state
-                 (space, opened_at, m6_mutation_count, space_id)
-             VALUES (?1, 100, 0, ?2)",
-            libsql::params![OLD, recreated.id.clone()],
-        )
-        .await;
-    let counter_replace = conn
-        .execute(
-            "INSERT OR REPLACE INTO m6_counters(space_id, space, name, value)
-             VALUES (?1, ?2, 'relevance_generation', 0)",
-            libsql::params![recreated.id, OLD],
-        )
-        .await;
-    assert!(
-        genesis_replace.is_err() && counter_replace.is_err(),
-        "recreating a name with a new spaces.id cannot adopt or reset retained proofs"
-    );
-
-    let mut rows = conn
-        .query(
-            "SELECT space_id, m6_mutation_count FROM genesis_coverage_state",
-            (),
-        )
-        .await
-        .unwrap();
-    let genesis = rows.next().await.unwrap().unwrap();
-    assert_eq!(genesis.get::<String>(0).unwrap(), old_space_id);
-    assert_eq!(genesis.get::<i64>(1).unwrap(), 5);
-    let mut rows = conn
-        .query("SELECT space_id, value FROM m6_counters", ())
-        .await
-        .unwrap();
-    let counter = rows.next().await.unwrap().unwrap();
-    assert_eq!(counter.get::<String>(0).unwrap(), old_space_id);
-    assert_eq!(counter.get::<i64>(1).unwrap(), 5);
-}
-
-#[tokio::test]
-async fn destination_genesis_rows_refuse_the_rename_without_mutating_either_side() {
-    let (db, _dir) = seeded_db().await;
-    db.create_space(NEW, None, false).await.unwrap();
-    {
-        let conn = db.conn.lock().await;
-        seed_source_evidence(&conn).await;
-        seed_destination_genesis(&conn).await;
-    }
-    db.delete_space(NEW, "keep").await.unwrap();
-
-    let error = db
-        .update_space(OLD, NEW, Some("renamed"))
-        .await
-        .expect_err("permanent destination genesis rows must refuse the rename");
-    assert!(
-        error.to_string().contains("destination genesis"),
-        "rename was refused for the wrong reason: {error}"
-    );
-
-    assert!(db.get_space(OLD).await.unwrap().is_some());
-    assert!(db.get_space(NEW).await.unwrap().is_none());
-
-    let conn = db.conn.lock().await;
-    for table in closed_tables() {
-        assert_eq!(
-            rows_naming(&conn, table, OLD).await,
-            1,
-            "source row in {table} was not rolled back"
-        );
-    }
-    for table in [
-        "genesis_candidates",
-        "genesis_coverage_state",
-        "genesis_group_coverage",
-        "genesis_frontier",
-    ] {
-        assert_eq!(
-            rows_naming(&conn, table, NEW).await,
-            1,
-            "destination row in {table} changed during the refused rename"
-        );
-    }
-
-    let mut rows = conn
-        .query(
-            "SELECT candidate_id, coverage_epoch, input_generation, active_root_digest, state
-             FROM genesis_candidates WHERE space = ?1",
-            libsql::params![NEW],
-        )
-        .await
-        .unwrap();
-    let candidate = rows.next().await.unwrap().unwrap();
-    assert_eq!(candidate.get::<String>(0).unwrap(), "cand-destination");
-    assert_eq!(candidate.get::<i64>(1).unwrap(), 7);
-    assert_eq!(candidate.get::<i64>(2).unwrap(), 11);
-    assert_eq!(candidate.get::<String>(3).unwrap(), "destination-root");
-    assert_eq!(candidate.get::<String>(4).unwrap(), "published");
-
-    let mut rows = conn
-        .query(
-            "SELECT root_id, independence_group_id, consumed, retained
-             FROM genesis_candidate_roots WHERE candidate_id = 'cand-1'",
-            (),
-        )
-        .await
-        .unwrap();
-    let evidence = rows.next().await.unwrap().unwrap();
-    assert_eq!(evidence.get::<String>(0).unwrap(), "root-source");
-    assert_eq!(evidence.get::<String>(1).unwrap(), "grp-source");
-    assert_eq!(evidence.get::<i64>(2).unwrap(), 1);
-    assert_eq!(evidence.get::<i64>(3).unwrap(), 1);
-}
-
-#[tokio::test]
 async fn a_rename_does_not_change_the_space_id() {
-    // G8.11a. M6 identity digests `spaces.id`, so a rename that leaves the id
-    // alone leaves `slot_id`, `page_id`, and candidate identity alone with it.
+    // G8.11a: a rename keeps the space's id.
     let (db, _dir) = seeded_db().await;
     let before = db.get_space(OLD).await.unwrap().unwrap();
     db.update_space(OLD, NEW, None).await.unwrap();
     let after = db.get_space(NEW).await.unwrap().unwrap();
 
     assert_eq!(before.id, after.id, "a rename must not re-key the space");
-
-    let slot_before = crate::m6::identity::slot_id_space_overview(&before.id);
-    let slot_after = crate::m6::identity::slot_id_space_overview(&after.id);
-    assert_eq!(slot_before, slot_after);
-    assert_eq!(
-        crate::m6::identity::page_id(&slot_before),
-        crate::m6::identity::page_id(&slot_after)
-    );
-    assert_eq!(
-        crate::m6::identity::candidate_id(&slot_before, 1),
-        crate::m6::identity::candidate_id(&slot_after, 1)
-    );
 }
 
 #[tokio::test]
@@ -853,25 +418,10 @@ async fn assert_substrate_merged_into_target(db: &MemoryDB) {
         if table == "communities" || table == "edges" {
             continue;
         }
-        let expected = if merge_retained_tables().contains(&table) {
-            1
-        } else {
-            0
-        };
         assert_eq!(
             rows_naming(&conn, table, OLD).await,
-            expected,
+            0,
             "{table} rows naming the source space after the merge"
-        );
-    }
-    for table in permanent_tables() {
-        if merge_retained_tables().contains(&table) {
-            continue;
-        }
-        assert_eq!(
-            rows_naming(&conn, table, NEW).await,
-            1,
-            "permanent {table} row did not follow the merge"
         );
     }
 
@@ -913,44 +463,4 @@ async fn deleting_a_space_with_move_merges_the_substrate_into_the_target() {
     db.delete_space(OLD, &format!("move:{NEW}")).await.unwrap();
     assert!(db.get_space(OLD).await.unwrap().is_none());
     assert_substrate_merged_into_target(&db).await;
-}
-
-#[tokio::test]
-async fn permanent_genesis_rows_on_both_sides_refuse_the_merge_without_mutating_either() {
-    let (db, _dir) = seeded_db_with_live_target().await;
-    {
-        let conn = db.conn.lock().await;
-        seed_destination_genesis(&conn).await;
-    }
-
-    let error = db
-        .reassign_memories_space(OLD, NEW)
-        .await
-        .expect_err("two genesis histories must not be spliced");
-    assert!(
-        error.to_string().contains("permanent genesis rows"),
-        "merge was refused for the wrong reason: {error}"
-    );
-
-    let conn = db.conn.lock().await;
-    for table in closed_tables() {
-        assert_eq!(
-            rows_naming(&conn, table, OLD).await,
-            1,
-            "source row in {table} was not rolled back"
-        );
-    }
-    assert_eq!(rows_naming(&conn, "pages", OLD).await, 2);
-    for table in [
-        "genesis_candidates",
-        "genesis_coverage_state",
-        "genesis_group_coverage",
-        "genesis_frontier",
-    ] {
-        assert_eq!(
-            rows_naming(&conn, table, NEW).await,
-            1,
-            "destination row in {table} changed during the refused merge"
-        );
-    }
 }

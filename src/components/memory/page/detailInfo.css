@@ -120,6 +120,7 @@
 .page-detail-actions-menu[data-keyboard-navigation="true"] button:focus { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; }
 .page-detail-actions-menu { max-width: calc(100vw - 32px); }
 .page-detail-actions-menu button[role="menuitemcheckbox"] { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.page-detail-menu-check { margin-left: auto; min-width: 1em; color: var(--mem-accent-page); text-align: right; }
 
 .page-info-drawer .detail-info-content .note-info-sections { margin: 0; gap: var(--detail-info-section-gap); }
 

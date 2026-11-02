@@ -168,9 +168,7 @@ pub struct Wikilink {
 }
 
 /// A parsed `[[wikilink]]` carrying the target capture's byte range in the
-/// source content. The M6 orphan-wikilink signal (`m6::signals`) uses the
-/// range to test whether an occurrence falls inside a claim revision's
-/// anchored span (`docs/plans/2026-08-03-m6-pr-a-followup-2-scope.md` §2.1).
+/// source content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WikilinkWithSpan {
     pub target: String,

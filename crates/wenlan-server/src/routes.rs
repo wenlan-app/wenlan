@@ -167,6 +167,14 @@ pub async fn handle_status(
         )
     };
 
+    let embedding_model = match db
+        .as_ref()
+        .and_then(|db| (!db.embedder_ready()).then(|| db.embedder_load_error().unwrap_or_default()))
+    {
+        Some(reason) => wenlan_types::responses::EmbeddingModelStatus::Unavailable { reason },
+        None => wenlan_types::responses::EmbeddingModelStatus::Ready,
+    };
+
     Ok(Json(wenlan_types::responses::StatusResponse {
         is_running: true,
         files_indexed,
@@ -178,6 +186,7 @@ pub async fn handle_status(
         reranker_light: reranker_light_status,
         reranker_mode,
         on_device_inference,
+        embedding_model,
         capabilities: vec!["default_save_space".to_string()],
         truth,
     }))

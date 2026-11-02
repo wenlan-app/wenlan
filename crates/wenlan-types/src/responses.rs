@@ -150,6 +150,21 @@ pub enum RerankerStatus {
     Failed { reason: String },
 }
 
+/// Text-embedding model state, surfaced on `/api/status`. The daemon serves
+/// without the model when it cannot load (first start offline, or the model
+/// host unreachable): pages stay readable and writable, search is keyword
+/// only, and the daemon keeps retrying the load in the background.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum EmbeddingModelStatus {
+    /// Loaded. Also what an older daemon, which omits the field, means: it
+    /// could not serve without the model.
+    #[default]
+    Ready,
+    /// Not loaded yet. `reason` is the last load error.
+    Unavailable { reason: String },
+}
+
 /// Background document-enrichment queue state, surfaced on `/api/status` so
 /// operators can see whether folder-ingest enrichment is progressing, idle, or
 /// paused on an LLM failure (waiting for a backoff retry). Mirrors the
@@ -284,6 +299,10 @@ pub struct StatusResponse {
     /// a local model.
     #[serde(default)]
     pub on_device_inference: OnDeviceInferenceStatus,
+    /// Text-embedding model state. Additive: defaults to `Ready` for older
+    /// daemons, which could not serve without the model.
+    #[serde(default)]
+    pub embedding_model: EmbeddingModelStatus,
     /// Additive daemon capabilities. Clients must negotiate against this list
     /// instead of inferring support from a version string.
     #[serde(default)]
@@ -799,6 +818,20 @@ pub struct OnDeviceModelEntry {
     pub ram_required_gb: f64,
     pub file_size_gb: f64,
     pub cached: bool,
+    /// Enough memory for this model on this computer. Missing on an older
+    /// daemon reads true, so nothing is hidden.
+    #[serde(default = "crate::requests::default_true")]
+    pub fits: bool,
+    /// Runs, but at least partly on the CPU (no discrete GPU, or a model larger
+    /// than its memory), so it may be slow.
+    #[serde(default)]
+    pub may_be_slow: bool,
+    /// Not downloaded, and the disk has too little free space for it.
+    #[serde(default)]
+    pub no_disk_space: bool,
+    /// Offered before "Show all" (at most three per computer).
+    #[serde(default)]
+    pub shortlisted: bool,
 }
 
 /// Response envelope for `GET /api/on-device-model`.
@@ -811,6 +844,9 @@ pub struct OnDeviceModelResponse {
     pub selected: Option<String>,
     /// All available models with per-model cache/download state.
     pub models: Vec<OnDeviceModelEntry>,
+    /// Total memory of the computer the daemon runs on, in GB.
+    #[serde(default)]
+    pub total_ram_gb: Option<f64>,
 }
 
 // ===== Indexed files / chunks =====
@@ -1640,7 +1676,12 @@ mod on_device_model_response_tests {
                 ram_required_gb: 6.0,
                 file_size_gb: 2.7,
                 cached: true,
+                fits: true,
+                may_be_slow: false,
+                no_disk_space: false,
+                shortlisted: true,
             }],
+            total_ram_gb: Some(16.0),
         };
 
         let value = serde_json::to_value(&response).unwrap();
@@ -1665,6 +1706,18 @@ mod on_device_model_response_tests {
         assert!(parsed.loaded.is_none());
         assert!(parsed.selected.is_none());
         assert!(parsed.models.is_empty());
+        assert!(parsed.total_ram_gb.is_none());
+    }
+
+    #[test]
+    fn older_daemon_entries_read_as_fitting_and_not_shortlisted() {
+        let parsed: OnDeviceModelEntry = serde_json::from_str(
+            r#"{"id":"qwen3-4b","display_name":"Qwen 3 4B","param_count":"4B","ram_required_gb":3.0,"file_size_gb":2.7,"cached":false}"#,
+        )
+        .unwrap();
+        assert!(parsed.fits);
+        assert!(!parsed.may_be_slow);
+        assert!(!parsed.shortlisted);
     }
 }
 
@@ -2271,6 +2324,7 @@ mod reranker_status_tests {
         assert_eq!(parsed.reranker, RerankerStatus::Disabled);
         assert_eq!(parsed.reranker_light, RerankerStatus::Disabled);
         assert_eq!(parsed.reranker_mode, "");
+        assert_eq!(parsed.embedding_model, EmbeddingModelStatus::Ready);
     }
 
     #[test]
@@ -2290,6 +2344,9 @@ mod reranker_status_tests {
             },
             reranker_mode: "full".into(),
             on_device_inference: OnDeviceInferenceStatus::default(),
+            embedding_model: EmbeddingModelStatus::Unavailable {
+                reason: "offline".into(),
+            },
             capabilities: vec!["default_save_space".into()],
             truth: None,
         };
@@ -2298,6 +2355,7 @@ mod reranker_status_tests {
         assert_eq!(parsed.reranker, s.reranker);
         assert_eq!(parsed.reranker_light, s.reranker_light);
         assert_eq!(parsed.reranker_mode, "full");
+        assert_eq!(parsed.embedding_model, s.embedding_model);
     }
 
     #[test]
