@@ -76,7 +76,7 @@ describe("Sidebar workspace", () => {
     expect(onNavigatePages).toHaveBeenCalledTimes(1);
   });
 
-  it("puts Sources, Graph and Topics under More with pins, and no Memories", async () => {
+  it("UX-FIND-4: puts Sources, Graph and Topics under More with pins, and no Memories", async () => {
     const user = userEvent.setup();
     renderSidebar({ onNavigateSources: vi.fn(), onNavigateEntities: vi.fn() });
     await user.click(screen.getByRole("button", { name: "More" }));
