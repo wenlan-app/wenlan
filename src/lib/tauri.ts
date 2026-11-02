@@ -972,9 +972,20 @@ export interface ThingPage {
   at: number;
 }
 
+/** A point its conversations saved: what the thing has worked out so far. */
+export interface ThingMemory {
+  source_id: string;
+  title: string;
+  memory_type?: string | null;
+  space?: string | null;
+  created_at: number;
+}
+
 export interface ThingDetail extends ThingSummary {
   sessions: ThingSession[];
   pages: ThingPage[];
+  /** Newest first. Older daemons leave it out. */
+  memories?: ThingMemory[];
 }
 
 /** Things with recent activity first. Empty until things have their own record. */
