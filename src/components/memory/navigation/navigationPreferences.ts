@@ -2,17 +2,19 @@
 import { readPreference, writePreference } from "../../../lib/preferenceStorage";
 import type { GlobalNavigation } from "./viewState";
 
-export type NavigationDestination = Exclude<GlobalNavigation, "home">;
+export type NavigationDestination = GlobalNavigation;
 export type SidebarMode = "icons" | "labels";
 export type SidebarPreferences = { readonly visible: boolean; readonly mode: SidebarMode; readonly width?: number };
 
 export const NAVIGATION_PREFERENCE_KEY = "wenlan-navigation-v1";
 export const SIDEBAR_PREFERENCE_KEY = "wenlan-sidebar-collapsed";
 export const LEGACY_SIDEBAR_PREFERENCE_KEY = "origin-sidebar-collapsed";
+// Home is where the app opens (what you're working on); the Wiki holds every
+// page. One name, one place.
 export const NAVIGATION_DESTINATION_ORDER: readonly NavigationDestination[] = [
-  "pages", "spaces", "graph", "sources", "memories", "entities",
+  "home", "pages", "spaces", "graph", "sources", "memories", "entities",
 ];
-export const REQUIRED_NAVIGATION_DESTINATIONS: readonly NavigationDestination[] = ["pages", "spaces", "graph", "sources"];
+export const REQUIRED_NAVIGATION_DESTINATIONS: readonly NavigationDestination[] = ["home", "pages", "spaces", "graph", "sources"];
 export const DEFAULT_VISIBLE_NAVIGATION: readonly NavigationDestination[] = REQUIRED_NAVIGATION_DESTINATIONS;
 export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = { visible: true, mode: "labels" };
 export const DEFAULT_SIDEBAR_WIDTH = 240;

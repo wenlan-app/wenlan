@@ -262,6 +262,10 @@ const en = {
   boot: {
     stillWaiting: "Still waiting for Wenlan's background service to answer.",
     connectionTitle: "Could not reach the background service",
+    connectionNext: "Try again. If it still doesn't work, report it to us.",
+    reportProblem: "Report problem",
+    reportCopied: "Details copied. Paste them into the report if the page didn't open.",
+    reportOpened: "Opened the report page in your browser.",
     connectionProblem:
       "Wenlan could not reach its background service while starting up.",
     preflightRepairTitle: "Wenlan couldn't repair its startup configuration",
@@ -279,8 +283,6 @@ const en = {
   setup: {
     welcomeTitle: "Welcome to Wenlan",
     notesFirst: {
-      body: "Start with a page. Connect your AI tools when you need them.",
-      hint: "No model setup or import required.",
       openFailed: "Could not open your pages. Please try again.",
       checkConnection: "Check connection",
       intro: "A personal Wiki you and your AI tools build together. Your files and chats become pages they can recall.",
@@ -297,7 +299,6 @@ const en = {
     tagline: "A living Wiki your AI tools build as they work.",
     welcomeBody:
       "Your AI tools write what they learn into source-cited pages that refresh between sessions.",
-    privacyTitle: "Your memories live on this machine.",
     getStarted: "Get started",
     back: "Back",
     skip: "Skip",
@@ -543,7 +544,7 @@ const en = {
     archive: {"title": "Archived pages", "restore": "Restore page", "restoreShort": "Restore", "restoreNamed": "Restore {{title}}", "restoring": "Restoring…", "titleLabel": "Page title", "explanation": "The page comes back to your library with its text, sources and history.", "empty": "No archived pages.", "noMatches": "No archived pages match.", "loadError": "Archived pages could not be loaded.", "retry": "Try again", "search": "Search archived pages", "restoreError": "The page could not be restored. Try again.", "titleTaken": "Another page already has this title. Choose a different title.", "titleTakenFixed": "Another page already has this title. Rename that page, then restore this one.", "changed": "This page changed since you opened it. Reload it, then restore.", "notRestorable": "This page cannot be restored.", "restored": "Page restored.", "readOnly": "This page is archived. Restore it to edit.", "filePending": "Page restored. Its file could not be updated yet.", "fileHidden": "Page restored. Its file is not available right now.", "fixedTitle": "Source and imported pages keep their original title.", "reload": "Reload", "busy": "This page is busy. Try again in a moment."},
     groups: { central: "Central pages", right: "Right pages", moveToRight: "Move to right group", moveToCentral: "Move to central group", openBeside: "Open beside", moveBack: "Move back", openInRight: "This page is open on the right.", openInCentral: "This page is open in the central group.", showNote: "Show page", dismiss: "Dismiss" },
     recent: { title: "Recently used", remove: "Remove from Recently used", custom: "Manual order", dragNote: "Drag to reorder {{title}}", reorderHint: "Use arrow keys to reorder.", customHint: "Drag pages to set your order. Opening a page keeps its place.", modeLabel: "Browse pages", empty: "Pages you open appear here.", browseFolders: "Browse folders" },
-    tabs: { label: "Open pages", close: "Close {{title}}", home: "Wiki home" },
+    tabs: { label: "Open pages", close: "Close {{title}}", home: "Home" },
     folders: {
       title: "Folders", root: "Folders", rootDestination: "Top level", emptyDirectory: "Create a folder to organize your pages.", locationPending: "Your page is saved, but its file could not be saved in the chosen folder.", retryLocation: "Retry saving the file", retryLocationError: "The file still could not be saved. Check that the folder is available, then retry.", newFolder: "New folder", newFolderIn: "New folder in {{name}}", openNote: "Open", deleteNote: "Delete page", folderName: "Folder name", createIn: "Create in {{name}}", create: "Create", cancel: "Cancel", createError: "The folder couldn't be created. Try again.", unavailable: "Folder browsing is unavailable. All pages are still accessible.", searchAll: "Search all pages", view: "Page view", cards: "Cards", list: "List", empty: "This folder has no pages yet.", move: "Move to folder", destination: "Destination folder", moveError: "The page couldn't be moved. Try again.", moving: "Moving…", moveConfirm: "Move", close: "Close", currentFolder: "Current folder: {{name}}", noteCount_one: "{{count}} page", noteCount_other: "{{count}} pages",
     },
@@ -615,6 +616,8 @@ const en = {
       readingStartTitle: "Open a page",
       readingStartDescription: "Use Search to find a page, or select + to start writing.",
       workingOnTitle: "What you're working on",
+      workingOnWrote: "Wrote “{{title}}”",
+      workingOnTalkedIn: "Talked it through in {{tool}}",
       newPagesTitle: "New pages",
       recentTitle: "Recently edited",
       aiWrote: "AI wrote",
@@ -860,6 +863,9 @@ const en = {
     taskList: "To-do",
     blockquote: "Quote",
     fencedCode: "Code block",
+    heading3: "Heading 3",
+    pageLink: "Link to page",
+    callout: "Callout",
   },
   pageHistory: {
     open: "See what changed: {{change}}",
@@ -871,6 +877,7 @@ const en = {
     notKept: "The text of this version wasn’t kept.",
     noEarlier: "No earlier version is kept, so this is the whole text as it was.",
     noTextChange: "The text didn’t change.",
+    firstVersion: "The page as it was first written.",
     close: "Close",
   },
   pageInfo: {
@@ -921,6 +928,9 @@ const en = {
       citationBackfill: "Wenlan filled in citations",
       linkRename: "Updated link after rename",
       other: "Updated",
+      personCreate: "You created this page",
+      agentCreate: "Created by an agent",
+      create: "Created",
     },
     summary: {
       chars_one: "{{sign}}{{count}} character",
@@ -3412,6 +3422,10 @@ const zhHans = {
   boot: {
     stillWaiting: "仍在等待文澜的后台服务响应。",
     connectionTitle: "无法连接到后台服务",
+    connectionNext: "请再试一次。还是不行的话，回报给我们。",
+    reportProblem: "回报问题",
+    reportCopied: "诊断信息已复制。如果回报页没有打开，可以直接贴到别处发给我们。",
+    reportOpened: "已在浏览器打开回报页。",
     connectionProblem: "启动时文澜无法连接到后台服务。",
     preflightRepairTitle: "文澜无法修复启动配置",
     preflightRepairBody: "请退出文澜后重新打开，再试一次修复。",
@@ -3428,8 +3442,6 @@ const zhHans = {
   setup: {
     welcomeTitle: "欢迎使用文澜",
     notesFirst: {
-      body: "先写笔记，需要时再接上你的 AI 工具。",
-      hint: "不用先设置模型或导入资料。",
       openFailed: "暂时无法打开笔记，请再试一次。",
       checkConnection: "检查连接",
       intro: "你和 AI 工具一起搭建的个人 Wiki。文件和对话会变成它们记得住的笔记。",
@@ -3445,7 +3457,6 @@ const zhHans = {
     },
     tagline: "一个随你的 AI 工具工作而持续更新的 Wiki。",
     welcomeBody: "你的 AI 工具会把学到的内容写成带来源引用的笔记，并在会话之间自动刷新。",
-    privacyTitle: "你的记忆保存在这台设备上。",
     getStarted: "开始使用",
     back: "返回",
     skip: "跳过",
@@ -3676,7 +3687,7 @@ const zhHans = {
     archive: {"title": "已归档笔记", "restore": "恢复笔记", "restoreShort": "恢复", "restoreNamed": "恢复「{{title}}」", "restoring": "正在恢复…", "titleLabel": "笔记名称", "explanation": "笔记会连同正文、来源和历史记录回到笔记库。", "empty": "没有已归档的笔记。", "noMatches": "没有匹配的已归档笔记。", "loadError": "未能加载已归档笔记。", "retry": "重试", "search": "搜索已归档笔记", "restoreError": "未能恢复笔记，请重试。", "titleTaken": "已有其他笔记使用这个名称，请换一个名称。", "titleTakenFixed": "已有其他笔记使用这个名称。请先重命名那篇笔记，再恢复这篇。", "changed": "这篇笔记在你打开后有变化，请重新加载后再恢复。", "notRestorable": "这篇笔记无法恢复。", "restored": "笔记已恢复。", "readOnly": "这篇笔记已归档，恢复后才能编辑。", "filePending": "笔记已恢复，但文件暂时未能更新。", "fileHidden": "笔记已恢复，但目前无法访问它的文件。", "fixedTitle": "来源笔记和导入的笔记会保留原名称。", "reload": "重新加载", "busy": "这篇笔记正在处理中，请稍后再试。"},
     groups: { central: "中央笔记", right: "右侧笔记", moveToRight: "移至右侧分组", moveToCentral: "移至中央分组", openBeside: "并排打开", moveBack: "移回中央", openInRight: "这篇笔记已在右侧打开。", openInCentral: "这篇笔记已在中央打开。", showNote: "查看笔记", dismiss: "关闭提示" },
     recent: { title: "最近使用", remove: "从最近使用中移除", custom: "手动排序", dragNote: "拖动调整「{{title}}」的位置", reorderHint: "使用方向键调整顺序。", customHint: "拖动笔记调整顺序，打开笔记时位置保持不变。", modeLabel: "浏览笔记", empty: "打开过的笔记会出现在这里。", browseFolders: "按文件夹浏览" },
-    tabs: { label: "已打开的笔记", close: "关闭 {{title}}", home: "Wiki 首页" },
+    tabs: { label: "已打开的笔记", close: "关闭 {{title}}", home: "首页" },
     folders: {
       title: "文件夹", root: "文件夹", rootDestination: "最外层", emptyDirectory: "创建文件夹，让笔记更好查找。", locationPending: "笔记已保存，但未能将文件保存到所选文件夹。", retryLocation: "重试保存文件", retryLocationError: "仍无法保存文件。请确认文件夹可用后重试。", newFolder: "新建文件夹", newFolderIn: "在 {{name}} 中新建文件夹", openNote: "打开", deleteNote: "删除笔记", folderName: "文件夹名称", createIn: "创建于 {{name}}", create: "创建", cancel: "取消", createError: "未能创建文件夹，请重试。", unavailable: "暂时无法浏览文件夹。仍可访问所有笔记。", searchAll: "搜索所有笔记", view: "笔记视图", cards: "卡片", list: "列表", empty: "这个文件夹还没有笔记。", move: "移至文件夹", destination: "目标文件夹", moveError: "未能移动笔记，请重试。", moving: "正在移动…", moveConfirm: "移动", close: "关闭", currentFolder: "当前文件夹：{{name}}", noteCount_one: "{{count}} 篇笔记", noteCount_other: "{{count}} 篇笔记",
     },
@@ -3748,6 +3759,8 @@ const zhHans = {
       readingStartTitle: "打开笔记",
       readingStartDescription: "用搜索找到笔记，或点击“+”开始写作。",
       workingOnTitle: "正在做的事",
+      workingOnWrote: "写了《{{title}}》",
+      workingOnTalkedIn: "在 {{tool}} 里聊",
       newPagesTitle: "新笔记",
       recentTitle: "最近编辑",
       aiWrote: "AI 写的",
@@ -3993,6 +4006,9 @@ const zhHans = {
     taskList: "待办",
     blockquote: "引用",
     fencedCode: "代码块",
+    heading3: "三级标题",
+    pageLink: "链接到笔记",
+    callout: "提示框",
   },
   pageHistory: {
     open: "看改了什么：{{change}}",
@@ -4004,6 +4020,7 @@ const zhHans = {
     notKept: "这个版本的文字没有留下。",
     noEarlier: "没有更早的版本可以对照，这是当时的全文。",
     noTextChange: "文字没有变。",
+    firstVersion: "这篇刚写好时的样子。",
     close: "关闭",
   },
   pageInfo: {
@@ -4054,6 +4071,9 @@ const zhHans = {
       citationBackfill: "文澜补上引用",
       linkRename: "改名后更新了链接",
       other: "已更新",
+      personCreate: "你创建了这篇",
+      agentCreate: "Agent 创建",
+      create: "创建",
     },
     summary: {
       chars_one: "{{sign}}{{count}} 字",
@@ -6501,6 +6521,10 @@ const zhHant = {
   boot: {
     stillWaiting: "仍在等待文瀾的背景服務回應。",
     connectionTitle: "無法連線到背景服務",
+    connectionNext: "請再試一次。還是不行的話，回報給我們。",
+    reportProblem: "回報問題",
+    reportCopied: "診斷資訊已複製。如果回報頁沒有打開，可以直接貼到別處傳給我們。",
+    reportOpened: "已在瀏覽器打開回報頁。",
     connectionProblem: "啟動時文瀾無法連線到背景服務。",
     preflightRepairTitle: "文瀾無法修復啟動設定",
     preflightRepairBody: "請退出文瀾後重新開啟，再試一次修復。",
@@ -6517,8 +6541,6 @@ const zhHant = {
   setup: {
     welcomeTitle: "歡迎使用文瀾",
     notesFirst: {
-      body: "先寫筆記，需要時再接上你的 AI 工具。",
-      hint: "不用先設定模型或匯入資料。",
       openFailed: "暫時無法開啟筆記，請再試一次。",
       checkConnection: "檢查連線",
       intro: "你和 AI 工具一起搭建的個人 Wiki。文字、檔案和對話會變成它們記得住的筆記。",
@@ -6534,7 +6556,6 @@ const zhHant = {
     },
     tagline: "一個隨你的 AI 工具工作而持續更新的 Wiki。",
     welcomeBody: "你的 AI 工具會把學到的內容寫成附來源引用的筆記，並在工作階段之間自動更新。",
-    privacyTitle: "你的記憶保存在這台裝置上。",
     getStarted: "開始使用",
     back: "返回",
     skip: "略過",
@@ -6765,7 +6786,7 @@ const zhHant = {
     archive: {"title": "已封存筆記", "restore": "還原筆記", "restoreShort": "還原", "restoreNamed": "還原「{{title}}」", "restoring": "還原中…", "titleLabel": "筆記名稱", "explanation": "筆記會連同內文、來源與歷史記錄回到筆記庫。", "empty": "沒有已封存的筆記。", "noMatches": "沒有符合的已封存筆記。", "loadError": "無法載入已封存筆記。", "retry": "重試", "search": "搜尋已封存筆記", "restoreError": "無法還原筆記，請再試一次。", "titleTaken": "已有其他筆記使用這個名稱，請換一個名稱。", "titleTakenFixed": "已有其他筆記使用這個名稱。請先重新命名那篇筆記，再還原這篇。", "changed": "這篇筆記在你開啟後有變更，請重新載入後再還原。", "notRestorable": "這篇筆記無法還原。", "restored": "筆記已還原。", "readOnly": "這篇筆記已封存，還原後才能編輯。", "filePending": "筆記已還原，但檔案暫時無法更新。", "fileHidden": "筆記已還原，但目前無法存取它的檔案。", "fixedTitle": "來源筆記與匯入的筆記會保留原本的名稱。", "reload": "重新載入", "busy": "這篇筆記正在處理中，請稍後再試。"},
     groups: { central: "中央筆記", right: "右側筆記", moveToRight: "移至右側分組", moveToCentral: "移至中央分組", openBeside: "並排開啟", moveBack: "移回中央", openInRight: "這篇筆記已在右側開啟。", openInCentral: "這篇筆記已在中央開啟。", showNote: "查看筆記", dismiss: "關閉提示" },
     recent: { title: "最近使用", remove: "從最近使用中移除", custom: "手動排序", dragNote: "拖曳調整「{{title}}」的位置", reorderHint: "使用方向鍵調整順序。", customHint: "拖曳筆記調整順序，開啟筆記時位置保持不變。", modeLabel: "瀏覽筆記", empty: "開啟過的筆記會出現在這裡。", browseFolders: "按資料夾瀏覽" },
-    tabs: { label: "已開啟的筆記", close: "關閉 {{title}}", home: "Wiki 首頁" },
+    tabs: { label: "已開啟的筆記", close: "關閉 {{title}}", home: "首頁" },
     folders: {
       title: "資料夾", root: "資料夾", rootDestination: "最外層", emptyDirectory: "建立資料夾，讓筆記更好找。", locationPending: "筆記已儲存，但無法將檔案儲存到所選資料夾。", retryLocation: "重試儲存檔案", retryLocationError: "仍無法儲存檔案。請確認資料夾可用後重試。", newFolder: "新增資料夾", newFolderIn: "在 {{name}} 中新增資料夾", openNote: "開啟", deleteNote: "刪除筆記", folderName: "資料夾名稱", createIn: "建立於 {{name}}", create: "建立", cancel: "取消", createError: "無法建立資料夾，請重試。", unavailable: "暫時無法瀏覽資料夾。仍可存取所有筆記。", searchAll: "搜尋所有筆記", view: "筆記檢視", cards: "卡片", list: "清單", empty: "這個資料夾還沒有筆記。", move: "移至資料夾", destination: "目標資料夾", moveError: "無法移動筆記，請重試。", moving: "移動中…", moveConfirm: "移動", close: "關閉", currentFolder: "目前資料夾：{{name}}", noteCount_one: "{{count}} 篇筆記", noteCount_other: "{{count}} 篇筆記",
     },
@@ -6837,6 +6858,8 @@ const zhHant = {
       readingStartTitle: "開啟筆記",
       readingStartDescription: "用搜尋找到筆記，或點選「+」開始撰寫。",
       workingOnTitle: "正在做的事",
+      workingOnWrote: "寫了《{{title}}》",
+      workingOnTalkedIn: "在 {{tool}} 裡聊",
       newPagesTitle: "新筆記",
       recentTitle: "最近編輯",
       aiWrote: "AI 寫的",
@@ -7082,6 +7105,9 @@ const zhHant = {
     taskList: "待辦",
     blockquote: "引用",
     fencedCode: "程式碼區塊",
+    heading3: "三級標題",
+    pageLink: "連結到筆記",
+    callout: "提示框",
   },
   pageHistory: {
     open: "看改了什麼：{{change}}",
@@ -7093,6 +7119,7 @@ const zhHant = {
     notKept: "這個版本的文字沒有留下。",
     noEarlier: "沒有更早的版本可以對照，這是當時的全文。",
     noTextChange: "文字沒有變。",
+    firstVersion: "這篇剛寫好時的樣子。",
     close: "關閉",
   },
   pageInfo: {
@@ -7143,6 +7170,9 @@ const zhHant = {
       citationBackfill: "文瀾補上引用",
       linkRename: "改名後更新了連結",
       other: "已更新",
+      personCreate: "你建立了這篇",
+      agentCreate: "Agent 建立",
+      create: "建立",
     },
     summary: {
       chars_one: "{{sign}}{{count}} 字",

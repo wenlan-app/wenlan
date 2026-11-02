@@ -21,6 +21,9 @@
 //! group has. Each entry is synced before `append` returns.
 //!
 //! Opening a log cuts a torn last line (a crash mid-write) off the last file.
+//! A line that passes its check but that this build cannot read was written
+//! by a newer Wenlan: it is never cut, and the log refuses to open for
+//! appending until a build that reads it does.
 //! Replay returns the entries of complete, committed groups in seq order and
 //! reports what it left out: groups with no commit, committed groups that lost
 //! an entry, and lines that fail their check.
@@ -221,6 +224,9 @@ pub struct ReplayReport {
     /// Committed groups whose entry count does not match their commit, by tx.
     pub damaged: Vec<u64>,
     pub bad_lines: Vec<BadLine>,
+    /// Lines that pass their check but that this build cannot read: a newer
+    /// Wenlan wrote them. Their groups count as damaged here.
+    pub newer_lines: Vec<BadLine>,
     /// Seqs that were not above the one before them; those lines are skipped.
     pub out_of_order: Vec<u64>,
 }
@@ -230,6 +236,7 @@ impl ReplayReport {
         self.uncommitted.is_empty()
             && self.damaged.is_empty()
             && self.bad_lines.is_empty()
+            && self.newer_lines.is_empty()
             && self.out_of_order.is_empty()
     }
 }
@@ -296,6 +303,19 @@ impl HistoryLog {
                 fs::remove_file(&last.path)?;
                 sync_dir(last.path.parent().unwrap_or(root));
                 files.pop();
+            }
+        }
+
+        if let Some(last) = files.last() {
+            let bytes = fs::read(&last.path)?;
+            if split_lines(&bytes)
+                .any(|line| matches!(decode_line(line.bytes), Err(LineError::Newer(_))))
+            {
+                return Err(WenlanError::Conflict(format!(
+                    "history log {} has entries a newer Wenlan wrote; this build will not \
+                     append to it",
+                    root.display()
+                )));
             }
         }
 
@@ -503,7 +523,15 @@ pub fn replay(root: &Path) -> Result<Replay, WenlanError> {
         for (index, line) in split_lines(&bytes).enumerate() {
             let entry = match decode_line(line.bytes) {
                 Ok(entry) => entry,
-                Err(reason) => {
+                Err(LineError::Newer(reason)) => {
+                    report.newer_lines.push(BadLine {
+                        file: file.path.clone(),
+                        line: index + 1,
+                        reason,
+                    });
+                    continue;
+                }
+                Err(LineError::Damaged(reason)) => {
                     report.bad_lines.push(BadLine {
                         file: file.path.clone(),
                         line: index + 1,
@@ -613,22 +641,33 @@ fn encode_line(entry: &HistoryEntry) -> Result<Vec<u8>, WenlanError> {
     Ok(json)
 }
 
-fn decode_line(line: &[u8]) -> Result<HistoryEntry, String> {
+/// Why a line was not read.
+#[derive(Debug)]
+enum LineError {
+    /// The line fails its check: torn or changed on disk.
+    Damaged(String),
+    /// The line passes its check but is not an entry this build knows.
+    Newer(String),
+}
+
+fn decode_line(line: &[u8]) -> Result<HistoryEntry, LineError> {
+    let damaged = |reason: &str| LineError::Damaged(reason.to_string());
     if line.len() < CRC_SUFFIX_LEN + 2 || !line.ends_with(b"\"}") {
-        return Err("no crc".to_string());
+        return Err(damaged("no crc"));
     }
     let split = line.len() - CRC_SUFFIX_LEN;
     let (body, suffix) = line.split_at(split);
     if !suffix.starts_with(CRC_PREFIX) {
-        return Err("no crc".to_string());
+        return Err(damaged("no crc"));
     }
     let crc = &suffix[CRC_PREFIX.len()..CRC_PREFIX.len() + CRC_LEN];
     let mut json = body.to_vec();
     json.push(b'}');
     if crc_of(&json).as_bytes() != crc {
-        return Err("crc mismatch".to_string());
+        return Err(damaged("crc mismatch"));
     }
-    serde_json::from_slice(&json).map_err(|error| format!("bad entry: {error}"))
+    serde_json::from_slice(&json)
+        .map_err(|error| LineError::Newer(format!("unknown entry: {error}")))
 }
 
 fn crc_of(bytes: &[u8]) -> String {
@@ -681,7 +720,8 @@ fn repair_tail(path: &Path) -> Result<(u64, bool), WenlanError> {
     let mut offset = 0usize;
     for line in split_lines(&bytes) {
         let end = offset + line.bytes.len() + usize::from(line.terminated);
-        if line.terminated && decode_line(line.bytes).is_ok() {
+        // A line a newer build wrote passed its check, so it is kept.
+        if line.terminated && !matches!(decode_line(line.bytes), Err(LineError::Damaged(_))) {
             good_len = end;
         }
         offset = end;

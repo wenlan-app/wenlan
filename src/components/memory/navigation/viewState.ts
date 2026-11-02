@@ -44,7 +44,7 @@ export function activeNavigationForView(view: View): GlobalNavigation | null {
     case "home":
     case "first-use":
     case "thing":
-      return "pages";
+      return "home";
     case "activity":
       return null;
     case "memory":

@@ -24,6 +24,9 @@ describe("revisionWriterLabel", () => {
     ["refinery_merge", { en: "Wenlan merged pages", "zh-Hans": "文澜合并笔记", "zh-Hant": "文瀾合併筆記" }],
     ["revision_accept", { en: "You approved a revision", "zh-Hans": "你核准了修订", "zh-Hant": "你核准了修訂" }],
     ["citation_backfill", { en: "Wenlan filled in citations", "zh-Hans": "文澜补上引用", "zh-Hant": "文瀾補上引用" }],
+    ["person_create", { en: "You created this page", "zh-Hans": "你创建了这篇", "zh-Hant": "你建立了這篇" }],
+    ["agent_create", { en: "Created by an agent", "zh-Hans": "Agent 创建", "zh-Hant": "Agent 建立" }],
+    ["create", { en: "Created", "zh-Hans": "创建", "zh-Hant": "建立" }],
   ];
 
   it.each(table)("maps %s in every locale", (slug, labels) => {

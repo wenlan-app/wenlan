@@ -9,9 +9,14 @@ import {
   MODEL_LOAD_DEADLINE_MS,
 } from "./SetupWizard";
 import { i18n } from "../i18n";
+import { reportProblem } from "../lib/problemReport";
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
+}));
+
+vi.mock("../lib/problemReport", () => ({
+  reportProblem: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -2587,19 +2592,29 @@ describe("SetupWizard", () => {
 
     expect(
       await screen.findByTestId("welcome-connection-problem"),
-    ).toHaveTextContent("Wenlan could not reach its background service while starting up.");
+    ).toHaveTextContent("Try again. If it still doesn't work, report it to us.");
     // The title is what changes. "Welcome to Wenlan" over a dead service is
     // the sentence that reads as a wiped install.
     expect(
       screen.getByRole("heading", { name: "Could not reach the background service" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Welcome to Wenlan")).not.toBeInTheDocument();
-    // Recovery still describes the notes-first experience without AI setup questions.
-    expect(
-      screen.getByText(
-        "Start with a page. Connect your AI tools when you need them.",
-      ),
-    ).toBeInTheDocument();
+    // One message and two ways forward; no welcome or privacy copy around it.
+    expect(screen.queryByText(/Start with a page/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check connection" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Report problem" })).toBeInTheDocument();
+  });
+
+  it("reports a startup connection problem with the app's diagnostics", async () => {
+    (reportProblem as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    renderWizard({ daemonGateErrored: true });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Report problem" }));
+
+    await waitFor(() =>
+      expect(reportProblem).toHaveBeenCalledWith("Could not reach the background service"),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("Details copied.");
   });
 
   it("keeps the plain welcome title when the gate answered normally", async () => {

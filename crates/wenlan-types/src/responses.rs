@@ -150,6 +150,21 @@ pub enum RerankerStatus {
     Failed { reason: String },
 }
 
+/// Text-embedding model state, surfaced on `/api/status`. The daemon serves
+/// without the model when it cannot load (first start offline, or the model
+/// host unreachable): pages stay readable and writable, search is keyword
+/// only, and the daemon keeps retrying the load in the background.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum EmbeddingModelStatus {
+    /// Loaded. Also what an older daemon, which omits the field, means: it
+    /// could not serve without the model.
+    #[default]
+    Ready,
+    /// Not loaded yet. `reason` is the last load error.
+    Unavailable { reason: String },
+}
+
 /// Background document-enrichment queue state, surfaced on `/api/status` so
 /// operators can see whether folder-ingest enrichment is progressing, idle, or
 /// paused on an LLM failure (waiting for a backoff retry). Mirrors the
@@ -284,6 +299,10 @@ pub struct StatusResponse {
     /// a local model.
     #[serde(default)]
     pub on_device_inference: OnDeviceInferenceStatus,
+    /// Text-embedding model state. Additive: defaults to `Ready` for older
+    /// daemons, which could not serve without the model.
+    #[serde(default)]
+    pub embedding_model: EmbeddingModelStatus,
     /// Additive daemon capabilities. Clients must negotiate against this list
     /// instead of inferring support from a version string.
     #[serde(default)]
@@ -2271,6 +2290,7 @@ mod reranker_status_tests {
         assert_eq!(parsed.reranker, RerankerStatus::Disabled);
         assert_eq!(parsed.reranker_light, RerankerStatus::Disabled);
         assert_eq!(parsed.reranker_mode, "");
+        assert_eq!(parsed.embedding_model, EmbeddingModelStatus::Ready);
     }
 
     #[test]
@@ -2290,6 +2310,9 @@ mod reranker_status_tests {
             },
             reranker_mode: "full".into(),
             on_device_inference: OnDeviceInferenceStatus::default(),
+            embedding_model: EmbeddingModelStatus::Unavailable {
+                reason: "offline".into(),
+            },
             capabilities: vec!["default_save_space".into()],
             truth: None,
         };
@@ -2298,6 +2321,7 @@ mod reranker_status_tests {
         assert_eq!(parsed.reranker, s.reranker);
         assert_eq!(parsed.reranker_light, s.reranker_light);
         assert_eq!(parsed.reranker_mode, "full");
+        assert_eq!(parsed.embedding_model, s.embedding_model);
     }
 
     #[test]

@@ -83,7 +83,23 @@ pub(crate) fn archive_file_from(
     source: &Dir,
     filename: &str,
 ) -> Result<(), WenlanError> {
-    archive_file_from_with_hook(root, source, filename, &mut |_| {})
+    archive_file_from_with_hook(root, source, filename, &mut |_| {}, &|_, _| true)
+}
+
+/// [`archive_file_from`], keeping the file only if `belongs` accepts what was
+/// actually moved. A check made before the move can be outrun: a sync client
+/// can swap another file in at `filename` between the check and the rename.
+/// So `belongs` is asked about the moved file itself, under its private name
+/// in `archive/`, and a file it refuses is renamed back to `filename` (never
+/// over something that appeared there since) and the call fails with
+/// `page_archive_identity_changed`.
+pub(crate) fn archive_file_from_if(
+    root: &Dir,
+    source: &Dir,
+    filename: &str,
+    belongs: &dyn Fn(&Dir, &str) -> bool,
+) -> Result<(), WenlanError> {
+    archive_file_from_with_hook(root, source, filename, &mut |_| {}, belongs)
 }
 
 /// [`archive_file_from`] with a seam before each attempt at a final name.
@@ -94,6 +110,7 @@ fn archive_file_from_with_hook(
     source: &Dir,
     filename: &str,
     before_place: &mut dyn FnMut(&str),
+    belongs: &dyn Fn(&Dir, &str) -> bool,
 ) -> Result<(), WenlanError> {
     match source.symlink_metadata(filename) {
         Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
@@ -119,11 +136,15 @@ fn archive_file_from_with_hook(
         .symlink_metadata(&held)
         .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink());
     if !plain {
-        if let Err(error) = vault_fs::rename_noreplace(&archive, &held, source, filename) {
-            log::warn!("[archive] could not put {filename} back from {held}: {error}");
-        }
+        put_back(&archive, &held, source, filename, before_place);
         return Err(WenlanError::Conflict(
             "page_projection_target_invalid".to_string(),
+        ));
+    }
+    if !belongs(&archive, &held) {
+        put_back(&archive, &held, source, filename, before_place);
+        return Err(WenlanError::Conflict(
+            "page_archive_identity_changed".to_string(),
         ));
     }
     place_held(&archive, &held, filename, before_place)
@@ -144,6 +165,57 @@ pub(crate) fn archive_aside_from(
         .rename(aside, &archive, &held)
         .map_err(WenlanError::Io)?;
     place_held(&archive, &held, filename, &mut |_| {})
+}
+
+/// Put a file an archive took by mistake back at `filename`, never over a
+/// file saved there meanwhile. Only an atomic no-replace rename is used: the
+/// probing fallback could replace that newer save. When the put-back cannot
+/// happen (the name is taken, or the filesystem has no atomic way), the
+/// bytes are filed under a visible name in `archive/` rather than left under
+/// the hidden private one, so a person can find them.
+fn put_back(
+    archive: &Dir,
+    held: &str,
+    source: &Dir,
+    filename: &str,
+    before_place: &mut dyn FnMut(&str),
+) {
+    let Err(error) = vault_fs::rename_noreplace_atomic(archive, held, source, filename) else {
+        return;
+    };
+    log::warn!("[archive] could not put {filename} back from {held}: {error}");
+    if !archive
+        .symlink_metadata(held)
+        .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink())
+    {
+        // Not a plain file (or already gone): nothing a visible name helps.
+        return;
+    }
+    // Atomic renames only here as well: a probing rename could replace a
+    // file a sync client just put in `archive/`.
+    let (stem, extension) = archive_basename(filename);
+    for attempt in 1..=MAX_ARCHIVE_ATTEMPTS {
+        let target = if attempt == 1 {
+            format!("{stem}{extension}")
+        } else {
+            format!("{stem}-{attempt}{extension}")
+        };
+        before_place(&target);
+        match vault_fs::rename_noreplace_atomic(archive, held, archive, &target) {
+            Ok(()) => {
+                log::warn!("[archive] kept the file that was at {filename} as archive/{target}");
+                return;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                log::warn!(
+                    "[archive] the file that was at {filename} stays in archive/ as {held}: {error}"
+                );
+                return;
+            }
+        }
+    }
+    log::warn!("[archive] the file that was at {filename} stays in archive/ as {held}");
 }
 
 fn place_held(
@@ -287,16 +359,22 @@ mod tests {
         std::fs::write(dir.path().join("alpha.md"), b"the page").unwrap();
         let archive_path = dir.path().join("archive");
         let mut created = false;
-        archive_file_from_with_hook(&root, &root, "alpha.md", &mut |candidate| {
-            if !created {
-                assert_eq!(
-                    candidate, "alpha.md",
-                    "the first candidate is the plain name"
-                );
-                std::fs::write(archive_path.join(candidate), b"arrived meanwhile").unwrap();
-                created = true;
-            }
-        })
+        archive_file_from_with_hook(
+            &root,
+            &root,
+            "alpha.md",
+            &mut |candidate| {
+                if !created {
+                    assert_eq!(
+                        candidate, "alpha.md",
+                        "the first candidate is the plain name"
+                    );
+                    std::fs::write(archive_path.join(candidate), b"arrived meanwhile").unwrap();
+                    created = true;
+                }
+            },
+            &|_, _| true,
+        )
         .unwrap();
         assert!(created, "the hook ran before the first placement");
         assert_eq!(

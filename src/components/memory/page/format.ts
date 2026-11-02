@@ -17,6 +17,10 @@ const WRITER_LABEL_KEYS = {
   revision_accept: "revisionLabel.writer.revisionAccept",
   citation_backfill: "revisionLabel.writer.citationBackfill",
   link_rename: "revisionLabel.writer.linkRename",
+  // A page's first version, listed in its history as its birth.
+  person_create: "revisionLabel.writer.personCreate",
+  agent_create: "revisionLabel.writer.agentCreate",
+  create: "revisionLabel.writer.create",
 } as const;
 
 /** Who made a page revision, in words the reader can use. Never the raw

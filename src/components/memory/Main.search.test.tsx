@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ComponentProps } from "react";
@@ -192,6 +192,7 @@ vi.mock("./Sidebar", () => ({
     activityCurrent?: boolean;
     onNavigateGraph?: () => void;
     onNavigatePages?: () => void;
+    onNavigateHome?: () => void;
     onNavigateSettings?: () => void;
     onNavigateSpaces?: (create: boolean) => void;
     onOpenSearch?: (trigger: HTMLButtonElement) => void;
@@ -220,6 +221,7 @@ vi.mock("./Sidebar", () => ({
       </button>
       <ActivityStatus onOpenActivity={props.onNavigateActivity ?? (() => {})} current={props.activityCurrent} />
       <button type="button" onClick={props.onNavigateLog}>Open memories</button>
+      <button type="button" onClick={props.onNavigateHome}>Open home</button>
       <button type="button" onClick={props.onNavigatePages}>Open wiki</button>
       <button type="button" onClick={props.onNavigateSettings}>Open settings</button>
       <button type="button" onClick={props.onNavigateGraph}>Open graph</button>
@@ -272,6 +274,7 @@ vi.mock("./pages/WikiWorkspace", () => ({
   ),
 }));
 vi.mock("./pages/PagesOverview", () => ({
+  WikiStart: () => <div data-testid="wiki-start" />,
   PagesOverview: (props: {
     onCreatePage: (space: string | null) => void;
     onSelectDraft: (draftId: string, space: string | null) => void;
@@ -578,10 +581,10 @@ describe("Main search", () => {
     const forward = () => screen.getByRole("button", { name: i18n.t("main.forward") });
     expect(back()).toBeDisabled();
     expect(forward()).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     expect(back()).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Open spaces" }));
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Open recent page" }));
     expect(screen.getByTestId("page-detail")).toHaveAttribute("data-page-id", "page-1");
     expect(screen.getByRole("main")).toHaveClass("memory-main-content--wiki");
@@ -637,7 +640,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
     await user.click(screen.getByRole("button", { name: "Open spaces" }));
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Open recent page" }));
     await user.click(screen.getByRole("button", { name: i18n.t("main.back") }));
     expect(screen.getByRole("button", { name: i18n.t("main.forward") })).toBeEnabled();
@@ -730,7 +733,7 @@ describe("Main search", () => {
     await user.click(screen.getByRole("button", { name: "Search" }));
     const search = getSearchInput();
     await user.type(search, "architecture");
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
     expect(screen.getByTestId("pages-overview")).toBeVisible();
     expect(screen.getByRole("button", { name: "Search" })).toHaveAttribute("aria-expanded", "false");
@@ -830,7 +833,7 @@ describe("Main search", () => {
     await user.click(screen.getByRole("button", { name: "Finish import" }));
     expect(screen.getByRole("heading", { name: "Memories" })).toBeVisible();
     expect(screen.getByRole("complementary")).toHaveAttribute("data-active", "memories");
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     expect(screen.getByTestId("pages-overview")).toBeVisible();
   });
 
@@ -1140,7 +1143,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
 
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
 
     expect(screen.getByTestId("page-draft-editor")).toHaveAttribute("data-space", "none");
@@ -1357,7 +1360,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
 
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
     await user.click(screen.getByRole("button", { name: "Open spaces" }));
 
@@ -1383,7 +1386,7 @@ describe("Main search", () => {
     await expect(guard()).resolves.toBe(true);
     expect(draftFlushMock).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
     draftFlushMock.mockResolvedValue(false);
 
@@ -1396,7 +1399,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
 
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
     await user.click(screen.getByRole("button", { name: "Open graph" }));
 
@@ -1427,7 +1430,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
 
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
     const originalEditor = screen.getByTestId("page-draft-editor");
     await user.type(
@@ -1477,7 +1480,7 @@ describe("Main search", () => {
     });
     const user = userEvent.setup();
     renderMain();
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
     const search = getSearchInput();
 
@@ -1514,7 +1517,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
 
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
     await user.type(
       getSearchInput(),
@@ -1532,7 +1535,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
 
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
     await user.click(screen.getByRole("button", { name: "Open spaces" }));
 
@@ -1545,7 +1548,7 @@ describe("Main search", () => {
     draftFlushMock.mockReturnValue(flush.promise);
     const user = userEvent.setup();
     const view = renderMain();
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
 
     view.rerenderMain({ initialMemoryId: "memory-1" });
@@ -1562,7 +1565,7 @@ describe("Main search", () => {
     draftFlushMock.mockResolvedValue(false);
     const user = userEvent.setup();
     const view = renderMain();
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
 
     view.rerenderMain({ initialMemoryId: "memory-1" });
@@ -1588,7 +1591,7 @@ describe("Main search", () => {
     });
     const user = userEvent.setup();
     const view = renderMain();
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
 
     view.rerenderMain(externalProps);
@@ -1611,7 +1614,7 @@ describe("Main search", () => {
     draftIdentityMock.mockReturnValue({ draftId: null, version: null });
     const user = userEvent.setup();
     renderMain();
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Resume draft" }));
 
     await user.click(screen.getByRole("button", { name: "Open graph" }));
@@ -1627,7 +1630,7 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
 
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Resume draft" }));
 
     expect(screen.getByTestId("page-draft-editor")).toHaveAttribute("data-draft-id", "draft-resume");
@@ -1665,7 +1668,7 @@ describe("Main search", () => {
     stubResponsiveViewport(true);
     const user = userEvent.setup();
     renderMain();
-    await user.click(screen.getByRole("button", { name: "Open wiki" }));
+    await user.click(screen.getByRole("button", { name: "Open home" }));
     await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
     await user.click(screen.getByRole("button", { name: "Toggle sidebar" }));
     expect(screen.getByRole("complementary")).toHaveAttribute("data-open", "true");
@@ -1833,8 +1836,9 @@ describe("Main search", () => {
     const user = userEvent.setup();
     renderMain();
 
-    expect(screen.queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Activity" }));
+    const activity = screen.getByRole("button", { name: "Activity" });
+    expect(within(activity.parentElement!).queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
+    await user.click(activity);
     await user.click(screen.getByTestId("activity-summary-open"));
 
     expect(await screen.findByTestId("activity-feed")).toBeInTheDocument();
