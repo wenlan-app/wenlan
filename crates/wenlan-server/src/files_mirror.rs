@@ -80,6 +80,58 @@ fn due(status: &FilesMirrorStatus, db_changed_at: i64, now: i64) -> bool {
     }
 }
 
+/// Before the database opens: when its file is gone and a file copy
+/// exists, builds it again from the files (`wenlan_core::store::restore`).
+/// When that fails, the files are moved aside so the empty database the
+/// daemon then starts with cannot overwrite them, and the status says so.
+pub async fn restore_missing_database(data_root: &Path, db_dir: &Path) {
+    use wenlan_core::store::restore::{self, Restore};
+    if turned_off() {
+        return;
+    }
+    let mirror = mirror::mirror_root(data_root);
+    match restore::restore_missing_database(data_root, db_dir).await {
+        Ok(Restore::NotNeeded) | Ok(Restore::NoFiles) => {}
+        Ok(Restore::Restored { rows, problems, ms }) => {
+            tracing::warn!(
+                "[files_mirror] the database was missing: rebuilt it from {} in {ms} ms \
+                 ({rows} rows, {} problems, see {})",
+                mirror.join(mirror::FILES_DIR).display(),
+                problems.len(),
+                mirror.join(restore::RESTORE_REPORT).display()
+            );
+            note(
+                &mirror,
+                format!("the database was rebuilt from these files at {}", now()),
+            );
+        }
+        Err(error) => {
+            let kept = restore::keep_files_after_failure(data_root, now());
+            tracing::error!(
+                "[files_mirror] the database was missing and could not be rebuilt from the \
+                 files: {error}; files kept in {}",
+                kept.as_deref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "place".to_string())
+            );
+            note(
+                &mirror,
+                format!("the database could not be rebuilt from these files: {error}"),
+            );
+        }
+    }
+}
+
+fn note(mirror: &Path, text: String) {
+    let status = FilesMirrorStatus {
+        note: Some(text),
+        ..mirror::read_status(mirror).unwrap_or_default()
+    };
+    if let Err(error) = mirror::write_status(mirror, &status) {
+        tracing::warn!("[files_mirror] status not written: {error}");
+    }
+}
+
 pub fn start(shared: SharedState, shutdown: tokio::sync::watch::Receiver<bool>) {
     if turned_off() {
         return;
