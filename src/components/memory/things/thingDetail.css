@@ -40,3 +40,23 @@
 .thing-detail-status { padding:24px 0;color:var(--mem-text-tertiary); }
 /* The same ground as Home and an open page, not the sidebar's. */
 .memory-main-content:has(> .thing-detail) { background:var(--workspace-document-background, var(--mem-bg)); }
+/* Short text and mind map (UX-VIEW-1): one switch, the same points. */
+.thing-views-bar { display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:6px; }
+.thing-views-bar .thing-detail-meta { margin:0; }
+.thing-views-switch { display:inline-flex;gap:2px;padding:2px;border-radius:999px;background:var(--mem-hover); }
+.thing-views-switch button { padding:3px 12px;border:0;border-radius:999px;background:none;color:var(--mem-text-secondary);font:500 12.5px/1.5 var(--mem-font-body);cursor:pointer; }
+.thing-views-switch button[aria-pressed="true"] { background:var(--mem-surface);color:var(--mem-text);box-shadow:0 1px 2px color-mix(in srgb,#141820 10%,transparent); }
+.thing-views-switch button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:1px; }
+.thing-short { margin-top:18px;display:grid;gap:12px; }
+.thing-short .thing-detail-where { margin:0;font-weight:500; }
+.thing-short-points { margin:0;color:var(--mem-text);font:400 15px/1.8 var(--mem-font-body);overflow-wrap:anywhere; }
+.thing-map { margin-top:18px;min-width:0;overflow-x:auto; }
+.thing-map svg { display:block;min-width:560px;height:auto;font:13px var(--mem-font-body); }
+.thing-map-links path { stroke:color-mix(in srgb,var(--mem-text) 16%,transparent);stroke-width:1.5; }
+.thing-map-center rect { fill:var(--mem-surface);stroke:var(--mem-accent-page);stroke-width:1.5; }
+.thing-map-center text { fill:var(--mem-text);font-weight:600;font-size:14px; }
+.thing-map-point rect { fill:var(--mem-hover); }
+.thing-map-point text, .thing-map-page text { fill:var(--mem-text); }
+.thing-map-page rect { fill:var(--mem-surface);stroke:color-mix(in srgb,var(--mem-text) 12%,transparent); }
+.thing-map-page { cursor:pointer;outline:none; }
+.thing-map-page:hover rect, .thing-map-page:focus-visible rect { stroke:var(--mem-accent-page); }

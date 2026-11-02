@@ -9,6 +9,7 @@ import { DetailReadingFrame } from "../DetailLayout";
 import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
 import { THINGS_QUERY_KEY } from "../pages/WorkingOn";
 import { hasToolMark, ToolMark } from "../assets/toolMarks";
+import { ThingViews } from "./ThingViews";
 import "./thingDetail.css";
 
 export const thingQueryKey = (id: string) => ["thing", id] as const;
@@ -66,8 +67,7 @@ export function ThingDetail({ thingId, onBack, onOpenPage, onOpenThing }: ThingD
             <BackButton onBack={onBack} label={t("thing.back")} />
           </div>
         </header>
-        {thing.status_line ? <p className="thing-detail-where">{thing.status_line}</p> : null}
-        <p className="thing-detail-meta">{[...thing.spaces, when].join(" · ")}</p>
+        <ThingViews thing={thing} meta={[...thing.spaces, when].join(" · ")} onOpenPage={onOpenPage} />
 
         <section className="thing-detail-section" aria-labelledby="thing-conversations">
           <h2 id="thing-conversations">{t("thing.conversations")}</h2>
