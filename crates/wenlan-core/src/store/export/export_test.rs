@@ -471,3 +471,145 @@ async fn each_brief_keeps_its_lists_in_order() {
     );
     assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
 }
+
+#[tokio::test]
+async fn a_canvas_shows_accepted_nodes_beside_its_page_and_keeps_the_rest_backstage() {
+    use super::canvases::export_canvases;
+    use crate::store::format::canvas;
+
+    let (db, _db_dir) = test_db().await;
+    page(&db, "p1", "Trip", "Plans.", "sp").await;
+    page(&db, "p2", "Loose", "No file for this one.", "sp").await;
+    for id in ["p1", "p2"] {
+        sql(
+            &db,
+            "INSERT INTO page_maps (page_id, revision, map_schema, viewport, generated_at, \
+             created_at, updated_at) VALUES (?1, 4, 1, '{\"zoom\":1.5}', NULL, \
+             '2026-01-01 00:00:00', '2026-01-02 00:00:00')",
+            id,
+        )
+        .await;
+    }
+    for (id, status, coordinates) in [
+        ("n_placed", "active", "12.5, -40, 300, 80"),
+        ("n_unplaced", "active", "NULL, 7, NULL, NULL"),
+        ("n_suggested", "suggested", "1, 2, 3, 4"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO page_map_nodes (id, page_id, parent_id, rank, ref_kind, ref_id, \
+                 label, status, pinned, placed, collapsed, x, y, width, height, fingerprint, \
+                 provenance, created_at, updated_at) VALUES ('{id}', ?1, NULL, 1.25, 'memory', \
+                 'mem_{id}', 'Label {id}', '{status}', 1, 0, 0, {coordinates}, 'fp_{id}', \
+                 'agent', 't0', 't1')"
+            ),
+            "p1",
+        )
+        .await;
+    }
+    for (id, to, status) in [
+        ("e_shown", "n_unplaced", "active"),
+        ("e_hidden", "n_suggested", "suggested"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO page_map_edges (id, page_id, from_node, to_node, kind, label, \
+                 status, provenance, created_at) VALUES ('{id}', ?1, 'n_placed', '{to}', \
+                 'link', NULL, '{status}', NULL, 't0')"
+            ),
+            "p1",
+        )
+        .await;
+    }
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    let page_paths = HashMap::from([("p1".to_string(), "visible/Trips/Trip.md".to_string())]);
+    let done = export_canvases(&db, &page_paths, &dirs, &mut manifest)
+        .await
+        .unwrap();
+    assert_eq!((done.canvases, done.hidden), (2, 1));
+
+    let shown = canvas::parse(&read(&dirs, "visible/Trips/Trip.canvas")).unwrap();
+    let ids: Vec<_> = shown.nodes.iter().map(|n| n.id.as_str()).collect();
+    assert_eq!(ids, ["n_placed", "n_unplaced"]);
+    assert_eq!(shown.nodes[0].x.to_string(), "12.5");
+    assert_eq!(shown.nodes[0].y.to_string(), "-40");
+    let placed = shown.nodes[0].wenlan.as_ref().unwrap();
+    assert_eq!(placed.reference.as_deref(), Some("memory:mem_n_placed"));
+    assert!(placed.accepted);
+    assert_eq!(placed.rest["rank"], serde_json::json!(1.25));
+    assert!(!placed.rest.contains_key("unset"));
+    let unplaced = shown.nodes[1].wenlan.as_ref().unwrap();
+    assert_eq!(
+        unplaced.rest["unset"],
+        serde_json::json!(["x", "width", "height"])
+    );
+    assert_eq!(shown.nodes[1].y.to_string(), "7");
+    let edges: Vec<_> = shown.edges.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(edges, ["e_shown"]);
+    assert_eq!(shown.rest["wenlan"]["revision"], serde_json::json!(4));
+    assert_eq!(
+        shown.rest["wenlan"]["viewport"],
+        serde_json::json!("{\"zoom\":1.5}")
+    );
+
+    let hidden = canvas::parse(&read(&dirs, "backstage/proposals/canvas/p1.canvas")).unwrap();
+    assert_eq!(hidden.nodes.len(), 1);
+    assert!(!hidden.nodes[0].wenlan.as_ref().unwrap().accepted);
+    assert_eq!(hidden.edges[0].id, "e_hidden");
+
+    let loose = canvas::parse(&read(&dirs, "backstage/layout/canvas/p2.canvas")).unwrap();
+    assert!(loose.nodes.is_empty());
+    assert_eq!(manifest.files.len(), 3);
+    assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
+}
+
+#[tokio::test]
+async fn artifact_originals_are_copied_byte_for_byte_with_their_records() {
+    use super::artifacts::{export_artifacts, RECORDS_PATH};
+
+    let (db, _db_dir) = test_db().await;
+    let data_root = tempfile::tempdir().unwrap();
+    let kept = data_root.path().join("originals/claude/conv1");
+    std::fs::create_dir_all(&kept).unwrap();
+    let bytes = b"<svg>\r\n\xff not utf-8</svg>";
+    std::fs::write(kept.join("art1.svg"), bytes).unwrap();
+    for (page_id, artifact, file) in [
+        ("orig_kept", "art1", "originals/claude/conv1/art1.svg"),
+        ("orig_lost", "art2", "originals/claude/conv1/art2.md"),
+    ] {
+        page(&db, page_id, page_id, "", "sp").await;
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO originals (page_id, vendor, conversation_id, artifact_id, kind, \
+                 title, file_path, conversation_url, written_at, imported_at) VALUES (?1, \
+                 'claude', 'conv1', '{artifact}', 'image/svg+xml', NULL, '{file}', \
+                 'https://claude.ai/chat/conv1', NULL, 1793404800)"
+            ),
+            page_id,
+        )
+        .await;
+    }
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    let copied = export_artifacts(&db, data_root.path(), &dirs, &mut manifest)
+        .await
+        .unwrap();
+    assert_eq!(copied, 1);
+    let written =
+        std::fs::read(dirs.root.join("backstage/originals/claude/conv1/art1.svg")).unwrap();
+    assert_eq!(written, bytes);
+    assert_eq!(manifest.files[0].sha256, sha256(bytes));
+    let records: serde_json::Value = serde_json::from_str(&read(&dirs, RECORDS_PATH)).unwrap();
+    assert_eq!(records[0]["page"], "orig_kept");
+    assert_eq!(records[1]["file"], "originals/claude/conv1/art2.md");
+    assert_eq!(manifest.left_out.len(), 1);
+    assert_eq!(manifest.left_out[0].id, "orig_lost");
+}

@@ -35,6 +35,8 @@ pub struct PagesExported {
     pub entities: usize,
     /// Each entity id's file stem, for `[[stem]]` links to it.
     pub entity_stems: HashMap<String, String>,
+    /// Each page id's file, relative to the export root.
+    pub page_paths: HashMap<String, String>,
 }
 
 /// Writes every page row. `placement` maps a page id to its file's path
@@ -117,6 +119,7 @@ pub async fn export_pages(
         };
         let text = page::render(&file);
         check(manifest, &row.id, page::parse(&text, "").ok() == Some(file));
+        done.page_paths.insert(row.id.clone(), relative.clone());
         manifest
             .files
             .push(dirs.write(&relative, &row.id, file_type, &text)?);
