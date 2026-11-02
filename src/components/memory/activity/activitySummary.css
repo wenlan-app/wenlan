@@ -31,3 +31,4 @@
 .mem-activity-summary-source-name { color: var(--mem-text); font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .mem-activity-summary-source .mem-activity-summary-description { margin: 0; }
 .mem-activity-summary-source .mem-activity-popover-action { margin: 2px 0 0; }
+.mem-activity-popover .mem-activity-summary-more { margin: 0 0 0 -4px; }

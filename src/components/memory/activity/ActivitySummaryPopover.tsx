@@ -53,7 +53,7 @@ interface Props {
   readonly firstActionRef: Ref<HTMLButtonElement>;
   /** Sources Wenlan cannot reach, said first because they need the person. */
   readonly brokenSources?: readonly RegisteredSource[];
-  readonly onOpenSource?: (source: RegisteredSource) => void;
+  readonly onOpenSource?: (source: RegisteredSource | null) => void;
   readonly onReadAgain: () => void;
   readonly onOpenActivity: () => void;
 }
@@ -61,13 +61,16 @@ interface Props {
 export default function ActivitySummaryPopover({ id, activity, isError, firstActionRef, brokenSources = [], onOpenSource, onReadAgain, onOpenActivity }: Props) {
   const { t, i18n } = useTranslation();
   const sourceFirst = brokenSources.length > 0 && onOpenSource !== undefined;
+  // Like every list that needs the person: three, then how many more.
+  const shownSources = brokenSources.slice(0, 3);
+  const moreSources = brokenSources.length - shownSources.length;
   const byKind = new Map(activity ? knownAssets(activity).map((asset) => [asset.kind, asset]) : []);
   return (
     <div id={id} className="mem-popover-surface mem-activity-popover" data-testid="activity-summary" role="dialog" aria-label={t("activityStatus.statusLabel")}>
       <h2 className="mem-activity-summary-title">{t("main.activity")}</h2>
       {sourceFirst && (
         <ul className="mem-activity-summary-sources" data-testid="activity-summary-sources">
-          {brokenSources.map((source, index) => (
+          {shownSources.map((source, index) => (
             <li key={source.id} className="mem-activity-summary-source">
               <span className="mem-activity-summary-source-name">{sourceName(source.path)}</span>
               <span className="mem-activity-summary-description">
@@ -80,6 +83,13 @@ export default function ActivitySummaryPopover({ id, activity, isError, firstAct
               </button>
             </li>
           ))}
+          {moreSources > 0 && (
+            <li>
+              <button type="button" className="mem-activity-popover-action mem-activity-summary-link mem-activity-summary-more" data-testid="activity-summary-sources-more" onClick={() => onOpenSource(null)}>
+                {t("activityStatus.sourcesMore", { count: moreSources })}<ArrowRight size={14} aria-hidden="true" />
+              </button>
+            </li>
+          )}
         </ul>
       )}
       {isError ? (

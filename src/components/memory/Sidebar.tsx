@@ -22,7 +22,7 @@ interface SidebarProps {
   readonly onNavigateGraph?: () => void;
   readonly onNavigateActivity?: () => void;
  /** Opens a source Activity reports as unreachable. */
- onOpenSource?: (source: RegisteredSource) => void;
+ onOpenSource?: (source: RegisteredSource | null) => void;
   readonly activityCurrent?: boolean;
   /** Opens the connect flow from "What your AI can do" when no tool is connected. */
   readonly onConnectTool?: () => void;

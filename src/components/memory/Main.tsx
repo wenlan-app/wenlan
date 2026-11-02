@@ -1519,7 +1519,7 @@ export default function Main({
             onEntityClick={handleEntityClick}
             onNavigateActivity={() => navigateTo({ kind: "activity" })}
             onOpenSource={(source) => {
-              setSourceLibraryState((state) => ({ ...state, container: { sourceId: source.id, path: source.path } }));
+              setSourceLibraryState((state) => ({ ...state, container: source ? { sourceId: source.id, path: source.path } : null }));
               navigateTo({ kind: "sources" });
             }}
             activityCurrent={view.kind === "activity"}

@@ -159,6 +159,8 @@ export const enActivityStatus = {
   sourceUnavailable: "Wenlan can't find this folder. It may have moved, or its drive isn't connected.",
   sourceError: "Wenlan couldn't read it the last time it checked.",
   sourceOpen: "Take a look",
+  sourcesMore_one: "{{count}} more",
+  sourcesMore_other: "{{count}} more",
   runningStep: {
     store: "Storing memories.",
     embed: "Preparing passages for search.",
@@ -395,6 +397,8 @@ export const hansActivityStatus = {
   sourceUnavailable: "找不到这个文件夹，可能被移走了，或硬盘没接上。",
   sourceError: "上次读取时出错了。",
   sourceOpen: "去看看",
+  sourcesMore_one: "还有 {{count}} 个",
+  sourcesMore_other: "还有 {{count}} 个",
   runningStep: {
     store: "正在存入记忆。",
     embed: "正在为搜索准备段落。",
@@ -618,6 +622,8 @@ export const hantActivityStatus = {
   sourceUnavailable: "找不到這個資料夾，可能被移走了，或硬碟沒接上。",
   sourceError: "上次讀取時出錯了。",
   sourceOpen: "去看看",
+  sourcesMore_one: "還有 {{count}} 個",
+  sourcesMore_other: "還有 {{count}} 個",
   runningStep: {
     store: "正在儲存記憶。",
     embed: "正在為搜尋準備段落。",

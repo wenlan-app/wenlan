@@ -180,6 +180,21 @@ describe("ActivityStatus", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("lists three sources that cannot be reached, then how many more, which opens the list", async () => {
+    getActivityMock.mockResolvedValue(activity());
+    listRegisteredSourcesMock.mockResolvedValue(["A", "B", "C", "D", "E"].map((name) =>
+      source({ id: name, path: `/Volumes/Old/${name}`, status: { Error: "read failed" } })));
+    const onOpenSource = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><ActivityStatus onOpenActivity={vi.fn()} onOpenSource={onOpenSource} /></QueryClientProvider>);
+
+    await userEvent.click(await screen.findByRole("button", { name: "5 sources can't be reached" }));
+    expect(screen.getAllByRole("button", { name: "Take a look" })).toHaveLength(3);
+    expect(screen.getByTestId("activity-summary-sources")).toHaveTextContent("Wenlan couldn't read it the last time it checked.");
+    await userEvent.click(screen.getByRole("button", { name: "2 more" }));
+    expect(onOpenSource).toHaveBeenCalledWith(null);
+  });
+
   it("does not check sources without a way to open them", async () => {
     renderStatus(activity());
     await screen.findByRole("button", { name: "Activity" });

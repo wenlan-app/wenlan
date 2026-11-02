@@ -18,9 +18,9 @@ interface ActivityStatusProps {
   readonly onOpenActivity: () => void;
   readonly current?: boolean;
   readonly compact?: boolean;
-  /** Opens a source that cannot be reached. Without it, Activity does not
-   *  check sources. */
-  readonly onOpenSource?: (source: RegisteredSource) => void;
+  /** Opens a source that cannot be reached, or the whole source list for
+   *  null. Without it, Activity does not check sources. */
+  readonly onOpenSource?: (source: RegisteredSource | null) => void;
 }
 
 export default function ActivityStatus({
