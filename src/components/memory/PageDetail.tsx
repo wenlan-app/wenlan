@@ -2546,7 +2546,7 @@ export default function PageDetail({
                         aria-checked={pageLength === "short"}
                         onClick={() => { closeActionMenu(); choosePageLength(pageLength === "short" ? "full" : "short"); }}
                       >
-                        {t("pageLayers.firstParagraphOnly")}
+                        {t("pageLayers.summaryView")}
                         <span aria-hidden="true" className="page-detail-menu-check">{pageLength === "short" ? "✓" : ""}</span>
                       </button>
                     ) : null}

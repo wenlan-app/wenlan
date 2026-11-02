@@ -522,7 +522,7 @@ describe("PageDetail", () => {
     const trigger = screen.getByRole("button", { name: "Page actions" });
     trigger.focus();
     await user.keyboard("{ArrowDown}");
-    expect(screen.getByRole("menuitemcheckbox", { name: "First paragraph only" })).toHaveFocus();
+    expect(screen.getByRole("menuitemcheckbox", { name: "Summary view" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu", { name: "Page actions" })).toBeNull();
     expect(trigger).toHaveFocus();
