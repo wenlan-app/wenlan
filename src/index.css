@@ -93,6 +93,9 @@ body {
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
+  /* A styled scrollbar never overlays: without a height, every sideways
+     scroller drew a thick grey bar that never went away. */
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {

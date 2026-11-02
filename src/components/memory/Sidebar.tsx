@@ -158,12 +158,9 @@ export default function Sidebar({
               entities: t("sidebar.entities"),
               graph: t("sidebar.graph"),
               home: t("sidebar.home"),
-              more: t("sidebar.more"),
               navigation: t("sidebar.navigation"),
               pages: t("sidebar.pages"),
-              pinToSidebar: (name) => t("sidebar.pinToSidebar", { name }),
               spaces: t("sidebar.spaces"),
-              unpinFromSidebar: (name) => t("sidebar.unpinFromSidebar", { name }),
             }}
             onNavigateEntities={closeAfterNavigation(onNavigateEntities, closeOverlay)}
             onNavigateGraph={closeAfterNavigation(onNavigateGraph, closeOverlay)}

@@ -28,7 +28,6 @@ for (const copy of cases) test(`${copy.locale} topics browse before managing`, a
   const controller = await installTauriMock(page, { fixture: createSpacesNavigationFixture(), locale: copy.locale, rawActions: [], localStorage: { "wenlan-theme": copy.theme } });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
-  await page.getByRole("button", { name: copy.more, exact: true }).click();
   await page.getByRole("button", { name: copy.title, exact: true }).click();
   const overview = page.locator(".entities-view");
   await expect(overview.getByRole("button", { name: copy.openAda, exact: true })).toBeVisible();
@@ -54,7 +53,7 @@ for (const copy of cases) test(`${copy.locale} topics browse before managing`, a
   await overview.getByRole("button", { name: copy.openAda, exact: true }).click();
   await expect(page.getByRole("heading", { name: "Ada Lovelace", exact: true })).toBeVisible();
   await expect(page.locator(".notes-workspace-sidebar")).toHaveCSS("width", "240px");
-  await expect(page.getByRole("button", { name: copy.more, exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("navigation").getByRole("button", { name: copy.title, exact: true })).toHaveAttribute("aria-current", "page");
   expect(controller.calls().filter(call => /^(confirm_entity|archive_entities|restore_entities)_cmd$/.test(call.command))).toEqual([]);
   const info = await openTopicContext(page, copy.locale);
   await expect(info.getByRole("button", { name: tr.infoActions.keepTopic, exact: true })).toHaveAttribute("data-active", "false");

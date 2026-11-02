@@ -88,7 +88,7 @@ for (const persisted of [false, true]) {
 }
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 }]) {
-  test(`More and account Escape retain the page draft and drawer at ${viewport.width}px`, async ({ page }) => {
+  test(`account Escape retains the page draft and drawer at ${viewport.width}px`, async ({ page }) => {
     await mkdir(test.info().outputDir, { recursive: true });
     const errors = collectBrowserErrors(page);
     const controller = await installTauriMock(page, {
@@ -107,17 +107,6 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 
     await title(page).fill("Popup Escape synthetic draft");
     await content(page).fill("The writing session stays here.");
     await showSidebar(page);
-
-    const more = sidebar(page).getByRole("button", { name: "More", exact: true });
-    await more.click();
-    await expect(page.getByRole("group", { name: "More", exact: true })).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("group", { name: "More", exact: true })).toHaveCount(0);
-    await expect(more).toBeFocused();
-    await expect(sidebar(page)).toHaveAttribute("aria-hidden", "false");
-    await expect(title(page)).toHaveValue("Popup Escape synthetic draft");
-    await expectEditorSource(content(page), "The writing session stays here.");
-    await page.screenshot({ path: test.info().outputPath(`more-escape-${viewport.width}.png`) });
 
     const account = sidebar(page).getByRole("button", { name: "Account menu", exact: true });
     await account.click();

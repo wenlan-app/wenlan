@@ -12,8 +12,8 @@ test("finds the exact entity after navigating to Topics in More", async ({ page 
   await page.goto("/");
 
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
-  await expect(navigation.getByRole("button", { name: "Topics", exact: true })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "More", exact: true })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Topics", exact: true })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "More", exact: true })).toHaveCount(0);
 
   const entity = await getSpaceEntityButton(page, "Ada Lovelace");
   await expect(page.getByRole("heading", { name: "Topics", exact: true })).toBeVisible();

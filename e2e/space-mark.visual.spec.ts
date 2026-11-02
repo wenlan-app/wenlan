@@ -130,7 +130,7 @@ test("renders the Planet Space mark across light, dark, mobile, focus, and physi
   await page.keyboard.press("Tab");
   await expect(spacesButton(page)).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(navigation.getByRole("button", { name: "More", exact: true })).toBeFocused();
+  await expect(navigation.getByRole("button", { name: "Graph", exact: true })).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(spacesButton(page)).toBeFocused();
   await expect(spacesButton(page)).toHaveAttribute("aria-current", "page");
