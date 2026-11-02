@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { Prec, StateEffect, StateField, type Extension, type Range } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from "@codemirror/view";
 import { processCitations } from "../../../lib/pageCitations";
 import type { MemoryItem, PageCitation } from "../../../lib/tauri";
 import { referenceTargetFromHref, type ReferenceTarget } from "../links/referenceTypes";
@@ -29,6 +29,8 @@ interface ResolvedReferenceRange extends ParsedWikiLink {
   target: ReferenceTarget;
   key: string;
   wiki: boolean;
+  /** A memory cited by id: its id is replaced by this number on screen. */
+  memoryNumber?: number;
 }
 export interface WikiLinkCallbacks {
   onActivate(pageId: string, anchor: HTMLAnchorElement): void;
@@ -81,6 +83,81 @@ function excludedRanges(source: string, tree: ReturnType<typeof syntaxTree>): Ar
     if (excludedNodeNames.has(node.name)) ranges.push({ from: node.from, to: node.to });
   } });
   return ranges;
+}
+
+/**
+ * A line with inline HTML keeps its links as written. Code on the line is
+ * not HTML: `Vec<Source>` or `<db_path>` in backticks must not stop the
+ * line's links from reading as links.
+ */
+function lineHasHtml(line: { from: number; to: number; text: string }, excluded: ReadonlyArray<{ from: number; to: number }>): boolean {
+  let text = line.text;
+  for (const range of excluded) {
+    if (range.to <= line.from || range.from >= line.to) continue;
+    const from = Math.max(range.from, line.from) - line.from;
+    const to = Math.min(range.to, line.to) - line.from;
+    if (/^`/.test(line.text.slice(from, to))) text = text.slice(0, from) + " ".repeat(to - from) + text.slice(to);
+  }
+  return /<\/?[A-Za-z][^>]*>/.test(text);
+}
+
+/**
+ * A memory an older page cites by its id, `[[mem_…]]`, `[mem_…]` or a bare
+ * `mem_…` in prose. It reads as a numbered citation like `[1]`, never as
+ * the id: the same memory keeps one number on the page, counted on from
+ * the page's own citations.
+ */
+export interface MemoryIdReference {
+  from: number;
+  to: number;
+  tokenFrom: number;
+  tokenTo: number;
+  memoryId: string;
+  number: number;
+}
+
+const MEMORY_ID_REFERENCE = /\[\[(mem_[0-9a-f]{8,})\]\]|\[(mem_[0-9a-f]{8,})\]|(?<![\w/[])(mem_[0-9a-f]{8,})(?![\w\]])/g;
+
+export function parseMemoryIdReferences(source: string, firstNumber = 1): MemoryIdReference[] {
+  const numbers = new Map<string, number>();
+  const references: MemoryIdReference[] = [];
+  for (const match of source.matchAll(MEMORY_ID_REFERENCE)) {
+    const memoryId = match[1] ?? match[2] ?? match[3];
+    const tokenFrom = match.index!;
+    const tokenTo = tokenFrom + match[0].length;
+    const bracketWidth = match[1] ? 2 : match[2] ? 1 : 0;
+    if (!numbers.has(memoryId)) numbers.set(memoryId, firstNumber + numbers.size);
+    references.push({
+      tokenFrom, tokenTo,
+      from: tokenFrom + bracketWidth, to: tokenTo - bracketWidth,
+      memoryId, number: numbers.get(memoryId)!,
+    });
+  }
+  return references;
+}
+
+class MemoryNumberWidget extends WidgetType {
+  constructor(readonly label: string, readonly className: string, readonly attributes: Record<string, string>) {
+    super();
+  }
+
+  eq(other: MemoryNumberWidget): boolean {
+    return other.label === this.label && other.className === this.className
+      && JSON.stringify(other.attributes) === JSON.stringify(this.attributes);
+  }
+
+  toDOM(): HTMLElement {
+    const anchor = document.createElement("a");
+    anchor.className = `${this.className} cm-memory-number`;
+    for (const [name, value] of Object.entries(this.attributes)) anchor.setAttribute(name, value);
+    anchor.textContent = this.label;
+    return anchor;
+  }
+
+  // The editor's own link handlers open and preview it, as for any reference.
+  ignoreEvent(): boolean {
+    return false;
+  }
 }
 
 export function parseResolvedWikiLinks(source: string, targets: ReadonlyMap<string, string>, baseOffset = 0): ParsedWikiLink[] {
@@ -288,10 +365,18 @@ export function createWikiLinkEditing(
           target: { kind: "citation", citation, sourceMemory: currentContext.sourceMemories?.get(citation.locator) ?? null,
             sourcesLoading: currentContext.sourcesLoading ?? false } });
       }
+      const highestCitation = Math.max(0, ...(currentContext.citations ?? []).map((citation) => citation.marker));
+      const memoryReferences = parseMemoryIdReferences(source, highestCitation + 1);
+      for (const reference of memoryReferences) {
+        if (resolvedLinks.some((range) => overlap({ from: reference.tokenFrom, to: reference.tokenTo }, { from: range.tokenFrom, to: range.tokenTo }))) continue;
+        resolvedLinks.push({ from: reference.from, to: reference.to, tokenFrom: reference.tokenFrom, tokenTo: reference.tokenTo,
+          targetLabel: reference.memoryId, displayText: String(reference.number), key: `memory-id:${reference.tokenFrom}`, wiki: false,
+          memoryNumber: reference.number, target: { kind: "memory", id: reference.memoryId } });
+      }
       const visibleLinks = resolvedLinks.filter((range) =>
         this.view.visibleRanges.some((visible) => overlap(range, visible))
         && !excluded.some((blocked) => overlap({ from: range.tokenFrom, to: range.tokenTo }, blocked)))
-        .filter((range) => !/<\/?[A-Za-z][^>]*>/.test(this.view.state.doc.lineAt(range.from).text));
+        .filter((range) => !lineHasHtml(this.view.state.doc.lineAt(range.from), excluded));
       this.references = new Map(visibleLinks.map((range) => [range.key, range]));
       const decorations: Array<Range<Decoration>> = [];
       const atomic: Array<Range<Decoration>> = [];
@@ -307,10 +392,8 @@ export function createWikiLinkEditing(
         const unverified = target.kind === "citation" && target.citation.status === "unverified";
         const typeLabel = currentContext.labels?.[kind] ?? kind;
         const href = target.kind === "page" ? `#concept:${target.id}` : target.kind === "memory" ? `#memory:${target.id}` : `#citation:${target.citation.occurrence}`;
-        decorations.push(Decoration.mark({
-          tagName: "a",
-          class: `cm-wiki-page-link reference-link reference-link--${kind}${target.kind === "citation" ? " cm-citation-link" : ""}${unverified ? " reference-link--unverified" : ""}`,
-          attributes: {
+        const linkClass = `cm-wiki-page-link reference-link reference-link--${kind}${target.kind === "citation" || range.memoryNumber !== undefined ? " cm-citation-link" : ""}${unverified ? " reference-link--unverified" : ""}`;
+        const linkAttributes: Record<string, string> = {
             href, role: "link", tabindex: "0",
             "aria-label": unverified ? `${range.displayText}, ${typeLabel}, ${currentContext.labels?.unverified ?? "Unverified"}` : range.displayText,
             "title": unverified ? `${typeLabel} · ${currentContext.labels?.unverified ?? "Unverified"}` : typeLabel,
@@ -320,7 +403,20 @@ export function createWikiLinkEditing(
               : kind,
             ...(target.kind === "page" ? { "data-wiki-page-id": target.id } : {}),
             "data-wiki-target-label": range.targetLabel,
-          },
+        };
+        if (range.memoryNumber !== undefined) {
+          // The id never shows: the whole token reads as its number until
+          // the caret enters it to edit the source.
+          if (compositionActive || editingToken) continue;
+          const replaced = Decoration.replace({ widget: new MemoryNumberWidget(range.displayText, linkClass, linkAttributes) }).range(range.tokenFrom, range.tokenTo);
+          decorations.push(replaced);
+          atomic.push(replaced);
+          continue;
+        }
+        decorations.push(Decoration.mark({
+          tagName: "a",
+          class: linkClass,
+          attributes: linkAttributes,
         }).range(range.from, range.to));
         if (compositionActive || editingToken) continue;
         if (range.tokenFrom < range.from) {
@@ -340,8 +436,9 @@ export function createWikiLinkEditing(
       const selfLabel = currentContext.selfTitle ? normalized(currentContext.selfTitle) : null;
       for (const range of parseUnresolvedWikiLinks(source, this.view.state.field(links))) {
         if (!this.view.visibleRanges.some((visible) => overlap(range, visible))) continue;
+        if (memoryReferences.some((reference) => overlap({ from: reference.tokenFrom, to: reference.tokenTo }, { from: range.tokenFrom, to: range.tokenTo }))) continue;
         if (excluded.some((blocked) => overlap({ from: range.tokenFrom, to: range.tokenTo }, blocked))) continue;
-        if (/<\/?[A-Za-z][^>]*>/.test(this.view.state.doc.lineAt(range.from).text)) continue;
+        if (lineHasHtml(this.view.state.doc.lineAt(range.from), excluded)) continue;
         const self = selfLabel !== null && (normalized(range.targetLabel) === selfLabel || normalized(range.displayText) === selfLabel);
         decorations.push(Decoration.mark(self
           ? { class: "cm-wiki-page-self" }
