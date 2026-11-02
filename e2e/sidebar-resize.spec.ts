@@ -46,7 +46,7 @@ test('drag resize is shared by Wiki Spaces Graph Settings and persists only afte
   await widthMatches(page, 304); expect(await stored(page)).toEqual(initial);
   await page.mouse.up();
   await expect.poll(async () => (await stored(page)).sidebar.width).toBe(304);
-  for (const name of ['Spaces', 'Graph', 'Sources', 'Wiki']) {
+  for (const name of ['Spaces', 'Graph', 'Wiki']) {
     await page.locator('.notes-rail-nav').getByRole('button', { name, exact: true }).click();
     await widthMatches(page, 304); await expect(seam(page)).toBeVisible();
   }
@@ -58,7 +58,7 @@ test('drag resize is shared by Wiki Spaces Graph Settings and persists only afte
   await page.locator('[data-sidebar-toggle]').click(); await widthMatches(page, 0);
   await page.locator('[data-sidebar-toggle]').click(); await widthMatches(page, 280);
   await page.reload(); await widthMatches(page, 280);
-  expect((await stored(page)).visible).toEqual(['home','pages','spaces','sources','graph']);
+  expect((await stored(page)).visible).toEqual(['home','pages','spaces','graph']);
   expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
 

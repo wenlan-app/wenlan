@@ -1524,7 +1524,6 @@ export default function Main({
             onNavigatePages={navigateNotes}
             onNavigateEntities={() => navigateTo({ kind: "entities" })}
             onNavigateGraph={() => navigateTo({ kind: "graph" })}
-            onNavigateSources={() => navigateTo({ kind: "sources" })}
             onNavigateSpaces={navigateSpaces}
             onNavigateSettings={() => navigateTo({ kind: "settings", section: "general" })}
             onOpenSearch={openSearch}
@@ -1572,6 +1571,7 @@ export default function Main({
               onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
               onOpenActivity={() => navigateTo({ kind: "activity" })}
               onImport={() => navigateTo({ kind: "import" })}
+              onOpenLibrary={() => navigateTo({ kind: "sources" })}
             />
           ) : (view.kind === "pages" || view.kind === "home") ? (
             <WikiWorkspace key={exampleWiki ? "example" : "own"}
@@ -1825,7 +1825,7 @@ export default function Main({
               onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
             />
           ) : view.kind === "source-document" ? (
-            <SourceDocumentPage key={JSON.stringify([view.file.source, view.file.source_id, view.file.space ?? null])} file={view.file} onReady={() => setReadySourceView(view)} onRegisterFlush={registerSourceDescriptionFlush} />
+            <SourceDocumentPage key={JSON.stringify([view.file.source, view.file.source_id, view.file.space ?? null])} file={view.file} onReady={() => setReadySourceView(view)} onRegisterFlush={registerSourceDescriptionFlush} onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })} />
           ) : view.kind === "sources" ? (
             <SourcesView
               libraryState={sourceLibraryState}

@@ -12,6 +12,7 @@ import SourceDocumentContent from "./SourceDocumentContent";
 import SourceAnnotations from "./SourceAnnotations";
 import { getSourcePresentation, getSourceAppFromUrl, sourceAppName } from "./sourcePresentation";
 import { SourceTypeIcon } from "./SourceTypeIcon";
+import { SourceCitedBy } from "./SourceCitedBy";
 import "../readingSurface.css";
 import "../page/detailInfo.css";
 import "../context/knowledge-context.css";
@@ -76,7 +77,7 @@ export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, fr
 }
 
 /** Shared source document shell for indexed sources and full local-file reads. */
-export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, content, infoContent, breadcrumbs }: {
+export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, content, infoContent, breadcrumbs, onOpenPage }: {
   file: IndexedFileInfo;
   space?: string;
   onReady?: () => void;
@@ -84,6 +85,8 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
   content?: ReactNode;
   infoContent?: ReactNode;
   breadcrumbs?: ReactNode;
+  /** Shows which pages cite this source, each opening that page. */
+  onOpenPage?: (pageId: string) => void;
 }) {
   const { t, i18n } = useTranslation();
   const { open, setOpen, toggle } = useDetailInfoOpen(JSON.stringify([file.source, file.source_id, space ?? null]));
@@ -96,6 +99,7 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
     open={open} onClose={() => setOpen(false)} title={t("knowledgeContext.memoryPanel")} closeLabel={t("common.close")}>
     <DetailInfoContent className="source-document-info">
       {relatedPages}
+      {onOpenPage && <SourceCitedBy sourceId={file.source_id} onOpenPage={onOpenPage} />}
       <section>
         <h3 className="note-info-section-heading">{t("sourceAccess.details")}</h3>
         <dl className="source-info-metadata">
@@ -121,7 +125,7 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
   </article>;
 }
 
-export function SourceDocumentPage({ file, space, onReady, onRegisterFlush }: { file: IndexedFileInfo; space?: string; onReady?: () => void; onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void }) {
+export function SourceDocumentPage({ file, space, onReady, onRegisterFlush, onOpenPage }: { file: IndexedFileInfo; space?: string; onReady?: () => void; onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void; onOpenPage?: (pageId: string) => void }) {
   const scope = space ?? file.space ?? undefined;
-  return <SourceDocumentLayout file={file} {...(scope === undefined ? {} : { space: scope })} {...(onReady === undefined ? {} : { onReady })} {...(onRegisterFlush === undefined ? {} : { onRegisterFlush })} />;
+  return <SourceDocumentLayout file={file} {...(scope === undefined ? {} : { space: scope })} {...(onReady === undefined ? {} : { onReady })} {...(onRegisterFlush === undefined ? {} : { onRegisterFlush })} {...(onOpenPage === undefined ? {} : { onOpenPage })} />;
 }

@@ -26,7 +26,6 @@ interface SidebarProps {
   readonly onNavigateHome?: () => void;
   readonly onNavigatePages?: () => void;
   readonly onNavigateSettings?: () => void;
-  readonly onNavigateSources?: () => void;
   readonly onNavigateSpaces?: (create: boolean) => void;
   readonly onOpenAbout?: () => void;
   readonly onOpenSearch?: (trigger: HTMLButtonElement) => void;
@@ -69,7 +68,6 @@ export default function Sidebar({
   onNavigateHome,
   onNavigatePages,
   onNavigateSettings,
-  onNavigateSources,
   onNavigateSpaces = () => {},
   onOpenAbout,
   onOpenSearch,
@@ -160,7 +158,6 @@ export default function Sidebar({
               navigation: t("sidebar.navigation"),
               pages: t("sidebar.pages"),
               pinToSidebar: (name) => t("sidebar.pinToSidebar", { name }),
-              sources: t("sidebar.sources"),
               spaces: t("sidebar.spaces"),
               unpinFromSidebar: (name) => t("sidebar.unpinFromSidebar", { name }),
             }}
@@ -168,7 +165,6 @@ export default function Sidebar({
             onNavigateGraph={closeAfterNavigation(onNavigateGraph, closeOverlay)}
             onNavigateHome={closeAfterNavigation(onNavigateHome, closeOverlay)}
             onNavigatePages={closeAfterNavigation(onNavigatePages, closeOverlay)}
-            onNavigateSources={closeAfterNavigation(onNavigateSources, closeOverlay)}
             onNavigateSpaces={closeAfterNavigation(onNavigateSpaces, closeOverlay)}
           />
         </div>

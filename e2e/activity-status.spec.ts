@@ -8,7 +8,7 @@ import { openPrimaryDestination } from "./helpers/primaryNavigation";
 import { openWikiNote } from "./helpers/wikiWorkspace";
 
 const WIDTHS = [1280, 375] as const;
-const VIEWS = ["Wiki", "Topics", "Spaces", "Graph", "Sources"] as const;
+const VIEWS = ["Wiki", "Topics", "Spaces", "Graph"] as const;
 
 /**
  * A fixture with work in every asset, so the popover has three non-empty

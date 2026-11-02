@@ -219,14 +219,18 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-FIND-2** `planned` Opening a source shows that sentence with a little
   of what came before and after, and where it is used. You can expand it to
   the whole original. Imported originals stay backstage: they are not in page
-  lists or on home.
-  原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）
+  lists or on home. The whole conversation reads like the AI tool it came from:
+  the person's words in a light bubble on the right, the AI's replies across
+  the width; the short preview stays one column with who spoke.
+  原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）「一般这种对话怎么渲染会更适合一些？就像现在这样在左边，还是说要左右左右这样子的？」（2026-11-02 16:03）「2. 同意」（2026-11-02 16:47）
 - **UX-FIND-3** `planned` There is "open in the original AI tool".
   原文：有「在原本的 AI 工具打開」。
 - **UX-FIND-4** `planned` The left side keeps only what matters: Search, Home,
-  Wiki and Spaces. Sources, the graph and topics wait under More, where each
-  can be pinned; Activity stays at the bottom. There is no Memories page.
-  原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）
+  Wiki and Spaces. The graph and topics wait under More, where each can be
+  pinned; Activity stays at the bottom. There is no Memories page and no
+  Sources page: a source is what a sentence cites, so a source shows which
+  pages cite it, and the list of added files and links opens from Settings.
+  原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）「那你说你有什么情况下会特别需要到一个来源的页面，导览页面里面去管理那些东西？感觉机会并不是很大。」（2026-11-02 16:02）「1. 同意」（2026-11-02 16:47）
 
 ## What AI tools made (HTML, images)
 

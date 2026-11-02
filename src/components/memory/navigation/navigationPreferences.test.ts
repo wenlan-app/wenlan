@@ -27,9 +27,9 @@ describe("navigation preferences", () => {
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(REQUIRED_NAVIGATION_DESTINATIONS);
   });
 
-  it("keeps Home first, once, while preserving other destinations, and drops Memories", () => {
-    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible: ["home", "sources", "home", "memories"] }));
-    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "sources"]);
+  it("keeps Home first, once, while preserving other destinations, and drops Memories and Sources", () => {
+    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible: ["home", "graph", "home", "memories", "sources"] }));
+    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "graph"]);
     expect(sanitizeVisibleNavigation(["home", "pages", "home"])).toEqual(REQUIRED_NAVIGATION_DESTINATIONS);
   });
 
@@ -48,10 +48,10 @@ describe("navigation preferences", () => {
     localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible: ["home", "unknown", "spaces", "home", "pages", "graph"] }));
     expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "graph"]);
     expect(sanitizeVisibleNavigation(["entities", "graph", "graph", null])).toEqual(["home", "pages", "spaces", "graph", "entities"]);
-    writeNavigationPreferences(["entities", "sources", "sources", "pages"]);
+    writeNavigationPreferences(["entities", "graph", "graph", "pages"]);
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!)).toEqual({
       version: 2,
-      visible: ["home", "pages", "spaces", "sources", "entities"],
+      visible: ["home", "pages", "spaces", "graph", "entities"],
       sidebar: DEFAULT_SIDEBAR_PREFERENCES,
     });
   });
@@ -105,7 +105,7 @@ describe("navigation preferences", () => {
     expect(readSidebarPreferences()).toEqual({ visible: true, mode: "labels", width: 315 });
     expect(expandedSidebarWidth(readSidebarPreferences())).toBe(315);
 
-    writeNavigationPreferences(["sources"]);
+    writeNavigationPreferences(["graph"]);
     expect(readSidebarPreferences()).toEqual({ visible: true, mode: "labels", width: 315 });
   });
 
@@ -120,6 +120,6 @@ describe("navigation preferences", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("disabled"); });
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("disabled"); });
     expect(readNavigationPreferences()).toEqual(DEFAULT_VISIBLE_NAVIGATION);
-    expect(() => writeNavigationPreferences(["sources"])).not.toThrow();
+    expect(() => writeNavigationPreferences(["graph"])).not.toThrow();
   });
 });

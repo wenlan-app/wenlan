@@ -227,6 +227,32 @@ describe("UX-FIND-2 a sentence with what came before and after", () => {
     expect(marked).toHaveTextContent("Decided: stay near Gion.");
   });
 
+  it("lays the whole conversation out like the AI tool: your words apart from the AI's", async () => {
+    const user = userEvent.setup();
+    getConversationLinesMock.mockResolvedValue({
+      session_id: "ses_1",
+      tool: "claude-code",
+      lines: [
+        { speaker: "you", text: "Decided: stay near Gion." },
+        { speaker: "ai", text: "Noted." },
+      ],
+    });
+    renderResults(activity(), [], { conversationHits: [hit] }, "gion");
+    await user.click(await screen.findByRole("button", { name: /Decided: stay near Gion/ }));
+    const quote = screen.getByTestId("conversation-quote");
+    // The three-line preview stays one left-aligned column with who spoke.
+    expect(quote.querySelector(".search-quote-lines--chat")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Show all" }));
+    await screen.findByText("Noted.");
+    const lines = quote.querySelector(".search-quote-lines--chat");
+    expect(lines).not.toBeNull();
+    expect(screen.getByText("Decided: stay near Gion.", { selector: ".search-quote-text" }).closest("p")).toHaveAttribute("data-speaker", "you");
+    expect(screen.getByText("Noted.").closest("p")).toHaveAttribute("data-speaker", "ai");
+    // Who spoke is still read out, though the side shows it on screen.
+    expect(lines).toHaveTextContent("You");
+  });
+
   it("says so when the conversation is gone from this computer", async () => {
     const user = userEvent.setup();
     getConversationLinesMock.mockRejectedValue(new Error("not found"));
