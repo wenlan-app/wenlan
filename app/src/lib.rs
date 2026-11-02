@@ -1845,6 +1845,7 @@ pub fn run() {
             search::get_session_detail,
             search::list_things,
             search::get_thing,
+            search::get_thing_map,
             search::rename_thing,
             search::move_session_thing,
             search::get_page_sessions,

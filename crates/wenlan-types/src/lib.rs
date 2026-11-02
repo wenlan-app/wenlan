@@ -123,9 +123,10 @@ pub use steep_new::{
     SteepOrganizeWork,
 };
 pub use things::{
-    ThingActor, ThingDetailResponse, ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapOp,
-    ThingMapOpsRequest, ThingMapOpsResponse, ThingMapProposal, ThingMapResponse, ThingMapSource,
-    ThingMapState, ThingMoveRequest, ThingPageEntry, ThingPageVia, ThingRef, ThingRenameRequest,
+    SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingActor, ThingDetailResponse,
+    ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapOp, ThingMapOpsRequest,
+    ThingMapOpsResponse, ThingMapProposal, ThingMapResponse, ThingMapSource, ThingMapState,
+    ThingMoveRequest, ThingPageEntry, ThingPageVia, ThingRef, ThingRenameRequest,
     ThingSessionEntry, ThingSummary, ThingsResponse,
 };
 

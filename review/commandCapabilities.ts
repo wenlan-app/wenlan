@@ -122,6 +122,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // Fixtures have no things: the list is empty and no id resolves.
     "list_things",
     "get_thing",
+    "get_thing_map",
     "rename_thing",
     "move_session_thing",
     "list_registered_sources",

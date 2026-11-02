@@ -121,7 +121,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_page_sessions": return { sessions: [] };
     case "get_session_detail": return null;
     // The fixture has no things, so no thing id resolves.
-    case "get_thing": case "rename_thing": throw new TauriMockArgumentError(command, "id");
+    case "get_thing": case "get_thing_map": case "rename_thing": throw new TauriMockArgumentError(command, "id");
     case "move_session_thing": throw new TauriMockArgumentError(command, "fromThingId");
     case "list_communities": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, communities: [], next_cursor: null };
     case "list_community_members": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, members: [], next_cursor: null };

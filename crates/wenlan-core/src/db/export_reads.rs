@@ -19,14 +19,21 @@ pub(crate) struct ExportPageRow {
     pub last_modified: String,
     /// The `citations` JSON as stored.
     pub citations: Option<String>,
-    /// The entity this row is the shadow page of, from the row or
-    /// `entity_page_map`.
+    /// The page's own `entity_id`, else the entity `entity_page_map` maps
+    /// to it.
     pub entity_id: Option<String>,
+    /// Whether `pages.entity_id` itself is set (not only the map).
+    pub entity_id_on_page: bool,
     pub entity_type: Option<String>,
-    pub entity_confirmed: bool,
+    /// As stored: NULL, 0 and 1 are kept apart.
+    pub entity_confirmed: Option<i64>,
     /// The `aliases` JSON as stored.
     pub aliases: Option<String>,
     pub established_by: Option<String>,
+    /// The page's one-line summary; the person can edit it.
+    pub summary: Option<String>,
+    pub entity_created_at: Option<i64>,
+    pub entity_updated_at: Option<i64>,
 }
 
 /// One `memories` row (one chunk), every column a memory file carries.
@@ -62,6 +69,11 @@ pub(crate) struct ExportMemoryRow {
     /// explicit, as enrichment treats it.
     pub memory_type_explicit: bool,
     pub structured_fields_explicit: bool,
+    pub last_modified: Option<i64>,
+    /// Extra text the memory is found by; part of what is embedded.
+    pub retrieval_cue: Option<String>,
+    /// The person turned down the space enrichment suggested.
+    pub space_rejected: bool,
 }
 
 impl MemoryDB {
@@ -76,8 +88,9 @@ impl MemoryDB {
                         COALESCE(p.entity_id, \
                                  (SELECT m.entity_id FROM entity_page_map m \
                                   WHERE m.page_id = p.id ORDER BY m.entity_id LIMIT 1)), \
-                        p.entity_type, COALESCE(p.entity_confirmed, 0), p.aliases, \
-                        p.established_by \
+                        p.entity_type, p.entity_confirmed, p.aliases, \
+                        p.established_by, p.summary, p.entity_created_at, \
+                        p.entity_updated_at, p.entity_id IS NOT NULL \
                  FROM pages p ORDER BY p.id",
                 (),
             )
@@ -99,15 +112,19 @@ impl MemoryDB {
                 citations: row.get(9).map_err(decode)?,
                 entity_id: row.get(10).map_err(decode)?,
                 entity_type: row.get(11).map_err(decode)?,
-                entity_confirmed: row.get::<i64>(12).map_err(decode)? != 0,
+                entity_confirmed: row.get::<Option<i64>>(12).map_err(decode)?,
                 aliases: row.get(13).map_err(decode)?,
                 established_by: row.get(14).map_err(decode)?,
+                summary: row.get(15).map_err(decode)?,
+                entity_created_at: row.get(16).map_err(decode)?,
+                entity_updated_at: row.get(17).map_err(decode)?,
+                entity_id_on_page: row.get::<i64>(18).map_err(decode)? != 0,
             });
         }
         Ok(out)
     }
 
-    /// The start of each memory in `ids` that exists, for citation labels.
+    /// The text of each memory in `ids` that exists, for citation labels.
     pub(crate) async fn export_memory_texts(
         &self,
         ids: &[String],
@@ -116,10 +133,16 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         for chunk in ids.chunks(200) {
             let marks = vec!["?"; chunk.len()].join(", ");
-            // A memory's id is its `source_id`; its first chunk starts its text.
+            // A memory's id is its `source_id`; its text is its chunks in
+            // order (chunk boundaries are cache, so a label never depends on
+            // where one falls). Only `memory` rows, as the app's label
+            // reader reads them.
+            // Document chunks are left out: their connected folder is their
+            // truth, so a rebuilt database has none to label them by.
             let sql = format!(
-                "SELECT source_id, content FROM memories WHERE source_id IN ({marks}) \
-                 ORDER BY source_id, chunk_index DESC"
+                "SELECT source_id, content, origin_class, source_agent FROM memories \
+                 WHERE source = 'memory' AND source_id IN ({marks}) \
+                 ORDER BY source_id, chunk_index"
             );
             let params: Vec<libsql::Value> = chunk
                 .iter()
@@ -138,7 +161,21 @@ impl MemoryDB {
                     .get(0)
                     .map_err(|e| WenlanError::VectorDb(format!("export_memory_texts id: {e}")))?;
                 let text: String = row.get(1).unwrap_or_default();
-                out.insert(id, text);
+                let origin: Option<String> = row.get(2).unwrap_or_default();
+                let agent: Option<String> = row.get(3).unwrap_or_default();
+                if origin.as_deref() == Some("document_ingest")
+                    || agent
+                        .as_deref()
+                        .is_some_and(crate::origin::is_document_ingest_source_agent)
+                {
+                    continue;
+                }
+                out.entry(id)
+                    .and_modify(|joined: &mut String| {
+                        joined.push('\n');
+                        joined.push_str(&text);
+                    })
+                    .or_insert(text);
             }
         }
         Ok(out)
@@ -164,9 +201,10 @@ impl MemoryDB {
                         m.origin_class, m.session_id, m.authored_content, m.entity_id, \
                         COALESCE(m.is_recap, 0), \
                         COALESCE(o.memory_type_explicit, 1), \
-                        COALESCE(o.structured_fields_explicit, 1) \
+                        COALESCE(o.structured_fields_explicit, 1), m.last_modified, \
+                        m.retrieval_cue, COALESCE(o.space_rejected, 0) \
                  FROM memories m LEFT JOIN enrichment_origin o ON o.source_id = m.source_id \
-                 ORDER BY m.source_id, m.chunk_index, m.id",
+                 ORDER BY m.source_id, m.source, m.chunk_index, m.id",
                 (),
             )
             .await
@@ -205,6 +243,9 @@ impl MemoryDB {
                 is_recap: flag(row.get(25).map_err(decode)?),
                 memory_type_explicit: flag(row.get(26).map_err(decode)?),
                 structured_fields_explicit: flag(row.get(27).map_err(decode)?),
+                last_modified: row.get(28).map_err(decode)?,
+                retrieval_cue: row.get(29).map_err(decode)?,
+                space_rejected: flag(row.get(30).map_err(decode)?),
             });
         }
         Ok(out)
@@ -376,6 +417,30 @@ impl MemoryDB {
         Ok((maps, nodes, edges))
     }
 
+    /// Each page's `creation_kind` and `user_edited`, which say who made a
+    /// first version recorded as plain `create`.
+    pub(crate) async fn export_page_births(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (String, bool)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export_page_births: {e}"));
+        let mut rows = conn
+            .query(
+                "SELECT id, COALESCE(creation_kind, ''), COALESCE(user_edited, 0) FROM pages",
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        let mut out = std::collections::HashMap::new();
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            let id: String = row.get(0).map_err(decode)?;
+            let kind: String = row.get(1).map_err(decode)?;
+            let edited: i64 = row.get(2).map_err(decode)?;
+            out.insert(id, (kind, edited != 0));
+        }
+        Ok(out)
+    }
+
     /// Every kept artifact original, by page id.
     pub(crate) async fn export_original_records(
         &self,
@@ -420,7 +485,11 @@ impl MemoryDB {
         let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export {table}: {e}"));
         let mut info = conn
             .query(
-                "SELECT name, pk FROM pragma_table_info(?1) ORDER BY cid",
+                // Key columns first, in key order, then the rest by name, not
+                // by position: a database upgraded with ALTER TABLE and a
+                // fresh one list the same columns in different orders.
+                "SELECT name, pk FROM pragma_table_info(?1) \
+                 ORDER BY pk = 0, NULLIF(pk, 0), name",
                 [table],
             )
             .await
@@ -451,6 +520,66 @@ impl MemoryDB {
         let select = columns
             .iter()
             .map(|name| quote(name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut rows = conn
+            .query(
+                &format!("SELECT {select} FROM {} ORDER BY {order}", quote(table)),
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            let mut values = Vec::with_capacity(columns.len());
+            for index in 0..columns.len() {
+                values.push(row.get_value(index as i32).map_err(decode)?);
+            }
+            out.push(values);
+        }
+        Ok(Some(ExportTable { columns, rows: out }))
+    }
+}
+
+impl MemoryDB {
+    /// The named columns of `table` that exist, every row, ordered by
+    /// `order` (column names). `None` when the table does not exist.
+    pub(crate) async fn export_columns(
+        &self,
+        table: &'static str,
+        wanted: &[&str],
+        order: &[&str],
+    ) -> Result<Option<ExportTable>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export {table}: {e}"));
+        let mut info = conn
+            .query(
+                "SELECT name FROM pragma_table_info(?1) ORDER BY cid",
+                [table],
+            )
+            .await
+            .map_err(decode)?;
+        let mut present = Vec::new();
+        while let Some(row) = info.next().await.map_err(decode)? {
+            present.push(row.get::<String>(0).map_err(decode)?);
+        }
+        if present.is_empty() {
+            return Ok(None);
+        }
+        let columns: Vec<String> = wanted
+            .iter()
+            .filter(|name| present.iter().any(|p| p == *name))
+            .map(|name| name.to_string())
+            .collect();
+        let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+        let select = columns
+            .iter()
+            .map(|c| quote(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let order = order
+            .iter()
+            .map(|c| quote(c))
             .collect::<Vec<_>>()
             .join(", ");
         let mut rows = conn

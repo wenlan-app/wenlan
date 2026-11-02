@@ -394,6 +394,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // The person moves a conversation between things; returns the target
     // thing's summary, which the scoped GET /api/things/{id} also guards.
     "/api/sessions/{id}/things/move",
+    // Where the caller's conversation is saved (UX-CHAT-7): a thing title the
+    // caller's Space can see, or null; the scoped GET /api/things/{id} guards it.
+    "/api/sessions/{id}/saved-in",
     // Changes a thing's map; returns the map, which the scoped
     // GET /api/things/{id}/map also guards.
     "/api/things/{id}/map/ops",

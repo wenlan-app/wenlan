@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Settings as files (spec section 3, "Settings"): `backstage/settings/`.
 //!
-//! | File              | Tables                       |
-//! |-------------------|------------------------------|
-//! | `spaces.json`     | `spaces`                     |
-//! | `things.json`     | `things`, `thing_sessions`   |
-//! | `agents.json`     | `agent_connections`          |
-//! | `profile.json`    | `profiles`                   |
-//! | `onboarding.json` | `onboarding_milestones`      |
-//! | `metadata.json`   | `app_metadata`               |
+//! | File              | Tables                                          |
+//! |-------------------|-------------------------------------------------|
+//! | `spaces.json`     | `spaces`                                        |
+//! | `things.json`     | `things`, `thing_sessions`, the `thing_map*` four |
+//! | `agents.json`     | `agent_connections`                             |
+//! | `profile.json`    | `profiles`                                      |
+//! | `onboarding.json` | `onboarding_milestones`                         |
+//! | `metadata.json`   | `app_metadata`                                  |
 //!
 //! Each table is copied whole, every column and row as stored, so a column a
 //! later migration adds is carried without a change here:
@@ -27,7 +27,17 @@ use crate::error::WenlanError;
 /// Each settings file and the tables it holds.
 pub const SETTINGS_FILES: &[(&str, &[&str])] = &[
     ("spaces", &["spaces"]),
-    ("things", &["things", "thing_sessions"]),
+    (
+        "things",
+        &[
+            "things",
+            "thing_sessions",
+            "thing_maps",
+            "thing_map_nodes",
+            "thing_map_edges",
+            "thing_map_proposals",
+        ],
+    ),
     ("agents", &["agent_connections"]),
     ("profile", &["profiles"]),
     ("onboarding", &["onboarding_milestones"]),
@@ -42,31 +52,52 @@ pub async fn export_settings(
 ) -> Result<usize, WenlanError> {
     let mut rows = 0;
     for (file, tables) in SETTINGS_FILES {
-        let mut held = Map::new();
-        for table in *tables {
-            let Some(copied) = db.export_table(table).await? else {
-                continue;
-            };
-            rows += copied.rows.len();
-            held.insert(table.to_string(), table_value(&copied));
-        }
-        let value = json!({ "tables": held });
-        let text = serde_json::to_string_pretty(&value)
-            .map_err(|error| WenlanError::Validation(format!("settings {file}: {error}")))?
-            + "\n";
-        let reads_back = serde_json::from_str::<Value>(&text).ok() == Some(value);
-        super::memories::check(manifest, file, reads_back);
-        manifest.files.push(dirs.write(
+        rows += write_tables(
+            db,
+            dirs,
+            manifest,
             &format!("backstage/settings/{file}.json"),
             file,
             "settings",
-            &text,
-        )?);
+            tables,
+        )
+        .await?;
     }
     Ok(rows)
 }
 
-fn table_value(table: &ExportTable) -> Value {
+/// Writes `tables`, each copied whole, as one JSON file at `path`; returns
+/// how many rows it holds. A table this database does not have is left out
+/// of the file.
+pub(super) async fn write_tables(
+    db: &MemoryDB,
+    dirs: &ExportDirs,
+    manifest: &mut Manifest,
+    path: &str,
+    id: &str,
+    file_type: &str,
+    tables: &[&'static str],
+) -> Result<usize, WenlanError> {
+    let mut rows = 0;
+    let mut held = Map::new();
+    for table in tables {
+        let Some(copied) = db.export_table(table).await? else {
+            continue;
+        };
+        rows += copied.rows.len();
+        held.insert(table.to_string(), table_value(&copied));
+    }
+    let value = json!({ "tables": held });
+    let text = serde_json::to_string_pretty(&value)
+        .map_err(|error| WenlanError::Validation(format!("{path}: {error}")))?
+        + "\n";
+    let reads_back = serde_json::from_str::<Value>(&text).ok() == Some(value);
+    super::memories::check(manifest, id, reads_back);
+    manifest.files.push(dirs.write(path, id, file_type, &text)?);
+    Ok(rows)
+}
+
+pub(super) fn table_value(table: &ExportTable) -> Value {
     json!({
         "columns": table.columns,
         "rows": table
@@ -77,7 +108,7 @@ fn table_value(table: &ExportTable) -> Value {
     })
 }
 
-fn cell(value: &libsql::Value) -> Value {
+pub(crate) fn cell(value: &libsql::Value) -> Value {
     match value {
         libsql::Value::Null => Value::Null,
         libsql::Value::Integer(number) => json!(number),

@@ -106,6 +106,52 @@ pub struct ThingRef {
     pub title: Option<String>,
 }
 
+/// Where a conversation was saved, for the one line the AI tool shows the
+/// person (UX-CHAT-7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedIn {
+    pub thing_id: String,
+    pub title: String,
+    /// Opens the thing in the Wenlan app (`wenlan://thing/{id}`).
+    pub link: String,
+}
+
+/// What a write just did to a page, for the saved-in line (UX-CHAT-7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SavedPageChange {
+    /// The AI wrote a new page.
+    New,
+    /// The AI changed a page that already existed.
+    Updated,
+    /// The AI wanted to change sentences the person wrote, so the change
+    /// waits for them as a suggestion.
+    Proposal,
+}
+
+/// Body of `POST /api/sessions/{id}/saved-in`. Empty after a plain save;
+/// after a page write, the page and what happened to it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedInRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change: Option<SavedPageChange>,
+}
+
+/// `POST /api/sessions/{id}/saved-in`: `saved_in` is set only when this
+/// conversation's thing changed since it was last reported, and the thing
+/// has a name; otherwise it is null. `report_page` says whether the page
+/// change in the request is worth a mention: a new page always is, an update
+/// or a suggestion once per page per conversation. When neither is set the
+/// AI tool says nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedInResponse {
+    pub saved_in: Option<SavedIn>,
+    #[serde(default)]
+    pub report_page: bool,
+}
+
 /// Who wrote a point on a thing's map (UX-WHO-2: the AI proposes rather than
 /// edits a point the person wrote or edited).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

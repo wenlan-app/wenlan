@@ -701,6 +701,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/sessions` | main | no | not_applicable | `none` | — | AgentSession carries no page prose |
 | `GET` | `/api/sessions/{id}` | main | yes | automatic | `none` | `handle_get_session` | SessionPageEntry.title |
 | `POST` | `/api/sessions/{id}/things/move` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `POST` | `/api/sessions/{id}/saved-in` | main | no | not_applicable | `none` | — | SavedInResponse: thing id, thing title and an app link, no page prose |
 | `GET` | `/api/things` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `GET` | `/api/things/{id}` | main | yes | automatic | `none` | `handle_get_thing` | ThingPageEntry.title |
 | `GET` | `/api/things/{id}/map` | main | no | not_applicable | `none` | — | ThingMapResponse: point labels written for the map and conversation ids, no page prose |
@@ -1408,7 +1409,7 @@ carrying the authority of agreement.
 | `core/sentences.rs::load_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sentences.rs::source_states` | `private` | no | no | — | `core/db/sentence_history.rs::cited_source_state` |
 | `core/sources/page_watcher.rs::sync_one_file` | `private` | no | no | — | `core/db.rs::get_page` |
-| `core/steep.rs::claim_as` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/steep.rs::claim_as` | `private` | yes | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::commit` | `pub` | yes | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::list_work` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/steep.rs::steep_work` |
 | `core/steep_new.rs::attach_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/steep_new.rs::existing_page` |
@@ -1419,6 +1420,7 @@ carrying the authority of agreement.
 | `core/steep_new.rs::unused_link_targets` | `pub` | no | **yes** | `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page_inner`, `server/steep_routes.rs::handle_steep_commit` | `core/steep_new.rs::link_targets`, `core/synthesis/wikilinks.rs::resolve_against_pages` |
 | `core/steep_new.rs::vault_linked_notes` | `private` | no | no | — | `core/db/steep_new.rs::notes_citing_sources_with`, `core/db/steep_new.rs::notes_citing_text_with` |
 | `core/steep_organize.rs::apply` | `pub` | yes | no | — | `core/db.rs::apply_entity_extraction` |
+| `core/store/export/run.rs::export_lossless` | `pub` | no | **yes** | `server/cmd_export.rs::run` | `core/store/export/pages.rs::export_pages` |
 | `core/synthesis/detect.rs::detect_page_candidates` | `pub` | no | no | — | `core/db.rs::find_distillation_clusters_scoped`, `core/db.rs::find_matching_page_scoped` |
 | `core/synthesis/distill.rs::build_page_compile_user_prompt` | `pub(crate)` | no | no | — | `core/synthesis/distill.rs::build_existing_titles_hint` |
 | `core/synthesis/distill.rs::distill_one_cluster_with_tuning` | `private` | no | no | — | `core/db.rs::find_best_overlapping_page`, `core/db.rs::find_matching_page_scoped`, `core/db.rs::get_page` |
@@ -1559,9 +1561,9 @@ carrying the authority of agreement.
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
 | `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::sync_one_file` |
-| `core/steep.rs::claim` | `pub` | yes | no | — | `core/steep.rs::claim_as` |
 | `core/steep_new.rs::claim_new` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
 | `core/steep_organize.rs::plan` | `pub` | no | no | — | `core/db.rs::entity_enrichment_for_claim` |
+| `core/store/rebuild/mod.rs::export_again` | `pub` | no | no | — | `core/store/export/run.rs::export_lossless` |
 | `core/synthesis/distill.rs::distill_one_cluster` | `pub` | no | no | — | `core/synthesis/distill.rs::distill_one_cluster_with_tuning` |
 | `core/synthesis/distill.rs::distill_pages_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/synthesis/distill.rs::distill_pages_scoped_gated` |
 | `core/synthesis/distill.rs::refresh_page` | `pub` | no | no | — | `core/synthesis/distill.rs::refresh_page_with_prompt` |
@@ -1572,6 +1574,7 @@ carrying the authority of agreement.
 | `server/check_routes.rs::handle_check` | `pub` | no | no | — | `core/chat_check.rs::check_against_decisions` |
 | `server/check_routes.rs::handle_check_context` | `pub` | no | no | — | `core/chat_check.rs::decision_context` |
 | `server/cmd_cutover.rs::run` | `pub` | yes | no | — | `core/export/knowledge.rs::plan_truth_cutover` |
+| `server/cmd_export.rs::run` | `pub` | yes | no | — | `core/store/export/run.rs::export_lossless` |
 | `server/lint_routes.rs::prepare_current_repair` | `pub(crate)` | no | no | `server/repair_routes.rs::handle_prepare_current` | `core/repair/current.rs::prepare_current_repair_with_pages` |
 | `server/main.rs::main` | `private` | yes | no | — | `server/main.rs::run_daemon` |
 | `server/memory_routes.rs::handle_search_memory` | `pub` | no | no | — | `server/memory_routes.rs::handle_search_memory_inner` |

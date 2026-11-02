@@ -5412,6 +5412,15 @@ pub async fn get_thing(
 }
 
 #[tauri::command]
+pub async fn get_thing_map(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::ThingMapResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_thing_map(&id).await
+}
+
+#[tauri::command]
 pub async fn rename_thing(
     state: tauri::State<'_, State>,
     id: String,

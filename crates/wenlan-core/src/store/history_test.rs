@@ -22,6 +22,7 @@ fn small() -> HistoryConfig {
     HistoryConfig {
         rotate_bytes: 600,
         blob_threshold: 64,
+        ..HistoryConfig::default()
     }
 }
 

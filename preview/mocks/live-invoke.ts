@@ -1072,6 +1072,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // falls back to Brief items.
   list_things: () => get("/api/things").then((r) => r?.things ?? []).catch(() => []),
   get_thing: (a) => get(`/api/things/${enc(String(a?.id ?? ""))}`),
+  get_thing_map: (a) => get(`/api/things/${enc(String(a?.id ?? ""))}/map`),
   rename_thing: (a) => patch(`/api/things/${enc(String(a?.id ?? ""))}`, { title: a?.title }),
   move_session_thing: (a) => post(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/things/move`, {
     from_thing_id: a?.fromThingId,

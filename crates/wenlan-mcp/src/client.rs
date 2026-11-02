@@ -98,6 +98,11 @@ const MAX_RETRIES: u32 = 3;
 const BACKOFF_BASE: Duration = Duration::from_secs(1);
 
 impl WenlanClient {
+    /// The AI session this clone writes for, if one resolved.
+    pub fn session(&self) -> Option<&SessionRef> {
+        self.session.as_ref()
+    }
+
     pub fn new(base_url: String) -> Self {
         Self {
             client: Client::new(),
