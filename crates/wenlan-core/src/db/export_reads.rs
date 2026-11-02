@@ -283,6 +283,200 @@ impl MemoryDB {
         }
         Ok((briefs, items))
     }
+
+    /// Every canvas, node and edge, ordered.
+    pub(crate) async fn export_canvases(
+        &self,
+    ) -> Result<
+        (
+            Vec<ExportCanvasRow>,
+            Vec<ExportCanvasNodeRow>,
+            Vec<ExportCanvasEdgeRow>,
+        ),
+        WenlanError,
+    > {
+        let conn = self.conn.lock().await;
+        let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export_canvases: {e}"));
+        let mut maps = Vec::new();
+        let mut rows = conn
+            .query(
+                "SELECT page_id, revision, map_schema, viewport, generated_at, created_at, \
+                        updated_at FROM page_maps ORDER BY page_id",
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            maps.push(ExportCanvasRow {
+                page_id: row.get(0).map_err(decode)?,
+                revision: row.get(1).map_err(decode)?,
+                map_schema: row.get(2).map_err(decode)?,
+                viewport: row.get(3).map_err(decode)?,
+                generated_at: row.get(4).map_err(decode)?,
+                created_at: row.get(5).map_err(decode)?,
+                updated_at: row.get(6).map_err(decode)?,
+            });
+        }
+        let mut nodes = Vec::new();
+        let mut rows = conn
+            .query(
+                "SELECT id, page_id, parent_id, rank, ref_kind, ref_id, label, status, pinned, \
+                        placed, collapsed, x, y, width, height, fingerprint, provenance, \
+                        created_at, updated_at \
+                 FROM page_map_nodes ORDER BY page_id, rank, id",
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            nodes.push(ExportCanvasNodeRow {
+                id: row.get(0).map_err(decode)?,
+                page_id: row.get(1).map_err(decode)?,
+                parent_id: row.get(2).map_err(decode)?,
+                rank: row.get(3).map_err(decode)?,
+                ref_kind: row.get(4).map_err(decode)?,
+                ref_id: row.get(5).map_err(decode)?,
+                label: row.get(6).map_err(decode)?,
+                status: row.get(7).map_err(decode)?,
+                pinned: row.get::<i64>(8).map_err(decode)? != 0,
+                placed: row.get::<i64>(9).map_err(decode)? != 0,
+                collapsed: row.get::<i64>(10).map_err(decode)? != 0,
+                x: row.get(11).map_err(decode)?,
+                y: row.get(12).map_err(decode)?,
+                width: row.get(13).map_err(decode)?,
+                height: row.get(14).map_err(decode)?,
+                fingerprint: row.get(15).map_err(decode)?,
+                provenance: row.get(16).map_err(decode)?,
+                created_at: row.get(17).map_err(decode)?,
+                updated_at: row.get(18).map_err(decode)?,
+            });
+        }
+        let mut edges = Vec::new();
+        let mut rows = conn
+            .query(
+                "SELECT id, page_id, from_node, to_node, kind, label, status, provenance, \
+                        created_at FROM page_map_edges ORDER BY page_id, id",
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            edges.push(ExportCanvasEdgeRow {
+                id: row.get(0).map_err(decode)?,
+                page_id: row.get(1).map_err(decode)?,
+                from_node: row.get(2).map_err(decode)?,
+                to_node: row.get(3).map_err(decode)?,
+                kind: row.get(4).map_err(decode)?,
+                label: row.get(5).map_err(decode)?,
+                status: row.get(6).map_err(decode)?,
+                provenance: row.get(7).map_err(decode)?,
+                created_at: row.get(8).map_err(decode)?,
+            });
+        }
+        Ok((maps, nodes, edges))
+    }
+
+    /// Every kept artifact original, by page id.
+    pub(crate) async fn export_original_records(
+        &self,
+    ) -> Result<Vec<super::originals::OriginalRecord>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export_originals: {e}"));
+        let mut rows = conn
+            .query(
+                "SELECT page_id, vendor, conversation_id, artifact_id, kind, title, file_path, \
+                        conversation_url, written_at, imported_at \
+                 FROM originals ORDER BY page_id",
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            out.push(super::originals::OriginalRecord {
+                page_id: row.get(0).map_err(decode)?,
+                vendor: row.get(1).map_err(decode)?,
+                conversation_id: row.get(2).map_err(decode)?,
+                artifact_id: row.get(3).map_err(decode)?,
+                kind: row.get(4).map_err(decode)?,
+                title: row.get(5).map_err(decode)?,
+                file_path: row.get(6).map_err(decode)?,
+                conversation_url: row.get(7).map_err(decode)?,
+                written_at: row.get(8).map_err(decode)?,
+                imported_at: row.get(9).map_err(decode)?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Every row of `table` as stored, in primary key order, or `None` when
+    /// the table does not exist. `table` is one of the export's fixed names,
+    /// never input.
+    pub(crate) async fn export_table(
+        &self,
+        table: &'static str,
+    ) -> Result<Option<ExportTable>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let decode = |e: libsql::Error| WenlanError::VectorDb(format!("export {table}: {e}"));
+        let mut info = conn
+            .query(
+                "SELECT name, pk FROM pragma_table_info(?1) ORDER BY cid",
+                [table],
+            )
+            .await
+            .map_err(decode)?;
+        let mut columns = Vec::new();
+        let mut keys: Vec<(i64, String)> = Vec::new();
+        while let Some(row) = info.next().await.map_err(decode)? {
+            let name: String = row.get(0).map_err(decode)?;
+            let pk: i64 = row.get(1).map_err(decode)?;
+            if pk > 0 {
+                keys.push((pk, name.clone()));
+            }
+            columns.push(name);
+        }
+        if columns.is_empty() {
+            return Ok(None);
+        }
+        keys.sort();
+        let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+        let order = if keys.is_empty() {
+            "rowid".to_string()
+        } else {
+            keys.iter()
+                .map(|(_, name)| quote(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let select = columns
+            .iter()
+            .map(|name| quote(name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut rows = conn
+            .query(
+                &format!("SELECT {select} FROM {} ORDER BY {order}", quote(table)),
+                (),
+            )
+            .await
+            .map_err(decode)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            let mut values = Vec::with_capacity(columns.len());
+            for index in 0..columns.len() {
+                values.push(row.get_value(index as i32).map_err(decode)?);
+            }
+            out.push(values);
+        }
+        Ok(Some(ExportTable { columns, rows: out }))
+    }
+}
+
+/// A table copied whole: its column names and every row's values.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ExportTable {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<libsql::Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -304,4 +498,51 @@ pub(crate) struct ExportBriefItemRow {
     pub added_at: i64,
     pub gate: Option<String>,
     pub version: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ExportCanvasRow {
+    pub page_id: String,
+    pub revision: i64,
+    pub map_schema: i64,
+    pub viewport: Option<String>,
+    pub generated_at: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ExportCanvasNodeRow {
+    pub id: String,
+    pub page_id: String,
+    pub parent_id: Option<String>,
+    pub rank: f64,
+    pub ref_kind: String,
+    pub ref_id: String,
+    pub label: Option<String>,
+    pub status: String,
+    pub pinned: bool,
+    pub placed: bool,
+    pub collapsed: bool,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+    pub fingerprint: String,
+    pub provenance: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ExportCanvasEdgeRow {
+    pub id: String,
+    pub page_id: String,
+    pub from_node: String,
+    pub to_node: String,
+    pub kind: String,
+    pub label: Option<String>,
+    pub status: String,
+    pub provenance: Option<String>,
+    pub created_at: Option<String>,
 }

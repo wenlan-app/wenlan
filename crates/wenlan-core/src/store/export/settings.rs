@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Settings as files (spec section 3, "Settings"): `backstage/settings/`.
+//!
+//! | File              | Tables                       |
+//! |-------------------|------------------------------|
+//! | `spaces.json`     | `spaces`                     |
+//! | `things.json`     | `things`, `thing_sessions`   |
+//! | `agents.json`     | `agent_connections`          |
+//! | `profile.json`    | `profiles`                   |
+//! | `onboarding.json` | `onboarding_milestones`      |
+//! | `metadata.json`   | `app_metadata`               |
+//!
+//! Each table is copied whole, every column and row as stored, so a column a
+//! later migration adds is carried without a change here:
+//! `{"tables": {"<table>": {"columns": [...], "rows": [[...], ...]}}}`.
+//! Rows are in primary key order. A number keeps whether it was stored as an
+//! integer or a real; bytes are written as `{"hex": "..."}`. The history of
+//! things (`thing_history`) goes with the history export.
+
+use serde_json::{json, Map, Value};
+
+use super::{ExportDirs, Manifest};
+use crate::db::export_reads::ExportTable;
+use crate::db::MemoryDB;
+use crate::error::WenlanError;
+
+/// Each settings file and the tables it holds.
+pub const SETTINGS_FILES: &[(&str, &[&str])] = &[
+    ("spaces", &["spaces"]),
+    ("things", &["things", "thing_sessions"]),
+    ("agents", &["agent_connections"]),
+    ("profile", &["profiles"]),
+    ("onboarding", &["onboarding_milestones"]),
+    ("metadata", &["app_metadata"]),
+];
+
+/// Writes the settings files; returns how many rows they hold.
+pub async fn export_settings(
+    db: &MemoryDB,
+    dirs: &ExportDirs,
+    manifest: &mut Manifest,
+) -> Result<usize, WenlanError> {
+    let mut rows = 0;
+    for (file, tables) in SETTINGS_FILES {
+        let mut held = Map::new();
+        for table in *tables {
+            let Some(copied) = db.export_table(table).await? else {
+                continue;
+            };
+            rows += copied.rows.len();
+            held.insert(table.to_string(), table_value(&copied));
+        }
+        let value = json!({ "tables": held });
+        let text = serde_json::to_string_pretty(&value)
+            .map_err(|error| WenlanError::Validation(format!("settings {file}: {error}")))?
+            + "\n";
+        let reads_back = serde_json::from_str::<Value>(&text).ok() == Some(value);
+        super::memories::check(manifest, file, reads_back);
+        manifest.files.push(dirs.write(
+            &format!("backstage/settings/{file}.json"),
+            file,
+            "settings",
+            &text,
+        )?);
+    }
+    Ok(rows)
+}
+
+fn table_value(table: &ExportTable) -> Value {
+    json!({
+        "columns": table.columns,
+        "rows": table
+            .rows
+            .iter()
+            .map(|row| Value::Array(row.iter().map(cell).collect()))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn cell(value: &libsql::Value) -> Value {
+    match value {
+        libsql::Value::Null => Value::Null,
+        libsql::Value::Integer(number) => json!(number),
+        libsql::Value::Real(number) => serde_json::Number::from_f64(*number)
+            .map(Value::Number)
+            .unwrap_or_else(|| json!({ "real": number.to_string() })),
+        libsql::Value::Text(text) => json!(text),
+        libsql::Value::Blob(bytes) => {
+            let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            json!({ "hex": hex })
+        }
+    }
+}
