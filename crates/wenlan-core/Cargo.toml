@@ -21,7 +21,9 @@ scratch-config = []
 wenlan-types = { workspace = true }
 
 serde = { workspace = true }
-serde_json = { workspace = true }
+# Floats read back exactly as written: the export keeps REAL columns as
+# JSON numbers, and the default parser can be one bit off.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 serde_yaml = { workspace = true }
 toml = { workspace = true }
 chrono = { workspace = true }

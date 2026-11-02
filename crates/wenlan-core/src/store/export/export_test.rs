@@ -1227,3 +1227,16 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     found
 }
+
+/// A cited document chunk is labelled by its file name, which a rebuilt
+/// database (that has no document chunks) gives back the same.
+#[test]
+fn a_document_chunk_is_labelled_by_its_file_name() {
+    use super::pages::document_label;
+    assert_eq!(
+        document_label("local_files::/Users/me/notes/plan.md::3").as_deref(),
+        Some("plan.md")
+    );
+    assert_eq!(document_label("mem_123"), None);
+    assert_eq!(document_label("x::/dir/::1"), None);
+}

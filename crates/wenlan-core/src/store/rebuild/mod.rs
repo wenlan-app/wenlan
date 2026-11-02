@@ -164,8 +164,8 @@ pub async fn rebuild_tables(from: &Path, into: &MemoryDB) -> Result<Rebuilt, Wen
 }
 
 /// Rebuilds every part the export folder `from` holds into `into` (a
-/// fresh database): whole tables and history, then the file rows, then the
-/// state seeds on the file rows.
+/// fresh database): the file rows, then the state seeds on them, then the
+/// whole tables and history.
 pub async fn rebuild(from: &Path, into: &MemoryDB) -> Result<Rebuilt, WenlanError> {
     let manifest = read_manifest(from)?;
     if manifest.format != crate::store::export::EXPORT_FORMAT {
@@ -198,12 +198,16 @@ async fn rebuild_parts(
     into: &MemoryDB,
 ) -> Result<Rebuilt, WenlanError> {
     let mut problems = Vec::new();
-    // Settings first: Brief rows name their space.
-    let mut rebuilt = rebuild_tables(from, into).await?;
     let pages = pages::rebuild_pages(from, manifest, into, &mut problems).await?;
     let memories = memories::rebuild_memories(from, manifest, into, &mut problems).await?;
     let (briefs, items) = briefs::rebuild_briefs(from, manifest, into, &mut problems).await?;
     let canvases = canvases::rebuild_canvases(from, manifest, into, &mut problems).await?;
+    let (_, unset) = apply_states(from, into).await?;
+    problems.extend(unset);
+    // Whole tables last. Setting the state seeds edits page rows, and the
+    // database's triggers answer an edit (a `supported` verdict is demoted,
+    // a derivation queued); the tables copied whole must end as exported.
+    let mut rebuilt = rebuild_tables(from, into).await?;
     rebuilt.tables.insert("briefs".to_string(), briefs);
     rebuilt.tables.insert("brief_items".to_string(), items);
     rebuilt.tables.insert("page_maps".to_string(), canvases);
@@ -212,8 +216,6 @@ async fn rebuild_parts(
     rebuilt
         .tables
         .insert("memory_entities".to_string(), memories.links);
-    let (_, unset) = apply_states(from, into).await?;
-    problems.extend(unset);
     problems.append(&mut rebuilt.problems);
     rebuilt.problems = problems;
     Ok(rebuilt)

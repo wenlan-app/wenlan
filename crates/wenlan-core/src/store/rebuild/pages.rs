@@ -171,6 +171,12 @@ fn entity_row(mut file: entity::EntityFile, problems: &mut Vec<String>) -> Optio
     };
     let entity_created_at = seen(other, "first_seen", problems);
     let entity_updated_at = seen(other, "last_seen", problems);
+    // The stored aliases text, when the list would not write it back.
+    let aliases = take_text(other, "entity_aliases").or_else(|| {
+        (!file.aliases.is_empty()).then(|| serde_json::to_string(&file.aliases).unwrap_or_default())
+    });
+    // An id only `entity_page_map` held stays off the page row.
+    let on_page = take_bool(other, "entity_id_on_page") != Some(false);
     Some(Row {
         title: file.name,
         content: file.description,
@@ -186,10 +192,9 @@ fn entity_row(mut file: entity::EntityFile, problems: &mut Vec<String>) -> Optio
         } else {
             take_bool(other, "entity_confirmed").map(|_| 0)
         },
-        aliases: (!file.aliases.is_empty())
-            .then(|| serde_json::to_string(&file.aliases).unwrap_or_default()),
+        aliases,
         established_by: file.established_by,
-        entity_id: Some(file.id),
+        entity_id: on_page.then_some(file.id),
         entity_created_at,
         entity_updated_at,
         summary: None,

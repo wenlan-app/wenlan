@@ -237,6 +237,22 @@ async fn pages_and_entities_rebuild_from_their_files() {
         "shadow",
     )
     .await;
+    // An entity page whose id only entity_page_map holds, with an empty
+    // alias list stored as text.
+    page("mapped", "Carol", "Carol joined.").await;
+    sql(
+        &db,
+        "UPDATE pages SET kind = 'entity', aliases = '[]' WHERE id = ?1",
+        "mapped",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO entity_page_map (entity_id, page_id, created_at) \
+         VALUES ('ent_carol', ?1, 't0')",
+        "mapped",
+    )
+    .await;
 
     let out = tempfile::tempdir().unwrap();
     let data_root = tempfile::tempdir().unwrap();
@@ -253,7 +269,7 @@ async fn pages_and_entities_rebuild_from_their_files() {
     let (fresh, _fresh_dir) = test_db().await;
     let rebuilt = super::rebuild(&target, &fresh).await.unwrap();
     assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
-    assert_eq!(rebuilt.tables["pages"], 4);
+    assert_eq!(rebuilt.tables["pages"], 5);
 
     let cache: Vec<&str> = DEFERRED_COLUMNS
         .iter()
@@ -356,6 +372,24 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         "INSERT INTO entity_page_map (entity_id, page_id, created_at) \
          VALUES ('ent_123456789', ?1, 't0')",
         "shadow",
+    )
+    .await;
+    // A supported verdict on a page whose version the state seeds set: the
+    // edit trigger must not demote it in the rebuild.
+    sql(&db, "UPDATE pages SET version = 3 WHERE id = ?1", "a").await;
+    sql(
+        &db,
+        "INSERT INTO page_truth_state (page_id, page_version, support_status, updated_at, \
+         evaluated_at) VALUES (?1, 3, 'supported', 1785725589, 1785725589)",
+        "a",
+    )
+    .await;
+    // A float that a default JSON parser reads one bit off.
+    sql(
+        &db,
+        "INSERT INTO rejected_memories (id, content, rejection_reason, similarity_score, \
+         created_at) VALUES (?1, 'dup', 'duplicate', 0.9083196446299553, 1785725589)",
+        "rej_1",
     )
     .await;
     // A copy migrated with foreign keys off can name a page that is gone;
