@@ -859,6 +859,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `rename_page` | yes | automatic | `none` | tool handler |
 | `save_source` | yes | automatic | `none` | tool handler |
 | `steep` | yes | automatic | `none` | tool handler |
+| `thing_map` | no | not_applicable | `none` | — |
 | `update_brief` | yes | automatic | `none` | tool handler |
 | `write_page` | yes | automatic | `none` | tool handler |
 

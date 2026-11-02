@@ -154,9 +154,10 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// length of `save_source`'s description when that tool was added, then by
 /// the length of `steep`'s, then by the length of `doc_fix`'s, then by the
 /// length of `attach_file`'s, then by the length of `propose_note_change`'s,
-/// then by the length of `check_reply`'s.
+/// then by the length of `check_reply`'s, then by the length of
+/// `thing_map`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 17_637;
+const DESCRIPTION_BUDGET_CHARS: usize = 18_307;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -5172,6 +5173,10 @@ fn url_encode_simple(value: &str) -> String {
 
 // ===== Tool Registrations =====
 
+#[path = "thing_map_tool.rs"]
+mod thing_map_tool;
+pub use thing_map_tool::{ThingMapAction, ThingMapOpParam, ThingMapParams, ThingMapStateParam};
+
 #[tool_router]
 impl WenlanMcpServer {
     pub fn new(
@@ -5739,6 +5744,23 @@ impl WenlanMcpServer {
         Parameters(params): Parameters<UpdateBriefParams>,
     ) -> Result<CallToolResult, McpError> {
         self.update_brief_impl(params).await
+    }
+
+    #[tool(
+        description = "Keep the map of what this conversation is working through. Call it only when the shape changes: a new question comes up, an option is added or dropped, a reason matters, or something is decided or reopened. Not every turn. Pick the shape from the conversation: working toward a decision or fixing a problem means a question with options, reasons, and decided / open / dropped; exploring or learning means a topic tree. One short sentence per point, in the conversation's language. Points the person wrote or edited are changed only as proposals. Do not tell the person you updated the map. Read first, then change with the revision you read; on a conflict, read again and redo.",
+        annotations(
+            title = "Thing map",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn thing_map(
+        &self,
+        Parameters(params): Parameters<ThingMapParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.thing_map_impl(params).await
     }
 
     #[tool(
@@ -12468,6 +12490,7 @@ mod tests {
             ("reject_refinement", (false, true, false)),
             ("save_source", (false, true, false)),
             ("steep", (false, false, false)),
+            ("thing_map", (false, false, false)),
             ("update_brief", (false, false, false)),
             ("write_page", (false, true, false)),
         ]);
@@ -12869,6 +12892,7 @@ mod tests {
             "reject_refinement",
             "save_source",
             "steep",
+            "thing_map",
             "update_brief",
             "write_page",
         ]
