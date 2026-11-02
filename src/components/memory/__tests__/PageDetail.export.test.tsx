@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "../PageDetail";
@@ -61,29 +61,13 @@ describe("PageDetail export", () => {
     return { user, trigger, menu: screen.getByRole("menu", { name: "Page actions" }) };
   }
 
-  it("leaves export out of the menu when no Obsidian vault is connected", async () => {
-    vi.mocked(tauri.listRegisteredSources).mockResolvedValue([]);
+  it("offers no per-page export even with an Obsidian vault connected", async () => {
+    vi.mocked(tauri.listRegisteredSources).mockResolvedValue(sources("vault-one", "vault-two"));
     await renderMenu();
-    expect(screen.queryByRole("menuitem", { name: "Export to Obsidian" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /^Export to/ })).toBeNull();
     expect(tauri.exportPageToObsidian).not.toHaveBeenCalled();
   });
 
-  it("exports directly from the page menu for exactly one vault", async () => {
-    vi.mocked(tauri.listRegisteredSources).mockResolvedValue(sources("vault"));
-    vi.mocked(tauri.exportPageToObsidian).mockResolvedValue({ path: "/Users/test/vault/Wenlan/pages/Test Page.md" });
-    const { user } = await renderMenu();
-    await user.click(screen.getByRole("menuitem", { name: "Export to Obsidian" }));
-    await waitFor(() => expect(tauri.exportPageToObsidian).toHaveBeenCalledWith("c1", "/Users/test/vault/Wenlan/pages"));
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-  });
-
-  it("lists each vault in the same page menu for multiple sources", async () => {
-    vi.mocked(tauri.listRegisteredSources).mockResolvedValue(sources("vault-one", "vault-two"));
-    await renderMenu();
-    expect(screen.getByRole("menuitem", { name: "Export to vault-one" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Export to vault-two" })).toBeInTheDocument();
-    expect(screen.getAllByRole("menu")).toHaveLength(1);
-  });
 
   it("closes the page menu with Escape and restores its stable title trigger", async () => {
     vi.mocked(tauri.listRegisteredSources).mockResolvedValue(sources("vault-one", "vault-two"));
@@ -135,21 +119,4 @@ describe("PageDetail export", () => {
     expect(lastItems[lastItems.length - 1]).toHaveFocus();
   });
 
-  it("exports to the selected vault without opening a second popover", async () => {
-    vi.mocked(tauri.listRegisteredSources).mockResolvedValue(sources("vault-one", "vault-two"));
-    vi.mocked(tauri.exportPageToObsidian).mockResolvedValue({ path: "/Users/test/vault-two/Wenlan/pages/Test Page.md" });
-    const { user } = await renderMenu();
-    await user.click(screen.getByRole("menuitem", { name: "Export to vault-two" }));
-    await waitFor(() => expect(tauri.exportPageToObsidian).toHaveBeenCalledWith("c1", "/Users/test/vault-two/Wenlan/pages"));
-  });
-
-  it("reports an export error and keeps the vault available for retry", async () => {
-    vi.mocked(tauri.listRegisteredSources).mockResolvedValue(sources("vault"));
-    vi.mocked(tauri.exportPageToObsidian).mockRejectedValueOnce(new Error("vault unavailable"));
-    const { user, trigger } = await renderMenu();
-    await user.click(screen.getByRole("menuitem", { name: "Export to Obsidian" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not export this page. Try again.");
-    await user.click(trigger);
-    expect(screen.getByRole("menuitem", { name: "Export to Obsidian" })).toBeEnabled();
-  });
 });
