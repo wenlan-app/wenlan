@@ -4,7 +4,8 @@
 //! day.
 //!
 //! - **Refresh:** when the database changed, at most every
-//!   [`REFRESH_EVERY`], the files are brought up to date where they are.
+//!   [`REFRESH_EVERY`] (longer when a refresh is slow, see
+//!   [`REFRESH_SHARE`]), the files are brought up to date where they are.
 //!   Only changed files are written, so a refresh costs reading and
 //!   rendering, not a copy of the database.
 //! - **Check:** once a day, and only when the database changed since the
@@ -30,6 +31,9 @@ const TICK: Duration = Duration::from_secs(30);
 /// Least time between two refreshes, counted from when the last one
 /// started.
 const REFRESH_EVERY: i64 = 2 * 60;
+/// A refresh reads and renders everything, so the gap also grows with its
+/// cost: at most a tenth of the time is spent refreshing.
+const REFRESH_SHARE: u64 = 10;
 /// Least time between two checks, counted from when the last one started.
 const RUN_EVERY: i64 = 24 * 60 * 60;
 /// A check copies the whole database: never in a daemon's first minutes.
@@ -95,11 +99,16 @@ fn due(status: &FilesMirrorStatus, db_changed_at: i64, now: i64) -> bool {
 /// started (`last`), and that was at least [`REFRESH_EVERY`] ago. The
 /// change time has whole seconds, so a change in the same second as the
 /// last start counts as after it.
-fn refresh_due(last: Option<i64>, db_changed_at: i64, now: i64) -> bool {
+fn refresh_due(last: Option<i64>, gap: i64, db_changed_at: i64, now: i64) -> bool {
     match last {
         None => true,
-        Some(at) => now - at >= REFRESH_EVERY && db_changed_at >= at,
+        Some(at) => now - at >= gap.max(REFRESH_EVERY) && db_changed_at >= at,
     }
+}
+
+/// The gap after a refresh that took `ms`.
+fn refresh_gap(ms: u64) -> i64 {
+    (ms.saturating_mul(REFRESH_SHARE) / 1_000).min(i64::MAX as u64) as i64
 }
 
 pub fn start(shared: SharedState, shutdown: tokio::sync::watch::Receiver<bool>) {
@@ -111,9 +120,7 @@ pub fn start(shared: SharedState, shutdown: tokio::sync::watch::Receiver<bool>) 
 
 async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<bool>) {
     let mut wait = FIRST_RUN_AFTER;
-    // When the last refresh started, whatever its outcome, so a failing one
-    // is not retried every tick.
-    let mut last_refresh: Option<i64> = None;
+    let mut last_refresh = Refreshed::default();
     let started = std::time::Instant::now();
     loop {
         tokio::select! {
@@ -144,9 +151,17 @@ fn pages_folder(db: &wenlan_core::db::MemoryDB) -> PagesFolder {
     }
 }
 
+/// When the last refresh started, whatever its outcome, so a failing one
+/// is not retried every tick, and the gap it asks for.
+#[derive(Default)]
+struct Refreshed {
+    at: Option<i64>,
+    gap: i64,
+}
+
 async fn tick(
     shared: &SharedState,
-    last_refresh: &mut Option<i64>,
+    last_refresh: &mut Refreshed,
     may_check: bool,
 ) -> anyhow::Result<()> {
     let db = { shared.read().await.db.clone() };
@@ -178,13 +193,16 @@ async fn tick(
             status.note = Some(note.to_string());
             mirror::write_status(&dir, &status)?;
         }
-        if refresh_due(*last_refresh, db_changed_at, now) {
-            *last_refresh = Some(now);
-            refresh(&db, &dir, status, now).await?;
+        if refresh_due(last_refresh.at, last_refresh.gap, db_changed_at, now) {
+            last_refresh.at = Some(now);
+            let started = std::time::Instant::now();
+            let result = refresh(&db, &dir, status, now).await;
+            last_refresh.gap = refresh_gap(started.elapsed().as_millis() as u64);
+            result?;
         }
         return Ok(());
     }
-    *last_refresh = Some(now);
+    last_refresh.at = Some(now);
     let Some(embedder) = db.shared_embedder() else {
         return Ok(());
     };
@@ -297,13 +315,39 @@ mod tests {
 
     #[test]
     fn a_refresh_follows_a_change_at_most_every_two_minutes() {
-        assert!(refresh_due(None, 0, 1_000));
+        assert!(refresh_due(None, 0, 0, 1_000));
         // Changed since the last refresh, but too soon.
-        assert!(!refresh_due(Some(1_000), 1_050, 1_000 + REFRESH_EVERY - 1));
-        assert!(refresh_due(Some(1_000), 1_050, 1_000 + REFRESH_EVERY));
+        assert!(!refresh_due(
+            Some(1_000),
+            0,
+            1_050,
+            1_000 + REFRESH_EVERY - 1
+        ));
+        assert!(refresh_due(Some(1_000), 0, 1_050, 1_000 + REFRESH_EVERY));
         // A change in the same second as the last start counts.
-        assert!(refresh_due(Some(1_000), 1_000, 1_000 + REFRESH_EVERY));
+        assert!(refresh_due(Some(1_000), 0, 1_000, 1_000 + REFRESH_EVERY));
         // No change since: nothing to do.
-        assert!(!refresh_due(Some(1_000), 999, 1_000 + 10 * REFRESH_EVERY));
+        assert!(!refresh_due(
+            Some(1_000),
+            0,
+            999,
+            1_000 + 10 * REFRESH_EVERY
+        ));
+    }
+
+    #[test]
+    fn a_slow_refresh_waits_longer() {
+        // 30 s of work: at least five minutes until the next one.
+        let gap = refresh_gap(30_000);
+        assert_eq!(gap, 300);
+        assert!(!refresh_due(Some(1_000), gap, 1_050, 1_000 + 299));
+        assert!(refresh_due(Some(1_000), gap, 1_050, 1_000 + 300));
+        // A quick one keeps the two minutes.
+        assert!(!refresh_due(
+            Some(1_000),
+            refresh_gap(3_000),
+            1_050,
+            1_000 + 60
+        ));
     }
 }

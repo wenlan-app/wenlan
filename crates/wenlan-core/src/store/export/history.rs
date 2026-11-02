@@ -389,6 +389,14 @@ fn write_log(root: &Path, mut entries: Vec<Keyed>) -> Result<(), WenlanError> {
     // Time order, so each month's file holds that month; rows with the same
     // time keep their table and row order.
     entries.sort_by(|a, b| a.0.cmp(&b.0));
+    // An entry with no stored time (marked `time_unknown`) and the state
+    // seeds take the newest stored time, not the export's own: the same
+    // database then gives the same files, and a refresh rewrites nothing.
+    if let Some(latest) = entries.iter().filter_map(|(_, entry)| entry.ts).max() {
+        for (_, entry) in &mut entries {
+            entry.ts.get_or_insert(latest);
+        }
+    }
     let config = HistoryConfig {
         sync_each_entry: false,
         ..HistoryConfig::default()

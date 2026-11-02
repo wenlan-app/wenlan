@@ -237,7 +237,9 @@ async fn a_refresh_writes_only_what_changed_and_removes_what_is_gone() {
     let files = mirror.join(FILES_DIR);
     let before = manifest_paths(&files);
 
-    // Nothing changed: nothing is written or removed.
+    // Nothing changed: nothing is written or removed, also a second later
+    // (an entry with no stored time once took the export's own time).
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
     let again = refresh(&db_file, &pages(), data_root.path(), &mirror)
         .await
         .unwrap();
