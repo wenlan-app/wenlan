@@ -3,22 +3,30 @@
 //!
 //! - A page keeps the folder it is in today (`placement`, from the pages
 //!   folder's own record); a page that has no file yet goes at the top.
+//!   Its file is named by its title, so the `[[Title]]` links pages
+//!   already hold find it in Obsidian. Obsidian looks a name up anywhere in
+//!   the vault, so a name that another visible page, archived page or
+//!   entity already has adds the end of its id; visible pages choose first.
 //! - Its body is `pages.content` byte for byte. Today's `[x](concept_…)`
 //!   links stay as written; turning them into `[[stem]]` is a later edit
 //!   with its own history entry, not part of a lossless copy.
 //! - The sources block lists one line per citation marker (`[N]` in the
-//!   body) and one `basis:` line per page this page relies on, at the version
-//!   that was confirmed. Who confirmed it and when, review state, version
-//!   numbers and the rest go to history (spec section 4).
-//! - An entity's shadow page becomes `backstage/entities/<name>-<id6>.md`,
-//!   its description the body.
+//!   body) and one `basis:` line per page this page relies on (state `ok`
+//!   or `pending`), at the version that was confirmed. Every basis row with
+//!   its state and confirmation is also in `records/page_basis.json`. Review
+//!   state, version numbers and the rest go to history (spec section 4).
+//! - The page's `summary`, which the person can edit, is a frontmatter key.
+//! - An entity's shadow page becomes `backstage/entities/<name>.md`,
+//!   its description the body, with `status` (when not active, so an
+//!   archived entity stays archived), `created`, `modified`, `first_seen`
+//!   and `last_seen`.
 //! - An archived page goes to `backstage/archive/`, keeping its folder.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use wenlan_types::pages::PageCitation;
 
-use super::memories::check;
+use super::memories::{check, utc};
 use super::{ExportDirs, LeftOut, Manifest};
 use crate::db::export_reads::ExportPageRow;
 use crate::db::MemoryDB;
@@ -26,6 +34,9 @@ use crate::error::WenlanError;
 use crate::store::format::entity::{self, EntityFile};
 use crate::store::format::names::{collision_stem, file_stem, same_file_name};
 use crate::store::format::page::{self, Basis, Citation, Locator, PageFile, PageKind};
+
+/// Basis states that still point at a page; the rest are only in records.
+const LIVE_BASIS_STATES: &[&str] = &["ok", "pending"];
 
 /// What one export of pages wrote.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -37,6 +48,8 @@ pub struct PagesExported {
     pub entity_stems: HashMap<String, String>,
     /// Each page id's file, relative to the export root.
     pub page_paths: HashMap<String, String>,
+    /// Every page row's id, entities included.
+    pub row_ids: HashSet<String>,
 }
 
 /// Writes every page row. `placement` maps a page id to its file's path
@@ -49,27 +62,35 @@ pub async fn export_pages(
     manifest: &mut Manifest,
 ) -> Result<PagesExported, WenlanError> {
     let rows = db.export_page_rows().await?;
-    let mut done = PagesExported::default();
+    let mut done = PagesExported {
+        row_ids: rows.iter().map(|row| row.id.clone()).collect(),
+        ..PagesExported::default()
+    };
 
     let (entities, pages): (Vec<&ExportPageRow>, Vec<&ExportPageRow>) =
         rows.iter().partition(|row| is_entity(row));
-    let mut visible = Paths::default();
-    let mut archive = Paths::default();
+    // Obsidian finds `[[Name]]` by file name anywhere in the vault, so pages,
+    // archived pages and entities share one set of names: a name two of
+    // them want goes to a visible page first, so links to it open the live
+    // page, and an archived page or entity with that name gets its id's end.
+    let mut names = Paths::vault_wide();
     let mut paths: HashMap<&str, (bool, String)> = HashMap::new();
-    // Pages that have a file keep its path; the rest are placed after them.
-    let (placed, unplaced): (Vec<&ExportPageRow>, Vec<&ExportPageRow>) = pages
-        .iter()
-        .copied()
-        .partition(|row| placement_of(placement, &row.id).is_some());
-    for row in placed.iter().chain(unplaced.iter()) {
-        let archived = row.status == "archived";
-        let (folder, stem) = match placement_of(placement, &row.id) {
-            Some((folder, stem)) => (folder, stem),
-            None => (String::new(), file_stem(&row.title)),
-        };
-        let taken = if archived { &mut archive } else { &mut visible };
-        let path = taken.claim(&folder, &stem, &row.id);
-        paths.insert(&row.id, (archived, path));
+    // In id order within each group, so a page's name does not depend on
+    // whether another page with its title has a file yet.
+    for archived in [false, true] {
+        for row in pages.iter().copied() {
+            if (row.status == "archived") != archived {
+                continue;
+            }
+            // The file is named by the page's title, so a `[[Title]]` link in
+            // another page finds it; the folder is the one it is in today.
+            let folder = placement_of(placement, &row.id)
+                .map(|(folder, _)| folder)
+                .unwrap_or_default();
+            let stem = file_stem(&row.title);
+            let path = names.claim(&folder, &stem, &row.id);
+            paths.insert(&row.id, (archived, path));
+        }
     }
     let stems: HashMap<&str, String> = paths
         .iter()
@@ -96,8 +117,22 @@ pub async fn export_pages(
         file.tags = row.space.iter().cloned().collect();
         file.created = Some(row.created_at.clone());
         file.modified = Some(row.last_modified.clone());
+        if let Some(summary) = &row.summary {
+            file.other.insert("summary".into(), summary.as_str().into());
+        }
+        entity_keys(&mut file.other, row);
+        // Archived pages are told by their folder; any other status is kept.
+        if !matches!(row.status.as_str(), "active" | "archived") {
+            file.other
+                .insert("status".into(), row.status.as_str().into());
+        }
         file.citations = citation_lines(row, &memory_texts, &stems, manifest);
+        // A basis whose page is gone is not a line; every basis row, state
+        // and confirmation is in `records/page_basis.json`.
         for basis in db.list_page_basis(&row.id).await? {
+            if !LIVE_BASIS_STATES.contains(&basis.state.as_str()) {
+                continue;
+            }
             let label = stems
                 .get(basis.basis_page_id.as_str())
                 .cloned()
@@ -125,8 +160,15 @@ pub async fn export_pages(
             .push(dirs.write(&relative, &row.id, file_type, &text)?);
     }
 
-    let mut entity_paths = Paths::default();
     for row in entities {
+        unwritten(
+            manifest,
+            &row.id,
+            &[
+                ("summary", row.summary.is_some()),
+                ("citations", citations_of(row).is_none_or(|c| !c.is_empty())),
+            ],
+        );
         let entity_id = match &row.entity_id {
             Some(id) => id.clone(),
             None => {
@@ -142,12 +184,45 @@ pub async fn export_pages(
         file.page = Some(row.id.clone());
         file.entity_type = row.entity_type.clone();
         file.aliases = aliases_of(row, manifest);
-        file.confirmed = row.entity_confirmed;
+        file.confirmed = row.entity_confirmed.is_some_and(|value| value != 0);
         file.established_by = row.established_by.clone();
         file.space = row.space.clone();
         file.description = row.content.clone();
-        let stem = format!("{}-{}", file_stem(&row.title), id_tail(&entity_id));
-        let path = entity_paths.claim("", &stem, &entity_id);
+        // Wenlan's keys the entity file has no field for.
+        if !row.entity_id_on_page {
+            // The id came from `entity_page_map`; the page row has none.
+            file.other.insert("entity_id_on_page".into(), false.into());
+        }
+        if let Some(raw) = &row.aliases {
+            // Aliases as stored when the list would not write them back the
+            // same (an empty list, other spacing, or not a list).
+            if file.aliases.is_empty()
+                || serde_json::to_string(&file.aliases).ok().as_deref() != Some(raw.as_str())
+            {
+                file.other
+                    .insert("entity_aliases".into(), raw.as_str().into());
+            }
+        }
+        if row.entity_confirmed == Some(0) {
+            // A stored 0, kept apart from an unset value.
+            file.other.insert("entity_confirmed".into(), false.into());
+        }
+        if row.status != "active" {
+            file.other
+                .insert("status".into(), row.status.as_str().into());
+        }
+        file.other
+            .insert("created".into(), row.created_at.as_str().into());
+        file.other
+            .insert("modified".into(), row.last_modified.as_str().into());
+        if let Some(at) = row.entity_created_at {
+            file.other.insert("first_seen".into(), utc(at).into());
+        }
+        if let Some(at) = row.entity_updated_at {
+            file.other.insert("last_seen".into(), utc(at).into());
+        }
+        let stem = file_stem(&row.title);
+        let path = names.claim("", &stem, &entity_id);
         done.entity_stems.insert(entity_id.clone(), stem_of(&path));
         let text = entity::render(&file);
         check(
@@ -164,6 +239,50 @@ pub async fn export_pages(
         done.entities += 1;
     }
     Ok(done)
+}
+
+/// Lists each column that holds a value the file for this kind of row has
+/// no place for: entity columns on a page, page columns on an entity.
+fn unwritten(manifest: &mut Manifest, id: &str, columns: &[(&str, bool)]) {
+    for (column, set) in columns {
+        if *set {
+            manifest.left_out.push(LeftOut {
+                id: id.to_string(),
+                field: column.to_string(),
+                why: "a value this kind of file has no place for".to_string(),
+            });
+        }
+    }
+}
+
+/// The entity a page is about (a distilled page keeps its cluster's
+/// entity), and any other entity column a page row carries, as stored, so
+/// the rebuild restores them exactly.
+fn entity_keys(other: &mut serde_yaml::Mapping, row: &ExportPageRow) {
+    let on_page = row.entity_id.clone().filter(|_| row.entity_id_on_page);
+    let text = [
+        ("entity_id", &on_page),
+        ("entity_type", &row.entity_type),
+        // Not `aliases`: a page file owns that key for its own list.
+        ("entity_aliases", &row.aliases),
+        ("established_by", &row.established_by),
+    ];
+    for (key, value) in text {
+        if let Some(value) = value {
+            other.insert(key.into(), value.as_str().into());
+        }
+    }
+    if let Some(value) = row.entity_confirmed {
+        other.insert("entity_confirmed".into(), (value != 0).into());
+    }
+    for (key, value) in [
+        ("entity_created_at", row.entity_created_at),
+        ("entity_updated_at", row.entity_updated_at),
+    ] {
+        if let Some(value) = value {
+            other.insert(key.into(), value.into());
+        }
+    }
 }
 
 /// A shadow page behind an entity.
@@ -189,9 +308,7 @@ fn placement_of(placement: &HashMap<String, String>, id: &str) -> Option<(String
             && !part.contains('\\')
             && !part.starts_with('.')
     };
-    let fine = plain(&stem)
-        && (folder.is_empty() || folder.split('/').all(plain))
-        && file_stem(&stem) == stem;
+    let fine = plain(&stem) && (folder.is_empty() || folder.split('/').all(plain));
     fine.then_some((folder, stem))
 }
 
@@ -200,24 +317,57 @@ fn placement_of(placement: &HashMap<String, String>, id: &str) -> Option<(String
 #[derive(Default)]
 pub(super) struct Paths {
     taken: HashMap<String, Vec<String>>,
+    /// Names clash across folders too, as Obsidian's `[[Name]]` links see
+    /// them.
+    vault_wide: bool,
 }
 
 impl Paths {
-    /// `folder/stem.md`, or `folder/stem-<id6>.md` when that name is taken.
+    /// Paths whose names are unique across every folder, not just within
+    /// one.
+    pub(super) fn vault_wide() -> Self {
+        Self {
+            vault_wide: true,
+            ..Self::default()
+        }
+    }
+
+    /// `folder/stem.md`, or `folder/stem-<id6>.md` when that name is taken,
+    /// then `-2`, `-3`, … until a name is free.
     pub(super) fn claim(&mut self, folder: &str, stem: &str, id: &str) -> String {
-        let key = folder.to_lowercase();
+        self.claim_as(folder, stem, id, "md")
+    }
+
+    /// [`Self::claim`] with another extension.
+    pub(super) fn claim_as(
+        &mut self,
+        folder: &str,
+        stem: &str,
+        id: &str,
+        extension: &str,
+    ) -> String {
+        let key = if self.vault_wide {
+            String::new()
+        } else {
+            folder.to_lowercase()
+        };
         let names = self.taken.entry(key).or_default();
         let clash = |stem: &str| names.iter().any(|name| same_file_name(name, stem));
-        let stem = if clash(stem) {
-            collision_stem(stem, id)
-        } else {
-            stem.to_string()
-        };
-        names.push(stem.clone());
+        let mut chosen = stem.to_string();
+        if clash(&chosen) {
+            let base = collision_stem(stem, id);
+            chosen = base.clone();
+            let mut n = 2;
+            while clash(&chosen) {
+                chosen = collision_stem(&base, &format!("{n}"));
+                n += 1;
+            }
+        }
+        names.push(chosen.clone());
         if folder.is_empty() {
-            format!("{stem}.md")
+            format!("{chosen}.{extension}")
         } else {
-            format!("{folder}/{stem}.md")
+            format!("{folder}/{chosen}.{extension}")
         }
     }
 }
@@ -225,11 +375,6 @@ impl Paths {
 fn stem_of(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
     name.strip_suffix(".md").unwrap_or(name).to_string()
-}
-
-pub(super) fn id_tail(id: &str) -> String {
-    let chars: Vec<char> = id.chars().collect();
-    chars[chars.len().saturating_sub(6)..].iter().collect()
 }
 
 /// `None` when the stored citations cannot be read.
@@ -332,7 +477,16 @@ fn label_of(
             }
         }
     }
-    citation.locator.clone()
+    document_label(&citation.locator).unwrap_or_else(|| citation.locator.clone())
+}
+
+/// A document chunk's file name, from a source id of the form
+/// `<folder>::<path>::<chunk>`.
+pub(super) fn document_label(locator: &str) -> Option<String> {
+    let mut parts = locator.split("::");
+    let (_, path) = (parts.next()?, parts.next()?);
+    let name = path.rsplit('/').next().filter(|name| !name.is_empty())?;
+    Some(name.to_string())
 }
 
 /// `text` on one line, so it fits a sources line.

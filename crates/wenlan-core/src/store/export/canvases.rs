@@ -10,15 +10,26 @@
 //! - Each node keeps `"wenlan": {"ref": "<kind>:<id>", "accepted", …}` with
 //!   its parent, rank, pin, placed, collapsed, fingerprint, provenance and
 //!   times. A position or size the database leaves empty is drawn at a
-//!   default and named in `wenlan.unset`, so the rebuild restores it empty.
+//!   default and named in `wenlan.unset`, so the rebuild restores it empty;
+//!   an infinite one is named as `x=inf`.
 //! - The canvas itself keeps its revision, schema, viewport and times under
 //!   a top-level `wenlan` key.
+//! - A node with no label that stands for a page, memory or entity the
+//!   export wrote is a `file` node showing that file; any other node without
+//!   a label is a text node with empty text and `label` in `wenlan.unset`.
+//! - A canvas that shows only its own page (the root node every canvas
+//!   has) goes to `backstage/layout/canvas/`, so the pages folder holds only
+//!   canvases someone can see something in.
+//! - A hidden line from a shown node carries a copy of that node
+//!   (`wenlan.shown: true`) so the file is a valid canvas; the rebuild reads
+//!   each node from the file that owns it.
 
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Map, Number, Value};
 
 use super::memories::check;
+use super::pages::Paths;
 use super::{ExportDirs, Manifest};
 use crate::db::export_reads::{ExportCanvasEdgeRow, ExportCanvasNodeRow, ExportCanvasRow};
 use crate::db::MemoryDB;
@@ -39,6 +50,20 @@ pub async fn export_canvases(
     manifest: &mut Manifest,
 ) -> Result<CanvasesExported, WenlanError> {
     let (maps, nodes, edges) = db.export_canvases().await?;
+    // What a node stands for, as the file the export wrote for it.
+    let mut files: HashMap<String, String> = HashMap::new();
+    for file in &manifest.files {
+        let kind = match file.file_type.as_str() {
+            "page" | "archived_page" => "page",
+            "memory" | "original" => "memory",
+            "entity" => "entity",
+            _ => continue,
+        };
+        files.insert(format!("{kind}:{}", file.id), file.path.clone());
+    }
+    for (id, path) in page_paths {
+        files.insert(format!("page:{id}"), path.clone());
+    }
     let mut nodes_by_page: HashMap<&str, Vec<&ExportCanvasNodeRow>> = HashMap::new();
     for node in &nodes {
         nodes_by_page.entry(&node.page_id).or_default().push(node);
@@ -48,6 +73,9 @@ pub async fn export_canvases(
         edges_by_page.entry(&edge.page_id).or_default().push(edge);
     }
     let mut done = CanvasesExported::default();
+    // Page ids differ by case on a case-sensitive database but not on the
+    // file system, so backstage canvas names are claimed like page names.
+    let mut names = Paths::default();
     for map in &maps {
         let page_nodes = nodes_by_page
             .remove(map.page_id.as_str())
@@ -77,33 +105,70 @@ pub async fn export_canvases(
             edges: Vec::new(),
             rest: Map::new(),
         };
-        for node in page_nodes {
+        hidden
+            .rest
+            .insert("wenlan".to_string(), json!({ "page": map.page_id }));
+        let by_id: HashMap<&str, &ExportCanvasNodeRow> = page_nodes
+            .iter()
+            .map(|node| (node.id.as_str(), *node))
+            .collect();
+        for node in &page_nodes {
             let target = if shown.contains(node.id.as_str()) {
                 &mut visible
             } else {
                 &mut hidden
             };
-            target.nodes.push(node_of(node));
+            target.nodes.push(node_of(node, &files));
         }
+        let mut copied: HashSet<&str> = HashSet::new();
         for edge in page_edges {
-            let target = if is_shown(edge) {
-                &mut visible
-            } else {
-                &mut hidden
-            };
-            target.edges.push(edge_of(edge));
+            if is_shown(edge) {
+                visible.edges.push(edge_of(edge));
+                continue;
+            }
+            for end in [edge.from_node.as_str(), edge.to_node.as_str()] {
+                if shown.contains(end) && copied.insert(end) {
+                    if let Some(node) = by_id.get(end) {
+                        let mut copy = node_of(node, &files);
+                        if let Some(data) = copy.wenlan.as_mut() {
+                            data.rest.insert("shown".to_string(), Value::Bool(true));
+                        }
+                        hidden.nodes.push(copy);
+                    }
+                }
+            }
+            hidden.edges.push(edge_of(edge));
         }
 
-        let path = match page_paths.get(&map.page_id) {
+        let own = format!("page:{}", map.page_id);
+        let only_itself = visible.edges.is_empty()
+            && visible.nodes.iter().all(|node| {
+                node.wenlan.as_ref().and_then(|w| w.reference.as_deref()) == Some(own.as_str())
+            });
+        let beside_page = page_paths.get(&map.page_id).filter(|_| !only_itself);
+        let path = match beside_page {
             Some(page) => format!("{}.canvas", page.strip_suffix(".md").unwrap_or(page)),
-            None => format!("backstage/layout/canvas/{}.canvas", file_safe(&map.page_id)),
+            None => format!(
+                "backstage/{}",
+                names.claim_as(
+                    "layout/canvas",
+                    &file_safe(&map.page_id),
+                    &map.page_id,
+                    "canvas"
+                )
+            ),
         };
         write_canvas(dirs, manifest, &path, &map.page_id, "canvas", &visible)?;
         done.canvases += 1;
         if !hidden.nodes.is_empty() || !hidden.edges.is_empty() {
             let path = format!(
-                "backstage/proposals/canvas/{}.canvas",
-                file_safe(&map.page_id)
+                "backstage/{}",
+                names.claim_as(
+                    "proposals/canvas",
+                    &file_safe(&map.page_id),
+                    &map.page_id,
+                    "canvas"
+                )
             );
             write_canvas(
                 dirs,
@@ -121,6 +186,13 @@ pub async fn export_canvases(
             id: page.to_string(),
             field: format!("canvas nodes ({})", rows.len()),
             why: "nodes of a page that has no canvas row".to_string(),
+        });
+    }
+    for (page, rows) in edges_by_page {
+        manifest.left_out.push(super::LeftOut {
+            id: page.to_string(),
+            field: format!("canvas lines ({})", rows.len()),
+            why: "lines of a page that has no canvas row".to_string(),
         });
     }
     Ok(done)
@@ -171,10 +243,15 @@ fn number(value: f64) -> Number {
     }
 }
 
-fn node_of(node: &ExportCanvasNodeRow) -> Node {
+fn node_of(node: &ExportCanvasNodeRow, files: &HashMap<String, String>) -> Node {
     let mut unset = Vec::new();
+    // An empty or non-finite value is drawn at the default and named.
     let mut coordinate = |name: &str, value: Option<f64>, default: f64| match value {
-        Some(value) => number(value),
+        Some(value) if value.is_finite() => number(value),
+        Some(value) => {
+            unset.push(Value::String(format!("{name}={value}")));
+            number(default)
+        }
         None => {
             unset.push(Value::String(name.to_string()));
             number(default)
@@ -201,24 +278,36 @@ fn node_of(node: &ExportCanvasNodeRow) -> Node {
     put("provenance", json!(node.provenance));
     put("created", json!(node.created_at));
     put("updated", json!(node.updated_at));
+    let reference = format!("{}:{}", node.ref_kind, node.ref_id);
+    let mut rest = Map::new();
+    let kind = match (&node.label, files.get(&reference)) {
+        (Some(label), _) => {
+            rest.insert("text".to_string(), json!(label));
+            "text"
+        }
+        (None, Some(path)) => {
+            rest.insert("file".to_string(), json!(path));
+            "file"
+        }
+        (None, None) => {
+            rest.insert("text".to_string(), json!(""));
+            unset.push(Value::String("label".to_string()));
+            "text"
+        }
+    };
     if !unset.is_empty() {
         data.insert("unset".to_string(), Value::Array(unset));
     }
-
-    let mut rest = Map::new();
-    if let Some(label) = &node.label {
-        rest.insert("text".to_string(), json!(label));
-    }
     Node {
         id: node.id.clone(),
-        kind: "text".to_string(),
+        kind: kind.to_string(),
         x,
         y,
         width,
         height,
         wenlan: Some(WenlanNode {
             source: None,
-            reference: Some(format!("{}:{}", node.ref_kind, node.ref_id)),
+            reference: Some(reference),
             accepted: node.status == "active",
             rest: data,
         }),

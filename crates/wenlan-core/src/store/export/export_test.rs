@@ -52,7 +52,7 @@ fn read(dirs: &ExportDirs, relative: &str) -> String {
         .unwrap_or_else(|error| panic!("{relative}: {error}"))
 }
 
-async fn fixture() -> (MemoryDB, tempfile::TempDir) {
+pub(crate) async fn fixture() -> (MemoryDB, tempfile::TempDir) {
     let (db, dir) = test_db().await;
     page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
     // Line ends at either end, a CRLF and a details part are kept as stored.
@@ -129,7 +129,7 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
         .await
         .unwrap();
     assert_eq!((done.pages, done.archived, done.entities), (4, 1, 2));
-    assert_eq!(done.entity_stems["ent_123456789"], "Bob-456789");
+    assert_eq!(done.entity_stems["ent_123456789"], "Bob");
 
     let alpha = page::parse(&read(&dirs, "visible/Trips/Alpha.md"), "x").unwrap();
     assert_eq!(alpha.id.as_deref(), Some("a"));
@@ -162,8 +162,11 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
     let labels: Vec<_> = beta.citations.iter().map(|c| c.label.as_str()).collect();
     assert_eq!(
         labels,
-        ["Prefers window seats · on long flights", "mem_two"],
-        "a memory's label is the start of its first chunk"
+        [
+            "Prefers window seats · on long flights second chunk",
+            "mem_two"
+        ],
+        "a memory's label is the start of its text, chunks joined in order"
     );
     assert_eq!(beta.basis.len(), 1);
     assert_eq!(beta.basis[0].label, "[[Alpha]]");
@@ -190,7 +193,7 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
     let gone = page::parse(&read(&dirs, "backstage/archive/Old/Gone.md"), "x").unwrap();
     assert_eq!(gone.body, "Archived text.");
 
-    let bob = entity::parse(&read(&dirs, "backstage/entities/Bob-456789.md")).unwrap();
+    let bob = entity::parse(&read(&dirs, "backstage/entities/Bob.md")).unwrap();
     assert_eq!(bob.id, "ent_123456789");
     assert_eq!(bob.page.as_deref(), Some("shadow"));
     assert_eq!(bob.aliases, ["Robert"]);
@@ -297,6 +300,49 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     )
     .await;
     memory_row(&db, "page_derived", 0, "", ", 'page', 'from a page'").await;
+    // An episode shares its parent's id and is not part of its text.
+    sql(
+        &db,
+        "INSERT INTO memories (id, source_id, chunk_index, title, last_modified, chunk_type, \
+         source, content) VALUES ('episode_row', ?1, 0, '', 0, 'text', 'episode', 'a slice')",
+        "mem_long",
+    )
+    .await;
+    memory_row(&db, "mem_odd", 0, "", ", 'mystery', 'who knows'").await;
+    memory_row(&db, "clipboard_1", 0, "", ", 'clipboard', 'copied text'").await;
+    for (chunk, text) in [(0, "# Notes"), (1, "Body.")] {
+        memory_row(
+            &db,
+            "docs::README.md",
+            chunk,
+            "",
+            &format!(", 'file', '{text}'"),
+        )
+        .await;
+    }
+    for (chunk, text) in [(0, "Saved page text."), (1, "Second part.")] {
+        memory_row(
+            &db,
+            "https://example.com/post",
+            chunk,
+            ", url",
+            &format!(", 'webpage', '{text}', 'https://example.com/post'"),
+        )
+        .await;
+    }
+    sql(
+        &db,
+        "UPDATE memories SET retrieval_cue = 'window seat', last_modified = 1793404900 \
+         WHERE source_id = ?1",
+        "mem_cap",
+    )
+    .await;
+    sql(
+        &db,
+        "UPDATE enrichment_origin SET space_rejected = 1 WHERE source_id = ?1",
+        "mem_cap",
+    )
+    .await;
     memory_row(
         &db,
         "mem_pending",
@@ -319,7 +365,19 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     let done = export_memories(&db, &stems, &dirs, &mut manifest)
         .await
         .unwrap();
-    assert_eq!(done.memories, 2);
+    assert_eq!((done.memories, done.originals), (3, 2));
+    let clip = memory::parse(&read(&dirs, "backstage/memories/undated/clipboard_1.md")).unwrap();
+    assert_eq!(clip.text, "copied text");
+    assert_eq!(clip.other["source"], "clipboard");
+    let doc = crate::store::format::original::parse(&read(
+        &dirs,
+        "backstage/originals/file/docs README.md.md",
+    ))
+    .unwrap();
+    assert_eq!(doc.external_id, "docs::README.md");
+    let texts: Vec<_> = doc.messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, ["# Notes", "Body."]);
+    assert_eq!(doc.other["source"], "file");
 
     let cap = memory::parse(&read(&dirs, "backstage/memories/2026-10/mem_cap.md")).unwrap();
     assert_eq!(
@@ -334,6 +392,21 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     assert_eq!(cap.about, ["Bob-ent_bob"]);
     let fields: serde_json::Value = serde_yaml::from_value(cap.fields.clone().unwrap()).unwrap();
     assert_eq!(fields, serde_json::json!({"a": "x", "b": 1}));
+    assert_eq!(cap.other["cue"], "window seat");
+    assert_eq!(cap.other["modified"], "2026-10-31T00:01:40Z");
+    assert_eq!(cap.other["space_rejected"], true);
+    assert!(!cap.other.contains_key("source"));
+
+    let web = crate::store::format::original::parse(&read(
+        &dirs,
+        "backstage/originals/web/https example.com post.md",
+    ))
+    .unwrap();
+    assert_eq!(web.vendor, "web");
+    assert_eq!(web.external_id, "https://example.com/post");
+    let texts: Vec<_> = web.messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, ["Saved page text.", "Second part."]);
+    assert_eq!(web.other["source"], "webpage");
 
     let long = memory::parse(&read(&dirs, "backstage/memories/undated/mem_long.md")).unwrap();
     assert_eq!(long.text, "part one\npart two");
@@ -348,7 +421,11 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
         .collect();
     assert_eq!(
         left,
-        [("mem_cap", "about[ent_gone]"), ("mem_pending", "memory")]
+        [
+            ("mem_cap", "about[ent_gone]"),
+            ("mem_odd", "memory with source mystery"),
+            ("mem_pending", "memory")
+        ]
     );
     let skipped: Vec<_> = manifest
         .not_files
@@ -357,7 +434,11 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
         .collect();
     assert_eq!(
         skipped,
-        [("document chunks", 1), ("memories with source page", 1)]
+        [
+            ("document chunks", 1),
+            ("memories with source episode", 1),
+            ("memories with source page", 1)
+        ]
     );
 }
 
@@ -383,7 +464,8 @@ async fn an_imported_chat_becomes_an_original_with_its_messages_in_order() {
     }
     sql(
         &db,
-        "UPDATE memories SET title = 'Trip ideas' WHERE source_id = ?1",
+        "UPDATE memories SET title = 'Trip ideas', pinned = 1, entity_id = 'ent_trip' \
+         WHERE source_id = ?1",
         "import_claude_6720-abc",
     )
     .await;
@@ -406,17 +488,14 @@ async fn an_imported_chat_becomes_an_original_with_its_messages_in_order() {
         [
             "Where should we go in May?",
             "A few ideas.\n\n## Lisbon\nWarm.",
-            "Ends with a line end."
+            "Ends with a line end.\n"
         ]
     );
     assert_eq!(chat.messages[1].at.as_deref(), Some("2026-10-31T00:00:05Z"));
-    // The third message lost its line end in the file, so it is listed.
-    let left: Vec<_> = manifest
-        .left_out
-        .iter()
-        .map(|l| (l.id.as_str(), l.field.as_str()))
-        .collect();
-    assert_eq!(left, [("import_claude_6720-abc", "file")]);
+    // The person's pin and entity on the chat are kept.
+    assert_eq!(chat.other["pinned"], true);
+    assert_eq!(chat.other["entity"], "ent_trip");
+    assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
 }
 
 #[tokio::test]
@@ -558,8 +637,12 @@ async fn a_canvas_shows_accepted_nodes_beside_its_page_and_keeps_the_rest_backst
     );
 
     let hidden = canvas::parse(&read(&dirs, "backstage/proposals/canvas/p1.canvas")).unwrap();
-    assert_eq!(hidden.nodes.len(), 1);
+    // The suggested node, and a copy of the shown node its line starts at.
+    assert_eq!(hidden.nodes.len(), 2);
     assert!(!hidden.nodes[0].wenlan.as_ref().unwrap().accepted);
+    let copy = hidden.nodes[1].wenlan.as_ref().unwrap();
+    assert_eq!(hidden.nodes[1].id, "n_placed");
+    assert_eq!(copy.rest["shown"], true);
     assert_eq!(hidden.edges[0].id, "e_hidden");
 
     let loose = canvas::parse(&read(&dirs, "backstage/layout/canvas/p2.canvas")).unwrap();
@@ -676,4 +759,521 @@ async fn settings_tables_are_copied_whole_with_their_stored_types() {
         .unwrap()
         .is_empty());
     assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
+}
+
+#[test]
+fn every_file_class_table_has_an_export_part() {
+    use super::records::RECORD_TABLES;
+    use super::settings::SETTINGS_FILES;
+    use super::FILE_TABLE_HOMES;
+    use crate::db::table_classes::{TableClass, TABLE_CLASSES};
+    use std::collections::BTreeSet;
+
+    let file_tables: BTreeSet<&str> = TABLE_CLASSES
+        .iter()
+        .filter(|(_, class)| *class == TableClass::File)
+        .map(|(table, _)| *table)
+        .collect();
+    let homes: BTreeSet<&str> = FILE_TABLE_HOMES.iter().map(|(table, _)| *table).collect();
+    assert_eq!(homes, file_tables, "a file-class table has no export part");
+
+    let home = |part: &str| -> BTreeSet<&str> {
+        FILE_TABLE_HOMES
+            .iter()
+            .filter(|(_, home)| *home == part)
+            .map(|(table, _)| *table)
+            .collect()
+    };
+    let records: BTreeSet<&str> = RECORD_TABLES.iter().copied().collect();
+    assert_eq!(home("records"), records);
+    // `thing_sessions` rides with `things`; it is classed history.
+    let settings: BTreeSet<&str> = SETTINGS_FILES
+        .iter()
+        .flat_map(|(_, tables)| tables.iter().copied())
+        .filter(|table| *table != "thing_sessions")
+        .collect();
+    assert_eq!(home("settings"), settings);
+}
+
+#[tokio::test]
+async fn records_keep_every_confirmation_and_annotation_column() {
+    use super::records::{export_records, RECORD_TABLES};
+
+    let (db, _db_dir) = test_db().await;
+    sql(
+        &db,
+        "INSERT INTO source_annotations (source, source_id, context_key, notes, page_ids, \
+         version, updated_at) VALUES ('memory', ?1, 'space:sp', 'Check the date.', '[]', 2, 9)",
+        "mem_1",
+    )
+    .await;
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    assert_eq!(export_records(&db, &dirs, &mut manifest).await.unwrap(), 1);
+    assert_eq!(manifest.files.len(), RECORD_TABLES.len());
+    let file: serde_json::Value =
+        serde_json::from_str(&read(&dirs, "backstage/records/source_annotations.json")).unwrap();
+    let table = &file["tables"]["source_annotations"];
+    assert_eq!(
+        table["columns"],
+        serde_json::json!([
+            "source",
+            "source_id",
+            "context_key",
+            "notes",
+            "page_ids",
+            "updated_at",
+            "version"
+        ])
+    );
+    assert_eq!(
+        table["rows"][0],
+        serde_json::json!(["memory", "mem_1", "space:sp", "Check the date.", "[]", 9, 2])
+    );
+    assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
+}
+
+#[tokio::test]
+async fn names_never_clash_and_page_and_entity_state_is_kept() {
+    let (db, _db_dir) = test_db().await;
+    page(&db, "p1", "Beta", "one", "sp").await;
+    page(&db, "p2", "beta-p3", "two", "sp").await;
+    page(&db, "p3", "beta", "three", "sp").await;
+    sql(
+        &db,
+        "UPDATE pages SET summary = 'The short claim.' WHERE id = ?1",
+        "p1",
+    )
+    .await;
+    // A page distilled about an entity keeps that entity, as stored.
+    sql(
+        &db,
+        "UPDATE pages SET entity_id = 'ent_bob', entity_type = 'person' WHERE id = ?1",
+        "p2",
+    )
+    .await;
+    page(&db, "shadow", "Bob", "Bob ran it.", "sp").await;
+    sql(
+        &db,
+        "UPDATE pages SET kind = 'entity', entity_id = 'ent_bob', status = 'archived', \
+         entity_created_at = 1793404800 WHERE id = ?1",
+        "shadow",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    let done = export_pages(&db, &HashMap::new(), &dirs, &mut manifest)
+        .await
+        .unwrap();
+    assert_eq!((done.pages, done.entities), (3, 1));
+    let p3 = page::parse(&read(&dirs, "visible/beta-p3-2.md"), "").unwrap();
+    assert_eq!(p3.id.as_deref(), Some("p3"));
+    let p1 = page::parse(&read(&dirs, "visible/Beta.md"), "").unwrap();
+    assert_eq!(p1.other["summary"], "The short claim.");
+
+    let bob = entity::parse(&read(&dirs, "backstage/entities/Bob.md")).unwrap();
+    assert_eq!(bob.other["status"], "archived");
+    assert_eq!(bob.other["first_seen"], "2026-10-31T00:00:00Z");
+    assert!(bob.other.contains_key("created"));
+    let left: Vec<_> = manifest
+        .left_out
+        .iter()
+        .map(|l| (l.id.as_str(), l.field.as_str()))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    let p2 = page::parse(&read(&dirs, "visible/beta-p3.md"), "").unwrap();
+    assert_eq!(p2.other["entity_id"], "ent_bob");
+    assert_eq!(p2.other["entity_type"], "person");
+}
+
+#[tokio::test]
+async fn a_name_belongs_to_the_visible_page_across_every_folder() {
+    // Obsidian finds `[[Launch]]` by file name anywhere in the vault, so an
+    // archived page or entity sharing a visible page's name must not take it.
+    let (db, _db_dir) = test_db().await;
+    page(&db, "aaa_old111", "Launch", "The old plan.", "sp").await;
+    sql(
+        &db,
+        "UPDATE pages SET status = 'archived' WHERE id = ?1",
+        "aaa_old111",
+    )
+    .await;
+    page(&db, "bbb_ent222", "launch", "The launch itself.", "sp").await;
+    sql(
+        &db,
+        "UPDATE pages SET kind = 'entity', entity_id = 'ent_lau333' WHERE id = ?1",
+        "bbb_ent222",
+    )
+    .await;
+    page(&db, "zzz_live44", "Launch", "The plan.", "sp").await;
+    let placement = HashMap::from([("zzz_live44".to_string(), "Work/Launch.md".to_string())]);
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    let done = export_pages(&db, &placement, &dirs, &mut manifest)
+        .await
+        .unwrap();
+    let live = page::parse(&read(&dirs, "visible/Work/Launch.md"), "").unwrap();
+    assert_eq!(live.id.as_deref(), Some("zzz_live44"));
+    let old = page::parse(&read(&dirs, "backstage/archive/Launch-old111.md"), "").unwrap();
+    assert_eq!(old.id.as_deref(), Some("aaa_old111"));
+    let entity = entity::parse(&read(&dirs, "backstage/entities/launch-lau333.md")).unwrap();
+    assert_eq!(entity.id, "ent_lau333");
+    assert_eq!(done.entity_stems["ent_lau333"], "launch-lau333");
+}
+
+#[tokio::test]
+async fn every_column_of_a_field_by_field_table_is_written_or_deferred() {
+    use super::{DEFERRED_COLUMNS, FILE_COLUMNS};
+    use std::collections::BTreeSet;
+
+    let (db, _db_dir) = test_db().await;
+    let mut problems = Vec::new();
+    for (table, written) in FILE_COLUMNS {
+        let live: BTreeSet<String> = db
+            .export_table(table)
+            .await
+            .unwrap()
+            .unwrap()
+            .columns
+            .into_iter()
+            .collect();
+        let mut listed: BTreeSet<String> = written.iter().map(|c| c.to_string()).collect();
+        for (deferred_table, _, columns) in DEFERRED_COLUMNS {
+            if deferred_table == table {
+                for column in *columns {
+                    assert!(
+                        listed.insert(column.to_string()),
+                        "{table}.{column} is listed twice"
+                    );
+                }
+            }
+        }
+        let missing: Vec<_> = live.difference(&listed).collect();
+        let gone: Vec<_> = listed.difference(&live).collect();
+        if !missing.is_empty() || !gone.is_empty() {
+            problems.push(format!(
+                "{table}: not written or deferred {missing:?}; listed but not in the schema {gone:?}"
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn every_history_class_table_has_a_place() {
+    use super::history::{HISTORY_ELSEWHERE, HISTORY_TABLES};
+    use crate::db::table_classes::{TableClass, TABLE_CLASSES};
+    use std::collections::BTreeSet;
+
+    let history: BTreeSet<&str> = TABLE_CLASSES
+        .iter()
+        .filter(|(_, class)| *class == TableClass::History)
+        .map(|(table, _)| *table)
+        .collect();
+    let placed: BTreeSet<&str> = HISTORY_TABLES
+        .iter()
+        .map(|spec| spec.table)
+        .chain(HISTORY_ELSEWHERE.iter().map(|(table, _)| *table))
+        .collect();
+    assert_eq!(
+        placed, history,
+        "a history-class table has no place in the export"
+    );
+}
+
+#[tokio::test]
+async fn replaying_the_history_log_gives_back_every_row() {
+    use super::history::{export_history, Log, HISTORY_TABLES};
+    use super::settings::cell;
+    use crate::store::history::{self, ActorKind};
+
+    let (db, _db_dir) = test_db().await;
+    page(&db, "p1", "Alpha", "Version one.", "sp").await;
+    let long = "x".repeat(40 * 1024);
+    for (version, content, edited_by) in [
+        (2, "Version two.", "manual_edit"),
+        (3, long.as_str(), "distill"),
+    ] {
+        sql(
+            &db,
+            &format!(
+                "INSERT INTO page_history (page_id, version, content, edited_by, created_at, \
+                 title, minor) VALUES (?1, {version}, '{content}', '{edited_by}', \
+                 '2026-03-0{version}T00:00:00Z', 'Alpha', 0)"
+            ),
+            "p1",
+        )
+        .await;
+    }
+    sql(
+        &db,
+        "INSERT INTO thing_history (ts, actor, op, thing_id, session_id, data) \
+         VALUES (1793404800, 'person', 'thing.rename', ?1, NULL, '{\"title\":\"Trip\"}')",
+        "thing_1",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO access_log (source_id, accessed_at) VALUES (?1, 1793404801)",
+        "mem_1",
+    )
+    .await;
+    // No time column: stamped with the export time, never 1970.
+    sql(
+        &db,
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 1, 0, 0)",
+        "mem_1",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let mut manifest = Manifest::new();
+    let done = export_history(&db, &dirs, &mut manifest, &Default::default())
+        .await
+        .unwrap();
+    assert!(done.entries >= 4 && done.reads >= 1, "{done:?}");
+    assert!(manifest
+        .files
+        .iter()
+        .any(|file| file.path.starts_with("backstage/history/blobs/")));
+    assert!(!manifest
+        .files
+        .iter()
+        .any(|file| file.path.ends_with(".lock")));
+
+    let root = dirs.backstage().join("history");
+    assert!(!root.join("1970-01").exists(), "an entry claims 1970");
+    let mut rebuilt: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+    for (log_root, log) in [(root.clone(), Log::Main), (root.join("reads"), Log::Reads)] {
+        let replay = history::replay(&log_root).unwrap();
+        assert!(replay.report.is_clean(), "{:?}", replay.report);
+        for entry in &replay.entries {
+            let data = entry.data.as_ref().unwrap();
+            if data.get("state_of").is_some() {
+                assert_eq!(entry.op, "state.seed");
+                assert_eq!(log, Log::Main);
+                continue;
+            }
+            let table = data["table"].as_str().unwrap().to_string();
+            if table == "enrichment_origin" {
+                assert_eq!(data["time_unknown"], true);
+            }
+            let spec = HISTORY_TABLES.iter().find(|s| s.table == table).unwrap();
+            assert_eq!(spec.log, log, "{table} is in the wrong log");
+            let mut row = data["row"].as_object().unwrap().clone();
+            if let Some(text) = history::read_text(&log_root, entry).unwrap() {
+                let column = if table == "page_history" {
+                    "content"
+                } else {
+                    "text"
+                };
+                row.insert(column.to_string(), serde_json::json!(text));
+            }
+            if table == "page_history" && row["edited_by"] == "manual_edit" {
+                assert_eq!(entry.actor.kind, ActorKind::Person);
+                assert_eq!(entry.op, "page.write");
+                assert_eq!(entry.version, Some(2));
+            }
+            if table == "page_history" && row["edited_by"] == "distill" {
+                assert_eq!(entry.actor.kind, ActorKind::Ai);
+                assert_eq!(data["text_column"], "content");
+            }
+            rebuilt
+                .entry(table)
+                .or_default()
+                .push(serde_json::Value::Object(row));
+        }
+    }
+    for spec in HISTORY_TABLES {
+        let Some(stored) = db.export_table(spec.table).await.unwrap() else {
+            continue;
+        };
+        let stored: Vec<serde_json::Value> = stored
+            .rows
+            .iter()
+            .map(|values| {
+                serde_json::Value::Object(
+                    stored
+                        .columns
+                        .iter()
+                        .cloned()
+                        .zip(values.iter().map(cell))
+                        .collect(),
+                )
+            })
+            .collect();
+        let mut got = rebuilt.remove(spec.table).unwrap_or_default();
+        let key = |row: &serde_json::Value| row.to_string();
+        let mut want = stored;
+        got.sort_by_key(key);
+        want.sort_by_key(key);
+        assert_eq!(got, want, "{} does not replay to its rows", spec.table);
+    }
+}
+
+#[tokio::test]
+async fn one_call_exports_everything_and_writes_the_manifest_last() {
+    use super::run::export_lossless;
+    use super::MANIFEST_FILE;
+
+    let (db, _db_dir) = fixture().await;
+    let data_root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(data_root.path().join("layout/versions")).unwrap();
+    std::fs::write(data_root.path().join("layout/palace.json"), "{}\n").unwrap();
+    std::fs::write(data_root.path().join("layout/versions/1.json"), "{}\n").unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    let placement = HashMap::from([("a".to_string(), "Plans/a.md".to_string())]);
+    let folder = super::run::PagesFolder::recorded(placement);
+    let summary = export_lossless(&db, &folder, data_root.path(), &target)
+        .await
+        .unwrap();
+    assert_eq!((summary.pages, summary.archived), (4, 1));
+    assert_eq!(summary.layout_files, 2);
+    assert!(target.join("visible/Plans/Alpha.md").is_file());
+    assert!(target.join("backstage/layout/versions/1.json").is_file());
+    let manifest: Manifest =
+        serde_json::from_str(&std::fs::read_to_string(target.join(MANIFEST_FILE)).unwrap())
+            .unwrap();
+    assert_eq!(manifest.files.len(), summary.files);
+    assert!(!manifest.deferred.is_empty());
+    for file in &manifest.files {
+        let bytes = std::fs::read(target.join(&file.path)).unwrap();
+        assert_eq!(sha256(&bytes), file.sha256, "{}", file.path);
+    }
+    // A second run into the same folder is refused.
+    assert!(export_lossless(&db, &folder, data_root.path(), &target)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn the_pages_folder_is_read_and_nothing_in_it_is_lost() {
+    use super::run::{export_lossless, PagesFolder};
+
+    let (db, _db_dir) = fixture().await;
+    let pages = tempfile::tempdir().unwrap();
+    let write = |relative: &str, text: &str| {
+        let path = pages.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("Plans/a.md", "---\norigin_id: a\n---\nAlpha\n");
+    // state.json forgot page b; its file still says whose it is.
+    write(
+        "Notes/Beta page.md",
+        "---\norigin_id: b\ntitle: Beta\n---\nBeta\n",
+    );
+    write(
+        "external-compile-topic-001.md",
+        "a file no page row claims\n",
+    );
+    write("deleted.md", "---\norigin_id: deleted\n---\nold\n");
+    // Edited in another app after Wenlan last wrote it.
+    write("Rust.md", "---\norigin_id: c\n---\nEdited elsewhere.\n");
+    write(".wenlan/state.json", "{}");
+    write(".obsidian/app.json", "{}");
+    let before = snapshot(pages.path());
+
+    let recorded = HashMap::from([
+        ("a".to_string(), "Plans/a.md".to_string()),
+        ("deleted".to_string(), "deleted.md".to_string()),
+        ("deleted_too".to_string(), "missing.md".to_string()),
+        ("c".to_string(), "Rust.md".to_string()),
+    ]);
+    let digests = HashMap::from([
+        (
+            "a".to_string(),
+            super::sha256(b"---\norigin_id: a\n---\nAlpha\n"),
+        ),
+        ("c".to_string(), super::sha256(b"what Wenlan wrote")),
+    ]);
+    let folder = PagesFolder {
+        dir: Some(pages.path().to_path_buf()),
+        recorded,
+        digests,
+    };
+    let data_root = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    let summary = export_lossless(&db, &folder, data_root.path(), &target)
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot(pages.path()),
+        before,
+        "the pages folder is never written"
+    );
+    assert_eq!(summary.found_by_id, 1);
+    assert_eq!(summary.stale_records, 2);
+    assert_eq!(summary.folder_only, 2);
+    // c was edited; b has no digest (state.json forgot it); a is as written.
+    assert_eq!(summary.edited_on_disk, 1);
+    assert_eq!(summary.no_digest, 1);
+    assert_eq!(
+        std::fs::read_to_string(target.join("backstage/.pages-folder/edited/Rust.md")).unwrap(),
+        "---\norigin_id: c\n---\nEdited elsewhere.\n"
+    );
+    assert!(target
+        .join("backstage/.pages-folder/edited/Notes/Beta page.md")
+        .is_file());
+    assert!(!target
+        .join("backstage/.pages-folder/edited/Plans/a.md")
+        .exists());
+    assert!(target.join("visible/Plans/Alpha.md").is_file());
+    assert!(target.join("visible/Notes/Beta.md").is_file());
+    assert_eq!(
+        std::fs::read_to_string(
+            target.join("backstage/.pages-folder/external-compile-topic-001.md")
+        )
+        .unwrap(),
+        "a file no page row claims\n"
+    );
+    assert!(target.join("backstage/.pages-folder/deleted.md").is_file());
+    assert!(!target.join("backstage/.pages-folder/.wenlan").exists());
+}
+
+/// Every file under `dir` with its bytes and modified time.
+fn snapshot(dir: &std::path::Path) -> Vec<(String, Vec<u8>, std::time::SystemTime)> {
+    let mut found = Vec::new();
+    for entry in walk(dir) {
+        let bytes = std::fs::read(&entry).unwrap();
+        let modified = std::fs::metadata(&entry).unwrap().modified().unwrap();
+        found.push((entry.display().to_string(), bytes, modified));
+    }
+    found.sort();
+    found
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(walk(&path));
+        } else {
+            found.push(path);
+        }
+    }
+    found
+}
+
+/// A cited document chunk is labelled by its file name, which a rebuilt
+/// database (that has no document chunks) gives back the same.
+#[test]
+fn a_document_chunk_is_labelled_by_its_file_name() {
+    use super::pages::document_label;
+    assert_eq!(
+        document_label("local_files::/Users/me/notes/plan.md::3").as_deref(),
+        Some("plan.md")
+    );
+    assert_eq!(document_label("mem_123"), None);
+    assert_eq!(document_label("x::/dir/::1"), None);
 }

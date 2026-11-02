@@ -27,9 +27,10 @@
 //! ```
 //!
 //! Each message starts at a marker line, so a `##` heading inside a message
-//! is just text. Line ends at the end of a message are not kept.
+//! is just text. Each message ends with one blank line that is not part of
+//! it, so the message's own text, line ends included, is kept as written.
 
-use super::{render_file, require_frontmatter, required, Keys};
+use super::{render_exact, require_frontmatter, required, Keys};
 use crate::error::WenlanError;
 
 pub const MESSAGE_MARKER: &str = "<!-- wenlan:message -->";
@@ -93,10 +94,16 @@ pub fn parse(text: &str) -> Result<OriginalFile, WenlanError> {
             None => (heading.to_string(), None),
         };
         let text = rest.strip_prefix('\n').unwrap_or(rest);
+        // Each message ends with exactly one blank line, so its own line
+        // ends are kept as written.
+        let text = text
+            .strip_suffix("\n\n")
+            .or_else(|| text.strip_suffix('\n'))
+            .unwrap_or(text);
         messages.push(Message {
             role,
             at,
-            text: text.trim_end_matches('\n').to_string(),
+            text: text.to_string(),
         });
     }
     Ok(OriginalFile {
@@ -132,8 +139,9 @@ pub fn render(original: &OriginalFile) -> String {
             body.push_str(at);
         }
         body.push_str("\n\n");
-        body.push_str(message.text.trim_end_matches('\n'));
+        body.push_str(&message.text);
         body.push_str("\n\n");
     }
-    render_file(&frontmatter, &body)
+    // `render_exact` adds the last line end back.
+    render_exact(&frontmatter, body.strip_suffix('\n').unwrap_or(&body))
 }

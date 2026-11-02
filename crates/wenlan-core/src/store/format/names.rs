@@ -2,7 +2,8 @@
 //! File names for files Wenlan writes (spec section 3, common rules).
 //!
 //! A name is the title made safe on every supported system: NFC, no
-//! characters Windows refuses, no trailing dots or spaces, no reserved
+//! characters Windows refuses or a `[[link]]` cannot hold, no leading dot,
+//! no trailing dots or spaces, no reserved
 //! device name, and at most [`MAX_STEM_BYTES`] bytes so the whole path stays
 //! under Windows' 260 limit. The full title always lives in the file itself.
 
@@ -23,6 +24,8 @@ pub fn file_stem(title: &str) -> String {
         .nfc()
         .map(|c| match c {
             '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => ' ',
+            // A `[[link]]` cannot name a file with these (Obsidian).
+            '#' | '^' | '[' | ']' => ' ',
             c if c.is_control() => ' ',
             c => c,
         })
@@ -31,7 +34,8 @@ pub fn file_stem(title: &str) -> String {
     truncate_at_char(&mut stem, MAX_STEM_BYTES);
     let trimmed = stem.trim_end_matches(['.', ' ']).len();
     stem.truncate(trimmed);
-    let stem = stem.trim_start().to_string();
+    // A leading dot hides a file in Obsidian and on macOS and Linux.
+    let stem = stem.trim_start_matches(['.', ' ']).to_string();
     if stem.is_empty() {
         return "page".to_string();
     }

@@ -38,7 +38,13 @@ pub async fn export_artifacts(
             "written": record.written_at,
             "imported": record.imported_at,
         }));
-        let fine = !record.file_path.split('/').any(|part| part == "..");
+        // Only a plain relative path under the data root is read.
+        let fine = !record.file_path.is_empty()
+            && !record.file_path.contains('\\')
+            && record
+                .file_path
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..");
         let bytes = fine
             .then(|| std::fs::read(data_root.join(&record.file_path)).ok())
             .flatten();

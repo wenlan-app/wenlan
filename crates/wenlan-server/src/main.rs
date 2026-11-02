@@ -3,6 +3,7 @@
 
 mod cmd_backfill;
 mod cmd_cutover;
+mod cmd_export;
 mod cmd_prune_junk_entities;
 #[path = "main/runtime.rs"]
 mod runtime;
@@ -655,6 +656,32 @@ enum Command {
         #[arg(long, value_name = "ENTITY_ID", conflicts_with_all = ["apply", "include_review"])]
         restore: Vec<String>,
     },
+    /// Internal storage migration step 2: write a COPY of a data folder's
+    /// database out as files into a new folder. Needs `--data-dir <copy>`;
+    /// refuses the installed app's data folder.
+    #[command(name = "export-lossless", hide = true)]
+    ExportLossless {
+        /// The new folder to write into. Must not exist, or be empty.
+        #[arg(long)]
+        out: std::path::PathBuf,
+        /// The pages folder whose `state.json` says where each page's file
+        /// is. Default: the copy's configured pages folder.
+        #[arg(long)]
+        pages: Option<std::path::PathBuf>,
+    },
+    /// Internal storage migration step 2: rebuild an `export-lossless`
+    /// folder into a new database, export it again and compare with the
+    /// COPY it came from. Needs `--data-dir <copy>`; writes only `--work`.
+    #[command(name = "rebuild-check", hide = true)]
+    RebuildCheck {
+        /// The export folder `export-lossless` wrote from this copy.
+        #[arg(long)]
+        export: std::path::PathBuf,
+        /// A new folder for the rebuilt database, the second export and
+        /// the report. Must not exist, or be empty.
+        #[arg(long)]
+        work: std::path::PathBuf,
+    },
 }
 
 async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow::Result<()> {
@@ -1005,6 +1032,8 @@ async fn main() -> anyhow::Result<()> {
                     cmd_prune_junk_entities::restore(&restore).await
                 }
             }
+            Some(Command::ExportLossless { out, pages }) => cmd_export::run(out, pages).await,
+            Some(Command::RebuildCheck { export, work }) => cmd_export::check(export, work).await,
             None => run_daemon(startup_repair_claim).await,
         }
     }

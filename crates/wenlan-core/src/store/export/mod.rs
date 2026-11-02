@@ -14,6 +14,9 @@
 //! <out>/backstage/proposals/canvas/ suggested and dismissed canvas parts
 //! <out>/backstage/layout/canvas/    canvases of pages with no page file
 //! <out>/backstage/settings/  spaces, things, AI tools, profile, onboarding
+//! <out>/backstage/records/   records with no file shape of their own yet
+//! <out>/backstage/history/   the append-only log; reads under reads/
+//! <out>/backstage/layout/    the palace layout, copied as it is
 //! <out>/export-manifest.json every file written, and every value left out
 //! ```
 //!
@@ -21,17 +24,24 @@
 //! memories and imported chats ([`memories::export_memories`]), Briefs
 //! ([`briefs::export_briefs`]), canvases beside their pages
 //! ([`canvases::export_canvases`]) and artifact originals
-//! ([`artifacts::export_artifacts`]) and settings
-//! ([`settings::export_settings`]). Proposals and history follow in their
-//! own parts and add to the same manifest. Every file is
+//! ([`artifacts::export_artifacts`]), settings
+//! ([`settings::export_settings`]) and the remaining records
+//! ([`records::export_records`]). [`FILE_TABLE_HOMES`] names where every
+//! file-class table goes, and a test keeps it equal to the table classes.
+//! History ([`history::export_history`]) is the append-only log.
+//! [`run::export_lossless`] runs every part in order and writes the
+//! manifest. Proposals follow in their own part. Every file is
 //! read back after it is rendered; one that does not read back as written
 //! is listed.
 
 pub mod artifacts;
 pub mod briefs;
 pub mod canvases;
+pub mod history;
 pub mod memories;
 pub mod pages;
+pub mod records;
+pub mod run;
 pub mod settings;
 
 use std::path::{Component, Path, PathBuf};
@@ -45,6 +55,189 @@ use crate::error::WenlanError;
 /// reads an export it does not understand.
 pub const EXPORT_FORMAT: u32 = 1;
 pub const MANIFEST_FILE: &str = "export-manifest.json";
+
+/// The export part that writes each table classed
+/// [`File`](crate::db::table_classes::TableClass::File).
+pub const FILE_TABLE_HOMES: &[(&str, &str)] = &[
+    ("pages", "pages"),
+    ("page_maps", "canvases"),
+    ("page_map_nodes", "canvases"),
+    ("page_map_edges", "canvases"),
+    ("memories", "memories"),
+    ("briefs", "briefs"),
+    ("brief_items", "briefs"),
+    ("originals", "artifacts"),
+    ("spaces", "settings"),
+    ("things", "settings"),
+    ("profiles", "settings"),
+    ("agent_connections", "settings"),
+    ("onboarding_milestones", "settings"),
+    ("app_metadata", "settings"),
+    ("source_annotations", "records"),
+    ("okf_concepts", "records"),
+    ("okf_concept_links", "records"),
+    ("page_basis", "records"),
+    ("page_code_basis", "records"),
+    ("entity_page_map", "records"),
+    ("page_evidence", "records"),
+    ("page_sources", "records"),
+];
+
+/// Columns of the tables written field by field (pages, entities, memories,
+/// Briefs) that their files hold. Every other column of those tables is in
+/// [`DEFERRED_COLUMNS`]; a test keeps the two equal to the live schema.
+pub const FILE_COLUMNS: &[(&str, &[&str])] = &[
+    (
+        "pages",
+        &[
+            "id",
+            "title",
+            "content",
+            "status",
+            "space",
+            "created_at",
+            "last_modified",
+            "citations",
+            "entity_id",
+            "entity_type",
+            "entity_confirmed",
+            "aliases",
+            "established_by",
+            "summary",
+            "entity_created_at",
+            "entity_updated_at",
+        ],
+    ),
+    (
+        "memories",
+        &[
+            "id",
+            "source",
+            "source_id",
+            "chunk_index",
+            "content",
+            "title",
+            "url",
+            "memory_type",
+            "space",
+            "source_agent",
+            "confirmed",
+            "pinned",
+            "supersedes",
+            "supersede_mode",
+            "pending_revision",
+            "structured_fields",
+            "source_text",
+            "created_at",
+            "event_date",
+            "event_end",
+            "importance",
+            "episode_of",
+            "origin_class",
+            "session_id",
+            "authored_content",
+            "entity_id",
+            "is_recap",
+            "last_modified",
+            "retrieval_cue",
+        ],
+    ),
+    (
+        "briefs",
+        &[
+            "space_id",
+            "last_session_summary",
+            "last_handoff_at",
+            "version",
+            "updated_at",
+        ],
+    ),
+    (
+        "brief_items",
+        &[
+            "id", "space_id", "text", "state", "added_at", "gate", "version",
+        ],
+    ),
+];
+
+/// Where the columns no file holds go: `history` (the history export
+/// restores them) or `cache` (the rebuild recomputes them). The comparison
+/// step checks each one against its source.
+pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
+    (
+        "pages",
+        "history",
+        &[
+            "version",
+            "review_status",
+            "review_required",
+            "user_edited",
+            "kind",
+            "creation_kind",
+            "workspace",
+            "changelog",
+            "source_memory_ids",
+            "source_revision",
+            "incarnation",
+            "basis_revision",
+            "source_agent",
+        ],
+    ),
+    (
+        "pages",
+        "cache",
+        &[
+            "embedding",
+            "embedding_updated_at",
+            "community_id",
+            "confidence",
+            "last_compiled",
+            "sources_updated_count",
+            "stale_reason",
+            "refresh_blocked_reason",
+        ],
+    ),
+    (
+        "memories",
+        "history",
+        &["version", "changelog", "access_count", "last_accessed"],
+    ),
+    // A quick capture's `content` (the tidied text) is also cache: its
+    // file holds what the person typed. Chunk boundaries are cache too: the
+    // comparison checks the joined text, not the rows.
+    (
+        "memories",
+        "cache",
+        &[
+            "embedding",
+            "summary",
+            "confidence",
+            "quality",
+            "stability",
+            "enrichment_status",
+            "needs_reembed",
+            "content_hash",
+            "refinement_status",
+            "effective_confidence",
+            "word_count",
+            "language",
+            "chunk_type",
+            "byte_start",
+            "byte_end",
+            "semantic_unit",
+            "last_distilled_at",
+        ],
+    ),
+    ("brief_items", "history", &["updated_at"]),
+];
+
+/// [`DEFERRED_COLUMNS`] as the manifest lists them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Deferred {
+    pub table: String,
+    pub to: String,
+    pub columns: Vec<String>,
+}
 
 /// Where an export goes.
 #[derive(Debug, Clone)]
@@ -195,12 +388,23 @@ pub struct Manifest {
     pub files: Vec<ExportedFile>,
     pub left_out: Vec<LeftOut>,
     pub not_files: Vec<NotFiles>,
+    /// Columns no file holds, and where each goes.
+    pub deferred: Vec<Deferred>,
 }
 
 impl Manifest {
     pub fn new() -> Self {
         Self {
             format: EXPORT_FORMAT,
+            deferred: DEFERRED_COLUMNS
+                .iter()
+                .filter(|(_, _, columns)| !columns.is_empty())
+                .map(|(table, to, columns)| Deferred {
+                    table: table.to_string(),
+                    to: to.to_string(),
+                    columns: columns.iter().map(|c| c.to_string()).collect(),
+                })
+                .collect(),
             ..Self::default()
         }
     }
@@ -208,4 +412,4 @@ impl Manifest {
 
 #[cfg(test)]
 #[path = "export_test.rs"]
-mod tests;
+pub(crate) mod tests;

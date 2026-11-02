@@ -16,6 +16,8 @@ fn a_stem_is_safe_on_every_system() {
     // Decomposed é becomes the composed one.
     assert_eq!(file_stem("Cafe\u{301}"), "Café");
     assert_eq!(file_stem("旅行計畫"), "旅行計畫");
+    assert_eq!(file_stem("C# [draft] ^1 | v2"), "C draft 1 v2");
+    assert_eq!(file_stem(".hidden"), "hidden");
 
     for title in ["a".repeat(300), "旅".repeat(100), "🙂".repeat(80)] {
         let stem = file_stem(&title);
@@ -526,7 +528,11 @@ fn every_original_reads_back_unchanged() {
                 .map(|_| Message {
                     role: gen.pick(&["user", "assistant", "tool"]).to_string(),
                     at: gen.chance().then(|| "2026-10-30T09:12:00Z".to_string()),
-                    text: text_block(&mut gen),
+                    // Line ends at either end are kept.
+                    text: {
+                        let text = text_block(&mut gen);
+                        edged(&mut gen, text)
+                    },
                 })
                 .collect(),
         };
