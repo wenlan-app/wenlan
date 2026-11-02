@@ -267,6 +267,23 @@ const markdownBlockTheme = EditorView.theme({
     margin: "0.35rem 0 0.6rem",
     cursor: "text",
   },
+  // Always show the sideways scrollbar, so a wide table or code block shows
+  // there is more to the right even where scrollbars only appear on scroll.
+  ".cm-md-table-wrap::-webkit-scrollbar, .cm-md-code::-webkit-scrollbar": {
+    height: "8px",
+  },
+  ".cm-md-table-wrap::-webkit-scrollbar-track, .cm-md-code::-webkit-scrollbar-track": {
+    background: "transparent",
+  },
+  ".cm-md-table-wrap::-webkit-scrollbar-thumb, .cm-md-code::-webkit-scrollbar-thumb": {
+    border: "2px solid transparent",
+    borderRadius: "999px",
+    backgroundColor: "color-mix(in srgb, var(--mem-text-secondary) 28%, transparent)",
+    backgroundClip: "padding-box",
+  },
+  ".cm-md-table-wrap::-webkit-scrollbar-thumb:hover, .cm-md-code::-webkit-scrollbar-thumb:hover": {
+    backgroundColor: "color-mix(in srgb, var(--mem-text-secondary) 48%, transparent)",
+  },
   ".cm-md-table": {
     borderCollapse: "collapse",
     fontSize: "0.94em",
