@@ -31,7 +31,7 @@ for (const mode of ["labels", "icons"] as const) {
     const fixture = fixtureWithManyNotes();
     const listed = fixture.pages.filter((item) => (item.status === "active" || item.status === "draft") && item.creation_kind !== "entity").length;
     await installTauriMock(page, { locale: "en", rawActions: [], fixture, localStorage: {
-      "wenlan-navigation-v1": JSON.stringify({ version: 1, visible: ["pages", "sources", "spaces", "memories", "entities", "graph"], sidebar: { visible: true, mode, width: 240 } }),
+      "wenlan-navigation-v1": JSON.stringify({ version: 2, visible: ["pages", "sources", "spaces", "memories", "entities", "graph"], sidebar: { visible: true, mode, width: 240 } }),
     } });
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");

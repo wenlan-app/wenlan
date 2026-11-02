@@ -2,7 +2,9 @@
 import { readPreference, writePreference } from "../../../lib/preferenceStorage";
 import type { GlobalNavigation } from "./viewState";
 
-export type NavigationDestination = GlobalNavigation;
+// The stream of memories is still a view (a memory opens there) but has no
+// place in the navigation.
+export type NavigationDestination = Exclude<GlobalNavigation, "memories">;
 export type SidebarMode = "icons" | "labels";
 export type SidebarPreferences = { readonly visible: boolean; readonly mode: SidebarMode; readonly width?: number };
 
@@ -10,11 +12,13 @@ export const NAVIGATION_PREFERENCE_KEY = "wenlan-navigation-v1";
 export const SIDEBAR_PREFERENCE_KEY = "wenlan-sidebar-collapsed";
 export const LEGACY_SIDEBAR_PREFERENCE_KEY = "origin-sidebar-collapsed";
 // Home is where the app opens (what you're working on); the Wiki holds every
-// page. One name, one place.
+// page; Spaces split the work by project. Sources, the graph and topics wait
+// under More until you pin them. Memories have no page of their own: you meet
+// them through search and the things they belong to.
 export const NAVIGATION_DESTINATION_ORDER: readonly NavigationDestination[] = [
-  "home", "pages", "spaces", "graph", "sources", "memories", "entities",
+  "home", "pages", "spaces", "sources", "graph", "entities",
 ];
-export const REQUIRED_NAVIGATION_DESTINATIONS: readonly NavigationDestination[] = ["home", "pages", "spaces", "graph", "sources"];
+export const REQUIRED_NAVIGATION_DESTINATIONS: readonly NavigationDestination[] = ["home", "pages", "spaces"];
 export const DEFAULT_VISIBLE_NAVIGATION: readonly NavigationDestination[] = REQUIRED_NAVIGATION_DESTINATIONS;
 export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = { visible: true, mode: "labels" };
 export const DEFAULT_SIDEBAR_WIDTH = 240;
@@ -22,15 +26,20 @@ export const MIN_SIDEBAR_WIDTH = 200;
 export const MAX_SIDEBAR_WIDTH = 360;
 export const ICONS_SIDEBAR_WIDTH = 64;
 
-type NavigationPreferencePayload = { version: 1; visible: unknown[]; sidebar?: unknown };
+// Version 2 moved sources and the graph under More. A version 1 payload
+// pinned them only because they were required then, so its pins are dropped
+// and its sidebar width and mode are kept.
+const NAVIGATION_PREFERENCE_VERSION = 2;
+type NavigationPreferencePayload = { version: 1 | 2; visible: unknown[]; sidebar?: unknown };
 
 function readPayload(): NavigationPreferencePayload | null {
   const stored = readPreference(NAVIGATION_PREFERENCE_KEY);
   if (stored === null) return null;
   try {
     const payload: unknown = JSON.parse(stored);
-    if (typeof payload !== "object" || payload === null || !("version" in payload) || payload.version !== 1 || !("visible" in payload) || !Array.isArray(payload.visible)) return null;
-    return payload as NavigationPreferencePayload;
+    if (typeof payload !== "object" || payload === null || !("version" in payload) || (payload.version !== 1 && payload.version !== NAVIGATION_PREFERENCE_VERSION) || !("visible" in payload) || !Array.isArray(payload.visible)) return null;
+    const read = payload as NavigationPreferencePayload;
+    return read.version === 1 ? { ...read, visible: [...DEFAULT_VISIBLE_NAVIGATION] } : read;
   } catch {
     return null;
   }
@@ -84,7 +93,7 @@ export function readSidebarPreferences(): SidebarPreferences {
 
 export function writeNavigationPreferences(visible: readonly GlobalNavigation[]): void {
   writePreference(NAVIGATION_PREFERENCE_KEY, JSON.stringify({
-    version: 1,
+    version: NAVIGATION_PREFERENCE_VERSION,
     visible: sanitizeVisibleNavigation(visible),
     sidebar: readSidebarPreferences(),
   }));
@@ -92,7 +101,7 @@ export function writeNavigationPreferences(visible: readonly GlobalNavigation[])
 
 export function writeSidebarPreferences(sidebar: SidebarPreferences): void {
   writePreference(NAVIGATION_PREFERENCE_KEY, JSON.stringify({
-    version: 1,
+    version: NAVIGATION_PREFERENCE_VERSION,
     visible: readNavigationPreferences(),
     sidebar: parseSidebarPreferences(sidebar) ?? DEFAULT_SIDEBAR_PREFERENCES,
   }));

@@ -160,7 +160,7 @@ pub async fn handle_get_session(
 /// agent sent and its transcript is still on this machine, show the newest one.
 /// Read fresh each time and never stored, so this read stays write-free and a
 /// later rename shows up. Best effort; any failure leaves the title empty.
-async fn fill_title_from_transcript(session: &mut AgentSession) {
+pub(crate) async fn fill_title_from_transcript(session: &mut AgentSession) {
     if session.tool != "claude-code"
         || session
             .title

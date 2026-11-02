@@ -123,6 +123,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "list_things",
     "get_thing",
     "get_thing_map",
+    "search_conversations",
+    "get_conversation_lines",
     "rename_thing",
     "move_session_thing",
     "list_registered_sources",

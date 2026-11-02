@@ -87,6 +87,7 @@ pub use activity_counts::{
     ActivityCounts, AssetBacklog, DetectTally, EmbeddingBacklog, RefinementOpenCount, StepBacklog,
     StepCount,
 };
+pub mod conversations;
 mod scoped_entities;
 mod scoped_pages;
 pub mod sentence_history;

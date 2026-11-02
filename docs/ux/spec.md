@@ -212,8 +212,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 ## Finding things
 
 - **UX-FIND-1** `planned` One box; results include pages, points on the map and
-  original words from conversations.
-  原文：一個框，結果包含頁、圖上的點和對話裡的原話。
+  original words from conversations. The groups come in this order: what you're
+  working on, pages, points on the map, the words said in conversations, then
+  topics. Memories, the AI's own notes, have no group of their own.
+  原文：一個框，結果包含頁、圖上的點和對話裡的原話。選擇卡「一个搜寻框找全部」（2026-11-01 22:19）；分組順序「正在做的事 → 笔记 → 图上的点 → 原话」、主題留在最後，「其他都可以」（2026-11-01 23:47）
 - **UX-FIND-2** `planned` Opening a source shows that sentence with a little
   of what came before and after, and where it is used. You can expand it to
   the whole original. Imported originals stay backstage: they are not in page
@@ -221,6 +223,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）
 - **UX-FIND-3** `planned` There is "open in the original AI tool".
   原文：有「在原本的 AI 工具打開」。
+- **UX-FIND-4** `planned` The left side keeps only what matters: Search, Home,
+  Wiki and Spaces. Sources, the graph and topics wait under More, where each
+  can be pinned; Activity stays at the bottom. There is no Memories page.
+  原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）
 
 ## What AI tools made (HTML, images)
 

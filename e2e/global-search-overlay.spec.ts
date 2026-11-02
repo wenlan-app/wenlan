@@ -16,7 +16,7 @@ async function start(page: Page, width = 1280, sidebar?: { visible: boolean; mod
   const fixture = createReviewDecisionFixture("wiki-folders");
   const runtime = await installTauriMock(page, { locale: "en", rawActions: [], fixture,
     delays: { update_page: 150 },
-    localStorage: sidebar ? { "wenlan-navigation-v1": JSON.stringify({version: 1, visible: ["pages", "spaces", "graph", "sources"], sidebar}) } : {},
+    localStorage: sidebar ? { "wenlan-navigation-v1": JSON.stringify({version: 2, visible: ["pages", "spaces", "graph", "sources"], sidebar}) } : {},
   });
   await page.addInitScript(({ target }) => {
     const api = window.__TAURI_INTERNALS__; if (!api) return;
@@ -110,7 +110,9 @@ test("modal shows loading and failure states plus typed groups and source naviga
  await expect(dialog(page).getByRole("status")).toContainText(/search|load/i);
  await expect(dialog(page).getByRole("button",{name:/Why fixtures stay deterministic/})).toBeVisible();
  await input(page).fill("error");await expect(dialog(page).getByRole("alert")).toBeVisible({timeout:10000});
- await input(page).fill("fixture");await expect(dialog(page).getByRole("button",{name:/A fixture memory/})).toBeVisible();
+ await input(page).fill("fixture");
+ // Memories are the AI's notes, not what was said: search shows the words said instead (UX-FIND-1).
+ await expect(dialog(page).getByRole("button",{name:/A fixture source/})).toBeVisible();await expect(dialog(page).getByRole("button",{name:/A fixture memory/})).toHaveCount(0);
  await expect(dialog(page).getByRole("button",{name:/A fixture source/})).toBeVisible();
  await expect(dialog(page).locator("mark").first()).toContainText(/fixture/i);
  await input(page).press("ArrowDown");await expect(dialog(page).getByRole("button",{name:/Why fixtures stay deterministic/})).toBeFocused();

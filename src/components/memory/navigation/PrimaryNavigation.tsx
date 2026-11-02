@@ -9,7 +9,6 @@ type PrimaryNavigationLabels = {
   readonly entities: string;
   readonly graph: string;
   readonly home: string;
-  readonly memories: string;
   readonly more: string;
   readonly navigation: string;
   readonly pages: string;
@@ -26,7 +25,6 @@ type PrimaryNavigationProps = {
   readonly onNavigateEntities?: () => void;
   readonly onNavigateGraph?: () => void;
   readonly onNavigateHome?: () => void;
-  readonly onNavigateLog?: () => void;
   readonly onNavigatePages?: () => void;
   readonly onNavigateSources?: () => void;
   readonly onNavigateSpaces: (create: boolean) => void;
@@ -64,14 +62,6 @@ const homeIcon = <House aria-hidden="true" data-navigation-icon="home" focusable
 const pageIcon = <Stack aria-hidden="true" data-navigation-icon="wiki-stack" focusable="false" size={16} style={iconStyle} weight="regular" />;
 const entityIcon = <TopicIcon data-navigation-icon="entities" size={16} style={iconStyle} />;
 const graphIcon = <svg aria-hidden="true" data-navigation-icon="graph" height="16" style={iconStyle} viewBox="0 0 24 24" width="16"><circle cx="5" cy="6" fill="none" r="2" stroke="currentColor" strokeWidth="2" /><circle cx="19" cy="6" fill="none" r="2" stroke="currentColor" strokeWidth="2" /><circle cx="12" cy="18" fill="none" r="2" stroke="currentColor" strokeWidth="2" /><path d="M7 6h10M6 8l5 8M18 8l-5 8" fill="none" stroke="currentColor" strokeWidth="2" /></svg>;
-const memoryIcon = <svg aria-hidden="true" data-navigation-icon="brain" fill="none" height="16" style={iconStyle} viewBox="0 0 24 24" width="16">{[
-  "M15.5 13a3.5 3.5 0 0 0 -3.5 3.5v1a3.5 3.5 0 0 0 7 0v-1.8",
-  "M8.5 13a3.5 3.5 0 0 1 3.5 3.5v1a3.5 3.5 0 0 1 -7 0v-1.8",
-  "M17.5 16a3.5 3.5 0 0 0 0 -7h-.5",
-  "M19 9.3v-2.8a3.5 3.5 0 0 0 -7 0",
-  "M6.5 16a3.5 3.5 0 0 1 0 -7h.5",
-  "M5 9.3v-2.8a3.5 3.5 0 0 1 7 0v10",
-].map((d) => <path d={d} key={d} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />)}</svg>;
 const sourceIcon = <Files aria-hidden="true" data-navigation-icon="sources-library" focusable="false" size={16} style={iconStyle} weight="regular" />;
 
 export function PrimaryNavigation({
@@ -81,7 +71,6 @@ export function PrimaryNavigation({
   onNavigateEntities,
   onNavigateGraph,
   onNavigateHome,
-  onNavigateLog,
   onNavigatePages,
   onNavigateSources,
   onNavigateSpaces,
@@ -99,7 +88,6 @@ export function PrimaryNavigation({
     spaces: { icon: <SpaceMark active={active === "spaces"} inheritColor />, onClick: () => onNavigateSpaces(false) },
     graph: { icon: graphIcon, onClick: onNavigateGraph },
     sources: { icon: sourceIcon, onClick: onNavigateSources },
-    memories: { icon: memoryIcon, onClick: onNavigateLog },
     entities: { icon: entityIcon, onClick: onNavigateEntities },
   };
   const destinations = NAVIGATION_DESTINATION_ORDER.map((key) => ({ key, label: labels[key], ...options[key] })).filter((destination) => destination.onClick !== undefined);

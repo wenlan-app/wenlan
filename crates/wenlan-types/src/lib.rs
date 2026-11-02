@@ -14,6 +14,7 @@ pub mod briefing;
 pub mod chat_check;
 pub mod code_basis;
 pub mod communities;
+pub mod conversations;
 pub mod entities;
 pub mod events;
 pub mod import;

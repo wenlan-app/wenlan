@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 import { openWikiNote } from "./helpers/wikiWorkspace";
+import { openMemoryFromPage } from "./helpers/primaryNavigation";
 import { resources } from "../src/i18n/resources";
 
 // A design token changed once must reach every detail page. This catches pages
@@ -30,7 +31,7 @@ test("Memory, Topic and Wiki consume the same reading and Info template", async 
     localStorage: {
       "wenlan-theme": "light",
       "wenlan-navigation-v1": JSON.stringify({
-        version: 1, visible: ["pages", "spaces", "graph", "sources", "memories", "entities"],
+        version: 2, visible: ["pages", "spaces", "graph", "sources", "memories", "entities"],
         sidebar: { visible: true, mode: "labels", width: 240 },
       }),
     },
@@ -38,16 +39,15 @@ test("Memory, Topic and Wiki consume the same reading and Info template", async 
   await page.goto("/");
   const nav = page.getByRole("navigation", { name: t.sidebar.navigation });
   for (const kind of ["memory", "topic", "wiki"] as const) {
-    await nav.getByRole("button", {
-      name: kind === "memory" ? t.sidebar.memories : kind === "topic" ? t.sidebar.entities : t.sidebar.pages,
-      exact: true,
-    }).click();
     if (kind === "memory") {
-      await page.getByRole("article", { name: "Fixture architecture", exact: true })
-        .getByRole("button", { name: t.memoryList.openMemory, exact: true }).click();
+      // Memories have no place in the navigation: one opens from a page's sources.
+      await openMemoryFromPage(page, "Fixture architecture", /Fixture architecture$/,
+        { wiki: t.sidebar.pages, more: t.sidebar.more, info: t.pageInspector.open });
     } else if (kind === "topic") {
+      await nav.getByRole("button", { name: t.sidebar.entities, exact: true }).click();
       await page.locator(".entities-view").getByRole("button", { name: topic.name, exact: true }).click();
     } else {
+      await nav.getByRole("button", { name: t.sidebar.pages, exact: true }).click();
       await openWikiNote(page, "Fixture architecture");
     }
     const frame = page.locator("[data-detail-reading]");

@@ -1091,3 +1091,86 @@ impl MemoryDB {
             .await
     }
 }
+
+impl MemoryDB {
+    /// Active pages whose title, summary or text contains every word of
+    /// `query`, title matches first, then newest. Search by meaning cannot
+    /// find a Chinese or Japanese word inside a longer run of characters, and
+    /// full-text search reads such a run as one word, so the search box adds
+    /// these literal matches first (UX-FIND-1).
+    pub async fn pages_containing_text(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &ReadScope,
+    ) -> Result<Vec<Page>, WenlanError> {
+        let words: Vec<String> = query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .filter(|w| !w.is_empty())
+            .take(8)
+            .collect();
+        if words.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let entity_id_column = super::page_entity_id_column("c.");
+        let select = format!(
+            "c.id, c.title, c.summary, c.content, {entity_id_column}, c.space, \
+             c.source_memory_ids, c.version, c.status, c.created_at, \
+             c.last_compiled, c.last_modified, \
+             COALESCE(c.sources_updated_count, 0), c.stale_reason, \
+             COALESCE(c.user_edited, 0), COALESCE(c.changelog, '[]'), \
+             COALESCE(c.creation_kind, 'distilled'), \
+             COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept'), \
+             NULL, COALESCE(c.review_required, 0)"
+        );
+        let mut conditions = vec![
+            "c.status = 'active'".to_string(),
+            super::entity_row_browse_predicate("c."),
+        ];
+        let mut values = Vec::new();
+        for word in &words {
+            conditions.push(
+                "(instr(lower(COALESCE(c.title, '')), ?) > 0 \
+                  OR instr(lower(COALESCE(c.summary, '')), ?) > 0 \
+                  OR instr(lower(COALESCE(c.content, '')), ?) > 0)"
+                    .to_string(),
+            );
+            for _ in 0..3 {
+                values.push(libsql::Value::Text(word.clone()));
+            }
+        }
+        if !matches!(scope, ReadScope::Global) {
+            super::push_read_scope_filter_folded(
+                scope,
+                "c.workspace",
+                &mut conditions,
+                &mut values,
+            );
+        }
+        let where_clause = numbered_conditions(&conditions, 1);
+        let next = values.len() + 1;
+        values.push(libsql::Value::Text(words[0].clone()));
+        values.push(libsql::Value::Integer(limit as i64));
+        let sql = format!(
+            "SELECT {select} FROM pages c WHERE {where_clause} \
+             ORDER BY instr(lower(COALESCE(c.title, '')), ?{next}) > 0 DESC, c.last_modified DESC \
+             LIMIT ?{}",
+            next + 1
+        );
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, values)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("pages containing text: {e}")))?;
+        let mut pages = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("pages containing text row: {e}")))?
+        {
+            pages.push(Self::row_to_page(&row)?);
+        }
+        Ok(pages)
+    }
+}

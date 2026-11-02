@@ -583,3 +583,204 @@ async fn ux_chat_7_a_conversation_hears_once_where_it_was_saved() {
     .await;
     assert!(typed::<SavedInResponse>(response).report_page);
 }
+
+#[tokio::test]
+async fn ux_find_1_search_finds_what_was_said_with_the_lines_around_it() {
+    let _guard = data_dir_lock().lock().await;
+    let vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("other", None, false).await.unwrap();
+
+    let projects = vault._tmp.path().join(".claude/projects/-kyoto");
+    std::fs::create_dir_all(&projects).unwrap();
+    let transcript = projects.join("kyoto.jsonl");
+    std::fs::write(
+        &transcript,
+        [
+            r#"{"type":"user","message":{"role":"user","content":"Where should we stay in Kyoto?"},"timestamp":"2026-11-01T10:00:00Z"}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Quiet, or easy to walk out at night?"}]},"timestamp":"2026-11-01T10:00:05Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":"决定住在祇园附近，晚上散步方便。"},"timestamp":"2026-11-01T10:01:00Z"}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Noted."}]},"timestamp":"2026-11-01T10:01:04Z"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({
+            "session": "claude-code:kyoto",
+            "title": "Kyoto stay",
+            "transcript_path": transcript.to_str().unwrap(),
+        })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let session_id = body["id"].as_str().unwrap().to_string();
+    db.sort_sessions_into_things().await.unwrap();
+
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        "/api/conversations/search?q=%E7%A5%87%E5%9B%AD",
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let hits = typed::<wenlan_types::conversations::ConversationSearchResponse>(body).hits;
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    let hit = &hits[0];
+    assert_eq!(hit.session_id, session_id);
+    assert_eq!(hit.title.as_deref(), Some("Kyoto stay"));
+    assert_eq!(hit.thing_title.as_deref(), Some("Kyoto stay"));
+    assert_eq!(hit.index, 2);
+    assert_eq!(hit.line.text, "决定住在祇园附近，晚上散步方便。");
+    assert_eq!(
+        hit.before.as_ref().map(|l| l.text.as_str()),
+        Some("Quiet, or easy to walk out at night?")
+    );
+    assert_eq!(hit.after.as_ref().map(|l| l.text.as_str()), Some("Noted."));
+
+    // Show all: the whole conversation, oldest first.
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/sessions/{session_id}/lines"),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let all = typed::<wenlan_types::conversations::ConversationLinesResponse>(body);
+    assert_eq!(all.lines.len(), 4);
+    assert_eq!(all.first_index, 0);
+    assert_eq!(all.thing_title.as_deref(), Some("Kyoto stay"));
+
+    // An empty search finds nothing; an AI tool may not read the words; a
+    // Space that cannot see the conversation finds nothing in it.
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        "/api/conversations/search?q=%20",
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        typed::<wenlan_types::conversations::ConversationSearchResponse>(body)
+            .hits
+            .is_empty()
+    );
+    for uri in [
+        "/api/conversations/search?q=Kyoto".to_string(),
+        format!("/api/sessions/{session_id}/lines"),
+    ] {
+        let (status, _) = call(&router, Method::GET, &uri, None, Caller::Agent("codex")).await;
+        assert_ne!(status, StatusCode::OK, "{uri} is for the person");
+    }
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        "/api/conversations/search?q=Kyoto",
+        None,
+        Caller::InSpace("other"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        typed::<wenlan_types::conversations::ConversationSearchResponse>(body)
+            .hits
+            .is_empty()
+    );
+    let (status, _) = call(
+        &router,
+        Method::GET,
+        &format!("/api/sessions/{session_id}/lines"),
+        None,
+        Caller::InSpace("other"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Once the conversation writes in that Space, the Space finds its words.
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/pages")
+                .header("content-type", "application/json")
+                .header("x-agent-name", "claude-code")
+                .header("x-wenlan-session", "claude-code:kyoto")
+                .header("x-wenlan-space", "other")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "title": "Gion inn",
+                        "content": "Ryokan two streets from Hanamikoji.",
+                        "creation_kind": "authored",
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        "/api/conversations/search?q=Kyoto",
+        None,
+        Caller::InSpace("other"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let hits = typed::<wenlan_types::conversations::ConversationSearchResponse>(body).hits;
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/sessions/{session_id}/lines"),
+        None,
+        Caller::InSpace("other"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // A word inside Chinese text finds the page that contains it, and only
+    // the pages that contain it.
+    for (title, content) in [
+        ("京都住宿", "決定住在祇園附近，晚上散步方便。"),
+        ("Lisbon itinerary", "Five nights in Alfama."),
+    ] {
+        let (status, body) = call(
+            &router,
+            Method::POST,
+            "/api/pages",
+            Some(json!({ "title": title, "content": content, "creation_kind": "authored" })),
+            Caller::Agent("claude-code"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/pages/search",
+        Some(json!({ "query": "祇園", "limit": 5 })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let titles: Vec<&str> = body["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, vec!["京都住宿"]);
+}

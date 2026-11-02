@@ -2,6 +2,7 @@
 import {test,expect} from '@playwright/test';
 import {installTauriMock,collectBrowserErrors} from './tauriMock';
 import {createSpacesNavigationFixture} from './fixtures/spacesNavigation';
+import {openMemoryFromPage} from './helpers/primaryNavigation';
 import {resources} from '../src/i18n/resources';
 import {writeFileSync} from 'node:fs';
 
@@ -11,7 +12,7 @@ for(const locale of ['en','zh-Hant','zh-Hans'] as const)for(const theme of ['lig
   const t=resources[locale].translation,errors=collectBrowserErrors(page),base=createSpacesNavigationFixture();
   const fixture={...base,memories:base.memories.map((m,i)=>i===0?{...m,content,confirmed:false,stability:'new' as const,structured_fields:JSON.stringify({claim:content,context:'出門前查看天氣；保留一條室內備案。'}),last_modified:Math.floor(Date.now()/1000)-7200}:m),entityDetails:base.entityDetails.map(d=>({...d,entity:{...d.entity,updated_at:Math.floor(Date.now()/1000)-7200}}))};
   await page.setViewportSize({width,height:900});
-  const runtime=await installTauriMock(page,{fixture,locale,rawActions:[],localStorage:{'wenlan-theme':theme,'wenlan-navigation-v1':JSON.stringify({version:1,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode:'icons',width:240}})}});
+  const runtime=await installTauriMock(page,{fixture,locale,rawActions:[],localStorage:{'wenlan-theme':theme,'wenlan-navigation-v1':JSON.stringify({version:2,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode:'icons',width:240}})}});
   await page.goto('/');await expect(page.locator('.memory-shell')).toBeVisible();
   await page.evaluate(()=>{const bridge=window.__TAURI_INTERNALS__!,invoke=bridge.invoke;bridge.invoke=async(command,args,options)=>{
    if(command==='get_enrichment_status')return {source_id:'memory-0',summary:'raw',steps:[{step:'summarize',status:'pending'}]};
@@ -23,8 +24,7 @@ for(const locale of ['en','zh-Hant','zh-Hans'] as const)for(const theme of ['lig
    if(!await nav.isVisible())await page.getByRole('button',{name:/^(Show sidebar|顯示側邊欄|显示侧边栏)$/}).click();
    await nav.getByRole('button',{name,exact:true}).click();
   };
-  await navigate(t.sidebar.memories);
-  await page.getByRole('article',{name:'Fixture architecture',exact:true}).getByRole('button',{name:t.memoryList.openMemory,exact:true}).click();
+  await openMemoryFromPage(page,'Fixture architecture',/Fixture architecture$/,{wiki:t.sidebar.pages,more:t.sidebar.more,info:t.pageInspector.open});
   const editor=page.locator('.memory-document-editor .cm-content');await expect(editor).toContainText(content);
   const openInfo=async()=>{const toggle=page.getByRole('button',{name:t.knowledgeContext.memoryPanel,exact:true});if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();};
   await openInfo();const pane=page.locator('.page-info-drawer:visible');await expect(pane).toBeVisible();
@@ -72,13 +72,12 @@ test("Empty Memory and Topic keep the shared Info hierarchy",async({page},info)=
  const base=createSpacesNavigationFixture();
  const fixture={...base,entityDetails:base.entityDetails.map(detail=>({...detail,relations:[]}))};
  await page.setViewportSize({width:1440,height:900});
- await installTauriMock(page,{fixture,locale:'en',rawActions:[],localStorage:{'wenlan-theme':'light','wenlan-navigation-v1':JSON.stringify({version:1,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode:'icons',width:240}})}});
+ await installTauriMock(page,{fixture,locale:'en',rawActions:[],localStorage:{'wenlan-theme':'light','wenlan-navigation-v1':JSON.stringify({version:2,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode:'icons',width:240}})}});
  await page.goto('/');
  await expect(page.locator('.memory-shell')).toBeVisible();
  await page.evaluate(()=>{const bridge=window.__TAURI_INTERNALS__!,invoke=bridge.invoke;bridge.invoke=async(command,args,options)=>command==='get_knowledge_graph_cmd'?{entities:[],relations:[],memory_links:[],memories:[],pages:[],page_links:[]}:invoke(command,args,options);});
  const nav=page.getByRole('navigation',{name:'Primary navigation'});
- await nav.getByRole('button',{name:'Memories',exact:true}).click();
- await page.getByRole('article',{name:'Fixture architecture',exact:true}).getByRole('button',{name:'Open memory',exact:true}).click();
+ await openMemoryFromPage(page,'Fixture architecture',/Fixture architecture$/);
  const pane=page.locator('.page-info-drawer:visible');
  await expect(pane.getByRole('heading',{name:'Connections',exact:true})).toBeVisible();
  await expect(pane.getByText('No direct connections in the currently visible knowledge.',{exact:true})).toBeVisible();
@@ -103,13 +102,12 @@ for (const scenario of [
   const fixture={...base,memories:base.memories.map((m,i)=>i===0?{...m,content:text}:m)};
   const errors=collectBrowserErrors(page);
   await page.setViewportSize({width,height:900});
-  const runtime=await installTauriMock(page,{fixture,locale:'en',rawActions:[],localStorage:{'wenlan-theme':theme,'wenlan-navigation-v1':JSON.stringify({version:1,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode,width:240}})}});
+  const runtime=await installTauriMock(page,{fixture,locale:'en',rawActions:[],localStorage:{'wenlan-theme':theme,'wenlan-navigation-v1':JSON.stringify({version:2,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode,width:240}})}});
   await page.goto('/');
   await expect(page.locator('.memory-shell')).toBeVisible();
   const nav=page.getByRole('navigation',{name:'Primary navigation'});
   if(!await nav.isVisible())await page.getByRole('button',{name:'Show sidebar',exact:true}).click();
-  await nav.getByRole('button',{name:'Memories',exact:true}).click();
-  await page.getByRole('article',{name:'Fixture architecture',exact:true}).getByRole('button',{name:'Open memory',exact:true}).click();
+  await openMemoryFromPage(page,'Fixture architecture',/Fixture architecture$/);
   const editor=page.locator('.memory-document-editor .cm-content');
   await expect(editor).toContainText(content);
   const pane=page.locator('.page-info-drawer:visible');

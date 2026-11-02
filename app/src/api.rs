@@ -1711,6 +1711,32 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
+    /// `GET /api/conversations/search`: sentences from conversations with
+    /// every search word (UX-FIND-1).
+    pub async fn search_conversations(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<wenlan_types::conversations::ConversationSearchResponse, String> {
+        let path = format!(
+            "/api/conversations/search?q={}&limit={limit}",
+            percent_encode_path_segment(query)
+        );
+        self.get_json(&path).await
+    }
+
+    /// `GET /api/sessions/{id}/lines`: the whole conversation (UX-FIND-2).
+    pub async fn conversation_lines(
+        &self,
+        session_id: &str,
+    ) -> Result<wenlan_types::conversations::ConversationLinesResponse, String> {
+        let path = format!(
+            "/api/sessions/{}/lines",
+            percent_encode_path_segment(session_id)
+        );
+        self.get_json(&path).await
+    }
+
     /// `PATCH /api/things/{id}`: the person renames a thing.
     pub async fn rename_thing(
         &self,

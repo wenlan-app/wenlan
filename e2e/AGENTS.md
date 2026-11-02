@@ -8,7 +8,7 @@ into: i18n (`i18n.spec.ts`, `spaces-zh-hans-visual.spec.ts`), page canvas
 (`page-canvas-*.spec.ts`, `page-editor.spec.ts`, `page-draft.visual.spec.ts`),
 spaces (`spaces-*.spec.ts`, `space-mark.visual.spec.ts`), wiki
 (`wiki-*.spec.ts`), graph (`graph-rendering.visual.spec.ts`), plus a handful of
-standalone suites (`memory-list.spec.ts`, `review-flavor.review.spec.ts`,
+standalone suites (`memory-detail-from-page.spec.ts`, `review-flavor.review.spec.ts`,
 `no-third-party-requests.spec.ts`, `tauriMock.self-test.spec.ts`). `*.visual.spec.ts`
 files are screenshot-diff tests.
 

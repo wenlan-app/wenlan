@@ -20,7 +20,7 @@ for (const cfg of [
     const errors = collectBrowserErrors(page);
     const controller = await installTauriMock(page, { fixture, locale: cfg.locale, rawActions: [], localStorage: {
       "wenlan-theme": cfg.theme, "wenlan-spaces-view-mode": "rows",
-      "wenlan-navigation-v1": JSON.stringify({ version: 1, visible: ["pages", "spaces", "sources", "memories", "entities", "graph"], sidebar: { visible: cfg.sidebar, mode: "labels", width: 240 } }),
+      "wenlan-navigation-v1": JSON.stringify({ version: 2, visible: ["pages", "spaces", "sources", "memories", "entities", "graph"], sidebar: { visible: cfg.sidebar, mode: "labels", width: 240 } }),
     } });
     await page.setViewportSize({ width: cfg.width, height: 900 });
     const annotationCalls: Record<string, unknown>[] = [];

@@ -108,6 +108,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "list_working_on": return workingOn();
     // The fixture has no things of its own yet, so home shows Brief items.
     case "list_things": return [];
+    // The fixture has no AI conversations, so search finds none of their words.
+    case "search_conversations": return [];
     case "get_briefing": return { content: "", new_today: 0, primary_agent: null, generated_at: 1_783_728_000, is_stale: false };
     case "get_enrichment_status": return { source_id: optionalString(args, "sourceId") ?? "", summary: "", steps: [] };
     case "get_version_chain_cmd": return [];
@@ -120,6 +122,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     // The fixture has no AI conversations: no note lists one, no id resolves.
     case "get_page_sessions": return { sessions: [] };
     case "get_session_detail": return null;
+    case "get_conversation_lines": throw new TauriMockArgumentError(command, "sessionId");
     // The fixture has no things, so no thing id resolves.
     case "get_thing": case "get_thing_map": case "rename_thing": throw new TauriMockArgumentError(command, "id");
     case "move_session_thing": throw new TauriMockArgumentError(command, "fromThingId");

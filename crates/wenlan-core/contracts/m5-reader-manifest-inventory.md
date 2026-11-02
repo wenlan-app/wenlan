@@ -705,6 +705,8 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/things` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `GET` | `/api/things/{id}` | main | yes | automatic | `none` | `handle_get_thing` | ThingPageEntry.title |
 | `GET` | `/api/things/{id}/map` | main | no | not_applicable | `none` | — | ThingMapResponse: point labels written for the map and conversation ids, no page prose |
+| `GET` | `/api/conversations/search` | main | no | not_applicable | `none` | — | ConversationSearchResponse: sentences from AI tool transcripts with conversation and thing titles, no page prose |
+| `GET` | `/api/sessions/{id}/lines` | main | no | not_applicable | `none` | — | ConversationLinesResponse: one AI tool transcript's lines with its conversation and thing titles, no page prose |
 | `POST` | `/api/things/{id}/map/ops` | main | no | not_applicable | `none` | — | ThingMapOpsResponse: point labels written for the map and conversation ids, no page prose |
 | `PATCH` | `/api/things/{id}` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
@@ -1103,6 +1105,7 @@ carrying the authority of agreement.
 | `core/db/scoped_entities.rs::search_entities_by_vector_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_search_entities` | — |
 | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` | `pub` | no | **yes** | `server/page_routes.rs::handle_get_page_links` | — |
 | `core/db/scoped_pages.rs::list_recent_changes_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_recent_page_changes` | — |
+| `core/db/scoped_pages.rs::pages_containing_text` | `pub` | no | **yes** | `server/page_routes.rs::handle_search_pages` | — |
 | `core/db/sentence_history.rs::cited_source_state_on` | `pub(super)` | no | no | — | — |
 | `core/db/sessions.rs::get_session_detail` | `pub` | no | **yes** | `server/session_routes.rs::handle_get_session` | — |
 | `core/db/steep.rs::list_steep_code_pages` | `pub(crate)` | no | no | — | — |
@@ -1256,6 +1259,7 @@ carrying the authority of agreement.
 | `server/page_routes.rs::handle_get_page` | `pub` | no | **yes** | `server/repair_read_routes.rs::handle_get_repair_page` | `core/db/page_basis.rs::linked_changed` |
 | `server/page_routes.rs::handle_get_page_links` | `pub` | no | no | — | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
 | `server/page_routes.rs::handle_publish_page_draft` | `pub` | no | no | — | `core/db/page_drafts.rs::publish_page_draft` |
+| `server/page_routes.rs::handle_search_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::pages_containing_text` |
 | `server/page_routes.rs::visible_conflict_identity` | `private` | no | no | `server/page_routes.rs::handle_publish_page_draft` | `core/db/truth_exposure.rs::conflict_identity_snapshot` |
 | `server/routes.rs::handle_distill_inner` | `private` | no | no | `server/routes.rs::handle_distill` | `core/db.rs::list_stale_pages_scoped`, `core/db.rs::load_page_source_index` |
 | `server/routes.rs::handle_recent_page_changes` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_changes_scoped` |
@@ -1599,7 +1603,6 @@ carrying the authority of agreement.
 | `server/page_routes.rs::handle_delete_page` | `pub` | no | no | — | `server/page_routes.rs::reject_entity_page_mutation` |
 | `server/page_routes.rs::handle_get_page_revisions` | `pub` | no | no | — | `core/page_history.rs::build_page_history` |
 | `server/page_routes.rs::handle_review_page` | `pub` | no | no | — | `core/db/presence_review.rs::review_page_with_presence` |
-| `server/page_routes.rs::handle_search_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::search_pages_scoped_browse` |
 | `server/page_routes.rs::handle_set_page_review_required` | `pub` | no | no | — | `server/page_routes.rs::reject_entity_page_mutation` |
 | `server/refinery_routes.rs::handle_accept_refinement` | `pub` | no | no | — | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` |
 | `server/repair_prepare_operation_routes.rs::handle_prepare_operation` | `private` | no | no | — | `core/repair/current.rs::prepare_current_repair_with_pages` |

@@ -106,7 +106,7 @@ test("imported documents remain browsable without any registered folder", async 
   await expect(preview.locator(".source-document-body")).toContainText("這是 閱讀與研究指南.pdf 的已保存內容。");
   await expect(preview.locator("img")).toHaveCount(0);
   expect(remoteImages).toEqual([]);
-  await page.getByRole("button", { name: "來源", exact: true }).click();
+  await openPrimaryDestination(page, "來源", "更多");
   await expect(preview).toHaveCount(0);
   await expect(library.getByRole("button", { name: /閱讀與研究指南/ })).toBeFocused();
   await page.getByRole("button", { name: "連結", exact: true }).click();
@@ -118,7 +118,7 @@ test("imported documents remain browsable without any registered folder", async 
   await expect(webpage.getByRole("alert")).toHaveCount(0);
   await page.getByRole("link", { name: "開啟原始網頁", exact: true }).click();
   expect(state.opens).toEqual([{ url: "https://example.org/article" }]);
-  await page.getByRole("button", { name: "來源", exact: true }).click();
+  await openPrimaryDestination(page, "來源", "更多");
   await page.getByRole("searchbox", { name: "篩選來源", exact: true }).fill("找不到的項目");
   await expect(page.getByRole("heading", { name: "沒有符合的來源" })).toBeVisible();
   await page.getByRole("button", { name: "清除搜尋與篩選" }).click();
@@ -219,7 +219,8 @@ test("navigation destinations keep one primary workspace and restore page contex
   const sidebar = page.locator(".notes-workspace-sidebar");
   await expect(sidebar).toHaveCSS("width", "240px");
   await expect(page.getByRole("navigation", { name: "主要導覽" }).locator('[aria-current="page"]')).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "來源", exact: true })).toHaveAttribute("aria-current", "page");
+  // Sources waits under More, which marks where you are.
+  await expect(page.getByRole("navigation", { name: "主要導覽" }).getByRole("button", { name: "更多", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(page.locator("#workspace-context-browser")).toHaveCount(0);
   await page.getByRole("button", { name: "連結", exact: true }).click();
   await page.getByRole("searchbox", { name: "篩選來源", exact: true }).fill("知識");
@@ -267,17 +268,15 @@ test("navigation destinations keep one primary workspace and restore page contex
 });
 
 
-test("Sources stays pinned while occasional people and topics stay in More on a narrow dark workspace", async ({ page }) => {
+test("Sources, the graph and topics wait in More on a narrow dark workspace (UX-FIND-4)", async ({ page }) => {
   const state = await setup(page, false, true);
   await page.setViewportSize({ width: 375, height: 812 });
   await page.locator("[data-sidebar-toggle]").click();
   const nav = page.getByRole("navigation", { name: "主要導覽", exact: true });
-  await expect(nav.getByRole("button", { name: "來源", exact: true })).toBeVisible();
-  await expect(nav.getByRole("button", { name: "圖譜", exact: true })).toBeVisible();
   await expect(nav.getByRole("button", { name: "空間", exact: true })).toBeVisible();
-  await expect(nav.getByRole("button", { name: "主題", exact: true })).toHaveCount(0);
+  for (const name of ["來源", "圖譜", "主題"]) await expect(nav.getByRole("button", { name, exact: true })).toHaveCount(0);
   await nav.getByRole("button", { name: "更多", exact: true }).click();
-  await expect(nav.getByRole("button", { name: "主題", exact: true })).toBeVisible();
+  for (const name of ["來源", "圖譜", "主題"]) await expect(nav.getByRole("button", { name, exact: true })).toBeVisible();
   await capture(page, "navigation-more-dark-narrow.png");
   await nav.getByRole("button", { name: "主題", exact: true }).click();
   await expect(page.getByRole("heading", { name: "主題", exact: true })).toHaveClass(/sr-only/);

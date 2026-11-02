@@ -9,7 +9,7 @@ for (const cfg of configs) test(`Space direct edits ${cfg.locale} ${cfg.theme} $
  const t = resources[cfg.locale].translation;
  await page.setViewportSize({width:cfg.width,height:900});
  const errors=collectBrowserErrors(page);
- const controller=await installTauriMock(page,{fixture:createSpaceProjectFixture(),locale:cfg.locale,rawActions:[],localStorage:{'wenlan-theme':cfg.theme,'wenlan-spaces-view-mode':'rows','wenlan-navigation-v1':JSON.stringify({version:1,visible:['pages','spaces','sources','memories','entities','graph'],sidebar:{visible:true,mode:'labels',width:240}})}});
+ const controller=await installTauriMock(page,{fixture:createSpaceProjectFixture(),locale:cfg.locale,rawActions:[],localStorage:{'wenlan-theme':cfg.theme,'wenlan-spaces-view-mode':'rows','wenlan-navigation-v1':JSON.stringify({version:2,visible:['pages','spaces','sources','memories','entities','graph'],sidebar:{visible:true,mode:'labels',width:240}})}});
  await page.goto('/');
  await openPrimaryDestination(page,t.sidebar.spaces,t.sidebar.more);
  await page.getByTestId('space-row-project-wenlan').getByRole('button',{name:'Wenlan',exact:true}).click();
