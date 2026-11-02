@@ -5,7 +5,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { setWritingCompositionActive } from "./writingPresentation";
-import { createWikiLinkEditing, parseResolvedWikiLinks, setResolvedWikiLinkTargets, setEditorReferenceContext, type EditorReferenceContext } from "./wikiLinkEditing";
+import { createWikiLinkEditing, parseMemoryIdReferences, parseResolvedWikiLinks, setResolvedWikiLinkTargets, setEditorReferenceContext, type EditorReferenceContext } from "./wikiLinkEditing";
 import { installCodeMirrorDomPolyfills } from "./editorTestUtils";
 
 beforeAll(installCodeMirrorDomPolyfills);
@@ -122,6 +122,22 @@ describe("wiki link editing", () => {
     expect(view.contentDOM.querySelector(".cm-wiki-page-missing")?.textContent).toBe("Missing");
     expect(view.contentDOM.textContent).toContain("[[Target");
     expect(view.contentDOM.textContent).not.toContain("[[Target|alias]]");
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
+  it("numbers memories cited by id instead of showing the id", () => {
+    expect(parseMemoryIdReferences("a [[mem_cf225d66e2a0]] b [mem_379c5ef87c10] c (source: mem_cf225d66e2a0) `mem_00000000aaaa`", 3)
+      .map((reference) => [reference.memoryId, reference.number])).toEqual([
+      ["mem_cf225d66e2a0", 3], ["mem_379c5ef87c10", 4], ["mem_cf225d66e2a0", 3], ["mem_00000000aaaa", 5],
+    ]);
+    const source = "Cache per daemon [[mem_cf225d66e2a0]][[mem_379c5ef87c10]]. Again [mem_cf225d66e2a0] and `mem_00000000aaaa`.";
+    const { view } = make(source);
+    const chips = [...view.contentDOM.querySelectorAll<HTMLAnchorElement>("a.reference-link--memory")];
+    expect(chips.map((chip) => [chip.textContent, chip.getAttribute("href")])).toEqual([
+      ["1", "#memory:mem_cf225d66e2a0"], ["2", "#memory:mem_379c5ef87c10"], ["1", "#memory:mem_cf225d66e2a0"],
+    ]);
+    expect(view.contentDOM.textContent).not.toContain("mem_cf225d66e2a0");
+    expect(view.contentDOM.textContent).toContain("`mem_00000000aaaa`");
     expect(view.state.doc.toString()).toBe(source);
   });
 
