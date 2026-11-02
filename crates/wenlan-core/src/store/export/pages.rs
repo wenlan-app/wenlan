@@ -70,12 +70,9 @@ pub async fn export_pages(
     let mut visible = Paths::default();
     let mut archive = Paths::default();
     let mut paths: HashMap<&str, (bool, String)> = HashMap::new();
-    // Pages that have a file keep its path; the rest are placed after them.
-    let (placed, unplaced): (Vec<&ExportPageRow>, Vec<&ExportPageRow>) = pages
-        .iter()
-        .copied()
-        .partition(|row| placement_of(placement, &row.id).is_some());
-    for row in placed.iter().chain(unplaced.iter()) {
+    // One pass in id order, so a page's name does not depend on whether
+    // another page with its title has a file yet.
+    for row in pages.iter().copied() {
         let archived = row.status == "archived";
         // The file is named by the page's title, so a `[[Title]]` link in
         // another page finds it; the folder is the one it is in today.
@@ -180,11 +177,29 @@ pub async fn export_pages(
         file.page = Some(row.id.clone());
         file.entity_type = row.entity_type.clone();
         file.aliases = aliases_of(row, manifest);
-        file.confirmed = row.entity_confirmed;
+        file.confirmed = row.entity_confirmed.is_some_and(|value| value != 0);
         file.established_by = row.established_by.clone();
         file.space = row.space.clone();
         file.description = row.content.clone();
         // Wenlan's keys the entity file has no field for.
+        if !row.entity_id_on_page {
+            // The id came from `entity_page_map`; the page row has none.
+            file.other.insert("entity_id_on_page".into(), false.into());
+        }
+        if let Some(raw) = &row.aliases {
+            // Aliases as stored when the list would not write them back the
+            // same (an empty list, other spacing, or not a list).
+            if file.aliases.is_empty()
+                || serde_json::to_string(&file.aliases).ok().as_deref() != Some(raw.as_str())
+            {
+                file.other
+                    .insert("entity_aliases".into(), raw.as_str().into());
+            }
+        }
+        if row.entity_confirmed == Some(0) {
+            // A stored 0, kept apart from an unset value.
+            file.other.insert("entity_confirmed".into(), false.into());
+        }
         if row.status != "active" {
             file.other
                 .insert("status".into(), row.status.as_str().into());
@@ -237,10 +252,12 @@ fn unwritten(manifest: &mut Manifest, id: &str, columns: &[(&str, bool)]) {
 /// entity), and any other entity column a page row carries, as stored, so
 /// the rebuild restores them exactly.
 fn entity_keys(other: &mut serde_yaml::Mapping, row: &ExportPageRow) {
+    let on_page = row.entity_id.clone().filter(|_| row.entity_id_on_page);
     let text = [
-        ("entity_id", &row.entity_id),
+        ("entity_id", &on_page),
         ("entity_type", &row.entity_type),
-        ("aliases", &row.aliases),
+        // Not `aliases`: a page file owns that key for its own list.
+        ("entity_aliases", &row.aliases),
         ("established_by", &row.established_by),
     ];
     for (key, value) in text {
@@ -248,8 +265,8 @@ fn entity_keys(other: &mut serde_yaml::Mapping, row: &ExportPageRow) {
             other.insert(key.into(), value.as_str().into());
         }
     }
-    if row.entity_confirmed {
-        other.insert("entity_confirmed".into(), true.into());
+    if let Some(value) = row.entity_confirmed {
+        other.insert("entity_confirmed".into(), (value != 0).into());
     }
     for (key, value) in [
         ("entity_created_at", row.entity_created_at),
@@ -437,7 +454,16 @@ fn label_of(
             }
         }
     }
-    citation.locator.clone()
+    document_label(&citation.locator).unwrap_or_else(|| citation.locator.clone())
+}
+
+/// A document chunk's file name, from a source id of the form
+/// `<folder>::<path>::<chunk>`.
+pub(super) fn document_label(locator: &str) -> Option<String> {
+    let mut parts = locator.split("::");
+    let (_, path) = (parts.next()?, parts.next()?);
+    let name = path.rsplit('/').next().filter(|name| !name.is_empty())?;
+    Some(name.to_string())
 }
 
 /// `text` on one line, so it fits a sources line.

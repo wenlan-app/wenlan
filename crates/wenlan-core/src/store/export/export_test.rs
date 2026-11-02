@@ -823,13 +823,13 @@ async fn records_keep_every_confirmation_and_annotation_column() {
             "context_key",
             "notes",
             "page_ids",
-            "version",
-            "updated_at"
+            "updated_at",
+            "version"
         ])
     );
     assert_eq!(
         table["rows"][0],
-        serde_json::json!(["memory", "mem_1", "space:sp", "Check the date.", "[]", 2, 9])
+        serde_json::json!(["memory", "mem_1", "space:sp", "Check the date.", "[]", 9, 2])
     );
     assert!(manifest.left_out.is_empty(), "{:?}", manifest.left_out);
 }
@@ -998,7 +998,9 @@ async fn replaying_the_history_log_gives_back_every_row() {
     let out = tempfile::tempdir().unwrap();
     let dirs = ExportDirs::create(out.path().join("export")).unwrap();
     let mut manifest = Manifest::new();
-    let done = export_history(&db, &dirs, &mut manifest).await.unwrap();
+    let done = export_history(&db, &dirs, &mut manifest, &Default::default())
+        .await
+        .unwrap();
     assert!(done.entries >= 4 && done.reads >= 1, "{done:?}");
     assert!(manifest
         .files
@@ -1137,6 +1139,8 @@ async fn the_pages_folder_is_read_and_nothing_in_it_is_lost() {
         "a file no page row claims\n",
     );
     write("deleted.md", "---\norigin_id: deleted\n---\nold\n");
+    // Edited in another app after Wenlan last wrote it.
+    write("Rust.md", "---\norigin_id: c\n---\nEdited elsewhere.\n");
     write(".wenlan/state.json", "{}");
     write(".obsidian/app.json", "{}");
     let before = snapshot(pages.path());
@@ -1145,10 +1149,19 @@ async fn the_pages_folder_is_read_and_nothing_in_it_is_lost() {
         ("a".to_string(), "Plans/a.md".to_string()),
         ("deleted".to_string(), "deleted.md".to_string()),
         ("deleted_too".to_string(), "missing.md".to_string()),
+        ("c".to_string(), "Rust.md".to_string()),
+    ]);
+    let digests = HashMap::from([
+        (
+            "a".to_string(),
+            super::sha256(b"---\norigin_id: a\n---\nAlpha\n"),
+        ),
+        ("c".to_string(), super::sha256(b"what Wenlan wrote")),
     ]);
     let folder = PagesFolder {
         dir: Some(pages.path().to_path_buf()),
         recorded,
+        digests,
     };
     let data_root = tempfile::tempdir().unwrap();
     let out = tempfile::tempdir().unwrap();
@@ -1164,17 +1177,30 @@ async fn the_pages_folder_is_read_and_nothing_in_it_is_lost() {
     assert_eq!(summary.found_by_id, 1);
     assert_eq!(summary.stale_records, 2);
     assert_eq!(summary.folder_only, 2);
+    // c was edited; b has no digest (state.json forgot it); a is as written.
+    assert_eq!(summary.edited_on_disk, 1);
+    assert_eq!(summary.no_digest, 1);
+    assert_eq!(
+        std::fs::read_to_string(target.join("backstage/.pages-folder/edited/Rust.md")).unwrap(),
+        "---\norigin_id: c\n---\nEdited elsewhere.\n"
+    );
+    assert!(target
+        .join("backstage/.pages-folder/edited/Notes/Beta page.md")
+        .is_file());
+    assert!(!target
+        .join("backstage/.pages-folder/edited/Plans/a.md")
+        .exists());
     assert!(target.join("visible/Plans/Alpha.md").is_file());
     assert!(target.join("visible/Notes/Beta.md").is_file());
     assert_eq!(
         std::fs::read_to_string(
-            target.join("backstage/pages-folder/external-compile-topic-001.md")
+            target.join("backstage/.pages-folder/external-compile-topic-001.md")
         )
         .unwrap(),
         "a file no page row claims\n"
     );
-    assert!(target.join("backstage/pages-folder/deleted.md").is_file());
-    assert!(!target.join("backstage/pages-folder/.wenlan").exists());
+    assert!(target.join("backstage/.pages-folder/deleted.md").is_file());
+    assert!(!target.join("backstage/.pages-folder/.wenlan").exists());
 }
 
 /// Every file under `dir` with its bytes and modified time.
@@ -1200,4 +1226,17 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         }
     }
     found
+}
+
+/// A cited document chunk is labelled by its file name, which a rebuilt
+/// database (that has no document chunks) gives back the same.
+#[test]
+fn a_document_chunk_is_labelled_by_its_file_name() {
+    use super::pages::document_label;
+    assert_eq!(
+        document_label("local_files::/Users/me/notes/plan.md::3").as_deref(),
+        Some("plan.md")
+    );
+    assert_eq!(document_label("mem_123"), None);
+    assert_eq!(document_label("x::/dir/::1"), None);
 }

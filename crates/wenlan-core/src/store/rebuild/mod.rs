@@ -13,6 +13,7 @@
 
 pub mod briefs;
 pub mod canvases;
+pub mod check;
 pub mod compare;
 pub mod memories;
 pub mod pages;
@@ -163,8 +164,8 @@ pub async fn rebuild_tables(from: &Path, into: &MemoryDB) -> Result<Rebuilt, Wen
 }
 
 /// Rebuilds every part the export folder `from` holds into `into` (a
-/// fresh database): whole tables and history, then the file rows, then the
-/// state seeds on the file rows.
+/// fresh database): the file rows, then the state seeds on them, then the
+/// whole tables and history.
 pub async fn rebuild(from: &Path, into: &MemoryDB) -> Result<Rebuilt, WenlanError> {
     let manifest = read_manifest(from)?;
     if manifest.format != crate::store::export::EXPORT_FORMAT {
@@ -174,13 +175,39 @@ pub async fn rebuild(from: &Path, into: &MemoryDB) -> Result<Rebuilt, WenlanErro
             crate::store::export::EXPORT_FORMAT
         )));
     }
+    if !into.rebuild_target_is_empty().await? {
+        return Err(WenlanError::Validation(
+            "the rebuild writes only into an empty database".to_string(),
+        ));
+    }
+    // Tables are written one at a time, so a row can name a row of a table
+    // written later (records name pages, a canvas node its parent). Keys are
+    // checked once everything is in.
+    into.rebuild_foreign_keys(false).await?;
+    let written = rebuild_parts(from, &manifest, into).await;
+    let checked = into.rebuild_foreign_key_problems().await;
+    into.rebuild_foreign_keys(true).await?;
+    let mut rebuilt = written?;
+    rebuilt.problems.extend(checked?);
+    Ok(rebuilt)
+}
+
+async fn rebuild_parts(
+    from: &Path,
+    manifest: &crate::store::export::Manifest,
+    into: &MemoryDB,
+) -> Result<Rebuilt, WenlanError> {
     let mut problems = Vec::new();
-    // Settings first: Brief rows name their space.
+    let pages = pages::rebuild_pages(from, manifest, into, &mut problems).await?;
+    let memories = memories::rebuild_memories(from, manifest, into, &mut problems).await?;
+    let (briefs, items) = briefs::rebuild_briefs(from, manifest, into, &mut problems).await?;
+    let canvases = canvases::rebuild_canvases(from, manifest, into, &mut problems).await?;
+    let (_, unset) = apply_states(from, into).await?;
+    problems.extend(unset);
+    // Whole tables last. Setting the state seeds edits page rows, and the
+    // database's triggers answer an edit (a `supported` verdict is demoted,
+    // a derivation queued); the tables copied whole must end as exported.
     let mut rebuilt = rebuild_tables(from, into).await?;
-    let pages = pages::rebuild_pages(from, &manifest, into, &mut problems).await?;
-    let memories = memories::rebuild_memories(from, &manifest, into, &mut problems).await?;
-    let (briefs, items) = briefs::rebuild_briefs(from, &manifest, into, &mut problems).await?;
-    let canvases = canvases::rebuild_canvases(from, &manifest, into, &mut problems).await?;
     rebuilt.tables.insert("briefs".to_string(), briefs);
     rebuilt.tables.insert("brief_items".to_string(), items);
     rebuilt.tables.insert("page_maps".to_string(), canvases);
@@ -189,8 +216,6 @@ pub async fn rebuild(from: &Path, into: &MemoryDB) -> Result<Rebuilt, WenlanErro
     rebuilt
         .tables
         .insert("memory_entities".to_string(), memories.links);
-    let (_, unset) = apply_states(from, into).await?;
-    problems.extend(unset);
     problems.append(&mut rebuilt.problems);
     rebuilt.problems = problems;
     Ok(rebuilt)
@@ -214,7 +239,7 @@ impl ExportDiff {
 
 /// File types the second export cannot have: the log (see [`ExportDiff`])
 /// and copies of a pages folder the rebuilt database never had.
-const NOT_COMPARED: &[&str] = &["history", "pages_folder_only"];
+const NOT_COMPARED: &[&str] = &["history", "pages_folder_only", "pages_folder_edited"];
 
 fn read_manifest(from: &Path) -> Result<crate::store::export::Manifest, WenlanError> {
     let text = std::fs::read_to_string(from.join(crate::store::export::MANIFEST_FILE))?;

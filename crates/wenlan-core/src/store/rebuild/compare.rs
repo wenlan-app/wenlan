@@ -97,11 +97,9 @@ impl KeyedDiff {
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct ColumnDiff {
     pub rows: usize,
-    /// Keys of the first few rows that differ.
-    pub examples: Vec<String>,
+    /// Keys of the rows that differ.
+    pub keys: Vec<String>,
 }
-
-const EXAMPLES: usize = 5;
 
 /// Compares `table` row by row, matching rows on `key`, every column but
 /// `skip`. Values are compared as stored, except where [`normalized`] says
@@ -136,9 +134,7 @@ pub async fn compare_keyed(
             if left != right {
                 let entry = diff.columns.entry(column.clone()).or_default();
                 entry.rows += 1;
-                if entry.examples.len() < EXAMPLES {
-                    entry.examples.push(row_key.clone());
-                }
+                entry.keys.push(row_key.clone());
             }
         }
     }
@@ -206,6 +202,160 @@ async fn keyed_rows(
             .collect::<Vec<_>>()
             .join("/");
         out.insert(row_key, row);
+    }
+    Ok(out)
+}
+
+/// Memories compared as memories, not rows: both databases are grouped by
+/// `(source, source_id)` and each memory's decisions are compared, field by
+/// field, as the export reads them. Only memories the export wrote as files
+/// (`written`, by source id) are compared on the source side; the rest are
+/// listed in its manifest.
+///
+/// What counts as the same, and why:
+/// - the text is the person's typed text when there is one, else the chunks
+///   joined in order; chunk boundaries and the tidied text are cache;
+/// - per-chunk fields come from the first chunk, the one the file speaks for;
+/// - a classified type or fields enrichment chose are cache: only explicit
+///   ones are compared;
+/// - an empty title or cue is no title or cue, a source text equal to the
+///   text is no source text, an unset supersede mode is `hide`, and an unset
+///   edit time is 0, as the columns read;
+/// - stated fields are compared as JSON values, not as text;
+/// - `about` is the memory's entity links, sorted.
+pub async fn compare_memories(
+    source: &MemoryDB,
+    rebuilt: &MemoryDB,
+    written: &std::collections::HashSet<String>,
+) -> Result<KeyedDiff, WenlanError> {
+    let a = memory_decisions(source, Some(written)).await?;
+    let mut b = memory_decisions(rebuilt, None).await?;
+    let mut diff = KeyedDiff {
+        table: "memories".to_string(),
+        rows: a.len(),
+        ..KeyedDiff::default()
+    };
+    for (key, left) in a {
+        let Some(right) = b.remove(&key) else {
+            diff.only_in_source.push(key);
+            continue;
+        };
+        for (field, value) in &left {
+            if right.get(field) != Some(value) {
+                let entry = diff.columns.entry(field.clone()).or_default();
+                entry.rows += 1;
+                entry.keys.push(key.clone());
+            }
+        }
+    }
+    diff.only_in_rebuilt = b.into_keys().collect();
+    Ok(diff)
+}
+
+async fn memory_decisions(
+    db: &MemoryDB,
+    written: Option<&std::collections::HashSet<String>>,
+) -> Result<BTreeMap<String, BTreeMap<String, serde_json::Value>>, WenlanError> {
+    use serde_json::{json, Value};
+    let rows = db.export_memory_rows().await?;
+    // `about` links, by memory (source id).
+    let mut about: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (memory, entity) in db.export_memory_entities().await? {
+        about.entry(memory).or_default().push(entity);
+    }
+    let mut groups: BTreeMap<String, Vec<&crate::db::export_reads::ExportMemoryRow>> =
+        BTreeMap::new();
+    for row in &rows {
+        if written.is_some_and(|ids| !ids.contains(&row.source_id)) {
+            continue;
+        }
+        groups
+            .entry(format!("{}/{}", row.source, row.source_id))
+            .or_default()
+            .push(row);
+    }
+    let some = |value: &Option<String>| {
+        value
+            .as_deref()
+            .filter(|text| !text.is_empty())
+            .map_or(Value::Null, |text| json!(text))
+    };
+    let fields = |value: &Option<String>| match value.as_deref() {
+        None => Value::Null,
+        Some(raw) => serde_json::from_str(raw).unwrap_or_else(|_| json!(raw)),
+    };
+    let mut out = BTreeMap::new();
+    for (key, mut chunks) in groups {
+        chunks.sort_by_key(|chunk| chunk.chunk_index);
+        let head = chunks[0];
+        let authored = chunks
+            .iter()
+            .find_map(|chunk| chunk.authored_content.clone());
+        let text = authored.clone().unwrap_or_else(|| {
+            chunks
+                .iter()
+                .map(|chunk| chunk.content.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+        let source_text = head.source_text.clone().filter(|source| *source != text);
+        let mut map = BTreeMap::new();
+        let mut put = |name: &str, value: Value| {
+            map.insert(name.to_string(), value);
+        };
+        put("text", json!(text));
+        put("typed", json!(authored.is_some()));
+        put("title", some(&head.title));
+        put("url", some(&head.url));
+        put(
+            "memory_type",
+            if head.memory_type_explicit {
+                some(&head.memory_type)
+            } else {
+                Value::Null
+            },
+        );
+        put("memory_type_explicit", json!(head.memory_type_explicit));
+        put("space", some(&head.space));
+        put("source_agent", some(&head.source_agent));
+        put("confirmed", json!(head.confirmed));
+        put("pinned", json!(head.pinned));
+        put("supersedes", some(&head.supersedes));
+        put(
+            "supersede_mode",
+            json!(head.supersede_mode.as_deref().unwrap_or("hide")),
+        );
+        put("pending_revision", json!(head.pending_revision));
+        put(
+            "structured_fields",
+            if head.structured_fields_explicit {
+                fields(&head.structured_fields)
+            } else {
+                Value::Null
+            },
+        );
+        put(
+            "structured_fields_explicit",
+            json!(head.structured_fields_explicit),
+        );
+        put("source_text", some(&source_text));
+        put("created_at", json!(head.created_at));
+        put("event_date", json!(head.event_date));
+        put("event_end", json!(head.event_end));
+        put("importance", json!(head.importance));
+        put("episode_of", some(&head.episode_of));
+        put("origin_class", some(&head.origin_class));
+        put("session_id", some(&head.session_id));
+        put("entity_id", some(&head.entity_id));
+        put("is_recap", json!(head.is_recap));
+        put("last_modified", json!(head.last_modified.unwrap_or(0)));
+        put("retrieval_cue", some(&head.retrieval_cue));
+        put("space_rejected", json!(head.space_rejected));
+        put(
+            "about",
+            json!(about.get(&head.source_id).cloned().unwrap_or_default()),
+        );
+        out.insert(key, map);
     }
     Ok(out)
 }

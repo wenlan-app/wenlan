@@ -9,7 +9,9 @@
 //! Today's pages folder is only read. A page `state.json` forgot is found by
 //! the `origin_id` in its file; a file no page row claims (a page the
 //! database no longer has, or a file someone put there) is copied as it is
-//! into `backstage/pages-folder/`, so nothing in that folder is lost.
+//! into `backstage/.pages-folder/`, so nothing in that folder is lost. The
+//! dot keeps these copies (mostly old `_sources` stubs) out of a vault's file
+//! list and link targets, where they would clash with the real pages' names.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
@@ -47,6 +49,12 @@ pub struct LosslessSummary {
     pub folder_only: usize,
     /// `state.json` entries for pages the database no longer has.
     pub stale_records: usize,
+    /// Claimed files whose bytes are not the ones Wenlan last wrote (edited
+    /// outside Wenlan), copied as they are.
+    pub edited_on_disk: usize,
+    /// Claimed files `state.json` records no digest for, copied as they are
+    /// since nothing tells whether they were edited.
+    pub no_digest: usize,
 }
 
 /// Today's pages folder: the folder (read only, never written) and what its
@@ -55,6 +63,8 @@ pub struct LosslessSummary {
 pub struct PagesFolder {
     pub dir: Option<PathBuf>,
     pub recorded: HashMap<String, String>,
+    /// Page id to the SHA-256 `state.json` records for its file.
+    pub digests: HashMap<String, String>,
 }
 
 impl PagesFolder {
@@ -63,6 +73,7 @@ impl PagesFolder {
         Self {
             dir: None,
             recorded,
+            digests: HashMap::new(),
         }
     }
 }
@@ -130,12 +141,43 @@ pub async fn export_lossless(
         for path in on_disk.iter().filter(|path| !claimed.contains(path)) {
             let bytes = std::fs::read(dir.join(path))?;
             manifest.files.push(dirs.write_bytes(
-                &format!("backstage/pages-folder/{path}"),
+                &format!("backstage/.pages-folder/{path}"),
                 path,
                 "pages_folder_only",
                 &bytes,
             )?);
             summary.folder_only += 1;
+        }
+        // A page's file is not read for the page (the database row is), so a
+        // file edited outside Wenlan would be lost: copy any whose bytes are
+        // not the ones Wenlan wrote.
+        let present: HashSet<&String> = on_disk.iter().collect();
+        let mut claimed_by: Vec<(&String, &String)> = placement
+            .iter()
+            .filter(|(id, path)| done.row_ids.contains(*id) && present.contains(path))
+            .collect();
+        claimed_by.sort();
+        for (id, path) in claimed_by {
+            let bytes = std::fs::read(dir.join(path))?;
+            let edited = match folder.digests.get(id) {
+                Some(digest) => *digest != super::sha256(&bytes),
+                None => {
+                    summary.no_digest += 1;
+                    true
+                }
+            };
+            if !edited {
+                continue;
+            }
+            if folder.digests.contains_key(id) {
+                summary.edited_on_disk += 1;
+            }
+            manifest.files.push(dirs.write_bytes(
+                &format!("backstage/.pages-folder/edited/{path}"),
+                id,
+                "pages_folder_edited",
+                &bytes,
+            )?);
         }
     }
     let kept = memories::export_memories(db, &done.entity_stems, &dirs, &mut manifest).await?;
@@ -149,7 +191,11 @@ pub async fn export_lossless(
     summary.layout_files = copy_layout(&data_root.join("layout"), "", &dirs, &mut manifest)?;
     summary.settings_rows = settings::export_settings(db, &dirs, &mut manifest).await?;
     summary.record_rows = records::export_records(db, &dirs, &mut manifest).await?;
-    let logged = history::export_history(db, &dirs, &mut manifest).await?;
+    let seeded = history::Seeded {
+        pages: Some(done.row_ids.clone()),
+        memories: Some(kept.keys.clone()),
+    };
+    let logged = history::export_history(db, &dirs, &mut manifest, &seeded).await?;
     summary.history_entries = logged.entries;
     summary.history_reads = logged.reads;
 

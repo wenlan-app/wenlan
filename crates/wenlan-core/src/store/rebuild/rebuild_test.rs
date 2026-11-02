@@ -237,6 +237,22 @@ async fn pages_and_entities_rebuild_from_their_files() {
         "shadow",
     )
     .await;
+    // An entity page whose id only entity_page_map holds, with an empty
+    // alias list stored as text.
+    page("mapped", "Carol", "Carol joined.").await;
+    sql(
+        &db,
+        "UPDATE pages SET kind = 'entity', aliases = '[]' WHERE id = ?1",
+        "mapped",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO entity_page_map (entity_id, page_id, created_at) \
+         VALUES ('ent_carol', ?1, 't0')",
+        "mapped",
+    )
+    .await;
 
     let out = tempfile::tempdir().unwrap();
     let data_root = tempfile::tempdir().unwrap();
@@ -253,7 +269,7 @@ async fn pages_and_entities_rebuild_from_their_files() {
     let (fresh, _fresh_dir) = test_db().await;
     let rebuilt = super::rebuild(&target, &fresh).await.unwrap();
     assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
-    assert_eq!(rebuilt.tables["pages"], 4);
+    assert_eq!(rebuilt.tables["pages"], 5);
 
     let cache: Vec<&str> = DEFERRED_COLUMNS
         .iter()
@@ -342,6 +358,51 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         .await;
     }
     memory("docs::README.md", 0, "", ", 'file', '# Notes'".to_string()).await;
+    // Typed by the person; the tidied text is cache.
+    memory(
+        "mem_typed",
+        0,
+        ", authored_content, source_text, created_at",
+        format!(", 'memory', 'Tidied text.', 'typed text', 'typed text', {at}"),
+    )
+    .await;
+    // A record that names a page: written before pages by the rebuild.
+    sql(
+        &db,
+        "INSERT INTO entity_page_map (entity_id, page_id, created_at) \
+         VALUES ('ent_123456789', ?1, 't0')",
+        "shadow",
+    )
+    .await;
+    // A supported verdict on a page whose version the state seeds set: the
+    // edit trigger must not demote it in the rebuild.
+    sql(&db, "UPDATE pages SET version = 3 WHERE id = ?1", "a").await;
+    sql(
+        &db,
+        "INSERT INTO page_truth_state (page_id, page_version, support_status, updated_at, \
+         evaluated_at) VALUES (?1, 3, 'supported', 1785725589, 1785725589)",
+        "a",
+    )
+    .await;
+    // A float that a default JSON parser reads one bit off.
+    sql(
+        &db,
+        "INSERT INTO rejected_memories (id, content, rejection_reason, similarity_score, \
+         created_at) VALUES (?1, 'dup', 'duplicate', 0.9083196446299553, 1785725589)",
+        "rej_1",
+    )
+    .await;
+    // A copy migrated with foreign keys off can name a page that is gone;
+    // the rebuild keeps the row, and the check does not count it as a loss.
+    db.rebuild_foreign_keys(false).await.unwrap();
+    sql(
+        &db,
+        "INSERT INTO entity_page_map (entity_id, page_id, created_at) \
+         VALUES ('ent_orphan', ?1, 't0')",
+        "page_that_is_gone",
+    )
+    .await;
+    db.rebuild_foreign_keys(true).await.unwrap();
     sql(
         &db,
         "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'ent_123456789')",
@@ -389,6 +450,8 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         ("n_placed", "active", "12.5, -40, 300, 80", "NULL"),
         ("n_unplaced", "active", "NULL, 7, NULL, NULL", "'n_placed'"),
         ("n_suggested", "suggested", "1, 2, 3, 4", "NULL"),
+        // Sorts before its parent: the rebuild must not need parents first.
+        ("n_child", "active", "5, 6, 7, 8", "'n_unplaced'"),
     ] {
         sql(
             &db,
@@ -448,7 +511,13 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
 
     let (fresh, _fresh_dir) = test_db().await;
     let rebuilt = rebuild(&first, &fresh).await.unwrap();
-    assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
+    assert_eq!(
+        rebuilt.problems.len(),
+        1,
+        "only the violation the source already had: {:?}",
+        rebuilt.problems
+    );
+    assert!(rebuilt.problems[0].starts_with("foreign key: entity_page_map -> pages"));
 
     let second = out.path().join("second");
     export_again(&fresh, &first, &second).await.unwrap();
@@ -471,4 +540,17 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
     tables.extend(HISTORY_TABLES.iter().map(|spec| spec.table));
     let diffs = compare_tables(&db, &fresh, &tables).await.unwrap();
     assert!(diffs.is_empty(), "{diffs:#?}");
+
+    // The one-call check agrees, and reports nothing.
+    let report = super::check::check_export(&db, &first, &out.path().join("work"))
+        .await
+        .unwrap();
+    assert!(report.is_clean(), "{}", report.summary());
+    assert!(report.summary().starts_with("CLEAN"));
+    // Every memory the export wrote is compared, the typed one included.
+    assert!(report.memories.rows >= 7, "{}", report.summary());
+
+    // The rebuild never writes into a database that has pages or memories.
+    let refused = rebuild(&first, &db).await;
+    assert!(refused.is_err());
 }

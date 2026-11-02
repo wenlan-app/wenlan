@@ -669,6 +669,19 @@ enum Command {
         #[arg(long)]
         pages: Option<std::path::PathBuf>,
     },
+    /// Internal storage migration step 2: rebuild an `export-lossless`
+    /// folder into a new database, export it again and compare with the
+    /// COPY it came from. Needs `--data-dir <copy>`; writes only `--work`.
+    #[command(name = "rebuild-check", hide = true)]
+    RebuildCheck {
+        /// The export folder `export-lossless` wrote from this copy.
+        #[arg(long)]
+        export: std::path::PathBuf,
+        /// A new folder for the rebuilt database, the second export and
+        /// the report. Must not exist, or be empty.
+        #[arg(long)]
+        work: std::path::PathBuf,
+    },
 }
 
 async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow::Result<()> {
@@ -1019,6 +1032,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             Some(Command::ExportLossless { out, pages }) => cmd_export::run(out, pages).await,
+            Some(Command::RebuildCheck { export, work }) => cmd_export::check(export, work).await,
             None => run_daemon(startup_repair_claim).await,
         }
     }

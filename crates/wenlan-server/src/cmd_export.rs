@@ -55,7 +55,9 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
 
     let pages =
         pages.unwrap_or_else(|| wenlan_core::config::load_config().knowledge_path_or_default());
-    let recorded = KnowledgeWriter::new(pages.clone(), &db).page_files();
+    let writer = KnowledgeWriter::new(pages.clone(), &db);
+    let recorded = writer.page_files();
+    let digests = writer.page_file_digests();
     println!(
         "Pages folder: {} ({} entries in state.json)",
         pages.display(),
@@ -64,6 +66,7 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
     let folder = PagesFolder {
         dir: Some(pages.clone()),
         recorded,
+        digests,
     };
 
     let summary = export_lossless(&db, &folder, &root, &out)
@@ -80,7 +83,8 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
         summary.briefs
     );
     println!(
-        "  canvases {} (+{} hidden), artifacts {}, layout files {}",
+        "  canvases {} (+{} hidden parts; those showing only their own page are kept \
+         backstage), artifacts {}, layout files {}",
         summary.canvases, summary.hidden_canvases, summary.artifacts, summary.layout_files
     );
     println!(
@@ -89,12 +93,53 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
     );
     println!(
         "  pages folder: {} found by their file's id, {} files no page claims (copied to \
-         backstage/pages-folder/), {} state.json entries for pages that are gone",
+         backstage/.pages-folder/), {} state.json entries for pages that are gone",
         summary.found_by_id, summary.folder_only, summary.stale_records
+    );
+    println!(
+        "  page files edited outside Wenlan: {} (+{} with no recorded digest), copied to \
+         backstage/.pages-folder/edited/",
+        summary.edited_on_disk, summary.no_digest
     );
     println!(
         "  {} files; {} values left out, listed in export-manifest.json",
         summary.files, summary.left_out
     );
+    Ok(())
+}
+
+/// `rebuild-check`: rebuild an export of a copied data folder into a new
+/// database under `work`, export that again, and compare with the copy.
+/// Writes `check-report.json` (with row keys) and `check-report.txt`
+/// (counts and paths only) into `work`.
+pub async fn check(export: PathBuf, work: PathBuf) -> Result<()> {
+    let Some(root) = std::env::var_os("WENLAN_DATA_DIR").map(PathBuf::from) else {
+        bail!(
+            "rebuild-check runs on a copy of the data folder only. Pass --data-dir <copy>, the \
+             folder the export was written from."
+        );
+    };
+    if same_folder(&root, &installed_root()) {
+        bail!(
+            "{} is the installed app's data folder. Pass --data-dir <copy>.",
+            root.display()
+        );
+    }
+    let _lock = super::DaemonDataLock::acquire(&root, true)?;
+    let data_dir = root.join("memorydb");
+    let db = MemoryDB::new(&data_dir, Arc::new(NoopEmitter))
+        .await
+        .with_context(|| format!("opening MemoryDB at {}", data_dir.display()))?;
+    let report = wenlan_core::store::rebuild::check::check_export(&db, &export, &work)
+        .await
+        .with_context(|| format!("checking {} in {}", export.display(), work.display()))?;
+    let summary = report.summary();
+    std::fs::write(
+        work.join("check-report.json"),
+        serde_json::to_string_pretty(&report)? + "\n",
+    )?;
+    std::fs::write(work.join("check-report.txt"), &summary)?;
+    print!("{summary}");
+    println!("Report: {}", work.join("check-report.txt").display());
     Ok(())
 }
