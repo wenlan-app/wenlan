@@ -219,10 +219,80 @@ pub async fn export_history(
         reads: reads.len(),
     };
     let root = dirs.backstage().join("history");
-    write_log(&root, main)?;
-    write_log(&root.join("reads"), reads)?;
+    if dirs.is_in_place() {
+        // The log only appends, so a refresh writes it whole into a folder
+        // of its own and then moves over only the files that changed.
+        let next = dirs.root.join(HISTORY_NEXT);
+        remove_tree(&next)?;
+        write_log(&next, main)?;
+        write_log(&next.join("reads"), reads)?;
+        let moved = sync_tree(&next, &root)?;
+        dirs.count_written(moved);
+        remove_tree(&next)?;
+    } else {
+        write_log(&root, main)?;
+        write_log(&root.join("reads"), reads)?;
+    }
     list_files(&dirs.root, &root, manifest)?;
     Ok(done)
+}
+
+/// Where an in-place refresh writes the log before moving it over.
+pub const HISTORY_NEXT: &str = ".history-next";
+
+fn remove_tree(dir: &Path) -> Result<(), WenlanError> {
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Makes `to` hold exactly the files `from` holds: a file whose bytes
+/// differ (or is new) is renamed over, a file `from` lacks is removed.
+/// Returns how many files were moved over.
+fn sync_tree(from: &Path, to: &Path) -> Result<usize, WenlanError> {
+    std::fs::create_dir_all(to)?;
+    let mut moved = 0;
+    let mut keep = std::collections::HashSet::new();
+    if let Ok(read) = std::fs::read_dir(from) {
+        for entry in read {
+            let entry = entry?;
+            let name = entry.file_name();
+            keep.insert(name.clone());
+            let (source, target) = (entry.path(), to.join(&name));
+            if entry.file_type()?.is_dir() {
+                moved += sync_tree(&source, &target)?;
+                continue;
+            }
+            let same = std::fs::read(&target)
+                .ok()
+                .zip(std::fs::read(&source).ok())
+                .is_some_and(|(old, new)| old == new);
+            if !same {
+                // Opened for writing: Windows flushes only a handle that may
+                // write.
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&source)?
+                    .sync_all()?;
+                std::fs::rename(&source, &target)?;
+                moved += 1;
+            }
+        }
+    }
+    for entry in std::fs::read_dir(to)? {
+        let entry = entry?;
+        if keep.contains(&entry.file_name()) {
+            continue;
+        }
+        if entry.file_type()?.is_dir() {
+            remove_tree(&entry.path())?;
+        } else {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(moved)
 }
 
 type Keyed = ((i64, &'static str, usize), NewEntry);
@@ -322,6 +392,14 @@ fn write_log(root: &Path, mut entries: Vec<Keyed>) -> Result<(), WenlanError> {
     // Time order, so each month's file holds that month; rows with the same
     // time keep their table and row order.
     entries.sort_by(|a, b| a.0.cmp(&b.0));
+    // An entry with no stored time (marked `time_unknown`) and the state
+    // seeds take the newest stored time, not the export's own: the same
+    // database then gives the same files, and a refresh rewrites nothing.
+    if let Some(latest) = entries.iter().filter_map(|(_, entry)| entry.ts).max() {
+        for (_, entry) in &mut entries {
+            entry.ts.get_or_insert(latest);
+        }
+    }
     let config = HistoryConfig {
         sync_each_entry: false,
         ..HistoryConfig::default()

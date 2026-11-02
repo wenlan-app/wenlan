@@ -29,7 +29,9 @@ pub async fn rebuild_canvases(
             "canvas_hidden" => false,
             _ => continue,
         };
-        let text = std::fs::read_to_string(from.join(&file.path))?;
+        let Some(text) = super::read_listed(&from.join(&file.path), &file.path, problems)? else {
+            continue;
+        };
         let parsed = match canvas::parse(&text) {
             Ok(parsed) => parsed,
             Err(error) => {

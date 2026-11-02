@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Storage migration step 3 in the daemon: keep the file copy of the
-//! database current (`wenlan_core::store::mirror`) and check it once a day.
+//! Storage migration steps 3 and 4 in the daemon: keep the file copy of
+//! the database current (`wenlan_core::store::mirror`) and check it once a
+//! day.
 //!
-//! A run copies the database, writes the files and checks them: once a day,
-//! and only when the database changed since the last run. (Measured on a
-//! 600 MB database: about 70 s for the files and 70 s for the check, so not
-//! hourly.) The first run is ten minutes after the daemon starts, so a
-//! short-lived daemon (a test, a quick restart) never runs it. `WENLAN_FILES_MIRROR=0`
-//! turns it off. The files are never read back: the database stays the
-//! truth, and nothing the person sees changes.
+//! - **Refresh:** when the database changed, at most every
+//!   [`REFRESH_EVERY`] (longer when a refresh is slow, see
+//!   [`REFRESH_SHARE`]), the files are brought up to date where they are.
+//!   Only changed files are written, so a refresh costs reading and
+//!   rendering, not a copy of the database.
+//! - **Check:** once a day, and only when the database changed since the
+//!   last check, a run copies the database, refreshes the files from the
+//!   copy and rebuilds them to compare. (Measured on a 600 MB database:
+//!   about 70 s for the check, so not hourly.)
+//!
+//! Nothing runs in the first [`FIRST_RUN_AFTER`], so a short-lived daemon
+//! (a test, a quick restart) never does. `WENLAN_FILES_MIRROR=0` turns it
+//! off. The files are not read back yet: nothing the person sees changes.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -19,10 +26,18 @@ use wenlan_types::responses::{FilesMirrorState, FilesMirrorStatus};
 
 use crate::state::SharedState;
 
-const FIRST_RUN_AFTER: Duration = Duration::from_secs(10 * 60);
-const TICK: Duration = Duration::from_secs(10 * 60);
-/// Least time between two runs, counted from when the last one started.
+const FIRST_RUN_AFTER: Duration = Duration::from_secs(2 * 60);
+const TICK: Duration = Duration::from_secs(30);
+/// Least time between two refreshes, counted from when the last one
+/// started.
+const REFRESH_EVERY: i64 = 2 * 60;
+/// A refresh reads and renders everything, so the gap also grows with its
+/// cost: at most a tenth of the time is spent refreshing.
+const REFRESH_SHARE: u64 = 10;
+/// Least time between two checks, counted from when the last one started.
 const RUN_EVERY: i64 = 24 * 60 * 60;
+/// A check copies the whole database: never in a daemon's first minutes.
+const FIRST_CHECK_AFTER: Duration = Duration::from_secs(10 * 60);
 /// Free space a run needs beyond three times the database's size (the
 /// snapshot, the rebuilt database and the files).
 const SPARE_BYTES: u64 = 512 * 1024 * 1024;
@@ -71,13 +86,29 @@ fn database_files(db_dir: &Path) -> (u64, i64) {
     (size, changed)
 }
 
-/// Whether a run is due: never run, or a day since the last one started
+/// Whether a check is due: never run, or a day since the last one started
 /// and the database changed since then.
 fn due(status: &FilesMirrorStatus, db_changed_at: i64, now: i64) -> bool {
-    match status.tried_at.or(status.written_at) {
+    match status.tried_at {
         None => true,
         Some(at) => now - at >= RUN_EVERY && db_changed_at > at,
     }
+}
+
+/// Whether a refresh is due: the database changed since the last refresh
+/// started (`last`), and that was at least [`REFRESH_EVERY`] ago. The
+/// change time has whole seconds, so a change in the same second as the
+/// last start counts as after it.
+fn refresh_due(last: &Refreshed, db_changed_at: i64, now: i64) -> bool {
+    match last.at {
+        None => true,
+        Some(at) => now - at >= last.gap.max(REFRESH_EVERY) && (last.failed || db_changed_at >= at),
+    }
+}
+
+/// The gap after a refresh that took `ms`.
+fn refresh_gap(ms: u64) -> i64 {
+    (ms.saturating_mul(REFRESH_SHARE) / 1_000).min(i64::MAX as u64) as i64
 }
 
 pub fn start(shared: SharedState, shutdown: tokio::sync::watch::Receiver<bool>) {
@@ -89,6 +120,8 @@ pub fn start(shared: SharedState, shutdown: tokio::sync::watch::Receiver<bool>) 
 
 async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<bool>) {
     let mut wait = FIRST_RUN_AFTER;
+    let mut last_refresh = Refreshed::default();
+    let started = std::time::Instant::now();
     loop {
         tokio::select! {
             _ = tokio::time::sleep(wait) => {}
@@ -98,13 +131,41 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
             return;
         }
         wait = TICK;
-        if let Err(error) = tick(&shared).await {
+        let may_check = started.elapsed() >= FIRST_CHECK_AFTER;
+        if let Err(error) = tick(&shared, &mut last_refresh, may_check).await {
             tracing::warn!("[files_mirror] {error}");
         }
     }
 }
 
-async fn tick(shared: &SharedState) -> anyhow::Result<()> {
+/// The pages folder as the export reads it: the folder and what its
+/// `state.json` records.
+fn pages_folder(db: &wenlan_core::db::MemoryDB) -> PagesFolder {
+    let pages = wenlan_core::config::load_config().knowledge_path_or_default();
+    let writer = wenlan_core::export::knowledge::KnowledgeWriter::new(pages.clone(), db);
+    PagesFolder {
+        dir: Some(pages),
+        recorded: writer.page_files(),
+        digests: writer.page_file_digests(),
+        skip_unclaimed: true,
+    }
+}
+
+/// When the last refresh started, whatever its outcome, so a failing one
+/// is not retried every tick, and the gap it asks for.
+#[derive(Default)]
+struct Refreshed {
+    at: Option<i64>,
+    gap: i64,
+    /// A failed refresh is tried again after the gap, change or not.
+    failed: bool,
+}
+
+async fn tick(
+    shared: &SharedState,
+    last_refresh: &mut Refreshed,
+    may_check: bool,
+) -> anyhow::Result<()> {
     let db = { shared.read().await.db.clone() };
     let Some(db) = db else { return Ok(()) };
     let dir = mirror_dir();
@@ -112,39 +173,44 @@ async fn tick(shared: &SharedState) -> anyhow::Result<()> {
     let data_root = wenlan_core::config::data_root();
     let (db_size, db_changed_at) = database_files(&data_root.join("memorydb"));
     let now = now();
-    if !due(&status, db_changed_at, now) {
+    // A check also refreshes the files. When one is due but cannot run
+    // yet, the files are still refreshed, and the status says why.
+    let blocked = if !may_check || !due(&status, db_changed_at, now) {
+        None
+    } else if db.shared_embedder().is_none() {
+        Some("waiting for the search model to load")
+    } else {
+        std::fs::create_dir_all(&dir)?;
+        let free = fs2::available_space(&dir).unwrap_or(u64::MAX);
+        (free < db_size.saturating_mul(3).saturating_add(SPARE_BYTES))
+            .then_some("check skipped: not enough free disk space")
+    };
+    let check_due = may_check && due(&status, db_changed_at, now);
+    if !check_due || blocked.is_some() {
+        let mut status = status;
+        if let Some(note) = blocked {
+            if status.written_at.is_none() {
+                status.state = FilesMirrorState::Waiting;
+            }
+            status.note = Some(note.to_string());
+            mirror::write_status(&dir, &status)?;
+        }
+        if refresh_due(last_refresh, db_changed_at, now) {
+            last_refresh.at = Some(now);
+            let started = std::time::Instant::now();
+            let result = refresh(&db, &dir, status, now).await;
+            last_refresh.gap = refresh_gap(started.elapsed().as_millis() as u64);
+            last_refresh.failed = !matches!(result, Ok(true));
+            result?;
+        }
         return Ok(());
     }
-    let wait = |note: &str| -> anyhow::Result<()> {
-        let status = FilesMirrorStatus {
-            state: if status.written_at.is_some() {
-                status.state.clone()
-            } else {
-                FilesMirrorState::Waiting
-            },
-            note: Some(note.to_string()),
-            ..status.clone()
-        };
-        mirror::write_status(&dir, &status)?;
-        Ok(())
-    };
+    last_refresh.at = Some(now);
     let Some(embedder) = db.shared_embedder() else {
-        return wait("waiting for the search model to load");
+        return Ok(());
     };
-    std::fs::create_dir_all(&dir)?;
-    let free = fs2::available_space(&dir).unwrap_or(u64::MAX);
-    if free < db_size.saturating_mul(3).saturating_add(SPARE_BYTES) {
-        return wait("skipped: not enough free disk space");
-    }
 
-    let pages = wenlan_core::config::load_config().knowledge_path_or_default();
-    let writer = wenlan_core::export::knowledge::KnowledgeWriter::new(pages.clone(), &db);
-    let folder = PagesFolder {
-        dir: Some(pages),
-        recorded: writer.page_files(),
-        digests: writer.page_file_digests(),
-        skip_unclaimed: true,
-    };
+    let folder = pages_folder(&db);
     let status = FilesMirrorStatus {
         tried_at: Some(now),
         ..status
@@ -169,8 +235,10 @@ async fn tick(shared: &SharedState) -> anyhow::Result<()> {
     let next = match result {
         Ok(run) => {
             tracing::info!(
-                "[files_mirror] wrote {} files in {} ms{}",
+                "[files_mirror] {} files, {} written, {} removed, in {} ms{}",
                 run.files,
+                run.written,
+                run.removed,
                 run.write_ms,
                 match run.check_clean {
                     Some(true) => format!(", check clean in {} ms", run.check_ms),
@@ -184,6 +252,42 @@ async fn tick(shared: &SharedState) -> anyhow::Result<()> {
     };
     mirror::write_status(&dir, &next)?;
     Ok(())
+}
+
+/// Brings the files up to date with the live database, between checks.
+async fn refresh(
+    db: &wenlan_core::db::MemoryDB,
+    dir: &Path,
+    status: FilesMirrorStatus,
+    now: i64,
+) -> anyhow::Result<bool> {
+    let folder = pages_folder(db);
+    let data_root = wenlan_core::config::data_root();
+    let db_file = data_root.join("memorydb").join("origin_memory.db");
+    let handle = tokio::runtime::Handle::current();
+    let mirror_dir = dir.to_path_buf();
+    // Off the async workers, like a check: libsql runs on the calling thread.
+    let result = tokio::task::spawn_blocking(move || {
+        handle.block_on(mirror::refresh(&db_file, &folder, &data_root, &mirror_dir))
+    })
+    .await?;
+    let ok = result.is_ok();
+    let next = match result {
+        Ok(run) => {
+            if run.written + run.removed > 0 {
+                tracing::info!(
+                    "[files_mirror] refreshed: {} written, {} removed, in {} ms",
+                    run.written,
+                    run.removed,
+                    run.write_ms
+                );
+            }
+            mirror::after_refresh(status, &run, now)
+        }
+        Err(error) => mirror::after_failure(status, &error),
+    };
+    mirror::write_status(dir, &next)?;
+    Ok(ok)
 }
 
 #[cfg(test)]
@@ -211,5 +315,53 @@ mod tests {
             ..FilesMirrorStatus::default()
         };
         assert!(!due(&failed, 30_000, 20_000 + 600));
+    }
+
+    #[test]
+    fn a_refresh_follows_a_change_at_most_every_two_minutes() {
+        let at = |at: i64, failed: bool| Refreshed {
+            at: Some(at),
+            gap: 0,
+            failed,
+        };
+        assert!(refresh_due(&Refreshed::default(), 0, 1_000));
+        // Changed since the last refresh, but too soon.
+        assert!(!refresh_due(
+            &at(1_000, false),
+            1_050,
+            1_000 + REFRESH_EVERY - 1
+        ));
+        assert!(refresh_due(&at(1_000, false), 1_050, 1_000 + REFRESH_EVERY));
+        // A change in the same second as the last start counts.
+        assert!(refresh_due(&at(1_000, false), 1_000, 1_000 + REFRESH_EVERY));
+        // No change since: nothing to do.
+        assert!(!refresh_due(
+            &at(1_000, false),
+            999,
+            1_000 + 10 * REFRESH_EVERY
+        ));
+        // Unless the last one failed: then it is tried again.
+        assert!(!refresh_due(
+            &at(1_000, true),
+            999,
+            1_000 + REFRESH_EVERY - 1
+        ));
+        assert!(refresh_due(&at(1_000, true), 999, 1_000 + REFRESH_EVERY));
+    }
+
+    #[test]
+    fn a_slow_refresh_waits_longer() {
+        let after = |ms: u64| Refreshed {
+            at: Some(1_000),
+            gap: refresh_gap(ms),
+            failed: false,
+        };
+        // 30 s of work: at least five minutes until the next one.
+        assert_eq!(refresh_gap(30_000), 300);
+        assert!(!refresh_due(&after(30_000), 1_050, 1_000 + 299));
+        assert!(refresh_due(&after(30_000), 1_050, 1_000 + 300));
+        // A quick one keeps the two minutes.
+        assert!(!refresh_due(&after(3_000), 1_050, 1_000 + 60));
+        assert!(refresh_due(&after(3_000), 1_050, 1_000 + REFRESH_EVERY));
     }
 }

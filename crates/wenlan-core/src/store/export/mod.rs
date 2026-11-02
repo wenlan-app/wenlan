@@ -247,7 +247,21 @@ pub struct Deferred {
 #[derive(Debug, Clone)]
 pub struct ExportDirs {
     pub root: PathBuf,
+    /// Set when the export refreshes an earlier one where it is
+    /// ([`Self::in_place`]) instead of writing a new folder.
+    in_place: Option<std::sync::Arc<InPlace>>,
 }
+
+/// What an in-place refresh tracks.
+#[derive(Debug, Default)]
+struct InPlace {
+    /// Files written because they were new or their bytes changed.
+    written: std::sync::atomic::AtomicUsize,
+}
+
+/// Suffix of the file a refresh writes before it renames it over the old
+/// one. A leftover (the refresh stopped) is removed by the next refresh.
+pub const TEMP_SUFFIX: &str = ".wenlan-tmp";
 
 impl ExportDirs {
     /// `root` must not exist yet, or be an empty folder: an export never
@@ -268,7 +282,45 @@ impl ExportDirs {
             }
             Err(error) => return Err(error.into()),
         }
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            in_place: None,
+        })
+    }
+
+    /// Refresh the export already in `root` where it is: a file whose bytes
+    /// did not change is not written again, a changed one is written beside
+    /// it and renamed over it (so a reader never sees half a file), and
+    /// [`Self::finish_in_place`] removes the files the new manifest no
+    /// longer lists. `root` is created when missing.
+    pub fn in_place(root: impl Into<PathBuf>) -> Result<Self, WenlanError> {
+        let root = root.into();
+        std::fs::create_dir_all(&root)?;
+        Ok(Self {
+            root,
+            in_place: Some(std::sync::Arc::new(InPlace::default())),
+        })
+    }
+
+    /// How many files an in-place refresh wrote so far.
+    pub fn written(&self) -> usize {
+        self.in_place.as_ref().map_or(0, |in_place| {
+            in_place.written.load(std::sync::atomic::Ordering::Relaxed)
+        })
+    }
+
+    /// Counts files an in-place refresh wrote other than through
+    /// [`Self::write_bytes`] (the history log).
+    pub(crate) fn count_written(&self, files: usize) {
+        if let Some(in_place) = &self.in_place {
+            in_place
+                .written
+                .fetch_add(files, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    pub fn is_in_place(&self) -> bool {
+        self.in_place.is_some()
     }
 
     pub fn visible(&self) -> PathBuf {
@@ -304,6 +356,22 @@ impl ExportDirs {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let exported = ExportedFile {
+            id: id.to_string(),
+            file_type: file_type.to_string(),
+            path: relative.to_string(),
+            sha256: sha256(bytes),
+        };
+        if let Some(in_place) = &self.in_place {
+            if std::fs::read(&path).is_ok_and(|old| old == bytes) {
+                return Ok(exported);
+            }
+            replace_file(&path, bytes)?;
+            in_place
+                .written
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Ok(exported);
+        }
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -313,12 +381,7 @@ impl ExportDirs {
             })?;
         std::io::Write::write_all(&mut file, bytes)?;
         file.sync_all()?;
-        Ok(ExportedFile {
-            id: id.to_string(),
-            file_type: file_type.to_string(),
-            path: relative.to_string(),
-            sha256: sha256(bytes),
-        })
+        Ok(exported)
     }
 
     /// Writes the manifest last, so a folder without one is an export that
@@ -327,6 +390,9 @@ impl ExportDirs {
         let text = serde_json::to_string_pretty(manifest)
             .map_err(|error| WenlanError::Validation(format!("manifest: {error}")))?;
         let path = self.root.join(MANIFEST_FILE);
+        if self.in_place.is_some() {
+            return replace_file(&path, format!("{text}\n").as_bytes());
+        }
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -336,6 +402,70 @@ impl ExportDirs {
         file.sync_all()?;
         Ok(())
     }
+}
+
+impl ExportDirs {
+    /// Ends an in-place refresh that produced `manifest` (call it before
+    /// [`Self::write_manifest`]): removes every file under `root` that
+    /// `manifest` does not list (records the database no longer has, and
+    /// leftovers of a refresh that stopped), so the folder holds exactly
+    /// the export. `root` is the export's own folder; nothing else lives
+    /// there. Returns how many files were removed.
+    pub fn finish_in_place(&self, manifest: &Manifest) -> Result<usize, WenlanError> {
+        let listed: std::collections::HashSet<PathBuf> = manifest
+            .files
+            .iter()
+            .filter_map(|file| safe_relative(&file.path).ok())
+            .collect();
+        remove_unlisted(&self.root, Path::new(""), &listed)
+    }
+}
+
+fn remove_unlisted(
+    root: &Path,
+    relative: &Path,
+    listed: &std::collections::HashSet<PathBuf>,
+) -> Result<usize, WenlanError> {
+    let dir = root.join(relative);
+    let mut removed = 0;
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        let inner = relative.join(entry.file_name());
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            removed += remove_unlisted(root, &inner, listed)?;
+            // Empty now: the records that were in it are gone.
+            let _ = std::fs::remove_dir(entry.path());
+        } else if inner != Path::new(MANIFEST_FILE) && !listed.contains(&inner) {
+            std::fs::remove_file(entry.path())?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// The manifest an export at `root` wrote, if it has one that reads.
+pub fn read_manifest(root: &Path) -> Option<Manifest> {
+    let text = std::fs::read_to_string(root.join(MANIFEST_FILE)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Writes `bytes` beside `path` and renames it over `path`, so a reader
+/// sees the old file or the new one, never half of one.
+fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), WenlanError> {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(TEMP_SUFFIX);
+    let temp = path.with_file_name(name);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&temp)?;
+    std::io::Write::write_all(&mut file, bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&temp, path)?;
+    Ok(())
 }
 
 /// `relative` as a path under the root: forward slashes, no `..`, nothing

@@ -82,7 +82,9 @@ pub async fn rebuild_memories(
         let path = from.join(&file.path);
         match file.file_type.as_str() {
             "memory" => {
-                let text = std::fs::read_to_string(&path)?;
+                let Some(text) = super::read_listed(&path, &file.path, problems)? else {
+                    continue;
+                };
                 let parsed = match memory::parse(&text) {
                     Ok(parsed) => parsed,
                     Err(error) => {
@@ -106,7 +108,9 @@ pub async fn rebuild_memories(
                 done.memories += 1;
             }
             "original" => {
-                let text = std::fs::read_to_string(&path)?;
+                let Some(text) = super::read_listed(&path, &file.path, problems)? else {
+                    continue;
+                };
                 let parsed = match original::parse(&text) {
                     Ok(parsed) => parsed,
                     Err(error) => {

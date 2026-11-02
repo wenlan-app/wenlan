@@ -20,7 +20,9 @@ pub async fn rebuild_briefs(
     let mut briefs = Vec::new();
     let mut items = Vec::new();
     for file in manifest.files.iter().filter(|f| f.file_type == "brief") {
-        let text = std::fs::read_to_string(from.join(&file.path))?;
+        let Some(text) = super::read_listed(&from.join(&file.path), &file.path, problems)? else {
+            continue;
+        };
         let mut parsed = match brief::parse(&text) {
             Ok(parsed) => parsed,
             Err(error) => {

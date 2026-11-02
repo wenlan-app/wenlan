@@ -184,8 +184,42 @@ impl MemoryDB {
     /// Runs one statement with `?1` bound to `id`, for export fixtures.
     #[cfg(test)]
     pub(crate) async fn export_fixture_sql(&self, statement: &str, id: &str) {
+        self.export_fixture_sql_result(statement, id).await.unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn export_fixture_sql_result(
+        &self,
+        statement: &str,
+        id: &str,
+    ) -> Result<u64, libsql::Error> {
         let conn = self.conn.lock().await;
-        conn.execute(statement, libsql::params![id]).await.unwrap();
+        conn.execute(statement, libsql::params![id]).await
+    }
+
+    /// Pages, and memories counted once per memory (not per chunk): what
+    /// the export writes a file for, counted cheaply.
+    pub async fn export_content_count(&self) -> Result<usize, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT (SELECT COUNT(*) FROM pages) + \
+                        (SELECT COUNT(*) FROM (SELECT DISTINCT source, source_id FROM memories))",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("export_content_count: {e}")))?;
+        let count: i64 = match rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("export_content_count: {e}")))?
+        {
+            Some(row) => row
+                .get(0)
+                .map_err(|e| WenlanError::VectorDb(format!("export_content_count: {e}")))?,
+            None => 0,
+        };
+        Ok(count.max(0) as usize)
     }
 
     /// Every `memories` row, ordered by memory then chunk.
@@ -708,6 +742,81 @@ pub async fn copy_database_file(
         .await
         .map_err(|error| WenlanError::VectorDb(format!("copy the database: {error}")))?;
     Ok(())
+}
+
+impl MemoryDB {
+    /// A read-only view of the database file `db_file` as it was when this
+    /// returns: its own connection, `query_only`, inside one read
+    /// transaction, so every read through it sees the same moment while the
+    /// daemon keeps writing (WAL). No migration runs and nothing is
+    /// written; the file must already be at this build's schema. For
+    /// exporting the live database without copying it first.
+    pub async fn open_read_snapshot(db_file: &std::path::Path) -> Result<MemoryDB, WenlanError> {
+        if !db_file.is_file() {
+            return Err(WenlanError::Validation(format!(
+                "no database at {}",
+                db_file.display()
+            )));
+        }
+        let path = db_file.to_str().ok_or_else(|| {
+            WenlanError::Validation(format!("not a UTF-8 path: {}", db_file.display()))
+        })?;
+        let db = libsql::Builder::new_local(path)
+            .build()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("open a read snapshot: {error}")))?;
+        let conn = db
+            .connect()
+            .map_err(|error| WenlanError::VectorDb(format!("connect a read snapshot: {error}")))?;
+        conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA query_only = ON; BEGIN;")
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("start a read snapshot: {error}")))?;
+        // The first read fixes the moment the transaction sees.
+        let version: i64 = {
+            let mut rows = conn
+                .query("PRAGMA user_version", ())
+                .await
+                .map_err(|error| WenlanError::VectorDb(format!("read snapshot: {error}")))?;
+            match rows
+                .next()
+                .await
+                .map_err(|error| WenlanError::VectorDb(format!("read snapshot: {error}")))?
+            {
+                Some(row) => row.get(0).unwrap_or(0),
+                None => 0,
+            }
+        };
+        if version != i64::from(crate::db::SCHEMA_VERSION) {
+            return Err(WenlanError::Validation(format!(
+                "the database is at schema {version}, this build reads {}",
+                crate::db::SCHEMA_VERSION
+            )));
+        }
+        let lint_freshness =
+            std::sync::Arc::new(crate::lint::snapshot::LintFreshnessClock::new(&db).map_err(
+                |error| WenlanError::VectorDb(format!("lint freshness observer: {error}")),
+            )?);
+        Ok(MemoryDB {
+            _db: db,
+            conn: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
+            entity_resolution_lock: tokio::sync::Mutex::new(()),
+            space_write_lock: tokio::sync::Mutex::new(()),
+            lint_freshness,
+            page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
+            derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
+            embedder: std::sync::OnceLock::new(),
+            embedder_load_error: std::sync::Mutex::new(None),
+            chunker: super::ChunkingEngine::default(),
+            embedding_cache: std::sync::Mutex::new(super::EmbeddingCache::new(200)),
+            community_dirty_nodes: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            community_grouping_runtime: std::sync::Mutex::new(
+                crate::community_grouping::CommunityGroupingRuntime::default(),
+            ),
+            opened_fresh_file: std::sync::atomic::AtomicBool::new(false),
+            skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            steep_leases: crate::steep::SteepLeases::default(),
+        })
+    }
 }
 
 impl MemoryDB {

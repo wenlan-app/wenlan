@@ -668,6 +668,11 @@ enum Command {
         /// is. Default: the copy's configured pages folder.
         #[arg(long)]
         pages: Option<std::path::PathBuf>,
+        /// Bring an earlier export in `--out` up to date where it is:
+        /// write only the files that changed and remove the ones that are
+        /// gone. Without it, `--out` must be new or empty.
+        #[arg(long)]
+        refresh: bool,
     },
     /// Internal storage migration step 2: rebuild an `export-lossless`
     /// folder into a new database, export it again and compare with the
@@ -1033,7 +1038,11 @@ async fn main() -> anyhow::Result<()> {
                     cmd_prune_junk_entities::restore(&restore).await
                 }
             }
-            Some(Command::ExportLossless { out, pages }) => cmd_export::run(out, pages).await,
+            Some(Command::ExportLossless {
+                out,
+                pages,
+                refresh,
+            }) => cmd_export::run(out, pages, refresh).await,
             Some(Command::RebuildCheck { export, work }) => cmd_export::check(export, work).await,
             None => run_daemon(startup_repair_claim).await,
         }

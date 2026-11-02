@@ -97,7 +97,9 @@ pub async fn rebuild_pages(
         let path = from.join(&file.path);
         let row = match file.file_type.as_str() {
             "page" | "archived_page" => {
-                let text = std::fs::read_to_string(&path)?;
+                let Some(text) = super::read_listed(&path, &file.path, problems)? else {
+                    continue;
+                };
                 match page::parse(&text, "") {
                     Ok(parsed) => page_row(parsed, file.file_type == "archived_page", problems),
                     Err(error) => {
@@ -107,7 +109,9 @@ pub async fn rebuild_pages(
                 }
             }
             "entity" => {
-                let text = std::fs::read_to_string(&path)?;
+                let Some(text) = super::read_listed(&path, &file.path, problems)? else {
+                    continue;
+                };
                 match entity::parse(&text) {
                     Ok(parsed) => entity_row(parsed, problems),
                     Err(error) => {

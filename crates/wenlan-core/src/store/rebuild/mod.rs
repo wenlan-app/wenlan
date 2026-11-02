@@ -34,6 +34,24 @@ pub struct Rebuilt {
     pub problems: Vec<String>,
 }
 
+/// A file the manifest lists. One that is gone (a refresh stopped after
+/// removing it and before writing the new manifest) is a problem, not an
+/// error: the rest still rebuilds.
+pub(crate) fn read_listed(
+    path: &Path,
+    listed: &str,
+    problems: &mut Vec<String>,
+) -> Result<Option<String>, WenlanError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            problems.push(format!("{listed}: listed but missing"));
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Reads the whole-table files and the history log under `from` (an
 /// export folder) into `into`.
 pub async fn rebuild_tables(from: &Path, into: &MemoryDB) -> Result<Rebuilt, WenlanError> {
