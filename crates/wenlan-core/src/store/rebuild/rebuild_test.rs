@@ -358,6 +358,17 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         "shadow",
     )
     .await;
+    // A copy migrated with foreign keys off can name a page that is gone;
+    // the rebuild keeps the row, and the check does not count it as a loss.
+    db.rebuild_foreign_keys(false).await.unwrap();
+    sql(
+        &db,
+        "INSERT INTO entity_page_map (entity_id, page_id, created_at) \
+         VALUES ('ent_orphan', ?1, 't0')",
+        "page_that_is_gone",
+    )
+    .await;
+    db.rebuild_foreign_keys(true).await.unwrap();
     sql(
         &db,
         "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'ent_123456789')",
@@ -466,7 +477,13 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
 
     let (fresh, _fresh_dir) = test_db().await;
     let rebuilt = rebuild(&first, &fresh).await.unwrap();
-    assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
+    assert_eq!(
+        rebuilt.problems.len(),
+        1,
+        "only the violation the source already had: {:?}",
+        rebuilt.problems
+    );
+    assert!(rebuilt.problems[0].starts_with("foreign key: entity_page_map -> pages"));
 
     let second = out.path().join("second");
     export_again(&fresh, &first, &second).await.unwrap();

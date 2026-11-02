@@ -7,6 +7,10 @@ use super::table_classes::TABLE_CLASSES;
 use super::MemoryDB;
 use crate::error::WenlanError;
 
+/// How a foreign key problem starts: `foreign key: <table> -> <parent>
+/// (row <rowid>)`, a row of `table` naming a `parent` row that is not there.
+pub(crate) const FOREIGN_KEY: &str = "foreign key: ";
+
 impl MemoryDB {
     /// Replaces every row of `table` with `rows`, each holding a value for
     /// each of `columns`, in one transaction. `table` must be one of the
@@ -162,7 +166,7 @@ impl MemoryDB {
             let rowid: Option<i64> = row.get(1).ok();
             let parent: String = row.get(2).map_err(fail)?;
             problems.push(format!(
-                "{table} row {}: names a {parent} row that is not there",
+                "{FOREIGN_KEY}{table} -> {parent} (row {})",
                 rowid.map_or_else(|| "?".to_string(), |id| id.to_string())
             ));
         }

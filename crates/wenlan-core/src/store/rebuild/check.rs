@@ -227,9 +227,10 @@ pub async fn check_export(
             only_in_rebuilt: diff.only_in_rebuilt.len(),
         })
         .collect();
+    let problems = without_source_violations(source, rebuilt.problems).await?;
     Ok(CheckReport {
         rebuilt: rebuilt.tables,
-        problems: rebuilt.problems,
+        problems,
         files,
         pages,
         page_columns,
@@ -238,4 +239,44 @@ pub async fn check_export(
         tables,
         tables_compared,
     })
+}
+
+/// The rebuild's problems with foreign key violations the source copy
+/// already has taken out: a copy migrated with foreign keys off can hold
+/// rows naming rows that are gone, and the rebuild keeps them as they are.
+/// Only more violations of a kind than the source has are reported, as one
+/// line per kind.
+async fn without_source_violations(
+    source: &MemoryDB,
+    problems: Vec<String>,
+) -> Result<Vec<String>, WenlanError> {
+    use crate::db::rebuild_writes::FOREIGN_KEY;
+    let kind = |problem: &str| -> Option<String> {
+        let rest = problem.strip_prefix(FOREIGN_KEY)?;
+        Some(rest.split(" (row").next().unwrap_or(rest).to_string())
+    };
+    let mut before: BTreeMap<String, usize> = BTreeMap::new();
+    for problem in source.rebuild_foreign_key_problems().await? {
+        if let Some(kind) = kind(&problem) {
+            *before.entry(kind).or_default() += 1;
+        }
+    }
+    let mut after: BTreeMap<String, usize> = BTreeMap::new();
+    let mut kept = Vec::new();
+    for problem in problems {
+        match kind(&problem) {
+            Some(kind) => *after.entry(kind).or_default() += 1,
+            None => kept.push(problem),
+        }
+    }
+    for (kind, count) in after {
+        let had = before.get(&kind).copied().unwrap_or(0);
+        if count > had {
+            kept.push(format!(
+                "{FOREIGN_KEY}{kind}: {count} rows name a row that is not there \
+                 (the source copy has {had})"
+            ));
+        }
+    }
+    Ok(kept)
 }

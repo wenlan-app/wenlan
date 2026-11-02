@@ -221,7 +221,8 @@ async fn keyed_rows(
 /// - an empty title or cue is no title or cue, a source text equal to the
 ///   text is no source text, an unset supersede mode is `hide`, and an unset
 ///   edit time is 0, as the columns read;
-/// - stated fields are compared as JSON values, not as text.
+/// - stated fields are compared as JSON values, not as text;
+/// - `about` is the memory's entity links, sorted.
 pub async fn compare_memories(
     source: &MemoryDB,
     rebuilt: &MemoryDB,
@@ -257,6 +258,11 @@ async fn memory_decisions(
 ) -> Result<BTreeMap<String, BTreeMap<String, serde_json::Value>>, WenlanError> {
     use serde_json::{json, Value};
     let rows = db.export_memory_rows().await?;
+    // `about` links, by memory (source id).
+    let mut about: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (memory, entity) in db.export_memory_entities().await? {
+        about.entry(memory).or_default().push(entity);
+    }
     let mut groups: BTreeMap<String, Vec<&crate::db::export_reads::ExportMemoryRow>> =
         BTreeMap::new();
     for row in &rows {
@@ -345,6 +351,10 @@ async fn memory_decisions(
         put("last_modified", json!(head.last_modified.unwrap_or(0)));
         put("retrieval_cue", some(&head.retrieval_cue));
         put("space_rejected", json!(head.space_rejected));
+        put(
+            "about",
+            json!(about.get(&head.source_id).cloned().unwrap_or_default()),
+        );
         out.insert(key, map);
     }
     Ok(out)
