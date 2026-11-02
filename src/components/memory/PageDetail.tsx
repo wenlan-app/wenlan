@@ -665,8 +665,9 @@ export default function PageDetail({
       ? [[source.source.memory_source_id, source.memory] as const] : [])),
     sourcesLoading: pageSourcesLoading,
     labels: { page: t("references.page"), memory: t("citation.kind.memory"), source: t("references.source"),
-      authored: t("citation.kind.authored"), unverified: t("citation.unverified") },
-  }), [page?.citations, pageSources, pageSourcesLoading, t]);
+      authored: t("citation.kind.authored"), unverified: t("citation.unverified"), missing: t("references.missingPage") },
+    selfTitle: page?.title,
+  }), [page?.citations, page?.title, pageSources, pageSourcesLoading, t]);
   useEffect(() => {
     // A save can clear or replace the evidence map. Never keep a stale citation open.
     setWikiLinkPreview((current) => current?.target.kind === "citation" ? null : current);

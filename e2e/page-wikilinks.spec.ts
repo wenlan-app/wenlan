@@ -235,7 +235,7 @@ test("resolved link syntax is concealed outside its active editing range without
     view?.dispatch({ selection: { anchor: 0 } });
     view?.focus();
   });
-  await expect(editor).toContainText("Open target alias. See 城市散步. Missing [[Missing Page]].");
+  await expect(editor).toContainText("Open target alias. See 城市散步. Missing Missing Page.");
   await expect(editor).not.toContainText(resolved);
   expect(await editorSource(editor)).toBe(INITIAL_SOURCE);
 
