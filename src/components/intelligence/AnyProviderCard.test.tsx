@@ -431,7 +431,7 @@ describe("AnyProviderCard — the Local-server card (spec §5.2)", () => {
       await screen.findByText(/Connected to LM Studio/);
       const key = await screen.findByLabelText("API key (optional)");
       expect(key).toHaveAttribute("type", "password");
-      expect(screen.getByText(/Only if this server asks for a token/)).toBeInTheDocument();
+      expect(screen.getByText(/Only if the server asks for one/)).toBeInTheDocument();
 
       await userEvent.type(key, "lm-token");
       // The keyless mount probe no longer speaks for this form: discovery

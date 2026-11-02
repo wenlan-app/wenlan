@@ -472,7 +472,7 @@ const en = {
     apiKeyConfiguredPlaceholder: "••••••••  (key stored)",
     apiKeyOptionalLabel: "API key (optional)",
     apiKeyOptionalHint:
-      "Only if this server asks for a token. LM Studio does when \"Require Authentication\" is on (Server Settings > Manage Tokens).",
+      "Only if the server asks for one.",
     modelDiscoveryUnauthorized: "The server wants an API key (401). Enter it above, or type a model name.",
     localUnauthorizedChip: "{{name}} at {{host}} asks for an API key",
     modelDiscoveryKeyRejected: "The server rejected this API key (401). Check it, or type a model name.",
@@ -3624,7 +3624,7 @@ const zhHans = {
     apiKeyConfiguredPlaceholder: "••••••••（已保存密钥）",
     apiKeyOptionalLabel: "API 密钥（可选）",
     apiKeyOptionalHint:
-      "仅当服务器要求令牌时填写。LM Studio 开启“Require Authentication”后需要令牌（Server Settings > Manage Tokens）。",
+      "服务器要求时才填。",
     modelDiscoveryUnauthorized: "服务器要求 API 密钥（401）。请在上方填写，或手动输入模型名称。",
     localUnauthorizedChip: "{{host}} 上的 {{name}} 要求 API 密钥",
     modelDiscoveryKeyRejected: "服务器拒绝了这个 API 密钥（401）。请检查密钥，或手动输入模型名称。",
@@ -6730,7 +6730,7 @@ const zhHant = {
     apiKeyConfiguredPlaceholder: "••••••••（已儲存金鑰）",
     apiKeyOptionalLabel: "API 金鑰（選填）",
     apiKeyOptionalHint:
-      "僅在伺服器要求權杖時填寫。LM Studio 開啟「Require Authentication」後需要權杖（Server Settings > Manage Tokens）。",
+      "伺服器要求時才填。",
     modelDiscoveryUnauthorized: "伺服器要求 API 金鑰（401）。請在上方填寫，或手動輸入模型名稱。",
     localUnauthorizedChip: "{{host}} 上的 {{name}} 要求 API 金鑰",
     modelDiscoveryKeyRejected: "伺服器拒絕了這個 API 金鑰（401）。請檢查金鑰，或手動輸入模型名稱。",
