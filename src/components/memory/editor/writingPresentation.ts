@@ -362,6 +362,13 @@ const writingTheme = EditorView.theme({
     fontWeight: "500",
     lineHeight: "1.4",
   },
+  // One body line, the space a blank source line gives.
+  ".cm-writing-heading-space-above": {
+    paddingTop: "calc(var(--reading-font-size, 15px) * var(--reading-line-height, 1.75))",
+  },
+  ".cm-writing-heading-space-below": {
+    paddingBottom: "calc(var(--reading-font-size, 15px) * var(--reading-line-height, 1.75))",
+  },
   ".cm-writing-heading-1": {
     fontSize: "20px",
   },
@@ -650,10 +657,18 @@ function buildWritingRanges(view: EditorView): WritingRanges {
 
         if (/^ATXHeading[1-6]$/.test(node.name)) {
           const level = node.name.slice("ATXHeading".length);
-          addLineClass(
-            state.doc.lineAt(node.from).from,
-            `cm-writing-heading cm-writing-heading-${level}`,
-          );
+          const line = state.doc.lineAt(node.from);
+          addLineClass(line.from, `cm-writing-heading cm-writing-heading-${level}`);
+          // A heading reads the same whether or not its source has a blank
+          // line around it: a missing blank line is made up with space.
+          if (line.number > 1 && line.from - 1 > frontmatterEnd
+            && state.doc.line(line.number - 1).text.trim() !== "") {
+            addLineClass(line.from, "cm-writing-heading-space-above");
+          }
+          if (line.number < state.doc.lines
+            && state.doc.line(line.number + 1).text.trim() !== "") {
+            addLineClass(line.from, "cm-writing-heading-space-below");
+          }
           return;
         }
 
