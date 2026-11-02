@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
@@ -56,8 +56,9 @@ describe("Sidebar workspace", () => {
     expect(container.querySelector(".notes-workspace-panel")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Wiki" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Spaces" })).toBeInTheDocument();
-    // The graph waits under More; memories and sources have no page.
-    expect(screen.queryByRole("button", { name: "Graph" })).not.toBeInTheDocument();
+    // Every destination is on the left; memories and sources have no page.
+    expect(screen.getByRole("button", { name: "Graph" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sources" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Memories" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
@@ -76,17 +77,10 @@ describe("Sidebar workspace", () => {
     expect(onNavigatePages).toHaveBeenCalledTimes(1);
   });
 
-  it("UX-FIND-4: puts Graph and Topics under More with pins, and no Memories or Sources", async () => {
-    const user = userEvent.setup();
+  it("UX-FIND-4: puts Graph and Topics on the left, with no More, Memories or Sources", () => {
     renderSidebar({ onNavigateEntities: vi.fn() });
-    await user.click(screen.getByRole("button", { name: "More" }));
-    expect(screen.queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
-    const more = screen.getByRole("group", { name: "More" });
-    expect(more.querySelectorAll(".notes-more-destination")).toHaveLength(2);
-    expect(more.querySelectorAll(".notes-more-pin")).toHaveLength(2);
-    for (const name of ["Graph", "Topics"]) expect(within(more).getByRole("button", { name })).toBeInTheDocument();
-    for (const name of ["Wiki", "Spaces", "Memories", "Sources"]) expect(within(more).queryByRole("button", { name })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Customize navigation/ })).not.toBeInTheDocument();
+    for (const name of ["Wiki", "Spaces", "Graph", "Topics"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    for (const name of ["More", "Memories", "Sources", "Home"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   });
 
   it("keeps page and memory inventory out of global navigation", () => {
@@ -95,23 +89,22 @@ describe("Sidebar workspace", () => {
     expect(container.querySelector(".notes-memory-panel")).not.toBeInTheDocument();
   });
 
-  it("opens the graph from More, marks More while there, and keeps Settings in the account menu", async () => {
+  it("opens the graph from the left, marks it while there, and keeps Settings in the account menu", async () => {
     const user = userEvent.setup();
     const onNavigateGraph = vi.fn();
     const onNavigateSettings = vi.fn();
     renderSidebar({ onNavigateGraph, onNavigateSettings, activeNavigation: "graph" });
 
-    const more = screen.getByRole("button", { name: "More" });
-    expect(more).toHaveAttribute("aria-current", "page");
-    await user.click(more);
-    await user.click(within(screen.getByRole("group", { name: "More" })).getByRole("button", { name: "Graph" }));
+    const graph = screen.getByRole("button", { name: "Graph" });
+    expect(graph).toHaveAttribute("aria-current", "page");
+    await user.click(graph);
     expect(onNavigateGraph).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: "Account menu" }));
     await user.click(screen.getByRole("menuitem", { name: "Settings" }));
     expect(onNavigateSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("closes the narrow drawer after navigation from More", async () => {
+  it("closes the narrow drawer after navigation", async () => {
     const user = userEvent.setup();
     const onRequestClose = vi.fn();
     const onNavigateGraph = vi.fn();
@@ -122,8 +115,7 @@ describe("Sidebar workspace", () => {
       onNavigateGraph,
     });
 
-    await user.click(screen.getByRole("button", { name: "More" }));
-    await user.click(within(screen.getByRole("group", { name: "More" })).getByRole("button", { name: "Graph" }));
+    await user.click(screen.getByRole("button", { name: "Graph" }));
     expect(onNavigateGraph).toHaveBeenCalledTimes(1);
     expect(onRequestClose).toHaveBeenCalledTimes(1);
   });

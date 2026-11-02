@@ -23,18 +23,10 @@ test("Wiki -> Spaces -> Space -> Page -> back and Space -> global Topics -> Topi
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
   await openPrimaryDestination(page, "Wiki");
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
-  const more = primaryNavigation.getByRole("button", { name: "More", exact: true });
   const wiki = primaryNavigation.getByRole("button", { name: "Wiki", exact: true });
   await expect(wiki).toHaveAttribute("aria-current", "page");
-  await expect(more).not.toHaveAttribute("aria-current");
-  await more.click();
-  await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);
-  await expect(wiki).toHaveAttribute("aria-current", "page");
   await expect(primaryNavigation.getByRole("button", { name: "Home", exact: true })).not.toHaveAttribute("aria-current");
-  await expect(more).not.toHaveAttribute("aria-current");
-  await page.keyboard.press("Escape");
-  await expect(wiki).toHaveAttribute("aria-current", "page");
-  await expect(more).not.toHaveAttribute("aria-current");
+  await expect(primaryNavigation.getByRole("button", { name: "More", exact: true })).toHaveCount(0);
 
   await primaryNavigation.getByRole("button", { name: "Wiki", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();

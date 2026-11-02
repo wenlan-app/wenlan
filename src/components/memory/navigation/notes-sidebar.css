@@ -107,7 +107,6 @@
 .notes-primary-link .notes-navigation-glyph { flex: 0 0 22px; }
 .notes-rail-nav--icons { align-items: center; }
 .notes-rail-nav--icons .notes-rail-button { flex: 0 0 44px; }
-.notes-rail-nav--labels .notes-more-anchor { width: 100%; }
 
 /* A shared alignment slot with optical sizing for each asset's viewBox padding.
    Stroke weight stays fixed when a smaller drawing needs a larger SVG canvas. */
@@ -155,39 +154,12 @@
 }
 
 .notes-rail-button:focus-visible,
-.notes-more-destination-link:focus-visible,
-.notes-more-pin:focus-visible,
 .notes-primary-link:focus-visible,
 .notes-list-create:focus-visible,
 .notes-page-button:focus-visible,
 .notes-list-filter:focus-within {
   outline: 2px solid var(--mem-accent-page);
   outline-offset: 2px;
-}
-
-.notes-more-anchor {
-  position: relative;
-}
-
-.notes-more-panel {
-  position: fixed;
-  top: 0;
-  left: 51px;
-  z-index: 10;
-  display: flex;
-  box-sizing: border-box;
-  width: 264px;
-  max-width: calc(100vw - 16px);
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px;
-  border: 1px solid var(--mem-border);
-  border-radius: 9px;
-  background: var(--mem-sidebar);
-  box-shadow: var(--mem-popover-shadow);
 }
 
 .settings-sidebar-group { min-height: 44px; flex: 0 0 44px; width: 100%; }
@@ -243,81 +215,6 @@
   padding: 0;
 }
 
-.notes-more-destination {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  width: 100%;
-  min-height: 44px;
-  border-radius: 6px;
-}
-
-.notes-more-destination-link {
-  position: relative;
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 44px;
-  align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 6px 0 0 6px;
-  background: transparent;
-  color: var(--mem-text-secondary);
-  font: 13px var(--mem-font-body);
-  text-align: left;
-  cursor: pointer;
-}
-
-.notes-more-destination:hover,
-.notes-more-destination:focus-within,
-.notes-more-destination[data-active="true"] {
-  background: var(--mem-hover);
-}
-
-.notes-more-destination:hover > button,
-.notes-more-destination:focus-within > button,
-.notes-more-destination[data-active="true"] > button {
-  color: var(--mem-text);
-}
-
-.notes-more-pin {
-  display: flex;
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0 6px 6px 0;
-  border: 0;
-  background: transparent;
-  color: var(--mem-text-secondary);
-  cursor: pointer;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.notes-more-destination:hover .notes-more-pin,
-.notes-more-destination:focus-within .notes-more-pin,
-.notes-more-pin[data-pinned="true"] {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-}
-
-.notes-more-pin[data-pinned="true"] {
-  color: var(--mem-text);
-}
-
-@media (hover: none), (pointer: coarse) {
-  .notes-more-pin {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-  }
-}
 
 .notes-workspace-panel {
   display: flex;

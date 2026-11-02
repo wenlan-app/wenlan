@@ -4,11 +4,16 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import ActivityStatus from "./ActivityStatus";
-import type { ActivityResponse } from "../../../lib/tauri";
+import type { ActivityResponse, RegisteredSource } from "../../../lib/tauri";
 
 const getActivityMock = vi.hoisted(() => vi.fn());
+const listRegisteredSourcesMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../../../lib/tauri", () => ({ getActivity: getActivityMock }));
+vi.mock("../../../lib/tauri", () => ({ getActivity: getActivityMock, listRegisteredSources: listRegisteredSourcesMock }));
+
+function source(fields: Partial<RegisteredSource>): RegisteredSource {
+  return { id: "s1", source_type: "directory", path: "/Users/me/Notes", status: "Active", last_sync: 1, file_count: 3, memory_count: 0, ...fields };
+}
 
 function activity(fields: Partial<ActivityResponse> = {}): ActivityResponse {
   return {
@@ -38,7 +43,7 @@ function renderStatus(data: ActivityResponse, onOpenActivity = vi.fn()) {
   };
 }
 
-beforeEach(() => getActivityMock.mockReset());
+beforeEach(() => { getActivityMock.mockReset(); listRegisteredSourcesMock.mockReset(); });
 
 describe("ActivityStatus", () => {
   it("keeps a neutral Pulse for idle and unconfigured activity, and opens the summary before Activity", async () => {
@@ -146,6 +151,54 @@ describe("ActivityStatus", () => {
     const retry = screen.getByRole("button", { name: "Read again" });
     expect(fireEvent.keyDown(trigger, { key: "Tab" })).toBe(false);
     expect(retry).toHaveFocus();
+  });
+
+  it("says a source that cannot be reached in Activity's place and opens it", async () => {
+    getActivityMock.mockResolvedValue(activity());
+    listRegisteredSourcesMock.mockResolvedValue([
+      source({ id: "gone", path: "/Volumes/Backup/Research/", status: { Unavailable: "missing" } }),
+      source({ id: "paused", path: "/Users/me/Paused", status: "Paused" }),
+      source({ id: "fine", path: "/Users/me/Notes" }),
+    ]);
+    const onOpenSource = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><ActivityStatus onOpenActivity={vi.fn()} onOpenSource={onOpenSource} /></QueryClientProvider>);
+
+    const trigger = await screen.findByRole("button", { name: "1 source can't be reached" });
+    expect(trigger).toHaveAttribute("data-state", "source");
+    expect(screen.getByTestId("activity-status-icon")).toHaveAttribute("data-icon-kind", "attention");
+    await userEvent.click(trigger);
+    const list = screen.getByTestId("activity-summary-sources");
+    expect(list).toHaveTextContent("Research");
+    expect(list).toHaveTextContent("Wenlan can't find this folder.");
+    expect(list).not.toHaveTextContent("Paused");
+    expect(fireEvent.keyDown(trigger, { key: "Tab" })).toBe(false);
+    const open = screen.getByRole("button", { name: "Take a look" });
+    expect(open).toHaveFocus();
+    await userEvent.click(open);
+    expect(onOpenSource).toHaveBeenCalledWith(expect.objectContaining({ id: "gone" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("lists three sources that cannot be reached, then how many more, which opens the list", async () => {
+    getActivityMock.mockResolvedValue(activity());
+    listRegisteredSourcesMock.mockResolvedValue(["A", "B", "C", "D", "E"].map((name) =>
+      source({ id: name, path: `/Volumes/Old/${name}`, status: { Error: "read failed" } })));
+    const onOpenSource = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><ActivityStatus onOpenActivity={vi.fn()} onOpenSource={onOpenSource} /></QueryClientProvider>);
+
+    await userEvent.click(await screen.findByRole("button", { name: "5 sources can't be reached" }));
+    expect(screen.getAllByRole("button", { name: "Take a look" })).toHaveLength(3);
+    expect(screen.getByTestId("activity-summary-sources")).toHaveTextContent("Wenlan couldn't read it the last time it checked.");
+    await userEvent.click(screen.getByRole("button", { name: "2 more" }));
+    expect(onOpenSource).toHaveBeenCalledWith(null);
+  });
+
+  it("does not check sources without a way to open them", async () => {
+    renderStatus(activity());
+    await screen.findByRole("button", { name: "Activity" });
+    expect(listRegisteredSourcesMock).not.toHaveBeenCalled();
   });
 
 });

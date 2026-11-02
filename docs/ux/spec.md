@@ -225,12 +225,14 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）「一般这种对话怎么渲染会更适合一些？就像现在这样在左边，还是说要左右左右这样子的？」（2026-11-02 16:03）「2. 同意」（2026-11-02 16:47）
 - **UX-FIND-3** `planned` There is "open in the original AI tool".
   原文：有「在原本的 AI 工具打開」。
-- **UX-FIND-4** `planned` The left side keeps only what matters: Search, Home,
-  Wiki and Spaces. The graph and topics wait under More, where each can be
-  pinned; Activity stays at the bottom. There is no Memories page and no
+- **UX-FIND-4** `planned` The left side shows Search, Home, Wiki, Spaces, the
+  graph and topics, with no More menu: there are few enough to show them all.
+  Activity stays at the bottom. There is no Memories page and no
   Sources page: a source is what a sentence cites, so a source shows which
   pages cite it, and the list of added files and links opens from Settings.
-  原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）「那你说你有什么情况下会特别需要到一个来源的页面，导览页面里面去管理那些东西？感觉机会并不是很大。」（2026-11-02 16:02）「1. 同意」（2026-11-02 16:47）
+  When a source can't be reached (moved, or its drive unplugged), Activity says
+  so in its own place at the bottom left, not on Home, and opens that source.
+  原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）「那你说你有什么情况下会特别需要到一个来源的页面，导览页面里面去管理那些东西？感觉机会并不是很大。」（2026-11-02 16:02）「1. 同意」（2026-11-02 16:47）選擇卡「左下角「活动」」（2026-11-02 18:11）「因為現在選項沒有很多，全放出來也還好」（2026-11-02 19:38）
 
 ## What AI tools made (HTML, images)
 

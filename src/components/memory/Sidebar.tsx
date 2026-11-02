@@ -7,6 +7,7 @@ import { PrimaryNavigation } from "./navigation/PrimaryNavigation";
 import { ReviewEnvironmentBadge } from "./navigation/ReviewEnvironmentBadge";
 import { SearchEntry } from "./SearchEntry";
 import ActivityStatus from "./activity/ActivityStatus";
+import type { RegisteredSource } from "../../lib/tauri";
 import ServiceStatus from "./ServiceStatus";
 import type { GlobalNavigation } from "./navigation/viewState";
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "./navigation/navigationPreferences";
@@ -20,6 +21,8 @@ interface SidebarProps {
   readonly onNavigateEntities?: () => void;
   readonly onNavigateGraph?: () => void;
   readonly onNavigateActivity?: () => void;
+ /** Opens a source Activity reports as unreachable. */
+ onOpenSource?: (source: RegisteredSource | null) => void;
   readonly activityCurrent?: boolean;
   /** Opens the connect flow from "What your AI can do" when no tool is connected. */
   readonly onConnectTool?: () => void;
@@ -63,6 +66,7 @@ export default function Sidebar({
   onNavigateEntities,
   onNavigateGraph,
   onNavigateActivity,
+  onOpenSource,
   activityCurrent = false,
   onConnectTool,
   onNavigateHome,
@@ -154,12 +158,9 @@ export default function Sidebar({
               entities: t("sidebar.entities"),
               graph: t("sidebar.graph"),
               home: t("sidebar.home"),
-              more: t("sidebar.more"),
               navigation: t("sidebar.navigation"),
               pages: t("sidebar.pages"),
-              pinToSidebar: (name) => t("sidebar.pinToSidebar", { name }),
               spaces: t("sidebar.spaces"),
-              unpinFromSidebar: (name) => t("sidebar.unpinFromSidebar", { name }),
             }}
             onNavigateEntities={closeAfterNavigation(onNavigateEntities, closeOverlay)}
             onNavigateGraph={closeAfterNavigation(onNavigateGraph, closeOverlay)}
@@ -177,6 +178,7 @@ export default function Sidebar({
                   compact={compact}
                   current={activityCurrent}
                   onOpenActivity={closeAfterNavigation(onNavigateActivity, closeOverlay)}
+                  onOpenSource={closeAfterNavigation(onOpenSource, closeOverlay)}
                 />
               )}
             </ServiceStatus>

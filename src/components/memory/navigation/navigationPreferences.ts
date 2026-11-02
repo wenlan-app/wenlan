@@ -12,15 +12,15 @@ export const NAVIGATION_PREFERENCE_KEY = "wenlan-navigation-v1";
 export const SIDEBAR_PREFERENCE_KEY = "wenlan-sidebar-collapsed";
 export const LEGACY_SIDEBAR_PREFERENCE_KEY = "origin-sidebar-collapsed";
 // Home is where the app opens (what you're working on); the Wiki holds every
-// page; Spaces split the work by project. The graph and topics wait under More
-// until you pin them. Memories have no page of their own: you meet them through
+// page; Spaces split the work by project; then the graph and topics. All of
+// them sit on the left, with no More menu. Memories have no page of their own: you meet them through
 // search and the things they belong to. Sources have none either: a source is
 // what a sentence cites, read from the page that cites it, and the list of
 // added files and links lives in Settings → Sources.
 export const NAVIGATION_DESTINATION_ORDER: readonly NavigationDestination[] = [
   "home", "pages", "spaces", "graph", "entities",
 ];
-export const REQUIRED_NAVIGATION_DESTINATIONS: readonly NavigationDestination[] = ["home", "pages", "spaces"];
+export const REQUIRED_NAVIGATION_DESTINATIONS: readonly NavigationDestination[] = NAVIGATION_DESTINATION_ORDER;
 export const DEFAULT_VISIBLE_NAVIGATION: readonly NavigationDestination[] = REQUIRED_NAVIGATION_DESTINATIONS;
 export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = { visible: true, mode: "labels" };
 export const DEFAULT_SIDEBAR_WIDTH = 240;

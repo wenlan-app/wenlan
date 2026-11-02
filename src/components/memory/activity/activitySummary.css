@@ -26,3 +26,9 @@
 .mem-activity-summary-mode-name { justify-self: start; padding: 1px 8px; border: 1px solid var(--mem-border); border-radius: 999px; color: var(--mem-text-secondary); font-size: 11px; line-height: 1.5; }
 .mem-activity-summary-finish code { color: var(--mem-text); font-family: var(--mem-font-mono); white-space: nowrap; }
 .mem-activity-summary-finish .ask-ai-hint-copy { width: 22px; height: 22px; margin-left: 4px; font-size: 12px; vertical-align: middle; }
+.mem-activity-summary-sources { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.mem-activity-summary-source { display: grid; justify-items: start; gap: 4px; min-width: 0; }
+.mem-activity-summary-source-name { color: var(--mem-text); font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.mem-activity-summary-source .mem-activity-summary-description { margin: 0; }
+.mem-activity-summary-source .mem-activity-popover-action { margin: 2px 0 0; }
+.mem-activity-popover .mem-activity-summary-more { margin: 0 0 0 -4px; }

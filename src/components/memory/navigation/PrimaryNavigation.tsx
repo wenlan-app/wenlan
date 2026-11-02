@@ -1,20 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { House, PushPin, Stack } from "@phosphor-icons/react";
+import { House, Stack } from "@phosphor-icons/react";
 import { TopicIcon } from "../entities/TopicIcon";
 import type { GlobalNavigation } from "./viewState";
 import { SpaceMark } from "./SpaceMark";
-import { NAVIGATION_DESTINATION_ORDER, readNavigationPreferences, REQUIRED_NAVIGATION_DESTINATIONS, sanitizeVisibleNavigation, writeNavigationPreferences } from "./navigationPreferences";
+import { NAVIGATION_DESTINATION_ORDER } from "./navigationPreferences";
 
 type PrimaryNavigationLabels = {
   readonly entities: string;
   readonly graph: string;
   readonly home: string;
-  readonly more: string;
   readonly navigation: string;
   readonly pages: string;
-  readonly pinToSidebar: (name: string) => string;
   readonly spaces: string;
-  readonly unpinFromSidebar: (name: string) => string;
 };
 
 type PrimaryNavigationProps = {
@@ -33,17 +29,16 @@ type NavButtonProps = {
   readonly compact?: boolean;
   readonly icon: React.ReactNode;
   readonly label: string;
-  readonly moreItem?: boolean;
   readonly onClick?: () => void;
 };
 
-function NavButton({ active, compact = false, icon, label, moreItem = false, onClick }: NavButtonProps) {
+function NavButton({ active, compact = false, icon, label, onClick }: NavButtonProps) {
   if (!onClick) return null;
   return (
     <button
       aria-current={active ? "page" : undefined}
       aria-label={label}
-      className={moreItem ? "notes-more-destination-link" : compact ? "notes-rail-button" : "notes-primary-link"}
+      className={compact ? "notes-rail-button" : "notes-primary-link"}
       data-active={active ? "true" : undefined}
       onClick={onClick}
       title={compact ? label : undefined}
@@ -71,13 +66,6 @@ export function PrimaryNavigation({
   onNavigatePages,
   onNavigateSpaces,
 }: PrimaryNavigationProps) {
-  const [visibleState, setVisibleState] = useState(readNavigationPreferences);
-  const visible = sanitizeVisibleNavigation(visibleState);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [panelPosition, setPanelPosition] = useState({ left: 51, top: 0, maxHeight: 0 });
-  const moreRef = useRef<HTMLDivElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const options = {
     home: { icon: homeIcon, onClick: onNavigateHome },
     pages: { icon: pageIcon, onClick: onNavigatePages },
@@ -85,137 +73,15 @@ export function PrimaryNavigation({
     graph: { icon: graphIcon, onClick: onNavigateGraph },
     entities: { icon: entityIcon, onClick: onNavigateEntities },
   };
-  const destinations = NAVIGATION_DESTINATION_ORDER.map((key) => ({ key, label: labels[key], ...options[key] })).filter((destination) => destination.onClick !== undefined);
-  const optionalDestinations = destinations.filter((destination) => !REQUIRED_NAVIGATION_DESTINATIONS.includes(destination.key));
-  const railDestinations = destinations.filter((destination) => visible.includes(destination.key));
-  const moreActive = destinations.some((destination) => destination.key === active && !visible.includes(destination.key));
-  const moreMarked = moreActive && !moreOpen;
-
-  const closeMore = () => setMoreOpen(false);
-
-  useEffect(() => {
-    if (!moreOpen) return;
-    const closeOutside = (event: PointerEvent) => {
-      if (!moreRef.current?.contains(event.target as Node)) {
-        setMoreOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", closeOutside);
-    return () => document.removeEventListener("pointerdown", closeOutside);
-  }, [moreOpen]);
-
-  useLayoutEffect(() => {
-    if (!moreOpen) return;
-    const positionPanel = () => {
-      const anchor = moreRef.current?.getBoundingClientRect();
-      const panel = panelRef.current?.getBoundingClientRect();
-      if (!anchor || !panel) return;
-      const margin = 8;
-      const maxHeight = Math.max(0, window.innerHeight - margin * 2);
-      const left = Math.max(margin, Math.min(anchor.right + 7, window.innerWidth - panel.width - margin));
-      const top = Math.max(margin, Math.min(anchor.top, window.innerHeight - Math.min(panel.height, maxHeight) - margin));
-      setPanelPosition((current) => current.left === left && current.top === top && current.maxHeight === maxHeight
-        ? current : { left, top, maxHeight });
-    };
-    positionPanel();
-    window.addEventListener("resize", positionPanel);
-    window.addEventListener("scroll", positionPanel, true);
-    return () => {
-      window.removeEventListener("resize", positionPanel);
-      window.removeEventListener("scroll", positionPanel, true);
-    };
-  }, [moreOpen]);
-
-  const updateVisible = (next: readonly GlobalNavigation[]) => {
-    const sanitized = sanitizeVisibleNavigation(next);
-    setVisibleState(sanitized);
-    writeNavigationPreferences(sanitized);
-  };
-  const navigate = (action: (() => void) | undefined) => action && (() => {
-    closeMore();
-    action();
-  });
+  // Every destination sits on the left: there are few enough that a More
+  // menu only hid them (UX-FIND-4).
+  const destinations = NAVIGATION_DESTINATION_ORDER.map((key) => ({ key, label: labels[key], ...options[key] }));
 
   return (
     <nav aria-label={labels.navigation} className={`notes-rail-nav${compact ? " notes-rail-nav--icons" : " notes-rail-nav--labels"}`}>
-      {railDestinations.map((destination) => (
+      {destinations.map((destination) => (
         <NavButton active={active === destination.key} compact={compact} icon={destination.icon} key={destination.key} label={destination.label} onClick={destination.onClick} />
       ))}
-      <div
-        className="notes-more-anchor"
-        data-sidebar-escape-scope={moreOpen ? "true" : undefined}
-        onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
-          event.preventDefault();
-          event.stopPropagation();
-          closeMore();
-          moreButtonRef.current?.focus();
-        }}
-        ref={moreRef}
-      >
-        <button
-          aria-controls={moreOpen ? "notes-more-destinations" : undefined}
-          aria-current={moreMarked ? "page" : undefined}
-          aria-expanded={moreOpen}
-          aria-label={labels.more}
-          className={compact ? "notes-rail-button" : "notes-primary-link"}
-          data-active={moreMarked ? "true" : undefined}
-          data-sidebar-more="true"
-          onClick={(event) => {
-            event.currentTarget.focus({ preventScroll: true });
-            setMoreOpen((current) => !current);
-          }}
-          ref={moreButtonRef}
-          title={labels.more}
-          type="button"
-        >
-          <span aria-hidden="true" className="notes-navigation-glyph"><svg aria-hidden="true" fill="currentColor" height="16" viewBox="0 0 24 24" width="16"><circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" /></svg></span>
-          {!compact && <span>{labels.more}</span>}
-        </button>
-        {moreOpen && (
-          <div
-            aria-label={labels.more}
-            className="notes-more-panel"
-            id="notes-more-destinations"
-            ref={panelRef}
-            role="group"
-            style={{ left: panelPosition.left, top: panelPosition.top, maxHeight: panelPosition.maxHeight || undefined }}
-          >
-            {optionalDestinations.map((destination) => {
-              const pinned = visible.includes(destination.key);
-              const pinLabel = pinned
-                ? labels.unpinFromSidebar(destination.label)
-                : labels.pinToSidebar(destination.label);
-              const activeInMore = active === destination.key && !pinned && moreOpen;
-              return (
-                <div className="notes-more-destination" data-active={activeInMore ? "true" : undefined} key={destination.key}>
-                  <NavButton
-                    active={activeInMore}
-                    icon={destination.icon}
-                    label={destination.label}
-                    moreItem
-                    onClick={navigate(destination.onClick)}
-                  />
-                  <button
-                    aria-label={pinLabel}
-                    aria-pressed={pinned}
-                    className="notes-more-pin"
-                    data-pinned={pinned ? "true" : "false"}
-                    onClick={(event) => {
-                      event.currentTarget.focus({ preventScroll: true });
-                      updateVisible(pinned ? visible.filter((key) => key !== destination.key) : [...visible, destination.key]);
-                    }}
-                    title={pinLabel}
-                    type="button"
-                  >
-                    <PushPin aria-hidden="true" size={18} weight={pinned ? "fill" : "regular"} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
     </nav>
   );
 }

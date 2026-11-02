@@ -8,6 +8,8 @@ import { agentDisplayName, getThing, listThings, listWorkingOn, type ThingDetail
 export const WORKING_ON_QUERY_KEY = ["working-on"] as const;
 export const THINGS_QUERY_KEY = ["things"] as const;
 
+const RETRY_SOON = { retry: 5, retryDelay: (attempt: number) => Math.min(2_000 * 2 ** attempt, 15_000) } as const;
+
 /** How many lines of work home shows; the rest live in their Spaces. */
 export const WORKING_ON_LISTED = 6;
 
@@ -49,11 +51,15 @@ export function WorkingOn({
   readonly onOpenThing?: (thingId: string) => void;
 }) {
   const { t, i18n } = useTranslation();
+  // A read that fails (the daemon restarting after an update) would look the
+  // same as having no work, so try again within seconds, not at the next
+  // minute's refresh.
   const things = useQuery({
     queryKey: THINGS_QUERY_KEY,
     queryFn: listThings,
     refetchInterval: 60_000,
     enabled: !!onOpenThing,
+    ...RETRY_SOON,
   });
   const thingItems: ThingSummary[] = onOpenThing ? (things.data ?? []).slice(0, WORKING_ON_LISTED) : [];
   // Each card names the pages its work wrote and the tool it happened in.
@@ -64,12 +70,15 @@ export function WorkingOn({
       staleTime: 60_000,
     })),
   });
-  const useBrief = !onOpenThing || (things.isFetched && thingItems.length === 0);
+  // A failed things read is not "no things": wait for it instead of falling
+  // back to the Space Briefs.
+  const useBrief = !onOpenThing || (things.isSuccess && thingItems.length === 0);
   const brief = useQuery({
     queryKey: WORKING_ON_QUERY_KEY,
     queryFn: listWorkingOn,
     refetchInterval: 60_000,
     enabled: useBrief,
+    ...RETRY_SOON,
   });
   const briefItems: WorkingOnItem[] = useBrief ? (brief.data ?? []).slice(0, WORKING_ON_LISTED) : [];
   if (thingItems.length === 0 && briefItems.length === 0) return null;

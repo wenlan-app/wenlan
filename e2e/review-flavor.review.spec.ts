@@ -100,7 +100,7 @@ test("keeps every enabled primary destination inside the Review command contract
   await openPrimaryDestination(page, "Wiki");
   await expect(page.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Wiki", exact: true })).toHaveAttribute("aria-current", "page");
-  await expect(navigation.getByRole("button", { name: "More", exact: true })).not.toHaveAttribute("aria-current");
+  await expect(navigation.locator('[aria-current="page"]')).toHaveCount(1);
 
   await page.waitForTimeout(250);
   expect(await rejectedCommands(page)).toEqual([]);

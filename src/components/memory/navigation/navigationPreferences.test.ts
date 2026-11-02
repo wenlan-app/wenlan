@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SIDEBAR_PREFERENCES, DEFAULT_SIDEBAR_WIDTH, DEFAULT_VISIBLE_NAVIGATION, REQUIRED_NAVIGATION_DESTINATIONS, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, NAVIGATION_PREFERENCE_KEY, expandedSidebarWidth, readNavigationPreferences, readSidebarPreferences, sanitizeSidebarWidth, sanitizeVisibleNavigation, writeNavigationPreferences, writeSidebarPreferences } from "./navigationPreferences";
+import { NAVIGATION_DESTINATION_ORDER, DEFAULT_SIDEBAR_PREFERENCES, DEFAULT_SIDEBAR_WIDTH, DEFAULT_VISIBLE_NAVIGATION, REQUIRED_NAVIGATION_DESTINATIONS, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, NAVIGATION_PREFERENCE_KEY, expandedSidebarWidth, readNavigationPreferences, readSidebarPreferences, sanitizeSidebarWidth, sanitizeVisibleNavigation, writeNavigationPreferences, writeSidebarPreferences } from "./navigationPreferences";
 
 beforeEach(() => {
   localStorage.clear();
@@ -27,9 +27,9 @@ describe("navigation preferences", () => {
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(REQUIRED_NAVIGATION_DESTINATIONS);
   });
 
-  it("keeps Home first, once, while preserving other destinations, and drops Memories and Sources", () => {
+  it("shows every destination once, in order, and drops Memories and Sources", () => {
     localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible: ["home", "graph", "home", "memories", "sources"] }));
-    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "graph"]);
+    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "graph", "entities"]);
     expect(sanitizeVisibleNavigation(["home", "pages", "home"])).toEqual(REQUIRED_NAVIGATION_DESTINATIONS);
   });
 
@@ -38,15 +38,15 @@ describe("navigation preferences", () => {
     expect(readNavigationPreferences()).toEqual(REQUIRED_NAVIGATION_DESTINATIONS);
   });
 
-  it("moves Sources and Graph under More for a version 1 payload, keeping its sidebar", () => {
+  it("keeps a version 1 payload's sidebar and shows every destination", () => {
     localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 1, visible: ["home", "pages", "spaces", "graph", "sources", "entities"], sidebar: { visible: false, mode: "icons", width: 300 } }));
-    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces"]);
+    expect(readNavigationPreferences()).toEqual(NAVIGATION_DESTINATION_ORDER);
     expect(readSidebarPreferences()).toEqual({ visible: false, mode: "icons", width: 300 });
   });
 
   it("keeps known unique keys in canonical order", () => {
     localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible: ["home", "unknown", "spaces", "home", "pages", "graph"] }));
-    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "graph"]);
+    expect(readNavigationPreferences()).toEqual(NAVIGATION_DESTINATION_ORDER);
     expect(sanitizeVisibleNavigation(["entities", "graph", "graph", null])).toEqual(["home", "pages", "spaces", "graph", "entities"]);
     writeNavigationPreferences(["entities", "graph", "graph", "pages"]);
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!)).toEqual({
@@ -71,7 +71,7 @@ describe("navigation preferences", () => {
     writeSidebarPreferences({ visible: false, mode: "icons" });
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!)).toEqual({
       version: 2,
-      visible: ["home", "pages", "spaces"],
+      visible: NAVIGATION_DESTINATION_ORDER,
       sidebar: { visible: false, mode: "icons" },
     });
     writeNavigationPreferences(["spaces"]);
