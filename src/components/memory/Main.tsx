@@ -1243,13 +1243,15 @@ export default function Main({
     return () => { unlisten.then((f) => f()); };
   }, []);
 
-  // wenlan://page/{id} and wenlan://memory/{id} links (an AI tool prints them
-  // next to an in-chat reminder) open that page or memory. As with pairing,
+  // wenlan://page/{id}, wenlan://memory/{id} and wenlan://thing/{id} links (an
+  // AI tool prints them next to an in-chat reminder, or where a conversation
+  // was saved) open that page, memory or thing. As with pairing,
   // the native side holds the link until asked, so a cold start keeps it.
   const openLinkNavigateRef = useRef<(target: OpenLinkTarget) => void>(() => {});
   openLinkNavigateRef.current = (target) => {
     if (target.kind === "page") navigateTo({ kind: "page", pageId: target.pageId });
     else if (target.kind === "memory") navigateTo({ kind: "memory", sourceId: target.memoryId });
+    else if (target.kind === "thing") navigateTo({ kind: "thing", thingId: target.thingId });
   };
   useEffect(() => {
     const pull = () => {

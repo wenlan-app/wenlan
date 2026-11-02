@@ -4533,7 +4533,8 @@ export async function takeRemotePairingLink(): Promise<string | null> {
 /** What a wenlan://page/{id} or wenlan://memory/{id} link asked to open. */
 export type OpenLinkTarget =
   | { kind: "page"; pageId: string }
-  | { kind: "memory"; memoryId: string };
+  | { kind: "memory"; memoryId: string }
+  | { kind: "thing"; thingId: string };
 
 /**
  * The page or memory link that opened the app or arrived since, handed out

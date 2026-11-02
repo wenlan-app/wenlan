@@ -177,6 +177,11 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-CHAT-6** `planned` The check's rules live in Wenlan itself, not in each
   tool's plugin, so every AI tool gets the same result.
   原文：檢查的規則寫在文瀾本身，不寫在各家外掛裡；換哪個 AI 工具結果都一樣。
+- **UX-CHAT-7** `planned` When a conversation is first saved into a thing, or
+  moves to another one, the AI tool's reply ends with one quiet line naming
+  it, such as "Saved in Wenlan: Plan the Lisbon trip", with a link that opens
+  that thing in the Wenlan app. Other replies do not repeat it.
+  原文：「对话里面如果记一个也是可以」（2026-11-01 17:29）「聽起來可以，有辦法直接跳轉到 wenlan app?」（2026-11-01 20:11）
 
 ## The big map
 
