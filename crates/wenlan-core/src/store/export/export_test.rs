@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::HashMap;
 
-use super::pages::{export_pages, PagesExported};
+use super::pages::export_pages;
 use super::{sha256, ExportDirs, Manifest};
 use crate::db::tests::test_db;
 use crate::db::MemoryDB;
@@ -128,14 +128,8 @@ async fn every_page_row_becomes_a_file_that_reads_back_as_stored() {
     let done = export_pages(&db, &placement, &dirs, &mut manifest)
         .await
         .unwrap();
-    assert_eq!(
-        done,
-        PagesExported {
-            pages: 4,
-            archived: 1,
-            entities: 2,
-        }
-    );
+    assert_eq!((done.pages, done.archived, done.entities), (4, 1, 2));
+    assert_eq!(done.entity_stems["ent_123456789"], "Bob-456789");
 
     let alpha = page::parse(&read(&dirs, "visible/Trips/Alpha.md"), "x").unwrap();
     assert_eq!(alpha.id.as_deref(), Some("a"));
@@ -240,4 +234,129 @@ async fn an_export_never_writes_into_a_folder_with_files() {
     assert!(dirs.write("../out.md", "a", "page", "x").is_err());
     assert!(dirs.write("/abs.md", "a", "page", "x").is_err());
     assert_eq!(read(&dirs, "visible/a.md"), "one");
+}
+
+async fn memory_row(db: &MemoryDB, id: &str, chunk: i64, columns: &str, values: &str) {
+    sql(
+        db,
+        &format!(
+            "INSERT INTO memories (id, source_id, chunk_index, title, last_modified, chunk_type, \
+             source, content{columns}) VALUES ('{id}#{chunk}', ?1, {chunk}, '', 0, 'text'{values})"
+        ),
+        id,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn each_memory_becomes_one_file_with_what_someone_stated() {
+    use super::memories::export_memories;
+    use crate::store::format::memory;
+
+    let (db, _db_dir) = test_db().await;
+    // 2026-10-31T00:00:00Z
+    let at = 1_793_404_800;
+    memory_row(
+        &db,
+        "mem_cap",
+        0,
+        ", authored_content, origin_class, created_at, pinned, memory_type, structured_fields, space",
+        &format!(", 'memory', 'derived', 'My own note\n', 'human_capture', {at}, 1, 'preference', '{{\"b\":1,\"a\":\"x\"}}', 'Work'"),
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 1, 1, 0)",
+        "mem_cap",
+    )
+    .await;
+    for (chunk, text) in [(0, "part one"), (1, "part two")] {
+        memory_row(
+            &db,
+            "mem_long",
+            chunk,
+            ", memory_type, source_text, structured_fields",
+            &format!(", 'memory', '{text}', 'fact', 'Original prose.', '{{\"k\":2}}'"),
+        )
+        .await;
+    }
+    sql(
+        &db,
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 0, 0, 0)",
+        "mem_long",
+    )
+    .await;
+    memory_row(
+        &db,
+        "mem_doc",
+        0,
+        ", source_agent",
+        ", 'memory', 'a note chunk', 'obsidian'",
+    )
+    .await;
+    memory_row(&db, "page_derived", 0, "", ", 'page', 'from a page'").await;
+    memory_row(
+        &db,
+        "mem_pending",
+        0,
+        ", pending_revision",
+        ", 'memory', 'staged', 1",
+    )
+    .await;
+    sql(
+        &db,
+        "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'ent_bob'), (?1, 'ent_gone')",
+        "mem_cap",
+    )
+    .await;
+
+    let out = tempfile::tempdir().unwrap();
+    let dirs = ExportDirs::create(out.path().join("export")).unwrap();
+    let stems = HashMap::from([("ent_bob".to_string(), "Bob-ent_bob".to_string())]);
+    let mut manifest = Manifest::new();
+    let done = export_memories(&db, &stems, &dirs, &mut manifest)
+        .await
+        .unwrap();
+    assert_eq!(done.memories, 2);
+
+    let cap = memory::parse(&read(&dirs, "backstage/memories/2026-10/mem_cap.md")).unwrap();
+    assert_eq!(
+        cap.text, "My own note\n",
+        "a capture keeps what the person typed"
+    );
+    assert_eq!(cap.kind.as_deref(), Some("preference"));
+    assert_eq!(cap.origin.as_deref(), Some("human_capture"));
+    assert_eq!(cap.created.as_deref(), Some("2026-10-31T00:00:00Z"));
+    assert!(cap.pinned);
+    assert_eq!(cap.space.as_deref(), Some("Work"));
+    assert_eq!(cap.about, ["Bob-ent_bob"]);
+    let fields: serde_json::Value = serde_yaml::from_value(cap.fields.clone().unwrap()).unwrap();
+    assert_eq!(fields, serde_json::json!({"a": "x", "b": 1}));
+
+    let long = memory::parse(&read(&dirs, "backstage/memories/undated/mem_long.md")).unwrap();
+    assert_eq!(long.text, "part one\npart two");
+    assert_eq!(long.kind, None, "a classified type is not written");
+    assert_eq!(long.fields, None, "extracted fields are not written");
+    assert_eq!(long.source_text.as_deref(), Some("Original prose."));
+
+    let left: Vec<_> = manifest
+        .left_out
+        .iter()
+        .map(|l| (l.id.as_str(), l.field.as_str()))
+        .collect();
+    assert_eq!(
+        left,
+        [("mem_cap", "about[ent_gone]"), ("mem_pending", "memory")]
+    );
+    let skipped: Vec<_> = manifest
+        .not_files
+        .iter()
+        .map(|n| (n.what.as_str(), n.count))
+        .collect();
+    assert_eq!(
+        skipped,
+        [("document chunks", 1), ("memories with source page", 1)]
+    );
 }

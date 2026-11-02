@@ -362,6 +362,21 @@ fn every_memory_reads_back_unchanged() {
         memory.episode_of = maybe(&mut gen);
         memory.event_date = maybe(&mut gen);
         memory.importance = gen.chance().then(|| (gen.next() % 11) as i64);
+        memory.event_end = maybe(&mut gen);
+        memory.origin = maybe(&mut gen);
+        memory.title = maybe(&mut gen);
+        memory.url = maybe(&mut gen);
+        memory.session = maybe(&mut gen);
+        memory.entity = maybe(&mut gen);
+        memory.recap = gen.chance();
+        if gen.chance() {
+            let json = serde_json::json!({"rating": gen.next() % 5, "note": gen.pick(WORDS), "tags": [gen.pick(WORDS)], "nested": {"ok": true}});
+            memory.fields = Some(serde_yaml::to_value(json).unwrap());
+        }
+        if gen.chance() {
+            let source = text_block(&mut gen);
+            memory.source_text = Some(edged(&mut gen, source));
+        }
         memory.about = (0..gen.next() % 3).map(|_| one_line(&mut gen)).collect();
         memory.other = person_keys(&mut gen);
         let text = memory::render(&memory);

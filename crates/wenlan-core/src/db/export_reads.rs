@@ -29,6 +29,41 @@ pub(crate) struct ExportPageRow {
     pub established_by: Option<String>,
 }
 
+/// One `memories` row (one chunk), every column a memory file carries.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ExportMemoryRow {
+    pub source: String,
+    pub source_id: String,
+    pub chunk_index: i64,
+    pub content: String,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub memory_type: Option<String>,
+    pub space: Option<String>,
+    pub source_agent: Option<String>,
+    pub confirmed: bool,
+    pub pinned: bool,
+    pub supersedes: Option<String>,
+    pub supersede_mode: Option<String>,
+    pub pending_revision: bool,
+    pub structured_fields: Option<String>,
+    pub source_text: Option<String>,
+    pub created_at: Option<i64>,
+    pub event_date: Option<i64>,
+    pub event_end: Option<i64>,
+    pub importance: Option<i64>,
+    pub episode_of: Option<String>,
+    pub origin_class: Option<String>,
+    pub session_id: Option<String>,
+    pub authored_content: Option<String>,
+    pub entity_id: Option<String>,
+    pub is_recap: bool,
+    /// From `enrichment_origin`; a memory without a row there counts as
+    /// explicit, as enrichment treats it.
+    pub memory_type_explicit: bool,
+    pub structured_fields_explicit: bool,
+}
+
 impl MemoryDB {
     /// Every page row, ordered by id, archived and entity rows included.
     pub(crate) async fn export_page_rows(&self) -> Result<Vec<ExportPageRow>, WenlanError> {
@@ -114,5 +149,89 @@ impl MemoryDB {
     pub(crate) async fn export_fixture_sql(&self, statement: &str, id: &str) {
         let conn = self.conn.lock().await;
         conn.execute(statement, libsql::params![id]).await.unwrap();
+    }
+
+    /// Every `memories` row, ordered by memory then chunk.
+    pub(crate) async fn export_memory_rows(&self) -> Result<Vec<ExportMemoryRow>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT m.source, m.source_id, m.chunk_index, m.content, m.title, m.url, \
+                        m.memory_type, m.space, m.source_agent, COALESCE(m.confirmed, 0), \
+                        COALESCE(m.pinned, 0), m.supersedes, m.supersede_mode, \
+                        COALESCE(m.pending_revision, 0), m.structured_fields, m.source_text, \
+                        m.created_at, m.event_date, m.event_end, m.importance, m.episode_of, \
+                        m.origin_class, m.session_id, m.authored_content, m.entity_id, \
+                        COALESCE(m.is_recap, 0), \
+                        COALESCE(o.memory_type_explicit, 1), \
+                        COALESCE(o.structured_fields_explicit, 1) \
+                 FROM memories m LEFT JOIN enrichment_origin o ON o.source_id = m.source_id \
+                 ORDER BY m.source_id, m.chunk_index, m.id",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("export_memory_rows: {e}")))?;
+        let decode =
+            |e: libsql::Error| WenlanError::VectorDb(format!("export_memory_rows row: {e}"));
+        let flag = |value: i64| value != 0;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(decode)? {
+            out.push(ExportMemoryRow {
+                source: row.get(0).map_err(decode)?,
+                source_id: row.get(1).map_err(decode)?,
+                chunk_index: row.get(2).map_err(decode)?,
+                content: row.get(3).map_err(decode)?,
+                title: row.get(4).map_err(decode)?,
+                url: row.get(5).map_err(decode)?,
+                memory_type: row.get(6).map_err(decode)?,
+                space: row.get(7).map_err(decode)?,
+                source_agent: row.get(8).map_err(decode)?,
+                confirmed: flag(row.get(9).map_err(decode)?),
+                pinned: flag(row.get(10).map_err(decode)?),
+                supersedes: row.get(11).map_err(decode)?,
+                supersede_mode: row.get(12).map_err(decode)?,
+                pending_revision: flag(row.get(13).map_err(decode)?),
+                structured_fields: row.get(14).map_err(decode)?,
+                source_text: row.get(15).map_err(decode)?,
+                created_at: row.get(16).map_err(decode)?,
+                event_date: row.get(17).map_err(decode)?,
+                event_end: row.get(18).map_err(decode)?,
+                importance: row.get(19).map_err(decode)?,
+                episode_of: row.get(20).map_err(decode)?,
+                origin_class: row.get(21).map_err(decode)?,
+                session_id: row.get(22).map_err(decode)?,
+                authored_content: row.get(23).map_err(decode)?,
+                entity_id: row.get(24).map_err(decode)?,
+                is_recap: flag(row.get(25).map_err(decode)?),
+                memory_type_explicit: flag(row.get(26).map_err(decode)?),
+                structured_fields_explicit: flag(row.get(27).map_err(decode)?),
+            });
+        }
+        Ok(out)
+    }
+
+    /// `(memory id, entity id)` links, ordered.
+    pub(crate) async fn export_memory_entities(
+        &self,
+    ) -> Result<Vec<(String, String)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT memory_id, entity_id FROM memory_entities ORDER BY memory_id, entity_id",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("export_memory_entities: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("export_memory_entities row: {e}")))?
+        {
+            let decode =
+                |e: libsql::Error| WenlanError::VectorDb(format!("export_memory_entities: {e}"));
+            out.push((row.get(0).map_err(decode)?, row.get(1).map_err(decode)?));
+        }
+        Ok(out)
     }
 }

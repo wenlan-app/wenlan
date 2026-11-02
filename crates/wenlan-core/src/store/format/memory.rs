@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The memory file, `memories/YYYY-MM/<id>.md` in the backstage (spec
-//! section 3). The body is the memory's text byte for byte; `kind`, `event_date` and
-//! `importance` are written only when someone stated them.
+//! section 3). The body is the memory's text byte for byte; `kind` is
+//! written only when someone stated it. Times are UTC, to the second.
 
 use super::{exact_text, render_exact, require_frontmatter, required, Keys};
 use crate::error::WenlanError;
@@ -21,7 +21,21 @@ pub struct MemoryFile {
     pub supersede_mode: Option<String>,
     pub episode_of: Option<String>,
     pub event_date: Option<String>,
+    pub event_end: Option<String>,
     pub importance: Option<i64>,
+    /// `human_capture`, `generated` or `document_ingest`: whether the text
+    /// counts as the person's own writing.
+    pub origin: Option<String>,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub session: Option<String>,
+    /// The entity the memory is filed under.
+    pub entity: Option<String>,
+    pub recap: bool,
+    /// Fields someone stated with the memory, as given.
+    pub fields: Option<serde_yaml::Value>,
+    /// The prose as sent, when the text is a rewrite of it.
+    pub source_text: Option<String>,
     /// Entity names, written as `[[name]]` links.
     pub about: Vec<String>,
     pub other: serde_yaml::Mapping,
@@ -42,7 +56,16 @@ impl MemoryFile {
             supersede_mode: None,
             episode_of: None,
             event_date: None,
+            event_end: None,
             importance: None,
+            origin: None,
+            title: None,
+            url: None,
+            session: None,
+            entity: None,
+            recap: false,
+            fields: None,
+            source_text: None,
             about: Vec::new(),
             other: serde_yaml::Mapping::new(),
             text: text.into(),
@@ -65,7 +88,16 @@ pub fn parse(text: &str) -> Result<MemoryFile, WenlanError> {
     memory.supersede_mode = fields.text("supersede_mode");
     memory.episode_of = fields.text("episode_of");
     memory.event_date = fields.text("event_date");
+    memory.event_end = fields.text("event_end");
     memory.importance = fields.int("importance");
+    memory.origin = fields.text("origin");
+    memory.title = fields.text("title");
+    memory.url = fields.text("url");
+    memory.session = fields.text("session");
+    memory.entity = fields.text("entity");
+    memory.recap = fields.flag("recap");
+    memory.fields = fields.value("fields");
+    memory.source_text = fields.text("source_text");
     memory.about = fields
         .list("about")
         .into_iter()
@@ -94,7 +126,16 @@ pub fn render(memory: &MemoryFile) -> String {
         .some("supersede_mode", memory.supersede_mode.as_deref())
         .some("episode_of", memory.episode_of.as_deref())
         .some("event_date", memory.event_date.as_deref())
+        .some("event_end", memory.event_end.as_deref())
         .int("importance", memory.importance)
+        .some("origin", memory.origin.as_deref())
+        .some("title", memory.title.as_deref())
+        .some("url", memory.url.as_deref())
+        .some("session", memory.session.as_deref())
+        .some("entity", memory.entity.as_deref())
+        .flag("recap", memory.recap)
+        .value("fields", memory.fields.as_ref())
+        .some("source_text", memory.source_text.as_deref())
         .list("about", &about)
         .finish(&memory.other);
     render_exact(&frontmatter, &memory.text)
