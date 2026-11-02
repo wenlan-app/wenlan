@@ -9,7 +9,7 @@ const seam = (page: Page) => page.getByRole('separator', { name: 'Resize sidebar
 async function start(page: Page) {
   await page.setViewportSize({ width: 1280, height: 900 });
   await installTauriMock(page, { locale: 'en', rawActions: [], preserveLocalStorage: true,
-    localStorage: { 'wenlan-theme': 'light', [key]: JSON.stringify({ version: 1, visible: ['pages','spaces','graph','sources'], sidebar: { visible: true, mode: 'labels' } }) } });
+    localStorage: { 'wenlan-theme': 'light', [key]: JSON.stringify({ version: 2, visible: ['pages','spaces','graph','sources'], sidebar: { visible: true, mode: 'labels' } }) } });
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Open a page', exact: true })).toBeVisible();
   await expect(seam(page)).toBeVisible();
@@ -58,7 +58,7 @@ test('drag resize is shared by Wiki Spaces Graph Settings and persists only afte
   await page.locator('[data-sidebar-toggle]').click(); await widthMatches(page, 0);
   await page.locator('[data-sidebar-toggle]').click(); await widthMatches(page, 280);
   await page.reload(); await widthMatches(page, 280);
-  expect((await stored(page)).visible).toEqual(['home','pages','spaces','graph','sources']);
+  expect((await stored(page)).visible).toEqual(['home','pages','spaces','sources','graph']);
   expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
 

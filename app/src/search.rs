@@ -5420,6 +5420,30 @@ pub async fn get_thing_map(
     client.get_thing_map(&id).await
 }
 
+/// Sentences from conversations, for search (UX-FIND-1).
+#[tauri::command]
+pub async fn search_conversations(
+    state: tauri::State<'_, State>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<wenlan_types::conversations::ConversationHit>, String> {
+    let client = { state.read().await.client.clone() };
+    Ok(client
+        .search_conversations(&query, limit.unwrap_or(5))
+        .await?
+        .hits)
+}
+
+/// The whole conversation, for "show all" (UX-FIND-2).
+#[tauri::command]
+pub async fn get_conversation_lines(
+    state: tauri::State<'_, State>,
+    session_id: String,
+) -> Result<wenlan_types::conversations::ConversationLinesResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.conversation_lines(&session_id).await
+}
+
 #[tauri::command]
 pub async fn rename_thing(
     state: tauri::State<'_, State>,
@@ -6978,6 +7002,7 @@ mod status_response_tests {
             embedding_model: Default::default(),
             capabilities: Vec::new(),
             truth: None,
+            files_mirror: None,
         };
 
         let merged = merge_daemon_status(local, daemon);

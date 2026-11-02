@@ -1028,6 +1028,47 @@ export async function getThingMap(id: string): Promise<ThingMap> {
   return invoke("get_thing_map", { id });
 }
 
+/** One thing someone said in a conversation (UX-FIND-2). `at` is Unix seconds. */
+export interface ConversationLine {
+  speaker: "you" | "ai";
+  text: string;
+  at?: number | null;
+}
+
+/** A sentence search found in a conversation, with the line before and after. */
+export interface ConversationHit {
+  session_id: string;
+  tool: string;
+  title?: string | null;
+  thing_id?: string | null;
+  thing_title?: string | null;
+  index: number;
+  line: ConversationLine;
+  before?: ConversationLine | null;
+  after?: ConversationLine | null;
+}
+
+export interface ConversationLines {
+  session_id: string;
+  tool: string;
+  title?: string | null;
+  thing_id?: string | null;
+  thing_title?: string | null;
+  /** Where `lines` starts in the conversation; a long one returns only its newest lines. */
+  first_index?: number;
+  lines: ConversationLine[];
+}
+
+/** Sentences from AI conversations with every search word, newest conversation first (UX-FIND-1). */
+export async function searchConversations(query: string, limit = 5): Promise<ConversationHit[]> {
+  return invoke("search_conversations", { query, limit });
+}
+
+/** The whole conversation, oldest line first, for "show all" (UX-FIND-2). */
+export async function getConversationLines(sessionId: string): Promise<ConversationLines> {
+  return invoke("get_conversation_lines", { sessionId });
+}
+
 export async function renameThing(id: string, title: string): Promise<ThingSummary> {
   return invoke("rename_thing", { id, title });
 }

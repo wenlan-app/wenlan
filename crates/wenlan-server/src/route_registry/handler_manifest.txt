@@ -75,6 +75,8 @@ main|get|/api/sessions/{id}|wenlan_server::session_routes::handle_get_session
 main|get|/api/things|wenlan_server::things_routes::handle_list_things
 main|get|/api/things/{id}|wenlan_server::things_routes::handle_get_thing
 main|get|/api/things/{id}/map|wenlan_server::things_routes::handle_get_thing_map
+main|get|/api/conversations/search|wenlan_server::conversation_routes::handle_search_conversations
+main|get|/api/sessions/{id}/lines|wenlan_server::conversation_routes::handle_conversation_lines
 main|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 repair|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 main|get|/api/snapshots|wenlan_server::snapshot_routes::handle_list_snapshots
@@ -183,6 +185,7 @@ main|post|/api/search|wenlan_server::routes::handle_search
 main|post|/api/sessions|wenlan_server::session_routes::handle_upsert_session
 main|post|/api/sessions/{id}/things/move|wenlan_server::things_routes::handle_move_session_thing
 main|post|/api/sessions/{id}/saved-in|wenlan_server::things_routes::handle_saved_in
+main|post|/api/things/{id}/map/ops|wenlan_server::things_routes::handle_thing_map_ops
 main|post|/api/shutdown|wenlan_server::routes::handle_shutdown
 main|post|/api/snapshots/{id}/delete|wenlan_server::snapshot_routes::handle_delete_snapshot
 main|post|/api/sources|wenlan_server::source_routes::handle_add_source

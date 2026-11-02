@@ -10,7 +10,6 @@ const labels = {
   entities: "Topics",
   graph: "Graph",
   home: "Home",
-  memories: "Memories",
   more: "More",
   navigation: "Primary navigation",
   pages: "Wiki",
@@ -22,7 +21,7 @@ const labels = {
 
 function renderNavigation(active: GlobalNavigation | null = null) {
   const callbacks = {
-    entities: vi.fn(), graph: vi.fn(), home: vi.fn(), memories: vi.fn(),
+    entities: vi.fn(), graph: vi.fn(), home: vi.fn(),
     pages: vi.fn(), sources: vi.fn(), spaces: vi.fn(),
   };
   const props = {
@@ -30,7 +29,6 @@ function renderNavigation(active: GlobalNavigation | null = null) {
     onNavigateEntities: callbacks.entities,
     onNavigateGraph: callbacks.graph,
     onNavigateHome: callbacks.home,
-    onNavigateLog: callbacks.memories,
     onNavigatePages: callbacks.pages,
     onNavigateSources: callbacks.sources,
     onNavigateSpaces: callbacks.spaces,
@@ -58,12 +56,12 @@ beforeEach(() => {
 });
 
 describe("PrimaryNavigation", () => {
-  it("defaults to Wiki, Spaces, Graph, Sources and More in that order with working named destinations", async () => {
+  it("defaults to Home, Wiki, Spaces and More, with Graph and Sources one step away in More", async () => {
     const user = userEvent.setup();
     localStorage.clear();
     const { callbacks } = renderNavigation("pages");
     expect(screen.getByRole("navigation", { name: "Primary navigation" })).toBeInTheDocument();
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "More"]);
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "More"]);
     const wiki = screen.getByRole("button", { name: "Wiki", current: "page" });
     expect(wiki).toHaveAttribute("title", "Wiki");
     expect(wiki.querySelector('[data-navigation-icon="wiki-stack"]')).toHaveAttribute("aria-hidden", "true");
@@ -72,15 +70,15 @@ describe("PrimaryNavigation", () => {
     expect(pageIcon).not.toHaveAttribute("data-navigation-icon");
     await user.click(wiki);
     await user.click(screen.getByRole("button", { name: "Spaces" }));
-    await user.click(screen.getByRole("button", { name: "Graph" }));
     expect(callbacks.pages).toHaveBeenCalledOnce();
     expect(callbacks.spaces).toHaveBeenCalledExactlyOnceWith(false);
+    await user.click(within(await openMore(user)).getByRole("button", { name: "Graph" }));
     expect(callbacks.graph).toHaveBeenCalledOnce();
-    await user.click(screen.getByRole("button", { name: "Sources" }));
-    expect(callbacks.sources).toHaveBeenCalledOnce();
-    const sources = screen.getByRole("button", { name: "Sources" });
+    const more = await openMore(user);
+    const sources = within(more).getByRole("button", { name: "Sources" });
     expect(sources.querySelector('[data-navigation-icon="sources-library"]')).toHaveAttribute("aria-hidden", "true");
-    expect(sources.querySelector('[data-navigation-icon="sources-library"]')).not.toBe(wiki.querySelector('[data-navigation-icon="wiki-stack"]'));
+    await user.click(sources);
+    expect(callbacks.sources).toHaveBeenCalledOnce();
   });
 
   it("lists only optional destinations in More and navigates from each stable row", async () => {
@@ -90,15 +88,15 @@ describe("PrimaryNavigation", () => {
     expect(moreButton).toHaveAttribute("aria-current", "page");
     const more = await openMore(user);
     expect(within(more).getAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label")))
-      .toEqual(["Memories", "Topics"]);
-    for (const label of ["Wiki", "Spaces", "Graph", "Sources"]) {
+      .toEqual(["Sources", "Graph", "Topics"]);
+    for (const label of ["Wiki", "Spaces", "Memories"]) {
       expect(within(more).queryByRole("button", { name: label })).not.toBeInTheDocument();
       expect(within(more).queryByRole("button", { name: `Unpin ${label} from sidebar` })).not.toBeInTheDocument();
     }
     expect(moreButton).not.toHaveAttribute("aria-current");
     expect(within(more).getByRole("button", { name: "Topics", current: "page" })).toBeInTheDocument();
     for (const [label, callback] of [
-      ["Memories", callbacks.memories], ["Topics", callbacks.entities],
+      ["Sources", callbacks.sources], ["Graph", callbacks.graph], ["Topics", callbacks.entities],
     ] as const) {
       await user.click(within(screen.getByRole("group", { name: "More" })).getByRole("button", { name: label }));
       expect(callback).toHaveBeenCalledOnce();
@@ -111,42 +109,42 @@ describe("PrimaryNavigation", () => {
     localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 1, visible: ["home", "sources"] }));
     const user = userEvent.setup();
     renderNavigation("sources");
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "More"]);
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "More"]);
     const more = await openMore(user);
     expect(within(more).queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
     expect(within(more).getAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label")))
-      .toEqual(["Memories", "Topics"]);
+      .toEqual(["Sources", "Graph", "Topics"]);
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "sources"]);
-    writeNavigationPreferences(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible);
-    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces", "graph", "sources"]);
+    writeNavigationPreferences(["home", "sources"]);
+    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces", "sources"]);
   });
 
   it("pins immediately without navigating, preserves focus, persists and keeps unpinned navigation reachable", async () => {
     const user = userEvent.setup();
-    const view = renderNavigation("memories");
+    const view = renderNavigation("graph");
     const more = await openMore(user);
-    const pinMemories = pinButton(more, "Pin Memories to sidebar");
-    await user.click(pinMemories);
-    const unpinMemories = pinButton(more, "Unpin Memories from sidebar");
-    expect(unpinMemories).toBe(pinMemories);
-    expect(unpinMemories).toHaveFocus();
-    expect(unpinMemories).toHaveAttribute("aria-pressed", "true");
+    const pinGraph = pinButton(more, "Pin Graph to sidebar");
+    await user.click(pinGraph);
+    const unpinGraph = pinButton(more, "Unpin Graph from sidebar");
+    expect(unpinGraph).toBe(pinGraph);
+    expect(unpinGraph).toHaveFocus();
+    expect(unpinGraph).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("group", { name: "More" })).toBeInTheDocument();
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "Memories", "More"]);
-    expect(screen.getByRole("button", { name: "Memories", current: "page" })).toBeInTheDocument();
-    expect(view.callbacks.memories).not.toHaveBeenCalled();
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "More"]);
+    expect(screen.getByRole("button", { name: "Graph", current: "page" })).toBeInTheDocument();
+    expect(view.callbacks.graph).not.toHaveBeenCalled();
 
-    await user.click(unpinMemories);
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "More"]);
-    expect(within(more).getByRole("button", { name: "Memories", current: "page" })).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces", "graph", "sources"]);
+    await user.click(unpinGraph);
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "More"]);
+    expect(within(more).getByRole("button", { name: "Graph", current: "page" })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces"]);
     view.unmount();
 
-    const remounted = renderNavigation("memories");
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "More"]);
+    const remounted = renderNavigation("graph");
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "More"]);
     const reopened = await openMore(user);
-    await user.click(within(reopened).getByRole("button", { name: "Memories" }));
-    expect(remounted.callbacks.memories).toHaveBeenCalledOnce();
+    await user.click(within(reopened).getByRole("button", { name: "Graph" }));
+    expect(remounted.callbacks.graph).toHaveBeenCalledOnce();
     expect(screen.queryByRole("group", { name: "More" })).not.toBeInTheDocument();
   });
 
@@ -155,41 +153,41 @@ describe("PrimaryNavigation", () => {
     writeNavigationPreferences(NAVIGATION_DESTINATION_ORDER);
     renderNavigation("pages");
     const more = await openMore(user);
-    for (const label of ["Memories", "Topics"]) {
+    for (const label of ["Sources", "Graph", "Topics"]) {
       await user.click(pinButton(more, `Unpin ${label} from sidebar`));
     }
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "More"]);
-    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces", "graph", "sources"]);
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "More"]);
+    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces"]);
     expect(within(more).queryByRole("button", { name: "Wiki" })).not.toBeInTheDocument();
-    await user.click(pinButton(more, "Pin Memories to sidebar"));
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "Memories", "More"]);
+    await user.click(pinButton(more, "Pin Graph to sidebar"));
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "More"]);
     expect(screen.getByRole("group", { name: "More" })).toBeInTheDocument();
   });
 
   it("recovers malformed persistence and retains More when a saved empty preference remounts", () => {
     localStorage.setItem(NAVIGATION_PREFERENCE_KEY, '{"version":1,"visible":["old-route"]}');
     const view = renderNavigation();
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "More"]);
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "More"]);
     view.unmount();
     writeNavigationPreferences([]);
     renderNavigation("pages");
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "More"]);
-    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces", "graph", "sources"]);
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "More"]);
+    expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(["home", "pages", "spaces"]);
   });
 
   it("keeps exactly one accessible current destination as pins move without a decorative stripe", async () => {
     const user = userEvent.setup();
-    writeNavigationPreferences(["memories"]);
-    const { container } = renderNavigation("memories");
+    writeNavigationPreferences(["graph"]);
+    const { container } = renderNavigation("graph");
     const marker = () => container.querySelectorAll('[aria-current="page"]');
     expect(container.querySelector(".notes-nav-active-marker")).toBeNull();
     expect(marker()).toHaveLength(1);
     const more = await openMore(user);
     expect(marker()).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Memories", current: "page" })).toBeInTheDocument();
-    await user.click(pinButton(more, "Unpin Memories from sidebar"));
-    expect(pinButton(more, "Pin Memories to sidebar")).toHaveFocus();
-    expect(within(more).getByRole("button", { name: "Memories", current: "page" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Graph", current: "page" })).toBeInTheDocument();
+    await user.click(pinButton(more, "Unpin Graph from sidebar"));
+    expect(pinButton(more, "Pin Graph to sidebar")).toHaveFocus();
+    expect(within(more).getByRole("button", { name: "Graph", current: "page" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "More" })).not.toHaveAttribute("aria-current");
     expect(marker()).toHaveLength(1);
     await user.keyboard("{Escape}");
@@ -197,8 +195,8 @@ describe("PrimaryNavigation", () => {
     expect(marker()).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "More" }));
     const reopened = screen.getByRole("group", { name: "More" });
-    await user.click(pinButton(reopened, "Pin Memories to sidebar"));
-    expect(screen.getByRole("button", { name: "Memories", current: "page" })).toBeInTheDocument();
+    await user.click(pinButton(reopened, "Pin Graph to sidebar"));
+    expect(screen.getByRole("button", { name: "Graph", current: "page" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "More" })).not.toHaveAttribute("aria-current");
     expect(marker()).toHaveLength(1);
   });
@@ -215,17 +213,17 @@ describe("PrimaryNavigation", () => {
     await user.keyboard("{Enter}");
     expect(callbacks.spaces).toHaveBeenCalledExactlyOnceWith(false);
     const more = await openMore(user);
-    const memories = pinButton(more, "Pin Memories to sidebar");
-    memories.focus();
+    const graph = pinButton(more, "Pin Graph to sidebar");
+    graph.focus();
     await user.keyboard(" ");
-    expect(pinButton(more, "Unpin Memories from sidebar")).toBe(memories);
-    expect(memories).toHaveAttribute("aria-pressed", "true");
-    expect(memories).toHaveFocus();
+    expect(pinButton(more, "Unpin Graph from sidebar")).toBe(graph);
+    expect(graph).toHaveAttribute("aria-pressed", "true");
+    expect(graph).toHaveFocus();
     await user.keyboard("{Escape}");
     const moreButton = screen.getByRole("button", { name: "More" });
     expect(moreButton).toHaveFocus();
     expect(moreButton).toHaveAttribute("aria-expanded", "false");
-    expect(callbacks.memories).not.toHaveBeenCalled();
+    expect(callbacks.graph).not.toHaveBeenCalled();
     await user.keyboard("{Enter}");
     expect(screen.getByRole("group", { name: "More" })).toBeInTheDocument();
   });
@@ -236,13 +234,13 @@ describe("PrimaryNavigation", () => {
     const { rerender } = render(<PrimaryNavigation active={null} compact labels={labels} onNavigateSpaces={() => {}} onNavigateSources={() => {}} />);
     expect(railLabels()).toEqual(["Spaces", "Sources", "More"]);
     const more = await openMore(user);
-    expect(within(more).queryAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label"))).toEqual([]);
+    expect(within(more).queryAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label"))).toEqual(["Sources"]);
     expect(within(more).queryByRole("button", { name: "Pin Wiki to sidebar" })).not.toBeInTheDocument();
     expect(within(more).queryByRole("button", { name: "Unpin Spaces from sidebar" })).not.toBeInTheDocument();
-    expect(within(more).queryByRole("button", { name: "Unpin Sources from sidebar" })).not.toBeInTheDocument();
+    expect(within(more).getByRole("button", { name: "Unpin Sources from sidebar" })).toBeInTheDocument();
     rerender(<PrimaryNavigation active={null} compact labels={labels} onNavigatePages={() => {}} onNavigateSpaces={() => {}} onNavigateSources={() => {}} />);
     expect(railLabels()).toEqual(["Wiki", "Spaces", "Sources", "More"]);
-    expect(within(screen.getByRole("group", { name: "More" })).queryAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label"))).toEqual([]);
+    expect(within(screen.getByRole("group", { name: "More" })).queryAllByRole("button").filter((button) => button.classList.contains("notes-more-destination-link")).map((button) => button.getAttribute("aria-label"))).toEqual(["Sources"]);
   });
 
   it("keeps pinning usable when preference storage is unavailable", async () => {
@@ -251,10 +249,10 @@ describe("PrimaryNavigation", () => {
     const user = userEvent.setup();
     renderNavigation();
     const more = await openMore(user);
-    await user.click(pinButton(more, "Pin Memories to sidebar"));
-    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "Sources", "Memories", "More"]);
+    await user.click(pinButton(more, "Pin Graph to sidebar"));
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces", "Graph", "More"]);
     expect(screen.getByRole("group", { name: "More" })).toBeInTheDocument();
-    expect(pinButton(more, "Unpin Memories from sidebar")).toHaveFocus();
+    expect(pinButton(more, "Unpin Graph from sidebar")).toHaveFocus();
   });
 
   it("clamps a late More anchor inside a narrow viewport and updates after resize", async () => {
@@ -293,15 +291,15 @@ describe("PrimaryNavigation", () => {
     renderNavigation();
     const more = await openMore(user);
     const panel = screen.getByRole("group", { name: "More" });
-    expect(panel).toHaveStyle({ top: "350px" });
-    await user.click(pinButton(more, "Pin Memories to sidebar"));
-    expect(panel).toHaveStyle({ top: "350px" });
+    expect(panel).toHaveStyle({ top: "250px" });
+    await user.click(pinButton(more, "Pin Graph to sidebar"));
+    expect(panel).toHaveStyle({ top: "250px" });
     fireEvent(window, new Event("resize"));
-    expect(panel).toHaveStyle({ top: "400px" });
-    await user.click(pinButton(more, "Unpin Memories from sidebar"));
-    expect(panel).toHaveStyle({ top: "400px" });
+    expect(panel).toHaveStyle({ top: "300px" });
+    await user.click(pinButton(more, "Unpin Graph from sidebar"));
+    expect(panel).toHaveStyle({ top: "300px" });
     fireEvent(window, new Event("resize"));
-    expect(panel).toHaveStyle({ top: "350px" });
+    expect(panel).toHaveStyle({ top: "250px" });
     vi.unstubAllGlobals();
   });
 });

@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { collectBrowserErrors, installTauriMock } from "../tauriMock";
 import { getSpaceEntityButton } from "./spaceEntity";
 
-const TOPICS_PINNED = JSON.stringify({ version: 1, visible: ["pages", "spaces", "graph", "entities"] });
+const TOPICS_PINNED = JSON.stringify({ version: 2, visible: ["pages", "spaces", "graph", "entities"] });
 
 test("finds the exact entity after navigating to Topics in More", async ({ page }) => {
   const errors = collectBrowserErrors(page);

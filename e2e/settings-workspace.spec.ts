@@ -19,7 +19,7 @@ async function showSettingsSidebar(page:Page) {
 for(const layout of ["labels","icons","hidden","narrow"] as const) test(`Settings Home and five groups: ${layout}`,async({page})=>{
  await page.setViewportSize({width:layout==="narrow"?375:1280,height:900});
  const errors=collectBrowserErrors(page);
- const runtime=await installTauriMock(page,{locale:"en",rawActions:[],localStorage:{"wenlan-navigation-v1":JSON.stringify({version:1,visible:["pages","spaces","graph","sources"],sidebar:{visible:layout!=="hidden",mode:layout==="icons"?"icons":"labels"}})}});
+ const runtime=await installTauriMock(page,{locale:"en",rawActions:[],localStorage:{"wenlan-navigation-v1":JSON.stringify({version:2,visible:["pages","spaces","graph","sources"],sidebar:{visible:layout!=="hidden",mode:layout==="icons"?"icons":"labels"}})}});
  await page.goto("/");await enterSettings(page);
  for(const group of ["General","Intelligence","Diagnostics","Connections","Sources"]){
   const sidebar=await showSettingsSidebar(page);

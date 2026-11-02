@@ -2,7 +2,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
-import { openPrimaryDestination } from "./helpers/primaryNavigation";
+import { openMemoryFromPage, openPrimaryDestination } from "./helpers/primaryNavigation";
 
 // Desktop detail views open Info without its toggle, so no focused control
 // opened the pane. Escape from inside it must still land on the toggle, the
@@ -46,8 +46,8 @@ test("topic Info opened by default returns Escape focus to its toggle", async ({
 test("memory Info opened by default returns Escape focus to its toggle", async ({ page }) => {
   const errors = await setup(page);
   await page.goto("/");
-  await openPrimaryDestination(page, "Memories", "More");
-  await page.getByRole("article", { name: "Fixture architecture", exact: true }).getByRole("button", { name: /^Open memory/ }).first().click();
+  await openMemoryFromPage(page, "Fixture architecture", /Fixture architecture$/);
+  await expect(page.locator(".memory-detail-reading")).toBeVisible();
   await expectEscapeReturnsToToggle(page);
   expect(errors.pageErrors).toEqual([]);
   expect(errors.consoleErrors).toEqual([]);

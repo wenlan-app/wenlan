@@ -311,6 +311,62 @@ pub struct StatusResponse {
     /// client must read as "not live" rather than "unknown, proceed anyway".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub truth: Option<TruthStatus>,
+    /// Storage migration step 3: the file copy of the database the daemon
+    /// keeps current, and its daily check. Absent on daemons that predate it
+    /// or before its first run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_mirror: Option<FilesMirrorStatus>,
+}
+
+/// Where the file copy of the database stands (`<data root>/files-mirror/`).
+/// The database is still the truth; the copy is what it will become.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilesMirrorState {
+    /// Turned off (`WENLAN_FILES_MIRROR=0`).
+    Off,
+    /// Not written yet, or skipped (see `note`).
+    #[default]
+    Waiting,
+    /// Written, and the last check found the files rebuild the database.
+    Ok,
+    /// The last check found differences (`check-report.txt` lists them).
+    Differences,
+    /// The last run failed (see `note`).
+    Failed,
+}
+
+/// Counts and times only, never row content.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilesMirrorStatus {
+    pub state: FilesMirrorState,
+    /// Unix seconds when the last run started, whether or not it worked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tried_at: Option<i64>,
+    /// Unix seconds when the files were last written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written_at: Option<i64>,
+    /// How many files the last write produced.
+    #[serde(default)]
+    pub files: usize,
+    #[serde(default)]
+    pub write_ms: u64,
+    /// Unix seconds of the last check (rebuild the files into a new
+    /// database and compare).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_clean: Option<bool>,
+    #[serde(default)]
+    pub check_ms: u64,
+    /// Checks run so far, and how many of them were clean.
+    #[serde(default)]
+    pub checks: u32,
+    #[serde(default)]
+    pub clean_checks: u32,
+    /// Why the last run was skipped or failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2349,6 +2405,7 @@ mod reranker_status_tests {
             },
             capabilities: vec!["default_save_space".into()],
             truth: None,
+            files_mirror: None,
         };
         let json = serde_json::to_string(&s).unwrap();
         let parsed: StatusResponse = serde_json::from_str(&json).unwrap();

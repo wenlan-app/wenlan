@@ -1302,3 +1302,75 @@ async fn a_link_resolved_into_another_space_reads_as_an_orphan_to_a_scoped_reade
         vec!["personal/nothing".to_string()]
     );
 }
+
+#[tokio::test]
+async fn ux_find_1_pages_containing_text_finds_a_word_inside_chinese_text() {
+    let (db, _tmp) = test_db().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    for (id, title, content, workspace) in [
+        (
+            "kyoto",
+            "京都住宿",
+            "京都之旅決定住在祇園附近，晚上散步方便。",
+            Some("trips"),
+        ),
+        ("gion", "祇園散步", "晚上散步路線。", Some("trips")),
+        (
+            "lisbon",
+            "Lisbon itinerary",
+            "Five nights in Alfama.",
+            Some("trips"),
+        ),
+        ("elsewhere", "祇園筆記", "另一個空間。", Some("work")),
+    ] {
+        db.insert_page_with_kind(
+            id,
+            title,
+            None,
+            content,
+            None,
+            None,
+            &[],
+            &now,
+            "distilled",
+            "confirmed",
+            workspace,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    let ids = |pages: Vec<Page>| pages.into_iter().map(|p| p.id).collect::<Vec<_>>();
+    let trips = ReadScope::Space("trips".to_string());
+    // Title matches first; another Space's page stays out.
+    assert_eq!(
+        ids(db.pages_containing_text("祇園", 10, &trips).await.unwrap()),
+        vec!["gion", "kyoto"]
+    );
+    assert_eq!(
+        ids(db
+            .pages_containing_text("祇園 散步", 10, &trips)
+            .await
+            .unwrap()),
+        vec!["gion", "kyoto"]
+    );
+    assert_eq!(
+        ids(db
+            .pages_containing_text("ALFAMA", 10, &trips)
+            .await
+            .unwrap()),
+        vec!["lisbon"]
+    );
+    assert_eq!(
+        db.pages_containing_text("祇園", 10, &ReadScope::Global)
+            .await
+            .unwrap()
+            .len(),
+        3
+    );
+    assert!(db
+        .pages_containing_text("  ", 10, &trips)
+        .await
+        .unwrap()
+        .is_empty());
+}

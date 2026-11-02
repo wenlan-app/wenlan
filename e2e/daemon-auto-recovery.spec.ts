@@ -11,7 +11,7 @@ test("keeps the compact service row quiet during automatic recovery and explains
     rawActions: [],
     localStorage: {
       "wenlan-navigation-v1": JSON.stringify({
-        version: 1,
+        version: 2,
         visible: ["pages", "spaces", "graph", "sources"],
         sidebar: { visible: true, mode: "icons" },
       }),

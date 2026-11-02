@@ -983,7 +983,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   list_entities_cmd: (a) =>
     post("/api/memory/entities/list", { limit: a?.limit ?? 100 }).then((r) => r.entities ?? r),
   search_entities_cmd: (a) =>
-    post("/api/memory/entities/search", { query: a.query }).then((r) => r.entities ?? r),
+    post("/api/memory/entities/search", { query: a.query }).then((r) => r.entities ?? r.results ?? r),
   get_entity_detail_cmd: (a) => get(`/api/memory/entities/${enc(a.entityId)}`),
   change_entity_type_cmd: (a) =>
     put(`/api/memory/entities/${enc(a.entityId)}/type`, {
@@ -1073,6 +1073,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   list_things: () => get("/api/things").then((r) => r?.things ?? []).catch(() => []),
   get_thing: (a) => get(`/api/things/${enc(String(a?.id ?? ""))}`),
   get_thing_map: (a) => get(`/api/things/${enc(String(a?.id ?? ""))}/map`),
+  // Conversation words (UX-FIND-1/2). An older daemon has no route: no hits.
+  search_conversations: (a) =>
+    get(`/api/conversations/search?q=${enc(String(a?.query ?? ""))}&limit=${Number(a?.limit ?? 5)}`)
+      .then((r) => r?.hits ?? []).catch(() => []),
+  get_conversation_lines: (a) => get(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/lines`),
   rename_thing: (a) => patch(`/api/things/${enc(String(a?.id ?? ""))}`, { title: a?.title }),
   move_session_thing: (a) => post(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/things/move`, {
     from_thing_id: a?.fromThingId,

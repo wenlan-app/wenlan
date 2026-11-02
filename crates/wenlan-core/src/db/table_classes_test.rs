@@ -192,7 +192,10 @@ async fn migration_151_drops_the_genesis_lane_and_nothing_else() {
         .await,
         1
     );
-    assert_eq!(scalar(&db, "PRAGMA user_version").await, 151);
+    assert_eq!(
+        scalar(&db, "PRAGMA user_version").await,
+        i64::from(crate::db::SCHEMA_VERSION)
+    );
 }
 
 #[tokio::test]

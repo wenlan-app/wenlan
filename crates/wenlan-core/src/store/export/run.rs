@@ -65,6 +65,11 @@ pub struct PagesFolder {
     pub recorded: HashMap<String, String>,
     /// Page id to the SHA-256 `state.json` records for its file.
     pub digests: HashMap<String, String>,
+    /// Leave out the folder's files no page claims (attachments, other
+    /// notes in a vault), counting them in the manifest instead. The daily
+    /// file copy sets it: those files are the person's own and stay where
+    /// they are, and a vault's attachments can be large.
+    pub skip_unclaimed: bool,
 }
 
 impl PagesFolder {
@@ -74,6 +79,7 @@ impl PagesFolder {
             dir: None,
             recorded,
             digests: HashMap::new(),
+            skip_unclaimed: false,
         }
     }
 }
@@ -138,8 +144,19 @@ pub async fn export_lossless(
         .map(|(_, path)| path)
         .collect();
     if let Some(dir) = &folder.dir {
+        // A file that cannot be read (removed meanwhile, or held open by
+        // another program on Windows) is counted, not a reason to stop.
+        let mut unreadable = 0;
+        let mut skipped = 0;
         for path in on_disk.iter().filter(|path| !claimed.contains(path)) {
-            let bytes = std::fs::read(dir.join(path))?;
+            if folder.skip_unclaimed {
+                skipped += 1;
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(dir.join(path)) else {
+                unreadable += 1;
+                continue;
+            };
             manifest.files.push(dirs.write_bytes(
                 &format!("backstage/.pages-folder/{path}"),
                 path,
@@ -158,7 +175,10 @@ pub async fn export_lossless(
             .collect();
         claimed_by.sort();
         for (id, path) in claimed_by {
-            let bytes = std::fs::read(dir.join(path))?;
+            let Ok(bytes) = std::fs::read(dir.join(path)) else {
+                unreadable += 1;
+                continue;
+            };
             let edited = match folder.digests.get(id) {
                 Some(digest) => *digest != super::sha256(&bytes),
                 None => {
@@ -178,6 +198,20 @@ pub async fn export_lossless(
                 "pages_folder_edited",
                 &bytes,
             )?);
+        }
+        if skipped > 0 {
+            manifest.not_files.push(NotFiles {
+                what: "pages-folder files no page claims".to_string(),
+                count: skipped,
+                why: "left where they are; this export does not copy them".to_string(),
+            });
+        }
+        if unreadable > 0 {
+            manifest.not_files.push(NotFiles {
+                what: "pages-folder files that could not be read".to_string(),
+                count: unreadable,
+                why: "removed while the export ran, or held open by another program".to_string(),
+            });
         }
     }
     let kept = memories::export_memories(db, &done.entity_stems, &dirs, &mut manifest).await?;

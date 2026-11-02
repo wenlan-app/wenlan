@@ -20,10 +20,7 @@ test("renders Graph as a structured canvas instead of a flat orange field", asyn
   });
   await page.goto("/");
 
-  await page
-    .getByRole("navigation", { name: "Primary navigation" })
-    .getByRole("button", { name: "Graph", exact: true })
-    .click();
+  await openPrimaryDestination(page, "Graph");
 
   const graph = page.getByTestId("atlas-view");
   await expect(graph).toBeVisible();
@@ -155,8 +152,7 @@ test("Graph keeps app search focused and canvas controls reachable", async ({ pa
   await page.setViewportSize({ width: 1280, height: 900 });
   await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.goto("/");
-  await page.getByRole("navigation", { name: "Primary navigation" })
-    .getByRole("button", { name: "Graph", exact: true }).click();
+  await openPrimaryDestination(page, "Graph");
   const jump = page.getByRole("combobox", { name: "Filter nodes" });
   await expect(jump).toBeVisible();
   await jump.click();

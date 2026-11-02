@@ -39,6 +39,12 @@ These flags control ignored, target-Mac profiling tests; they are not daemon run
 |---|---|
 | `WENLAN_TELEMETRY_DISABLED` | Set to `1` to make product telemetry unavailable: the daemon reports telemetry as unavailable and does not record or send operation counters, even when persisted consent is enabled. When unset, telemetry remains available only in non-debug builds with an initialized HTTP client. |
 
+## Files mirror flag (storage migration step 3)
+
+| Flag | Contract |
+|---|---|
+| `WENLAN_FILES_MIRROR` | Set to `0` to stop `files_mirror.rs` from keeping `<data root>/files-mirror/`. When unset, the daemon copies the database (`VACUUM INTO`), exports the copy into `files-mirror/files/` and rebuild-checks it, first ten minutes after start, then at most once a day and only after the database changed. The files are never read back, so turning it off loses nothing; `/api/status` then reports `files_mirror.state: off`. |
+
 ### Local delivery observations
 
 `GET /api/telemetry` additionally returns nullable `last_delivery`. This is a

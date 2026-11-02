@@ -16,7 +16,7 @@ for (const cfg of [
     const errors = collectBrowserErrors(page);
     await installTauriMock(page, { fixture: createSpacesNavigationFixture(), locale: cfg.locale, rawActions: [], localStorage: {
       "wenlan-theme": cfg.theme,
-      "wenlan-navigation-v1": JSON.stringify({ version: 1, visible: ["pages", "spaces", "sources", "memories", "entities", "graph"], sidebar: { visible: false, mode: "labels", width: 240 } }),
+      "wenlan-navigation-v1": JSON.stringify({ version: 2, visible: ["pages", "spaces", "sources", "memories", "entities", "graph"], sidebar: { visible: false, mode: "labels", width: 240 } }),
     } });
     await page.setViewportSize({ width: cfg.width, height: 900 });
     const sources: RegisteredSource[] = [

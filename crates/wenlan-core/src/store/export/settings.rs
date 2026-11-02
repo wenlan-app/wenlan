@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Settings as files (spec section 3, "Settings"): `backstage/settings/`.
 //!
-//! | File              | Tables                       |
-//! |-------------------|------------------------------|
-//! | `spaces.json`     | `spaces`                     |
-//! | `things.json`     | `things`, `thing_sessions`   |
-//! | `agents.json`     | `agent_connections`          |
-//! | `profile.json`    | `profiles`                   |
-//! | `onboarding.json` | `onboarding_milestones`      |
-//! | `metadata.json`   | `app_metadata`               |
+//! | File              | Tables                                          |
+//! |-------------------|-------------------------------------------------|
+//! | `spaces.json`     | `spaces`                                        |
+//! | `things.json`     | `things`, `thing_sessions`, the `thing_map*` four |
+//! | `agents.json`     | `agent_connections`                             |
+//! | `profile.json`    | `profiles`                                      |
+//! | `onboarding.json` | `onboarding_milestones`                         |
+//! | `metadata.json`   | `app_metadata`                                  |
 //!
 //! Each table is copied whole, every column and row as stored, so a column a
 //! later migration adds is carried without a change here:
@@ -27,7 +27,17 @@ use crate::error::WenlanError;
 /// Each settings file and the tables it holds.
 pub const SETTINGS_FILES: &[(&str, &[&str])] = &[
     ("spaces", &["spaces"]),
-    ("things", &["things", "thing_sessions"]),
+    (
+        "things",
+        &[
+            "things",
+            "thing_sessions",
+            "thing_maps",
+            "thing_map_nodes",
+            "thing_map_edges",
+            "thing_map_proposals",
+        ],
+    ),
     ("agents", &["agent_connections"]),
     ("profile", &["profiles"]),
     ("onboarding", &["onboarding_milestones"]),

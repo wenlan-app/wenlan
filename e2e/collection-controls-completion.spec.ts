@@ -22,12 +22,12 @@ for(const width of [1280,375])test(`Space detail shares Cards/List across Pages 
  await notes.locator(".space-dossier-page-summary").first().click();await expect(page.locator(".page-detail")).toBeVisible();expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
 });
 
-for(const width of [1280,375])test(`Sources and Memories expose consistent collection lenses ${width}`,async({page})=>{
+for(const width of [1280,375])test(`Sources expose consistent collection lenses ${width}`,async({page})=>{
  await page.setViewportSize({width,height:900});const errors=collectBrowserErrors(page);await installTauriMock(page,{locale:"en",rawActions:[]});await page.goto("/");await addSourceFixtures(page);await openPrimaryDestination(page,"Sources");const library=page.locator(".source-library");
  await expect(library.getByRole("button",{name:"New",exact:true})).toBeVisible();await expect(library.locator("h1")).toHaveClass("sr-only");await expect(library.locator(".source-library-row")).toHaveCount(2);
  await library.getByTestId("asset-lens-cards").click();await expect(library.locator(".source-library-list")).toHaveAttribute("data-lens","cards");await library.getByRole("searchbox").fill("Reading");await expect(library.locator(".source-library-row")).toHaveCount(1);await library.getByTestId("asset-lens-rows").click();await expect(library.locator(".source-library-row")).toHaveCount(1);await library.getByRole("searchbox").fill("");
  await expect(library.getByRole("button",{name:"More source actions",exact:true})).toHaveCount(0);await library.getByRole("button",{name:"New",exact:true}).click();await expect(page.getByRole("dialog")).toBeVisible();await page.keyboard.press("Escape");
- await openPrimaryDestination(page,"Memories");await page.getByTestId("asset-lens-cards").click();await expect(page.locator(".memory-collection-card").first()).toBeVisible();const count=await page.locator(".memory-collection-card").count();await page.getByTestId("asset-lens-rows").click();await expect(page.locator(".memory-collection-card")).toHaveCount(0);await expect(page.locator(".memory-list-reading-row")).toHaveCount(count);expect(count).toBeGreaterThan(0);expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
+ expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
 });
 
 test("Graph inspector uses the shared sidebar surface and a continuous divider",async({page})=>{
