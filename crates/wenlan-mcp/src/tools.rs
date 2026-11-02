@@ -1729,6 +1729,19 @@ fn format_save_source_success(resp: &wenlan_types::responses::IngestResponse) ->
     )
 }
 
+/// What the AI tool shows the person when a conversation is first saved into
+/// a thing (UX-CHAT-7): one quiet line in the person's language, linking into
+/// the app.
+fn format_saved_in_line(saved: &wenlan_types::SavedIn) -> String {
+    format!(
+        "saved_in: {title}\nEnd your reply to the person with exactly one line, \
+         written in the language of the conversation, and say nothing else about it: \
+         Saved in Wenlan: [{title}]({link})",
+        title = saved.title,
+        link = saved.link,
+    )
+}
+
 fn format_capture_success(resp: &StoreMemoryResponse) -> String {
     let mut msg = if resp.gated {
         format!(
@@ -2488,6 +2501,30 @@ impl WenlanMcpServer {
         output
     }
 
+    /// `output` with the saved-in line appended the first time this
+    /// conversation lands in a thing, or after it moves (UX-CHAT-7). The daemon
+    /// decides when; this only relays. Best effort: no session, an older
+    /// daemon or any error adds nothing.
+    async fn with_saved_in_line(&self, client: &WenlanClient, mut output: String) -> String {
+        let Some(session) = client.session() else {
+            return output;
+        };
+        let path = format!(
+            "/api/sessions/{}/saved-in",
+            url_encode_simple(&session.to_string())
+        );
+        if let Ok(wenlan_types::SavedInResponse {
+            saved_in: Some(saved),
+        }) = client
+            .post::<_, wenlan_types::SavedInResponse>(&path, &serde_json::json!({}))
+            .await
+        {
+            output.push_str("\n\n");
+            output.push_str(&format_saved_in_line(&saved));
+        }
+        output
+    }
+
     pub async fn capture_impl(&self, params: CaptureParams) -> Result<CallToolResult, McpError> {
         // Tool was renamed `remember -> capture` in v0.4. The HTTP request
         // body shape (StoreMemoryRequest) is unchanged; only the MCP-facing
@@ -2537,6 +2574,7 @@ impl WenlanMcpServer {
         let output = self
             .with_steep_line(&client, space_arg.as_deref(), format_capture_success(&resp))
             .await;
+        let output = self.with_saved_in_line(&client, output).await;
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
 
@@ -8430,6 +8468,23 @@ mod tests {
             params.space.as_deref(),
             Some("work"),
             "alias must map domain → space"
+        );
+    }
+
+    #[test]
+    fn ux_chat_7_saved_in_line_names_the_thing_and_links_into_the_app() {
+        let line = format_saved_in_line(&wenlan_types::SavedIn {
+            thing_id: "thg_1".into(),
+            title: "Plan the Lisbon trip".into(),
+            link: "wenlan://thing/thg_1".into(),
+        });
+        assert!(
+            line.starts_with("saved_in: Plan the Lisbon trip\n"),
+            "{line}"
+        );
+        assert!(
+            line.ends_with("Saved in Wenlan: [Plan the Lisbon trip](wenlan://thing/thg_1)"),
+            "{line}"
         );
     }
 

@@ -15,8 +15,8 @@ use axum::Json;
 use wenlan_core::db::things::MoveTarget;
 use wenlan_core::db::MemoryDB;
 use wenlan_types::{
-    ThingDetailResponse, ThingMapResponse, ThingMoveRequest, ThingRenameRequest, ThingSummary,
-    ThingsResponse,
+    SavedIn, SavedInResponse, ThingDetailResponse, ThingMapResponse, ThingMoveRequest,
+    ThingRenameRequest, ThingSummary, ThingsResponse,
 };
 
 use crate::error::ServerError;
@@ -37,6 +37,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/sessions/{id}/things/move",
             post(handle_move_session_thing),
         )
+        .route("/api/sessions/{id}/saved-in", post(handle_saved_in))
 }
 
 async fn open_db(state: &SharedState) -> Result<Arc<MemoryDB>, ServerError> {
@@ -128,6 +129,69 @@ pub async fn handle_get_thing_map(
         revision: 0,
         nodes: Vec::new(),
         edges: Vec::new(),
+    }))
+}
+
+/// POST /api/sessions/{id}/saved-in
+///
+/// Where this conversation is saved, for the one line the AI tool ends its
+/// reply with (UX-CHAT-7): set only the first time the conversation lands in
+/// a thing, or when it moves to another, and only once that thing has a name.
+/// A conversation not yet sorted is sorted now, so the line can come with the
+/// first save. A thing the caller's Space cannot see is never named. `{id}` is
+/// the conversation's row id or its `tool:external-id` ref.
+pub async fn handle_saved_in(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    Path(id): Path<String>,
+) -> Result<Json<SavedInResponse>, ServerError> {
+    let (db, reported) = {
+        let state = state.read().await;
+        let db = state.db.clone().ok_or(ServerError::DbNotInitialized)?;
+        (db, state.saved_in_reported.clone())
+    };
+    // An AI tool knows its conversation by its ref (`tool:external-id`, as it
+    // sends in `x-wenlan-session`); the app knows the row id.
+    let id = if id.starts_with("ses_") {
+        id
+    } else {
+        let session = wenlan_types::SessionRef::parse(&id)
+            .map_err(|reason| ServerError::ValidationError(format!("bad session: {reason}")))?;
+        wenlan_core::db::sessions::session_row_id(&session)
+    };
+    let mut things = db.session_things(&id).await?;
+    if things.is_empty() {
+        sort_once(&db).await;
+        things = db.session_things(&id).await?;
+    }
+    // Newest assignment last: a moved conversation reports where it is now.
+    let Some(thing) = things.pop() else {
+        return Ok(Json(SavedInResponse { saved_in: None }));
+    };
+    let Some(title) = thing.title.filter(|title| !title.trim().is_empty()) else {
+        return Ok(Json(SavedInResponse { saved_in: None }));
+    };
+    if visible_thing(&db, header_space.as_deref(), &thing.id)
+        .await
+        .is_err()
+    {
+        return Ok(Json(SavedInResponse { saved_in: None }));
+    }
+    {
+        let mut reported = reported
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if reported.get(&id) == Some(&thing.id) {
+            return Ok(Json(SavedInResponse { saved_in: None }));
+        }
+        reported.insert(id, thing.id.clone());
+    }
+    Ok(Json(SavedInResponse {
+        saved_in: Some(SavedIn {
+            link: format!("wenlan://thing/{}", thing.id),
+            thing_id: thing.id,
+            title,
+        }),
     }))
 }
 

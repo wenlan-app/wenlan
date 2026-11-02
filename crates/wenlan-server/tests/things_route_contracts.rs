@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 use std::sync::OnceLock;
 use tower::ServiceExt;
 use wenlan_types::{
-    SessionDetailResponse, ThingActor, ThingDetailResponse, ThingMapResponse, ThingSummary,
-    ThingsResponse,
+    SavedInResponse, SessionDetailResponse, ThingActor, ThingDetailResponse, ThingMapResponse,
+    ThingSummary, ThingsResponse,
 };
 
 /// Every test points `WENLAN_DATA_DIR` (and so the knowledge path and
@@ -323,4 +323,97 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
         1,
         "a move is not re-sorted"
     );
+}
+
+#[tokio::test]
+async fn ux_chat_7_a_conversation_hears_once_where_it_was_saved() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("other", None, false).await.unwrap();
+
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({ "session": "claude-code:lisbon", "title": "Plan the Lisbon trip" })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let session_id = body["id"].as_str().unwrap().to_string();
+    let saved_in = format!("/api/sessions/{session_id}/saved-in");
+
+    // A Space that cannot see the thing is never told its name.
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &saved_in,
+        None,
+        Caller::InSpace("other"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(typed::<SavedInResponse>(body).saved_in, None);
+
+    // The first save sorts the conversation and names its thing, with a link
+    // into the app. An AI tool asks by its conversation ref.
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/sessions/claude-code:lisbon/saved-in",
+        None,
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let first = typed::<SavedInResponse>(body)
+        .saved_in
+        .expect("named on the first save");
+    assert_eq!(first.title, "Plan the Lisbon trip");
+    assert_eq!(first.link, format!("wenlan://thing/{}", first.thing_id));
+
+    // Later saves in the same thing say nothing.
+    let (_, body) = call(
+        &router,
+        Method::POST,
+        &saved_in,
+        None,
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(typed::<SavedInResponse>(body).saved_in, None);
+
+    // Moved to another thing, the next save names the new one once.
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &format!("/api/sessions/{session_id}/things/move"),
+        Some(json!({ "from_thing_id": first.thing_id, "new_title": "Sintra day trip" })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, body) = call(
+        &router,
+        Method::POST,
+        &saved_in,
+        None,
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    let moved = typed::<SavedInResponse>(body)
+        .saved_in
+        .expect("named after the move");
+    assert_eq!(moved.title, "Sintra day trip");
+    assert_ne!(moved.thing_id, first.thing_id);
+    let (_, body) = call(
+        &router,
+        Method::POST,
+        &saved_in,
+        None,
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(typed::<SavedInResponse>(body).saved_in, None);
 }

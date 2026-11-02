@@ -106,6 +106,24 @@ pub struct ThingRef {
     pub title: Option<String>,
 }
 
+/// Where a conversation was saved, for the one line the AI tool shows the
+/// person (UX-CHAT-7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedIn {
+    pub thing_id: String,
+    pub title: String,
+    /// Opens the thing in the Wenlan app (`wenlan://thing/{id}`).
+    pub link: String,
+}
+
+/// `POST /api/sessions/{id}/saved-in`: `saved_in` is set only when this
+/// conversation's thing changed since it was last reported, and the thing
+/// has a name; otherwise it is null and the AI tool says nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedInResponse {
+    pub saved_in: Option<SavedIn>,
+}
+
 /// Who wrote a point on a thing's map (UX-WHO-2: the AI proposes rather than
 /// edits a point the person wrote or edited).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -179,6 +179,10 @@ pub struct ServerState {
     /// routes make (`agent_presence`). In-memory only; a restart just allows
     /// one more write per agent.
     pub agent_presence: Arc<crate::agent_presence::AgentPresenceThrottle>,
+    /// The thing each conversation was last told it is saved in (UX-CHAT-7),
+    /// so the AI tool's "Saved in Wenlan" line shows once per thing. In-memory
+    /// only; a restart just lets each conversation hear it once more.
+    pub saved_in_reported: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
 }
 
 impl Default for ServerState {
@@ -218,6 +222,7 @@ impl Default for ServerState {
             ambient_run_lock: Arc::new(Mutex::new(())),
             telemetry: Arc::new(Telemetry::disabled()),
             agent_presence: Arc::default(),
+            saved_in_reported: Arc::default(),
         }
     }
 }

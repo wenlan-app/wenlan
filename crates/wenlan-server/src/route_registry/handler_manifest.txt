@@ -182,6 +182,7 @@ main|post|/api/repairs/runtime/resume|wenlan_server::repair_runtime_routes::hand
 main|post|/api/search|wenlan_server::routes::handle_search
 main|post|/api/sessions|wenlan_server::session_routes::handle_upsert_session
 main|post|/api/sessions/{id}/things/move|wenlan_server::things_routes::handle_move_session_thing
+main|post|/api/sessions/{id}/saved-in|wenlan_server::things_routes::handle_saved_in
 main|post|/api/shutdown|wenlan_server::routes::handle_shutdown
 main|post|/api/snapshots/{id}/delete|wenlan_server::snapshot_routes::handle_delete_snapshot
 main|post|/api/sources|wenlan_server::source_routes::handle_add_source

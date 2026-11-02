@@ -123,9 +123,10 @@ pub use steep_new::{
     SteepOrganizeWork,
 };
 pub use things::{
-    ThingActor, ThingDetailResponse, ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapResponse,
-    ThingMapSource, ThingMapState, ThingMoveRequest, ThingPageEntry, ThingPageVia, ThingRef,
-    ThingRenameRequest, ThingSessionEntry, ThingSummary, ThingsResponse,
+    SavedIn, SavedInResponse, ThingActor, ThingDetailResponse, ThingMapAuthor, ThingMapEdge,
+    ThingMapNode, ThingMapResponse, ThingMapSource, ThingMapState, ThingMoveRequest,
+    ThingPageEntry, ThingPageVia, ThingRef, ThingRenameRequest, ThingSessionEntry, ThingSummary,
+    ThingsResponse,
 };
 
 use serde::{Deserialize, Serialize};
