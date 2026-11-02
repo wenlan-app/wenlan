@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 use std::sync::OnceLock;
 use tower::ServiceExt;
 use wenlan_types::{
-    SessionDetailResponse, ThingActor, ThingDetailResponse, ThingMapResponse, ThingSummary,
-    ThingsResponse,
+    SessionDetailResponse, ThingActor, ThingDetailResponse, ThingMapAuthor, ThingMapOpsResponse,
+    ThingMapResponse, ThingMapState, ThingSummary, ThingsResponse,
 };
 
 /// Every test points `WENLAN_DATA_DIR` (and so the knowledge path and
@@ -187,6 +187,82 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
     assert_eq!(map.revision, 0);
     assert!(map.nodes.is_empty() && map.edges.is_empty());
 
+    // The AI writes points; its change to the person's point waits for them.
+    let ops_uri = format!("/api/things/{}/map/ops", thing.id);
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &ops_uri,
+        Some(json!({ "expected_revision": 0, "ops": [
+            { "op": "add", "id": "root", "parent_id": null, "kind": "question",
+              "label": "Which tagline?" },
+            { "op": "add", "id": "b", "parent_id": "root", "kind": "option",
+              "state": "open", "label": "Option B",
+              "sources": [{ "session_id": session_id, "from": 2, "to": 3 }] },
+        ]})),
+        Caller::Agent("codex"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let written: ThingMapOpsResponse = typed(body);
+    assert_eq!((written.map.revision, written.proposed), (1, 0));
+    assert_eq!(written.map.nodes[1].by, ThingMapAuthor::Ai);
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &ops_uri,
+        Some(json!({ "expected_revision": 1, "ops": [
+            { "op": "edit", "id": "b", "label": "Option B, shorter" },
+        ]})),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &ops_uri,
+        Some(json!({ "expected_revision": 2, "ops": [
+            { "op": "edit", "id": "b", "state": "dropped" },
+        ]})),
+        Caller::Agent("codex"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let proposed: ThingMapOpsResponse = typed(body);
+    assert_eq!(proposed.proposed, 1);
+    assert_eq!(proposed.map.nodes[1].state, Some(ThingMapState::Open));
+    assert_eq!(proposed.map.proposals.len(), 1);
+    // A stale revision is a conflict; a bad op changes nothing.
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &ops_uri,
+        Some(json!({ "expected_revision": 1, "ops": [{ "op": "remove", "id": "b" }]})),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &ops_uri,
+        Some(json!({ "expected_revision": 3, "ops": [{ "op": "remove", "id": "nope" }]})),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/things/{}/map", thing.id),
+        None,
+        Caller::Reader,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(typed::<ThingMapResponse>(body), proposed.map);
+
     // Another Space does not see it; an unknown thing is absent.
     let (status, _) = call(
         &router,
@@ -203,6 +279,15 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
         Method::GET,
         &format!("/api/things/{}/map", thing.id),
         None,
+        Caller::InSpace("other"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &format!("/api/things/{}/map/ops", thing.id),
+        Some(json!({ "expected_revision": 3, "ops": [{ "op": "remove", "id": "root" }]})),
         Caller::InSpace("other"),
     )
     .await;

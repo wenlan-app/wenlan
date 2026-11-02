@@ -394,6 +394,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // The person moves a conversation between things; returns the target
     // thing's summary, which the scoped GET /api/things/{id} also guards.
     "/api/sessions/{id}/things/move",
+    // Changes a thing's map; returns the map, which the scoped
+    // GET /api/things/{id}/map also guards.
+    "/api/things/{id}/map/ops",
     "/api/refinery/queue/{id}/reject", "/api/refinery/queue/{id}/accept", "/api/sources/{id}", "/api/sources/{id}/sync",
     "/api/config", "/api/config/routing", "/api/setup/status", "/api/setup/anthropic-key", "/api/on-device-model",
     "/api/on-device-model/download", "/api/outbox/drain", "/api/outbox/status", "/api/chunks/{id}/update", "/api/chunks/time-range", "/api/chunks/delete-bulk",
