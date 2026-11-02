@@ -20,7 +20,7 @@ for (const cfg of [
       source: "file", source_id: "/demo/reading.md", title: "Reading pages", chunk_count: 1, last_modified: 1,
     }, content: "# Reading pages\n\nA familiar reading lane keeps text comfortable when supplementary information is open.\n\n## Context\n\nKeep the original source and the next step clear." }] }, rawActions: [], localStorage: {
       "wenlan-theme": cfg.theme,
-      "wenlan-navigation-v1": JSON.stringify({ version: 1, visible: ["pages", "sources", "spaces", "memories", "entities", "graph"], sidebar: { visible: true, mode: cfg.mode, width: 240 } }),
+      "wenlan-navigation-v1": JSON.stringify({ version: 2, visible: ["pages", "sources", "spaces", "memories", "entities", "graph"], sidebar: { visible: true, mode: cfg.mode, width: 240 } }),
     } });
     await page.setViewportSize({ width: cfg.width, height: 900 });
     await page.goto("/");

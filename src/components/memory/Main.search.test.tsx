@@ -188,7 +188,6 @@ vi.mock("./Sidebar", () => ({
     mode: "icons" | "labels";
     open?: boolean;
     onEntityClick: (entityId: string) => void;
-    onNavigateLog?: () => void;
     onNavigateActivity?: () => void;
     activityCurrent?: boolean;
     onNavigateGraph?: () => void;
@@ -221,7 +220,6 @@ vi.mock("./Sidebar", () => ({
         Open avatar menu destination
       </button>
       <ActivityStatus onOpenActivity={props.onNavigateActivity ?? (() => {})} current={props.activityCurrent} />
-      <button type="button" onClick={props.onNavigateLog}>Open memories</button>
       <button type="button" onClick={props.onNavigateHome}>Open home</button>
       <button type="button" onClick={props.onNavigatePages}>Open wiki</button>
       <button type="button" onClick={props.onNavigateSettings}>Open settings</button>
@@ -605,14 +603,14 @@ describe("Main search", () => {
     expect(forward()).toBeDisabled();
   });
 
-  it("keeps Activity and Memories in the shared history across sidebar roots", async () => {
+  it("keeps Activity and Spaces in the shared history across sidebar roots", async () => {
     const user = userEvent.setup();
     renderMain();
     await user.click(screen.getByRole("button", { name: "Activity" }));
     await user.click(screen.getByTestId("activity-summary-open"));
     expect(screen.getByTestId("activity-feed")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Open memories" }));
-    expect(screen.getByRole("heading", { name: "Memories" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Open spaces" }));
+    expect(screen.getByTestId("spaces-overview")).toBeVisible();
     await user.click(screen.getByRole("button", { name: i18n.t("main.back") }));
     expect(screen.getByTestId("activity-feed")).toBeVisible();
     await user.click(screen.getByRole("button", { name: i18n.t("main.back") }));
@@ -621,7 +619,7 @@ describe("Main search", () => {
     await user.click(screen.getByRole("button", { name: i18n.t("main.forward") }));
     expect(screen.getByTestId("activity-feed")).toBeVisible();
     await user.click(screen.getByRole("button", { name: i18n.t("main.forward") }));
-    expect(screen.getByRole("heading", { name: "Memories" })).toBeVisible();
+    expect(screen.getByTestId("spaces-overview")).toBeVisible();
   });
 
   it("uses Spaces as the initial Space fallback and records both exits for Forward", async () => {
@@ -854,15 +852,6 @@ describe("Main search", () => {
     expect(screen.queryByRole("heading", { name: "Memories" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Settings back" }));
     expect(screen.getByTestId("pages-overview")).toBeVisible();
-  });
-
-  it("keeps the Memories collection free of retired Recaps and duplicate recent-memory navigation", async () => {
-    const user = userEvent.setup();
-    renderMain();
-    await user.click(screen.getByRole("button", { name: "Open memories" }));
-    expect(screen.getByRole("heading", { name: "Memories" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Recaps" })).not.toBeInTheDocument();
-    expect(screen.queryByTestId("context-browser")).not.toBeInTheDocument();
   });
 
   it("migrates the legacy collapsed preference to hidden labels", async () => {

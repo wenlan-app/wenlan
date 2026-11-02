@@ -64,7 +64,7 @@ test("an explicitly visible icon sidebar preserves destination focus at 900px", 
   await installTauriMock(page, {
     locale: "en",
     rawActions: [],
-    localStorage: { "wenlan-navigation-v1": JSON.stringify({ version: 1, visible: ["pages", "spaces", "sources"], sidebar: { visible: true, mode: "icons" } }) },
+    localStorage: { "wenlan-navigation-v1": JSON.stringify({ version: 2, visible: ["pages", "spaces", "sources"], sidebar: { visible: true, mode: "icons" } }) },
   });
   await page.goto("/");
   const sidebar = page.locator('aside[aria-label="Primary navigation"]');

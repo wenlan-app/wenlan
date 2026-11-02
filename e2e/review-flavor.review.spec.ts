@@ -88,32 +88,11 @@ test("keeps every enabled primary destination inside the Review command contract
   await navigation.getByRole("button", { name: "Spaces", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Spaces" })).toBeVisible();
 
-  await navigation.getByRole("button", { name: "Graph", exact: true }).click();
+  await openPrimaryDestination(page, "Graph");
   await expect(page.getByTestId("atlas-view")).toBeVisible();
   // Same fixture and same count line as graph-rendering.visual.spec: notes
   // lead, and the topic count is over what is drawn (the three connected ones).
   await expect(page.getByText(/^7 pages · 3 topics(?: · \d+ regions?)?$/)).toBeVisible();
-
-  await openPrimaryDestination(page, "Memories");
-  await expect(page.getByRole("region", { name: "Memory list" })).toBeVisible();
-  // Keep the same fixture row even if a mutation changes list ordering.
-  const firstMemory = page.getByRole("article", { name: "Fixture architecture", exact: true });
-  const memoryActions = firstMemory.getByRole("button", { name: "Memory actions", exact: true });
-  // The reading row reveals this control when it receives keyboard focus.
-  // Focusing it first makes the interaction match the accessible user path.
-  await memoryActions.focus();
-  await expect(memoryActions).toBeFocused();
-  await page.keyboard.press("Enter");
-  await firstMemory.getByRole("menuitem", { name: "Unpin memory", exact: true }).click();
-  await memoryActions.focus();
-  await page.keyboard.press("Enter");
-  await expect(firstMemory.getByRole("menuitem", { name: "Pin memory", exact: true })).toBeVisible();
-  await firstMemory.getByRole("menuitem", { name: "Unconfirm memory", exact: true }).click();
-  await memoryActions.focus();
-  await page.keyboard.press("Enter");
-  await expect(firstMemory.getByRole("menuitem", { name: "Confirm memory", exact: true })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(memoryActions).toBeFocused();
 
   await openPrimaryDestination(page, "Sources");
   await expect(page.getByRole("heading", { level: 1, name: "Sources", exact: true })).toBeVisible();
@@ -122,8 +101,8 @@ test("keeps every enabled primary destination inside the Review command contract
   ).toBeVisible();
   await expect(page.getByRole("group", { name: "Filter sources", exact: true })).toBeVisible();
   await expect(page.getByRole("searchbox", { name: "Filter sources", exact: true })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Sources", exact: true })).toHaveAttribute("aria-current", "page");
-  await expect(navigation.getByRole("button", { name: "More", exact: true })).not.toHaveAttribute("aria-current");
+  // Sources lives under More, so More carries the current mark while it is open.
+  await expect(navigation.getByRole("button", { name: "More", exact: true })).toHaveAttribute("aria-current", "page");
 
   await openPrimaryDestination(page, "Wiki");
   await expect(page.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();

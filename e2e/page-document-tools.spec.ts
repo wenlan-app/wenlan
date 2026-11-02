@@ -243,7 +243,7 @@ test("docked tools resize the complete workspace and keep search usable across t
 
 
 test('many tabs leave the entire action group reachable with the main sidebar hidden',async({page},info)=>{
- await page.setViewportSize({width:1440,height:900});await installTauriMock(page,{locale:'en',rawActions:[],localStorage:{'wenlan-navigation-v1':JSON.stringify({version:1,visible:['pages','spaces','graph','sources'],sidebar:{visible:false,mode:'labels'}})}});await page.goto('/');
+ await page.setViewportSize({width:1440,height:900});await installTauriMock(page,{locale:'en',rawActions:[],localStorage:{'wenlan-navigation-v1':JSON.stringify({version:2,visible:['pages','spaces','graph','sources'],sidebar:{visible:false,mode:'labels'}})}});await page.goto('/');
  for(const title of ['Fixture architecture','Why fixtures stay deterministic','Weekly fixture recap','CJK layout','History semantics','Independent research'])await openWikiNote(page,title);
  await expect(page.locator('.note-tabs-list [role=tab][aria-selected=true]')).toHaveText('Independent research');
  const plus=(await page.locator('.note-tab-create').boundingBox())!,actions=(await page.locator('.workspace-header-actions').boundingBox())!;

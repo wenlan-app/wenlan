@@ -30,7 +30,7 @@ test("Memory, Topic and Wiki consume the same reading and Info template", async 
     localStorage: {
       "wenlan-theme": "light",
       "wenlan-navigation-v1": JSON.stringify({
-        version: 1, visible: ["pages", "spaces", "graph", "sources", "memories", "entities"],
+        version: 2, visible: ["pages", "spaces", "graph", "sources", "memories", "entities"],
         sidebar: { visible: true, mode: "labels", width: 240 },
       }),
     },

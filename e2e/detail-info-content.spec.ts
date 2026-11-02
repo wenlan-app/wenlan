@@ -11,7 +11,7 @@ for(const locale of ['en','zh-Hant','zh-Hans'] as const)for(const theme of ['lig
   const t=resources[locale].translation,errors=collectBrowserErrors(page),base=createSpacesNavigationFixture();
   const fixture={...base,memories:base.memories.map((m,i)=>i===0?{...m,content,confirmed:false,stability:'new' as const,structured_fields:JSON.stringify({claim:content,context:'出門前查看天氣；保留一條室內備案。'}),last_modified:Math.floor(Date.now()/1000)-7200}:m),entityDetails:base.entityDetails.map(d=>({...d,entity:{...d.entity,updated_at:Math.floor(Date.now()/1000)-7200}}))};
   await page.setViewportSize({width,height:900});
-  const runtime=await installTauriMock(page,{fixture,locale,rawActions:[],localStorage:{'wenlan-theme':theme,'wenlan-navigation-v1':JSON.stringify({version:1,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode:'icons',width:240}})}});
+  const runtime=await installTauriMock(page,{fixture,locale,rawActions:[],localStorage:{'wenlan-theme':theme,'wenlan-navigation-v1':JSON.stringify({version:2,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode:'icons',width:240}})}});
   await page.goto('/');await expect(page.locator('.memory-shell')).toBeVisible();
   await page.evaluate(()=>{const bridge=window.__TAURI_INTERNALS__!,invoke=bridge.invoke;bridge.invoke=async(command,args,options)=>{
    if(command==='get_enrichment_status')return {source_id:'memory-0',summary:'raw',steps:[{step:'summarize',status:'pending'}]};
@@ -72,7 +72,7 @@ test("Empty Memory and Topic keep the shared Info hierarchy",async({page},info)=
  const base=createSpacesNavigationFixture();
  const fixture={...base,entityDetails:base.entityDetails.map(detail=>({...detail,relations:[]}))};
  await page.setViewportSize({width:1440,height:900});
- await installTauriMock(page,{fixture,locale:'en',rawActions:[],localStorage:{'wenlan-theme':'light','wenlan-navigation-v1':JSON.stringify({version:1,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode:'icons',width:240}})}});
+ await installTauriMock(page,{fixture,locale:'en',rawActions:[],localStorage:{'wenlan-theme':'light','wenlan-navigation-v1':JSON.stringify({version:2,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode:'icons',width:240}})}});
  await page.goto('/');
  await expect(page.locator('.memory-shell')).toBeVisible();
  await page.evaluate(()=>{const bridge=window.__TAURI_INTERNALS__!,invoke=bridge.invoke;bridge.invoke=async(command,args,options)=>command==='get_knowledge_graph_cmd'?{entities:[],relations:[],memory_links:[],memories:[],pages:[],page_links:[]}:invoke(command,args,options);});
@@ -103,7 +103,7 @@ for (const scenario of [
   const fixture={...base,memories:base.memories.map((m,i)=>i===0?{...m,content:text}:m)};
   const errors=collectBrowserErrors(page);
   await page.setViewportSize({width,height:900});
-  const runtime=await installTauriMock(page,{fixture,locale:'en',rawActions:[],localStorage:{'wenlan-theme':theme,'wenlan-navigation-v1':JSON.stringify({version:1,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode,width:240}})}});
+  const runtime=await installTauriMock(page,{fixture,locale:'en',rawActions:[],localStorage:{'wenlan-theme':theme,'wenlan-navigation-v1':JSON.stringify({version:2,visible:['pages','spaces','graph','sources','memories','entities'],sidebar:{visible:true,mode,width:240}})}});
   await page.goto('/');
   await expect(page.locator('.memory-shell')).toBeVisible();
   const nav=page.getByRole('navigation',{name:'Primary navigation'});

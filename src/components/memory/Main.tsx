@@ -1497,7 +1497,6 @@ export default function Main({
             hidden={sidebarCollapsed}
             mode={effectiveSidebar.mode}
             onEntityClick={handleEntityClick}
-            onNavigateLog={() => navigateTo({ kind: "stream" })}
             onNavigateActivity={() => navigateTo({ kind: "activity" })}
             activityCurrent={view.kind === "activity"}
             onConnectTool={() => navigateTo({ kind: "connect-agent" })}

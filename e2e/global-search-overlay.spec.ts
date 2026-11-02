@@ -16,7 +16,7 @@ async function start(page: Page, width = 1280, sidebar?: { visible: boolean; mod
   const fixture = createReviewDecisionFixture("wiki-folders");
   const runtime = await installTauriMock(page, { locale: "en", rawActions: [], fixture,
     delays: { update_page: 150 },
-    localStorage: sidebar ? { "wenlan-navigation-v1": JSON.stringify({version: 1, visible: ["pages", "spaces", "graph", "sources"], sidebar}) } : {},
+    localStorage: sidebar ? { "wenlan-navigation-v1": JSON.stringify({version: 2, visible: ["pages", "spaces", "graph", "sources"], sidebar}) } : {},
   });
   await page.addInitScript(({ target }) => {
     const api = window.__TAURI_INTERNALS__; if (!api) return;

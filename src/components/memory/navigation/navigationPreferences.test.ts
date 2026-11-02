@@ -14,8 +14,8 @@ describe("navigation preferences", () => {
   });
 
   it.each([
-    "{", "null", "[]", '{}', '{"version":2,"visible":["home"]}',
-    '{"version":1,"visible":"home"}',
+    "{", "null", "[]", '{}', '{"version":3,"visible":["home"]}',
+    '{"version":2,"visible":"home"}',
   ])("defaults for malformed or unsupported data %s", (payload) => {
     localStorage.setItem(NAVIGATION_PREFERENCE_KEY, payload);
     expect(readNavigationPreferences()).toEqual(DEFAULT_VISIBLE_NAVIGATION);
@@ -27,25 +27,31 @@ describe("navigation preferences", () => {
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!).visible).toEqual(REQUIRED_NAVIGATION_DESTINATIONS);
   });
 
-  it("keeps Home first, once, while preserving other destinations", () => {
-    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 1, visible: ["home", "sources", "home", "memories"] }));
-    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "graph", "sources", "memories"]);
+  it("keeps Home first, once, while preserving other destinations, and drops Memories", () => {
+    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible: ["home", "sources", "home", "memories"] }));
+    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "sources"]);
     expect(sanitizeVisibleNavigation(["home", "pages", "home"])).toEqual(REQUIRED_NAVIGATION_DESTINATIONS);
   });
 
   it.each([["home"], ["unknown", null, 3]])("restores required destinations from obsolete saved pins %j", (...visible) => {
-    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 1, visible }));
+    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible }));
     expect(readNavigationPreferences()).toEqual(REQUIRED_NAVIGATION_DESTINATIONS);
   });
 
+  it("moves Sources and Graph under More for a version 1 payload, keeping its sidebar", () => {
+    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 1, visible: ["home", "pages", "spaces", "graph", "sources", "entities"], sidebar: { visible: false, mode: "icons", width: 300 } }));
+    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces"]);
+    expect(readSidebarPreferences()).toEqual({ visible: false, mode: "icons", width: 300 });
+  });
+
   it("keeps known unique keys in canonical order", () => {
-    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 1, visible: ["home", "unknown", "spaces", "home", "pages"] }));
-    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "graph", "sources"]);
-    expect(sanitizeVisibleNavigation(["entities", "graph", "graph", null])).toEqual(["home", "pages", "spaces", "graph", "sources", "entities"]);
+    localStorage.setItem(NAVIGATION_PREFERENCE_KEY, JSON.stringify({ version: 2, visible: ["home", "unknown", "spaces", "home", "pages", "graph"] }));
+    expect(readNavigationPreferences()).toEqual(["home", "pages", "spaces", "graph"]);
+    expect(sanitizeVisibleNavigation(["entities", "graph", "graph", null])).toEqual(["home", "pages", "spaces", "graph", "entities"]);
     writeNavigationPreferences(["entities", "sources", "sources", "pages"]);
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!)).toEqual({
-      version: 1,
-      visible: ["home", "pages", "spaces", "graph", "sources", "entities"],
+      version: 2,
+      visible: ["home", "pages", "spaces", "sources", "entities"],
       sidebar: DEFAULT_SIDEBAR_PREFERENCES,
     });
   });
@@ -64,8 +70,8 @@ describe("navigation preferences", () => {
 
     writeSidebarPreferences({ visible: false, mode: "icons" });
     expect(JSON.parse(localStorage.getItem(NAVIGATION_PREFERENCE_KEY)!)).toEqual({
-      version: 1,
-      visible: ["home", "pages", "spaces", "graph", "sources"],
+      version: 2,
+      visible: ["home", "pages", "spaces"],
       sidebar: { visible: false, mode: "icons" },
     });
     writeNavigationPreferences(["spaces"]);
@@ -104,7 +110,7 @@ describe("navigation preferences", () => {
   });
 
   it("falls back safely for malformed and unsupported sidebar preference payloads", () => {
-    for (const payload of ["{", JSON.stringify({ version: 2, visible: ["pages"], sidebar: { visible: false, mode: "icons" } })]) {
+    for (const payload of ["{", JSON.stringify({ version: 3, visible: ["pages"], sidebar: { visible: false, mode: "icons" } })]) {
       localStorage.setItem(NAVIGATION_PREFERENCE_KEY, payload);
       expect(readSidebarPreferences()).toEqual(DEFAULT_SIDEBAR_PREFERENCES);
     }
