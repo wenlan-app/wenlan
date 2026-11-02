@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { useQuery } from "@tanstack/react-query";
 import { useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { ThingDetail, ThingMemory, ThingPage } from "../../../lib/tauri";
+import { getThingMap, type ThingDetail, type ThingMap, type ThingMapNode, type ThingMemory, type ThingPage } from "../../../lib/tauri";
 
 export type ThingView = "short" | "map";
 
@@ -49,6 +50,15 @@ export function ThingViews({
     writeView(next);
   };
   const points = pointsOf(thing);
+  // The thing's own map (UX-VIEW-7), once something has written it. Until
+  // then, and on a daemon without the route, both views fall back to the
+  // points grouped by their kind.
+  const mapQuery = useQuery({
+    queryKey: ["thing-map", thing.id],
+    queryFn: () => getThingMap(thing.id),
+    retry: false,
+  });
+  const tree = mapQuery.data ? treeOf(mapQuery.data) : null;
   return (
     <>
       <div className="thing-views-bar">
@@ -65,7 +75,9 @@ export function ThingViews({
       {view === "short" ? (
         <div className="thing-short" data-testid="thing-short">
           {thing.status_line ? <p className="thing-detail-where">{thing.status_line}</p> : null}
-          {points.length > 0 ? (
+          {mapQuery.isPending ? null : tree ? (
+            <TreeRecap tree={tree} />
+          ) : points.length > 0 ? (
             RECAP_GROUPS.map((group) => (
               <RecapGroup key={group.key} group={group} points={points.filter((point) => groupOf(point) === group.key)} />
             ))
@@ -73,6 +85,8 @@ export function ThingViews({
             <p className="thing-detail-empty">{t("thing.noPoints")}</p>
           )}
         </div>
+      ) : mapQuery.isPending ? null : tree ? (
+        <TreeMap tree={tree} />
       ) : (
         <ThingMap thing={thing} points={points} onOpenPage={onOpenPage} />
       )}
@@ -135,9 +149,12 @@ function RecapGroup({
   );
 }
 
-function withStop(text: string): string {
+/** Ends a point with a full stop in the language around it: `context` is the
+ *  words shown before it, such as the question it answers. */
+function withStop(text: string, context = ""): string {
   const trimmed = text.trim();
-  return /[.!?。！？…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+  if (/[.!?。！？…]$/.test(trimmed)) return trimmed;
+  return /[⺀-￿]/.test(trimmed + context) ? `${trimmed}。` : `${trimmed}.`;
 }
 
 const MAP_WIDTH = 730;
@@ -163,7 +180,8 @@ function wrap(text: string, maxUnits = 30): string[] {
   const words = /[⺀-￿]/.test(text) ? [...text] : text.split(/(\s+)/);
   for (const word of words) {
     const w = [...word].reduce((sum, ch) => sum + units(ch), 0);
-    if (width + w > maxUnits && line.trim()) {
+    // Closing punctuation never starts a line; it stays with the word before.
+    if (width + w > maxUnits && line.trim() && !/^[，。、；：！？）」』…,.;:!?)]$/.test(word)) {
       lines.push(line.trim());
       if (lines.length === 2) break;
       line = "";
@@ -302,6 +320,208 @@ function ThingMap({
             <NodeText x={PAGE_X + 12} y={rightTop + page.y} lines={page.lines} />
           </g>
         ))}
+      </svg>
+    </div>
+  );
+}
+
+/* ---------- A map the AI wrote from the conversation (UX-VIEW-6, UX-VIEW-7) ---------- */
+
+/** Kinds this app draws in their own way. Any other kind is a plain point, so
+ *  the AI can add a shape without breaking the page. */
+const KNOWN_KINDS = new Set(["question", "option", "reason", "topic"]);
+
+interface Tree {
+  readonly root: ThingMapNode;
+  readonly children: ReadonlyMap<string, readonly ThingMapNode[]>;
+  readonly byId: ReadonlyMap<string, ThingMapNode>;
+}
+
+/** The map as a tree, siblings in rank order; null while it has no points. */
+function treeOf(map: ThingMap): Tree | null {
+  const root = map.nodes.find((node) => node.parent_id == null);
+  if (!root || map.nodes.length < 2) return null;
+  const byId = new Map(map.nodes.map((node) => [node.id, node]));
+  const children = new Map<string, ThingMapNode[]>();
+  for (const node of map.nodes) {
+    if (node.parent_id == null || !byId.has(node.parent_id)) continue;
+    const list = children.get(node.parent_id) ?? [];
+    list.push(node);
+    children.set(node.parent_id, list);
+  }
+  for (const list of children.values()) list.sort((a, b) => a.rank - b.rank);
+  return { root, children, byId };
+}
+
+const kidsOf = (tree: Tree, node: ThingMapNode) => tree.children.get(node.id) ?? [];
+
+/** Every point under the root in reading order, skipping what was dropped. */
+function walk(tree: Tree): ThingMapNode[] {
+  const out: ThingMapNode[] = [];
+  const visit = (node: ThingMapNode) => {
+    for (const child of kidsOf(tree, node)) {
+      if (child.state === "dropped") continue;
+      out.push(child);
+      visit(child);
+    }
+  };
+  visit(tree.root);
+  return out;
+}
+
+type TreeGroupKey = "decided" | "open" | "background";
+type TreeGroupLabel = "thing.recapDecided" | "thing.recapOpen" | "thing.recapBackground";
+const TREE_GROUPS: readonly { readonly key: TreeGroupKey; readonly label: TreeGroupLabel }[] = [
+  { key: "decided", label: "thing.recapDecided" },
+  { key: "open", label: "thing.recapOpen" },
+  { key: "background", label: "thing.recapBackground" },
+];
+
+/** Decided and open points by their state; the background is every other
+ *  point with nothing under it (reasons, facts, a topic's details). Questions
+ *  are the map's structure, so they show as a point's context instead. */
+function treeGroupOf(tree: Tree, node: ThingMapNode): TreeGroupKey | null {
+  if (node.state === "decided") return "decided";
+  if (node.state === "open") return "open";
+  if (node.kind === "question" || kidsOf(tree, node).length > 0) return null;
+  return "background";
+}
+
+function TreeRecap({ tree }: { readonly tree: Tree }) {
+  const points = walk(tree);
+  return (
+    <>
+      {TREE_GROUPS.map((group) => {
+        const items = points.filter((node) => treeGroupOf(tree, node) === group.key);
+        return <TreeRecapGroup key={group.key} tree={tree} group={group} items={items} />;
+      })}
+    </>
+  );
+}
+
+function TreeRecapGroup({
+  tree,
+  group,
+  items,
+}: {
+  readonly tree: Tree;
+  readonly group: { readonly key: TreeGroupKey; readonly label: TreeGroupLabel };
+  readonly items: readonly ThingMapNode[];
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  if (items.length === 0) return null;
+  const shown = open ? items : items.slice(0, RECAP_SHOWN);
+  const hidden = items.length - shown.length;
+  return (
+    <section className="thing-recap-group" aria-label={t(group.label)} data-recap={group.key}>
+      <h3>{t(group.label)}</h3>
+      <ul>
+        {shown.map((node) => {
+          const parent = node.parent_id ? tree.byId.get(node.parent_id) : undefined;
+          const context = parent && parent.id !== tree.root.id ? parent.label : null;
+          return (
+            <li key={node.id}>
+              {context ? <span className="thing-recap-context">{context} </span> : null}
+              {withStop(node.label, context ?? "")}
+            </li>
+          );
+        })}
+      </ul>
+      {hidden > 0 ? (
+        <button type="button" className="thing-recap-more" onClick={() => setOpen(true)}>
+          {t("thing.recapMore", { count: hidden })}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+const TREE_GAP_X = 28;
+const TREE_GAP_Y = 10;
+const TREE_LEAF_GAP = 16;
+
+interface PlacedNode {
+  readonly node: ThingMapNode;
+  readonly depth: number;
+  readonly lines: readonly string[];
+  readonly y: number;
+  readonly height: number;
+}
+
+/** A left-to-right tree: the thing on the left, each level a column, leaves
+ *  stacked and every parent centred on its children. Its shape is whatever
+ *  the AI wrote: questions and options for a decision, a topic tree for
+ *  something being learned. */
+function TreeMap({ tree }: { readonly tree: Tree }) {
+  const { t } = useTranslation();
+  let maxDepth = 0;
+  const depthOf = (node: ThingMapNode, depth: number) => {
+    maxDepth = Math.max(maxDepth, depth);
+    for (const child of kidsOf(tree, node)) depthOf(child, depth + 1);
+  };
+  depthOf(tree.root, 0);
+  const column = MAP_WIDTH / (maxDepth + 1);
+  const boxWidth = column - TREE_GAP_X;
+  const unitsFor = (width: number) => Math.max(10, Math.floor((width - 24) / 7));
+  const placed: PlacedNode[] = [];
+  let cursor = 0;
+  let lastDepth = -1;
+  const place = (node: ThingMapNode, depth: number): { top: number; bottom: number; centre: number } => {
+    const lines = wrap(node.label, unitsFor(boxWidth));
+    const height = nodeHeight(lines);
+    const kids = kidsOf(tree, node);
+    if (kids.length === 0) {
+      if (lastDepth >= 0) cursor += depth < lastDepth ? TREE_LEAF_GAP : TREE_GAP_Y;
+      lastDepth = depth;
+      const y = cursor;
+      cursor += height;
+      placed.push({ node, depth, lines, y, height });
+      return { top: y, bottom: y + height, centre: y + height / 2 };
+    }
+    const spans = kids.map((child) => place(child, depth + 1));
+    const centre = (spans[0].centre + spans[spans.length - 1].centre) / 2;
+    const y = centre - height / 2;
+    placed.push({ node, depth, lines, y, height });
+    return { top: Math.min(y, spans[0].top), bottom: Math.max(y + height, spans[spans.length - 1].bottom), centre };
+  };
+  const span = place(tree.root, 0);
+  const shift = 12 - Math.min(0, span.top);
+  const height = span.bottom - Math.min(0, span.top) + 24;
+  const at = new Map(placed.map((item) => [item.node.id, item]));
+  const xOf = (depth: number) => depth * column;
+  return (
+    <div className="thing-map" data-testid="thing-map">
+      <svg viewBox={`0 0 ${MAP_WIDTH} ${height}`} width="100%" role="group" aria-label={t("thing.viewMap")}>
+        <g className="thing-map-links" fill="none">
+          {placed
+            .filter((item) => item.node.parent_id && at.has(item.node.parent_id))
+            .map((item) => {
+              const parent = at.get(item.node.parent_id as string) as PlacedNode;
+              return (
+                <path
+                  key={item.node.id}
+                  d={curve(xOf(parent.depth) + boxWidth, shift + parent.y + parent.height / 2, xOf(item.depth), shift + item.y + item.height / 2)}
+                />
+              );
+            })}
+        </g>
+        {placed.map((item) => {
+          const { node } = item;
+          const isRoot = node.id === tree.root.id;
+          const kind = isRoot ? "root" : KNOWN_KINDS.has(node.kind) ? node.kind : "plain";
+          const state = node.state ?? "none";
+          const lines = node.state === "decided" && !isRoot ? [...item.lines.slice(0, -1), `${item.lines[item.lines.length - 1]} ✓`] : item.lines;
+          return (
+            <g key={node.id} className="thing-tree-node" data-kind={kind} data-state={state}>
+              <title>{node.label}</title>
+              {kind === "reason" ? null : (
+                <rect x={xOf(item.depth)} y={shift + item.y} width={boxWidth} height={item.height} rx={isRoot ? 14 : 10} />
+              )}
+              <NodeText x={xOf(item.depth) + (kind === "reason" ? 2 : 12)} y={shift + item.y} lines={lines} />
+            </g>
+          );
+        })}
       </svg>
     </div>
   );

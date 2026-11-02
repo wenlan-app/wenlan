@@ -2,12 +2,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getThing, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord } from "../../../lib/tauri";
+import { getThing, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
 import { ThingDetail } from "./ThingDetail";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
   getThing: vi.fn(),
+  getThingMap: vi.fn(),
   listThings: vi.fn(),
   renameThing: vi.fn(),
   moveSessionThing: vi.fn(),
@@ -44,6 +45,7 @@ describe("ThingDetail", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.mocked(getThing).mockReset().mockResolvedValue(tagline);
+    vi.mocked(getThingMap).mockReset().mockResolvedValue({ thing_id: "thg_1", revision: 0, nodes: [], edges: [] });
     vi.mocked(listThings).mockReset().mockResolvedValue([
       tagline,
       { ...tagline, id: "thg_2", title: "Product Hunt launch" },
@@ -75,6 +77,7 @@ describe("ThingDetail", () => {
     });
     renderThing();
     const short = await screen.findByTestId("thing-short");
+    await within(short).findByRole("region", { name: "Decided" });
     expect(short.firstElementChild).toHaveTextContent(/Picked the X wording/);
     expect(within(short).getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(["Decided", "Background"]);
     expect(within(short).getByRole("region", { name: "Background" })).toHaveTextContent("The old line still ships in the PH gallery.");
@@ -83,7 +86,7 @@ describe("ThingDetail", () => {
   it("UX-VIEW-1: short text and mind map show the same points, and the last view is remembered", async () => {
     const { onOpenPage } = renderThing();
     const short = await screen.findByTestId("thing-short");
-    expect(within(short).getByRole("region", { name: "Decided" })).toHaveTextContent("Lead with the X wording.");
+    expect(await within(short).findByRole("region", { name: "Decided" })).toHaveTextContent("Lead with the X wording.");
     expect(within(short).getByRole("region", { name: "Background" })).toHaveTextContent("The hero line stays under eight words.");
     fireEvent.click(screen.getByRole("button", { name: "Mind map" }));
     const map = screen.getByTestId("thing-map");
@@ -107,6 +110,50 @@ describe("ThingDetail", () => {
     expect(within(decided).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Decision 1.", "Decision 2.", "Decision 3."]);
     fireEvent.click(within(decided).getByRole("button", { name: "2 more" }));
     expect(within(decided).getAllByRole("listitem")).toHaveLength(5);
+  });
+
+  it("UX-VIEW-7: once the AI writes the map, both views follow its shape", async () => {
+    const node = (id: string, parent: string | null, kind: string, label: string, state?: "open" | "decided" | "dropped", rank = 0) =>
+      ({ id, parent_id: parent, rank, kind, label, state, by: "ai" as const, sources: [] });
+    const lisbon: ThingMap = {
+      thing_id: "thg_1",
+      revision: 4,
+      edges: [],
+      nodes: [
+        node("root", null, "topic", "Plan the Lisbon trip"),
+        node("q1", "root", "question", "Where to stay?", undefined, 1),
+        node("o1", "q1", "option", "Alfama", "decided", 1),
+        node("r1", "o1", "reason", "Old town on foot", undefined, 1),
+        node("o2", "q1", "option", "Baixa", "dropped", 2),
+        node("r2", "o2", "reason", "Too loud", undefined, 1),
+        node("q2", "root", "question", "Where on the 14th?", "open", 2),
+        node("o3", "q2", "option", "Sintra", undefined, 1),
+        node("r3", "o3", "reason", "Pena Palace is quiet in the morning", undefined, 1),
+        node("x1", "root", "a_future_kind", "Pack light", undefined, 3),
+      ],
+    };
+    vi.mocked(getThingMap).mockResolvedValue(lisbon);
+    renderThing();
+    const decided = await screen.findByRole("region", { name: "Decided" });
+    expect(decided).toHaveTextContent("Where to stay? Alfama.");
+    expect(screen.getByRole("region", { name: "Still open" })).toHaveTextContent("Where on the 14th?");
+    const background = screen.getByRole("region", { name: "Background" });
+    expect(background).toHaveTextContent("Alfama Old town on foot.");
+    expect(background).toHaveTextContent("Pack light.");
+    // What was dropped stays on the map but out of the recap.
+    expect(screen.getByTestId("thing-short")).not.toHaveTextContent("Too loud");
+    expect(within(screen.getByTestId("thing-short")).getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual([
+      "Decided",
+      "Still open",
+      "Background",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Mind map" }));
+    const map = screen.getByTestId("thing-map");
+    expect(map).toHaveTextContent("Too loud");
+    expect(map.querySelector('[data-kind="question"]')).not.toBeNull();
+    expect(map.querySelector('[data-state="dropped"]')).toHaveTextContent("Baixa");
+    // A kind the app does not know is drawn as a plain point.
+    expect(map.querySelector('[data-kind="plain"]')).toHaveTextContent("Pack light");
   });
 
   it("UX-THING-1: renames the thing in one step", async () => {

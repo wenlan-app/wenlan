@@ -70,3 +70,16 @@
 .thing-map-group text { fill:var(--mem-text-secondary);font-weight:600;font-size:12px; }
 .thing-map-more rect { fill:none; }
 .thing-map-more text { fill:var(--mem-text-tertiary); }
+/* A map the AI wrote (UX-VIEW-7): the shape comes from the points' kinds and
+   states; a kind this app does not know is a plain point. */
+.thing-recap-context { color:var(--mem-text-tertiary); }
+.thing-tree-node text { fill:var(--mem-text); }
+.thing-tree-node rect { fill:var(--mem-hover); }
+.thing-tree-node[data-kind="root"] rect { fill:var(--mem-surface);stroke:var(--mem-accent-page);stroke-width:1.5; }
+.thing-tree-node[data-kind="root"] text { font-weight:600;font-size:14px; }
+.thing-tree-node[data-kind="question"] rect { fill:var(--mem-indigo-bg); }
+.thing-tree-node[data-kind="reason"] text { fill:var(--mem-text-secondary);font-size:12.5px; }
+.thing-tree-node[data-state="decided"] rect { fill:var(--mem-surface);stroke:var(--mem-accent-sage);stroke-width:1.5; }
+.thing-tree-node[data-state="open"] rect { fill:var(--mem-surface);stroke:var(--mem-accent-amber);stroke-width:1.5;stroke-dasharray:4 3; }
+.thing-tree-node[data-state="dropped"] rect { fill:none;stroke:color-mix(in srgb,var(--mem-text) 18%,transparent);stroke-dasharray:2 3; }
+.thing-tree-node[data-state="dropped"] text { fill:var(--mem-text-tertiary);text-decoration:line-through; }

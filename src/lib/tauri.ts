@@ -988,6 +988,33 @@ export interface ThingDetail extends ThingSummary {
   memories?: ThingMemory[];
 }
 
+/** Where a point on a thing's map stands; apart from its kind, since an
+ *  option can be decided or dropped. */
+export type ThingMapState = "open" | "decided" | "dropped";
+
+/** One point on a thing's map (docs/ux/spec.md, UX-VIEW-7). `kind` is an open
+ *  set the AI picks (question, option, reason, topic, ...); a kind this app
+ *  does not know shows as a plain point. */
+export interface ThingMapNode {
+  id: string;
+  /** Null only for the root. */
+  parent_id: string | null;
+  rank: number;
+  kind: string;
+  state?: ThingMapState | null;
+  label: string;
+  by: "you" | "ai" | "local";
+  sources: { session_id: string; from?: number | null; to?: number | null; memory_id?: string | null }[];
+}
+
+export interface ThingMap {
+  thing_id: string;
+  /** 0 until something writes the map. */
+  revision: number;
+  nodes: ThingMapNode[];
+  edges: { from: string; to: string; kind: string }[];
+}
+
 /** Things with recent activity first. Empty until things have their own record. */
 export async function listThings(): Promise<ThingSummary[]> {
   return invoke("list_things");
@@ -995,6 +1022,10 @@ export async function listThings(): Promise<ThingSummary[]> {
 
 export async function getThing(id: string): Promise<ThingDetail> {
   return invoke("get_thing", { id });
+}
+
+export async function getThingMap(id: string): Promise<ThingMap> {
+  return invoke("get_thing_map", { id });
 }
 
 export async function renameThing(id: string, title: string): Promise<ThingSummary> {
