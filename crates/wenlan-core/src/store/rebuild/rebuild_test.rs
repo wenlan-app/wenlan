@@ -323,6 +323,14 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
         "mem_cap",
     )
     .await;
+    // A revision waiting for the person's yes, over mem_cap.
+    memory(
+        "mem_pending",
+        0,
+        ", created_at, supersedes, pending_revision",
+        format!(", 'memory', 'My revised note', {at}, 'mem_cap', 1"),
+    )
+    .await;
     // A classified type and extracted fields are cache: not in the file.
     memory(
         "mem_auto",
@@ -548,7 +556,13 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
     assert!(report.is_clean(), "{}", report.summary());
     assert!(report.summary().starts_with("CLEAN"));
     // Every memory the export wrote is compared, the typed one included.
-    assert!(report.memories.rows >= 7, "{}", report.summary());
+    assert!(report.memories.rows >= 8, "{}", report.summary());
+    let rows = fresh.export_memory_rows().await.unwrap();
+    let pending = rows
+        .iter()
+        .find(|row| row.source_id == "mem_pending")
+        .unwrap();
+    assert!(pending.pending_revision, "a pending revision stays pending");
 
     // The rebuild never writes into a database that has pages or memories.
     let refused = rebuild(&first, &db).await;
