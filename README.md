@@ -85,7 +85,7 @@ In the App's Settings, **Add a tool** finds the AI tools on your computer and **
 
 > /recall my earlier pages and decisions on this, then help me: …
 
-Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first. Grok Bot runs `wenlan recall` on your computer ([Grok Bot guide](docs/setup-with-ai.md#grok-bot)).
+Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first. Grok Bot runs `wenlan recall` on your computer, or a short `wenlan-mcp` session there ([Grok Bot guide](docs/setup-with-ai.md#grok-bot)).
 
 When an import finishes, the app offers **Write pages with** your AI tool to turn it into your first cited pages. No command needed.
 

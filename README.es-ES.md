@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=5be5c90ba4fd1f7023b26a996e9bbece22b2c05fa283b278a8ec2648733eecfe -->
+<!-- README_SYNC: source=README.md sha256=56f9ff9caff436589bb98772e21096c38651133957cda16f6db7f2a2b28bf861 -->
 
 <p align="center">
   <picture>
@@ -85,7 +85,7 @@ En los ajustes de la aplicación, **Add a tool** encuentra las herramientas de I
 
 > /recall mis páginas y decisiones anteriores sobre esto y luego ayúdame con: …
 
-En Codex, usa `$recall`; con una herramienta solo MCP, pídele que consulte Wenlan primero. Grok Bot ejecuta `wenlan recall` en tu ordenador ([guía de Grok Bot](docs/setup-with-ai.md#grok-bot)).
+En Codex, usa `$recall`; con una herramienta solo MCP, pídele que consulte Wenlan primero. Grok Bot ejecuta `wenlan recall` en tu ordenador, o una sesión corta de `wenlan-mcp` allí ([guía de Grok Bot](docs/setup-with-ai.md#grok-bot)).
 
 Cuando termina una importación, la aplicación ofrece **Write pages with** tu herramienta de IA para convertirla en tus primeras páginas con citas. No hace falta ningún comando.
 

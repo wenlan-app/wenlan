@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=5be5c90ba4fd1f7023b26a996e9bbece22b2c05fa283b278a8ec2648733eecfe -->
+<!-- README_SYNC: source=README.md sha256=56f9ff9caff436589bb98772e21096c38651133957cda16f6db7f2a2b28bf861 -->
 
 <p align="center">
   <picture>
@@ -87,7 +87,7 @@
 
 > /recall 我之前對這件事的筆記和決定，再幫我：……
 
-Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok Bot 在你的電腦上執行 `wenlan recall`（[Grok Bot 指南](docs/setup-with-ai.md#grok-bot)）。
+Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok Bot 在你的電腦上執行 `wenlan recall`，或在那裡開一段短暫的 `wenlan-mcp` 會話（[Grok Bot 指南](docs/setup-with-ai.md#grok-bot)）。
 
 匯入完成後，App 會提供「用（你的 AI 工具）寫頁面」，把資料寫成第一批帶引用的筆記，不用輸入指令。
 

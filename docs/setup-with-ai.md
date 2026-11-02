@@ -69,13 +69,13 @@ Start a new Codex task so the plugin and MCP server load, then type `$wenlan` (o
 
 ## Grok Bot
 
-Grok Bot reads and writes the user's Wenlan library by running the `wenlan` CLI on the user's computer. It can also use `wenlan-mcp` when that process starts on the same computer as the daemon.
+Grok Bot uses the Wenlan library on the user's computer in two ways. Both run there, through the commands Grok Bot is allowed to run on that computer (on a Mac, the machine it can shell into). A command on Grok Bot's own Linux computer talks to a daemon on that computer, not to the library on the user's Mac.
 
-There is no `wenlan connect grok-bot` target, and **Add a tool** does not set Grok Bot up. Grok Bot does not keep a local MCP config file this command can update.
+There is no `wenlan connect grok-bot` target, and **Add a tool** does not set Grok Bot up. Grok Bot does not keep a local MCP config file. Its MCP path is a short session per command, not a persistent registered connector.
 
 ### CLI on the user's computer
 
-Install the runtime with the host-specific path above, on the computer that holds the library. When Grok Bot runs commands on the user's Mac, that computer is the Mac. Pass `--agent-name grok-bot` on each command, or export `WENLAN_AGENT_NAME=grok-bot` for the shell. Without a name, the daemon records the caller as `unknown`.
+Install the runtime with the host-specific path above, on the computer that holds the library. Pass `--agent-name grok-bot` on each command, or export `WENLAN_AGENT_NAME=grok-bot` for the shell. Without a name, the daemon records the caller as `unknown`.
 
 ```bash
 wenlan --agent-name grok-bot recall "what we decided"
@@ -86,26 +86,19 @@ wenlan --agent-name grok-bot capture "the decision, in one sentence"
 
 `recall` searches memories and the pages that match. `memories` lists recent memories. `spaces list` lists Spaces. `capture` stores one memory and prints its id (`Stored memory <id>`).
 
-A command run on Grok Bot's own Linux computer talks to a daemon on that computer. It does not see the library on the user's Mac.
+### MCP over a local shell
 
-### MCP on the same computer
+On the user's computer, start one `wenlan-mcp` process, pipe it newline-delimited JSON-RPC, read the replies from stdout, and let the process exit. Each invocation is its own session. The connector calls `http://127.0.0.1:7878` on that same computer.
 
-Use this when the client starts `wenlan-mcp` on the same computer as the daemon. The connector calls `http://127.0.0.1:7878` on the machine where its process runs.
-
-```json
-{
-  "mcpServers": {
-    "wenlan": {
-      "command": "wenlan-mcp",
-      "args": ["--agent-name", "grok-bot"]
-    }
-  }
-}
+```bash
+~/.wenlan/bin/wenlan-mcp --agent-name grok-bot <<'EOF'
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"grok-bot","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"recall","arguments":{"query":"what we decided"}}}
+EOF
 ```
 
-When `wenlan-mcp` is not on `PATH`, set `command` to `~/.wenlan/bin/wenlan-mcp` and keep the same `args`. Or set `command` to `npx` and `args` to `["-y", "wenlan-mcp", "--agent-name", "grok-bot"]`.
-
-A stdio server that starts on Grok Bot's Linux computer cannot open the daemon on the user's Mac. For that library, use the CLI on the Mac.
+Send `initialize`, then `notifications/initialized`, then the call. Replies are one JSON object per line. `initialize` returns the server info. `tools/call` with `name` `recall` searches the library. The same session shape with `method` `tools/list` returns the local tools, including `recall`, `brief`, `get_page_sources`, `capture`, `write_page`, and `forget`. Logs go to stderr.
 
 ### Verify
 
@@ -117,7 +110,17 @@ wenlan --agent-name grok-bot capture "Wenlan Grok Bot setup check. Disposable."
 wenlan --agent-name grok-bot recall "Wenlan Grok Bot setup check"
 ```
 
-The round trip is proven when `wenlan status` reports a healthy runtime and `recall` returns the captured sentence. `capture` prints `Stored memory <id>`. Delete that memory with the MCP `forget` tool, with `memory_id` set to `<id>`. The `wenlan` CLI has no forget command.
+The round trip is proven when `wenlan status` reports a healthy runtime and `recall` returns the captured sentence. `capture` prints `Stored memory <id>`. Delete that memory in a short MCP session with `forget`:
+
+```bash
+~/.wenlan/bin/wenlan-mcp --agent-name grok-bot <<'EOF'
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"grok-bot","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"forget","arguments":{"memory_id":"<id>"}}}
+EOF
+```
+
+Replace `<id>` with the id `capture` printed. The `wenlan` CLI has no forget command.
 
 ## MCP-only setup and other clients
 
@@ -139,4 +142,4 @@ First confirm the local runtime:
 wenlan status
 ```
 
-Then use the current client's Wenlan tools to capture a disposable sentence and recall it. Delete the test memory afterward if the client exposes `forget`. If the tools are not visible, start a new client session and verify again before declaring setup complete. For Grok Bot, run the CLI round trip in [Grok Bot](#grok-bot).
+Then use the current client's Wenlan tools to capture a disposable sentence and recall it. Delete the test memory afterward if the client exposes `forget`. If the tools are not visible, start a new client session and verify again before declaring setup complete. For Grok Bot, run the round trip in [Grok Bot](#grok-bot), including MCP `forget`.
