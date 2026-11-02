@@ -276,6 +276,10 @@ describe("writingPresentation", () => {
       ["Loose", false, false],
       ["Last", true, false],
     ]);
+    // The blank line under "Loose" is narrowed to the same half-line gap.
+    const gaps = [...view.contentDOM.querySelectorAll(".cm-writing-heading-gap")];
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].previousElementSibling).toHaveTextContent("Loose");
     expect(view.state.doc.toString()).toBe(source);
   });
 
