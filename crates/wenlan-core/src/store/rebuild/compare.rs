@@ -320,6 +320,7 @@ async fn memory_decisions(
         put("source_agent", some(&head.source_agent));
         put("confirmed", json!(head.confirmed));
         put("pinned", json!(head.pinned));
+        put("pending_revision", json!(head.pending_revision));
         put("supersedes", some(&head.supersedes));
         put(
             "supersede_mode",

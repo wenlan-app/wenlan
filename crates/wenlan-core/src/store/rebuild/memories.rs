@@ -42,6 +42,7 @@ const COLUMNS: &[&str] = &[
     "session_id",
     "entity_id",
     "is_recap",
+    "pending_revision",
     "last_modified",
     "retrieval_cue",
     "chunk_type",
@@ -171,6 +172,8 @@ struct Decisions {
     session: Option<String>,
     entity: Option<String>,
     recap: bool,
+    /// A revision still waiting for the person's yes.
+    pending: bool,
     fields: Option<String>,
     source_text: Option<String>,
     modified: Option<i64>,
@@ -204,6 +207,11 @@ fn memory_row(mut file: MemoryFile, problems: &mut Vec<String>) -> Vec<libsql::V
         session: file.session,
         entity: file.entity,
         recap: file.recap,
+        pending: file
+            .other
+            .shift_remove("pending")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
         fields: file.fields.as_ref().map(fields_text),
         source_text: file.source_text,
         modified,
@@ -251,6 +259,7 @@ fn original_rows(mut file: OriginalFile, problems: &mut Vec<String>) -> Vec<Vec<
         session: text_key(other, "session"),
         entity: text_key(other, "entity"),
         recap: flag(other, "recap"),
+        pending: flag(other, "pending"),
         fields: other.shift_remove("fields").as_ref().map(fields_text),
         source_text: text_key(other, "source_text"),
         modified,
@@ -327,6 +336,7 @@ fn row_of(
         text(&d.session),
         text(&d.entity),
         flag(d.recap),
+        flag(d.pending),
         libsql::Value::Integer(d.modified.unwrap_or(0)),
         text(&d.cue),
         libsql::Value::Text("text".to_string()),

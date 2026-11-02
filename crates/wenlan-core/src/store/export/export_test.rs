@@ -365,7 +365,7 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     let done = export_memories(&db, &stems, &dirs, &mut manifest)
         .await
         .unwrap();
-    assert_eq!((done.memories, done.originals), (3, 2));
+    assert_eq!((done.memories, done.originals), (4, 2));
     let clip = memory::parse(&read(&dirs, "backstage/memories/undated/clipboard_1.md")).unwrap();
     assert_eq!(clip.text, "copied text");
     assert_eq!(clip.other["source"], "clipboard");
@@ -414,6 +414,10 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     assert_eq!(long.fields, None, "extracted fields are not written");
     assert_eq!(long.source_text.as_deref(), Some("Original prose."));
 
+    // A revision waiting for the person's yes is written, marked pending.
+    let pending = memory::parse(&read(&dirs, "backstage/memories/undated/mem_pending.md")).unwrap();
+    assert_eq!(pending.other["pending"], true);
+
     let left: Vec<_> = manifest
         .left_out
         .iter()
@@ -424,7 +428,6 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
         [
             ("mem_cap", "about[ent_gone]"),
             ("mem_odd", "memory with source mystery"),
-            ("mem_pending", "memory")
         ]
     );
     let skipped: Vec<_> = manifest

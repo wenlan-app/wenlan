@@ -103,14 +103,6 @@ pub async fn export_memories(
                 continue;
             }
         }
-        if head.pending_revision {
-            manifest.left_out.push(LeftOut {
-                id: id.to_string(),
-                field: "memory".to_string(),
-                why: "a pending revision; it becomes a proposal file in a later part".to_string(),
-            });
-            continue;
-        }
         let original = if source == WEB_SOURCE {
             Some(("web", id, "page"))
         } else if source == FILE_SOURCE {
@@ -213,6 +205,10 @@ fn memory_file(
     }
     if head.space_rejected {
         file.other.insert("space_rejected".into(), true.into());
+    }
+    // A revision waiting for the person's yes: it stays a proposal.
+    if head.pending_revision {
+        file.other.insert("pending".into(), true.into());
     }
     // The text is what the person typed (`authored_content`); the tidied
     // `content` is cache. The rebuild needs to know which it is.
