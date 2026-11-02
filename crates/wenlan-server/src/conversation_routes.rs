@@ -3,8 +3,11 @@
 //!
 //! Search finds the sentence someone said, in the transcript the AI tool
 //! keeps, and shows a little of what came before and after; "show all" reads
-//! the whole conversation. Only the person reads these: a conversation's
-//! words are not handed to another AI tool through the daemon.
+//! the whole conversation. These routes are for the app: a caller that names
+//! itself as an AI tool (`x-agent-name`) is turned away, so a tool's own
+//! words are not handed to another tool through Wenlan's MCP and CLI. Like
+//! the daemon's other caller checks this relies on callers naming
+//! themselves; it is not a lock against a local program that does not.
 
 use std::time::{Duration, Instant};
 
@@ -207,15 +210,15 @@ pub async fn handle_conversation_lines(
     .await
     .map_err(|e| ServerError::Internal(format!("conversation lines: {e}")))?;
     let mut lines = lines.ok_or_else(not_found)?;
-    if lines.len() > MAX_LINES {
-        lines.drain(..lines.len() - MAX_LINES);
-    }
+    let first_index = lines.len().saturating_sub(MAX_LINES);
+    lines.drain(..first_index);
     Ok(Json(ConversationLinesResponse {
         session_id,
         tool,
         title,
         thing_id: thing.as_ref().map(|t| t.id.clone()),
         thing_title: thing.and_then(|t| t.title),
+        first_index,
         lines,
     }))
 }

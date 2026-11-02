@@ -671,31 +671,24 @@ pub async fn handle_search_pages(
     let scope =
         crate::read_scope::effective_read_scope(&db, req.space.as_deref(), header_space.as_deref())
             .await?;
-    let results = db
-        .search_pages_scoped_browse(
-            &req.query,
-            req.limit.unwrap_or(20),
-            req.page_type.as_deref(),
-            &scope,
-        )
-        .await
-        .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
     // A word inside a run of Chinese or Japanese characters is found only by
     // its literal text, and search by meaning then returns unrelated pages:
     // when some pages contain the words, the results are those (UX-FIND-1).
+    // A search narrowed to one kind of page keeps the usual path.
     let limit = req.limit.unwrap_or(20);
-    let mut results = if req.query.chars().any(is_cjk_char) {
-        let literal = db
-            .pages_containing_text(&req.query, limit, &scope)
+    let literal = if req.page_type.is_none() && req.query.chars().any(is_cjk_char) {
+        db.pages_containing_text(&req.query, limit, &scope)
             .await
-            .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
-        if literal.is_empty() {
-            results
-        } else {
-            literal
-        }
+            .map_err(|e| ServerError::SearchFailed(e.to_string()))?
     } else {
-        results
+        Vec::new()
+    };
+    let mut results = if literal.is_empty() {
+        db.search_pages_scoped_browse(&req.query, limit, req.page_type.as_deref(), &scope)
+            .await
+            .map_err(|e| ServerError::SearchFailed(e.to_string()))?
+    } else {
+        literal
     };
     results.truncate(limit);
     let results = wenlan_core::truth_adapter::filter_pages(&db, &view.grant, results)

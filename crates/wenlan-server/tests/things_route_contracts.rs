@@ -506,7 +506,9 @@ async fn ux_find_1_search_finds_what_was_said_with_the_lines_around_it() {
     let (router, _tmp, db) = common::test_app_no_gate().await;
     db.create_space("other", None, false).await.unwrap();
 
-    let transcript = vault._tmp.path().join("kyoto.jsonl");
+    let projects = vault._tmp.path().join(".claude/projects/-kyoto");
+    std::fs::create_dir_all(&projects).unwrap();
+    let transcript = projects.join("kyoto.jsonl");
     std::fs::write(
         &transcript,
         [
@@ -569,6 +571,7 @@ async fn ux_find_1_search_finds_what_was_said_with_the_lines_around_it() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let all = typed::<wenlan_types::conversations::ConversationLinesResponse>(body);
     assert_eq!(all.lines.len(), 4);
+    assert_eq!(all.first_index, 0);
     assert_eq!(all.thing_title.as_deref(), Some("Kyoto stay"));
 
     // An empty search finds nothing; an AI tool may not read the words; a
@@ -617,6 +620,51 @@ async fn ux_find_1_search_finds_what_was_said_with_the_lines_around_it() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Once the conversation writes in that Space, the Space finds its words.
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/pages")
+                .header("content-type", "application/json")
+                .header("x-agent-name", "claude-code")
+                .header("x-wenlan-session", "claude-code:kyoto")
+                .header("x-wenlan-space", "other")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "title": "Gion inn",
+                        "content": "Ryokan two streets from Hanamikoji.",
+                        "creation_kind": "authored",
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        "/api/conversations/search?q=Kyoto",
+        None,
+        Caller::InSpace("other"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let hits = typed::<wenlan_types::conversations::ConversationSearchResponse>(body).hits;
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/sessions/{session_id}/lines"),
+        None,
+        Caller::InSpace("other"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 
     // A word inside Chinese text finds the page that contains it, and only
     // the pages that contain it.

@@ -1054,6 +1054,8 @@ export interface ConversationLines {
   title?: string | null;
   thing_id?: string | null;
   thing_title?: string | null;
+  /** Where `lines` starts in the conversation; a long one returns only its newest lines. */
+  first_index?: number;
   lines: ConversationLine[];
 }
 

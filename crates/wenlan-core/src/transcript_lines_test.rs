@@ -64,7 +64,8 @@ fn ux_find_2_excerpts_centre_on_the_word_and_mark_cuts() {
 
 #[test]
 fn ux_find_2_reads_a_transcript_file_once_until_it_changes() {
-    let dir = std::env::temp_dir().join(format!("wenlan-lines-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("wenlan-lines-{}", std::process::id()));
+    let dir = root.join(".claude").join("projects").join("-repo");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("t.jsonl");
     std::fs::write(&path, TRANSCRIPT).unwrap();
@@ -93,5 +94,31 @@ fn ux_find_2_reads_a_transcript_file_once_until_it_changes() {
         conversation_lines("claude-code", &path).is_none(),
         "pruned file"
     );
-    std::fs::remove_dir(&dir).ok();
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn ux_find_2_reads_only_files_where_claude_code_keeps_transcripts() {
+    let root = std::env::temp_dir().join(format!("wenlan-lines-out-{}", std::process::id()));
+    let projects = root.join(".claude").join("projects").join("-repo");
+    std::fs::create_dir_all(&projects).unwrap();
+    let outside = root.join("notes.jsonl");
+    std::fs::write(&outside, TRANSCRIPT).unwrap();
+    assert!(conversation_lines("claude-code", &outside).is_none());
+    let not_jsonl = projects.join("t.txt");
+    std::fs::write(&not_jsonl, TRANSCRIPT).unwrap();
+    assert!(conversation_lines("claude-code", &not_jsonl).is_none());
+    #[cfg(unix)]
+    {
+        let link = projects.join("link.jsonl");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        assert!(
+            conversation_lines("claude-code", &link).is_none(),
+            "a link out of the projects folder is not followed"
+        );
+    }
+    let inside = projects.join("t.jsonl");
+    std::fs::write(&inside, TRANSCRIPT).unwrap();
+    assert_eq!(conversation_lines("claude-code", &inside).unwrap().len(), 3);
+    std::fs::remove_dir_all(&root).ok();
 }

@@ -26,6 +26,11 @@ interface SearchResultsProps {
   conceptResults: Page[];
   /** Sentences from AI conversations (UX-FIND-1). */
   conversationHits: ConversationHit[];
+  /**
+   * Conversations are still being read. The other groups show meanwhile;
+   * "nothing found" waits for them.
+   */
+  conversationsLoading?: boolean;
   /** Passages from source files, shown with the conversation sentences. */
   sourceResults: SearchResult[];
   entityResults: EntitySearchResult[];
@@ -67,6 +72,7 @@ export function SearchResults({
   thingResults,
   conceptResults,
   conversationHits,
+  conversationsLoading = false,
   sourceResults,
   entityResults,
   loading,
@@ -101,6 +107,7 @@ export function SearchResults({
     ? <p className="search-modal-status" data-testid="search-preparing">{t("main.search.preparing", { count: preparing })}</p>
     : null;
   if (!loading && !error && !hasResults) {
+    if (conversationsLoading) return preparingLine;
     return <>
       <p className="search-modal-status">{t("main.search.noResults", { query })}</p>
       {preparingLine}
@@ -213,7 +220,10 @@ function ConversationQuote({ hit, query, onBack, onOpenThing }: {
       <button className="search-quote-back" onClick={onBack} ref={backRef} type="button">{t("main.search.backToResults")}</button>
       <div className="search-quote-lines">
         {all && lines.data
-          ? lines.data.lines.map((line, i) => said(line, i === hit.index, i))
+          ? lines.data.lines.map((line, i) => {
+            const at = i + (lines.data.first_index ?? 0);
+            return said(line, at === hit.index, at);
+          })
           : <>
             {hit.before && said(hit.before, false, "before")}
             {said(hit.line, true, "hit")}

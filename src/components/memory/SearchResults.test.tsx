@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../i18n";
@@ -47,6 +47,7 @@ type Groups = {
   conversationHits?: ConversationHit[];
   sourceResults?: SearchResult[];
   entityResults?: EntitySearchResult[];
+  conversationsLoading?: boolean;
 };
 
 function renderResults(data: ActivityResponse, sourceResults: SearchResult[] = [result], groups: Groups = {}, query = "delta") {
@@ -62,6 +63,7 @@ function renderResults(data: ActivityResponse, sourceResults: SearchResult[] = [
         conversationHits={groups.conversationHits ?? []}
         sourceResults={groups.sourceResults ?? sourceResults}
         entityResults={groups.entityResults ?? []}
+        conversationsLoading={groups.conversationsLoading}
         loading={false}
         error={false}
         ready
@@ -161,6 +163,19 @@ describe("UX-FIND-1 one search box", () => {
   });
 });
 
+describe("UX-FIND-1 groups show while conversations are still read", () => {
+  it("shows pages at once and says nothing was found only after conversations are read", async () => {
+    renderResults(activity(), [], { conversationsLoading: true, conceptResults: [{ id: "p1", title: "Gion notes", summary: null, content: "Gion notes body", domain: null } as unknown as Page] }, "gion");
+    expect(await screen.findByRole("region", { name: "Pages" })).toBeInTheDocument();
+  });
+
+  it("does not say nothing was found while conversations are still read", async () => {
+    renderResults(activity(), [], { conversationsLoading: true }, "gion");
+    await waitFor(() => expect(getActivityMock).toHaveBeenCalled());
+    expect(screen.queryByText(/0 results/)).toBeNull();
+  });
+});
+
 describe("UX-FIND-2 a sentence with what came before and after", () => {
   it("opens the sentence in context, names where it is used, and shows all on request", async () => {
     const user = userEvent.setup();
@@ -191,6 +206,25 @@ describe("UX-FIND-2 a sentence with what came before and after", () => {
 
     await user.click(screen.getByRole("button", { name: "← Back to results" }));
     expect(screen.getByRole("region", { name: "Said in conversations" })).toBeInTheDocument();
+  });
+
+  it("marks the sentence when a long conversation returns only its newest lines", async () => {
+    const user = userEvent.setup();
+    getConversationLinesMock.mockResolvedValue({
+      session_id: "ses_1",
+      tool: "codex",
+      first_index: 1,
+      lines: [
+        { speaker: "you", text: "Decided: stay near Gion." },
+        { speaker: "ai", text: "Noted." },
+      ],
+    });
+    renderResults(activity(), [], { conversationHits: [hit] }, "gion");
+    await user.click(await screen.findByRole("button", { name: /Decided: stay near Gion/ }));
+    await user.click(screen.getByRole("button", { name: "Show all" }));
+    await screen.findByText("Noted.");
+    const marked = screen.getByTestId("conversation-quote").querySelector(".search-quote-line--hit");
+    expect(marked).toHaveTextContent("Decided: stay near Gion.");
   });
 
   it("says so when the conversation is gone from this computer", async () => {

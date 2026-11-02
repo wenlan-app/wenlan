@@ -24,53 +24,150 @@ use wenlan_types::conversations::{ConversationLine, ConversationSpeaker};
 const MAX_JSONL_LINE_BYTES: usize = 4 * 1024 * 1024;
 /// Text kept from one message.
 const MAX_LINE_CHARS: usize = 20_000;
-/// Transcripts remembered at once.
-const CACHE_ENTRIES: usize = 256;
+/// Text, in bytes, of the transcripts remembered at once. The ones read
+/// longest ago are forgotten first.
+const CACHE_BYTES: usize = 64 * 1024 * 1024;
+/// Only the end of a longer transcript file is read: search and "show all"
+/// stay quick however long a conversation ran.
+const MAX_TRANSCRIPT_BYTES: u64 = 32 * 1024 * 1024;
 
 type Parsed = Arc<Vec<ConversationLine>>;
 
 struct Cached {
     modified: Option<SystemTime>,
     len: u64,
+    bytes: usize,
+    used: u64,
     lines: Parsed,
 }
 
-fn cache() -> &'static Mutex<HashMap<PathBuf, Cached>> {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Cached>>> = OnceLock::new();
+#[derive(Default)]
+struct Cache {
+    entries: HashMap<PathBuf, Cached>,
+    bytes: usize,
+    clock: u64,
+}
+
+impl Cache {
+    fn get(&mut self, path: &Path, modified: Option<SystemTime>, len: u64) -> Option<Parsed> {
+        self.clock += 1;
+        let clock = self.clock;
+        let hit = self.entries.get_mut(path)?;
+        if hit.modified != modified || hit.len != len {
+            return None;
+        }
+        hit.used = clock;
+        Some(hit.lines.clone())
+    }
+
+    fn forget(&mut self, path: &Path) {
+        if let Some(gone) = self.entries.remove(path) {
+            self.bytes -= gone.bytes;
+        }
+    }
+
+    fn insert(&mut self, path: PathBuf, modified: Option<SystemTime>, len: u64, lines: Parsed) {
+        self.forget(&path);
+        let bytes: usize = lines.iter().map(|l| l.text.len() + 32).sum();
+        if bytes > CACHE_BYTES {
+            return;
+        }
+        while self.bytes + bytes > CACHE_BYTES {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, c)| c.used)
+                .map(|(p, _)| p.clone())
+            else {
+                break;
+            };
+            self.forget(&oldest);
+        }
+        self.clock += 1;
+        self.bytes += bytes;
+        self.entries.insert(
+            path,
+            Cached {
+                modified,
+                len,
+                bytes,
+                used: self.clock,
+                lines,
+            },
+        );
+    }
+}
+
+fn cache() -> &'static Mutex<Cache> {
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
 }
 
 /// The conversation's lines, oldest first. `None` when the tool's transcript
-/// format is not one Wenlan reads, or the file is gone.
+/// format is not one Wenlan reads, the file is gone, or it is not where that
+/// tool keeps its transcripts.
 pub fn conversation_lines(tool: &str, path: &Path) -> Option<Parsed> {
     if tool != "claude-code" {
         return None;
     }
-    let meta = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
+    let Some(meta) = std::fs::metadata(path)
+        .ok()
+        .filter(|m| m.is_file() && is_claude_code_transcript(path))
+    else {
+        if let Ok(mut cache) = cache().lock() {
+            cache.forget(path);
+        }
+        return None;
+    };
     let (modified, len) = (meta.modified().ok(), meta.len());
-    if let Ok(cache) = cache().lock() {
-        if let Some(hit) = cache.get(path) {
-            if hit.modified == modified && hit.len == len {
-                return Some(hit.lines.clone());
-            }
+    if let Ok(mut cache) = cache().lock() {
+        if let Some(lines) = cache.get(path, modified, len) {
+            return Some(lines);
         }
     }
-    let file = std::fs::File::open(path).ok()?;
-    let lines: Parsed = Arc::new(parse_claude_code(std::io::BufReader::new(file)));
+    let lines: Parsed = Arc::new(read_claude_code(path, len)?);
     if let Ok(mut cache) = cache().lock() {
-        if cache.len() >= CACHE_ENTRIES {
-            cache.clear();
-        }
-        cache.insert(
-            path.to_path_buf(),
-            Cached {
-                modified,
-                len,
-                lines: lines.clone(),
-            },
-        );
+        cache.insert(path.to_path_buf(), modified, len, lines.clone());
     }
     Some(lines)
+}
+
+fn read_claude_code(path: &Path, len: u64) -> Option<Vec<ConversationLine>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    if len <= MAX_TRANSCRIPT_BYTES {
+        return Some(parse_claude_code(std::io::BufReader::new(file)));
+    }
+    file.seek(SeekFrom::Start(len - MAX_TRANSCRIPT_BYTES))
+        .ok()?;
+    let mut reader = std::io::BufReader::new(file.take(MAX_TRANSCRIPT_BYTES));
+    // The first line of the tail is probably cut mid-way.
+    let mut cut = Vec::new();
+    reader.read_until(b'\n', &mut cut).ok()?;
+    Some(parse_claude_code(reader))
+}
+
+/// A `.jsonl` file inside a Claude Code `projects` folder (`~/.claude/projects`,
+/// or the one under `CLAUDE_CONFIG_DIR`), once links are followed. A
+/// conversation names its own transcript, so this keeps it from pointing
+/// search at some other file.
+pub fn is_claude_code_transcript(path: &Path) -> bool {
+    let Ok(real) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    if real.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        return false;
+    }
+    let config_projects = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .and_then(|dir| std::fs::canonicalize(PathBuf::from(dir).join("projects")).ok());
+    real.ancestors().skip(1).any(|dir| {
+        config_projects.as_deref() == Some(dir)
+            || (dir.file_name().is_some_and(|n| n == "projects")
+                && dir
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|n| n == ".claude"))
+    })
 }
 
 #[derive(Deserialize)]

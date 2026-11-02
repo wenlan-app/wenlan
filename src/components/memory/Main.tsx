@@ -994,7 +994,6 @@ export default function Main({
 
   const searchLoading = !!displayedSearchQuery.trim() && (
     displayedSearchQuery !== debouncedQuery || memorySearchLoading || entitySearchLoading || conceptSearchLoading
-    || conversationSearchLoading
   );
   // Conversation words are best effort: an older daemon without the route,
   // or a transcript that moved, leaves that group empty rather than failing.
@@ -1929,6 +1928,7 @@ export default function Main({
           thingResults={thingResults}
           conceptResults={conceptResults}
           conversationHits={conversationHits}
+          conversationsLoading={conversationSearchLoading}
           sourceResults={sourceResults}
           entityResults={entityResults}
           loading={searchLoading}

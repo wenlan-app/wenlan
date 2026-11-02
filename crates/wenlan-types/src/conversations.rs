@@ -68,5 +68,9 @@ pub struct ConversationLinesResponse {
     pub thing_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thing_title: Option<String>,
+    /// Where `lines` starts in the conversation, so a hit's `index` finds its
+    /// line when only the newest lines of a long conversation are returned.
+    #[serde(default)]
+    pub first_index: usize,
     pub lines: Vec<ConversationLine>,
 }
