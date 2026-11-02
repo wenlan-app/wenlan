@@ -60,7 +60,7 @@ import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
 import ContentRenderer, { EmbedPageContext } from "./ContentRenderer";
-import { PageLengthSwitch, PageReadingLayers, usePageLength } from "./page/PageReadingLayers";
+import { PageReadingLayers, usePageLength } from "./page/PageReadingLayers";
 import { pageLayerOffsets } from "./page/pageLayers";
 import type { PageLayersSettings } from "./editor/pageLayersEditing";
 import type { SentenceProposalSettings } from "./editor/sentenceProposals";
@@ -2539,6 +2539,17 @@ export default function PageDetail({
                         {t("pageDetail.renamePage")}
                       </button>
                     ) : null}
+                    {pageHasTwoLengths && !showCanvas ? (
+                      <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={pageLength === "short"}
+                        onClick={() => { closeActionMenu(); choosePageLength(pageLength === "short" ? "full" : "short"); }}
+                      >
+                        {t("pageLayers.firstParagraphOnly")}
+                        <span aria-hidden="true" className="page-detail-menu-check">{pageLength === "short" ? "✓" : ""}</span>
+                      </button>
+                    ) : null}
                     {/* Re-distill rebuilds a page from its sources; a page
                         with none has nothing to rebuild from. */}
                     {page.status === "active" && canUpdateFromSources ? <button
@@ -3082,7 +3093,6 @@ export default function PageDetail({
               {editorSessionId && (
                 <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}>
                 {hideOuterTitleWhileEditing && <><h1 className="sr-only">{page.title}</h1>{documentTools}</>}
-                {pageHasTwoLengths && <PageLengthSwitch length={pageLength} onChoose={choosePageLength} />}
                 <MarkdownEditor
                   ref={editorRef}
                   pageLayers={editorPageLayers}
@@ -3180,6 +3190,8 @@ export default function PageDetail({
               )}
               <PageReadingLayers
                 content={displayContent}
+                length={pageLength}
+                onChoose={choosePageLength}
                 renderBody={(markdown) => (
                   <ContentRenderer
                     content={markdown}

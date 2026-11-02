@@ -87,7 +87,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   原文：短文、心智圖、你要的其他樣子是同一件事的三個看法，切換不換頁，記得你上次用哪個。「因为我们还没有很明确的用户需求，这样的情境下做的选择会是哪一个就选哪一个」→ 先不做第三種（2026-10-31 19:10）
 - **UX-VIEW-2** `shipped` While reading you can pick short or full text. It is
   one page, not two copies: short is the page's first paragraph, never a
-  separately written summary. The switch is marked Beta.
+  separately written summary. The choice sits in the page's ⋯ menu ("First
+  paragraph only"), not above the text, and a short page ends with a way to
+  the full one.
+  原文：「Beta的字眼可以先拿掉」「又有 short 跟 full 在放在类似的位置，那就导致说那个文章被往下推了很多」（2026-11-01 23:42）
 - **UX-VIEW-5** `planned` A page's first paragraph is its point. The AI writes
   its pages that way and fixes its older pages when it next updates them. On
   your pages it only proposes a first sentence, which counts once you accept it.
