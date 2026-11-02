@@ -106,6 +106,12 @@ pub async fn run(out: PathBuf, pages: Option<PathBuf>) -> Result<()> {
         "  {} files; {} values left out, listed in export-manifest.json",
         summary.files, summary.left_out
     );
+    let timings: Vec<String> = summary
+        .timings_ms
+        .iter()
+        .map(|(part, ms)| format!("{part} {ms} ms"))
+        .collect();
+    println!("  time: {}", timings.join(", "));
     Ok(())
 }
 

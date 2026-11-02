@@ -55,6 +55,8 @@ pub struct LosslessSummary {
     /// Claimed files `state.json` records no digest for, copied as they are
     /// since nothing tells whether they were edited.
     pub no_digest: usize,
+    /// Milliseconds each part took, in order.
+    pub timings_ms: Vec<(&'static str, u64)>,
 }
 
 /// Today's pages folder: the folder (read only, never written) and what its
@@ -96,6 +98,13 @@ pub async fn export_lossless(
     let dirs = ExportDirs::create(out)?;
     let mut manifest = Manifest::new();
     let mut summary = LosslessSummary::default();
+    let mut clock = std::time::Instant::now();
+    let mut lap = |summary: &mut LosslessSummary, part: &'static str| {
+        summary
+            .timings_ms
+            .push((part, clock.elapsed().as_millis() as u64));
+        clock = std::time::Instant::now();
+    };
 
     let on_disk = match &folder.dir {
         Some(dir) => folder_files(dir, "")?,
@@ -118,7 +127,9 @@ pub async fn export_lossless(
         }
     }
 
+    lap(&mut summary, "pages folder scan");
     let done = pages::export_pages(db, &placement, &dirs, &mut manifest).await?;
+    lap(&mut summary, "pages");
     summary.pages = done.pages;
     summary.archived = done.archived;
     summary.entities = done.entities;
@@ -214,17 +225,23 @@ pub async fn export_lossless(
             });
         }
     }
+    lap(&mut summary, "pages folder copies");
     let kept = memories::export_memories(db, &done.entity_stems, &dirs, &mut manifest).await?;
+    lap(&mut summary, "memories");
     summary.memories = kept.memories;
     summary.originals = kept.originals;
     summary.briefs = briefs::export_briefs(db, &dirs, &mut manifest).await?;
+    lap(&mut summary, "briefs");
     let drawn = canvases::export_canvases(db, &done.page_paths, &dirs, &mut manifest).await?;
+    lap(&mut summary, "canvases");
     summary.canvases = drawn.canvases;
     summary.hidden_canvases = drawn.hidden;
     summary.artifacts = artifacts::export_artifacts(db, data_root, &dirs, &mut manifest).await?;
     summary.layout_files = copy_layout(&data_root.join("layout"), "", &dirs, &mut manifest)?;
+    lap(&mut summary, "artifacts and layout");
     summary.settings_rows = settings::export_settings(db, &dirs, &mut manifest).await?;
     summary.record_rows = records::export_records(db, &dirs, &mut manifest).await?;
+    lap(&mut summary, "settings and records");
     let seeded = history::Seeded {
         pages: Some(done.row_ids.clone()),
         memories: Some(kept.keys.clone()),
@@ -232,10 +249,12 @@ pub async fn export_lossless(
     let logged = history::export_history(db, &dirs, &mut manifest, &seeded).await?;
     summary.history_entries = logged.entries;
     summary.history_reads = logged.reads;
+    lap(&mut summary, "history");
 
     summary.files = manifest.files.len();
     summary.left_out = manifest.left_out.len();
     dirs.write_manifest(&manifest)?;
+    lap(&mut summary, "manifest");
     Ok(summary)
 }
 
