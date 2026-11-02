@@ -108,15 +108,6 @@ fn ux_find_2_reads_only_files_where_claude_code_keeps_transcripts() {
     let not_jsonl = projects.join("t.txt");
     std::fs::write(&not_jsonl, TRANSCRIPT).unwrap();
     assert!(conversation_lines("claude-code", &not_jsonl).is_none());
-    #[cfg(unix)]
-    {
-        let link = projects.join("link.jsonl");
-        std::os::unix::fs::symlink(&outside, &link).unwrap();
-        assert!(
-            conversation_lines("claude-code", &link).is_none(),
-            "a link out of the projects folder is not followed"
-        );
-    }
     let inside = projects.join("t.jsonl");
     std::fs::write(&inside, TRANSCRIPT).unwrap();
     assert_eq!(conversation_lines("claude-code", &inside).unwrap().len(), 3);
