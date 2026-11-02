@@ -215,6 +215,58 @@ class CalloutBadgeWidget extends WidgetType {
   }
 }
 
+/**
+ * The file name of an inline-code file path (`~/a/b/run.md`, `/x/y.txt`,
+ * `docs/plan.md`, `specs/archive/`), or null when the code is not a path.
+ */
+const BARE_FILE_NAME = /^[\w@-][\w.@-]*\.(?:md|markdown|txt|json|jsonl|html?|pdf|png|jpe?g|gif|webp|svg|csv|tsv|ya?ml|toml|mp4|mov|docx?|xlsx?|pptx?|zip)$/i;
+
+export function filePathName(code: string): string | null {
+  const path = code.trim();
+  if (!path || /\s/.test(path) || /^[a-z][a-z0-9+.-]*:\/\//i.test(path)) return null;
+  const segments = path.split("/");
+  // A bare file name reads the same way as the files beside it in a path.
+  if (segments.length < 2) return BARE_FILE_NAME.test(path) ? path : null;
+  const folder = path.endsWith("/");
+  const last = folder ? segments[segments.length - 2] : segments[segments.length - 1];
+  if (!last || !/^[\w.@-]+$/.test(last)) return null;
+  // Rooted paths are always paths; a relative one needs a file extension or
+  // a trailing slash, so `a/b` or `and/or` in code stays as written.
+  const rooted = /^(~|\.{1,2})?\//.test(path);
+  if (!rooted && !folder && !/\.[A-Za-z0-9]{1,8}$/.test(last)) return null;
+  if (segments.slice(0, -1).some((segment, index) => !segment && index > 0)) return null;
+  return folder ? `${last}/` : last;
+}
+
+class FilePathWidget extends WidgetType {
+  constructor(readonly name: string, readonly path: string) {
+    super();
+  }
+
+  eq(other: FilePathWidget): boolean {
+    return other.name === this.name && other.path === this.path;
+  }
+
+  toDOM(): HTMLElement {
+    const chip = document.createElement("span");
+    chip.className = "cm-writing-file-path";
+    chip.textContent = this.name;
+    chip.title = this.path;
+    chip.addEventListener("mousedown", (event) => event.preventDefault());
+    chip.addEventListener("click", () => {
+      void navigator.clipboard?.writeText(this.path).then(() => {
+        chip.classList.add("cm-writing-file-path-copied");
+        window.setTimeout(() => chip.classList.remove("cm-writing-file-path-copied"), 1200);
+      }).catch(() => undefined);
+    });
+    return chip;
+  }
+
+  ignoreEvent(event: Event): boolean {
+    return event.type === "mousedown" || event.type === "click";
+  }
+}
+
 class HorizontalRuleWidget extends WidgetType {
   eq(other: HorizontalRuleWidget): boolean {
     return other instanceof HorizontalRuleWidget;
@@ -313,6 +365,22 @@ const writingTheme = EditorView.theme({
   },
   ".cm-writing-inline-code, .cm-writing-fenced-code": {
     fontFamily: "var(--mem-font-mono)",
+  },
+  ".cm-writing-file-path": {
+    padding: "0.05em 0.4em",
+    borderRadius: "4px",
+    backgroundColor: "var(--mem-hover)",
+    color: "var(--mem-text-secondary)",
+    fontSize: "0.9em",
+    cursor: "copy",
+    whiteSpace: "nowrap",
+  },
+  ".cm-writing-file-path:hover": {
+    color: "var(--mem-text)",
+  },
+  ".cm-writing-file-path-copied::after": {
+    content: '" ✓"',
+    color: "var(--mem-accent-page)",
   },
   ".cm-writing-inline-code": {
     padding: "0.08em 0.3em",
@@ -540,6 +608,17 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           return;
         }
         if (node.name === "InlineCode") {
+          // A file path reads as its file name; the whole path shows on
+          // hover, copies on click and returns as text beside the caret.
+          const marks = directChildrenNamed(node.node, "CodeMark");
+          const opening = marks[0];
+          const closing = marks[marks.length - 1];
+          const path = opening && closing && marks.length >= 2 ? state.sliceDoc(opening.to, closing.from) : "";
+          const name = filePathName(path);
+          if (name && !constructIsRevealed(state, node.from, node.to, contentFocused)) {
+            addConcealment(node.from, node.to, new FilePathWidget(name, path.trim()));
+            return false;
+          }
           addMarkClass(node.from, node.to, "cm-writing-inline-code");
           return;
         }
