@@ -370,8 +370,11 @@ const writingTheme = EditorView.theme({
   ".cm-writing-heading-space-below": {
     paddingBottom: "calc(var(--reading-font-size, 15px) * var(--reading-line-height, 1.75) / 2)",
   },
+  // The blank line under a heading keeps the body type; only its box is
+  // shortened to the same half line.
   ".cm-writing-heading-gap": {
-    lineHeight: "calc(var(--reading-font-size, 15px) * var(--reading-line-height, 1.75) / 2)",
+    height: "calc(var(--reading-font-size, 15px) * var(--reading-line-height, 1.75) / 2)",
+    overflow: "hidden",
   },
   ".cm-writing-heading-1": {
     fontSize: "20px",
