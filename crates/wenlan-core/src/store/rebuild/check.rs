@@ -156,10 +156,26 @@ pub async fn check_export(
     export: &Path,
     work: &Path,
 ) -> Result<CheckReport, WenlanError> {
+    check_export_with(source, export, work, None).await
+}
+
+/// [`check_export`], opening the new database with `embedder` when given
+/// instead of loading the model again (the daemon's daily check).
+pub async fn check_export_with(
+    source: &MemoryDB,
+    export: &Path,
+    work: &Path,
+    embedder: Option<crate::db::SharedEmbedder>,
+) -> Result<CheckReport, WenlanError> {
     crate::store::export::ExportDirs::create(work)?;
     let fresh_dir = work.join("rebuilt");
     std::fs::create_dir_all(&fresh_dir)?;
-    let fresh = MemoryDB::new(&fresh_dir, Arc::new(NoopEmitter)).await?;
+    let fresh = match embedder {
+        Some(embedder) => {
+            MemoryDB::new_with_shared_embedder(&fresh_dir, Arc::new(NoopEmitter), embedder).await?
+        }
+        None => MemoryDB::new(&fresh_dir, Arc::new(NoopEmitter)).await?,
+    };
     let rebuilt = rebuild(export, &fresh).await?;
     export_again(&fresh, export, &work.join("second")).await?;
     let files = compare_exports(export, &work.join("second"))?;

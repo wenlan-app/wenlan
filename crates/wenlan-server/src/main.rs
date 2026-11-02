@@ -467,7 +467,7 @@ mod bind_addr_tests;
 // All other modules live in the library target (src/lib.rs) so that
 // integration tests in tests/ can reference them as wenlan_server::<mod>.
 use wenlan_server::{
-    brief_files, ingest_batcher, lifecycle, repo_wiki_daily, router, scheduler,
+    brief_files, files_mirror, ingest_batcher, lifecycle, repo_wiki_daily, router, scheduler,
     state::{ServerState, SharedState},
 };
 
@@ -836,6 +836,7 @@ async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow:
     if optional_runtime_workers_allowed(repair_recovery_pending) {
         telemetry.start(shutdown.clone());
         repo_wiki_daily::start(shared.clone(), shutdown.subscribe());
+        files_mirror::start(shared.clone(), shutdown.subscribe());
     }
 
     runtime::serve_and_drain(
