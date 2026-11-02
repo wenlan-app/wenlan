@@ -131,6 +131,7 @@ pub(super) async fn prepare_startup_state(
         tracing::warn!("Opening current database in side-effect-free repair mode");
         wenlan_core::db::MemoryDB::open_for_repair(&data_dir).await?
     } else {
+        files_mirror::restore_missing_database(&wenlan_root, &data_dir).await;
         let emitter: Arc<dyn wenlan_core::events::EventEmitter> =
             Arc::new(wenlan_core::NoopEmitter);
         tracing::info!("Initializing MemoryDB at {}", data_dir.display());
