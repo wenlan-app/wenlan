@@ -112,3 +112,7 @@
 .wiki-new-pages-preview { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;color:var(--mem-text-secondary);font:400 12.5px/1.55 var(--mem-font-body); }
 .home-columns .wiki-new-pages-by, .home-columns .wiki-new-pages-meta { margin-top:auto; }
 .home-columns ~ .getting-started-reopen { margin-top:28px; }
+.home-connect-line { display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:-12px 0 0;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body); }
+.home-connect-line button { padding:0;border:0;background:none;color:var(--mem-accent-page);font:inherit;font-weight:600;cursor:pointer; }
+.home-connect-line button:hover { text-decoration:underline; }
+.home-connect-line button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:4px; }
