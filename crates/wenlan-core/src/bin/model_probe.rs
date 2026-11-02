@@ -31,9 +31,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let model_path = PathBuf::from(&args[1]);
     let prompts = PromptRegistry::default();
-    let engine = LlmEngine::new(&model_path, prompts.clone())?.with_thinking_mode(
-        wenlan_core::on_device_models::thinking_mode_for_model_file(&model_path),
-    );
+    let engine = LlmEngine::new(&model_path, prompts.clone())?
+        .with_thinking_mode(wenlan_core::on_device_models::thinking_mode_for_model_file(
+            &model_path,
+        ))
+        .with_prompt_format(wenlan_core::on_device_models::prompt_format_for_model_file(
+            &model_path,
+        ));
     let runtime = engine.inference_runtime_info();
 
     println!("--- Inference backend: {} ---", runtime.backend);
@@ -54,10 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let system = prompts.classify_memory.clone();
     let user = "I prefer tabs over spaces for indentation.";
 
-    let prompt = format!(
-        "<|im_start|>system\n{}\n<|im_end|>\n<|im_start|>user\n{}\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
-        system, user
-    );
+    // The same prompt writer the daemon uses: ChatML for Qwen, the model's
+    // own chat template for families like Gemma.
+    let prompt = engine.format_prompt(Some(&system), user);
 
     println!("=== Probe: CLASSIFY_MEMORY ===");
     println!("Input: {}", user);

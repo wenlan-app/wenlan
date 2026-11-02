@@ -380,6 +380,7 @@ async fn interactive_setup() -> anyhow::Result<()> {
 }
 
 fn print_model_list() {
+    let hardware = on_device_models::detect_local_hardware();
     let cfg = config::load_config();
     let selected = cfg
         .on_device_model
@@ -393,9 +394,24 @@ fn print_model_list() {
             "not downloaded"
         };
         let marker = if Some(model.id) == selected { "*" } else { " " };
+        let fit = hardware
+            .as_ref()
+            .map(|hw| on_device_models::model_fit(model, hw, on_device_models::is_cached(model)));
+        let note = match fit {
+            Some(on_device_models::ModelFit::TooLarge) => " - too large for this computer",
+            Some(on_device_models::ModelFit::NoDiskSpace) => " - not enough disk space",
+            Some(on_device_models::ModelFit::MaybeSlow) => " - may be slow",
+            _ => "",
+        };
         println!(
-            "{} {} ({}, {:.1}GB download, needs {:.0}GB RAM) - {}",
-            marker, model.id, model.display_name, model.file_size_gb, model.ram_required_gb, cached
+            "{} {} ({}, {:.1}GB download, needs {:.0}GB RAM) - {}{}",
+            marker,
+            model.id,
+            model.display_name,
+            model.file_size_gb,
+            model.ram_required_gb,
+            cached,
+            note
         );
     }
 }

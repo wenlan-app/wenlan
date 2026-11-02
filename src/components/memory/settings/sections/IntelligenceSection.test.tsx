@@ -210,7 +210,7 @@ describe("IntelligenceSection", () => {
 
   it("legacy mode shows a service, not a duplicate on-device model, and leaves synthesis not set up", async () => {
     mocks.getOnDeviceModel.mockResolvedValue({ loaded: "qwen3-4b-instruct-2507", selected: "qwen3-4b-instruct-2507",
-      models: [{ id: "qwen3-4b-instruct-2507", display_name: "Qwen3 4B Instruct", cached: true }] });
+      models: [{ id: "qwen3-4b-instruct-2507", display_name: "Qwen3 4B Instruct", param_count: "4B", ram_required_gb: 6, file_size_gb: 2.7, cached: true }] });
     renderSection();
     const everyday = (await screen.findByText("Everyday work")).closest<HTMLElement>(".settings-task-row")!;
     expect(await within(everyday).findByText("On-device")).toBeInTheDocument();
@@ -306,7 +306,7 @@ describe("IntelligenceSection", () => {
       expect(within(everyday).getAllByText("Basic")).toHaveLength(1);
       expect(within(synthesis).getAllByText("Not set up")).toHaveLength(1);
       await userEvent.click(within(everyday).getByRole("button", { name: "Set up" }));
-      expect(screen.getByRole("tab", { name: "On-device" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: "Local" })).toHaveAttribute("aria-selected", "true");
       expect(scroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
       expect(mocks.setSourcePin).not.toHaveBeenCalled();
     } finally { Element.prototype.scrollIntoView = previousScroll; }
@@ -353,9 +353,9 @@ describe("IntelligenceSection", () => {
     expect(screen.queryByText("Shared model")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Choose on-device model")).not.toBeInTheDocument();
     expect(mocks.downloadOnDeviceModel).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("tab", { name: "On-device" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Local" }));
     expect(screen.getAllByText("Qwen3 4B", { exact: true })).toHaveLength(1);
-    const enable = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Enable" });
+    const enable = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Use" });
     await userEvent.click(enable);
     await waitFor(() => expect(mocks.downloadOnDeviceModel).toHaveBeenCalledWith("qwen3-8b"));
   });
@@ -374,13 +374,15 @@ describe("IntelligenceSection", () => {
 
   it("service tabs preserve drafts and do not change task assignments", async () => {
     renderSection();
+    expect(await screen.findByRole("tab", { name: "Local" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(screen.getByRole("tab", { name: "Cloud" }));
     const panel = await screen.findByRole("tabpanel");
     expect(await screen.findByRole("combobox", { name: "Provider" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Anthropic" })).not.toBeInTheDocument();
     const input = within(panel).getByPlaceholderText("sk-ant-api03-...");
     await userEvent.type(input, "unsaved-draft");
-    await userEvent.click(screen.getByRole("tab", { name: "Local server" }));
-    expect(screen.getByRole("tab", { name: "Local server" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(screen.getByRole("tab", { name: "Local" }));
+    expect(screen.getByRole("tab", { name: "Local" })).toHaveAttribute("aria-selected", "true");
     await userEvent.click(screen.getByRole("tab", { name: "Cloud" }));
     expect(input).toHaveValue("unsaved-draft");
     expect(mocks.setApiKey).not.toHaveBeenCalled();
@@ -390,12 +392,12 @@ describe("IntelligenceSection", () => {
 
   it("keyboard navigation switches service views without changing assignments", async () => {
     renderSection();
-    const cloud = await screen.findByRole("tab", { name: "Cloud" });
-    cloud.focus();
+    const local = await screen.findByRole("tab", { name: "Local" });
+    local.focus();
     await userEvent.keyboard("{ArrowRight}");
-    expect(screen.getByRole("tab", { name: "On-device" })).toHaveAttribute("aria-selected", "true");
-    await userEvent.keyboard("{End}");
-    expect(screen.getByRole("tab", { name: "Local server" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Cloud" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{Home}");
+    expect(screen.getByRole("tab", { name: "Local" })).toHaveAttribute("aria-selected", "true");
     expect(mocks.setSourcePin).not.toHaveBeenCalled();
   });
 
@@ -405,34 +407,72 @@ describe("IntelligenceSection", () => {
     { id: "qwen3-14b", display_name: "Qwen3 14B", param_count: "14B", ram_required_gb: 20, file_size_gb: 9, cached: false },
   ];
 
-  it("separates downloaded and enabled models, then refreshes actual activation state", async () => {
+  it("uses a downloaded model, shows which one is in use, and greys out models too large for this computer", async () => {
     mocks.getApiKey.mockResolvedValue("configured");
-    mocks.getOnDeviceModel.mockResolvedValue({ loaded: "qwen3-4b-instruct-2507", selected: "qwen3-4b-instruct-2507", models: deviceModels });
+    const tooBig = { ...deviceModels[2], fits: false };
+    const models = [deviceModels[0], deviceModels[1], tooBig];
+    mocks.getOnDeviceModel.mockResolvedValue({ loaded: "qwen3-4b-instruct-2507", selected: "qwen3-4b-instruct-2507", models, total_ram_gb: 16 });
     mocks.downloadOnDeviceModel.mockImplementation(async (id: string) => {
-      mocks.getOnDeviceModel.mockResolvedValue({ loaded: id, selected: id, models: deviceModels });
+      mocks.getOnDeviceModel.mockResolvedValue({ loaded: id, selected: id, models, total_ram_gb: 16 });
     });
     renderSection();
-    await userEvent.click(screen.getByRole("tab", { name: "On-device" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Local" }));
     const panel = screen.getByRole("tabpanel");
-    const enable = await within(panel).findByRole("button", { name: "Enable" });
-    expect(within(panel).getByText("Enabled", { exact: true })).toBeVisible();
-    expect(within(panel).getByText("Downloaded", { exact: true })).toBeVisible();
-    expect(within(panel).getByRole("button", { name: "Download & enable" })).toBeDisabled();
-    await userEvent.click(enable);
+    expect(await within(panel).findByText("This computer has 16 GB of memory.")).toBeVisible();
+    const use = await within(panel).findByRole("button", { name: "Use" });
+    expect(within(panel).getByText("In use", { exact: true })).toBeVisible();
+    const big = within(panel).getByText("Qwen3 14B").closest(".settings-device-model") as HTMLElement;
+    expect(big).toHaveTextContent("Needs 20 GB of memory");
+    expect(within(big).queryByRole("button")).not.toBeInTheDocument();
+    await userEvent.click(use);
     await waitFor(() => expect(mocks.downloadOnDeviceModel).toHaveBeenCalledWith("qwen3.5-9b"));
-    await waitFor(() => expect(within(panel).getByText("Qwen3.5 9B").closest(".settings-row")).toHaveTextContent("Enabled"));
+    await waitFor(() => expect(within(panel).getByText("Qwen3.5 9B").closest(".settings-device-model")).toHaveTextContent("In use"));
     expect(mocks.setSourcePin).not.toHaveBeenCalled();
   });
 
-  it("reports a model activation error without showing it as enabled", async () => {
+  it("offers this computer's shortlist without a recommended badge, notes slow and no-disk models, and Show all expands the full list", async () => {
+    const models = [
+      { ...deviceModels[0], shortlisted: true },
+      { ...deviceModels[1], shortlisted: true, may_be_slow: true, cached: false },
+      { ...deviceModels[2], shortlisted: false, no_disk_space: true },
+    ];
+    mocks.getOnDeviceModel.mockResolvedValue({ loaded: null, selected: null, models, total_ram_gb: 32 });
+    renderSection();
+    await userEvent.click(screen.getByRole("tab", { name: "Local" }));
+    const panel = screen.getByRole("tabpanel");
+    const slow = (await within(panel).findByText("Qwen3.5 9B")).closest(".settings-device-model") as HTMLElement;
+    expect(panel).not.toHaveTextContent("Recommended");
+    expect(slow).toHaveTextContent("may be slow on this computer");
+    expect(within(slow).getByRole("button", { name: "Download" })).toBeEnabled();
+    expect(within(panel).queryByText("Qwen3 14B")).not.toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "Show all (3)" }));
+    const noDisk = within(panel).getByText("Qwen3 14B").closest(".settings-device-model") as HTMLElement;
+    expect(noDisk).toHaveTextContent("Needs 9.0 GB of free disk space");
+    expect(within(noDisk).queryByRole("button")).not.toBeInTheDocument();
+    await userEvent.click(within(panel).getByRole("button", { name: "Show fewer" }));
+    expect(within(panel).queryByText("Qwen3 14B")).not.toBeInTheDocument();
+  });
+
+  it("names the jobs that run on the model in use, in the task rows' words", async () => {
+    mocks.getResolvedRouting.mockResolvedValue(pinnedRouting({
+      everyday: { source: "on_device", model: "qwen3-4b-instruct-2507", mode: "pinned", pin: "on_device" },
+    }));
+    mocks.getOnDeviceModel.mockResolvedValue({ loaded: "qwen3-4b-instruct-2507", selected: "qwen3-4b-instruct-2507", models: [deviceModels[0]] });
+    renderSection();
+    const row = (await screen.findAllByText("Qwen3 4B")).map((el) => el.closest(".settings-device-model")).find(Boolean) as HTMLElement;
+    expect(await within(row).findByText("Used for Everyday work")).toBeVisible();
+    expect(within(row).queryByText("In use")).not.toBeInTheDocument();
+  });
+
+  it("reports a model activation error without showing it as in use", async () => {
     mocks.getOnDeviceModel.mockResolvedValue({ loaded: null, selected: null, models: [deviceModels[0]] });
     mocks.downloadOnDeviceModel.mockRejectedValue(new Error("model load failed"));
     renderSection();
-    await userEvent.click(screen.getByRole("tab", { name: "On-device" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Local" }));
     const panel = screen.getByRole("tabpanel");
-    await userEvent.click(await within(panel).findByRole("button", { name: "Enable" }));
+    await userEvent.click(await within(panel).findByRole("button", { name: "Use" }));
     expect(await within(panel).findByRole("alert")).toHaveTextContent("model load failed");
-    expect(within(panel).queryByText("Enabled", { exact: true })).not.toBeInTheDocument();
+    expect(within(panel).queryByText("In use", { exact: true })).not.toBeInTheDocument();
   });
 
   it("does not offer a downloaded but unloaded device model as an available AI service", async () => {

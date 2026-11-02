@@ -457,7 +457,8 @@ impl OnDeviceProvider {
         std::env::set_var("GGML_METAL_NO_RESIDENCY", "1");
 
         let engine = LlmEngine::new(&model_path, prompts.clone())?
-            .with_thinking_mode(model_spec.thinking_mode);
+            .with_thinking_mode(model_spec.thinking_mode)
+            .with_prompt_format(model_spec.prompt_format);
         let backend_plan = engine.inference_backend_plan().clone();
         log::info!(
             "[on_device_provider] selected inference backend: {}",
@@ -490,7 +491,8 @@ impl OnDeviceProvider {
                 // Sleep to let autorelease pool fully drain queues from the dropped engine.
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 let fallback = LlmEngine::new(&model_path, prompts)?
-                    .with_thinking_mode(model_spec.thinking_mode);
+                    .with_thinking_mode(model_spec.thinking_mode)
+                    .with_prompt_format(model_spec.prompt_format);
                 if !Self::probe_metal_with_retries(&fallback, "BF16-disabled") {
                     log::error!(
                         "[on_device_provider] Metal context still fails with BF16 disabled \
@@ -513,7 +515,8 @@ impl OnDeviceProvider {
                     log::warn!("[on_device_provider] {message}; reloading the model on CPU");
                     drop(engine);
                     let fallback = LlmEngine::reload_on_cpu(&model_path, prompts, message.clone())?
-                        .with_thinking_mode(model_spec.thinking_mode);
+                        .with_thinking_mode(model_spec.thinking_mode)
+                        .with_prompt_format(model_spec.prompt_format);
                     fallback.probe_context().map_err(|cpu_cause| {
                         crate::error::WenlanError::Llm(format!(
                             "{message}; CPU fallback context creation failed: {cpu_cause}"

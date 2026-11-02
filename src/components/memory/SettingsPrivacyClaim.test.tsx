@@ -84,6 +84,7 @@ vi.mock("./RemoteAccessPanel", () => ({
 vi.mock("../intelligence/IntelligenceSetup", () => ({
   AnthropicFields: () => <div />,
   OnDeviceModelCard: () => <div />,
+  OnDeviceModelManager: () => <div />,
   useApiKeyStatus: () => ({
     data: { hasAnthropic: false, hasOpenAI: false },
     isLoading: false,
