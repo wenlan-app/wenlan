@@ -862,6 +862,8 @@ impl MemoryDB {
             ids
         };
         let mut sessions = Vec::new();
+        // Conversations with no stored title, to name from their transcript.
+        let mut untitled: Vec<(usize, AgentSession)> = Vec::new();
         let mut pages: Vec<ThingPageEntry> = Vec::new();
         let mut page_index: HashMap<String, usize> = HashMap::new();
         let mut memories = Vec::new();
@@ -872,6 +874,9 @@ impl MemoryDB {
             };
             if sessions.len() >= THING_DETAIL_SESSIONS {
                 break;
+            }
+            if detail.session.title.is_none() {
+                untitled.push((sessions.len(), detail.session.clone()));
             }
             sessions.push(ThingSessionEntry {
                 id: detail.session.id.clone(),
@@ -917,6 +922,23 @@ impl MemoryDB {
             for memory in detail.memories {
                 if seen_memories.insert(memory.source_id.clone()) {
                     memories.push(memory);
+                }
+            }
+        }
+        // A Claude Code conversation is often titled only in its transcript;
+        // show that title rather than "untitled", as sorting names things.
+        if !untitled.is_empty() {
+            let titles = tokio::task::spawn_blocking(move || {
+                untitled
+                    .into_iter()
+                    .map(|(index, session)| (index, session_title(&session)))
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_default();
+            for (index, title) in titles {
+                if let (Some(title), Some(entry)) = (title, sessions.get_mut(index)) {
+                    entry.title = Some(title);
                 }
             }
         }
