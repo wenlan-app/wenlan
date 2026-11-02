@@ -15,7 +15,8 @@ use axum::Json;
 use wenlan_core::db::things::MoveTarget;
 use wenlan_core::db::MemoryDB;
 use wenlan_types::{
-    ThingDetailResponse, ThingMoveRequest, ThingRenameRequest, ThingSummary, ThingsResponse,
+    ThingDetailResponse, ThingMapResponse, ThingMoveRequest, ThingRenameRequest, ThingSummary,
+    ThingsResponse,
 };
 
 use crate::error::ServerError;
@@ -31,6 +32,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/things/{id}",
             get(handle_get_thing).patch(handle_rename_thing),
         )
+        .route("/api/things/{id}/map", get(handle_get_thing_map))
         .route(
             "/api/sessions/{id}/things/move",
             post(handle_move_session_thing),
@@ -107,6 +109,26 @@ pub async fn handle_get_thing(
     )
     .await?;
     Ok(Json(detail))
+}
+
+/// GET /api/things/{id}/map
+///
+/// The thing's map of points, which its recap and mind map read. Nothing
+/// writes maps yet, so a known thing answers an empty map at revision 0; the
+/// page then falls back to grouping its memories. 404 when the thing is unknown or out of scope.
+pub async fn handle_get_thing_map(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    Path(id): Path<String>,
+) -> Result<Json<ThingMapResponse>, ServerError> {
+    let db = open_db(&state).await?;
+    visible_thing(&db, header_space.as_deref(), &id).await?;
+    Ok(Json(ThingMapResponse {
+        thing_id: id,
+        revision: 0,
+        nodes: Vec::new(),
+        edges: Vec::new(),
+    }))
 }
 
 async fn visible_thing(
