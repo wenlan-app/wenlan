@@ -1733,12 +1733,17 @@ fn format_save_source_success(resp: &wenlan_types::responses::IngestResponse) ->
 /// a thing (UX-CHAT-7): one quiet line in the person's language, linking into
 /// the app.
 fn format_saved_in_line(saved: &wenlan_types::SavedIn) -> String {
+    let (title, link) = (&saved.title, &saved.link);
     format!(
-        "saved_in: {title}\nEnd your reply to the person with exactly one line, \
-         written in the language of the conversation, and say nothing else about it: \
-         Saved in Wenlan: [{title}]({link})",
-        title = saved.title,
-        link = saved.link,
+        "saved_in: {title}\n\
+         Make this the last line of your reply, copied exactly, in the \
+         conversation's language. Pick one and change nothing else:\n\
+         - 記在文瀾：[{title}]({link})\n\
+         - 记在文澜：[{title}]({link})\n\
+         - Saved in Wenlan: [{title}]({link})\n\
+         (Other languages: translate only the words before the colon.) Say \
+         nothing else about where this was saved, now or later in this \
+         conversation."
     )
 }
 
@@ -8482,10 +8487,13 @@ mod tests {
             line.starts_with("saved_in: Plan the Lisbon trip\n"),
             "{line}"
         );
-        assert!(
-            line.ends_with("Saved in Wenlan: [Plan the Lisbon trip](wenlan://thing/thg_1)"),
-            "{line}"
-        );
+        for choice in [
+            "記在文瀾：[Plan the Lisbon trip](wenlan://thing/thg_1)",
+            "记在文澜：[Plan the Lisbon trip](wenlan://thing/thg_1)",
+            "Saved in Wenlan: [Plan the Lisbon trip](wenlan://thing/thg_1)",
+        ] {
+            assert!(line.contains(&format!("\n- {choice}\n")), "{line}");
+        }
     }
 
     #[test]

@@ -416,4 +416,48 @@ async fn ux_chat_7_a_conversation_hears_once_where_it_was_saved() {
     )
     .await;
     assert_eq!(typed::<SavedInResponse>(body).saved_in, None);
+
+    // The tool can write the conversation's title after the first save: the
+    // thing waits unnamed and says nothing, then is named on the next save.
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({ "session": "claude-code:porto" })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let porto = "/api/sessions/claude-code:porto/saved-in";
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        porto,
+        None,
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(typed::<SavedInResponse>(body).saved_in, None);
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({ "session": "claude-code:porto", "title": "Porto stay in Ribeira" })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, body) = call(
+        &router,
+        Method::POST,
+        porto,
+        None,
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    let named = typed::<SavedInResponse>(body)
+        .saved_in
+        .expect("named once the conversation has a title");
+    assert_eq!(named.title, "Porto stay in Ribeira");
 }

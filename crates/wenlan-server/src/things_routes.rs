@@ -159,8 +159,15 @@ pub async fn handle_saved_in(
             .map_err(|reason| ServerError::ValidationError(format!("bad session: {reason}")))?;
         wenlan_core::db::sessions::session_row_id(&session)
     };
+    // Sorting runs in the background. When this conversation is in no thing
+    // yet, or its thing still waits for a name (the tool may write the
+    // conversation's title after the first save), sort now.
     let mut things = db.session_things(&id).await?;
-    if things.is_empty() {
+    let named = things
+        .last()
+        .and_then(|thing| thing.title.as_deref())
+        .is_some_and(|title| !title.trim().is_empty());
+    if !named {
         sort_once(&db).await;
         things = db.session_things(&id).await?;
     }
