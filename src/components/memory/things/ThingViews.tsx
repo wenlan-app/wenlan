@@ -66,11 +66,9 @@ export function ThingViews({
         <div className="thing-short" data-testid="thing-short">
           {thing.status_line ? <p className="thing-detail-where">{thing.status_line}</p> : null}
           {points.length > 0 ? (
-            <p className="thing-short-points">
-              {points.map((point) => (
-                <span key={point.source_id} className="thing-short-point">{withStop(point.title)} </span>
-              ))}
-            </p>
+            RECAP_GROUPS.map((group) => (
+              <RecapGroup key={group.key} group={group} points={points.filter((point) => groupOf(point) === group.key)} />
+            ))
           ) : thing.status_line ? null : (
             <p className="thing-detail-empty">{t("thing.noPoints")}</p>
           )}
@@ -82,17 +80,81 @@ export function ThingViews({
   );
 }
 
+type RecapKey = "decided" | "watch" | "background";
+
+/** A recap, not a wall of text: what is decided, what to watch out for, and
+ *  the background. Each point already carries its kind, so nothing is
+ *  rewritten to sort it. */
+type RecapLabel = "thing.recapDecided" | "thing.recapWatch" | "thing.recapBackground";
+
+const RECAP_GROUPS: readonly { readonly key: RecapKey; readonly label: RecapLabel }[] = [
+  { key: "decided", label: "thing.recapDecided" },
+  { key: "watch", label: "thing.recapWatch" },
+  { key: "background", label: "thing.recapBackground" },
+];
+
+const RECAP_SHOWN = 3;
+
+function groupOf(point: ThingMemory): RecapKey {
+  switch (point.memory_type) {
+    case "decision":
+      return "decided";
+    case "gotcha":
+    case "lesson":
+      return "watch";
+    default:
+      return "background";
+  }
+}
+
+function RecapGroup({
+  group,
+  points,
+}: {
+  readonly group: { readonly key: RecapKey; readonly label: RecapLabel };
+  readonly points: readonly ThingMemory[];
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  if (points.length === 0) return null;
+  // Newest first within a group; the rest wait behind one line.
+  const newest = [...points].sort((a, b) => b.created_at - a.created_at);
+  const shown = open ? newest : newest.slice(0, RECAP_SHOWN);
+  const hidden = newest.length - shown.length;
+  return (
+    <section className="thing-recap-group" aria-label={t(group.label)} data-recap={group.key}>
+      <h3>{t(group.label)}</h3>
+      <ul>
+        {shown.map((point) => (
+          <li key={point.source_id}>{withStop(point.title)}</li>
+        ))}
+      </ul>
+      {hidden > 0 ? (
+        <button type="button" className="thing-recap-more" onClick={() => setOpen(true)}>
+          {t("thing.recapMore", { count: hidden })}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 function withStop(text: string): string {
   const trimmed = text.trim();
   return /[.!?。！？…]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
 const MAP_WIDTH = 730;
-const NODE_WIDTH = 230;
+const POINT_WIDTH = 220;
+const GROUP_X = 244;
+const GROUP_WIDTH = 92;
+const CENTER_X = 372;
+const CENTER_WIDTH = 150;
+const PAGE_X = 556;
+const PAGE_WIDTH = MAP_WIDTH - PAGE_X;
 const LINE_HEIGHT = 17;
 const NODE_PAD_Y = 10;
-const NODE_GAP = 12;
-const CENTER_WIDTH = 170;
+const NODE_GAP = 10;
+const GROUP_GAP = 22;
 
 /** Split a label into at most two lines that fit a node, ending in an ellipsis
  *  when cut. CJK characters count about twice as wide as Latin ones. */
@@ -122,28 +184,26 @@ function wrap(text: string, maxUnits = 30): string[] {
   return lines;
 }
 
-interface MapNode {
-  readonly key: string;
-  readonly lines: string[];
-  readonly full: string;
-  readonly y: number;
-  readonly height: number;
+const nodeHeight = (lines: readonly string[]) => lines.length * LINE_HEIGHT + NODE_PAD_Y * 2;
+
+function NodeText({ x, y, lines, anchor }: { readonly x: number; readonly y: number; readonly lines: readonly string[]; readonly anchor?: "middle" }) {
+  return (
+    <text x={x} y={y + NODE_PAD_Y + LINE_HEIGHT / 2} dominantBaseline="middle" textAnchor={anchor}>
+      {lines.map((line, index) => (
+        <tspan key={index} x={x} dy={index === 0 ? 0 : LINE_HEIGHT}>{line}</tspan>
+      ))}
+    </text>
+  );
 }
 
-function layout(labels: readonly { key: string; text: string }[]): { nodes: MapNode[]; height: number } {
-  let y = 0;
-  const nodes = labels.map(({ key, text }) => {
-    const lines = wrap(text);
-    const height = lines.length * LINE_HEIGHT + NODE_PAD_Y * 2;
-    const node = { key, lines, full: text, y, height };
-    y += height + NODE_GAP;
-    return node;
-  });
-  return { nodes, height: Math.max(0, y - NODE_GAP) };
-}
+const curve = (x1: number, y1: number, x2: number, y2: number) => {
+  const mid = (x1 + x2) / 2;
+  return `M${x1} ${y1} C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`;
+};
 
-/** The thing in the middle, its points on the left and the pages it used on
- *  the right. Pages open from the map. */
+/** The thing in the middle; on the left its points under the same three kinds
+ *  as the short text (newest three each, the rest counted); on the right the
+ *  pages it used, which open from the map. */
 function ThingMap({
   thing,
   points,
@@ -154,22 +214,41 @@ function ThingMap({
   readonly onOpenPage: (pageId: string) => void;
 }) {
   const { t } = useTranslation();
-  const left = layout(points.map((point) => ({ key: point.source_id, text: point.title })));
-  const right = layout(thing.pages.map((page: ThingPage) => ({ key: page.id, text: page.title })));
-  const centerLines = wrap(thing.title ?? t("thing.untitled"), 22);
-  const centerHeight = centerLines.length * LINE_HEIGHT + NODE_PAD_Y * 2 + 4;
-  const height = Math.max(left.height, right.height, centerHeight) + 24;
-  const leftTop = (height - left.height) / 2;
-  const rightTop = (height - right.height) / 2;
-  const cx = MAP_WIDTH / 2;
+  // Left side: groups, each a label with its points stacked beside it.
+  let y = 0;
+  const groups = RECAP_GROUPS.flatMap((group) => {
+    const all = points.filter((point) => groupOf(point) === group.key).sort((a, b) => b.created_at - a.created_at);
+    if (all.length === 0) return [];
+    const items = all.slice(0, RECAP_SHOWN).map((point) => ({ key: point.source_id, full: point.title, lines: wrap(point.title), more: false }));
+    if (all.length > RECAP_SHOWN) {
+      const label = t("thing.recapMore", { count: all.length - RECAP_SHOWN });
+      items.push({ key: `${group.key}-more`, full: label, lines: [label], more: true });
+    }
+    const top = y;
+    const placed = items.map((item) => {
+      const node = { ...item, y, height: nodeHeight(item.lines) };
+      y += node.height + NODE_GAP;
+      return node;
+    });
+    const bottom = y - NODE_GAP;
+    y += GROUP_GAP - NODE_GAP;
+    return [{ key: group.key, label: t(group.label), top, middle: (top + bottom) / 2, items: placed }];
+  });
+  const leftHeight = Math.max(0, y - GROUP_GAP);
+  let py = 0;
+  const pages = thing.pages.map((page: ThingPage) => {
+    const lines = wrap(page.title, 24);
+    const node = { key: page.id, full: page.title, lines, y: py, height: nodeHeight(lines) };
+    py += node.height + NODE_GAP;
+    return node;
+  });
+  const rightHeight = Math.max(0, py - NODE_GAP);
+  const centerLines = wrap(thing.title ?? t("thing.untitled"), 18);
+  const centerHeight = nodeHeight(centerLines) + 4;
+  const height = Math.max(leftHeight, rightHeight, centerHeight) + 24;
+  const leftTop = (height - leftHeight) / 2;
+  const rightTop = (height - rightHeight) / 2;
   const cy = height / 2;
-  const centerLeft = cx - CENTER_WIDTH / 2;
-  const centerRight = cx + CENTER_WIDTH / 2;
-  const rightX = MAP_WIDTH - NODE_WIDTH;
-  const curve = (x1: number, y1: number, x2: number, y2: number) => {
-    const mid = (x1 + x2) / 2;
-    return `M${x1} ${y1} C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}`;
-  };
   const open = (pageId: string) => (event: KeyboardEvent<SVGGElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -180,49 +259,50 @@ function ThingMap({
     <div className="thing-map" data-testid="thing-map">
       <svg viewBox={`0 0 ${MAP_WIDTH} ${height}`} width="100%" role="group" aria-label={t("thing.viewMap")}>
         <g className="thing-map-links" fill="none">
-          {left.nodes.map((node) => (
-            <path key={node.key} d={curve(NODE_WIDTH, leftTop + node.y + node.height / 2, centerLeft, cy)} />
+          {groups.map((group) => (
+            <g key={group.key}>
+              <path d={curve(GROUP_X + GROUP_WIDTH, leftTop + group.middle, CENTER_X, cy)} />
+              {group.items.map((item) => (
+                <path key={item.key} d={curve(POINT_WIDTH, leftTop + item.y + item.height / 2, GROUP_X, leftTop + group.middle)} />
+              ))}
+            </g>
           ))}
-          {right.nodes.map((node) => (
-            <path key={node.key} d={curve(centerRight, cy, rightX, rightTop + node.y + node.height / 2)} />
+          {pages.map((page) => (
+            <path key={page.key} d={curve(CENTER_X + CENTER_WIDTH, cy, PAGE_X, rightTop + page.y + page.height / 2)} />
           ))}
         </g>
         <g className="thing-map-center">
-          <rect x={centerLeft} y={cy - centerHeight / 2} width={CENTER_WIDTH} height={centerHeight} rx={14} />
-          <text x={cx} y={cy - ((centerLines.length - 1) * LINE_HEIGHT) / 2} textAnchor="middle" dominantBaseline="middle">
-            {centerLines.map((line, index) => (
-              <tspan key={index} x={cx} dy={index === 0 ? 0 : LINE_HEIGHT}>{line}</tspan>
-            ))}
-          </text>
+          <rect x={CENTER_X} y={cy - centerHeight / 2} width={CENTER_WIDTH} height={centerHeight} rx={14} />
+          <NodeText x={CENTER_X + CENTER_WIDTH / 2} y={cy - centerHeight / 2 + 2} lines={centerLines} anchor="middle" />
         </g>
-        {left.nodes.map((node) => (
-          <g key={node.key} className="thing-map-point">
-            <title>{node.full}</title>
-            <rect x={0} y={leftTop + node.y} width={NODE_WIDTH} height={node.height} rx={10} />
-            <text x={12} y={leftTop + node.y + NODE_PAD_Y + LINE_HEIGHT / 2} dominantBaseline="middle">
-              {node.lines.map((line, index) => (
-                <tspan key={index} x={12} dy={index === 0 ? 0 : LINE_HEIGHT}>{line}</tspan>
-              ))}
-            </text>
+        {groups.map((group) => (
+          <g key={group.key} role="group" aria-label={group.label}>
+            <g className="thing-map-group">
+              <rect x={GROUP_X} y={leftTop + group.middle - 15} width={GROUP_WIDTH} height={30} rx={15} />
+              <text x={GROUP_X + GROUP_WIDTH / 2} y={leftTop + group.middle} dominantBaseline="middle" textAnchor="middle">{group.label}</text>
+            </g>
+            {group.items.map((item) => (
+              <g key={item.key} className={item.more ? "thing-map-point thing-map-more" : "thing-map-point"}>
+                <title>{item.full}</title>
+                <rect x={0} y={leftTop + item.y} width={POINT_WIDTH} height={item.height} rx={10} />
+                <NodeText x={12} y={leftTop + item.y} lines={item.lines} />
+              </g>
+            ))}
           </g>
         ))}
-        {right.nodes.map((node) => (
+        {pages.map((page) => (
           <g
-            key={node.key}
+            key={page.key}
             className="thing-map-page"
             role="button"
             tabIndex={0}
-            aria-label={node.full}
-            onClick={() => onOpenPage(node.key)}
-            onKeyDown={open(node.key)}
+            aria-label={page.full}
+            onClick={() => onOpenPage(page.key)}
+            onKeyDown={open(page.key)}
           >
-            <title>{node.full}</title>
-            <rect x={rightX} y={rightTop + node.y} width={NODE_WIDTH} height={node.height} rx={10} />
-            <text x={rightX + 12} y={rightTop + node.y + NODE_PAD_Y + LINE_HEIGHT / 2} dominantBaseline="middle">
-              {node.lines.map((line, index) => (
-                <tspan key={index} x={rightX + 12} dy={index === 0 ? 0 : LINE_HEIGHT}>{line}</tspan>
-              ))}
-            </text>
+            <title>{page.full}</title>
+            <rect x={PAGE_X} y={rightTop + page.y} width={PAGE_WIDTH} height={page.height} rx={10} />
+            <NodeText x={PAGE_X + 12} y={rightTop + page.y} lines={page.lines} />
           </g>
         ))}
       </svg>

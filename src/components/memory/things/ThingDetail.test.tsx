@@ -68,8 +68,10 @@ describe("ThingDetail", () => {
   it("UX-VIEW-1: short text and mind map show the same points, and the last view is remembered", async () => {
     const { onOpenPage } = renderThing();
     const short = await screen.findByTestId("thing-short");
-    // Points read in the order they were worked out.
-    expect(short).toHaveTextContent("Lead with the X wording. The hero line stays under eight words.");
+    // A recap: decided first, then the background, each point under its kind.
+    expect(within(short).getByRole("region", { name: "Decided" })).toHaveTextContent("Lead with the X wording.");
+    expect(within(short).getByRole("region", { name: "Background" })).toHaveTextContent("The hero line stays under eight words.");
+    expect(within(short).queryByRole("region", { name: "Watch out" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Mind map" }));
     const map = screen.getByTestId("thing-map");
     expect(map).toHaveTextContent("Lead with the X wording.");
@@ -80,6 +82,18 @@ describe("ThingDetail", () => {
     renderThing();
     expect(await screen.findByTestId("thing-map")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Mind map" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the newest three points of a kind and folds the rest behind one line", async () => {
+    vi.mocked(getThing).mockResolvedValue({
+      ...tagline,
+      memories: [1, 2, 3, 4, 5].map((n) => ({ source_id: `mem_${n}`, title: `Decision ${n}`, memory_type: "decision", created_at: now - n * 60 })),
+    });
+    renderThing();
+    const decided = await screen.findByRole("region", { name: "Decided" });
+    expect(within(decided).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Decision 1.", "Decision 2.", "Decision 3."]);
+    fireEvent.click(within(decided).getByRole("button", { name: "2 more" }));
+    expect(within(decided).getAllByRole("listitem")).toHaveLength(5);
   });
 
   it("UX-THING-1: renames the thing in one step", async () => {
