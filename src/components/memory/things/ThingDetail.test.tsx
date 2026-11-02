@@ -86,7 +86,7 @@ describe("ThingDetail", () => {
     vi.mocked(renameThing).mockResolvedValue({ ...tagline, title: "Tagline", title_by: "person" });
     renderThing();
     fireEvent.click(await screen.findByRole("button", { name: "Rename" }));
-    const input = screen.getByRole("textbox", { name: "Name of this thing" });
+    const input = screen.getByRole("textbox", { name: "Name" });
     fireEvent.change(input, { target: { value: "Tagline" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(renameThing).toHaveBeenCalledWith("thg_1", "Tagline"));
@@ -118,8 +118,8 @@ describe("ThingDetail", () => {
     vi.mocked(moveSessionThing).mockResolvedValue({ ...tagline, id: "thg_3", title: "Hero copy" });
     renderThing();
     fireEvent.click(await screen.findByRole("button", { name: "Move" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Name of the new thing" }), { target: { value: "Hero copy" } });
-    fireEvent.click(screen.getByRole("button", { name: "New thing" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "New name" }), { target: { value: "Hero copy" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start new" }));
     await waitFor(() => expect(moveSessionThing).toHaveBeenCalledWith("ses_a", "thg_1", { newTitle: "Hero copy" }));
   });
 });
