@@ -34,56 +34,37 @@ export function usePageLength(): readonly [PageLength, (next: PageLength) => voi
   return [length, choose] as const;
 }
 
-/** Short or full, for a page whose two lengths differ (UX-VIEW-2). */
-export function PageLengthSwitch({
-  length,
-  onChoose,
-}: {
-  readonly length: PageLength;
-  readonly onChoose: (next: PageLength) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="page-length-row">
-      <div className="page-length-switch" role="group" aria-label={t("pageLayers.length")}>
-        {(["short", "full"] as const).map((option) => (
-          <button
-            key={option}
-            type="button"
-            aria-pressed={length === option}
-            onClick={() => onChoose(option)}
-          >
-            {t(`pageLayers.${option}`)}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /**
  * The reading body of a page in its layers (docs/ux/spec.md): a short or full
  * human part, one page either way (UX-VIEW-2), and the part for AI folded
- * away below it (UX-VIEW-3). The length switch shows only when the two lengths
- * differ, and the last choice is kept for the next page. The editor shows the
- * same layers by folding (editor/pageLayersEditing.ts).
+ * away below it (UX-VIEW-3). The length is chosen in the page's ⋯ menu; a
+ * short page ends with a way to the full one. The editor shows the same layers
+ * by folding (editor/pageLayersEditing.ts).
  */
 export function PageReadingLayers({
   content,
+  length,
+  onChoose,
   renderBody,
 }: {
   readonly content: string;
+  readonly length: PageLength;
+  readonly onChoose: (next: PageLength) => void;
   readonly renderBody: (markdown: string) => ReactNode;
 }) {
   const { t } = useTranslation();
-  const [length, choose] = usePageLength();
   const layers = splitPageLayers(content);
   const twoLengths = layers.short !== layers.human;
-  const shown = twoLengths && length === "short" ? layers.short : layers.human;
+  const short = twoLengths && length === "short";
+  const shown = short ? layers.short : layers.human;
   return (
     <>
-      {twoLengths ? <PageLengthSwitch length={length} onChoose={choose} /> : null}
       {shown ? renderBody(shown) : null}
+      {short ? (
+        <button type="button" className="page-length-show-full" onClick={() => onChoose("full")}>
+          {t("pageLayers.showFull")}
+        </button>
+      ) : null}
       {layers.aiDetails ? (
         <details className="page-ai-details" data-testid="page-ai-details">
           <summary>{t("pageLayers.aiDetails")}</summary>

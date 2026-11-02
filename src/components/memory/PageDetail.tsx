@@ -29,8 +29,6 @@ import {
   recordPageEditorDiagnostic,
   deletePage,
   clipboardWrite,
-  exportPageToObsidian,
-  listRegisteredSources,
   getPageSources,
   reviewPage,
   pageReviewSupported,
@@ -60,7 +58,7 @@ import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
 import ContentRenderer, { EmbedPageContext } from "./ContentRenderer";
-import { PageLengthSwitch, PageReadingLayers, usePageLength } from "./page/PageReadingLayers";
+import { PageReadingLayers, usePageLength } from "./page/PageReadingLayers";
 import { pageLayerOffsets } from "./page/pageLayers";
 import type { PageLayersSettings } from "./editor/pageLayersEditing";
 import type { SentenceProposalSettings } from "./editor/sentenceProposals";
@@ -81,7 +79,6 @@ import { PageLockSwitch } from "./page/PageLockSwitch";
 import { AiUpdateLine } from "./page/AiUpdateLine";
 import { ThisSentence } from "./page/ThisSentence";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
-import { folderName } from "../../lib/dateFormat";
 import { stripLedeLabel } from "../../lib/pageLede";
 import CitationChip from "./page/CitationChip";
 import { PageTour } from "../onboarding/PageTour";
@@ -310,8 +307,6 @@ export default function PageDetail({
   const [wikiLinkPreview, setWikiLinkPreview] = useState<ReferencePreviewRequest | null>(null);
   const wikiLinkPreviewLeaveTimerRef = useRef<number | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
-  const [exported, setExported] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   useEffect(() => setRestoreOpen(false), [pageId]);
@@ -623,16 +618,6 @@ export default function PageDetail({
     };
   }, [dismissWikiLinkPreview, editing, pageId]);
 
-  const { data: registeredSources = [] } = useQuery({
-    queryKey: ["registeredSources"],
-    queryFn: () => listRegisteredSources(),
-    staleTime: 30000,
-  });
-
-  const obsidianSources = useMemo(
-    () => registeredSources.filter((s) => s.source_type === "obsidian"),
-    [registeredSources],
-  );
 
   const { data: pageSources, isPending: pageSourcesLoading } = useQuery({
     queryKey: ["page-sources", pageId],
@@ -814,7 +799,6 @@ export default function PageDetail({
     setRedistillNotice(null);
     setReviewNotice(null);
     setActionErrorMessage(null);
-    setExported(false);
     // Inspector open/selected state belongs to the workspace, not this note.
     setCanvasSwitchPending(false);
     canvasSwitchPendingRef.current = false;
@@ -1282,25 +1266,6 @@ export default function PageDetail({
     },
   });
 
-  const handleExportToVault = useCallback(
-    async (vaultPath: string) => {
-      const originPageId = pageId;
-      setActionErrorMessage(null);
-      setExporting(true);
-      try {
-        await exportPageToObsidian(originPageId, `${vaultPath}/Wenlan/pages`);
-        if (activePageIdRef.current !== originPageId) return;
-        setExported(true);
-        setTimeout(() => setExported(false), 2000);
-      } catch {
-        if (activePageIdRef.current !== originPageId) return;
-        setActionErrorMessage(t("pageDetail.exportError"));
-      } finally {
-        setExporting(false);
-      }
-    },
-    [pageId, t],
-  );
 
   const clearConfirmIntent = () => {
     confirmIntentRef.current = null;
@@ -2539,6 +2504,17 @@ export default function PageDetail({
                         {t("pageDetail.renamePage")}
                       </button>
                     ) : null}
+                    {pageHasTwoLengths && !showCanvas ? (
+                      <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={pageLength === "short"}
+                        onClick={() => { closeActionMenu(); choosePageLength(pageLength === "short" ? "full" : "short"); }}
+                      >
+                        {t("pageLayers.summaryView")}
+                        <span aria-hidden="true" className="page-detail-menu-check">{pageLength === "short" ? "✓" : ""}</span>
+                      </button>
+                    ) : null}
                     {/* Re-distill rebuilds a page from its sources; a page
                         with none has nothing to rebuild from. */}
                     {page.status === "active" && canUpdateFromSources ? <button
@@ -2556,34 +2532,6 @@ export default function PageDetail({
                           ? t("pageDetail.redistillingPage")
                           : t("pageDetail.redistillPage")}
                     </button> : null}
-                    {obsidianSources.length === 0 ? (
-                      <button
-                        className="page-detail-mobile-menu-item"
-                        disabled
-                        role="menuitem"
-                        type="button"
-                      >
-                        {t("pageDetail.exportToObsidian")}
-                      </button>
-                    ) : (
-                      obsidianSources.map((source) => (
-                        <button
-                          className="page-detail-mobile-menu-item"
-                          disabled={storedActionPending || exporting || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive}
-                          key={source.id}
-                          onClick={() => {
-                            setActionMenuOpen(false);
-                            void handleExportToVault(source.path);
-                          }}
-                          role="menuitem"
-                          type="button"
-                        >
-                          {exported ? t("pageDetail.exported") : obsidianSources.length === 1
-                            ? t("pageDetail.exportToObsidian")
-                            : t("pageDetail.exportToVault", { vault: folderName(source.path) })}
-                        </button>
-                      ))
-                    )}
                     {canArchivePage(page) && (
                       <button
                         className="page-detail-mobile-menu-item"
@@ -3082,7 +3030,6 @@ export default function PageDetail({
               {editorSessionId && (
                 <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}>
                 {hideOuterTitleWhileEditing && <><h1 className="sr-only">{page.title}</h1>{documentTools}</>}
-                {pageHasTwoLengths && <PageLengthSwitch length={pageLength} onChoose={choosePageLength} />}
                 <MarkdownEditor
                   ref={editorRef}
                   pageLayers={editorPageLayers}
@@ -3180,6 +3127,8 @@ export default function PageDetail({
               )}
               <PageReadingLayers
                 content={displayContent}
+                length={pageLength}
+                onChoose={choosePageLength}
                 renderBody={(markdown) => (
                   <ContentRenderer
                     content={markdown}
