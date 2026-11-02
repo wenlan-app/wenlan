@@ -338,3 +338,95 @@ fn a_refresh_keeps_the_last_check_and_clears_a_failure() {
     assert_eq!(status.state, FilesMirrorState::Ok);
     assert_eq!(status.note, None);
 }
+
+#[tokio::test]
+async fn an_emptied_database_does_not_empty_the_files() {
+    let (db, dir) = fixture().await;
+    let db_file = dir.path().join("origin_memory.db");
+    let data_root = tempfile::tempdir().unwrap();
+    let mirror = mirror_root(data_root.path());
+    refresh(&db_file, &pages(), data_root.path(), &mirror)
+        .await
+        .unwrap();
+    let files = mirror.join(FILES_DIR);
+    let mut manifest = crate::store::export::read_manifest(&files).unwrap();
+    let content = db.export_content_count().await.unwrap();
+    assert!(content > 0);
+    // Files that list far more memories than the database now holds, as
+    // after the database came back empty.
+    let listed: Vec<_> = (0..(2 * content + COLLAPSE_FLOOR))
+        .map(|n| crate::store::export::ExportedFile {
+            id: format!("gone-{n}"),
+            file_type: "memory".to_string(),
+            path: format!("backstage/memories/gone-{n}.md"),
+            sha256: String::new(),
+        })
+        .collect();
+    manifest.files.extend(listed);
+    std::fs::write(
+        files.join(crate::store::export::MANIFEST_FILE),
+        serde_json::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+    let kept = std::fs::read(files.join(crate::store::export::MANIFEST_FILE)).unwrap();
+
+    let refused = refresh(&db_file, &pages(), data_root.path(), &mirror).await;
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|e| e.to_string().contains("not refreshed")),
+        "{refused:?}"
+    );
+    assert_eq!(
+        std::fs::read(files.join(crate::store::export::MANIFEST_FILE)).unwrap(),
+        kept,
+        "nothing written"
+    );
+    // A small copy is not compared: a new database grows past it.
+    assert!(refuse_a_collapse(&db, &mirror.join("nothing-here"))
+        .await
+        .is_ok());
+}
+
+#[tokio::test]
+async fn a_file_the_manifest_lists_but_is_gone_is_a_problem_not_an_error() {
+    let (db, dir) = fixture().await;
+    let db_file = dir.path().join("origin_memory.db");
+    let data_root = tempfile::tempdir().unwrap();
+    let mirror = mirror_root(data_root.path());
+    refresh(&db_file, &pages(), data_root.path(), &mirror)
+        .await
+        .unwrap();
+    let files = mirror.join(FILES_DIR);
+    let manifest = crate::store::export::read_manifest(&files).unwrap();
+    // A refresh stopped after removing these and before its manifest.
+    let mut gone = Vec::new();
+    for kind in ["page", "memory"] {
+        let file = manifest
+            .files
+            .iter()
+            .find(|file| file.file_type == kind)
+            .unwrap();
+        std::fs::remove_file(files.join(&file.path)).unwrap();
+        gone.push(file.path.clone());
+    }
+    drop(db);
+
+    let fresh_dir = tempfile::tempdir().unwrap();
+    let fresh = MemoryDB::new(fresh_dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let rebuilt = crate::store::rebuild::rebuild(&files, &fresh)
+        .await
+        .unwrap();
+    for path in gone {
+        assert!(
+            rebuilt
+                .problems
+                .contains(&format!("{path}: listed but missing")),
+            "{:?}",
+            rebuilt.problems
+        );
+    }
+    assert!(rebuilt.tables["pages"] > 0);
+}

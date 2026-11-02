@@ -197,6 +197,31 @@ impl MemoryDB {
         conn.execute(statement, libsql::params![id]).await
     }
 
+    /// Pages, and memories counted once per memory (not per chunk): what
+    /// the export writes a file for, counted cheaply.
+    pub async fn export_content_count(&self) -> Result<usize, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT (SELECT COUNT(*) FROM pages) + \
+                        (SELECT COUNT(*) FROM (SELECT DISTINCT source, source_id FROM memories))",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("export_content_count: {e}")))?;
+        let count: i64 = match rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("export_content_count: {e}")))?
+        {
+            Some(row) => row
+                .get(0)
+                .map_err(|e| WenlanError::VectorDb(format!("export_content_count: {e}")))?,
+            None => 0,
+        };
+        Ok(count.max(0) as usize)
+    }
+
     /// Every `memories` row, ordered by memory then chunk.
     pub(crate) async fn export_memory_rows(&self) -> Result<Vec<ExportMemoryRow>, WenlanError> {
         let conn = self.conn.lock().await;

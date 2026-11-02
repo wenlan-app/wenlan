@@ -270,9 +270,12 @@ fn sync_tree(from: &Path, to: &Path) -> Result<usize, WenlanError> {
                 .zip(std::fs::read(&source).ok())
                 .is_some_and(|(old, new)| old == new);
             if !same {
-                if let Ok(file) = std::fs::File::open(&source) {
-                    file.sync_all()?;
-                }
+                // Opened for writing: Windows flushes only a handle that may
+                // write.
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&source)?
+                    .sync_all()?;
                 std::fs::rename(&source, &target)?;
                 moved += 1;
             }

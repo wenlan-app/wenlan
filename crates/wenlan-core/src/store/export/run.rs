@@ -311,10 +311,13 @@ async fn export_into(
 
     summary.files = manifest.files.len();
     summary.left_out = manifest.left_out.len();
+    // The manifest first: a stop after it leaves only files no manifest
+    // lists, which a rebuild never reads; a stop before it leaves the old
+    // manifest over files that are all still there.
+    dirs.write_manifest(&manifest)?;
     if dirs.is_in_place() {
         summary.removed = dirs.finish_in_place(&manifest)?;
     }
-    dirs.write_manifest(&manifest)?;
     lap(&mut summary, "manifest");
     Ok(summary)
 }

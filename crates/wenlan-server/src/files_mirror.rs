@@ -99,10 +99,10 @@ fn due(status: &FilesMirrorStatus, db_changed_at: i64, now: i64) -> bool {
 /// started (`last`), and that was at least [`REFRESH_EVERY`] ago. The
 /// change time has whole seconds, so a change in the same second as the
 /// last start counts as after it.
-fn refresh_due(last: Option<i64>, gap: i64, db_changed_at: i64, now: i64) -> bool {
-    match last {
+fn refresh_due(last: &Refreshed, db_changed_at: i64, now: i64) -> bool {
+    match last.at {
         None => true,
-        Some(at) => now - at >= gap.max(REFRESH_EVERY) && db_changed_at >= at,
+        Some(at) => now - at >= last.gap.max(REFRESH_EVERY) && (last.failed || db_changed_at >= at),
     }
 }
 
@@ -157,6 +157,8 @@ fn pages_folder(db: &wenlan_core::db::MemoryDB) -> PagesFolder {
 struct Refreshed {
     at: Option<i64>,
     gap: i64,
+    /// A failed refresh is tried again after the gap, change or not.
+    failed: bool,
 }
 
 async fn tick(
@@ -193,11 +195,12 @@ async fn tick(
             status.note = Some(note.to_string());
             mirror::write_status(&dir, &status)?;
         }
-        if refresh_due(last_refresh.at, last_refresh.gap, db_changed_at, now) {
+        if refresh_due(last_refresh, db_changed_at, now) {
             last_refresh.at = Some(now);
             let started = std::time::Instant::now();
             let result = refresh(&db, &dir, status, now).await;
             last_refresh.gap = refresh_gap(started.elapsed().as_millis() as u64);
+            last_refresh.failed = !matches!(result, Ok(true));
             result?;
         }
         return Ok(());
@@ -257,7 +260,7 @@ async fn refresh(
     dir: &Path,
     status: FilesMirrorStatus,
     now: i64,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let folder = pages_folder(db);
     let data_root = wenlan_core::config::data_root();
     let db_file = data_root.join("memorydb").join("origin_memory.db");
@@ -268,6 +271,7 @@ async fn refresh(
         handle.block_on(mirror::refresh(&db_file, &folder, &data_root, &mirror_dir))
     })
     .await?;
+    let ok = result.is_ok();
     let next = match result {
         Ok(run) => {
             if run.written + run.removed > 0 {
@@ -283,7 +287,7 @@ async fn refresh(
         Err(error) => mirror::after_failure(status, &error),
     };
     mirror::write_status(dir, &next)?;
-    Ok(())
+    Ok(ok)
 }
 
 #[cfg(test)]
@@ -315,39 +319,49 @@ mod tests {
 
     #[test]
     fn a_refresh_follows_a_change_at_most_every_two_minutes() {
-        assert!(refresh_due(None, 0, 0, 1_000));
+        let at = |at: i64, failed: bool| Refreshed {
+            at: Some(at),
+            gap: 0,
+            failed,
+        };
+        assert!(refresh_due(&Refreshed::default(), 0, 1_000));
         // Changed since the last refresh, but too soon.
         assert!(!refresh_due(
-            Some(1_000),
-            0,
+            &at(1_000, false),
             1_050,
             1_000 + REFRESH_EVERY - 1
         ));
-        assert!(refresh_due(Some(1_000), 0, 1_050, 1_000 + REFRESH_EVERY));
+        assert!(refresh_due(&at(1_000, false), 1_050, 1_000 + REFRESH_EVERY));
         // A change in the same second as the last start counts.
-        assert!(refresh_due(Some(1_000), 0, 1_000, 1_000 + REFRESH_EVERY));
+        assert!(refresh_due(&at(1_000, false), 1_000, 1_000 + REFRESH_EVERY));
         // No change since: nothing to do.
         assert!(!refresh_due(
-            Some(1_000),
-            0,
+            &at(1_000, false),
             999,
             1_000 + 10 * REFRESH_EVERY
         ));
+        // Unless the last one failed: then it is tried again.
+        assert!(!refresh_due(
+            &at(1_000, true),
+            999,
+            1_000 + REFRESH_EVERY - 1
+        ));
+        assert!(refresh_due(&at(1_000, true), 999, 1_000 + REFRESH_EVERY));
     }
 
     #[test]
     fn a_slow_refresh_waits_longer() {
+        let after = |ms: u64| Refreshed {
+            at: Some(1_000),
+            gap: refresh_gap(ms),
+            failed: false,
+        };
         // 30 s of work: at least five minutes until the next one.
-        let gap = refresh_gap(30_000);
-        assert_eq!(gap, 300);
-        assert!(!refresh_due(Some(1_000), gap, 1_050, 1_000 + 299));
-        assert!(refresh_due(Some(1_000), gap, 1_050, 1_000 + 300));
+        assert_eq!(refresh_gap(30_000), 300);
+        assert!(!refresh_due(&after(30_000), 1_050, 1_000 + 299));
+        assert!(refresh_due(&after(30_000), 1_050, 1_000 + 300));
         // A quick one keeps the two minutes.
-        assert!(!refresh_due(
-            Some(1_000),
-            refresh_gap(3_000),
-            1_050,
-            1_000 + 60
-        ));
+        assert!(!refresh_due(&after(3_000), 1_050, 1_000 + 60));
+        assert!(refresh_due(&after(3_000), 1_050, 1_000 + REFRESH_EVERY));
     }
 }

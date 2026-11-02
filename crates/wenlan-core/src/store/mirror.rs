@@ -104,10 +104,45 @@ fn prepare(mirror: &Path) -> Result<PathBuf, WenlanError> {
     if !files.exists() && old.exists() {
         std::fs::rename(&old, &files)?;
     }
-    if files.exists() && crate::store::export::read_manifest(&files).is_none() {
-        remove_dir(&files)?;
-    }
+    // A folder with no manifest, or one this build cannot read, is
+    // refreshed like any other: the refresh removes what the new manifest
+    // does not list, after writing it.
     Ok(files)
+}
+
+/// Least files an earlier export must list before [`refuse_a_collapse`]
+/// compares.
+const COLLAPSE_FLOOR: usize = 20;
+
+/// Refuses to refresh `files` from `db` when the database holds less than
+/// half the pages and memories the files do: a database that came back
+/// empty or damaged must not empty the copy it could be rebuilt from.
+pub async fn refuse_a_collapse(db: &MemoryDB, files: &Path) -> Result<(), WenlanError> {
+    let Some(old) = crate::store::export::read_manifest(files) else {
+        return Ok(());
+    };
+    let listed = old
+        .files
+        .iter()
+        .filter(|file| {
+            matches!(
+                file.file_type.as_str(),
+                "page" | "archived_page" | "memory" | "original"
+            )
+        })
+        .count();
+    if listed < COLLAPSE_FLOOR {
+        return Ok(());
+    }
+    let now = db.export_content_count().await?;
+    if now.saturating_mul(2) < listed {
+        return Err(WenlanError::Validation(format!(
+            "the database holds {now} pages and memories and the files {listed}: the files \
+             are kept as they are and not refreshed. Delete files-mirror/ to start the copy \
+             again from this database."
+        )));
+    }
+    Ok(())
 }
 
 /// Brings `files/` up to date with the live database file `db_file`, where
@@ -123,6 +158,7 @@ pub async fn refresh(
     let files = prepare(mirror)?;
     let started = Instant::now();
     let db = MemoryDB::open_read_snapshot(db_file).await?;
+    refuse_a_collapse(&db, &files).await?;
     let summary = refresh_lossless(&db, pages, data_root, &files).await?;
     Ok(MirrorRun {
         files: summary.files,
@@ -171,6 +207,7 @@ pub async fn run_once(
             MemoryEmbeddingRecovery::Deferred,
         )
         .await?;
+        refuse_a_collapse(&snapshot, &files).await?;
         let summary = refresh_lossless(&snapshot, pages, data_root, &files).await?;
         let mut run = MirrorRun {
             files: summary.files,
