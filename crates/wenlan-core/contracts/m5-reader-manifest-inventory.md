@@ -705,6 +705,8 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/things` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `GET` | `/api/things/{id}` | main | yes | automatic | `none` | `handle_get_thing` | ThingPageEntry.title |
 | `GET` | `/api/things/{id}/map` | main | no | not_applicable | `none` | — | ThingMapResponse: point labels written for the map and conversation ids, no page prose |
+| `GET` | `/api/conversations/search` | main | no | not_applicable | `none` | — | ConversationSearchResponse: sentences from AI tool transcripts with conversation and thing titles, no page prose |
+| `GET` | `/api/sessions/{id}/lines` | main | no | not_applicable | `none` | — | ConversationLinesResponse: one AI tool transcript's lines with its conversation and thing titles, no page prose |
 | `PATCH` | `/api/things/{id}` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
@@ -1181,6 +1183,8 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::finalize_page_support` | `pub` | no | no | — | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::reconcile_supported_pages` | `pub` | no | **yes** | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::run_leased_page_linked_truth_promotion` | `pub(super)` | no | no | — | `core/db/claim_derivation.rs::derive_leased_page_claims`, `core/db/claim_derivation.rs::load_linked_memory_chunks` |
+| `core/db/conversations.rs::searchable_conversation` | `pub` | no | **yes** | `server/conversation_routes.rs::handle_conversation_lines` | `core/db/sessions.rs::get_session_detail` |
+| `core/db/conversations.rs::searchable_conversations` | `pub` | no | **yes** | `server/conversation_routes.rs::handle_search_conversations` | `core/db/sessions.rs::get_session_detail` |
 | `core/db/page_basis.rs::apply_card_mark` | `private` | no | no | — | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::basis_diff_in_scope` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_basis_diff` | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::check_basis_candidates` | `pub` | no | **yes** | `server/page_routes.rs::handle_create_page_inner` | `core/db/page_basis.rs::load_facts` |
@@ -1432,6 +1436,8 @@ carrying the authority of agreement.
 | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` | `pub` | no | **yes** | `server/refinery_routes.rs::handle_accept_refinement` | `core/db.rs::accept_page_merge`, `core/db.rs::merge_entities` |
 | `core/truth_adapter.rs::verdicts` | `private` | no | no | — | `core/db/truth_exposure.rs::page_truth_states` |
 | `server/brief_routes.rs::handle_read_brief` | `pub` | no | **yes** | `server/routes.rs::handle_context` | `core/db.rs::search_memory` |
+| `server/conversation_routes.rs::handle_conversation_lines` | `pub` | no | no | — | `core/db/conversations.rs::searchable_conversation` |
+| `server/conversation_routes.rs::handle_search_conversations` | `pub` | no | no | — | `core/db/conversations.rs::searchable_conversations` |
 | `server/entity_graph_routes.rs::handle_add_entity_alias` | `pub` | no | no | — | `core/db.rs::add_entity_alias_in_scope` |
 | `server/knowledge_routes.rs::handle_resolve_embed` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/main.rs::run_daemon` | `private` | no | no | `server/main.rs::main` | `server/main/startup.rs::prepare_startup_state` |

@@ -96,6 +96,7 @@ pub mod synthesis;
 pub mod tags;
 pub(crate) mod temporal_query;
 pub mod topic_match;
+pub mod transcript_lines;
 pub mod truth_adapter;
 pub mod truth_contract;
 pub mod truth_manifest;

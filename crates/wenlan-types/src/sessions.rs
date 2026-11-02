@@ -89,8 +89,9 @@ pub struct AgentSession {
     pub repo_branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_commit: Option<String>,
-    /// Where the transcript lives on the user's machine. A location only; the
-    /// daemon never reads it.
+    /// Where the transcript lives on the user's machine. The daemon reads it
+    /// only for the conversation's title and, for the person, its words in
+    /// search (UX-FIND-1); it never copies it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
     /// Space of the first write, when it had one.

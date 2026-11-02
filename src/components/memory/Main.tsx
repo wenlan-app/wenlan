@@ -13,7 +13,9 @@ import { toast } from "sonner";
 import {
   listMemoriesRich,
   listSpaces,
+  listThings,
   openSearchResult as openSearchResultTarget,
+  searchConversations,
   searchEntities,
   searchPages,
   takeRemotePairingLink,
@@ -41,7 +43,8 @@ import { showExampleWikiReadOnly } from "../../lib/exampleWiki/invoke";
 import { setStartIntent } from "../onboarding/startIntent";
 import { readRememberedDirectoryHidden, rememberDirectoryHidden } from "../../lib/wikiLayoutMemory";
 import AtlasView from "./AtlasView";
-import { SearchResults } from "./SearchResults";
+import { SearchResults, matchingThings } from "./SearchResults";
+import { THINGS_QUERY_KEY } from "./pages/WorkingOn";
 import MemoryDetail from "./MemoryDetail";
 import PageDetail from "./PageDetail";
 import DistillReviewPanel from "./DistillReviewPanel";
@@ -955,7 +958,8 @@ export default function Main({
     setQuery(nextQuery);
   };
   const displayedSearchQuery = pendingDraftSearchQuery ?? query;
-  const memoryResults = results.filter((result) => searchResultTarget(result).kind === "copy");
+  // Memories are the AI's notes, not what was said: search shows the
+  // conversation's own words instead (UX-FIND-1), and source passages with them.
   const sourceResults = results.filter((result) => searchResultTarget(result).kind === "file");
 
   useEffect(() => {
@@ -974,9 +978,26 @@ export default function Main({
     enabled: debouncedQuery.length > 0,
   });
 
+  const { data: conversationHits = [], isFetching: conversationSearchLoading } = useQuery({
+    queryKey: ["searchConversations", debouncedQuery],
+    queryFn: () => searchConversations(debouncedQuery, 5),
+    enabled: debouncedQuery.trim().length > 0,
+  });
+
+  // What you're working on: the home list, matched here by title.
+  const { data: allThings = [] } = useQuery({
+    queryKey: THINGS_QUERY_KEY,
+    queryFn: listThings,
+    enabled: debouncedQuery.trim().length > 0,
+  });
+  const thingResults = matchingThings(allThings, debouncedQuery);
+
   const searchLoading = !!displayedSearchQuery.trim() && (
     displayedSearchQuery !== debouncedQuery || memorySearchLoading || entitySearchLoading || conceptSearchLoading
+    || conversationSearchLoading
   );
+  // Conversation words are best effort: an older daemon without the route,
+  // or a transcript that moved, leaves that group empty rather than failing.
   const searchError = displayedSearchQuery === debouncedQuery
     && !!(memorySearchError || entitySearchError || conceptSearchError);
 
@@ -1905,13 +1926,15 @@ export default function Main({
         />
         <SearchResults
           query={displayedSearchQuery}
-          memoryResults={memoryResults}
+          thingResults={thingResults}
+          conceptResults={conceptResults}
+          conversationHits={conversationHits}
           sourceResults={sourceResults}
           entityResults={entityResults}
-          conceptResults={conceptResults}
           loading={searchLoading}
           error={searchError}
           ready={!searchLoading && !searchError}
+          onOpenThing={(thingId) => { dismissSearch(); navigateTo({ kind: "thing", thingId }); }}
           onOpenResult={(result) => void openSearchResult(result)}
           onOpenPage={(pageId) => { dismissSearch(); navigateTo({ kind: "page", pageId }); }}
           onOpenEntity={(entityId) => { dismissSearch(); handleEntityClick(entityId); }}

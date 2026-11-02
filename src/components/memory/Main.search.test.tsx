@@ -87,6 +87,8 @@ vi.mock("../../lib/tauri", () => ({
   getMemoryStats: vi.fn().mockResolvedValue({ total: 0, new_today: 0, confirmed: 0, domains: [] }),
   searchEntities: vi.fn().mockResolvedValue([]),
   searchPages: vi.fn().mockResolvedValue([]),
+  searchConversations: vi.fn().mockResolvedValue([]),
+  listThings: vi.fn().mockResolvedValue([]),
   // Main reads the getting-started state to decide whether the Wiki shows its directory.
   listAgents: vi.fn().mockResolvedValue([]),
   listRegisteredSources: vi.fn().mockResolvedValue([]),
@@ -1797,7 +1799,7 @@ describe("Main search", () => {
     renderMain();
 
     await user.click(screen.getByRole("button", { name: "Search" }));
-    await user.click(await screen.findByRole("button", { name: "Source credibility pages" }));
+    await user.click(await screen.findByRole("button", { name: /Source credibility pages/ }));
 
     expect(openSearchResultMock).toHaveBeenCalledWith("/tmp/source.md");
   });
@@ -1823,7 +1825,7 @@ describe("Main search", () => {
     renderMain();
 
     await user.click(screen.getByRole("button", { name: "Search" }));
-    await user.click(await screen.findByRole("button", { name: "Source credibility pages" }));
+    await user.click(await screen.findByRole("button", { name: /Source credibility pages/ }));
 
     expect(openSearchResultMock).toHaveBeenCalledWith("file:///tmp/source.md");
   });
