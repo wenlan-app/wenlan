@@ -15,8 +15,8 @@ use axum::Json;
 use wenlan_core::db::things::MoveTarget;
 use wenlan_core::db::MemoryDB;
 use wenlan_types::{
-    ThingDetailResponse, ThingMapResponse, ThingMoveRequest, ThingRenameRequest, ThingSummary,
-    ThingsResponse,
+    SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingDetailResponse,
+    ThingMapResponse, ThingMoveRequest, ThingRenameRequest, ThingSummary, ThingsResponse,
 };
 
 use crate::error::ServerError;
@@ -37,6 +37,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/sessions/{id}/things/move",
             post(handle_move_session_thing),
         )
+        .route("/api/sessions/{id}/saved-in", post(handle_saved_in))
 }
 
 async fn open_db(state: &SharedState) -> Result<Arc<MemoryDB>, ServerError> {
@@ -128,6 +129,112 @@ pub async fn handle_get_thing_map(
         revision: 0,
         nodes: Vec::new(),
         edges: Vec::new(),
+    }))
+}
+
+/// POST /api/sessions/{id}/saved-in
+///
+/// What the AI tool's one closing line names (UX-CHAT-7). `saved_in` is set
+/// only the first time the conversation lands in a thing, or when it moves
+/// to another, and only once that thing has a name. A conversation not yet
+/// sorted is sorted now, so the line can come with the first save. A thing
+/// the caller's Space cannot see is never named. After a page write the body
+/// names the page and what happened to it; `report_page` is true for a new
+/// page, and for an update or a suggestion the first time in this
+/// conversation. `{id}` is the conversation's row id or its
+/// `tool:external-id` ref.
+pub async fn handle_saved_in(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    Path(id): Path<String>,
+    body: Option<Json<SavedInRequest>>,
+) -> Result<Json<SavedInResponse>, ServerError> {
+    let request = body.map(|Json(request)| request).unwrap_or_default();
+    let (db, reported, reported_pages) = {
+        let state = state.read().await;
+        let db = state.db.clone().ok_or(ServerError::DbNotInitialized)?;
+        (
+            db,
+            state.saved_in_reported.clone(),
+            state.saved_in_pages.clone(),
+        )
+    };
+    // An AI tool knows its conversation by its ref (`tool:external-id`, as it
+    // sends in `x-wenlan-session`); the app knows the row id.
+    let id = if id.starts_with("ses_") {
+        id
+    } else {
+        let session = wenlan_types::SessionRef::parse(&id)
+            .map_err(|reason| ServerError::ValidationError(format!("bad session: {reason}")))?;
+        wenlan_core::db::sessions::session_row_id(&session)
+    };
+    let report_page = match (request.page_id.as_deref(), request.change) {
+        (Some(page_id), Some(change)) if !page_id.trim().is_empty() => {
+            let key = |change: SavedPageChange| format!("{id}|{page_id}|{change:?}");
+            let mut seen = reported_pages
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match change {
+                // A page the AI has just written is not news again when it
+                // revises it in the same conversation.
+                SavedPageChange::New => {
+                    seen.insert(key(SavedPageChange::Updated));
+                    true
+                }
+                SavedPageChange::Updated | SavedPageChange::Proposal => seen.insert(key(change)),
+            }
+        }
+        _ => false,
+    };
+    Ok(Json(SavedInResponse {
+        saved_in: thing_to_report(&db, header_space.as_deref(), &id, &reported).await?,
+        report_page,
+    }))
+}
+
+/// The thing to name for conversation `id`, if it changed since the last
+/// report and has a name the caller may see.
+async fn thing_to_report(
+    db: &MemoryDB,
+    header_space: Option<&str>,
+    id: &str,
+    reported: &std::sync::Mutex<std::collections::HashMap<String, String>>,
+) -> Result<Option<SavedIn>, ServerError> {
+    // Sorting runs in the background. When this conversation is in no thing
+    // yet, or its thing still waits for a name (the tool may write the
+    // conversation's title after the first save), sort now.
+    let mut things = db.session_things(id).await?;
+    let named = things
+        .last()
+        .and_then(|thing| thing.title.as_deref())
+        .is_some_and(|title| !title.trim().is_empty());
+    if !named {
+        sort_once(db).await;
+        things = db.session_things(id).await?;
+    }
+    // Newest assignment last: a moved conversation reports where it is now.
+    let Some(thing) = things.pop() else {
+        return Ok(None);
+    };
+    let Some(title) = thing.title.filter(|title| !title.trim().is_empty()) else {
+        return Ok(None);
+    };
+    if visible_thing(db, header_space, &thing.id).await.is_err() {
+        return Ok(None);
+    }
+    {
+        let mut reported = reported
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if reported.get(id) == Some(&thing.id) {
+            return Ok(None);
+        }
+        reported.insert(id.to_string(), thing.id.clone());
+    }
+    Ok(Some(SavedIn {
+        link: format!("wenlan://thing/{}", thing.id),
+        thing_id: thing.id,
+        title,
     }))
 }
 

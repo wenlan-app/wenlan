@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `wenlan://page/{id}` and `wenlan://memory/{id}` links: open that page or
-//! memory in the app.
+//! `wenlan://page/{id}`, `wenlan://memory/{id}` and `wenlan://thing/{id}`
+//! links: open that page, memory or thing in the app.
 //!
 //! AI tools print these next to a reminder or a cited page (the in-chat check,
 //! the CLI), so the person can jump to where something was decided. A link
@@ -25,6 +25,12 @@ pub enum OpenTarget {
     Memory {
         #[serde(rename = "memoryId")]
         memory_id: String,
+    },
+    /// What a conversation was saved into: the AI tool prints the link when
+    /// the conversation is first saved (UX-CHAT-7).
+    Thing {
+        #[serde(rename = "thingId")]
+        thing_id: String,
     },
 }
 
@@ -52,8 +58,9 @@ impl PendingOpenLink {
     }
 }
 
-/// The target when `url` is exactly `wenlan://page/<id>` or
-/// `wenlan://memory/<id>`. Anything else, including a query, is ignored.
+/// The target when `url` is exactly `wenlan://page/<id>`,
+/// `wenlan://memory/<id>` or `wenlan://thing/<id>`. Anything else, including a
+/// query, is ignored.
 pub fn open_target(url: &Url) -> Option<OpenTarget> {
     if url.scheme() != "wenlan"
         || !url.username().is_empty()
@@ -74,6 +81,9 @@ pub fn open_target(url: &Url) -> Option<OpenTarget> {
         }),
         "memory" => Some(OpenTarget::Memory {
             memory_id: id.to_string(),
+        }),
+        "thing" => Some(OpenTarget::Thing {
+            thing_id: id.to_string(),
         }),
         _ => None,
     }
@@ -122,7 +132,7 @@ pub fn accept_urls<R: Runtime>(app: &AppHandle<R>, urls: &[Url]) -> Vec<Url> {
 /// A `wenlan://page…` or `wenlan://memory…` URL, valid or not: never handed to
 /// the pairing handler.
 fn is_open_link_shape(url: &Url) -> bool {
-    url.scheme() == "wenlan" && matches!(url.host_str(), Some("page" | "memory"))
+    url.scheme() == "wenlan" && matches!(url.host_str(), Some("page" | "memory" | "thing"))
 }
 
 #[tauri::command]
@@ -152,6 +162,12 @@ mod tests {
                 memory_id: "mem_x.2".into()
             })
         );
+        assert_eq!(
+            parse("wenlan://thing/thg_01J"),
+            Some(OpenTarget::Thing {
+                thing_id: "thg_01J".into()
+            })
+        );
     }
 
     #[test]
@@ -169,6 +185,13 @@ mod tests {
             })
             .unwrap(),
             serde_json::json!({"kind": "memory", "memoryId": "m1"})
+        );
+        assert_eq!(
+            serde_json::to_value(OpenTarget::Thing {
+                thing_id: "t1".into()
+            })
+            .unwrap(),
+            serde_json::json!({"kind": "thing", "thingId": "t1"})
         );
     }
 

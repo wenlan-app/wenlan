@@ -52,7 +52,7 @@ const draftIdentityMock = vi.hoisted(
 const realDraftEditor = vi.hoisted(() => ({ enabled: false }));
 const setSearchQueryMock = vi.hoisted(() => vi.fn());
 const takeRemotePairingLinkMock = vi.hoisted(() => vi.fn<() => Promise<string | null>>());
-const takeOpenLinkMock = vi.hoisted(() => vi.fn<() => Promise<{ kind: "page"; pageId: string } | { kind: "memory"; memoryId: string } | null>>());
+const takeOpenLinkMock = vi.hoisted(() => vi.fn<() => Promise<import("../../lib/tauri").OpenLinkTarget | null>>());
 const useSearchMock = vi.hoisted(() => vi.fn((): {
   query: string;
   setQuery: typeof setSearchQueryMock;
@@ -146,6 +146,7 @@ vi.mock("./MemorySearchResult", () => ({
   ),
 }));
 vi.mock("./MemoryDetail", () => ({ default: () => <div data-testid="memory-detail" /> }));
+vi.mock("./things/ThingDetail", () => ({ ThingDetail: ({ thingId }: { thingId: string }) => <div data-testid="thing-detail" data-thing-id={thingId} /> }));
 vi.mock("./PageDetail", () => ({
   default: (props: {
     onBack?: () => void;
@@ -822,6 +823,12 @@ describe("Main search", () => {
     takeOpenLinkMock.mockResolvedValueOnce({ kind: "page", pageId: "page-2" });
     await act(async () => { eventListeners.get("wenlan-open-link")?.(); });
     expect(await screen.findByTestId("page-detail")).toHaveAttribute("data-page-id", "page-2");
+  });
+
+  it("UX-CHAT-7: opens the thing a wenlan://thing link names", async () => {
+    takeOpenLinkMock.mockResolvedValueOnce({ kind: "thing", thingId: "thg_1" });
+    renderMain();
+    expect(await screen.findByTestId("thing-detail")).toHaveAttribute("data-thing-id", "thg_1");
   });
 
   it("completes a Settings import in Memories and returns to Wiki", async () => {

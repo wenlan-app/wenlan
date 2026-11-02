@@ -376,6 +376,36 @@ async fn detail_lists_its_conversations_and_their_pages() {
 }
 
 #[tokio::test]
+async fn ux_thing_1_a_conversation_titled_only_in_its_transcript_shows_that_title() {
+    let (db, temp) = test_db().await;
+    let transcript = temp.path().join("conversation.jsonl");
+    std::fs::write(
+        &transcript,
+        "{\"type\":\"ai-title\",\"aiTitle\":\"Kyoto stay near Gion\",\"sessionId\":\"k\"}\n",
+    )
+    .unwrap();
+    let session = db
+        .upsert_session_metadata(&UpsertSessionRequest {
+            session: "claude-code:kyoto".into(),
+            transcript_path: Some(transcript.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    db.sort_sessions_into_things().await.unwrap();
+    let thing = things_of(&db, &session.id).await.remove(0);
+    let detail = db
+        .get_thing_detail(&thing, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        detail.sessions[0].title.as_deref(),
+        Some("Kyoto stay near Gion")
+    );
+}
+
+#[tokio::test]
 async fn migration_149_adds_the_thing_tables() {
     let (db, _temp) = test_db_at(148).await;
     db.migrate_149_things(148).await.unwrap();

@@ -1704,6 +1704,13 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
+    /// `GET /api/things/{id}/map`: the thing's map of points (UX-VIEW-7); empty
+    /// at revision 0 until something writes it.
+    pub async fn get_thing_map(&self, id: &str) -> Result<wenlan_types::ThingMapResponse, String> {
+        let path = format!("/api/things/{}/map", percent_encode_path_segment(id));
+        self.get_json(&path).await
+    }
+
     /// `PATCH /api/things/{id}`: the person renames a thing.
     pub async fn rename_thing(
         &self,
