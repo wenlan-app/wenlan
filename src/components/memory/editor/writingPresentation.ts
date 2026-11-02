@@ -10,7 +10,9 @@ import {
   Facet,
   StateEffect,
   StateField,
+  type EditorState,
   type Extension,
+  type Text,
   type Range,
 } from "@codemirror/state";
 import {
@@ -72,16 +74,39 @@ type TreeNodeLike = Readonly<{
   parent: TreeNodeLike | null;
 }>;
 
+const linkDefinitionsByDoc = new WeakMap<Text, Set<string>>();
+
+/** Whether `[label]` has a `[label]: url` definition somewhere on the page. */
+function hasLinkDefinition(state: EditorState, label: string): boolean {
+  let labels = linkDefinitionsByDoc.get(state.doc);
+  if (!labels) {
+    labels = new Set();
+    for (const match of state.doc.toString().matchAll(/^ {0,3}\[([^\]\n]+)\]:/gm)) {
+      labels.add(match[1].trim().replace(/\s+/g, " ").toLowerCase());
+    }
+    linkDefinitionsByDoc.set(state.doc, labels);
+  }
+  return labels.has(label.trim().replace(/\s+/g, " ").toLowerCase());
+}
+
+/** Width of a list item's leading spaces: each level reads as a clear step. */
+function listIndentEm(indent: string): number {
+  let width = 0;
+  for (const char of indent) width += char === "\t" ? 2.8 : 0.7;
+  return Math.round(width * 100) / 100;
+}
+
 class ListMarkerWidget extends WidgetType {
   constructor(
     readonly kind: "bullet" | "ordered",
     readonly label: string,
+    readonly width: string,
   ) {
     super();
   }
 
   eq(other: ListMarkerWidget): boolean {
-    return other.kind === this.kind && other.label === this.label;
+    return other.kind === this.kind && other.label === this.label && other.width === this.width;
   }
 
   toDOM(): HTMLElement {
@@ -90,6 +115,7 @@ class ListMarkerWidget extends WidgetType {
     marker.dataset.writingListMarker = this.kind;
     marker.setAttribute("aria-hidden", "true");
     marker.textContent = this.label;
+    marker.style.width = this.width;
     return marker;
   }
 }
@@ -448,18 +474,24 @@ const writingTheme = EditorView.theme({
     display: "inline-block",
     minWidth: "1.35em",
     paddingRight: "0.35em",
+    textIndent: "0",
     color: "var(--mem-text-secondary)",
     fontVariantNumeric: "tabular-nums",
     textAlign: "right",
     userSelect: "none",
   },
-  ".cm-writing-list-indent": {
-    letterSpacing: "0.4em",
+  ".cm-writing-plain-brackets, .cm-writing-plain-brackets *:not(.cm-writing-link, .cm-writing-link *)": {
+    color: "var(--mem-text)",
   },
-  ".cm-writing-list-continuation": {
+  // The hanging indent is for the line's own text; a chip, icon or link
+  // arrow inside it must not inherit the negative indent and shift.
+  ".cm-writing-list-item *, .cm-writing-list-item *::before, .cm-writing-list-item *::after, .cm-writing-list-continuation-line *, .cm-writing-list-continuation-line *::before, .cm-writing-list-continuation-line *::after": {
+    textIndent: "0",
+  },
+  ".cm-writing-list-indent, .cm-writing-list-continuation": {
     display: "inline-block",
-    minWidth: "1.35em",
     whiteSpace: "pre",
+    textIndent: "0",
   },
   '.cm-writing-list-marker[data-writing-list-marker="bullet"]': {
     textAlign: "center",
@@ -584,6 +616,27 @@ function buildWritingRanges(view: EditorView): WritingRanges {
     decorations.push(Decoration.mark({ class: className }).range(from, to));
   };
 
+  const addListLine = (at: number, className: string, column: string): void => {
+    const key = `${at}:${className}`;
+    if (lineKeys.has(key)) return;
+    lineKeys.add(key);
+    decorations.push(Decoration.line({
+      class: className,
+      attributes: { style: `padding-left: ${column}; text-indent: calc(-1 * ${column})` },
+    }).range(at));
+  };
+
+  const addListIndent = (from: number, to: number, widthEm: number): void => {
+    if (from >= to) return;
+    const key = `${from}:${to}:cm-writing-list-indent`;
+    if (markKeys.has(key)) return;
+    markKeys.add(key);
+    decorations.push(Decoration.mark({
+      class: "cm-writing-list-indent",
+      attributes: { style: `width: ${widthEm}em` },
+    }).range(from, to));
+  };
+
   for (const visible of view.visibleRanges) {
     const tree = syntaxTreeAvailable(state, visible.to)
       ? syntaxTree(state)
@@ -661,6 +714,16 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           const closingLabel = marks[1];
           const closing = marks[marks.length - 1];
           if (url && /^#(?:concept|memory):[^\s#]+$/.test(state.sliceDoc(url.from, url.to))) return;
+          // `[VERIFIED]` or `[source: …]` with no link behind it is text, not
+          // a link: CommonMark only links a bracket that has a definition.
+          if (marks.length === 2) {
+            const label = state.sliceDoc(node.from + 1, node.to - 1);
+            const wiki = state.sliceDoc(node.from - 1, node.from) === "[" || state.sliceDoc(node.to, node.to + 1) === "]";
+            if (!wiki && !/^\d+$/.test(label.trim()) && !hasLinkDefinition(state, label)) {
+              addMarkClass(node.from, node.to, "cm-writing-plain-brackets");
+            }
+            return;
+          }
           if (url && marks.length >= 4 && opening && closingLabel && closing) {
             addMarkClass(opening.to, closingLabel.from, "cm-writing-link");
             // A link that just took its title stays a link beside the caret.
@@ -696,7 +759,9 @@ function buildWritingRanges(view: EditorView): WritingRanges {
         if (
           node.name === "URL"
           && parent
-          && !["Link", "Image", "LinkReference", "Autolink"].includes(parent.name)
+          && (!["Link", "Image", "LinkReference", "Autolink"].includes(parent.name)
+            // A bare URL inside plain brackets, "[VERIFIED https://…]".
+            || (parent.name === "Link" && directChildrenNamed(parent, "LinkMark").length === 2))
           && isBrowserUrl(state.sliceDoc(node.from, node.to))
         ) {
           addMarkClass(node.from, node.to, "cm-writing-link cm-writing-link-external");
@@ -750,15 +815,19 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           const markerTo = markerWithSeparatorEnd(state, node.to, parent.to);
           const task = directChildrenNamed(parent, "Task")[0];
           const itemLine = state.doc.lineAt(node.from);
-          addLineClass(itemLine.from, "cm-writing-list-item");
+          // The item's text column: its indent plus the marker (bullet,
+          // number or checkbox). A long item wraps back to that column, and
+          // the item's own next lines ("- file\n  SHA-256: …") start there.
+          const indentText = state.sliceDoc(itemLine.from, node.from);
+          const indentEm = listIndentEm(indentText);
+          const markerWidth = task
+            ? "1.43rem"
+            : `${list?.name === "OrderedList" ? Math.max(1.35, 0.58 * (node.to - node.from) + 0.35) : 1.35}em`;
+          const column = `calc(${indentEm}em + ${markerWidth})`;
+          addListLine(itemLine.from, "cm-writing-list-item", column);
           // A nested item's leading spaces are a few pixels wide in a
           // proportional font; widen them so each level is visible.
-          if (/^[ \t]+$/.test(state.sliceDoc(itemLine.from, node.from))) {
-            addMarkClass(itemLine.from, node.from, "cm-writing-list-indent");
-          }
-          // A wrapped item's own next lines ("- file\n  SHA-256: …") line up
-          // under the item's text, not at the left edge: their leading spaces
-          // take the same width as the indent and marker above them.
+          if (/^[ \t]+$/.test(indentText)) addListIndent(itemLine.from, node.from, indentEm);
           const indentLength = node.from - itemLine.from;
           const contentColumn = markerTo - itemLine.from;
           for (let at = itemLine.to + 1; at < parent.to && at <= state.doc.length;) {
@@ -767,8 +836,12 @@ function buildWritingRanges(view: EditorView): WritingRanges {
             if (!line.text.trim() || /^\s*(?:[-*+]|\d+[.)])(?:\s|$)|^\s*(?:```|~~~)/.test(line.text)) continue;
             // Only the item's own lines: deeper ones belong to a nested item.
             if ((/^[ \t]*/.exec(line.text)?.[0].length ?? 0) !== contentColumn) continue;
-            if (indentLength > 0) addMarkClass(line.from, line.from + indentLength, "cm-writing-list-indent");
-            addMarkClass(line.from + indentLength, line.from + contentColumn, "cm-writing-list-continuation");
+            addListLine(line.from, "cm-writing-list-continuation-line", column);
+            if (indentLength > 0) addListIndent(line.from, line.from + indentLength, indentEm);
+            decorations.push(Decoration.mark({
+              class: "cm-writing-list-continuation",
+              attributes: { style: `width: ${markerWidth}` },
+            }).range(line.from + indentLength, line.from + contentColumn));
           }
           // A list marker stays a bullet (or number) while the caret is on its
           // line, as in Obsidian: only a selection over the marker itself
@@ -783,13 +856,13 @@ function buildWritingRanges(view: EditorView): WritingRanges {
             addConcealment(
               node.from,
               markerTo,
-              new ListMarkerWidget("bullet", "•"),
+              new ListMarkerWidget("bullet", "•", markerWidth),
             );
           } else if (list?.name === "OrderedList") {
             addConcealment(
               node.from,
               markerTo,
-              new ListMarkerWidget("ordered", state.sliceDoc(node.from, node.to)),
+              new ListMarkerWidget("ordered", state.sliceDoc(node.from, node.to), markerWidth),
             );
           }
           return;

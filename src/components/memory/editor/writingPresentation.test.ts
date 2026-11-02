@@ -238,6 +238,30 @@ describe("writingPresentation", () => {
     expect(view.state.doc.toString()).toBe(source);
   });
 
+  it("reads a bracket with no link behind it as text, not a link", () => {
+    const source = "Claim [VERIFIED] and [docs](https://wenlan.app) cite [1] and [ref] [SEEN https://wenlan.app/docs].\n\n[ref]: https://wenlan.app";
+    const view = makeView(source, { selection: EditorSelection.single(source.length) });
+
+    const plain = [...view.contentDOM.querySelectorAll(".cm-writing-plain-brackets")];
+    expect(plain.map((node) => node.textContent)).toEqual(["[VERIFIED]", "[SEEN wenlan.app/docs]"]);
+    // The address inside stays a link to open.
+    expect(plain[1].querySelector(".cm-writing-link-external")).toHaveTextContent("wenlan.app/docs");
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
+  it("wraps a long list item back to its text, not under the bullet", () => {
+    const source = "- top\n  - nested\n1. first";
+    const view = makeView(source, { selection: EditorSelection.single(source.length) });
+
+    const lines = [...view.contentDOM.querySelectorAll<HTMLElement>(".cm-writing-list-item")];
+    expect(lines.map((line) => line.style.paddingLeft)).toEqual([
+      "calc(1.35em)",
+      "calc(2.75em)",
+      "calc(1.51em)",
+    ]);
+    expect(lines[0].style.textIndent).toMatch(/^calc\(-/);
+  });
+
   it("marks only browser-bound links, labelled or bare, as external", () => {
     const source = [
       "See [docs](https://wenlan.app/docs) and [[Wiki]].",
