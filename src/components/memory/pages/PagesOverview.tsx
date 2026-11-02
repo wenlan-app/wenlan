@@ -178,6 +178,14 @@ export function PagesOverview({
       <div className="home-columns">
         {example ? null : <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} />}
         {newPages}
+        {/* With no AI tool connected there is nothing to be working on yet:
+            the pages lead, and one line says what connecting adds. */}
+        {!example && !onboarding && onConnectTool && writePages.loaded && writePages.tools.length === 0 ? (
+          <p className="home-connect-line">
+            <span>{t("pages.overview.workingOnConnect")}</span>
+            <button type="button" onClick={onConnectTool}>{t("pages.overview.workingOnConnectAction")}</button>
+          </p>
+        ) : null}
       </div>
       {gettingStarted}
       {everyday}
