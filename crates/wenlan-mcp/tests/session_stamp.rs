@@ -84,14 +84,18 @@ fn session_header(request: &wiremock::Request) -> Option<String> {
         .map(|value| value.to_str().unwrap().to_string())
 }
 
-/// The requests the tool sent, leaving out the best-effort steep count each
-/// reply reads on the side; it is not what these tests stamp or announce.
+/// The requests the tool sent, leaving out the best-effort side reads each
+/// reply makes (the steep count, and where the conversation was saved); they
+/// are not what these tests stamp or announce.
 async fn sent(mock: &MockServer) -> Vec<wiremock::Request> {
     mock.received_requests()
         .await
         .unwrap()
         .into_iter()
-        .filter(|request| request.url.path() != "/api/steep/worklist")
+        .filter(|request| {
+            let path = request.url.path();
+            path != "/api/steep/worklist" && !path.ends_with("/saved-in")
+        })
         .collect()
 }
 
