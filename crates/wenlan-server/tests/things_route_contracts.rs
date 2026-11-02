@@ -11,7 +11,8 @@ use serde_json::{json, Value};
 use std::sync::OnceLock;
 use tower::ServiceExt;
 use wenlan_types::{
-    SessionDetailResponse, ThingActor, ThingDetailResponse, ThingSummary, ThingsResponse,
+    SessionDetailResponse, ThingActor, ThingDetailResponse, ThingMapResponse, ThingSummary,
+    ThingsResponse,
 };
 
 /// Every test points `WENLAN_DATA_DIR` (and so the knowledge path and
@@ -171,6 +172,21 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
     assert_eq!(detail.sessions.len(), 1);
     assert_eq!(detail.sessions[0].id, session_id);
 
+    // Its map is empty until something writes it (UX-VIEW-6/7).
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/things/{}/map", thing.id),
+        None,
+        Caller::Reader,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let map: ThingMapResponse = typed(body);
+    assert_eq!(map.thing_id, thing.id);
+    assert_eq!(map.revision, 0);
+    assert!(map.nodes.is_empty() && map.edges.is_empty());
+
     // Another Space does not see it; an unknown thing is absent.
     let (status, _) = call(
         &router,
@@ -182,6 +198,15 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(things(&router, Caller::InSpace("other")).await.is_empty());
+    let (status, _) = call(
+        &router,
+        Method::GET,
+        &format!("/api/things/{}/map", thing.id),
+        None,
+        Caller::InSpace("other"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _) = call(
         &router,
         Method::GET,
