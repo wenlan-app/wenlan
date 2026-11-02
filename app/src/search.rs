@@ -6978,6 +6978,7 @@ mod status_response_tests {
             embedding_model: Default::default(),
             capabilities: Vec::new(),
             truth: None,
+            files_mirror: None,
         };
 
         let merged = merge_daemon_status(local, daemon);

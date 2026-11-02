@@ -1562,6 +1562,7 @@ carrying the authority of agreement.
 | `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep_new.rs::claim_new` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
 | `core/steep_organize.rs::plan` | `pub` | no | no | — | `core/db.rs::entity_enrichment_for_claim` |
+| `core/store/mirror.rs::run_once` | `pub` | yes | no | — | `core/db.rs::new_with_shared_embedder_and_recovery`, `core/store/export/run.rs::export_lossless` |
 | `core/store/rebuild/mod.rs::export_again` | `pub` | no | no | — | `core/store/export/run.rs::export_lossless` |
 | `core/synthesis/distill.rs::distill_one_cluster` | `pub` | no | no | — | `core/synthesis/distill.rs::distill_one_cluster_with_tuning` |
 | `core/synthesis/distill.rs::distill_pages_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/synthesis/distill.rs::distill_pages_scoped_gated` |
