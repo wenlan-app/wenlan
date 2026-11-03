@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::conversation_intake::{FoundConversation, Grouping, Label, Piece};
+use crate::conversation_intake::{Correction, FoundConversation, Grouping, Label, Piece};
 use crate::db::tests::test_db;
 use crate::read_scope::ReadScope;
 use std::path::PathBuf;
@@ -409,4 +409,79 @@ async fn ux_thing_1_a_read_conversation_follows_its_space_when_renamed() {
     db.update_space("wenlan", "wenlan-app", None).await.unwrap();
     let pending = db.intake_pending(50).await.unwrap();
     assert_eq!(pending[0].space, "wenlan-app");
+}
+
+#[tokio::test]
+async fn ux_thing_2_the_persons_moves_are_what_the_grouping_follows() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    for (id, title) in [("z1", "Zotero sync"), ("z2", "Launch post")] {
+        db.record_conversation_label(&found(id, now - 600), &work(title, "Going"), None)
+            .await
+            .unwrap();
+    }
+    let pending = db.intake_pending(50).await.unwrap();
+    // The model put both in one thing; the Zotero one was wrong.
+    db.apply_intake_grouping(
+        &pending,
+        &[],
+        &Grouping {
+            new: vec![("Wenlan growth".into(), vec![0, 1])],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(db.intake_corrections().await.unwrap().is_empty());
+    let z1 = pending
+        .iter()
+        .find(|p| p.title == "Zotero sync")
+        .unwrap()
+        .session_id
+        .clone();
+    let growth = db.session_things(&z1).await.unwrap()[0].id.clone();
+    let zotero = db
+        .move_session_thing(
+            &z1,
+            &growth,
+            &crate::db::things::MoveTarget::NewThing("Zotero workflow".into()),
+        )
+        .await
+        .unwrap();
+    let corrections = db.intake_corrections().await.unwrap();
+    assert_eq!(
+        corrections,
+        vec![Correction {
+            title: "Zotero sync".into(),
+            about: "about Zotero sync".into(),
+            from: "Wenlan growth".into(),
+            to: "Zotero workflow".into(),
+        }]
+    );
+
+    // The next grouping sees the move as the way to sort a case like it.
+    let prompt = crate::conversation_intake::group_prompt(&[], &[], &corrections, "English");
+    assert!(prompt.contains(
+        "- \"Zotero sync\" (about Zotero sync): not \"Wenlan growth\" but \"Zotero workflow\""
+    ));
+    assert!(prompt.contains("the way the person did"));
+    // With no moves, the prompt says nothing about them.
+    assert!(
+        !crate::conversation_intake::group_prompt(&[], &[], &[], "English").contains("corrected")
+    );
+
+    // Moved again: only where it is now counts.
+    db.move_session_thing(
+        &z1,
+        &zotero,
+        &crate::db::things::MoveTarget::NewThing("Research tools".into()),
+    )
+    .await
+    .unwrap();
+    let corrections = db.intake_corrections().await.unwrap();
+    assert_eq!(corrections.len(), 1);
+    assert_eq!(
+        (corrections[0].from.as_str(), corrections[0].to.as_str()),
+        ("Zotero workflow", "Research tools")
+    );
 }

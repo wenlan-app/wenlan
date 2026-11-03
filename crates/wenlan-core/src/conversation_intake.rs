@@ -723,10 +723,26 @@ pub struct OpenThing {
     pub news: Vec<String>,
 }
 
+/// A conversation the person moved to another thing: what it was about, and
+/// the titles of the thing it left and the one it went to (UX-THING-2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Correction {
+    pub title: String,
+    pub about: String,
+    pub from: String,
+    pub to: String,
+}
+
 /// The prompt that puts labelled conversations into things and writes where
 /// each thing stands: only the labels' one-line titles, abouts and statuses,
-/// never the conversations.
-pub fn group_prompt(pending: &[Pending], open: &[OpenThing], language: &str) -> String {
+/// never the conversations. The person's past moves come along as examples,
+/// so a case they corrected once is sorted their way (UX-THING-2).
+pub fn group_prompt(
+    pending: &[Pending],
+    open: &[OpenThing],
+    corrections: &[Correction],
+    language: &str,
+) -> String {
     let things = if open.is_empty() {
         "(none yet)".to_string()
     } else {
@@ -758,9 +774,37 @@ pub fn group_prompt(pending: &[Pending], open: &[OpenThing], language: &str) -> 
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let corrected = if corrections.is_empty() {
+        String::new()
+    } else {
+        let moves = corrections
+            .iter()
+            .map(|c| {
+                let about = if c.about.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", c.about)
+                };
+                if c.from.is_empty() {
+                    format!("- \"{}\"{about} belongs to \"{}\"", c.title, c.to)
+                } else {
+                    format!(
+                        "- \"{}\"{about}: not \"{}\" but \"{}\"",
+                        c.title, c.from, c.to
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "The person corrected where these conversations went. Sort a new conversation \
+like one of them the way the person did: into the piece with that title, or a new piece \
+with that title when none is listed.\n{moves}\n\n"
+        )
+    };
     format!(
         "A person's pieces of work so far (id, title, [space], about):\n{things}\n\n\
-New conversations they had with AI tools (id, title, [space], about):\n{convs}\n\n\
+{corrected}New conversations they had with AI tools (id, title, [space], about):\n{convs}\n\n\
 Put every new conversation into a piece of work, or leave it out. A piece is a goal the \
 person is working toward (a product feature, a release, a launch, a paper, a trip), not a \
 step of it: a review, a test run, a cleanup or a check done for a goal belongs to that goal. \

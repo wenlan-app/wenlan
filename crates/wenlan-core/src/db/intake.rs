@@ -13,7 +13,9 @@
 
 use super::sessions::{session_row_id, upsert_session_span};
 use super::MemoryDB;
-use crate::conversation_intake::{FoundConversation, Grouping, Label, OpenThing, Pending, Piece};
+use crate::conversation_intake::{
+    Correction, FoundConversation, Grouping, Label, OpenThing, Pending, Piece,
+};
 use crate::WenlanError;
 use std::collections::HashMap;
 use wenlan_types::{SessionRef, ThingActor, THING_QUIET_AFTER_SECS};
@@ -50,6 +52,8 @@ const OPEN_THINGS: i64 = 80;
 pub const SPACE_IN_USE_SECS: i64 = 30 * 86_400;
 /// Most news lines shown for one thing.
 const NEWS_PER_THING: usize = 3;
+/// The person's newest moves the grouping model sees as examples.
+const CORRECTIONS_SHOWN: i64 = 20;
 
 fn db_err(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
     move |e| WenlanError::VectorDb(format!("{context}: {e}"))
@@ -346,6 +350,52 @@ impl MemoryDB {
                 if out[i].news.len() < NEWS_PER_THING {
                     out[i].news.push(row.get::<String>(1).unwrap_or_default());
                 }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The person's newest moves of a conversation into another thing, newest
+    /// first, one per conversation, while the conversation is still where they
+    /// put it: what the grouping model follows for similar conversations
+    /// (UX-THING-2).
+    pub async fn intake_corrections(&self) -> Result<Vec<Correction>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT COALESCE(NULLIF(l.title, ''), a.title, ''), COALESCE(l.about, ''),
+                        COALESCE(f.title, ''), t.title, h.session_id
+                   FROM thing_history h
+                   JOIN things t ON t.id = h.thing_id
+                   LEFT JOIN things f ON f.id = json_extract(h.data, '$.from')
+                   LEFT JOIN conversation_labels l ON l.session_id = h.session_id
+                   LEFT JOIN agent_sessions a ON a.id = h.session_id
+                  WHERE h.actor = 'person' AND h.op = 'thing.assign'
+                    AND json_extract(h.data, '$.rule') = 'move'
+                    AND t.title IS NOT NULL AND t.merged_into IS NULL
+                    AND EXISTS (SELECT 1 FROM thing_sessions ts
+                                 WHERE ts.thing_id = h.thing_id AND ts.session_id = h.session_id)
+                  ORDER BY h.ts DESC, h.rowid DESC",
+                (),
+            )
+            .await
+            .map_err(db_err("intake corrections"))?;
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(row) = rows.next().await.map_err(db_err("intake correction row"))? {
+            let title = row.get::<String>(0).unwrap_or_default();
+            let session = row.get::<String>(4).unwrap_or_default();
+            if title.trim().is_empty() || !seen.insert(session) {
+                continue;
+            }
+            out.push(Correction {
+                title,
+                about: row.get::<String>(1).unwrap_or_default(),
+                from: row.get::<String>(2).unwrap_or_default(),
+                to: row.get::<String>(3).unwrap_or_default(),
+            });
+            if out.len() as i64 >= CORRECTIONS_SHOWN {
+                break;
             }
         }
         Ok(out)

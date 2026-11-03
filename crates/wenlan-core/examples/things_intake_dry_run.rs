@@ -117,7 +117,7 @@ async fn main() {
         let answer = group
             .generate(LlmRequest {
                 system_prompt: Some("You sort a person's conversations into the pieces of work they belong to. Answer with JSON only.".into()),
-                user_prompt: intake::group_prompt(&pending, &open, language),
+                user_prompt: intake::group_prompt(&pending, &open, &[], language),
                 max_tokens: 4_000,
                 temperature: 0.0,
                 label: Some("things_group".into()),
