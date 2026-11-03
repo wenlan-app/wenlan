@@ -16,7 +16,7 @@ priority = 100
 # queue behind unrelated DB tests. Reserve the complete runner pool so startup
 # readiness is measured without artificial lock contention.
 [[profile.default.overrides]]
-filter = 'binary(=graceful_shutdown) | binary(=port_discovery)'
+filter = 'binary(=graceful_shutdown) | binary(=port_discovery) | binary(=delete_database_rebuild)'
 threads-required = "num-test-threads"
 
 # The folder-ingest pipeline is normally well under a minute (23s in the
