@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getThing, hideThing, listThings, listWorkingOn, setUiLanguage, type ThingSummary } from "../../../lib/tauri";
-import { WorkingOn } from "./WorkingOn";
+import { shortName, WorkingOn } from "./WorkingOn";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
@@ -202,6 +202,27 @@ describe("WorkingOn", () => {
     // A quiet thing has no card: its name opens it.
     fireEvent.click(screen.getByRole("button", { name: "Old work" }));
     expect(onOpenThing).toHaveBeenCalledWith("thg_3");
+  });
+
+  it("UX-CHAT-5: names two steeped things at most, and \"and more\" lights every steeped card", async () => {
+    const tonight = new Date();
+    tonight.setHours(3, 0, 0, 0);
+    const at = Math.floor(tonight.getTime() / 1000);
+    vi.mocked(listThings).mockResolvedValue([
+      thing({ id: "thg_1", title: "Site redesign", dreamed_at: at }),
+      thing({ id: "thg_2", title: "Release notes", dreamed_at: at }),
+      thing({ id: "thg_3", title: "Zotero workflow", dreamed_at: at }),
+    ]);
+    renderWorkingOn();
+    const line = await screen.findByTestId("wiki-working-on-steeped");
+    expect(line).toHaveTextContent("Site redesign, Release notesand more");
+    expect(line).not.toHaveTextContent("Zotero workflow");
+    expect(shortName("Wenlan 迁移与整合验收")).toBe("Wenlan 迁移与整…");
+    expect(shortName("Release notes")).toBe("Release notes");
+    fireEvent.click(screen.getByRole("button", { name: "and more" }));
+    for (const id of ["thg_1", "thg_2", "thg_3"]) {
+      expect(document.querySelector(`[data-thing-id="${id}"] .wiki-working-on-card`)).toHaveAttribute("data-glow", "true");
+    }
   });
 
   it("UX-CHAT-5: says nothing about steeping that was not today", async () => {

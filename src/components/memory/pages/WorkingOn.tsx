@@ -15,8 +15,22 @@ const RETRY_SOON = { retry: 5, retryDelay: (attempt: number) => Math.min(2_000 *
 
 /** How many lines of work home shows before "See all". */
 export const WORKING_ON_LISTED = 6;
-/** Most things the "steeped overnight" line names. */
-const STEEPED_NAMED = 3;
+/** How wide a name in the "steeped overnight" line may be, in CJK characters. */
+const STEEPED_NAME_WIDTH = 8;
+
+/** Cuts a name to about eight CJK characters (a Latin letter counts half). */
+export function shortName(name: string): string {
+  let width = 0;
+  const chars = Array.from(name);
+  for (let index = 0; index < chars.length; index += 1) {
+    width += chars[index].codePointAt(0)! < 0x2e80 ? 0.55 : 1;
+    if (width > STEEPED_NAME_WIDTH) return `${chars.slice(0, index).join("").trimEnd()}…`;
+  }
+  return name;
+}
+
+/** Most things the "steeped overnight" line names; the rest are "and more". */
+const STEEPED_NAMED = 2;
 /** Steeping before this local hour happened overnight. */
 const NIGHT_ENDS = 7;
 /** How long a card lights up when its name is pressed. */
@@ -101,27 +115,33 @@ export function WorkingOn({
   // What Wenlan steeped from today's things into long-term memory (UX-CHAT-5),
   // named in one quiet line beside the heading so the night's work is seen.
   // It names things, never counts them, and is gone tomorrow.
-  const steeped = onOpenThing
-    ? (things.data ?? []).filter((thing) => thing.title && thing.dreamed_at && steepedToday(thing.dreamed_at)).slice(0, STEEPED_NAMED)
+  // Two names at most, each cut short, then "and more", so the line stays
+  // one short phrase however many things were steeped or how long their names.
+  const steepedAll = onOpenThing
+    ? (things.data ?? []).filter((thing) => thing.title && thing.dreamed_at && steepedToday(thing.dreamed_at))
     : [];
-  const overnight = steeped.every((thing) => new Date((thing.dreamed_at ?? 0) * 1000).getHours() < NIGHT_ENDS);
-  const [glowing, setGlowing] = useState<string | null>(null);
+  const steeped = steepedAll.slice(0, STEEPED_NAMED);
+  const steepedMore = steepedAll.length > STEEPED_NAMED;
+  const overnight = steepedAll.every((thing) => new Date((thing.dreamed_at ?? 0) * 1000).getHours() < NIGHT_ENDS);
+  const [glowing, setGlowing] = useState<string[]>([]);
   const glowTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(glowTimer.current), []);
   // A name opens nothing new: its card lights up for a moment where it is.
-  // A thing gone quiet has no card, so its name opens the thing.
-  const showSteeped = (id: string) => {
-    const at = current.findIndex((thing) => thing.id === id);
-    if (at < 0) {
-      onOpenThing?.(id);
+  // A thing gone quiet has no card, so its name opens the thing. "And more"
+  // lights every steeped card at once.
+  const showSteeped = (ids: string[]) => {
+    const at = ids.map((id) => current.findIndex((thing) => thing.id === id));
+    const shown = ids.filter((_, index) => at[index] >= 0);
+    if (shown.length === 0) {
+      if (ids.length === 1) onOpenThing?.(ids[0]);
       return;
     }
-    if (at >= WORKING_ON_LISTED) setShowAll(true);
-    setGlowing(id);
+    if (at.some((index) => index >= WORKING_ON_LISTED)) setShowAll(true);
+    setGlowing(shown);
     window.clearTimeout(glowTimer.current);
-    glowTimer.current = window.setTimeout(() => setGlowing(null), GLOW_MS);
+    glowTimer.current = window.setTimeout(() => setGlowing([]), GLOW_MS);
     window.requestAnimationFrame(() =>
-      document.querySelector(`[data-thing-id="${CSS.escape(id)}"]`)?.scrollIntoView?.({ behavior: "smooth", block: "nearest", inline: "nearest" }));
+      document.querySelector(`[data-thing-id="${CSS.escape(shown[0])}"]`)?.scrollIntoView?.({ behavior: "smooth", block: "nearest", inline: "nearest" }));
   };
   // Each card names the pages its work wrote and the tool it happened in.
   const details = useQueries({
@@ -156,9 +176,15 @@ export function WorkingOn({
               {steeped.map((thing, index) => (
                 <Fragment key={thing.id}>
                   {index > 0 ? <span className="wiki-working-on-steeped-sep">{t("pages.overview.steepedSeparator")}</span> : null}
-                  <button type="button" onClick={() => showSteeped(thing.id)}>{thing.title}</button>
+                  <button type="button" title={thing.title ?? undefined} aria-label={thing.title ?? undefined} onClick={() => showSteeped([thing.id])}>{shortName(thing.title ?? "")}</button>
                 </Fragment>
               ))}
+              {/* A narrow window names one thing and says "and more" for the rest. */}
+              {steepedAll.length > 1 ? (
+                <button type="button" className="wiki-working-on-steeped-more" data-narrow-only={steepedMore ? undefined : "true"} onClick={() => showSteeped(steepedAll.map((thing) => thing.id))}>
+                  {t("pages.overview.steepedMore")}
+                </button>
+              ) : null}
             </span>
           </p>
         ) : null}
@@ -179,7 +205,7 @@ export function WorkingOn({
           const where = [...named, ...thing.spaces].join(" · ");
           return (
             <li key={thing.id} data-thing-id={thing.id}>
-              <button type="button" className="wiki-working-on-card" data-glow={glowing === thing.id ? "true" : undefined} onClick={() => onOpenThing?.(thing.id)}>
+              <button type="button" className="wiki-working-on-card" data-glow={glowing.includes(thing.id) ? "true" : undefined} onClick={() => onOpenThing?.(thing.id)}>
                 <span className="wiki-working-on-title">{thing.title ?? t("thing.untitled")}</span>
                 <span className="wiki-working-on-text">{line ?? ""}</span>
                 <span className="wiki-working-on-foot">
