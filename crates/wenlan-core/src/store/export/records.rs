@@ -13,6 +13,20 @@
 //! - `entity_page_map`: which page an entity's file belongs to, as stored.
 //! - `page_evidence`, `page_sources`: derived from the citation block, kept
 //!   until the rebuild re-creates them and the comparison shows it does.
+//! - What the AI worked out that would cost a model to work out again
+//!   after a restore: the graph (`edges`, `observations`, `relations`) with
+//!   the provenance roots its edges name, and the judge's score for each
+//!   sentence and source span (`entailment_cache`, keyed by their text).
+//!   The claims themselves are not kept: they are derived again from the
+//!   page text without a model, and their support edges with them
+//!   (`KEPT_ROWS` in `db::export_reads`); the scores make that
+//!   derivation call no model for text that has not changed.
+//! - `eval_signals`: the person's feedback (confirm, pin, edit, a search
+//!   result opened).
+//! - `enrichment_steps`: which AI steps (classify, extract entities, title,
+//!   page growth) each memory has had, at which version. Their results are
+//!   in the memory, entity and page files; without this record a restore
+//!   would run every step again over every memory.
 
 use super::settings::write_tables;
 use super::{ExportDirs, Manifest};
@@ -28,6 +42,14 @@ pub const RECORD_TABLES: &[&str] = &[
     "entity_page_map",
     "page_evidence",
     "page_sources",
+    "edges",
+    "provenance_roots",
+    "provenance_root_minhash_bands",
+    "observations",
+    "relations",
+    "entailment_cache",
+    "eval_signals",
+    "enrichment_steps",
 ];
 
 /// Writes one file per record table; returns how many rows they hold.

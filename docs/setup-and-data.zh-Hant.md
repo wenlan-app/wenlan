@@ -84,7 +84,7 @@ npx -y wenlan setup
 
 - 頁面與工作階段筆記：`~/.wenlan/`。
 - 資料庫與執行環境資料：macOS 為 `~/Library/Application Support/wenlan/`，Linux 為 `~/.local/share/wenlan/`，Windows 為 `%LOCALAPPDATA%\wenlan\`。
-- 資料庫的檔案副本：資料庫資料夾裡的 `files-mirror/`。這是之後版本改用檔案儲存的預覽。有改動後幾分鐘內 Wenlan 會更新它，每天檢查一次這些檔案能重建出同樣的資料庫，Wenlan 啟動時如果資料庫檔案不見了或是空的，會用這份副本重建資料庫。除此之外不會讀它，所以資料庫還在時刪掉也沒關係。設定 `WENLAN_FILES_MIRROR=0` 可以關閉。
+- 資料庫的檔案副本：資料庫資料夾裡的 `files-mirror/`。這是之後版本改用檔案儲存的預覽。有改動後幾分鐘內 Wenlan 會更新它，每天檢查一次這些檔案能重建出同樣的資料庫，Wenlan 啟動時如果資料庫檔案不見了或是空的，會用這份副本重建資料庫，然後在背景重新檢查頁面和出處。檢查沿用 AI 之前的判斷，沒改過的內容不用再判斷一次。除此之外不會讀它，所以資料庫還在時刪掉也沒關係。設定 `WENLAN_FILES_MIRROR=0` 可以關閉。
 
 ### 備份知識資料
 

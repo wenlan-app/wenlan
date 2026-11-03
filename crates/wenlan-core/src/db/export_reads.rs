@@ -76,6 +76,12 @@ pub(crate) struct ExportMemoryRow {
     pub space_rejected: bool,
 }
 
+/// Tables the file copy holds only some rows of, with the rows it holds.
+/// The support edges of `edges` name claims, which are derived again from
+/// the page text after a restore rather than kept, so they go with them.
+pub(crate) const KEPT_ROWS: &[(&str, &str)] =
+    &[("edges", "edge_type NOT IN ('supports', 'attests')")];
+
 impl MemoryDB {
     /// Every page row, ordered by id, archived and entity rows included.
     pub(crate) async fn export_page_rows(&self) -> Result<Vec<ExportPageRow>, WenlanError> {
@@ -508,8 +514,9 @@ impl MemoryDB {
         Ok(out)
     }
 
-    /// Every row of `table` as stored, in primary key order, or `None` when
-    /// the table does not exist. `table` is one of the export's fixed names,
+    /// Every row of `table` as stored (the rows [`KEPT_ROWS`] names, for a
+    /// table it lists), in primary key order, or `None` when the table does
+    /// not exist. `table` is one of the export's fixed names,
     /// never input.
     pub(crate) async fn export_table(
         &self,
@@ -556,9 +563,16 @@ impl MemoryDB {
             .map(|name| quote(name))
             .collect::<Vec<_>>()
             .join(", ");
+        let kept = KEPT_ROWS
+            .iter()
+            .find(|(name, _)| *name == table)
+            .map_or(String::new(), |(_, kept)| format!(" WHERE {kept}"));
         let mut rows = conn
             .query(
-                &format!("SELECT {select} FROM {} ORDER BY {order}", quote(table)),
+                &format!(
+                    "SELECT {select} FROM {}{kept} ORDER BY {order}",
+                    quote(table)
+                ),
                 (),
             )
             .await

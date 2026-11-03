@@ -60,6 +60,21 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         // Imported originals (the vendor's own text) and named things.
         ("originals", File),
         ("things", File),
+        // What the AI worked out that costs a model to work out again: the
+        // graph (`edges` without the support edges, which name claims), the
+        // provenance roots the graph names, observations and relations, the
+        // judge's scores for each sentence and source span, and the
+        // person's feedback signals. `enrichment_steps` records which AI
+        // steps each memory has had, so a restore does not run them again
+        // over memories whose results its files already hold.
+        ("enrichment_steps", File),
+        ("edges", File),
+        ("provenance_roots", File),
+        ("provenance_root_minhash_bands", File),
+        ("observations", File),
+        ("relations", File),
+        ("entailment_cache", File),
+        ("eval_signals", File),
         // A thing's map of points, and changes to it waiting for the person.
         ("thing_maps", File),
         ("thing_map_nodes", File),
@@ -114,9 +129,6 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("entity_type_vocabulary", Cache),
         ("relation_type_vocabulary", Cache),
         ("vocab_heal_ledger", Cache),
-        ("relations", Cache),
-        ("observations", Cache),
-        ("edges", Cache),
         ("claims", Cache),
         ("claim_anchors", Cache),
         ("claim_derivation_jobs", Cache),
@@ -129,7 +141,6 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("claim_run_generations", Cache),
         ("claim_run_inventories", Cache),
         ("page_version_claims", Cache),
-        ("entailment_cache", Cache),
         ("truth_marker_audit", Cache),
         // Grouping, summaries, provenance.
         ("communities", Cache),
@@ -141,10 +152,7 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("community_route_space_inputs", Cache),
         ("summary_nodes", Cache),
         ("summary_node_sources", Cache),
-        ("provenance_roots", Cache),
-        ("provenance_root_minhash_bands", Cache),
         // Work queues and caches.
-        ("enrichment_steps", Cache),
         ("document_enrichment_queue", Cache),
         ("derived_artifact_sweeps", Cache),
         ("refinement_queue", Cache),
@@ -155,7 +163,6 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("document_tags", Cache),
         // Eval harness; moves to the eval database.
         ("eval_judgments", Cache),
-        ("eval_signals", Cache),
         ("eval_tune_log", Cache),
         // The community reader gate: `community_reader_durable_gate_sql` and
         // `reconcile_pending_community_readers` still pick between the durable

@@ -568,3 +568,87 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
     let refused = rebuild(&first, &db).await;
     assert!(refused.is_err());
 }
+
+/// The graph, the judge's scores, the person's feedback and which AI steps
+/// each memory had come back from the files; the support edges, which name claims, do not: the claims are
+/// derived again, and their edges with them.
+#[tokio::test]
+async fn what_the_ai_worked_out_comes_back_without_its_support_edges() {
+    let (db, _db_dir) = test_db().await;
+    // Edges that no longer pass the space fence: their endpoints are gone,
+    // as when a page was deleted or moved after the edge was written.
+    sql(&db, "DROP TRIGGER edges_space_fence", "").await;
+    let statements = [
+        "INSERT INTO provenance_roots (root_id, identity_version, identity_digest, root_kind, \
+         independence_group_id, status, created_at) VALUES (?1, 1, 'd1', 'document_ingest', \
+         'g1', 'active', 5)",
+        "INSERT INTO edges (edge_id, src_id, src_kind, dst_id, dst_kind, edge_type, lineage, \
+         grounded, root_id, space, weight, payload, created_at) VALUES ('edge_relates', \
+         'ent_a', 'entity', 'ent_b', 'entity', 'relates', 'assertion', 0, NULL, 'sp', 0.5, \
+         '{\"relation_type\":\"works_with\"}', 6)",
+        "INSERT INTO edges (edge_id, src_id, src_kind, dst_id, dst_kind, edge_type, lineage, \
+         grounded, root_id, space, payload, created_at) VALUES ('edge_supports', 'rev_1', \
+         'claim_revision', 'mem_1', 'memory', 'supports', 'evidence', 0, ?1, 'sp', '{}', 7)",
+        "INSERT INTO entailment_cache (claim_text_digest, source_span_digest, model_id, \
+         model_version, prompt_version, score, threshold_at_write, backend, scored_at) \
+         VALUES ('c1', 's1', 'qwen3-4b', 'v1', ?1, 0.875, 0.75, 'llama', 8)",
+        "INSERT INTO eval_signals (id, signal_type, memory_id, query_context, rank_position, \
+         created_at, metadata) VALUES ('sig_1', 'pin', ?1, NULL, NULL, 9, NULL)",
+        "INSERT INTO observations (id, entity_id, content, source_memory_id, source_agent, \
+         confidence, confirmed, created_at) VALUES ('obs_1', 'ent_a', 'Prefers Rust.', ?1, \
+         'claude', 0.9, 1, 10)",
+        "INSERT INTO relations (id, from_entity, to_entity, relation_type, source_agent, \
+         created_at) VALUES ('rel_1', 'ent_a', 'ent_b', 'works_with', ?1, 11)",
+        "INSERT INTO enrichment_steps (source_id, step_name, status, attempts, updated_at, \
+         input_version) VALUES (?1, 'entity_extract', 'ok', 1, 12, 3)",
+    ];
+    let ids = [
+        "root_1", "", "root_1", "p1", "mem_1", "mem_1", "claude", "mem_1",
+    ];
+    for (statement, id) in statements.iter().zip(ids) {
+        sql(&db, statement, id).await;
+    }
+
+    let out = tempfile::tempdir().unwrap();
+    let data_root = tempfile::tempdir().unwrap();
+    let target = out.path().join("export");
+    export_lossless(
+        &db,
+        &crate::store::export::run::PagesFolder::default(),
+        data_root.path(),
+        &target,
+    )
+    .await
+    .unwrap();
+    let edges = std::fs::read_to_string(target.join("backstage/records/edges.json")).unwrap();
+    assert!(edges.contains("edge_relates"), "{edges}");
+    assert!(!edges.contains("edge_supports"), "{edges}");
+
+    let (fresh, _fresh_dir) = test_db().await;
+    let rebuilt = rebuild_tables(&target, &fresh).await.unwrap();
+    assert!(rebuilt.problems.is_empty(), "{:?}", rebuilt.problems);
+    for (table, rows) in [
+        ("edges", 1),
+        ("provenance_roots", 1),
+        ("entailment_cache", 1),
+        ("eval_signals", 1),
+        ("observations", 1),
+        ("relations", 1),
+        ("enrichment_steps", 1),
+    ] {
+        let copied = fresh.export_table(table).await.unwrap().unwrap();
+        assert_eq!(copied.rows.len(), rows, "{table}");
+    }
+    let diffs = compare_tables(&db, &fresh, RECORD_TABLES).await.unwrap();
+    assert!(diffs.is_empty(), "{diffs:#?}");
+    // The fence is back for the edges the daemon writes next.
+    let refused = fresh
+        .export_fixture_sql_result(
+            "INSERT INTO edges (edge_id, src_id, src_kind, dst_id, dst_kind, edge_type, \
+             lineage, grounded, space, created_at) VALUES (?1, 'ent_x', 'entity', 'ent_y', \
+             'entity', 'relates', 'assertion', 0, 'sp', 13)",
+            "edge_new",
+        )
+        .await;
+    assert!(refused.is_err(), "{refused:?}");
+}
