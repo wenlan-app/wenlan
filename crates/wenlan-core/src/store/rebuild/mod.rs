@@ -116,7 +116,7 @@ pub async fn rebuild_tables(from: &Path, into: &MemoryDB) -> Result<Rebuilt, Wen
             .iter()
             .map(|spec| (spec.table.to_string(), Vec::new()))
             .collect();
-    let root = backstage.join("history");
+    let root = crate::store::export::history::log_root(from);
     for log in [root.clone(), root.join("reads")] {
         if !log.is_dir() {
             continue;
@@ -345,7 +345,7 @@ pub async fn apply_states(
     from: &Path,
     into: &MemoryDB,
 ) -> Result<(usize, Vec<String>), WenlanError> {
-    let log = from.join("backstage").join("history");
+    let log = crate::store::export::history::log_root(from);
     if !log.is_dir() {
         return Ok((0, Vec::new()));
     }

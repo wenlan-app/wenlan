@@ -19,6 +19,37 @@ pub(crate) const FOREIGN_KEY: &str = "foreign key: ";
 const WRITTEN_WITHOUT_TRIGGERS: &[&str] = &["edges"];
 
 impl MemoryDB {
+    /// After a restore: works out each page's links (`page_links`, what
+    /// backlinks read) again from its text, as a save does. The rebuild
+    /// writes pages as stored, and `page_links` is not in the files.
+    /// Returns how many pages were done; a page that fails is logged and
+    /// skipped.
+    pub async fn rebuild_page_links(&self) -> Result<usize, WenlanError> {
+        let pages = {
+            let conn = self.conn.lock().await;
+            let fail = |e: libsql::Error| WenlanError::VectorDb(format!("rebuild page links: {e}"));
+            let mut rows = conn
+                .query("SELECT id, content FROM pages ORDER BY id", ())
+                .await
+                .map_err(fail)?;
+            let mut pages = Vec::new();
+            while let Some(row) = rows.next().await.map_err(fail)? {
+                let id: String = row.get(0).map_err(fail)?;
+                let content: Option<String> = row.get(1).map_err(fail)?;
+                pages.push((id, content.unwrap_or_default()));
+            }
+            pages
+        };
+        let mut done = 0;
+        for (id, content) in pages {
+            match self.refresh_page_wikilinks(&id, &content).await {
+                Ok(()) => done += 1,
+                Err(error) => log::warn!("[restore] links of page {id} not worked out: {error}"),
+            }
+        }
+        Ok(done)
+    }
+
     /// Replaces every row of `table` with `rows`, each holding a value for
     /// each of `columns`, in one transaction. `table` must be one of the
     /// classified tables; column names are quoted.
