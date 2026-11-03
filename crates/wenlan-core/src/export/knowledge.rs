@@ -19,9 +19,11 @@ use wenlan_types::CodeBasisLocator;
 #[path = "knowledge_folders.rs"]
 mod folders;
 pub use folders::{
-    create_knowledge_folder, follow_external_moves, knowledge_edit_targets,
-    knowledge_markdown_paths, list_knowledge_folders, move_projected_page, read_knowledge_markdown,
-    validate_knowledge_folder_path, KnowledgeFolderEntry,
+    adoption_frontmatter, create_knowledge_folder, drop_pending_adoption, follow_external_moves,
+    knowledge_edit_targets, knowledge_markdown_paths, list_knowledge_folders, move_projected_page,
+    note_person_file, origin_id_line, pending_adoptions, person_page_files,
+    read_knowledge_markdown, record_person_note, restamp_person_note, stamp_person_note,
+    unstamp_person_note, validate_knowledge_folder_path, KnowledgeFolderEntry, PersonPageFile,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;
@@ -84,6 +86,12 @@ struct KnowledgeState {
     /// Dropped with `archived_from`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     archived_versions: BTreeMap<String, i64>,
+    /// Notes the person put in the folder whose id line is written but
+    /// whose page may not exist yet (page id -> file). Recorded before the
+    /// id line, so a stop between the two never leaves a stamped note the
+    /// watcher takes for a deleted page; cleared once the page is recorded.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pending_adoptions: BTreeMap<String, String>,
 }
 
 impl Default for KnowledgeState {
@@ -95,6 +103,7 @@ impl Default for KnowledgeState {
             index_regeneration_pending: false,
             archived_from: BTreeMap::new(),
             archived_versions: BTreeMap::new(),
+            pending_adoptions: BTreeMap::new(),
         }
     }
 }
@@ -122,6 +131,13 @@ struct PageFileState {
     description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     space: Option<String>,
+    /// For a note the person put in the folder (an adopted file): its own
+    /// frontmatter, as they wrote it plus the `origin_id` line Wenlan
+    /// added. Wenlan writes such a page with this frontmatter and the new
+    /// body, never its own, so the person's keys, order and layout stay.
+    /// `None` for pages Wenlan made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    person_frontmatter: Option<String>,
 }
 
 #[cfg(test)]
@@ -225,6 +241,7 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
             "index_regeneration_pending",
             "archived_from",
             "archived_versions",
+            "pending_adoptions",
         ]
         .contains(&key.as_str())
     }) {
@@ -244,6 +261,7 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
         "title",
         "description",
         "space",
+        "person_frontmatter",
     ];
     for entry in pages.values() {
         let entry = entry
@@ -606,7 +624,16 @@ impl KnowledgeWriter {
         let file_path = self.path.join(&filename);
         let (target_directory, target_name) = folders::page_parent(&capabilities.root, &filename)?;
 
-        let content = render_markdown(page);
+        // A note the person put in the folder keeps its own frontmatter.
+        let person_frontmatter = state
+            .pages
+            .get(&page.id)
+            .and_then(|entry| entry.person_frontmatter.as_deref())
+            .map(|frontmatter| person_frontmatter_titled(frontmatter, &page.title));
+        let content = match &person_frontmatter {
+            Some(frontmatter) => render_person_markdown(page, frontmatter),
+            None => render_markdown(page),
+        };
         // Write to a temp file in the same capability directory, then rename
         // over the target: rename within one directory is atomic, so a reader
         // (Obsidian, the fs watcher) never observes a half-written page file.
@@ -687,6 +714,7 @@ impl KnowledgeWriter {
                 title: Some(page.title.clone()),
                 description: page.summary.clone(),
                 space: page.space.clone(),
+                person_frontmatter,
             },
         );
         // The old copy and the stale index entry are recorded in the save that
@@ -762,7 +790,12 @@ impl KnowledgeWriter {
                 continue;
             };
             stats.checked += 1;
-            if !self.projection_is_behind(&entry.file, page) {
+            let behind = if entry.person_frontmatter.is_some() {
+                self.person_file_is_behind(entry, page)
+            } else {
+                self.projection_is_behind(&entry.file, page)
+            };
+            if !behind {
                 continue;
             }
             match self.write_page_with_regenerate_index(guard, page, false) {
@@ -787,6 +820,28 @@ impl KnowledgeWriter {
             }
         }
         Ok(stats)
+    }
+
+    /// For a note the person put in the folder, which carries no version
+    /// stamp: whether its file is missing, or still holds exactly the bytes
+    /// Wenlan recorded for an older version (Wenlan saved a newer one and
+    /// stopped before writing the file). A file the person changed since
+    /// is theirs, and the watcher reads it.
+    fn person_file_is_behind(&self, entry: &PageFileState, page: &Page) -> bool {
+        let bytes = (|| {
+            let root = folders::read_root(&self.path)?;
+            let (directory, name) = folders::page_parent(&root, &entry.file)?;
+            let mut budget = RepairReadBudget::new();
+            read_regular_nofollow(&directory, OsStr::new(&name), &mut budget)
+        })();
+        match bytes {
+            Ok(bytes) => {
+                entry.version < page.version
+                    && entry.content_sha256.as_deref() == Some(projection_digest(&bytes).as_str())
+            }
+            Err(WenlanError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(_) => false,
+        }
     }
 
     /// Whether `filename` is missing, unreadable, or stamped with a version
@@ -2736,6 +2791,30 @@ impl LockedProjection<'_> {
         let expected_state = page_file_state_value(page, &path);
         let target_bytes = hex::decode(entries[1].content_hex())
             .map_err(|_| WenlanError::Conflict("repair_target_stale".to_string()))?;
+        // A note the person put in the folder is not Wenlan's render: it is
+        // in sync when its bytes are the ones recorded for it and its text is
+        // the page's.
+        if let Some(stored) =
+            stored_page.filter(|stored| stored.get("person_frontmatter").is_some())
+        {
+            let recorded = stored
+                .get("content_sha256")
+                .and_then(serde_json::Value::as_str);
+            let text_matches = std::str::from_utf8(&target_bytes).is_ok_and(|raw| {
+                crate::export::provenance::same_page_text_ignoring_save_noise(
+                    &crate::export::provenance::page_body_from_projection(raw),
+                    &crate::export::provenance::page_body_from_projection(&render_markdown_for(
+                        page,
+                    )),
+                )
+            });
+            if recorded == Some(projection_digest(&target_bytes).as_str()) && text_matches {
+                return Ok(Some((path, entries)));
+            }
+            return Err(WenlanError::Conflict(
+                "page projection contains unsynced edits".to_string(),
+            ));
+        }
         let expected_markdown = render_markdown_for(page);
         let state_matches = stored_page.is_some_and(|stored| {
             if stored == &expected_state {
@@ -5829,6 +5908,7 @@ pub(crate) fn page_file_state_value(page: &Page, file: &str) -> serde_json::Valu
         title: Some(page.title.clone()),
         description: page.summary.clone(),
         space: page.space.clone(),
+        person_frontmatter: None,
     })
     .expect("PageFileState serializes")
 }
@@ -5916,6 +5996,62 @@ fn render_markdown(page: &Page) -> String {
     }
 
     out
+}
+
+/// A note the person put in the folder, written with their own
+/// frontmatter (`frontmatter`, the text between the `---` lines) and the
+/// page's body, in the same envelope [`render_markdown`] uses, so the
+/// watcher reads the body back the same way.
+fn render_person_markdown(page: &Page, frontmatter: &str) -> String {
+    use crate::export::provenance::render_sources_block;
+    let mut out = format!("---\n{}\n---\n\n", frontmatter.trim_end_matches('\n'));
+    out.push_str(&convert_links_to_wikilinks(&page.content));
+    let block = render_sources_block(&page.source_memory_ids);
+    if !block.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&block);
+    } else {
+        out.push('\n');
+    }
+    out
+}
+
+/// The person's frontmatter with its `title:` line naming `title`, when it
+/// has one that names something else (the page was renamed in Wenlan).
+/// Everything else is kept as written.
+fn person_frontmatter_titled(frontmatter: &str, title: &str) -> String {
+    let current = serde_yaml::from_str::<HashMap<String, serde_yaml::Value>>(frontmatter)
+        .ok()
+        .and_then(|fields| {
+            fields
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    // Only a one-line `title:`; a block (`title: |`) is left as written.
+    let one_line = |line: &str| {
+        line.strip_prefix("title:")
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty() && !value.starts_with(['|', '>']))
+    };
+    match current {
+        Some(current) if current != title && frontmatter.lines().any(one_line) => {
+            let mut replaced = false;
+            frontmatter
+                .lines()
+                .map(|line| {
+                    if !replaced && one_line(line) {
+                        replaced = true;
+                        format!("title: {}", crate::export::provenance::yaml_quoted(title))
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => frontmatter.to_string(),
+    }
 }
 
 /// Page-to-page wikilink targets in the body, for the read-only `related:`
