@@ -9,6 +9,7 @@ import { DetailReadingFrame } from "../DetailLayout";
 import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
 import { THINGS_QUERY_KEY } from "../pages/WorkingOn";
 import { hasToolMark, ToolMark } from "../assets/toolMarks";
+import { ThingMergeProposal } from "./ThingMergeProposal";
 import { ThingViews } from "./ThingViews";
 import "./thingDetail.css";
 
@@ -67,7 +68,12 @@ export function ThingDetail({ thingId, onBack, onOpenPage, onOpenThing }: ThingD
             <BackButton onBack={onBack} label={t("thing.back")} />
           </div>
         </header>
-        <ThingViews thing={thing} meta={[...thing.spaces, when].join(" · ")} onOpenPage={onOpenPage} />
+        <ThingViews
+          thing={thing}
+          meta={[...thing.spaces, when].join(" · ")}
+          notice={<ThingMergeProposal thing={thing} queryKey={thingQueryKey(thing.id)} />}
+          onOpenPage={onOpenPage}
+        />
 
         <section className="thing-detail-section" aria-labelledby="thing-conversations">
           <h2 id="thing-conversations">{t("thing.conversations")}</h2>

@@ -88,6 +88,19 @@ pub struct ThingDetailResponse {
     pub pages: Vec<ThingPageEntry>,
     /// Newest first.
     pub memories: Vec<SessionMemoryEntry>,
+    /// Things the AI thinks are the same goal as this one, waiting for the
+    /// person to merge them or keep them apart (UX-THING-3). Older daemons
+    /// leave it out.
+    #[serde(default)]
+    pub merge_proposals: Vec<ThingRef>,
+}
+
+/// `POST /api/things/{id}/merge` and `POST /api/things/{id}/keep-apart`: the
+/// person answers a merge proposal. Merging folds `other_thing_id` into `{id}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThingMergeRequest {
+    pub other_thing_id: String,
 }
 
 /// `PATCH /api/things/{id}`: the person renames a thing.

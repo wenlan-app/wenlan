@@ -100,6 +100,7 @@ mod space_rename;
 mod steep;
 pub(crate) mod steep_new;
 pub mod thing_map;
+pub mod thing_merge;
 pub mod things;
 mod truth_exposure;
 
@@ -236,6 +237,8 @@ pub(crate) mod steep_code_test;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod thing_map_test;
+#[cfg(test)]
+mod thing_merge_test;
 #[cfg(test)]
 mod things_test;
 #[cfg(test)]
@@ -1556,7 +1559,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 154;
+pub const SCHEMA_VERSION: u32 = 155;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10805,6 +10808,15 @@ impl MemoryDB {
             }
             if version < 154 {
                 self.migrate_154_conversation_labels(version).await?;
+            }
+
+            // Migration 155 keeps the person's answers to merge proposals.
+            // See db/thing_merge.rs.
+            if ceiling < 155 {
+                return Ok(());
+            }
+            if version < 155 {
+                self.migrate_155_thing_merge_proposals(version).await?;
             }
         }
 

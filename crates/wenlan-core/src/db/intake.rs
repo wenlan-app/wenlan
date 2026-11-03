@@ -527,6 +527,12 @@ impl MemoryDB {
             .await
             .map_err(db_err("grouping leave out"))?;
         }
+        // Two things that look like one goal are only proposed (UX-THING-3).
+        for &(x, y) in &grouping.same {
+            if let (Some(x), Some(y)) = (open.get(x), open.get(y)) {
+                MemoryDB::propose_thing_merge(&tx, now, &x.id, &y.id).await?;
+            }
+        }
         tx.commit().await.map_err(db_err("grouping commit"))?;
         Ok(made)
     }

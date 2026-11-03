@@ -995,6 +995,9 @@ export interface ThingDetail extends ThingSummary {
   pages: ThingPage[];
   /** Newest first. Older daemons leave it out. */
   memories?: ThingMemory[];
+  /** Things the AI thinks are the same goal, waiting for the person
+   *  (UX-THING-3). Older daemons leave it out. */
+  merge_proposals?: { id: string; title: string | null }[];
 }
 
 /** Where a point on a thing's map stands; apart from its kind, since an
@@ -1085,6 +1088,12 @@ export async function renameThing(id: string, title: string): Promise<ThingSumma
 /** Take a thing off "what you're working on" until its next conversation (UX-HOME-5). */
 export async function hideThing(id: string): Promise<ThingSummary> {
   return invoke("hide_thing", { id });
+}
+
+/** Answer "these two look like one thing" on a thing's page (UX-THING-3):
+ *  merge `otherId` into `id`, or keep them apart so it is not asked again. */
+export async function answerThingMerge(id: string, otherId: string, merge: boolean): Promise<ThingSummary> {
+  return invoke("answer_thing_merge", { id, otherId, merge });
 }
 
 /** Move a conversation out of one thing into another, or into a new thing

@@ -127,8 +127,8 @@ pub use things::{
     SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingActor, ThingDetailResponse,
     ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapOp, ThingMapOpsRequest,
     ThingMapOpsResponse, ThingMapProposal, ThingMapResponse, ThingMapSource, ThingMapState,
-    ThingMoveRequest, ThingPageEntry, ThingPageVia, ThingRef, ThingRenameRequest,
-    ThingSessionEntry, ThingSummary, ThingsResponse, THING_QUIET_AFTER_SECS,
+    ThingMergeRequest, ThingMoveRequest, ThingPageEntry, ThingPageVia, ThingRef,
+    ThingRenameRequest, ThingSessionEntry, ThingSummary, ThingsResponse, THING_QUIET_AFTER_SECS,
 };
 
 use serde::{Deserialize, Serialize};

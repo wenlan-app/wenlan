@@ -125,6 +125,7 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
         ],
         left_out: vec![3],
         lines: vec![(Piece::New(0), "Cards drafted, hide button in".into())],
+        same: vec![],
     };
     assert_eq!(
         db.apply_intake_grouping(&pending, &[], &grouping)

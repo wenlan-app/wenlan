@@ -1754,6 +1754,25 @@ impl WenlanClient {
         self.post_empty(&path).await
     }
 
+    /// `POST /api/things/{id}/merge` or `/keep-apart`: the person answers a
+    /// merge proposal (UX-THING-3). Merging folds `other` into `id`.
+    pub async fn answer_thing_merge(
+        &self,
+        id: &str,
+        other: &str,
+        merge: bool,
+    ) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!(
+            "/api/things/{}/{}",
+            percent_encode_path_segment(id),
+            if merge { "merge" } else { "keep-apart" }
+        );
+        let request = wenlan_types::ThingMergeRequest {
+            other_thing_id: other.to_string(),
+        };
+        self.post_json(&path, &request).await
+    }
+
     /// `POST /api/sessions/{id}/things/move`: the person moves a conversation
     /// into another thing, or into a new one they name.
     pub async fn move_session_thing(
