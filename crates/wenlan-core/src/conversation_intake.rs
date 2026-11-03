@@ -739,15 +739,18 @@ pub fn group_prompt(pending: &[Pending], open: &[OpenThing], language: &str) -> 
     format!(
         "A person's pieces of work so far (id, title, [space], about):\n{things}\n\n\
 New conversations they had with AI tools (id, title, [space], about):\n{convs}\n\n\
-Put every new conversation into a piece of work. A conversation joins an existing piece \
-only when it serves the same goal (the same feature, the same document, the same trip); a \
-shared product, folder or space alone is not enough. Conversations that serve the same new \
-goal form one new piece together. Most pieces are small; a piece of one conversation is fine.\n\
-Give each new piece a title in {language} of at most 12 words or 12 Chinese characters. \
-{KEEP_NAMES}\n\
+Put every new conversation into a piece of work, or leave it out. A piece is a goal the \
+person is working toward (a product feature, a release, a launch, a paper, a trip), not a \
+step of it: a review, a test run, a cleanup or a check done for a goal belongs to that goal. \
+A conversation joins an existing piece when it serves the same goal; a shared product, \
+folder or space alone is not enough. Conversations that serve the same new goal form one new \
+piece together. Leave out a conversation that is only a small chore with no goal of its own \
+(confirming a merge, sending a file, a one-off cleanup) and that fits no piece.\n\
+Give each new piece a title in {language} of at most 12 words or 12 Chinese characters that \
+names the goal. {KEEP_NAMES}\n\
 Answer with JSON only: {{\"join\": [{{\"conversation\": \"C0\", \"piece\": \"T3\"}}], \
-\"new\": [{{\"title\": string, \"conversations\": [\"C1\", \"C2\"]}}]}} and use every \
-conversation exactly once."
+\"new\": [{{\"title\": string, \"conversations\": [\"C1\", \"C2\"]}}], \
+\"leave_out\": [\"C4\"]}} and use every conversation exactly once."
     )
 }
 
@@ -759,6 +762,8 @@ pub struct Grouping {
     pub joins: Vec<(usize, usize)>,
     /// A new thing's title and its pending indices.
     pub new: Vec<(String, Vec<usize>)>,
+    /// Pending indices that are no piece of work: small chores.
+    pub left_out: Vec<usize>,
 }
 
 /// A group bigger than this swallowed most of a batch: the failure a weak
@@ -766,8 +771,8 @@ pub struct Grouping {
 pub const MAX_NEW_GROUP: usize = 15;
 
 /// The grouping in a model's answer. Ids that do not exist or come twice are
-/// ignored; a conversation the model left out becomes a thing of its own,
-/// titled by its label.
+/// ignored; a conversation placed in a piece is not also left out, and one
+/// the model forgot becomes a thing of its own, titled by its label.
 pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Grouping> {
     #[derive(Deserialize)]
     struct Join {
@@ -787,6 +792,8 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
         join: Vec<Join>,
         #[serde(default)]
         new: Vec<New>,
+        #[serde(default)]
+        leave_out: Vec<String>,
     }
     let answer: Answer = serde_json::from_str(json_object(text)?).ok()?;
     let index = |id: &str, prefix: char, len: usize| {
@@ -828,6 +835,13 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
             title
         };
         grouping.new.push((title, members));
+    }
+    for id in &answer.leave_out {
+        if let Some(c) = index(id, 'C', pending.len()) {
+            if used.insert(c) {
+                grouping.left_out.push(c);
+            }
+        }
     }
     for (c, p) in pending.iter().enumerate() {
         if !used.contains(&c) {

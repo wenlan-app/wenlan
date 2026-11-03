@@ -327,6 +327,18 @@ impl MemoryDB {
             .await
             .map_err(db_err("grouping mark"))?;
         }
+        // A small chore is no piece of work: it leaves any thing the rules
+        // gave it and is not offered for grouping again.
+        for &c in &grouping.left_out {
+            let Some(p) = pending.get(c) else { continue };
+            super::things::unassign_rule_placements(&tx, now, &p.session_id).await?;
+            tx.execute(
+                "UPDATE conversation_labels SET work = 0, grouped_at = ?2 WHERE session_id = ?1",
+                libsql::params![p.session_id.as_str(), now],
+            )
+            .await
+            .map_err(db_err("grouping leave out"))?;
+        }
         tx.commit().await.map_err(db_err("grouping commit"))?;
         Ok(made)
     }

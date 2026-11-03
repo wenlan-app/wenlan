@@ -98,6 +98,7 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
         ("a", now - 7_200, "Home redesign", "Cards drafted"),
         ("b", now - 3_600, "Home cards", "Hide button added"),
         ("c", now - 1_800, "Lisbon trip", "Flights booked"),
+        ("e", now - 900, "Merge check", "Merged"),
     ] {
         db.record_conversation_label(&found(id, at), &work(title, status), None)
             .await
@@ -106,7 +107,7 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
     let pending = db.intake_pending(50).await.unwrap();
     assert_eq!(
         pending.iter().map(|p| p.title.as_str()).collect::<Vec<_>>(),
-        ["Home redesign", "Home cards", "Lisbon trip"]
+        ["Home redesign", "Home cards", "Lisbon trip", "Merge check"]
     );
     // The daemon's own rules leave read conversations alone.
     assert!(db
@@ -122,6 +123,7 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
             ("Home redesign".into(), vec![0, 1]),
             ("Lisbon trip".into(), vec![2]),
         ],
+        left_out: vec![3],
     };
     assert_eq!(
         db.apply_intake_grouping(&pending, &[], &grouping)
@@ -157,7 +159,7 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
     assert_eq!(open[1].about, "about Home cards");
     let grouping = Grouping {
         joins: vec![(0, 1)],
-        new: vec![],
+        ..Default::default()
     };
     assert_eq!(
         db.apply_intake_grouping(&pending, &open, &grouping)
@@ -214,6 +216,7 @@ async fn ux_thing_1_a_conversation_the_rules_placed_moves_and_the_persons_placem
     let grouping = Grouping {
         joins: vec![],
         new: vec![("Release".into(), vec![0])],
+        ..Default::default()
     };
     db.apply_intake_grouping(&pending, &[], &grouping)
         .await

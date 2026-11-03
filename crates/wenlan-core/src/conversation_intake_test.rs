@@ -278,7 +278,7 @@ fn ux_thing_1_a_label_keeps_only_the_persons_spaces_and_needs_a_title_to_be_work
 
 #[test]
 fn ux_thing_1_grouping_joins_existing_things_and_gives_every_conversation_a_thing() {
-    let pending: Vec<Pending> = (0..4)
+    let pending: Vec<Pending> = (0..6)
         .map(|i| Pending {
             session_id: format!("s{i}"),
             title: format!("t{i}"),
@@ -288,13 +288,20 @@ fn ux_thing_1_grouping_joins_existing_things_and_gives_every_conversation_a_thin
         .collect();
     let answer = r#"{"join": [{"conversation": "C0", "piece": "T1"}, {"conversation": "C0", "piece": "T0"},
         {"conversation": "C9", "piece": "T0"}],
-        "new": [{"title": "Home", "conversations": ["C1", "C2", "C0"]}]}"#;
+        "new": [{"title": "Home", "conversations": ["C1", "C2", "C0"]}],
+        "leave_out": ["C4", "C1", "C4", "C8"]}"#;
     let grouping = parse_grouping(answer, &pending, 2).unwrap();
     assert_eq!(grouping.joins, vec![(0, 1)]);
-    // C3 was left out by the model and stands alone under its own title.
+    // A chore is left out once; one already in a piece stays there.
+    assert_eq!(grouping.left_out, vec![4]);
+    // C3 and C5 the model forgot stand alone under their own titles.
     assert_eq!(
         grouping.new,
-        vec![("Home".into(), vec![1, 2]), ("t3".into(), vec![3])]
+        vec![
+            ("Home".into(), vec![1, 2]),
+            ("t3".into(), vec![3]),
+            ("t5".into(), vec![5])
+        ]
     );
 }
 

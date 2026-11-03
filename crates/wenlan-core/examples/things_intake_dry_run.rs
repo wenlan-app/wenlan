@@ -98,6 +98,7 @@ async fn main() {
     // Oldest first, in the daemon's batches, each seeing the things so far.
     work.sort_by_key(|w| w.2);
     let mut things: Vec<Thing> = Vec::new();
+    let mut left_out: Vec<String> = Vec::new();
     for batch in work.chunks(60) {
         let pending: Vec<Pending> = batch.iter().map(|w| w.0.clone()).collect();
         let open: Vec<OpenThing> = things
@@ -155,6 +156,7 @@ async fn main() {
                 add(&mut things, i, c);
             }
         }
+        left_out.extend(grouping.left_out.iter().map(|&c| batch[c].0.title.clone()));
         eprintln!("grouped {} conversations", pending.len());
     }
 
@@ -169,6 +171,7 @@ async fn main() {
             "last": chrono::DateTime::from_timestamp(t.last, 0).map(|d| d.to_rfc3339()),
             "tools": t.tools, "conversations": t.parts.len(), "parts": t.parts,
         })).collect::<Vec<_>>(),
+        "left_out": left_out,
         "skipped": skipped,
     });
     std::fs::create_dir_all(&things_out).unwrap();
