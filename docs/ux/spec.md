@@ -64,10 +64,12 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-HOME-4** `planned` Check results and source updates are not on home.
   原文：檢查結果和來源更新不放首頁。
 - **UX-HOME-5** `shipped` A thing with no new conversation and no Brief change
-  for two weeks leaves "what you're working on". It is not deleted: search
-  still finds it, and its next conversation brings it back. There is no cap:
-  home lists six, and "See all" opens the rest in place, without a count.
-  原文：選擇卡「显示，安静 2 周后离开」（2026-11-02 23:40）；「我很担心我设上限会出现什么问题」（2026-11-02 21:53）。
+  for a week leaves "what you're working on". Wenlan does not guess whether a
+  thing is done; each card has "Don't show", which takes it off home at once.
+  Either way it is not deleted: search still finds it, and its next
+  conversation brings it back. There is no cap: home lists six, and "See all"
+  opens the rest in place, without a count.
+  原文：選擇卡「显示，安静 2 周后离开」（2026-11-02 23:40）；「我很担心我设上限会出现什么问题」（2026-11-02 21:53）；選擇卡「安静 1 周 +「不用显示」」（2026-11-03 02:46）；「我有点担心会 over engineering…第一性原理就是UI UX」（2026-11-03 02:39）。
 
 ## Sorting conversations into things
 

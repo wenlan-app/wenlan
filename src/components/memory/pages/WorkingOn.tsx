@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { hasToolMark, ToolMark } from "../assets/toolMarks";
-import { agentDisplayName, getThing, listThings, listWorkingOn, type ThingDetail, type ThingSummary, type WorkingOnItem } from "../../../lib/tauri";
+import { agentDisplayName, getThing, hideThing, listThings, listWorkingOn, type ThingDetail, type ThingSummary, type WorkingOnItem } from "../../../lib/tauri";
 
 export const WORKING_ON_QUERY_KEY = ["working-on"] as const;
 export const THINGS_QUERY_KEY = ["things"] as const;
@@ -25,13 +25,15 @@ export function addedWhen(language: string, addedAtSeconds: number, now = Date.n
 /**
  * The one line on where a thing stands. The newest handoff says it best; until
  * a conversation has handed off, the page it wrote, or else the tool it was
- * talked through in, says what there is to pick up.
+ * talked through in, says what there is to pick up. A tool whose mark already
+ * shows on the card is not named again.
  */
 export function whereItStands(t: TFunction, thing: ThingSummary, detail?: ThingDetail): string | null {
   if (thing.status_line?.trim()) return thing.status_line;
   const wrote = detail?.pages.filter((page) => page.via === "wrote").sort((a, b) => b.at - a.at)[0];
   if (wrote) return t("pages.overview.workingOnWrote", { title: wrote.title });
   const session = detail?.sessions.slice().sort((a, b) => b.last_write_at - a.last_write_at)[0];
+  if (hasToolMark(session?.tool)) return null;
   const tool = agentDisplayName(session?.tool);
   return tool ? t("pages.overview.workingOnTalkedIn", { tool }) : null;
 }
@@ -63,9 +65,21 @@ export function WorkingOn({
     ...RETRY_SOON,
   });
   const [showAll, setShowAll] = useState(false);
-  // A thing with nothing new for two weeks leaves this list; search still
-  // finds it, and its next conversation brings it back (UX-HOME-5). There is
-  // no cap: when more are current, "See all" opens the rest in place.
+  const queryClient = useQueryClient();
+  // "Don't show" takes a finished thing off home at once rather than waiting
+  // out its quiet week; nothing is deleted and its next conversation brings
+  // it back (UX-HOME-5).
+  const hide = useMutation({
+    mutationFn: (id: string) => hideThing(id),
+    onMutate: (id: string) => {
+      queryClient.setQueryData<ThingSummary[]>(THINGS_QUERY_KEY, (list) =>
+        list?.map((thing) => (thing.id === id ? { ...thing, quiet: true } : thing)));
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: THINGS_QUERY_KEY, exact: true }),
+  });
+  // A thing with nothing new for a week leaves this list; search still finds
+  // it, and its next conversation brings it back (UX-HOME-5). There is no
+  // cap: when more are current, "See all" opens the rest in place.
   const current: ThingSummary[] = onOpenThing ? (things.data ?? []).filter((thing) => !thing.quiet) : [];
   const more = current.length > WORKING_ON_LISTED;
   const thingItems = showAll ? current : current.slice(0, WORKING_ON_LISTED);
@@ -125,6 +139,15 @@ export function WorkingOn({
                   </span>
                   <span className="wiki-working-on-when">{addedWhen(i18n.language, thing.last_activity_at)}</span>
                 </span>
+              </button>
+              <button
+                type="button"
+                className="wiki-working-on-hide"
+                aria-label={t("pages.overview.workingOnHide", { title: thing.title ?? t("thing.untitled") })}
+                title={t("pages.overview.workingOnHideHint")}
+                onClick={() => hide.mutate(thing.id)}
+              >
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
               </button>
             </li>
           );

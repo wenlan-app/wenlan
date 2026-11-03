@@ -5,8 +5,9 @@ import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 import { resources } from "../src/i18n/resources";
 import type { ThingSummary } from "../src/lib/tauri";
 
-// UX-HOME-5: a thing quiet for two weeks leaves "what you're working on";
-// there is no cap, and "See all" opens the rest in place without a count.
+// UX-HOME-5: a thing quiet for a week leaves "what you're working on";
+// there is no cap, "See all" opens the rest in place without a count, and
+// "Don't show" takes a finished thing off home at once.
 const day = 86_400;
 
 function things(now: number): ThingSummary[] {
@@ -18,8 +19,8 @@ function things(now: number): ThingSummary[] {
     ["Local model list", "Grouped by source, one recommended by memory.", 2],
     ["Product Hunt follow-up", "Thank-you notes drafted, waiting on wording.", 4],
     ["Editor headings", "One line above, half a line below.", 6],
-    ["Search groups", "Topics last; open in the original tool is not done.", 9],
-    ["Offline mode", "Shipped in 0.20.7; tell the reporter.", 12],
+    ["Search groups", "Topics last; open in the original tool is not done.", 5],
+    ["Offline mode", "Shipped in 0.20.7; tell the reporter.", 6.5],
   ] as const;
   const quiet = [
     ["Trip planning (old ChatGPT chat)", 40],
@@ -43,7 +44,7 @@ for (const cfg of [
   { locale: "en", theme: "dark", width: 1440 },
   { locale: "zh-Hant", theme: "light", width: 375 },
 ] as const) {
-  test(`UX-HOME-5 home leaves quiet things out and opens the rest in place ${cfg.locale} ${cfg.width}`, async ({ page }, info) => {
+  test(`UX-HOME-5 home leaves quiet things out, opens the rest in place and hides on request ${cfg.locale} ${cfg.width}`, async ({ page }, info) => {
     const t = resources[cfg.locale].translation;
     const errors = collectBrowserErrors(page);
     await installTauriMock(page, { fixture: createSpacesNavigationFixture(), locale: cfg.locale, rawActions: [], localStorage: {
@@ -51,19 +52,27 @@ for (const cfg of [
       "onboarding:gettingStartedDismissed": "1",
     } });
     await page.setViewportSize({ width: cfg.width, height: 900 });
-    const list = things(Date.now() / 1000);
+    let list = things(Date.now() / 1000);
+    const hidden: string[] = [];
     await page.exposeBinding("__thingsInvoke", (_source, command: string, args: { id?: string } | undefined) => {
       if (command === "list_things") return list;
+      if (command === "hide_thing") {
+        hidden.push(args?.id ?? "");
+        list = list.map((thing) => (thing.id === args?.id ? { ...thing, quiet: true } : thing));
+        return list.find((thing) => thing.id === args?.id);
+      }
       if (command === "get_thing") {
         const found = list.find((thing) => thing.id === args?.id);
         if (!found) throw new Error("unknown thing");
-        return { ...found, sessions: [], pages: [], memories: [] };
+        // Each card shows the tool it was talked through in by its mark.
+        const tool = Number(found.id.slice(5)) % 2 ? "codex" : "claude-code";
+        return { ...found, sessions: [{ id: `s-${found.id}`, tool, title: null, last_write_at: found.last_activity_at }], pages: [], memories: [] };
       }
       throw new Error(`Unexpected command: ${command}`);
     });
     await page.addInitScript(() => {
       const bridge = (window as any).__TAURI_INTERNALS__, original = bridge.invoke;
-      bridge.invoke = (command: string, args: unknown) => ["list_things", "get_thing"].includes(command)
+      bridge.invoke = (command: string, args: unknown) => ["list_things", "get_thing", "hide_thing"].includes(command)
         ? (window as any).__thingsInvoke(command, args) : original(command, args);
     });
     await page.goto("/");
@@ -71,6 +80,7 @@ for (const cfg of [
     const section = page.getByTestId("wiki-working-on");
     await expect(section.locator(".wiki-working-on-card")).toHaveCount(6);
     await expect(section).toContainText("New tagline");
+    await expect(section.locator(".wiki-working-on-card").first().locator(".tool-mark")).toBeVisible();
     for (const old of ["Trip planning", "Pricing page rewrite", "Summer reading list"]) {
       await expect(section).not.toContainText(old);
     }
@@ -91,6 +101,18 @@ for (const cfg of [
 
     await section.getByRole("button", { name: t.pages.overview.workingOnFewer, exact: true }).click();
     await expect(section.locator(".wiki-working-on-card")).toHaveCount(6);
+
+    // "Don't show" sits on the card, opens nothing, and takes it off home.
+    const first = section.locator("li").first();
+    await first.hover();
+    const hide = first.locator(".wiki-working-on-hide");
+    await expect(hide).toBeVisible();
+    await expect(hide).toHaveAttribute("title", t.pages.overview.workingOnHideHint);
+    await page.screenshot({ path: info.outputPath("working-on-hide.png") });
+    await hide.click();
+    await expect(section).not.toContainText("New tagline");
+    await expect(section.locator(".wiki-working-on-card")).toHaveCount(6);
+    expect(hidden).toEqual(["thg_c0"]);
     expect(errors.pageErrors).toEqual([]);
   });
 }

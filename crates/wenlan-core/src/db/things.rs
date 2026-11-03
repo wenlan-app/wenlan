@@ -460,6 +460,40 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Migration 153: `things.hidden_at`, when the person last took the thing
+    /// off home. Adding the column is skipped when it is already there, so a
+    /// crash before the version bump replays cleanly.
+    pub(super) async fn migrate_153_thing_hidden_at(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(153, prior_version).await?;
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM pragma_table_info('things') WHERE name = 'hidden_at'",
+                (),
+            )
+            .await
+            .map_err(db_err("m153 read columns"))?;
+        let present = rows
+            .next()
+            .await
+            .map_err(db_err("m153 column row"))?
+            .is_some();
+        drop(rows);
+        if !present {
+            conn.execute("ALTER TABLE things ADD COLUMN hidden_at INTEGER", ())
+                .await
+                .map_err(db_err("m153 add hidden_at"))?;
+        }
+        conn.execute("PRAGMA user_version = 153", ())
+            .await
+            .map_err(db_err("m153 bump"))?;
+        log::info!("[migration] Migration 153 applied: things.hidden_at");
+        Ok(())
+    }
+
     /// Sort every conversation that is in no thing yet, and name the AI's
     /// unnamed things. Nobody is asked (UX-THING-1). First every active Brief
     /// item gets a thing; then each conversation, oldest write first, goes to
@@ -662,8 +696,8 @@ impl MemoryDB {
     /// Every thing a scoped caller may see, newest activity first, or just
     /// the one `only` names. A thing is listed while it has a conversation or
     /// its Brief item is active, and never once merged. One with nothing new
-    /// for two weeks is still listed, marked `quiet`, so search finds it while
-    /// home leaves it out. A Space-scoped caller
+    /// for a week, or hidden from home since its last activity, is still
+    /// listed, marked `quiet`, so search finds it while home leaves it out. A Space-scoped caller
     /// sees a thing when one of its conversations ran in that Space or its
     /// Brief item is there, and sees no other Space named.
     pub async fn list_things(
@@ -689,7 +723,7 @@ impl MemoryDB {
                                JOIN agent_sessions a ON a.id = ts.session_id
                               WHERE ts.thing_id = t.id),
                             (SELECT COUNT(*) FROM thing_sessions ts WHERE ts.thing_id = t.id),
-                            bi.updated_at
+                            bi.updated_at, t.hidden_at
                        FROM things t
                        LEFT JOIN brief_items bi ON bi.id = t.brief_item_id
                        LEFT JOIN spaces sp ON sp.id = bi.space_id
@@ -719,6 +753,11 @@ impl MemoryDB {
             let chat_at = row.get::<Option<i64>>(7).unwrap_or(None);
             let item_at = row.get::<Option<i64>>(9).unwrap_or(None);
             let last_activity_at = chat_at.max(item_at).unwrap_or(created_at);
+            // Hidden from home until something happens in it again.
+            let hidden = row
+                .get::<Option<i64>>(10)
+                .unwrap_or(None)
+                .is_some_and(|at| at >= last_activity_at);
             things.push(Row {
                 summary: ThingSummary {
                     id: row.get::<String>(0).unwrap_or_default(),
@@ -727,7 +766,7 @@ impl MemoryDB {
                     status_line: None,
                     spaces: item_space.into_iter().collect(),
                     last_activity_at,
-                    quiet: now - last_activity_at > THING_QUIET_AFTER_SECS,
+                    quiet: hidden || now - last_activity_at > THING_QUIET_AFTER_SECS,
                 },
                 item_text: row.get::<Option<String>>(4).unwrap_or(None),
                 unfiled: false,
@@ -988,6 +1027,25 @@ impl MemoryDB {
             });
         }
         Ok(out)
+    }
+
+    /// The person takes a thing off "what you're working on". It is not
+    /// deleted and stays findable; the next conversation or Brief change in
+    /// it brings it back (UX-HOME-5).
+    pub async fn hide_thing(&self, id: &str) -> Result<(), WenlanError> {
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().await;
+        let changed = conn
+            .execute(
+                "UPDATE things SET hidden_at = ?1 WHERE id = ?2 AND merged_into IS NULL",
+                libsql::params![now, id],
+            )
+            .await
+            .map_err(db_err("thing hide"))?;
+        if changed == 0 {
+            return Err(WenlanError::NotFound("thing not found".into()));
+        }
+        Ok(())
     }
 
     /// The person renames a thing. From then on the AI leaves its name alone.

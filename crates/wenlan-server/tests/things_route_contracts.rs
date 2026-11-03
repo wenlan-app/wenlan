@@ -343,6 +343,32 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
     assert_eq!(renamed.title.as_deref(), Some("The new tagline"));
     assert_eq!(renamed.title_by, ThingActor::Person);
 
+    // "Don't show" is the person's too; the thing stays listed, quiet, for
+    // search (UX-HOME-5).
+    let hide = format!("/api/things/{}/hide", thing.id);
+    let (status, _) = call(&router, Method::POST, &hide, None, Caller::Agent("x")).await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "only the person hides"
+    );
+    let (status, body) = call(&router, Method::POST, &hide, None, Caller::Person).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(typed::<ThingSummary>(body).quiet);
+    assert!(things(&router, Caller::Person)
+        .await
+        .iter()
+        .any(|t| t.id == thing.id && t.quiet));
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        "/api/things/thg_missing/hide",
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
     // Moving it in one step: exactly one target, the person only.
     let move_uri = format!("/api/sessions/{session_id}/things/move");
     let (status, _) = call(

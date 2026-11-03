@@ -33,6 +33,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/things/{id}",
             get(handle_get_thing).patch(handle_rename_thing),
         )
+        .route("/api/things/{id}/hide", post(handle_hide_thing))
         .route("/api/things/{id}/map", get(handle_get_thing_map))
         .route("/api/things/{id}/map/ops", post(handle_thing_map_ops))
         .route(
@@ -50,7 +51,7 @@ async fn open_db(state: &SharedState) -> Result<Arc<MemoryDB>, ServerError> {
 fn require_person(headers: &HeaderMap) -> Result<(), ServerError> {
     if extract_agent_name(headers, None) != "unknown" {
         return Err(ServerError::ValidationError(
-            "thing_needs_the_person: only the person renames things and moves conversations".into(),
+            "thing_needs_the_person: only the person renames or hides things and moves conversations".into(),
         ));
     }
     Ok(())
@@ -306,6 +307,23 @@ pub async fn handle_rename_thing(
     let db = open_db(&state).await?;
     let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
     db.rename_thing(&id, &request.title).await?;
+    Ok(Json(summary(&db, &scope, &id).await?))
+}
+
+/// POST /api/things/{id}/hide
+///
+/// The person takes a thing off "what you're working on"; it comes back with
+/// its next conversation (UX-HOME-5).
+pub async fn handle_hide_thing(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<ThingSummary>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
+    db.hide_thing(&id).await?;
     Ok(Json(summary(&db, &scope, &id).await?))
 }
 
