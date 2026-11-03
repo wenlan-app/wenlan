@@ -31,16 +31,17 @@ pub struct ThingSummary {
     /// Unix seconds: its newest conversation write or Brief item change, else
     /// when it was made.
     pub last_activity_at: i64,
-    /// Nothing happened in it for [`THING_QUIET_AFTER_SECS`]: it leaves "what
-    /// you're working on" but is not deleted, stays findable, and comes back
-    /// on its own with the next conversation (UX-HOME-5).
+    /// Nothing happened in it for [`THING_QUIET_AFTER_SECS`], or the person
+    /// hid it from home since its last activity: it leaves "what you're
+    /// working on" but is not deleted, stays findable, and comes back on its
+    /// own with the next conversation (UX-HOME-5).
     #[serde(default)]
     pub quiet: bool,
 }
 
 /// How long a thing goes without a conversation or Brief change before it
-/// leaves "what you're working on": two weeks.
-pub const THING_QUIET_AFTER_SECS: i64 = 14 * 24 * 60 * 60;
+/// leaves "what you're working on": one week.
+pub const THING_QUIET_AFTER_SECS: i64 = 7 * 24 * 60 * 60;
 
 /// `GET /api/things`: newest activity first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

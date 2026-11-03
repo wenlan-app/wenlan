@@ -87,7 +87,14 @@
 /* One row, like the pages under it: more things scroll sideways instead of
    stacking rows that push everything else down. */
 .wiki-working-on ul { list-style:none;display:grid;grid-auto-flow:column;grid-auto-columns:max(190px,calc((100% - 3 * 14px) / 3.25));gap:14px;overflow-x:auto;padding:2px 2px 10px;margin:0 -2px;scroll-snap-type:x proximity; }
-.wiki-working-on li { display:flex;min-width:0;scroll-snap-align:start; }
+.wiki-working-on li { position:relative;display:flex;min-width:0;scroll-snap-align:start; }
+/* "Don't show": quiet until the card is hovered or focused; always there on touch screens. */
+.wiki-working-on-hide { position:absolute;top:8px;right:8px;display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--mem-text-tertiary);cursor:pointer;opacity:0;transition:opacity .12s ease; }
+.wiki-working-on li:hover .wiki-working-on-hide, .wiki-working-on-hide:focus-visible { opacity:1; }
+.wiki-working-on-hide:hover { background:color-mix(in srgb,var(--mem-text) 8%,transparent);color:var(--mem-text); }
+.wiki-working-on-hide:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:1px; }
+@media (hover:none) { .wiki-working-on-hide { opacity:.7; } }
+.wiki-working-on li:has(.wiki-working-on-hide) .wiki-working-on-title { padding-right:22px; }
 .wiki-working-on-card, .wiki-new-pages-row {
   border:1px solid color-mix(in srgb,var(--mem-text) 8%,transparent);border-radius:16px;
   background:var(--mem-surface);color:var(--mem-text);text-align:left;cursor:pointer;
