@@ -907,7 +907,7 @@ mod tests {
         let mut next = updated.clone();
         next.content = "written by Wenlan".into();
         next.version += 1;
-        writer.begin_projection_write().write_page(&next).unwrap();
+        project_page(&db, &writer, &next);
         assert_eq!(
             writer.page_filename(&page.id).unwrap(),
             "Notes/renamed by me.md"
@@ -938,11 +938,16 @@ mod tests {
         .unwrap();
         let writer = tracked_writer(&db, dir.path());
         let stored = db.get_page(&page.id).await.unwrap().unwrap();
-        writer
-            .begin_projection_write()
-            .write_page_in_folder(&stored, Some("Research"))
-            .unwrap();
-        let source = writer.page_filename(&page.id).unwrap();
+        project_page(&db, &writer, &stored);
+        let first = writer.page_filename(&page.id).unwrap();
+        let source = crate::export::knowledge::move_projected_page(
+            dir.path(),
+            &page.id,
+            &first,
+            "Research",
+            "watcher-folder",
+        )
+        .unwrap();
         assert!(source.starts_with("Research/"), "{source}");
         std::fs::rename(dir.path().join("Research"), dir.path().join("Reading")).unwrap();
 
