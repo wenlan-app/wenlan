@@ -1230,6 +1230,62 @@ export function shelveComponentsWithMetrics(graph: Graph): IslandPlacementReport
  * components are tested against the restored core and every surviving island,
  * which keeps a partial restore from leaving a fresh island in a protected
  * core void. */
+/** Graph-space distance from a kept point to a new point placed beside it. */
+const NEW_POINT_GAP = 14;
+
+/** Deterministic angle for a point, so a new point lands in the same spot
+ *  every time the same map is opened (UX-GRAPH-1). */
+function stableAngle(id: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < id.length; index += 1) {
+    hash ^= id.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) / 4294967296) * Math.PI * 2;
+}
+
+/**
+ * A new page or entity that joined a group whose other points were restored
+ * would otherwise keep its coordinate from the fresh layout, which belongs to
+ * a different arrangement. Put it beside the kept points it links to instead,
+ * then let chains of new points follow, so the old points never move and the
+ * new one appears next to what it is about.
+ */
+export function placeNewBesideKept(graph: Graph, preservedIds: ReadonlySet<string>): void {
+  const placed = new Set(preservedIds);
+  const waiting = graph.nodes().filter((id) =>
+    !placed.has(id) && graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE);
+  for (let pass = 0; pass < 8 && waiting.length > 0; pass += 1) {
+    const next: string[] = [];
+    const settled: [string, number, number][] = [];
+    for (const id of waiting) {
+      let sumX = 0;
+      let sumY = 0;
+      let count = 0;
+      graph.forEachNeighbor(id, (neighbor, attrs) => {
+        if (!placed.has(neighbor) || attrs.entityType === MEMORY_NODE_TYPE) return;
+        sumX += attrs.x as number;
+        sumY += attrs.y as number;
+        count += 1;
+      });
+      if (count === 0) {
+        next.push(id);
+        continue;
+      }
+      const angle = stableAngle(id);
+      const size = (graph.getNodeAttribute(id, "size") as number | undefined) ?? 1;
+      settled.push([id, sumX / count + Math.cos(angle) * (NEW_POINT_GAP + size), sumY / count + Math.sin(angle) * (NEW_POINT_GAP + size)]);
+    }
+    if (settled.length === 0) break;
+    for (const [id, x, y] of settled) {
+      graph.setNodeAttribute(id, "x", x);
+      graph.setNodeAttribute(id, "y", y);
+      placed.add(id);
+    }
+    waiting.splice(0, waiting.length, ...next);
+  }
+}
+
 function placeUnrestoredComponents(
   graph: Graph,
   placement: readonly string[][],
@@ -1926,6 +1982,7 @@ export function createAtlasSimulation(
     // components against the restored core and surviving islands.
     const preservedIds = new Set(positions.keys());
     placeUnrestoredComponents(graph, placement, preservedIds);
+    placeNewBesideKept(graph, preservedIds);
     for (const node of nodes) {
       if (preservedIds.has(node.id)) continue;
       const x = graph.getNodeAttribute(node.id, "x") as number;

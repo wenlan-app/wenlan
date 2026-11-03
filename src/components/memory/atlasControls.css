@@ -25,6 +25,18 @@
 .atlas-camera-controls .atlas-tooltip-anchor + .atlas-tooltip-anchor .atlas-icon-button {
   border-left: 0;
 }
+/* UX-GRAPH-1: rearranging asks first and can be taken back. */
+.atlas-rearrange-note {
+  position: absolute; right: 14px; bottom: 58px; z-index: 12;
+  display: inline-flex; align-items: baseline; gap: 12px; flex-wrap: wrap; max-width: calc(100% - 28px);
+  padding: 9px 12px; border: 1px solid var(--mem-border); border-radius: 8px;
+  background: var(--mem-surface); box-shadow: 0 4px 16px #0001;
+  color: var(--mem-text-secondary); font: 400 12.5px/1.4 var(--mem-font-body);
+}
+.atlas-rearrange-note button { padding: 0; border: 0; background: none; color: var(--mem-text-secondary); font: 500 12.5px/1.4 var(--mem-font-body); cursor: pointer; white-space: nowrap; }
+.atlas-rearrange-note button:hover { color: var(--mem-text); }
+.atlas-rearrange-note .atlas-rearrange-go { color: var(--mem-accent-indigo); }
+.atlas-rearrange-note button:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
 .atlas-cartography-alert { display: inline-flex; align-items: center; padding: 0 2px; color: var(--mem-danger); font: 400 10px/1.4 var(--mem-font-mono); }
 .atlas-icon-button { flex: none; border: none; min-height: 24px; padding: 3px; }
 @media (max-width: 640px) {

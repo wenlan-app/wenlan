@@ -15,6 +15,7 @@ import {
   Minus,
   Funnel,
   Plus,
+  Shuffle,
   SlidersHorizontal,
 } from "@phosphor-icons/react";
 import {
@@ -71,6 +72,7 @@ import {
 } from "../../lib/graph/atlas";
 import type { HoverState, AtlasSimulation, LodState, LabelPlacement } from "../../lib/graph/atlas";
 import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
+import { readStoredPositions, startRearrange, storePositions, undoRearrange } from "../../lib/graph/positions";
 import type { CartographyScene } from "../../lib/graph/cartography";
 import {
   communitiesFor,
@@ -207,6 +209,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const rendererDisposeRef = useRef<(() => void) | null>(null);
+  // UX-GRAPH-1: points keep their places; moving all of them is the
+  // person's choice, asked first, and can be taken back once.
+  const [layoutVersion, setLayoutVersion] = useState(0);
+  const [rearrange, setRearrange] = useState<"idle" | "asking" | "done">("idle");
+  const rearrangeRef = useRef<"fresh" | "undo" | null>(null);
   const viewpointRef = useRef<{ scope: string | null; view: AtlasViewpoint; body: Map<string, { x: number; y: number }> } | null>(null);
   const graphRef = useRef<Graph | null>(null);
   const simRef = useRef<AtlasSimulation | null>(null);
@@ -710,7 +717,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // Dispose the current imperative renderer before React mutates or detaches
     // its host. Mount/rebuild stays passive so large layouts do not block paint.
     return () => rendererDisposeRef.current?.();
-  }, [visibleModel]);
+  }, [visibleModel, layoutVersion]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -736,17 +743,32 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     });
     const previous = viewpointRef.current;
     const bodyIds = graph.nodes().filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE);
-    if (previous?.scope === spaceFilter && bodyIds.length > 0) {
-      // Layer/small-group changes may add or remove nodes. Restore every
-      // survivor rather than requiring an identical set, so the learned map
-      // stays put while the changed layer settles around it.
+    // Within a visit the last layout is in memory; on a new visit it comes
+    // from the kept layout, so the same point is where it was (UX-GRAPH-1).
+    const layoutChange = rearrangeRef.current;
+    rearrangeRef.current = null;
+    if (layoutChange === "fresh") startRearrange(spaceFilter);
+    else if (layoutChange === "undo") undoRearrange(spaceFilter);
+    const kept = previous?.scope === spaceFilter && !layoutChange ? previous.body : readStoredPositions(spaceFilter);
+    if (bodyIds.length > 0 && kept.size > 0) {
+      // Layer/small-group changes and new pages may add or remove nodes.
+      // Restore every survivor rather than requiring an identical set, so the
+      // learned map stays put while what is new settles around it.
       const survivorPositions = new Map(
         bodyIds
-          .map((id) => [id, previous.body.get(id)] as const)
+          .map((id) => [id, kept.get(id)] as const)
           .filter((entry): entry is readonly [string, { x: number; y: number }] => entry[1] !== undefined),
       );
       if (survivorPositions.size > 0) sim.restorePositions(survivorPositions);
     }
+    const bodyPositions = () => new Map(graph.nodes()
+      .filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE)
+      .map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }]));
+    // Keep this layout now, so it holds even if the app quits without
+    // unmounting the map, and again when the window goes away.
+    storePositions(spaceFilter, bodyPositions());
+    const keepOnHide = () => storePositions(spaceFilter, bodyPositions());
+    window.addEventListener("pagehide", keepOnHide);
     applyAtlasHierarchy(graph);
     // Large maps intentionally label only hierarchy landmarks at overview
     // zoom. Keep one stable name for a represented component that has no
@@ -1285,13 +1307,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       containerSizeObserver?.disconnect();
       // Sigma only detaches its own camera listener; release our listener too.
       camera.off("updated", onCameraUpdated);
-      viewpointRef.current = {
-        scope: spaceFilter,
-        view: captureAtlasViewpoint(renderer, graph),
-        body: new Map(graph.nodes()
-          .filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE)
-          .map((id) => [id, { x: graph.getNodeAttribute(id, "x"), y: graph.getNodeAttribute(id, "y") }])),
-      };
+      window.removeEventListener("pagehide", keepOnHide);
+      if (rearrangeRef.current) {
+        // The next build lays out fresh (or brings the old layout back);
+        // keeping this one would undo the person's choice.
+        viewpointRef.current = null;
+      } else {
+        const body = bodyPositions();
+        viewpointRef.current = {
+          scope: spaceFilter,
+          view: captureAtlasViewpoint(renderer, graph),
+          body,
+        };
+        storePositions(spaceFilter, body);
+      }
       sim.stop();
       simRef.current = null;
       sigmaRef.current = null;
@@ -1307,7 +1336,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     rendererDisposeRef.current = dispose;
     return dispose;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleModel]);
+  }, [visibleModel, layoutVersion]);
 
   // Theme flip: recolor the live graph and repaint — no remount. Also keeps
   // paletteRef current so nodeReducer/edgeReducer (read at paint time) see
@@ -1647,7 +1676,34 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
             <CornersOut size={16} weight="regular" aria-hidden="true" />
           </button>
         </AtlasTooltip>
+        <AtlasTooltip content={t("atlas.rearrange")}>
+          <button type="button" className="atlas-icon-button" aria-label={t("atlas.rearrange")} aria-expanded={rearrange === "asking"}
+            onClick={() => setRearrange((state) => (state === "asking" ? "idle" : "asking"))}>
+            <Shuffle size={16} weight="regular" aria-hidden="true" />
+          </button>
+        </AtlasTooltip>
       </div>
+      {rearrange !== "idle" && (
+        <div className="atlas-rearrange-note" role={rearrange === "asking" ? "dialog" : "status"} aria-label={t("atlas.rearrange")}>
+          <span>{t(rearrange === "asking" ? "atlas.rearrangeAsk" : "atlas.rearranged")}</span>
+          {rearrange === "asking" ? (
+            <>
+              <button type="button" className="atlas-rearrange-go" onClick={() => {
+                rearrangeRef.current = "fresh";
+                setRearrange("done");
+                setLayoutVersion((version) => version + 1);
+              }}>{t("atlas.rearrangeConfirm")}</button>
+              <button type="button" onClick={() => setRearrange("idle")}>{t("atlas.rearrangeCancel")}</button>
+            </>
+          ) : (
+            <button type="button" onClick={() => {
+              rearrangeRef.current = "undo";
+              setRearrange("idle");
+              setLayoutVersion((version) => version + 1);
+            }}>{t("atlas.rearrangeUndo")}</button>
+          )}
+        </div>
+      )}
 
     </div>
   );

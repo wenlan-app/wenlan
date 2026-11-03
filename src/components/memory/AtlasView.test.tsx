@@ -423,6 +423,9 @@ describe("AtlasView", () => {
     pageSource = { pages: [], page_links: [] };
     window.localStorage.removeItem("atlas.layers");
     window.localStorage.removeItem("atlas.smallGroups");
+    for (const key of Object.keys(window.localStorage)) {
+      if (key.startsWith("atlas.positions.")) window.localStorage.removeItem(key);
+    }
     mockGetKnowledgeGraph.mockImplementation(async () => {
       const entities = await entitiesSource();
       const details = await Promise.all(entities.map((entity) => detailSource(entity.id)));
@@ -2653,4 +2656,72 @@ describe("AtlasView", () => {
     expect(screen.queryByRole("dialog", { name: "Bob" })).not.toBeInTheDocument();
   });
 
+  it("UX-GRAPH-1: the same point is in the same place when the map opens again; rearranging asks first and can be undone", async () => {
+    const relation = (id: string, target: string, name: string) => ({
+      id,
+      relation_type: "knows",
+      direction: "outgoing" as const,
+      entity_id: target,
+      entity_name: name,
+      entity_type: "person",
+      source_agent: null,
+      created_at: Math.floor(Date.now() / 1000),
+    });
+    const star = (ids: string[]) => {
+      const entities = ids.map((id) => makeEntity({ id, name: id.toUpperCase() }));
+      mockListEntities.mockResolvedValue(entities);
+      mockGetEntityDetail.mockImplementation(async (id: string) => ({
+        entity: entities.find((e) => e.id === id)!,
+        observations: [],
+        relations: id === "e1" ? ids.slice(1).map((other, i) => relation(`rel-${i}`, other, other.toUpperCase())) : [],
+      }));
+    };
+    const at = (id: string) => [latestGraph().getNodeAttribute(id, "x") as number, latestGraph().getNodeAttribute(id, "y") as number];
+
+    star(["e1", "e2", "e3", "e4", "e5"]);
+    const first = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const e3 = at("e3");
+    first.unmount();
+    cleanup();
+
+    // The kept layout is what the next visit uses: move one point by hand to
+    // prove the map reads it rather than laying out again.
+    const key = "atlas.positions.*";
+    const kept = JSON.parse(window.localStorage.getItem(key)!) as Record<string, [number, number]>;
+    expect(Object.keys(kept).sort()).toEqual(["e1", "e2", "e3", "e4", "e5"]);
+    kept.e2 = [123, 45];
+    window.localStorage.setItem(key, JSON.stringify(kept));
+
+    // A new point joins: the old ones stay, the new one lands beside its link.
+    star(["e1", "e2", "e3", "e4", "e5", "e6"]);
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    expect(at("e2")).toEqual([123, 45]);
+    expect(at("e3")[0]).toBeCloseTo(e3[0], 1);
+    expect(at("e3")[1]).toBeCloseTo(e3[1], 1);
+    const [hubX, hubY] = at("e1");
+    const [newX, newY] = at("e6");
+    expect(Math.hypot(newX - hubX, newY - hubY)).toBeLessThan(40);
+
+    // Rearranging asks first; cancelling changes nothing.
+    fireEvent.click(screen.getByRole("button", { name: "Rearrange" }));
+    const ask = screen.getByRole("dialog", { name: "Rearrange" });
+    expect(ask).toHaveTextContent("Every point will move to a new place.");
+    fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Rearrange" })).toBeNull();
+    expect(capturedSigmaInstances).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rearrange" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Rearrange" })).getByRole("button", { name: "Rearrange" }));
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    expect(at("e2")).not.toEqual([123, 45]);
+    const done = screen.getByRole("status", { name: "Rearrange" });
+    expect(done).toHaveTextContent("Rearranged.");
+
+    // Undo puts the earlier layout back.
+    fireEvent.click(within(done).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(4));
+    expect(at("e2")).toEqual([123, 45]);
+  });
 });
