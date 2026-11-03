@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getThing, hideThing, listThings, listWorkingOn, type ThingSummary } from "../../../lib/tauri";
+import { getThing, hideThing, listThings, listWorkingOn, setUiLanguage, type ThingSummary } from "../../../lib/tauri";
 import { WorkingOn } from "./WorkingOn";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
@@ -11,6 +11,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   listWorkingOn: vi.fn(),
   getThing: vi.fn(),
   hideThing: vi.fn(),
+  setUiLanguage: vi.fn(() => Promise.resolve()),
 }));
 
 const now = Math.floor(Date.now() / 1000);
@@ -94,6 +95,13 @@ describe("WorkingOn", () => {
     fireEvent.click(screen.getByRole("button", { name: /^New tagline/ }));
     expect(onOpenThing).toHaveBeenCalledWith("thg_1");
     expect(listWorkingOn).not.toHaveBeenCalled();
+  });
+
+  it("UX-THING-1: tells Wenlan the app's language, which the things it reads are named in", async () => {
+    vi.mocked(listThings).mockResolvedValue([thing()]);
+    renderWorkingOn();
+    await screen.findByTestId("wiki-working-on");
+    await waitFor(() => expect(setUiLanguage).toHaveBeenCalledWith(expect.stringMatching(/^(en|zh)/)));
   });
 
   it("UX-HOME-1: falls back to Brief items while there are no things", async () => {

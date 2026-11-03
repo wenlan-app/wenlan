@@ -251,7 +251,7 @@ async fn history(
     Ok(())
 }
 
-async fn create_thing(
+pub(super) async fn create_thing(
     tx: &libsql::Transaction,
     now: i64,
     title: Option<&str>,
@@ -280,7 +280,7 @@ async fn create_thing(
     Ok(id)
 }
 
-async fn assign(
+pub(super) async fn assign(
     tx: &libsql::Transaction,
     now: i64,
     thing_id: &str,
@@ -305,6 +305,47 @@ async fn assign(
             thing_id,
             Some(session_id),
             data,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Take a conversation out of the things the daemon's rules put it in,
+/// keeping Brief items' things and every placement the person made, so the
+/// grouping model can place it instead (UX-THING-1).
+pub(super) async fn unassign_rule_placements(
+    tx: &libsql::Transaction,
+    now: i64,
+    session_id: &str,
+) -> Result<(), WenlanError> {
+    let things = query_strings(
+        tx,
+        "SELECT ts.thing_id FROM thing_sessions ts JOIN things t ON t.id = ts.thing_id
+          WHERE ts.session_id = ?1 AND ts.assigned_by = 'ai' AND t.brief_item_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM thing_history h
+                             WHERE h.thing_id = ts.thing_id AND h.session_id = ts.session_id
+                               AND h.op = 'thing.assign'
+                               AND json_extract(h.data, '$.rule') = 'model')",
+        vec![libsql::Value::Text(session_id.to_string())],
+        "thing rule placements",
+    )
+    .await?;
+    for thing in things {
+        tx.execute(
+            "DELETE FROM thing_sessions WHERE thing_id = ?1 AND session_id = ?2",
+            libsql::params![thing.as_str(), session_id],
+        )
+        .await
+        .map_err(db_err("thing unassign rule"))?;
+        history(
+            tx,
+            now,
+            ThingActor::Ai,
+            "thing.unassign",
+            &thing,
+            Some(session_id),
+            serde_json::json!({ "rule": "model" }),
         )
         .await?;
     }
@@ -505,6 +546,9 @@ impl MemoryDB {
     /// 4. a new thing named after the conversation (unnamed until it has a
     ///    title).
     ///
+    /// A conversation Wenlan read from its transcript is left to the grouping
+    /// model instead (`db/intake.rs`).
+    ///
     /// Idempotent: a pass with nothing new changes nothing.
     pub async fn sort_sessions_into_things(&self) -> Result<SortReport, WenlanError> {
         let mut report = SortReport::default();
@@ -520,6 +564,8 @@ impl MemoryDB {
                                               JOIN things t ON t.id = ts.thing_id
                                              WHERE ts.session_id = s.id
                                                AND t.merged_into IS NULL)
+                            AND NOT EXISTS (SELECT 1 FROM conversation_labels l
+                                             WHERE l.session_id = s.id)
                           ORDER BY s.last_write_at, s.id
                           LIMIT ?1"
                     ),
@@ -823,7 +869,7 @@ impl MemoryDB {
                       WHERE t.merged_into IS NULL AND trim(h.summary) <> ''{only_sql}
                       ORDER BY h.created_at DESC, h.brief_version DESC"
                 ),
-                libsql::params_from_iter(params),
+                libsql::params_from_iter(params.clone()),
             )
             .await
             .map_err(db_err("things status"))?;
@@ -837,6 +883,36 @@ impl MemoryDB {
             let space = row.get::<String>(1).unwrap_or_default();
             if scope.matches(Some(space.as_str())) {
                 things[i].summary.status_line = Some(row.get::<String>(2).unwrap_or_default());
+            }
+        }
+        drop(rows);
+
+        // Else where its newest conversation Wenlan read stands.
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT ts.thing_id, l.status
+                       FROM thing_sessions ts
+                       JOIN things t ON t.id = ts.thing_id
+                       JOIN conversation_labels l ON l.session_id = ts.session_id
+                      WHERE t.merged_into IS NULL AND l.work = 1
+                        AND trim(l.status) <> ''{only_sql}
+                      ORDER BY l.last_at DESC"
+                ),
+                libsql::params_from_iter(params),
+            )
+            .await
+            .map_err(db_err("things read status"))?;
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(db_err("things read status row"))?
+        {
+            let Some(&i) = index.get(&row.get::<String>(0).unwrap_or_default()) else {
+                continue;
+            };
+            if things[i].summary.status_line.is_none() {
+                things[i].summary.status_line = Some(row.get::<String>(1).unwrap_or_default());
             }
         }
         drop(rows);

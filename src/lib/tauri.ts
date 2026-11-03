@@ -650,6 +650,11 @@ export async function setBackgroundAiEnabled(enabled: boolean): Promise<void> {
   return invoke("set_background_ai_enabled", { enabled });
 }
 
+/** The app's language; what Wenlan writes about conversations follows it. */
+export async function setUiLanguage(language: string): Promise<void> {
+  return invoke("set_ui_language", { language });
+}
+
 export interface SystemInfo {
   total_ram_gb: number;
   available_ram_gb: number;

@@ -1319,6 +1319,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     if (typeof value !== "boolean") throw new Error("Invalid background AI setting");
     return value;
   },
+  set_ui_language: (a) => put("/api/config", { ui_language: String(a?.language ?? "") }).then(() => undefined),
   set_background_ai_enabled: async (a) => {
     if (typeof a?.enabled !== "boolean") throw new Error("Invalid background AI setting");
     const updated = await put("/api/config", { background_ai_enabled: a.enabled });

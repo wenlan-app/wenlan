@@ -8,6 +8,7 @@
 
 pub use wenlan_types;
 
+pub mod agent_cli_llm;
 pub mod attachments;
 pub mod authorship;
 pub mod briefing;
@@ -27,6 +28,7 @@ pub mod community_partition;
 pub mod community_routing;
 pub mod config;
 pub mod contradiction;
+pub mod conversation_intake;
 pub mod db;
 pub mod decay;
 mod derived_artifact_state;

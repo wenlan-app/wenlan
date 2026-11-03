@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { hasToolMark, ToolMark } from "../assets/toolMarks";
-import { agentDisplayName, getThing, hideThing, listThings, listWorkingOn, type ThingDetail, type ThingSummary, type WorkingOnItem } from "../../../lib/tauri";
+import { agentDisplayName, getThing, hideThing, listThings, listWorkingOn, setUiLanguage, type ThingDetail, type ThingSummary, type WorkingOnItem } from "../../../lib/tauri";
 
 export const WORKING_ON_QUERY_KEY = ["working-on"] as const;
 export const THINGS_QUERY_KEY = ["things"] as const;
@@ -64,6 +64,13 @@ export function WorkingOn({
     enabled: !!onOpenThing,
     ...RETRY_SOON,
   });
+  // Wenlan names the things it reads from conversations in the app's
+  // language, so the daemon is told which one that is.
+  const language = i18n.resolvedLanguage ?? i18n.language;
+  const readsThings = !!onOpenThing;
+  useEffect(() => {
+    if (readsThings && language) void setUiLanguage(language).catch(() => {});
+  }, [readsThings, language]);
   const [showAll, setShowAll] = useState(false);
   const queryClient = useQueryClient();
   // "Don't show" takes a finished thing off home at once rather than waiting

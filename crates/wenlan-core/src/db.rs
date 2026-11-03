@@ -88,6 +88,7 @@ pub use activity_counts::{
     StepCount,
 };
 pub mod conversations;
+pub mod intake;
 mod scoped_entities;
 mod scoped_pages;
 pub mod sentence_history;
@@ -1555,7 +1556,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 153;
+pub const SCHEMA_VERSION: u32 = 154;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10795,6 +10796,15 @@ impl MemoryDB {
             }
             if version < 153 {
                 self.migrate_153_thing_hidden_at(version).await?;
+            }
+
+            // Migration 154 remembers what Wenlan read from each conversation.
+            // See db/intake.rs.
+            if ceiling < 154 {
+                return Ok(());
+            }
+            if version < 154 {
+                self.migrate_154_conversation_labels(version).await?;
             }
         }
 
