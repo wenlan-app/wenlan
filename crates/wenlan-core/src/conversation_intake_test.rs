@@ -385,3 +385,55 @@ fn ux_thing_3_the_grouping_names_look_alike_things_only_as_pairs_to_ask_about() 
         group_prompt(&[], &[], &[], "English").contains("they are not merged, the person is asked")
     );
 }
+
+/// UX-CHAT-5: a night's reading keeps only points with text from a real
+/// conversation; a point replaces a kept one at most once.
+#[test]
+fn ux_chat_5_a_nights_points_come_from_real_conversations() {
+    let answer = r#"thinking...
+{"points": [
+  {"text": "  Tagline is You do the thinking.  ", "settled": true, "from": "C0", "replaces": "P1"},
+  {"text": "Tagline is You do the thinking.", "settled": true, "from": "C0"},
+  {"text": "Pricing page is open.", "settled": false, "from": "C1", "replaces": "P1"},
+  {"text": "No source.", "settled": true, "from": "C7"},
+  {"text": "", "settled": true, "from": "C0"},
+  {"text": "Bad replace.", "settled": true, "from": "C0", "replaces": "P9"}
+]}"#;
+    let points = parse_dream(answer, 2, 2).unwrap();
+    assert_eq!(
+        points,
+        vec![
+            DreamPoint {
+                text: "Tagline is You do the thinking.".into(),
+                decided: true,
+                from: 0,
+                replaces: Some(1),
+            },
+            DreamPoint {
+                text: "Pricing page is open.".into(),
+                decided: false,
+                from: 1,
+                replaces: None,
+            },
+            DreamPoint {
+                text: "Bad replace.".into(),
+                decided: true,
+                from: 0,
+                replaces: None,
+            },
+        ]
+    );
+    assert_eq!(parse_dream(r#"{"points": []}"#, 1, 0), Some(vec![]));
+    assert!(parse_dream("no json", 1, 0).is_none());
+    let prompt = dream_prompt(
+        "Site",
+        &[],
+        &[PriorPoint {
+            id: "m".into(),
+            text: "Kept.".into(),
+            decided: false,
+        }],
+        "English",
+    );
+    assert!(prompt.contains("P0 (open): Kept.") && prompt.contains("in English"));
+}

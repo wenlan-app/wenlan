@@ -10,16 +10,26 @@
 //! labels. Grouping uses the synthesis model when one is set, else the
 //! person's own AI tool (Claude Code or Codex), which spends that tool's
 //! quota. With neither, nothing is read.
+//!
+//! At night the same grouping model reads the conversations of each thing
+//! that went on that day and writes what the person settled and left open as
+//! memories, so the work joins long-term memory while the thing stays on
+//! home until it goes quiet (UX-CHAT-5). That model sees what the person
+//! typed and the end of the AI's last reply, nothing else.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::state::SharedState;
+use chrono::Timelike;
 use wenlan_core::conversation_intake::{self as intake, FoundConversation};
 use wenlan_core::db::intake::{found_session_id, needs_label};
+use wenlan_core::db::thing_dream::DreamDue;
 use wenlan_core::db::MemoryDB;
 use wenlan_core::llm_provider::{LlmProvider, LlmRequest};
+use wenlan_types::requests::StoreMemoryRequest;
+use wenlan_types::WriteSpaceTarget;
 
 /// How often conversations are looked at.
 const TICK: Duration = Duration::from_secs(10 * 60);
@@ -29,6 +39,18 @@ const FIRST_LOOK: Duration = Duration::from_secs(90);
 const LABEL_BATCH: usize = 30;
 /// Most conversations grouped in one call.
 const GROUP_BATCH: usize = 60;
+/// Most things read for points in one look.
+const DREAM_BATCH: usize = 10;
+/// The night, in local hours: when the day's conversations are read for
+/// points.
+const NIGHT_HOURS: std::ops::Range<u32> = 2..6;
+/// At night, a conversation is read once it has been still this long.
+const DREAM_SETTLED_SECS: i64 = 30 * 60;
+/// By day, a conversation is read once it has been still this long, so a
+/// computer that is off every night still gets its points.
+const DREAM_DAYTIME_SECS: i64 = 24 * 60 * 60;
+/// How far back transcripts are looked up for a night's reading.
+const DREAM_LOOKUP_SECS: i64 = 30 * 24 * 60 * 60;
 
 /// Waits after a model failed, so a conversation the everyday model cannot
 /// read, or a grouping answer that will not parse, does not spend the
@@ -39,6 +61,8 @@ pub struct Backoff {
     label: HashMap<String, (u32, i64)>,
     /// Grouping: failures so far and when to try again.
     group: (u32, i64),
+    /// Reading for points: failures so far and when to try again.
+    dream: (u32, i64),
 }
 
 /// The wait after `fails` failures in a row: one look, doubling, at most a
@@ -61,6 +85,10 @@ impl Backoff {
         self.group.0 += 1;
         self.group.1 = now + wait_after(self.group.0 - 1);
     }
+    fn dream_failed(&mut self, now: i64) {
+        self.dream.0 += 1;
+        self.dream.1 = now + wait_after(self.dream.0 - 1);
+    }
 }
 
 /// What one look did, for the log.
@@ -72,6 +100,9 @@ pub struct LookReport {
     pub work: usize,
     pub grouped: usize,
     pub things_made: usize,
+    /// Things read for points, and the points written.
+    pub dreamed: usize,
+    pub points: usize,
 }
 
 /// Start the loop.
@@ -92,7 +123,7 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
         }
         wait = TICK;
         match look_once(&shared, &mut backoff).await {
-            Ok(Some(report)) if report.labelled > 0 || report.grouped > 0 => {
+            Ok(Some(report)) if report.labelled > 0 || report.grouped > 0 || report.dreamed > 0 => {
                 tracing::info!("[things] read conversations: {report:?}");
             }
             Ok(_) => {}
@@ -168,9 +199,220 @@ pub async fn look_once(
         tokio::task::spawn_blocking(move || intake::scan(&roots, now, intake::INTAKE_WINDOW_SECS))
             .await
             .map_err(|e| e.to_string())?;
-    look_with(&db, found, &models, language, backoff)
+    let mut report = look_with(&db, found, &models, language, backoff).await?;
+    let local_hour = chrono::Local::now().hour();
+    let (dreamed, points) = dream_once(
+        &db,
+        &models,
+        language,
+        now,
+        local_hour,
+        backoff,
+        &DaemonWriter(shared.clone()),
+    )
+    .await?;
+    report.dreamed = dreamed;
+    report.points = points;
+    Ok(Some(report))
+}
+
+/// The new memory's id, or why it was not written.
+pub type Written<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>;
+
+/// Writes one point as a memory.
+pub trait PointWriter: Send + Sync {
+    fn write(&self, request: StoreMemoryRequest) -> Written<'_>;
+}
+
+/// Writes through the same path as any memory an AI tool stores, so a point
+/// is classified, linked into the map and checked like the rest. It is
+/// written by Wenlan, not by the person.
+pub struct DaemonWriter(pub SharedState);
+
+impl PointWriter for DaemonWriter {
+    fn write(&self, request: StoreMemoryRequest) -> Written<'_> {
+        Box::pin(async move {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                "x-agent-name",
+                axum::http::HeaderValue::from_static("wenlan"),
+            );
+            crate::memory_routes::handle_store_memory(
+                axum::extract::State(self.0.clone()),
+                headers,
+                crate::space_header::SpaceHeader(None),
+                axum::Json(request),
+            )
+            .await
+            .map(|response| response.0.source_id)
+            .map_err(|e| e.to_string())
+        })
+    }
+}
+
+/// When a conversation must have been still to be read for points: half an
+/// hour at night, a day otherwise.
+pub fn dream_quiet_since(now: i64, local_hour: u32) -> i64 {
+    if NIGHT_HOURS.contains(&local_hour) {
+        now - DREAM_SETTLED_SECS
+    } else {
+        now - DREAM_DAYTIME_SECS
+    }
+}
+
+/// Read the things that went on for points, if any are due. Returns the
+/// things read and the points written.
+async fn dream_once(
+    db: &MemoryDB,
+    models: &IntakeModels,
+    language: &str,
+    now: i64,
+    local_hour: u32,
+    backoff: &mut Backoff,
+    writer: &dyn PointWriter,
+) -> Result<(usize, usize), String> {
+    if now < backoff.dream.1 {
+        return Ok((0, 0));
+    }
+    let due = db
+        .things_to_dream(dream_quiet_since(now, local_hour), DREAM_BATCH)
         .await
-        .map(Some)
+        .map_err(|e| e.to_string())?;
+    if due.is_empty() {
+        return Ok((0, 0));
+    }
+    let roots = wenlan_types::session_context::TranscriptRoots::from_env(dirs::home_dir());
+    let found = tokio::task::spawn_blocking(move || intake::scan(&roots, now, DREAM_LOOKUP_SECS))
+        .await
+        .map_err(|e| e.to_string())?;
+    let found: HashMap<String, FoundConversation> = found
+        .into_iter()
+        .filter_map(|c| found_session_id(&c).map(|id| (id, c)))
+        .collect();
+    match dream_with(db, &due, &found, models.group.as_ref(), language, writer).await {
+        Ok(done) => {
+            backoff.dream = (0, 0);
+            Ok(done)
+        }
+        Err(error) => {
+            backoff.dream_failed(now);
+            Err(error)
+        }
+    }
+}
+
+/// Read each due thing's conversations once and keep what they settled.
+/// `found` holds the transcripts by session id; a conversation whose
+/// transcript is gone is marked read with nothing taken from it.
+pub async fn dream_with(
+    db: &MemoryDB,
+    due: &[DreamDue],
+    found: &HashMap<String, FoundConversation>,
+    model: &dyn LlmProvider,
+    language: &str,
+    writer: &dyn PointWriter,
+) -> Result<(usize, usize), String> {
+    let mut points_written = 0;
+    for (done, thing) in due.iter().enumerate() {
+        let conversations: Vec<(
+            &wenlan_core::db::thing_dream::DueConversation,
+            FoundConversation,
+        )> = thing
+            .conversations
+            .iter()
+            .filter_map(|c| found.get(&c.session_id).map(|f| (c, f.clone())))
+            .collect();
+        if conversations.is_empty() {
+            db.record_dream(&thing.thing_id, &[], &[], &thing.conversations)
+                .await
+                .map_err(|e| e.to_string())?;
+            continue;
+        }
+        let prior = db
+            .dream_points(&thing.thing_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let read: Vec<FoundConversation> = conversations.iter().map(|(_, f)| f.clone()).collect();
+        let answer = model
+            .generate(LlmRequest {
+                system_prompt: Some(
+                    "You keep what a person settled in their work, so it can be remembered. Answer with JSON only."
+                        .into(),
+                ),
+                user_prompt: intake::dream_prompt(&thing.title, &read, &prior, language),
+                max_tokens: 2_000,
+                temperature: 0.0,
+                label: Some("things_dream".into()),
+                timeout_secs: Some(300),
+            })
+            .await
+            .map_err(|e| format!("reading {} for points: {e}", thing.thing_id));
+        // A failure stops the night here; what was read stays read.
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(error) if done > 0 => {
+                tracing::warn!("[things] {error}");
+                return Ok((done, points_written));
+            }
+            Err(error) => return Err(error),
+        };
+        let Some(points) = intake::parse_dream(&answer, read.len(), prior.len()) else {
+            return if done > 0 {
+                Ok((done, points_written))
+            } else {
+                Err("reading for points: the answer was not JSON".into())
+            };
+        };
+        let mut decided = Vec::new();
+        let mut open = Vec::new();
+        for point in points {
+            let (from, _) = &conversations[point.from];
+            let space = if from.space.is_empty() {
+                WriteSpaceTarget::Inherit
+            } else {
+                WriteSpaceTarget::Named(from.space.clone())
+            };
+            let request = StoreMemoryRequest {
+                content: point.text.clone(),
+                memory_type: Some(if point.decided { "decision" } else { "fact" }.into()),
+                space,
+                source_agent: None,
+                // The point is its own title: short, and what the page lists.
+                title: Some(point.text.clone()),
+                confidence: None,
+                supersedes: point.replaces.map(|p| prior[p].id.clone()),
+                entity: None,
+                entity_type: None,
+                entity_id: None,
+                structured_fields: None,
+                retrieval_cue: None,
+            };
+            let id = match writer.write(request).await {
+                Ok(id) => id,
+                Err(error) => {
+                    tracing::warn!(
+                        "[things] a point of {} was not kept: {error}",
+                        thing.thing_id
+                    );
+                    continue;
+                }
+            };
+            db.attach_dream_point(&id, &from.session_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            if point.decided {
+                decided.push(id);
+            } else {
+                open.push(id);
+            }
+        }
+        points_written += decided.len() + open.len();
+        db.record_dream(&thing.thing_id, &decided, &open, &thing.conversations)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok((due.len(), points_written))
 }
 
 /// One look over conversations already found: label what is new or went on,

@@ -974,6 +974,156 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
     Some(grouping)
 }
 
+// ===== Overnight: what a piece of work settled goes into long-term memory =====
+//
+// UX-CHAT-5. Each night the grouping model reads the conversations of every
+// thing that went on that day and writes down what the person settled and
+// what they left open. Those points become memories, so they join the big
+// map like anything else Wenlan remembers. Like "dreaming" elsewhere: the
+// conversations are only read, a point that no longer holds is replaced by
+// its newer version, and the person can take back a night's points.
+
+/// Most points one night writes for one thing.
+pub const MAX_DREAM_POINTS: usize = 8;
+/// Longest point kept, in characters.
+pub const MAX_POINT_CHARS: usize = 200;
+/// Most conversations of one thing read in one night, newest first.
+pub const MAX_DREAM_CONVERSATIONS: usize = 6;
+/// Characters of each thing the person typed that the model reads.
+const DREAM_SAID_CHARS: usize = 400;
+/// Most of the person's messages read from one conversation, newest kept.
+const DREAM_SAID: usize = 20;
+
+/// A point an earlier night wrote for this thing, still standing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PriorPoint {
+    /// The memory it is.
+    pub id: String,
+    pub text: String,
+    pub decided: bool,
+}
+
+/// A point the model wrote.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DreamPoint {
+    pub text: String,
+    /// Settled, or still open.
+    pub decided: bool,
+    /// Index of the conversation it came from.
+    pub from: usize,
+    /// Index of the earlier point it replaces, when that one no longer holds.
+    pub replaces: Option<usize>,
+}
+
+/// The prompt that reads a thing's conversations for what they settled.
+pub fn dream_prompt(
+    title: &str,
+    conversations: &[FoundConversation],
+    prior: &[PriorPoint],
+    language: &str,
+) -> String {
+    let mut chats = String::new();
+    for (i, conv) in conversations.iter().enumerate() {
+        let start = conv.said.len().saturating_sub(DREAM_SAID);
+        let said = conv.said[start..]
+            .iter()
+            .map(|s| format!("- {}", cut(s, DREAM_SAID_CHARS)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let reply = if conv.last_reply.is_empty() {
+            "(none)".to_string()
+        } else {
+            cut_end(&conv.last_reply, REPLY_CHARS)
+        };
+        chats.push_str(&format!(
+            "C{i}: what the person typed, oldest first:\n{said}\nAssistant's last reply (end): {reply}\n\n"
+        ));
+    }
+    let prior_text = if prior.is_empty() {
+        "(none)".to_string()
+    } else {
+        prior
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let state = if p.decided { "settled" } else { "open" };
+                format!("P{i} ({state}): {}", p.text)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "A piece of work the person is doing with AI tools: \"{title}\".\n\n\
+Its conversations since the last time they were read:\n{chats}\
+Points already kept from it:\n{prior_text}\n\n\
+Write down what these conversations settled and what the person left open, so they can be \
+remembered after the work goes quiet. Only things the person decided, chose or asked to keep \
+open; not steps the assistant took, not chores, not greetings. One sentence each, standing on \
+its own (name what it is about), in {language}. {KEEP_NAMES} Leave out anything already kept \
+above. When a kept point no longer holds (it was decided differently, or what was open is now \
+settled), give the new point and name the old one in \"replaces\". At most {MAX_DREAM_POINTS} \
+points; none is a fine answer.\n\
+Answer with JSON only: {{\"points\": [{{\"text\": string, \"settled\": true|false, \
+\"from\": \"C0\", \"replaces\": \"P0\" or null}}]}}"
+    )
+}
+
+/// The points in a model's answer. A point without text, or from a
+/// conversation that does not exist, is dropped; a `replaces` that names no
+/// kept point, or one already replaced, is ignored.
+pub fn parse_dream(text: &str, conversations: usize, prior: usize) -> Option<Vec<DreamPoint>> {
+    #[derive(Deserialize)]
+    struct Point {
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        settled: bool,
+        #[serde(default)]
+        from: String,
+        #[serde(default)]
+        replaces: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Answer {
+        #[serde(default)]
+        points: Vec<Point>,
+    }
+    let answer: Answer = serde_json::from_str(json_object(text)?).ok()?;
+    let index = |id: &str, prefix: char, len: usize| {
+        id.trim()
+            .strip_prefix(prefix)
+            .and_then(|n| n.parse::<usize>().ok())
+            .filter(|n| *n < len)
+    };
+    let mut replaced = HashSet::new();
+    let mut seen = HashSet::new();
+    let mut points = Vec::new();
+    for point in answer.points {
+        let text = cut(point.text.trim(), MAX_POINT_CHARS);
+        let Some(from) = index(&point.from, 'C', conversations) else {
+            continue;
+        };
+        if text.is_empty() || !seen.insert(text.clone()) {
+            continue;
+        }
+        let replaces = point
+            .replaces
+            .as_deref()
+            .and_then(|id| index(id, 'P', prior))
+            .filter(|p| replaced.insert(*p));
+        points.push(DreamPoint {
+            text,
+            decided: point.settled,
+            from,
+            replaces,
+        });
+        if points.len() == MAX_DREAM_POINTS {
+            break;
+        }
+    }
+    Some(points)
+}
+
 #[cfg(test)]
 #[path = "conversation_intake_test.rs"]
 mod tests;

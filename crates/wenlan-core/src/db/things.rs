@@ -770,7 +770,13 @@ impl MemoryDB {
                                JOIN agent_sessions a ON a.id = ts.session_id
                               WHERE ts.thing_id = t.id),
                             (SELECT COUNT(*) FROM thing_sessions ts WHERE ts.thing_id = t.id),
-                            bi.updated_at, t.hidden_at
+                            bi.updated_at, t.hidden_at,
+                            (SELECT MAX(h.ts) FROM thing_history h
+                              WHERE h.thing_id = t.id AND h.op = 'thing.dream'
+                                AND NOT EXISTS (SELECT 1 FROM thing_history u
+                                                 WHERE u.thing_id = t.id
+                                                   AND u.op = 'thing.dream_undo'
+                                                   AND json_extract(u.data, '$.seq') = h.seq))
                        FROM things t
                        LEFT JOIN brief_items bi ON bi.id = t.brief_item_id
                        LEFT JOIN spaces sp ON sp.id = bi.space_id
@@ -814,6 +820,7 @@ impl MemoryDB {
                     spaces: item_space.into_iter().collect(),
                     last_activity_at,
                     quiet: hidden || now - last_activity_at > THING_QUIET_AFTER_SECS,
+                    dreamed_at: row.get::<Option<i64>>(11).unwrap_or(None),
                 },
                 item_text: row.get::<Option<String>>(4).unwrap_or(None),
                 unfiled: false,
@@ -1103,12 +1110,22 @@ impl MemoryDB {
                 .then_with(|| a.source_id.cmp(&b.source_id))
         });
         memories.truncate(THING_DETAIL_CAP);
+        let dream = self.thing_dream(&thing.id).await?;
+        let open_points = self
+            .dream_points(&thing.id)
+            .await?
+            .into_iter()
+            .filter(|point| !point.decided)
+            .map(|point| point.id)
+            .collect();
         Ok(Some(ThingDetailResponse {
             thing,
             sessions,
             pages,
             memories,
             merge_proposals: Vec::new(),
+            dream,
+            open_points,
         }))
     }
 

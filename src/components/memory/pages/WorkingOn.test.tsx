@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getThing, hideThing, listThings, listWorkingOn, setUiLanguage, type ThingSummary } from "../../../lib/tauri";
-import { WorkingOn } from "./WorkingOn";
+import { shortName, WorkingOn } from "./WorkingOn";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
@@ -177,5 +177,61 @@ describe("WorkingOn", () => {
     await waitFor(() => expect(section.textContent).not.toContain("New Mac"));
     expect(section.textContent).toContain("New tagline");
     expect(onOpenThing).not.toHaveBeenCalled();
+  });
+
+  it("UX-CHAT-5: names what was steeped overnight beside the heading, and pressing a name lights its card", async () => {
+    const tonight = new Date();
+    tonight.setHours(3, 0, 0, 0);
+    const at = Math.floor(tonight.getTime() / 1000);
+    vi.mocked(listThings).mockResolvedValue([
+      thing({ id: "thg_1", title: "Site redesign", dreamed_at: at }),
+      thing({ id: "thg_2", title: "Release notes", dreamed_at: at - 86_400 * 2 }),
+      thing({ id: "thg_3", title: "Old work", quiet: true, dreamed_at: at }),
+    ]);
+    const { onOpenThing } = renderWorkingOn();
+    const line = await screen.findByTestId("wiki-working-on-steeped");
+    expect(line).toHaveTextContent("Steeped overnight:");
+    expect(line).toHaveTextContent("Site redesign, Old work");
+    expect(line).not.toHaveTextContent("Release notes");
+    // Names, never a count.
+    expect(line.textContent).not.toMatch(/\d/);
+    fireEvent.click(screen.getByRole("button", { name: "Site redesign" }));
+    expect(onOpenThing).not.toHaveBeenCalled();
+    const card = document.querySelector('[data-thing-id="thg_1"] .wiki-working-on-card');
+    expect(card).toHaveAttribute("data-glow", "true");
+    // A quiet thing has no card: its name opens it.
+    fireEvent.click(screen.getByRole("button", { name: "Old work" }));
+    expect(onOpenThing).toHaveBeenCalledWith("thg_3");
+  });
+
+  it("UX-CHAT-5: names two steeped things at most, and \"and more\" lights every steeped card", async () => {
+    const tonight = new Date();
+    tonight.setHours(3, 0, 0, 0);
+    const at = Math.floor(tonight.getTime() / 1000);
+    vi.mocked(listThings).mockResolvedValue([
+      thing({ id: "thg_1", title: "Site redesign", dreamed_at: at }),
+      thing({ id: "thg_2", title: "Release notes", dreamed_at: at }),
+      thing({ id: "thg_3", title: "Zotero workflow", dreamed_at: at }),
+    ]);
+    renderWorkingOn();
+    const line = await screen.findByTestId("wiki-working-on-steeped");
+    expect(line).toHaveTextContent("Site redesign, Release notesand more");
+    expect(line).not.toHaveTextContent("Zotero workflow");
+    expect(shortName("Wenlan 迁移与整合验收")).toBe("Wenlan 迁移与整…");
+    expect(shortName("Release notes")).toBe("Release notes");
+    expect(shortName("Launch the public beta")).toBe("Launch the public…");
+    expect(shortName("Onboarding walkthrough")).toBe("Onboarding…");
+    expect(shortName("Internationalization")).toBe("Internationalizat…");
+    fireEvent.click(screen.getByRole("button", { name: "and more" }));
+    for (const id of ["thg_1", "thg_2", "thg_3"]) {
+      expect(document.querySelector(`[data-thing-id="${id}"] .wiki-working-on-card`)).toHaveAttribute("data-glow", "true");
+    }
+  });
+
+  it("UX-CHAT-5: says nothing about steeping that was not today", async () => {
+    vi.mocked(listThings).mockResolvedValue([thing({ dreamed_at: now - 86_400 * 3 })]);
+    renderWorkingOn();
+    await screen.findByText("New tagline");
+    expect(screen.queryByTestId("wiki-working-on-steeped")).toBeNull();
   });
 });

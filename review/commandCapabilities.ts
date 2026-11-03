@@ -131,6 +131,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "hide_thing",
     "move_session_thing",
     "answer_thing_merge",
+    "undo_thing_dream",
     "list_registered_sources",
   ],
   pageDrafts: [

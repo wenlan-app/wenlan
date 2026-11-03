@@ -712,6 +712,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/things/{id}/hide` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/{id}/merge` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/{id}/keep-apart` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `POST` | `/api/things/{id}/dream/undo` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
 | `POST` | `/api/pages/{id}/rename` | main | yes | automatic | `none` | `handle_rename_page` | title metadata — core page_write_permit before mutation |
@@ -1595,7 +1596,7 @@ carrying the authority of agreement.
 | `server/lint_routes.rs::prepare_current_repair` | `pub(crate)` | no | no | `server/repair_routes.rs::handle_prepare_current` | `core/repair/current.rs::prepare_current_repair_with_pages` |
 | `server/main.rs::main` | `private` | yes | no | — | `server/main.rs::run_daemon` |
 | `server/memory_routes.rs::handle_search_memory` | `pub` | no | no | — | `server/memory_routes.rs::handle_search_memory_inner` |
-| `server/memory_routes.rs::handle_store_memory` | `pub` | no | no | — | `server/memory_routes.rs::handle_store_memory_inner` |
+| `server/memory_routes.rs::handle_store_memory` | `pub` | no | **yes** | `server/things_intake.rs::write#2` | `server/memory_routes.rs::handle_store_memory_inner` |
 | `server/page_basis_routes.rs::handle_confirm_basis` | `pub` | no | no | — | `core/db/page_basis.rs::confirm_page_basis` |
 | `server/page_basis_routes.rs::handle_mark_basis` | `pub` | no | no | — | `core/db/page_basis.rs::mark_page_basis_in` |
 | `server/page_map_routes.rs::build_map_response` | `private` | no | no | `server/page_map_routes.rs::handle_get_page_map`, `server/page_map_routes.rs::handle_improve_page_map`, `server/page_map_routes.rs::handle_put_page_map_layout` | `server/page_map_routes.rs::wire_node` |

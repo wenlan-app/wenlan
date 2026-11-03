@@ -36,6 +36,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/things/{id}/hide", post(handle_hide_thing))
         .route("/api/things/{id}/merge", post(handle_merge_thing))
         .route("/api/things/{id}/keep-apart", post(handle_keep_thing_apart))
+        .route("/api/things/{id}/dream/undo", post(handle_undo_thing_dream))
         .route("/api/things/{id}/map", get(handle_get_thing_map))
         .route("/api/things/{id}/map/ops", post(handle_thing_map_ops))
         .route(
@@ -369,6 +370,26 @@ pub async fn handle_keep_thing_apart(
     let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
     visible_thing(&db, header_space.as_deref(), &request.other_thing_id).await?;
     db.keep_things_apart(&id, &request.other_thing_id).await?;
+    Ok(Json(summary(&db, &scope, &id).await?))
+}
+
+/// POST /api/things/{id}/dream/undo
+///
+/// The person takes back the newest night that put this thing's points into
+/// long-term memory (UX-CHAT-5): its memories are forgotten. Returns the
+/// thing.
+pub async fn handle_undo_thing_dream(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<ThingSummary>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
+    for memory in db.undo_thing_dream(&id).await? {
+        db.delete_by_source_id("memory", &memory).await?;
+    }
     Ok(Json(summary(&db, &scope, &id).await?))
 }
 

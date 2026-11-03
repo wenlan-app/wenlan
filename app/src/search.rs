@@ -5488,6 +5488,17 @@ pub async fn answer_thing_merge(
     client.answer_thing_merge(&id, &other_id, merge).await
 }
 
+/// Take back the newest night that steeped a thing's points into long-term
+/// memory (UX-CHAT-5).
+#[tauri::command]
+pub async fn undo_thing_dream(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.undo_thing_dream(&id).await
+}
+
 /// Move a conversation between things (UX-THING-1): into `to_thing_id`, or
 /// into a new thing named `new_title`.
 #[tauri::command]

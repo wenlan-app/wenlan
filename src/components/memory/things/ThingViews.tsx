@@ -24,6 +24,13 @@ function writeView(view: ThingView) {
   }
 }
 
+/** Whether a night's steeping (unix seconds) happened today, local time:
+ *  then the app says "last night" and marks what it steeped as new. */
+export function steepedToday(atSeconds: number, now = new Date()): boolean {
+  const at = new Date(atSeconds * 1000);
+  return at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+}
+
 /** Oldest first, so the points read in the order they were worked out. */
 function pointsOf(thing: ThingDetail): ThingMemory[] {
   return [...(thing.memories ?? [])].sort((a, b) => a.created_at - b.created_at);
@@ -53,6 +60,9 @@ export function ThingViews({
     writeView(next);
   };
   const points = pointsOf(thing);
+  const open = new Set(thing.open_points ?? []);
+  // What last night steeped is marked new while the page says "last night".
+  const fresh = new Set(thing.dream && steepedToday(thing.dream.at) ? thing.dream.fresh ?? [] : []);
   // The thing's own map (UX-VIEW-7), once something has written it. Until
   // then, and on a daemon without the route, both views fall back to the
   // points grouped by their kind.
@@ -83,7 +93,7 @@ export function ThingViews({
             <TreeRecap tree={tree} />
           ) : points.length > 0 ? (
             RECAP_GROUPS.map((group) => (
-              <RecapGroup key={group.key} group={group} points={points.filter((point) => groupOf(point) === group.key)} />
+              <RecapGroup key={group.key} group={group} fresh={fresh} points={points.filter((point) => groupOf(point, open) === group.key)} />
             ))
           ) : thing.status_line ? null : (
             <p className="thing-detail-empty">{t("thing.noPoints")}</p>
@@ -98,22 +108,25 @@ export function ThingViews({
   );
 }
 
-type RecapKey = "decided" | "background";
+type RecapKey = "decided" | "open" | "background";
 
 /** A recap in a fixed order (docs/ux/spec.md, UX-VIEW-6): where it stands and
  *  the next step first, then what is decided, then the background. Each point
  *  already carries its kind, so nothing is rewritten to sort it. "Still open"
  *  joins between decided and background once points can say they are open. */
-type RecapLabel = "thing.recapDecided" | "thing.recapBackground";
+type RecapLabel = "thing.recapDecided" | "thing.recapOpen" | "thing.recapBackground";
 
 const RECAP_GROUPS: readonly { readonly key: RecapKey; readonly label: RecapLabel }[] = [
   { key: "decided", label: "thing.recapDecided" },
+  { key: "open", label: "thing.recapOpen" },
   { key: "background", label: "thing.recapBackground" },
 ];
 
 const RECAP_SHOWN = 3;
 
-function groupOf(point: ThingMemory): RecapKey {
+/** `open` holds the points a night's steeping found still open (UX-CHAT-5). */
+function groupOf(point: ThingMemory, open: ReadonlySet<string>): RecapKey {
+  if (open.has(point.source_id)) return "open";
   switch (point.memory_type) {
     case "decision":
       return "decided";
@@ -125,9 +138,12 @@ function groupOf(point: ThingMemory): RecapKey {
 function RecapGroup({
   group,
   points,
+  fresh,
 }: {
   readonly group: { readonly key: RecapKey; readonly label: RecapLabel };
   readonly points: readonly ThingMemory[];
+  /** Points last night steeped, marked new. */
+  readonly fresh: ReadonlySet<string>;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -141,7 +157,7 @@ function RecapGroup({
       <h3>{t(group.label)}</h3>
       <ul>
         {shown.map((point) => (
-          <li key={point.source_id}>{withStop(point.title)}</li>
+          <li key={point.source_id} data-fresh={fresh.has(point.source_id) ? "true" : undefined}>{withStop(point.title)}</li>
         ))}
       </ul>
       {hidden > 0 ? (
@@ -236,7 +252,8 @@ function ThingMap({
   // Left side: groups, each a label with its points stacked beside it.
   let y = 0;
   const groups = RECAP_GROUPS.flatMap((group) => {
-    const all = points.filter((point) => groupOf(point) === group.key).sort((a, b) => b.created_at - a.created_at);
+    const open = new Set(thing.open_points ?? []);
+    const all = points.filter((point) => groupOf(point, open) === group.key).sort((a, b) => b.created_at - a.created_at);
     if (all.length === 0) return [];
     const items = all.slice(0, RECAP_SHOWN).map((point) => ({ key: point.source_id, full: point.title, lines: wrap(point.title), more: false }));
     if (all.length > RECAP_SHOWN) {

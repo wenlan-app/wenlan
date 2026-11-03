@@ -1773,6 +1773,14 @@ impl WenlanClient {
         self.post_json(&path, &request).await
     }
 
+    /// `POST /api/things/{id}/dream/undo`: the person takes back the newest
+    /// night that steeped this thing's points into long-term memory
+    /// (UX-CHAT-5).
+    pub async fn undo_thing_dream(&self, id: &str) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!("/api/things/{}/dream/undo", percent_encode_path_segment(id));
+        self.post_empty(&path).await
+    }
+
     /// `POST /api/sessions/{id}/things/move`: the person moves a conversation
     /// into another thing, or into a new one they name.
     pub async fn move_session_thing(

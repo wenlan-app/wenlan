@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { answerThingMerge, getThing, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
+import { answerThingMerge, getThing, undoThingDream, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
 import { ThingDetail } from "./ThingDetail";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
@@ -13,6 +13,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   renameThing: vi.fn(),
   moveSessionThing: vi.fn(),
   answerThingMerge: vi.fn(),
+  undoThingDream: vi.fn(),
 }));
 
 const now = Math.floor(Date.now() / 1000);
@@ -224,5 +225,40 @@ describe("ThingDetail", () => {
     renderThing();
     await screen.findByRole("heading", { level: 1, name: "New tagline" });
     expect(screen.queryByRole("group", { name: /Looks like the same thing/ })).toBeNull();
+  });
+
+  it("UX-CHAT-5: the page says what last night steeped, groups what is still open, marks the new points and can take them back", async () => {
+    const steeped: ThingRecord = {
+      ...tagline,
+      memories: [
+        ...(tagline.memories ?? []),
+        { source_id: "mem_3", title: "Whether the site gets a pricing page", memory_type: "fact", created_at: now - 60 },
+      ],
+      dream: { at: now - 60, decided: 1, open: 1, fresh: ["mem_1", "mem_3"] },
+      open_points: ["mem_3"],
+    };
+    vi.mocked(getThing).mockResolvedValue(steeped);
+    vi.mocked(undoThingDream).mockResolvedValue(tagline);
+    renderThing();
+    const line = await screen.findByRole("group", { name: "Steeped 2 points overnight" });
+    const open = await screen.findByRole("region", { name: "Still open" });
+    expect(within(open).getByText(/pricing page/)).toBeTruthy();
+    expect(within(open).getByText(/pricing page/).closest("li")).toHaveAttribute("data-fresh", "true");
+    const decided = screen.getByRole("region", { name: "Decided" });
+    expect(within(decided).getByText(/X wording/).closest("li")).toHaveAttribute("data-fresh", "true");
+    const background = screen.getByRole("region", { name: "Background" });
+    expect(within(background).getByText(/eight words/).closest("li")).not.toHaveAttribute("data-fresh");
+    vi.mocked(getThing).mockResolvedValue(tagline);
+    fireEvent.click(within(line).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(undoThingDream).toHaveBeenCalledWith("thg_1"));
+    await waitFor(() => expect(screen.queryByRole("group", { name: /overnight/ })).toBeNull());
+  });
+
+  it("UX-CHAT-5: an older night is dated, and nothing is marked new", async () => {
+    const at = now - 86_400 * 3;
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, dream: { at, decided: 1, open: 0, fresh: ["mem_1"] } });
+    renderThing();
+    await screen.findByRole("group", { name: /^Steeped 1 point on / });
+    expect(document.querySelector("li[data-fresh]")).toBeNull();
   });
 });
