@@ -115,32 +115,46 @@ fn prepare(mirror: &Path) -> Result<PathBuf, WenlanError> {
 const COLLAPSE_FLOOR: usize = 20;
 
 /// Refuses to refresh `files` from `db` when the database holds less than
-/// half the pages and memories the files do: a database that came back
-/// empty or damaged must not empty the copy it could be rebuilt from.
+/// half the pages, or less than half the memories, the files do: a
+/// database that came back empty or damaged must not empty the copy it
+/// could be rebuilt from. Pages and memories are compared apart, and only
+/// what the export writes a file for is counted, so many memories (or
+/// connected-folder documents, which get no file) cannot hide lost pages.
 pub async fn refuse_a_collapse(db: &MemoryDB, files: &Path) -> Result<(), WenlanError> {
     let Some(old) = crate::store::export::read_manifest(files) else {
         return Ok(());
     };
-    let listed = old
-        .files
-        .iter()
-        .filter(|file| {
-            matches!(
-                file.file_type.as_str(),
-                "page" | "archived_page" | "memory" | "original"
-            )
-        })
-        .count();
-    if listed < COLLAPSE_FLOOR {
+    let listed = |types: &[&str]| {
+        old.files
+            .iter()
+            .filter(|file| types.contains(&file.file_type.as_str()))
+            .count()
+    };
+    let (listed_pages, listed_memories) = (
+        listed(&["page", "archived_page"]),
+        listed(&["memory", "original"]),
+    );
+    if listed_pages < COLLAPSE_FLOOR && listed_memories < COLLAPSE_FLOOR {
         return Ok(());
     }
-    let now = db.export_content_count().await?;
-    if now.saturating_mul(2) < listed {
-        return Err(WenlanError::Validation(format!(
-            "the database holds {now} pages and memories and the files {listed}: the files \
-             are kept as they are and not refreshed. Delete files-mirror/ to start the copy \
-             again from this database."
-        )));
+    let (pages, heads) = db.export_content_heads().await?;
+    let memories = heads
+        .iter()
+        .filter(|(source, class, agent)| {
+            crate::store::export::memories::gets_a_file(source, class.as_deref(), agent.as_deref())
+        })
+        .count();
+    for (what, now, listed) in [
+        ("pages", pages, listed_pages),
+        ("memories", memories, listed_memories),
+    ] {
+        if listed >= COLLAPSE_FLOOR && now.saturating_mul(2) < listed {
+            return Err(WenlanError::Validation(format!(
+                "the database holds {now} {what} and the files {listed}: the files are kept \
+                 as they are and not refreshed. Delete files-mirror/ to start the copy again \
+                 from this database."
+            )));
+        }
     }
     Ok(())
 }

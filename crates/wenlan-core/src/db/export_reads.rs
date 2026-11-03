@@ -203,29 +203,42 @@ impl MemoryDB {
         conn.execute(statement, libsql::params![id]).await
     }
 
-    /// Pages, and memories counted once per memory (not per chunk): what
-    /// the export writes a file for, counted cheaply.
-    pub async fn export_content_count(&self) -> Result<usize, WenlanError> {
+    /// How many pages there are, and the first chunk of each memory (its
+    /// source, origin class and source agent): enough for the export to
+    /// tell which memories it writes a file for, read cheaply.
+    pub(crate) async fn export_content_heads(
+        &self,
+    ) -> Result<(usize, Vec<(String, Option<String>, Option<String>)>), WenlanError> {
         let conn = self.conn.lock().await;
+        let err = |e: libsql::Error| WenlanError::VectorDb(format!("export_content_heads: {e}"));
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM pages", ())
+            .await
+            .map_err(err)?;
+        let pages: i64 = match rows.next().await.map_err(err)? {
+            Some(row) => row.get(0).map_err(err)?,
+            None => 0,
+        };
+        drop(rows);
+        // SQLite takes the bare columns from the row MIN() picked: the
+        // memory's first chunk, the one the export classifies it by.
         let mut rows = conn
             .query(
-                "SELECT (SELECT COUNT(*) FROM pages) + \
-                        (SELECT COUNT(*) FROM (SELECT DISTINCT source, source_id FROM memories))",
+                "SELECT source, origin_class, source_agent, MIN(chunk_index) \
+                 FROM memories GROUP BY source_id, source",
                 (),
             )
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("export_content_count: {e}")))?;
-        let count: i64 = match rows
-            .next()
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("export_content_count: {e}")))?
-        {
-            Some(row) => row
-                .get(0)
-                .map_err(|e| WenlanError::VectorDb(format!("export_content_count: {e}")))?,
-            None => 0,
-        };
-        Ok(count.max(0) as usize)
+            .map_err(err)?;
+        let mut heads = Vec::new();
+        while let Some(row) = rows.next().await.map_err(err)? {
+            heads.push((
+                row.get(0).map_err(err)?,
+                row.get(1).map_err(err)?,
+                row.get(2).map_err(err)?,
+            ));
+        }
+        Ok((pages.max(0) as usize, heads))
     }
 
     /// Every `memories` row, ordered by memory then chunk.

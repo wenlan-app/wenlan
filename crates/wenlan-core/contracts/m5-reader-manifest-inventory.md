@@ -1094,6 +1094,7 @@ carrying the authority of agreement.
 | `core/db/page_restore.rs::restore_page_in_transaction` | `private` | no | no | — | — |
 | `core/db/page_summary_backfill.rs::backfill_page_summaries` | `pub` | no | **yes** | `server/main/startup.rs::prepare_startup_state` | — |
 | `core/db/presence_review.rs::page_binding` | `private` | no | no | — | — |
+| `core/db/rebuild_writes.rs::rebuild_page_links` | `pub` | no | no | — | — |
 | `core/db/repair_deterministic.rs::apply_deterministic_repair_cas` | `pub` | no | no | — | — |
 | `core/db/repair_page_rename.rs::page_on_connection` | `private` | no | no | — | — |
 | `core/db/repair_page_rename.rs::rename_page_title_cas_inner` | `pub(crate)` | no | no | — | — |
@@ -1237,7 +1238,7 @@ carrying the authority of agreement.
 | `core/steep_new.rs::list_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_list` | `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::strict_entity_titled` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles` |
 | `core/store/export/pages.rs::export_pages` | `pub` | no | no | — | `core/db/export_reads.rs::export_page_rows` |
-| `core/store/restore.rs::restore_missing_database` | `pub` | yes | no | — | `core/db.rs::backfill_page_embeddings` |
+| `core/store/restore.rs::restore_missing_database` | `pub` | yes | no | — | `core/db.rs::backfill_page_embeddings`, `core/db/rebuild_writes.rs::rebuild_page_links` |
 | `core/synthesis/distill.rs::build_existing_titles_hint` | `pub(crate)` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::build_refresh_titles_hint` | `private` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::refresh_page_with_candidate_sources` | `pub(crate)` | no | no | — | `core/db/page_basis.rs::list_basis_context` |

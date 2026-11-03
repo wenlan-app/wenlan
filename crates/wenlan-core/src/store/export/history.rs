@@ -220,14 +220,21 @@ pub async fn export_history(
     };
     let root = dirs.backstage().join("history");
     if dirs.is_in_place() {
-        // The log only appends, so a refresh writes it whole into a folder
-        // of its own and then moves over only the files that changed.
+        // A refresh writes the log whole into a folder of its own and puts
+        // it in place of the old one in one step. Its seqs follow time
+        // order, so an entry with an earlier time renumbers every file
+        // after it: moving files over one by one, a crash part way would
+        // leave old and new files side by side and a replay would skip
+        // the entries whose seqs went backwards.
         let next = dirs.root.join(HISTORY_NEXT);
         remove_tree(&next)?;
         write_log(&next, main)?;
         write_log(&next.join("reads"), reads)?;
-        let moved = sync_tree(&next, &root)?;
-        dirs.count_written(moved);
+        let changed = prepare_swap(&next, &root)?;
+        if changed > 0 {
+            swap_in(&next, &root, &dirs.root.join(HISTORY_OLD))?;
+        }
+        dirs.count_written(changed);
         remove_tree(&next)?;
     } else {
         write_log(&root, main)?;
@@ -248,51 +255,109 @@ fn remove_tree(dir: &Path) -> Result<(), WenlanError> {
     }
 }
 
-/// Makes `to` hold exactly the files `from` holds: a file whose bytes
-/// differ (or is new) is renamed over, a file `from` lacks is removed.
-/// Returns how many files were moved over.
-fn sync_tree(from: &Path, to: &Path) -> Result<usize, WenlanError> {
-    std::fs::create_dir_all(to)?;
-    let mut moved = 0;
+/// Where a refresh puts the old log while the new one takes its place.
+pub const HISTORY_OLD: &str = ".history-old";
+
+/// Gets `next` ready to replace `current` and returns how many files
+/// differ (new, changed or gone). A file whose bytes are unchanged is
+/// replaced in `next` by a link to the old file, already on disk; a new or
+/// changed one is flushed, so the swap never puts unwritten bytes in place.
+fn prepare_swap(next: &Path, current: &Path) -> Result<usize, WenlanError> {
+    let mut changed = 0;
     let mut keep = std::collections::HashSet::new();
-    if let Ok(read) = std::fs::read_dir(from) {
+    if let Ok(read) = std::fs::read_dir(next) {
         for entry in read {
             let entry = entry?;
             let name = entry.file_name();
             keep.insert(name.clone());
-            let (source, target) = (entry.path(), to.join(&name));
+            let (source, target) = (entry.path(), current.join(&name));
             if entry.file_type()?.is_dir() {
-                moved += sync_tree(&source, &target)?;
+                changed += prepare_swap(&source, &target)?;
                 continue;
             }
             let same = std::fs::read(&target)
                 .ok()
                 .zip(std::fs::read(&source).ok())
                 .is_some_and(|(old, new)| old == new);
-            if !same {
+            let linked = same && {
+                let link = source.with_extension("link-tmp");
+                let _ = std::fs::remove_file(&link);
+                std::fs::hard_link(&target, &link).is_ok()
+                    && std::fs::rename(&link, &source).is_ok()
+            };
+            if !linked {
                 // Opened for writing: Windows flushes only a handle that may
                 // write.
                 std::fs::OpenOptions::new()
                     .write(true)
                     .open(&source)?
                     .sync_all()?;
-                std::fs::rename(&source, &target)?;
-                moved += 1;
+            }
+            if !same {
+                changed += 1;
             }
         }
     }
-    for entry in std::fs::read_dir(to)? {
-        let entry = entry?;
-        if keep.contains(&entry.file_name()) {
-            continue;
-        }
-        if entry.file_type()?.is_dir() {
-            remove_tree(&entry.path())?;
-        } else {
-            std::fs::remove_file(entry.path())?;
+    if let Ok(read) = std::fs::read_dir(current) {
+        for entry in read {
+            if !keep.contains(&entry?.file_name()) {
+                changed += 1;
+            }
         }
     }
-    Ok(moved)
+    Ok(changed)
+}
+
+/// Puts the folder `next` in place of `current`, keeping the old one at
+/// `old` until the new one is there. [`recover_swap`] finishes a swap a
+/// crash stopped.
+fn swap_in(next: &Path, current: &Path, old: &Path) -> Result<(), WenlanError> {
+    remove_tree(old)?;
+    if current.exists() {
+        std::fs::rename(current, old)?;
+    }
+    std::fs::rename(next, current)?;
+    sync_parent(current)?;
+    remove_tree(old)
+}
+
+/// Flushes the renames in `path`'s folder where a folder can be opened
+/// (not on Windows, which flushes them itself).
+fn sync_parent(path: &Path) -> Result<(), WenlanError> {
+    if let Some(Ok(parent)) = path.parent().map(std::fs::File::open) {
+        parent.sync_all()?;
+    }
+    Ok(())
+}
+
+/// After a refresh that stopped part way through [`swap_in`]: puts the
+/// old log back when the new one never took its place, and removes the
+/// old one when it did. `root` is the folder the export writes to.
+pub fn recover_swap(root: &Path) -> Result<(), WenlanError> {
+    let old = root.join(HISTORY_OLD);
+    if !old.exists() {
+        return Ok(());
+    }
+    let current = root.join("backstage").join("history");
+    if current.exists() {
+        remove_tree(&old)
+    } else {
+        std::fs::rename(&old, &current)?;
+        sync_parent(&current)
+    }
+}
+
+/// The log a rebuild reads under the export folder `root`: in place, or,
+/// when a refresh stopped between the two renames of [`swap_in`], the old
+/// one it set aside.
+pub fn log_root(root: &Path) -> std::path::PathBuf {
+    let current = root.join("backstage").join("history");
+    let old = root.join(HISTORY_OLD);
+    if !current.is_dir() && old.is_dir() {
+        old
+    } else {
+        current
+    }
 }
 
 type Keyed = ((i64, &'static str, usize), NewEntry);

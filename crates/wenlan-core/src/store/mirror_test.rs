@@ -349,39 +349,61 @@ async fn an_emptied_database_does_not_empty_the_files() {
         .await
         .unwrap();
     let files = mirror.join(FILES_DIR);
-    let mut manifest = crate::store::export::read_manifest(&files).unwrap();
-    let content = db.export_content_count().await.unwrap();
-    assert!(content > 0);
-    // Files that list far more memories than the database now holds, as
-    // after the database came back empty.
-    let listed: Vec<_> = (0..(2 * content + COLLAPSE_FLOOR))
-        .map(|n| crate::store::export::ExportedFile {
-            id: format!("gone-{n}"),
-            file_type: "memory".to_string(),
-            path: format!("backstage/memories/gone-{n}.md"),
-            sha256: String::new(),
-        })
-        .collect();
-    manifest.files.extend(listed);
-    std::fs::write(
-        files.join(crate::store::export::MANIFEST_FILE),
-        serde_json::to_string(&manifest).unwrap(),
-    )
-    .unwrap();
-    let kept = std::fs::read(files.join(crate::store::export::MANIFEST_FILE)).unwrap();
-
-    let refused = refresh(&db_file, &pages(), data_root.path(), &mirror).await;
-    assert!(
-        refused
-            .as_ref()
-            .is_err_and(|e| e.to_string().contains("not refreshed")),
-        "{refused:?}"
-    );
-    assert_eq!(
-        std::fs::read(files.join(crate::store::export::MANIFEST_FILE)).unwrap(),
-        kept,
-        "nothing written"
-    );
+    let manifest = crate::store::export::read_manifest(&files).unwrap();
+    let (page_count, _) = db.export_content_heads().await.unwrap();
+    assert!(page_count > 0);
+    let count = |types: &[&str]| {
+        manifest
+            .files
+            .iter()
+            .filter(|file| types.contains(&file.file_type.as_str()))
+            .count()
+    };
+    let memory_count = count(&["memory", "original"]);
+    assert!(memory_count > 0);
+    // Files that list far more of one kind than the database now holds, as
+    // after the database came back empty or lost its pages.
+    let with_gone = |file_type: &str, folder: &str, n: usize| {
+        let mut manifest = manifest.clone();
+        manifest
+            .files
+            .extend((0..n).map(|n| crate::store::export::ExportedFile {
+                id: format!("gone-{n}"),
+                file_type: file_type.to_string(),
+                path: format!("{folder}/gone-{n}.md"),
+                sha256: String::new(),
+            }));
+        std::fs::write(
+            files.join(crate::store::export::MANIFEST_FILE),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+        std::fs::read(files.join(crate::store::export::MANIFEST_FILE)).unwrap()
+    };
+    for (file_type, folder, n) in [
+        (
+            "memory",
+            "backstage/memories",
+            2 * memory_count + COLLAPSE_FLOOR,
+        ),
+        // Lost pages are refused even when the memories, which outnumber
+        // them, are all still there.
+        ("page", "visible", 2 * page_count + COLLAPSE_FLOOR),
+    ] {
+        let kept = with_gone(file_type, folder, n);
+        let refused = refresh(&db_file, &pages(), data_root.path(), &mirror).await;
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("not refreshed")),
+            "{refused:?}"
+        );
+        assert_eq!(
+            std::fs::read(files.join(crate::store::export::MANIFEST_FILE)).unwrap(),
+            kept,
+            "nothing written"
+        );
+    }
     // A small copy is not compared: a new database grows past it.
     assert!(refuse_a_collapse(&db, &mirror.join("nothing-here"))
         .await

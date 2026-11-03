@@ -100,6 +100,10 @@ pub async fn restore_missing_database(
     )
     .await?;
     let rebuilt = rebuild(&from, &fresh).await?;
+    // Cache: what backlinks read, worked out from the page text.
+    if let Err(error) = fresh.rebuild_page_links().await {
+        log::warn!("[restore] page links not worked out: {error}");
+    }
     if let Err(error) = fresh.backfill_page_embeddings().await {
         // Cache: the daemon embeds pages again once its model loads.
         log::warn!("[restore] page vectors not computed: {error}");

@@ -34,6 +34,10 @@ const REFRESH_EVERY: i64 = 2 * 60;
 /// A refresh reads and renders everything, so the gap also grows with its
 /// cost: at most a tenth of the time is spent refreshing.
 const REFRESH_SHARE: u64 = 10;
+/// Most time between two refreshes, however slow the last one was: the
+/// first refresh writes every file and can take minutes, and the writes
+/// made after it must not wait ten times that long to reach the files.
+const REFRESH_GAP_MAX: i64 = 10 * 60;
 /// Least time between two checks, counted from when the last one started.
 const RUN_EVERY: i64 = 24 * 60 * 60;
 /// A check copies the whole database: never in a daemon's first minutes.
@@ -108,7 +112,7 @@ fn refresh_due(last: &Refreshed, db_changed_at: i64, now: i64) -> bool {
 
 /// The gap after a refresh that took `ms`.
 fn refresh_gap(ms: u64) -> i64 {
-    (ms.saturating_mul(REFRESH_SHARE) / 1_000).min(i64::MAX as u64) as i64
+    (ms.saturating_mul(REFRESH_SHARE) / 1_000).min(REFRESH_GAP_MAX as u64) as i64
 }
 
 /// Before the database opens: when its file is gone and a file copy
@@ -449,6 +453,10 @@ mod tests {
         assert_eq!(refresh_gap(30_000), 300);
         assert!(!refresh_due(&after(30_000), 1_050, 1_000 + 299));
         assert!(refresh_due(&after(30_000), 1_050, 1_000 + 300));
+        // A first refresh that wrote every file in 250 s: ten minutes, not
+        // forty-two.
+        assert_eq!(refresh_gap(250_000), REFRESH_GAP_MAX);
+        assert!(refresh_due(&after(250_000), 1_050, 1_000 + REFRESH_GAP_MAX));
         // A quick one keeps the two minutes.
         assert!(!refresh_due(&after(3_000), 1_050, 1_000 + 60));
         assert!(refresh_due(&after(3_000), 1_050, 1_000 + REFRESH_EVERY));
