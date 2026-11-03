@@ -241,7 +241,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   the person's words in a light bubble on the right, the AI's replies across
   the width; the short preview stays one column with who spoke.
   原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）「一般这种对话怎么渲染会更适合一些？就像现在这样在左边，还是说要左右左右这样子的？」（2026-11-02 16:03）「2. 同意」（2026-11-02 16:47）
-- **UX-FIND-3** `planned` There is "open in the original AI tool".
+- **UX-FIND-3** `shipped` There is "open in the original AI tool".
   原文：有「在原本的 AI 工具打開」。
 - **UX-FIND-4** `planned` The left side shows Search, Home, Wiki, Spaces, the
   graph and topics, with no More menu: there are few enough to show them all.

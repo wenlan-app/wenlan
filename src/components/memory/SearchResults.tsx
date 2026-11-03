@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import PageSearchResult from "./PageSearchResult";
+import { useSessionDetail } from "./sessions/SessionCard";
+import { SessionResumeAction } from "./sessions/SessionResumeAction";
 import { highlightTerms } from "../../lib/highlight";
 import {
   agentDisplayName,
@@ -199,6 +201,8 @@ function ConversationQuote({ hit, query, onBack, onOpenThing }: {
     queryFn: () => getConversationLines(hit.session_id),
     enabled: all,
   });
+  // For "open in the original AI tool" (UX-FIND-3).
+  const detail = useSessionDetail(hit.session_id);
   const focusRef = useRef<HTMLParagraphElement>(null);
   const linesRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
@@ -248,6 +252,12 @@ function ConversationQuote({ hit, query, onBack, onOpenThing }: {
       )}
       {!all && (
         <button className="search-quote-link" onClick={() => setAll(true)} type="button">{t("main.search.showAll")}</button>
+      )}
+      {detail.data && (
+        <SessionResumeAction
+          session={detail.data.session}
+          transcriptAvailable={detail.data.transcript_available === true}
+        />
       )}
     </div>
   );

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { clipboardWrite, type AgentSession } from "../../../lib/tauri";
 import { sessionResumeCommand, sessionToolActionLabel, sessionToolLabel } from "../../../lib/sessionSource";
+import "./sessionSources.css";
 
 async function copyText(text: string): Promise<boolean> {
   try {

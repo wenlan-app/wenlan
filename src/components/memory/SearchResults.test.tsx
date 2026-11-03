@@ -9,10 +9,14 @@ import type { ActivityResponse, ActivityStep, ConversationHit, EntitySearchResul
 
 const getActivityMock = vi.hoisted(() => vi.fn());
 const getConversationLinesMock = vi.hoisted(() => vi.fn());
+const getSessionDetailMock = vi.hoisted(() => vi.fn());
+const clipboardWriteMock = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/tauri", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../lib/tauri")>(),
   getActivity: getActivityMock,
   getConversationLines: getConversationLinesMock,
+  getSessionDetail: getSessionDetailMock,
+  clipboardWrite: clipboardWriteMock,
 }));
 
 function activity(embed?: ActivityStep): ActivityResponse {
@@ -80,6 +84,9 @@ function renderResults(data: ActivityResponse, sourceResults: SearchResult[] = [
 beforeEach(async () => {
   getActivityMock.mockReset();
   getConversationLinesMock.mockReset();
+  getSessionDetailMock.mockReset();
+  getSessionDetailMock.mockResolvedValue(null);
+  clipboardWriteMock.mockReset();
   await i18n.changeLanguage("en");
 });
 
@@ -206,6 +213,33 @@ describe("UX-FIND-2 a sentence with what came before and after", () => {
 
     await user.click(screen.getByRole("button", { name: "← Back to results" }));
     expect(screen.getByRole("region", { name: "Said in conversations" })).toBeInTheDocument();
+  });
+
+  it("UX-FIND-3: offers to open the conversation again in the AI tool it came from", async () => {
+    const user = userEvent.setup();
+    getSessionDetailMock.mockResolvedValue({
+      session: { id: "ses_1", tool: "codex", external_id: "019a-77b", transcript_path: "/home/me/.codex/sessions/x.jsonl" },
+      memories: [], pages: [], handoffs: [], transcript_available: true,
+    });
+    clipboardWriteMock.mockResolvedValue(undefined);
+    renderResults(activity(), [], { conversationHits: [hit] }, "gion");
+    await user.click(await screen.findByRole("button", { name: /Decided: stay near Gion/ }));
+    expect(getSessionDetailMock).toHaveBeenCalledWith("ses_1");
+    await user.click(await screen.findByRole("button", { name: "Continue in Codex" }));
+    expect(clipboardWriteMock).toHaveBeenCalledWith("codex resume 019a-77b");
+    expect(await screen.findByRole("status")).toHaveTextContent("Command copied. Paste it into your terminal.");
+  });
+
+  it("offers nothing to reopen when the conversation is gone from this computer", async () => {
+    const user = userEvent.setup();
+    getSessionDetailMock.mockResolvedValue({
+      session: { id: "ses_1", tool: "codex", external_id: "019a-77b", transcript_path: "/home/me/.codex/sessions/x.jsonl" },
+      memories: [], pages: [], handoffs: [], transcript_available: false,
+    });
+    renderResults(activity(), [], { conversationHits: [hit] }, "gion");
+    await user.click(await screen.findByRole("button", { name: /Decided: stay near Gion/ }));
+    expect(await screen.findByText("The original conversation was cleared by ChatGPT / Codex")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Continue in/ })).toBeNull();
   });
 
   it("marks the sentence when a long conversation returns only its newest lines", async () => {
