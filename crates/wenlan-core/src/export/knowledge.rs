@@ -21,8 +21,9 @@ mod folders;
 pub use folders::{
     adoption_frontmatter, create_knowledge_folder, drop_pending_adoption, knowledge_edit_targets,
     knowledge_markdown_paths, list_knowledge_folders, move_projected_page, note_person_file,
-    pending_adoptions, person_page_files, read_knowledge_markdown, record_person_note,
-    stamp_person_note, validate_knowledge_folder_path, KnowledgeFolderEntry, PersonPageFile,
+    origin_id_line, pending_adoptions, person_page_files, read_knowledge_markdown,
+    record_person_note, restamp_person_note, stamp_person_note, unstamp_person_note,
+    validate_knowledge_folder_path, KnowledgeFolderEntry, PersonPageFile,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;
@@ -240,6 +241,7 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
             "index_regeneration_pending",
             "archived_from",
             "archived_versions",
+            "pending_adoptions",
         ]
         .contains(&key.as_str())
     }) {
@@ -259,6 +261,7 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
         "title",
         "description",
         "space",
+        "person_frontmatter",
     ];
     for entry in pages.values() {
         let entry = entry
@@ -2708,6 +2711,30 @@ impl LockedProjection<'_> {
         let expected_state = page_file_state_value(page, &path);
         let target_bytes = hex::decode(entries[1].content_hex())
             .map_err(|_| WenlanError::Conflict("repair_target_stale".to_string()))?;
+        // A note the person put in the folder is not Wenlan's render: it is
+        // in sync when its bytes are the ones recorded for it and its text is
+        // the page's.
+        if let Some(stored) =
+            stored_page.filter(|stored| stored.get("person_frontmatter").is_some())
+        {
+            let recorded = stored
+                .get("content_sha256")
+                .and_then(serde_json::Value::as_str);
+            let text_matches = std::str::from_utf8(&target_bytes).is_ok_and(|raw| {
+                crate::export::provenance::same_page_text_ignoring_save_noise(
+                    &crate::export::provenance::page_body_from_projection(raw),
+                    &crate::export::provenance::page_body_from_projection(&render_markdown_for(
+                        page,
+                    )),
+                )
+            });
+            if recorded == Some(projection_digest(&target_bytes).as_str()) && text_matches {
+                return Ok(Some((path, entries)));
+            }
+            return Err(WenlanError::Conflict(
+                "page projection contains unsynced edits".to_string(),
+            ));
+        }
         let expected_markdown = render_markdown_for(page);
         let state_matches = stored_page.is_some_and(|stored| {
             if stored == &expected_state {
@@ -5882,18 +5909,28 @@ fn person_frontmatter_titled(frontmatter: &str, title: &str) -> String {
                 .and_then(|v| v.as_str())
                 .map(str::to_string)
         });
+    // Only a one-line `title:`; a block (`title: |`) is left as written.
+    let one_line = |line: &str| {
+        line.strip_prefix("title:")
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty() && !value.starts_with(['|', '>']))
+    };
     match current {
-        Some(current) if current != title => frontmatter
-            .lines()
-            .map(|line| {
-                if line.starts_with("title:") {
-                    format!("title: {}", crate::export::provenance::yaml_quoted(title))
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
+        Some(current) if current != title && frontmatter.lines().any(one_line) => {
+            let mut replaced = false;
+            frontmatter
+                .lines()
+                .map(|line| {
+                    if !replaced && one_line(line) {
+                        replaced = true;
+                        format!("title: {}", crate::export::provenance::yaml_quoted(title))
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
         _ => frontmatter.to_string(),
     }
 }
