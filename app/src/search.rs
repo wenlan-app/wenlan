@@ -5475,6 +5475,19 @@ pub async fn hide_thing(
     client.hide_thing(&id).await
 }
 
+/// Answer a merge proposal on a thing's page (UX-THING-3): merge `other_id`
+/// into `id`, or keep the two apart.
+#[tauri::command]
+pub async fn answer_thing_merge(
+    state: tauri::State<'_, State>,
+    id: String,
+    other_id: String,
+    merge: bool,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.answer_thing_merge(&id, &other_id, merge).await
+}
+
 /// Move a conversation between things (UX-THING-1): into `to_thing_id`, or
 /// into a new thing named `new_title`.
 #[tauri::command]

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useQuery } from "@tanstack/react-query";
-import { useState, type KeyboardEvent } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { getThingMap, type ThingDetail, type ThingMap, type ThingMapNode, type ThingMemory, type ThingPage } from "../../../lib/tauri";
 
@@ -37,10 +37,13 @@ function pointsOf(thing: ThingDetail): ThingMemory[] {
 export function ThingViews({
   thing,
   meta,
+  notice,
   onOpenPage,
 }: {
   readonly thing: ThingDetail;
   readonly meta: string;
+  /** A quiet line under the views bar, such as a merge proposal. */
+  readonly notice?: ReactNode;
   readonly onOpenPage: (pageId: string) => void;
 }) {
   const { t } = useTranslation();
@@ -72,6 +75,7 @@ export function ThingViews({
           </button>
         </div>
       </div>
+      {notice}
       {view === "short" ? (
         <div className="thing-short" data-testid="thing-short">
           {thing.status_line ? <p className="thing-detail-where">{thing.status_line}</p> : null}

@@ -818,10 +818,12 @@ For every new piece, and every existing piece that gains a conversation or shows
 \"now\": one sentence in {language}, at most 20 words or 30 Chinese characters, on where the \
 whole piece stands and what comes next, from its newest conversations, not only their last \
 small step.\n\
+If two existing pieces are clearly the same goal under two names, list them in \"same\"; \
+they are not merged, the person is asked.\n\
 Answer with JSON only: {{\"join\": [{{\"conversation\": \"C0\", \"piece\": \"T3\"}}], \
 \"new\": [{{\"title\": string, \"conversations\": [\"C1\", \"C2\"], \"now\": string}}], \
 \"now\": [{{\"piece\": \"T3\", \"line\": string}}], \
-\"leave_out\": [\"C4\"]}} and use every conversation exactly once."
+\"leave_out\": [\"C4\"], \"same\": [[\"T1\", \"T5\"]]}} and use every conversation exactly once."
     )
 }
 
@@ -837,6 +839,9 @@ pub struct Grouping {
     pub left_out: Vec<usize>,
     /// Where a piece stands now, written by the model.
     pub lines: Vec<(Piece, String)>,
+    /// Pairs of open-thing indices the model thinks are one goal: only ever
+    /// a proposal to the person (UX-THING-3).
+    pub same: Vec<(usize, usize)>,
 }
 
 /// A piece of work in a [`Grouping`]: an open thing or a new one.
@@ -889,6 +894,8 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
         leave_out: Vec<String>,
         #[serde(default)]
         now: Vec<Now>,
+        #[serde(default)]
+        same: Vec<Vec<String>>,
     }
     let answer: Answer = serde_json::from_str(json_object(text)?).ok()?;
     let index = |id: &str, prefix: char, len: usize| {
@@ -940,6 +947,16 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
         if let (Some(t), false) = (index(&now.piece, 'T', open), line.is_empty()) {
             grouping.lines.retain(|(piece, _)| *piece != Piece::Open(t));
             grouping.lines.push((Piece::Open(t), line));
+        }
+    }
+    for pair in &answer.same {
+        if let [x, y] = pair.as_slice() {
+            if let (Some(x), Some(y)) = (index(x, 'T', open), index(y, 'T', open)) {
+                let pair = (x.min(y), x.max(y));
+                if x != y && !grouping.same.contains(&pair) {
+                    grouping.same.push(pair);
+                }
+            }
         }
     }
     for id in &answer.leave_out {

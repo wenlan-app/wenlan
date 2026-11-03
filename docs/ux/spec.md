@@ -91,7 +91,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-THING-2** `planned` After you correct it once, the same case is not
   sorted wrong again.
   原文：改過一次，同樣的情況下次不再分錯。
-- **UX-THING-3** `planned` Merging two things is only ever a proposal; they
+- **UX-THING-3** `shipped` Merging two things is only ever a proposal; they
   merge when you press it.
   原文：合併只會是提議，你按了才合。
 

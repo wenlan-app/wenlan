@@ -16,7 +16,7 @@ use wenlan_core::db::things::MoveTarget;
 use wenlan_core::db::MemoryDB;
 use wenlan_types::{
     SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingDetailResponse, ThingMapAuthor,
-    ThingMapOpsRequest, ThingMapOpsResponse, ThingMapResponse, ThingMoveRequest,
+    ThingMapOpsRequest, ThingMapOpsResponse, ThingMapResponse, ThingMergeRequest, ThingMoveRequest,
     ThingRenameRequest, ThingSummary, ThingsResponse,
 };
 
@@ -34,6 +34,8 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             get(handle_get_thing).patch(handle_rename_thing),
         )
         .route("/api/things/{id}/hide", post(handle_hide_thing))
+        .route("/api/things/{id}/merge", post(handle_merge_thing))
+        .route("/api/things/{id}/keep-apart", post(handle_keep_thing_apart))
         .route("/api/things/{id}/map", get(handle_get_thing_map))
         .route("/api/things/{id}/map/ops", post(handle_thing_map_ops))
         .route(
@@ -112,6 +114,12 @@ pub async fn handle_get_thing(
         |page| page.id.as_str(),
     )
     .await?;
+    // Only things this caller can see are offered to merge (UX-THING-3).
+    for other in db.thing_merge_proposals(&id).await? {
+        if db.get_thing(&other.id, &scope).await?.is_some() {
+            detail.merge_proposals.push(other);
+        }
+    }
     Ok(Json(detail))
 }
 
@@ -324,6 +332,43 @@ pub async fn handle_hide_thing(
     let db = open_db(&state).await?;
     let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
     db.hide_thing(&id).await?;
+    Ok(Json(summary(&db, &scope, &id).await?))
+}
+
+/// POST /api/things/{id}/merge
+///
+/// The person presses "merge" on a thing's page: the other thing folds into
+/// this one (UX-THING-3). Nothing else merges things. Returns this thing.
+pub async fn handle_merge_thing(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<ThingMergeRequest>,
+) -> Result<Json<ThingSummary>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
+    visible_thing(&db, header_space.as_deref(), &request.other_thing_id).await?;
+    db.merge_things(&id, &request.other_thing_id).await?;
+    Ok(Json(summary(&db, &scope, &id).await?))
+}
+
+/// POST /api/things/{id}/keep-apart
+///
+/// The person keeps two things apart: the pair is not proposed again.
+pub async fn handle_keep_thing_apart(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<ThingMergeRequest>,
+) -> Result<Json<ThingSummary>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
+    visible_thing(&db, header_space.as_deref(), &request.other_thing_id).await?;
+    db.keep_things_apart(&id, &request.other_thing_id).await?;
     Ok(Json(summary(&db, &scope, &id).await?))
 }
 

@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getThing, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
+import { answerThingMerge, getThing, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
 import { ThingDetail } from "./ThingDetail";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
@@ -12,6 +12,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   listThings: vi.fn(),
   renameThing: vi.fn(),
   moveSessionThing: vi.fn(),
+  answerThingMerge: vi.fn(),
 }));
 
 const now = Math.floor(Date.now() / 1000);
@@ -52,6 +53,7 @@ describe("ThingDetail", () => {
     ]);
     vi.mocked(renameThing).mockReset();
     vi.mocked(moveSessionThing).mockReset();
+    vi.mocked(answerThingMerge).mockReset().mockResolvedValue(tagline);
   });
 
   it("UX-CHAT-5: shows where the thing stands, its conversations and pages, with no done state", async () => {
@@ -195,5 +197,32 @@ describe("ThingDetail", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "New name" }), { target: { value: "Hero copy" } });
     fireEvent.click(screen.getByRole("button", { name: "Start new" }));
     await waitFor(() => expect(moveSessionThing).toHaveBeenCalledWith("ses_a", "thg_1", { newTitle: "Hero copy" }));
+  });
+
+  it("UX-THING-3: two things that look alike are only a proposal; they merge when you press it", async () => {
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, merge_proposals: [{ id: "thg_2", title: "Product Hunt launch" }] });
+    renderThing();
+    const line = await screen.findByRole("group", { name: "Looks like the same thing as “Product Hunt launch”." });
+    // Nothing merged by itself: the page still shows its own thing.
+    expect(answerThingMerge).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { level: 1, name: "New tagline" })).toBeTruthy();
+    vi.mocked(getThing).mockResolvedValue(tagline);
+    fireEvent.click(within(line).getByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(answerThingMerge).toHaveBeenCalledWith("thg_1", "thg_2", true));
+    await waitFor(() => expect(screen.queryByRole("group", { name: /Looks like the same thing/ })).toBeNull());
+  });
+
+  it("UX-THING-3: keep apart answers the proposal without merging", async () => {
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, merge_proposals: [{ id: "thg_2", title: "Product Hunt launch" }] });
+    renderThing();
+    const line = await screen.findByRole("group", { name: /Looks like the same thing/ });
+    fireEvent.click(within(line).getByRole("button", { name: "Keep apart" }));
+    await waitFor(() => expect(answerThingMerge).toHaveBeenCalledWith("thg_1", "thg_2", false));
+  });
+
+  it("UX-THING-3: no proposal, no line", async () => {
+    renderThing();
+    await screen.findByRole("heading", { level: 1, name: "New tagline" });
+    expect(screen.queryByRole("group", { name: /Looks like the same thing/ })).toBeNull();
   });
 });

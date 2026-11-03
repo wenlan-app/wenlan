@@ -225,7 +225,7 @@ fn session_title(session: &AgentSession) -> Option<String> {
         .and_then(|t| clean_thing_title(&t))
 }
 
-async fn history(
+pub(super) async fn history(
     tx: &libsql::Transaction,
     now: i64,
     actor: ThingActor,
@@ -1108,6 +1108,7 @@ impl MemoryDB {
             sessions,
             pages,
             memories,
+            merge_proposals: Vec::new(),
         }))
     }
 

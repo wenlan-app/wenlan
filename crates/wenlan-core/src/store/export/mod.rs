@@ -73,6 +73,7 @@ pub const FILE_TABLE_HOMES: &[(&str, &str)] = &[
     ("thing_map_nodes", "settings"),
     ("thing_map_edges", "settings"),
     ("thing_map_proposals", "settings"),
+    ("thing_merge_proposals", "settings"),
     ("profiles", "settings"),
     ("agent_connections", "settings"),
     ("onboarding_milestones", "settings"),

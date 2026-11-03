@@ -374,3 +374,14 @@ fn ux_thing_1_a_worktree_belongs_to_its_main_checkout() {
     );
     assert_eq!(repo_root_of(&dir.path().to_string_lossy()), None);
 }
+
+#[test]
+fn ux_thing_3_the_grouping_names_look_alike_things_only_as_pairs_to_ask_about() {
+    let answer = r#"{"same": [["T2", "T0"], ["T0", "T2"], ["T1", "T1"], ["T0", "T9"], ["T1"]]}"#;
+    let grouping = parse_grouping(answer, &[], 3).unwrap();
+    assert_eq!(grouping.same, vec![(0, 2)]);
+    assert!(grouping.joins.is_empty() && grouping.new.is_empty());
+    assert!(
+        group_prompt(&[], &[], &[], "English").contains("they are not merged, the person is asked")
+    );
+}
