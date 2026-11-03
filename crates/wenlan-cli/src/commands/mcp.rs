@@ -524,7 +524,7 @@ fn write_json_atomic(path: &Path, value: &Value, expected: Option<&str>) -> Resu
     swapped
 }
 
-fn home_dir_path() -> Result<PathBuf> {
+pub(crate) fn home_dir_path() -> Result<PathBuf> {
     // Prefer the HOME/USERPROFILE env vars before falling back to the OS
     // resolver. `dirs::home_dir()` on Windows calls SHGetKnownFolderPath
     // directly and ignores USERPROFILE, which breaks integration tests

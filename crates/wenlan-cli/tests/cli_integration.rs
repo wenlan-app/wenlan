@@ -1589,6 +1589,102 @@ fn doctor_uses_origin_host_for_health_probe() {
         ));
 }
 
+#[test]
+fn doctor_help_offers_a_home_bin_repair() {
+    cli()
+        .args(["doctor", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--repair"))
+        .stdout(predicate::str::contains(".wenlan/bin"));
+}
+
+/// A regular file left behind by an older `install.sh` / `npx wenlan` is what
+/// PATH and `mcp.json` execute. Repair renames it aside and links the name at
+/// the app bundle.
+#[cfg(unix)]
+#[test]
+fn doctor_reports_a_stale_home_bin_and_repair_keeps_a_backup() {
+    let runtime = IsolatedRuntime::new();
+    let home = runtime.home.path();
+    let bin = home.join(".wenlan/bin");
+    fs::create_dir_all(&bin).expect("bin dir");
+    let bundle = runtime.root.path().join("Wenlan.app/Contents/MacOS");
+    fs::create_dir_all(&bundle).expect("bundle dir");
+    let current = env!("CARGO_PKG_VERSION");
+    for name in ["wenlan", "wenlan-server", "wenlan-mcp"] {
+        write_version_script(&bin.join(name), "0.0.1");
+        write_version_script(&bundle.join(name), current);
+    }
+    fs::write(bundle.join("wenlan-app"), b"app").expect("app marker");
+    fs::write(bin.join("notes.txt"), b"keep").expect("notes");
+
+    let wenlan = bin.join("wenlan");
+    cli_with_isolated_runtime(&runtime)
+        .env("WENLAN_BUNDLE_DIR", &bundle)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0.0.1"))
+        .stdout(predicate::str::contains(
+            "PATH and MCP configs that run ~/.wenlan/bin",
+        ))
+        .stdout(predicate::str::contains("doctor --repair"));
+    let before = fs::symlink_metadata(&wenlan).expect("wenlan metadata");
+    assert!(
+        before.is_file(),
+        "doctor without --repair must not replace the file"
+    );
+    assert!(!before.file_type().is_symlink());
+
+    cli_with_isolated_runtime(&runtime)
+        .env("WENLAN_BUNDLE_DIR", &bundle)
+        .args(["doctor", "--repair"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("moved the previous file"));
+
+    assert!(fs::symlink_metadata(&wenlan)
+        .expect("linked wenlan")
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::canonicalize(&wenlan).expect("canonicalize link"),
+        fs::canonicalize(bundle.join("wenlan")).expect("canonicalize bundle")
+    );
+    let backup = fs::read_dir(&bin)
+        .expect("read bin")
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("wenlan.bak.")
+        })
+        .expect("backup of the old wenlan");
+    let kept = fs::read_to_string(backup.path()).expect("read backup");
+    assert!(kept.contains("0.0.1"), "{kept}");
+    assert_eq!(fs::read(bin.join("notes.txt")).expect("notes"), b"keep");
+
+    cli_with_isolated_runtime(&runtime)
+        .env("WENLAN_BUNDLE_DIR", &bundle)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PATH and MCP configs that run ~/.wenlan/bin").not());
+}
+
+#[cfg(unix)]
+fn write_version_script(path: &Path, version: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::write(
+        path,
+        format!("#!/bin/sh\nprintf '%s\\n' 'wenlan {version}'\n"),
+    )
+    .expect("write script");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod");
+}
+
 #[cfg(not(target_os = "windows"))]
 #[test]
 fn service_unit_path_resolves_per_os() {
