@@ -134,6 +134,16 @@ async fn sync_pass(
     if !knowledge_path.exists() {
         return Ok(stats);
     }
+    // A page the person moved or renamed in the folder keeps its identity:
+    // its record follows the file before edits are looked for, so an edit
+    // made together with the move is read back too.
+    match crate::export::knowledge::follow_external_moves(knowledge_path) {
+        Ok(0) => {}
+        Ok(followed) => {
+            log::info!("[page-watcher] followed {followed} page(s) moved in the folder")
+        }
+        Err(error) => log::warn!("[page-watcher] could not follow moved pages: {error}"),
+    }
     if only.is_none() {
         finish_pending_adoptions(db, knowledge_path).await;
     }
@@ -1013,6 +1023,38 @@ mod tests {
             .is_empty());
     }
 
+    #[tokio::test]
+    async fn an_adopted_note_moved_to_another_folder_keeps_syncing() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        drop_note(
+            dir.path(),
+            "Inbox/idea.md",
+            "---\ntags: [idea]\n---\nA thought.\n",
+        );
+        sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        let id = origin_id_of(&dir.path().join("Inbox/idea.md"));
+        std::fs::create_dir_all(dir.path().join("Ideas")).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("Inbox/idea.md")).unwrap();
+        std::fs::remove_file(dir.path().join("Inbox/idea.md")).unwrap();
+        std::fs::write(
+            dir.path().join("Ideas/idea.md"),
+            raw.replace("A thought.", "A thought, filed."),
+        )
+        .unwrap();
+
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!((stats.applied, stats.errors), (1, 0), "{stats:?}");
+        assert_eq!(
+            db.get_page(&id).await.unwrap().unwrap().content,
+            "A thought, filed."
+        );
+        assert_eq!(
+            tracked_writer(&db, dir.path()).page_filename(&id).unwrap(),
+            "Ideas/idea.md"
+        );
+    }
+
     fn tracked_writer(db: &MemoryDB, path: &Path) -> KnowledgeWriter {
         KnowledgeWriter::new(path.to_path_buf(), db)
     }
@@ -1514,38 +1556,142 @@ mod tests {
         assert_eq!(updated.source_memory_ids, page.source_memory_ids);
     }
 
+    async fn projected_external_page(
+        db: &MemoryDB,
+        dir: &TempDir,
+    ) -> (Page, KnowledgeWriter, String) {
+        let page = sample_page("page_external", "External Topic", "original body");
+        db.insert_page(
+            &page.id,
+            &page.title,
+            None,
+            &page.content,
+            None,
+            None,
+            &["mem_seed"],
+            &page.created_at,
+        )
+        .await
+        .unwrap();
+        let writer = tracked_writer(db, dir.path());
+        project_page(db, &writer, &page);
+        let source = writer.page_filename(&page.id).unwrap();
+        (page, writer, source)
+    }
+
     #[tokio::test]
-    async fn external_move_and_duplicate_claimants_cannot_update_or_duplicate_a_page() {
-        for duplicate in [false, true] {
+    async fn a_page_moved_and_renamed_outside_wenlan_keeps_its_identity_and_edit() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        let (page, writer, source) = projected_external_page(&db, &dir).await;
+        crate::export::knowledge::create_knowledge_folder(dir.path(), "", "Notes").unwrap();
+        let moved = dir.path().join("Notes/renamed by me.md");
+        std::fs::rename(dir.path().join(&source), &moved).unwrap();
+        let raw = std::fs::read_to_string(&moved)
+            .unwrap()
+            .replace("original body", "an edit made with the move");
+        std::fs::write(&moved, &raw).unwrap();
+
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.errors, 0, "{stats:?}");
+        assert_eq!(stats.applied, 1, "{stats:?}");
+        let updated = db.get_page(&page.id).await.unwrap().unwrap();
+        assert_eq!(updated.content, "an edit made with the move");
+        assert!(updated.user_edited);
+        // The record follows the file; nothing is written back at the old
+        // name and no copy appears.
+        assert_eq!(
+            writer.page_filename(&page.id).unwrap(),
+            "Notes/renamed by me.md"
+        );
+        assert!(!dir.path().join(&source).exists());
+        assert_eq!(
+            crate::export::knowledge::knowledge_markdown_paths(dir.path())
+                .unwrap()
+                .into_iter()
+                .filter(|path| path.ends_with(".md") && !path.ends_with("index.md"))
+                .collect::<Vec<_>>(),
+            ["Notes/renamed by me.md"]
+        );
+
+        // A later Wenlan write keeps the person's name and folder.
+        let mut next = updated.clone();
+        next.content = "written by Wenlan".into();
+        next.version += 1;
+        project_page(&db, &writer, &next);
+        assert_eq!(
+            writer.page_filename(&page.id).unwrap(),
+            "Notes/renamed by me.md"
+        );
+        assert!(std::fs::read_to_string(&moved)
+            .unwrap()
+            .contains("written by Wenlan"));
+        assert!(!dir.path().join(&source).exists());
+    }
+
+    #[tokio::test]
+    async fn a_moved_folder_brings_its_pages_along() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        crate::export::knowledge::create_knowledge_folder(dir.path(), "", "Research").unwrap();
+        let page = sample_page("page_in_folder", "Folder Topic", "body");
+        db.insert_page(
+            &page.id,
+            &page.title,
+            None,
+            &page.content,
+            None,
+            None,
+            &["mem_seed"],
+            &page.created_at,
+        )
+        .await
+        .unwrap();
+        let writer = tracked_writer(&db, dir.path());
+        let stored = db.get_page(&page.id).await.unwrap().unwrap();
+        project_page(&db, &writer, &stored);
+        let first = writer.page_filename(&page.id).unwrap();
+        let source = crate::export::knowledge::move_projected_page(
+            dir.path(),
+            &page.id,
+            &first,
+            "Research",
+            "watcher-folder",
+        )
+        .unwrap();
+        assert!(source.starts_with("Research/"), "{source}");
+        std::fs::rename(dir.path().join("Research"), dir.path().join("Reading")).unwrap();
+
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.errors, 0, "{stats:?}");
+        assert_eq!(
+            writer.page_filename(&page.id).unwrap(),
+            source.replacen("Research/", "Reading/", 1)
+        );
+        assert_eq!(
+            db.get_page(&page.id).await.unwrap().unwrap().content,
+            "body"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_copy_of_a_page_cannot_update_or_duplicate_it() {
+        for original_kept in [true, false] {
             let (db, _ddir) = fresh_db().await;
             let dir = TempDir::new().unwrap();
-            let page = sample_page("page_external", "External Topic", "original body");
-            db.insert_page(
-                &page.id,
-                &page.title,
-                None,
-                &page.content,
-                None,
-                None,
-                &["mem_seed"],
-                &page.created_at,
-            )
-            .await
-            .unwrap();
-            let writer = tracked_writer(&db, dir.path());
-            project_page(&db, &writer, &page);
-            let source = writer.page_filename(&page.id).unwrap();
+            let (page, writer, source) = projected_external_page(&db, &dir).await;
             crate::export::knowledge::create_knowledge_folder(dir.path(), "", "Notes").unwrap();
-            let moved = dir.path().join("Notes/external.md");
-            if duplicate {
-                std::fs::copy(dir.path().join(&source), &moved).unwrap();
-            } else {
-                std::fs::rename(dir.path().join(&source), &moved).unwrap();
+            let copy = dir.path().join("Notes/external.md");
+            std::fs::copy(dir.path().join(&source), &copy).unwrap();
+            let second = dir.path().join("Notes/external 2.md");
+            if !original_kept {
+                // Moved, and copied too: two files claim the page.
+                std::fs::rename(dir.path().join(&source), &second).unwrap();
             }
-            let raw = std::fs::read_to_string(&moved)
+            let raw = std::fs::read_to_string(&copy)
                 .unwrap()
                 .replace("original body", "external edit that must be preserved");
-            std::fs::write(&moved, &raw).unwrap();
+            std::fs::write(&copy, &raw).unwrap();
             let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
             assert_eq!(stats.applied, 0);
             assert!(stats.errors > 0);
@@ -1553,8 +1699,9 @@ mod tests {
                 db.get_page(&page.id).await.unwrap().unwrap().content,
                 page.content
             );
-            assert_eq!(std::fs::read_to_string(&moved).unwrap(), raw);
-            assert_eq!(dir.path().join(&source).exists(), duplicate);
+            assert_eq!(std::fs::read_to_string(&copy).unwrap(), raw);
+            assert_eq!(dir.path().join(&source).exists(), original_kept);
+            assert_eq!(writer.page_filename(&page.id).unwrap(), source);
         }
     }
 

@@ -233,3 +233,128 @@ async fn a_copy_left_by_a_stopped_refresh_still_restores() {
         );
     }
 }
+
+/// A link to a page that does not exist yet lives only in `page_links`,
+/// which is not in the files: a restore works it out again from the page
+/// text, so the page still lists it.
+#[tokio::test]
+async fn a_restore_gives_back_links_to_pages_not_written_yet() {
+    let (db, dir) = fixture().await;
+    let body = "Plans built on [[Alpha]] and [[Not Written Yet]].";
+    db.export_fixture_sql("UPDATE pages SET content = ?1 WHERE id = 'b'", body)
+        .await;
+    db.refresh_page_wikilinks("b", body).await.unwrap();
+    let labels = |links: Vec<wenlan_types::responses::PageLinkOutbound>| {
+        let mut labels: Vec<(String, bool)> = links
+            .into_iter()
+            .map(|link| (link.label, link.target_page_id.is_some()))
+            .collect();
+        labels.sort();
+        labels
+    };
+    let scope = crate::read_scope::ReadScope::Global;
+    let before = labels(
+        db.get_page_outbound_links_scoped("b", &scope)
+            .await
+            .unwrap(),
+    );
+    assert!(
+        before.contains(&("Not Written Yet".to_string(), false)),
+        "{before:?}"
+    );
+    let data_root = tempfile::tempdir().unwrap();
+    let embedder = db.shared_embedder().expect("the test database has a model");
+    run_once(
+        &dir.path().join(DATABASE_FILE),
+        &PagesFolder::default(),
+        data_root.path(),
+        &mirror_root(data_root.path()),
+        embedder,
+        false,
+    )
+    .await
+    .unwrap();
+    let db_dir = data_root.path().join("memorydb");
+    let outcome = restore_missing_database(data_root.path(), &db_dir, 1)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, Restore::Restored { .. }), "{outcome:?}");
+    let restored = MemoryDB::new_with_embedding_recovery(
+        &db_dir,
+        Arc::new(NoopEmitter),
+        MemoryEmbeddingRecovery::Deferred,
+    )
+    .await
+    .unwrap();
+    let after = labels(
+        restored
+            .get_page_outbound_links_scoped("b", &scope)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(after, before);
+}
+
+/// A refresh that stopped after setting the old history aside and before
+/// putting the new one in place: the restore reads the old one, and the
+/// next refresh puts it back first.
+#[tokio::test]
+async fn a_refresh_stopped_mid_swap_keeps_the_whole_history() {
+    let (source, _source_dir, data_root) = files_of_fixture().await;
+    let files = mirror_root(data_root.path()).join(FILES_DIR);
+    let history = files.join("backstage").join("history");
+    let entries = crate::store::history::replay(&history)
+        .unwrap()
+        .entries
+        .len();
+    assert!(entries > 0);
+    let old = files.join(crate::store::export::history::HISTORY_OLD);
+    std::fs::rename(&history, &old).unwrap();
+    assert_eq!(crate::store::export::history::log_root(&files), old);
+
+    let db_dir = data_root.path().join("memorydb");
+    let outcome = restore_missing_database(data_root.path(), &db_dir, 1)
+        .await
+        .unwrap();
+    let Restore::Restored {
+        problems,
+        set_aside,
+        ..
+    } = outcome
+    else {
+        panic!("expected a restore, got {outcome:?}");
+    };
+    assert!(problems.is_empty(), "{problems:?}");
+    let restored = MemoryDB::new_with_embedding_recovery(
+        &db_dir,
+        Arc::new(NoopEmitter),
+        MemoryEmbeddingRecovery::Deferred,
+    )
+    .await
+    .unwrap();
+    // Page versions are history: they came back.
+    let versions = compare_keyed(
+        &source,
+        &restored,
+        "page_history",
+        &["page_id", "version"],
+        &[],
+    )
+    .await
+    .unwrap();
+    assert!(versions.rows > 0);
+    assert!(versions.only_in_source.is_empty(), "{versions:#?}");
+
+    // The files the restore read, set aside: putting the swap right puts
+    // the old history back where it was.
+    let aside = set_aside.expect("set aside");
+    crate::store::export::history::recover_swap(&aside).unwrap();
+    let back = aside.join("backstage").join("history");
+    assert_eq!(
+        crate::store::history::replay(&back).unwrap().entries.len(),
+        entries
+    );
+    assert!(!aside
+        .join(crate::store::export::history::HISTORY_OLD)
+        .exists());
+}

@@ -19,11 +19,11 @@ use wenlan_types::CodeBasisLocator;
 #[path = "knowledge_folders.rs"]
 mod folders;
 pub use folders::{
-    adoption_frontmatter, create_knowledge_folder, drop_pending_adoption, knowledge_edit_targets,
-    knowledge_markdown_paths, list_knowledge_folders, move_projected_page, note_person_file,
-    origin_id_line, pending_adoptions, person_page_files, read_knowledge_markdown,
-    record_person_note, restamp_person_note, stamp_person_note, unstamp_person_note,
-    validate_knowledge_folder_path, KnowledgeFolderEntry, PersonPageFile,
+    adoption_frontmatter, create_knowledge_folder, drop_pending_adoption, follow_external_moves,
+    knowledge_edit_targets, knowledge_markdown_paths, list_knowledge_folders, move_projected_page,
+    note_person_file, origin_id_line, pending_adoptions, person_page_files,
+    read_knowledge_markdown, record_person_note, restamp_person_note, stamp_person_note,
+    unstamp_person_note, validate_knowledge_folder_path, KnowledgeFolderEntry, PersonPageFile,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;

@@ -337,12 +337,29 @@ enum Class {
 }
 
 fn class_of(head: &ExportMemoryRow) -> Class {
-    let source = head.source.as_str();
-    let ingest = head.origin_class.as_deref() == Some("document_ingest")
-        || head
-            .source_agent
-            .as_deref()
-            .is_some_and(crate::origin::is_document_ingest_source_agent);
+    class_by(
+        &head.source,
+        head.origin_class.as_deref(),
+        head.source_agent.as_deref(),
+    )
+}
+
+/// Whether a memory whose first chunk has these fields gets a file of its
+/// own (a memory or an original), by the same rule the export uses.
+pub(crate) fn gets_a_file(
+    source: &str,
+    origin_class: Option<&str>,
+    source_agent: Option<&str>,
+) -> bool {
+    matches!(
+        class_by(source, origin_class, source_agent),
+        Class::Memory | Class::Original
+    )
+}
+
+fn class_by(source: &str, origin_class: Option<&str>, source_agent: Option<&str>) -> Class {
+    let ingest = origin_class == Some("document_ingest")
+        || source_agent.is_some_and(crate::origin::is_document_ingest_source_agent);
     if DERIVED_SOURCES.contains(&source) {
         Class::Derived(format!("memories with source {source}"))
     } else if ingest {

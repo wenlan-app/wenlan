@@ -118,6 +118,7 @@ pub async fn refresh_lossless(
     root: &Path,
 ) -> Result<LosslessSummary, WenlanError> {
     let dirs = ExportDirs::in_place(root)?;
+    history::recover_swap(root)?;
     remove_leftovers(root)?;
     let mut summary = export_into(db, folder, data_root, &dirs).await?;
     summary.written = dirs.written();
