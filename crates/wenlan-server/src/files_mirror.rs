@@ -106,7 +106,9 @@ fn due(status: &FilesMirrorStatus, db_changed_at: i64, now: i64) -> bool {
 fn refresh_due(last: &Refreshed, db_changed_at: i64, now: i64) -> bool {
     match last.at {
         None => true,
-        Some(at) => now - at >= last.gap.max(REFRESH_EVERY) && (last.failed || db_changed_at >= at),
+        Some(at) => {
+            now - at >= last.gap.max(refresh_every()) && (last.failed || db_changed_at >= at)
+        }
     }
 }
 
@@ -211,8 +213,27 @@ pub fn start(shared: SharedState, shutdown: tokio::sync::watch::Receiver<bool>) 
     tokio::spawn(run(shared, shutdown));
 }
 
+/// `WENLAN_FILES_MIRROR_REFRESH_SECS` lets a process test see the files
+/// follow the database without waiting minutes: the first refresh and the
+/// least gap between two refreshes, in seconds.
+fn refresh_override() -> Option<i64> {
+    std::env::var("WENLAN_FILES_MIRROR_REFRESH_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+}
+
+fn first_run_after() -> Duration {
+    refresh_override()
+        .map(|secs| Duration::from_secs(secs.max(0) as u64))
+        .unwrap_or(FIRST_RUN_AFTER)
+}
+
+fn refresh_every() -> i64 {
+    refresh_override().unwrap_or(REFRESH_EVERY)
+}
+
 async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<bool>) {
-    let mut wait = FIRST_RUN_AFTER;
+    let mut wait = first_run_after();
     let mut last_refresh = Refreshed::default();
     let started = std::time::Instant::now();
     loop {

@@ -132,6 +132,9 @@ impl RerankerModeArg {
 }
 
 pub async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
+    if let Some(note) = super::home_bin::refresh_for_setup() {
+        println!("{note}");
+    }
     if args.basic {
         configure_basic_memory()?;
         println!("Wenlan is set up for local memory.");
@@ -245,11 +248,12 @@ pub async fn run_reranker(mode: RerankerModeArg) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn run_doctor() -> anyhow::Result<()> {
+pub async fn run_doctor(repair: bool) -> anyhow::Result<()> {
     println!("Wenlan doctor");
     println!();
     print_data_root();
-    print_daemon_health().await;
+    let daemon_version = print_daemon_health().await;
+    super::home_bin::print_doctor_binaries(daemon_version, repair);
     #[cfg(target_os = "macos")]
     print_daemon_log_paths();
     print_key_status();
@@ -808,20 +812,30 @@ fn configured_model() -> Option<&'static on_device_models::OnDeviceModel> {
         .map(|id| on_device_models::resolve_or_default(Some(id)))
 }
 
-async fn print_daemon_health() {
+async fn print_daemon_health() -> Option<wenlan_core::home_bin::Version> {
     let url = origin_url("/api/health");
     match reqwest::get(&url).await {
-        Ok(resp) if resp.status().is_success() => println!("Daemon: running on {}", url),
-        Ok(resp) => println!("Daemon: unhealthy ({})", resp.status()),
+        Ok(resp) if resp.status().is_success() => {
+            println!("Daemon: running on {url}");
+            match resp.json::<wenlan_types::responses::HealthResponse>().await {
+                Ok(health) => wenlan_core::home_bin::Version::parse(&health.version).ok(),
+                Err(_) => None,
+            }
+        }
+        Ok(resp) => {
+            println!("Daemon: unhealthy ({})", resp.status());
+            None
+        }
         Err(_) => {
-            println!("Daemon: not reachable on {}", url);
+            println!("Daemon: not reachable on {url}");
             if super::service::autostart_off_marker_exists() {
                 println!(
                     "  The background service is switched off (`wenlan background off`); turn it back on with `wenlan background on`."
                 );
-                return;
+                return None;
             }
             print_last_daemon_error();
+            None
         }
     }
 }

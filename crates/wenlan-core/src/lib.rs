@@ -43,6 +43,7 @@ pub mod events;
 pub mod export;
 pub mod extract;
 pub mod faithfulness;
+pub mod home_bin;
 pub mod housekeeping;
 pub mod importer;
 pub mod ingest;

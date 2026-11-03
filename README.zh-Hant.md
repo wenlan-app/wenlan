@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=67cdf91d8405178c43a6a0837eeed71f1284a8b6ad041569773b85f31c61abfb -->
+<!-- README_SYNC: source=README.md sha256=56f9ff9caff436589bb98772e21096c38651133957cda16f6db7f2a2b28bf861 -->
 
 <p align="center">
   <picture>
@@ -81,12 +81,13 @@
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
 | Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Grok Bot | 本機 CLI，或 MCP | [Grok Bot 指南](docs/setup-with-ai.md#grok-bot) |
 
 在 App 的設定裡，「新增工具」會找出你電腦上的 AI 工具，按「全部連接」一次設好。接著開一個新的 AI 對話，問它：
 
 > /recall 我之前對這件事的筆記和決定，再幫我：……
 
-Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。
+Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。Grok Bot 在你的電腦上執行 `wenlan recall`，或在那裡開一段短暫的 `wenlan-mcp` 會話（[Grok Bot 指南](docs/setup-with-ai.md#grok-bot)）。
 
 匯入完成後，App 會提供「用（你的 AI 工具）寫頁面」，把資料寫成第一批帶引用的筆記，不用輸入指令。
 

@@ -8,6 +8,8 @@ mod config;
 mod error;
 #[path = "../../crates/wenlan-core/src/export/filename.rs"]
 mod filename;
+#[path = "../../crates/wenlan-core/src/home_bin.rs"]
+mod home_bin;
 #[path = "../../app/src/identity_paths.rs"]
 mod identity_paths;
 #[path = "../../app/src/sources/obsidian.rs"]

@@ -79,12 +79,13 @@ Create a page, or bring in an Obsidian vault, a Logseq graph, a folder, or earli
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
 | Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP and skills | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code and other MCP clients | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Grok Bot | CLI on your computer, or MCP | [Grok Bot guide](docs/setup-with-ai.md#grok-bot) |
 
 In the App's Settings, **Add a tool** finds the AI tools on your computer and **Connect all** sets them up in one press. Then start a new AI session and ask:
 
 > /recall my earlier pages and decisions on this, then help me: …
 
-Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first.
+Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first. Grok Bot runs `wenlan recall` on your computer, or a short `wenlan-mcp` session there ([Grok Bot guide](docs/setup-with-ai.md#grok-bot)).
 
 When an import finishes, the app offers **Write pages with** your AI tool to turn it into your first cited pages. No command needed.
 
