@@ -84,7 +84,7 @@ wenlan --agent-name grok-bot spaces list
 wenlan --agent-name grok-bot capture "the decision, in one sentence"
 ```
 
-`recall` searches memories and the pages that match. `memories` lists recent memories. `spaces list` lists Spaces. `capture` stores one memory and prints its id (`Stored memory <id>`).
+`recall` searches memories and the pages that match. `memories` lists recent memories. `spaces list` lists Spaces. `capture` stores one memory. In an interactive terminal it prints `Stored memory <id>`; when stdout is piped, it returns JSON with the id in `source_id`.
 
 ### MCP over a local shell
 
@@ -186,7 +186,7 @@ wenlan --agent-name grok-bot capture "Wenlan Grok Bot setup check. Disposable."
 wenlan --agent-name grok-bot recall "Wenlan Grok Bot setup check"
 ```
 
-The round trip is proven when `wenlan status` reports a healthy runtime and `recall` returns the captured sentence. `capture` prints `Stored memory <id>`. After defining `wenlan_mcp_call` above in the same shell, delete that memory with `forget`:
+The round trip is proven when `wenlan status` reports a healthy runtime and `recall` returns the captured sentence. Use the id from `Stored memory <id>` in an interactive terminal, or the `source_id` field when the CLI returns JSON (for example, through a bot shell). After defining `wenlan_mcp_call` above in the same shell, delete that memory with `forget`:
 
 ```bash
 wenlan_mcp_call forget '{"memory_id":"<id>"}'
