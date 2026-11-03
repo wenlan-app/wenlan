@@ -83,6 +83,7 @@ The daemon stays the single writer and storage owner. Claude does the thinking.
 - `/wenlan distill [t]` - advanced: synthesize or refresh source-backed pages for the active Space
 - `/wenlan steep [space:<name>]` - write pages from new material and bring out of date ones up to date with this AI tool (steep on demand)
 - `/wenlan wiki [space:<name>]` - read this repository and write a wiki about it, sized to the repository, each page tied to the code lines it relies on
+- `/wenlan organize [complete request]` - organize existing knowledge around your request, preserving identities and sources
 - `/wenlan pages [q]` - browse and open distilled pages
 - `/wenlan curate <surface>` - deep audit of captures, revisions or refinements
 - `/wenlan forget <id>` - delete one memory by ID, after confirmation
