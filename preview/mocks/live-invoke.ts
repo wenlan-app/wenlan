@@ -1079,6 +1079,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       .then((r) => r?.hits ?? []).catch(() => []),
   get_conversation_lines: (a) => get(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/lines`),
   rename_thing: (a) => patch(`/api/things/${enc(String(a?.id ?? ""))}`, { title: a?.title }),
+  hide_thing: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/hide`, {}),
   move_session_thing: (a) => post(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/things/move`, {
     from_thing_id: a?.fromThingId,
     ...(a?.toThingId == null ? {} : { to_thing_id: a.toThingId }),

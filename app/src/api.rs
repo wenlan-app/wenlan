@@ -1748,6 +1748,12 @@ impl WenlanClient {
             .await
     }
 
+    /// `POST /api/things/{id}/hide`: the person takes a thing off home.
+    pub async fn hide_thing(&self, id: &str) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!("/api/things/{}/hide", percent_encode_path_segment(id));
+        self.post_empty(&path).await
+    }
+
     /// `POST /api/sessions/{id}/things/move`: the person moves a conversation
     /// into another thing, or into a new one they name.
     pub async fn move_session_thing(

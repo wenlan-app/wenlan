@@ -424,7 +424,7 @@ async fn migration_149_adds_the_thing_tables() {
 }
 
 #[tokio::test]
-async fn ux_home_5_a_thing_quiet_for_two_weeks_leaves_working_on_and_comes_back() {
+async fn ux_home_5_a_thing_quiet_for_a_week_leaves_working_on_and_comes_back() {
     let (db, _temp) = test_db().await;
     let now = chrono::Utc::now().timestamp();
     let day = 24 * 60 * 60;
@@ -446,17 +446,28 @@ async fn ux_home_5_a_thing_quiet_for_two_weeks_leaves_working_on_and_comes_back(
         now - 40 * day,
     )
     .await;
+    let week_old = conversation(
+        &db,
+        "codex:week",
+        Some("Last week's release"),
+        None,
+        None,
+        now - 8 * day,
+    )
+    .await;
     db.sort_sessions_into_things().await.unwrap();
     let things = db.list_things(&ReadScope::Global, None).await.unwrap();
-    assert_eq!(things.len(), 2, "a quiet thing is still listed, for search");
+    assert_eq!(things.len(), 3, "a quiet thing is still listed, for search");
     let quiet = |id: &str| {
         let thing = things_of_list(&things, id);
         thing.quiet
     };
     let fresh_thing = things_of(&db, &fresh).await.remove(0);
     let old_thing = things_of(&db, &old).await.remove(0);
+    let week_thing = things_of(&db, &week_old).await.remove(0);
     assert!(!quiet(&fresh_thing));
     assert!(quiet(&old_thing));
+    assert!(quiet(&week_thing), "a week without anything new is quiet");
     assert_eq!(things[0].id, fresh_thing, "newest activity first");
 
     // A new conversation in it brings it back.
@@ -474,6 +485,47 @@ async fn ux_home_5_a_thing_quiet_for_two_weeks_leaves_working_on_and_comes_back(
         .unwrap()
         .unwrap();
     assert!(!back.quiet);
+}
+
+#[tokio::test]
+async fn ux_home_5_a_hidden_thing_leaves_working_on_until_its_next_conversation() {
+    let (db, _temp) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let session = conversation(&db, "codex:done", Some("New Mac"), None, None, now - 60).await;
+    db.sort_sessions_into_things().await.unwrap();
+    let thing = things_of(&db, &session).await.remove(0);
+    async fn quiet(db: &MemoryDB, id: &str) -> bool {
+        db.get_thing(id, &ReadScope::Global)
+            .await
+            .unwrap()
+            .unwrap()
+            .quiet
+    }
+    assert!(!quiet(&db, &thing).await);
+
+    db.hide_thing(&thing).await.unwrap();
+    assert!(quiet(&db, &thing).await, "hidden from home");
+    let listed = db.list_things(&ReadScope::Global, None).await.unwrap();
+    assert!(
+        listed.iter().any(|t| t.id == thing),
+        "still listed, for search"
+    );
+
+    // The next conversation in it brings it back.
+    let conn = db.conn.lock().await;
+    conn.execute(
+        "UPDATE agent_sessions SET last_write_at = ?1 WHERE id = ?2",
+        libsql::params![now + 60, session.as_str()],
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    assert!(!quiet(&db, &thing).await);
+
+    assert!(matches!(
+        db.hide_thing("thg_missing").await,
+        Err(crate::error::WenlanError::NotFound(_))
+    ));
 }
 
 #[tokio::test]

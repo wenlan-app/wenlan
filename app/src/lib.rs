@@ -1849,6 +1849,7 @@ pub fn run() {
             search::search_conversations,
             search::get_conversation_lines,
             search::rename_thing,
+            search::hide_thing,
             search::move_session_thing,
             search::get_page_sessions,
             search::set_page_review_required,

@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getThing, listThings, listWorkingOn, type ThingSummary } from "../../../lib/tauri";
+import { getThing, hideThing, listThings, listWorkingOn, type ThingSummary } from "../../../lib/tauri";
 import { WorkingOn } from "./WorkingOn";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
@@ -10,6 +10,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   listThings: vi.fn(),
   listWorkingOn: vi.fn(),
   getThing: vi.fn(),
+  hideThing: vi.fn(),
 }));
 
 const now = Math.floor(Date.now() / 1000);
@@ -41,6 +42,7 @@ describe("WorkingOn", () => {
     vi.mocked(listThings).mockReset();
     vi.mocked(listWorkingOn).mockReset().mockResolvedValue([]);
     vi.mocked(getThing).mockReset().mockImplementation(async (id) => ({ ...thing({ id }), sessions: [], pages: [] }));
+    vi.mocked(hideThing).mockReset();
   });
 
   it("shows a tool by its mark, and a tool without one by its name", async () => {
@@ -89,7 +91,7 @@ describe("WorkingOn", () => {
     expect(titles).toEqual(["New tagline", "Not named yet"]);
     expect(section.textContent).toContain("Picked the X wording");
     expect(section.textContent).not.toMatch(/\b\d+ (pages|conversations|sources)\b/);
-    fireEvent.click(screen.getByRole("button", { name: /New tagline/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^New tagline/ }));
     expect(onOpenThing).toHaveBeenCalledWith("thg_1");
     expect(listWorkingOn).not.toHaveBeenCalled();
   });
@@ -111,7 +113,7 @@ describe("WorkingOn", () => {
     expect(screen.queryByTestId("wiki-working-on")).toBeNull();
   });
 
-  it("UX-HOME-5: a thing quiet for two weeks leaves the list, and the Briefs stay out too", async () => {
+  it("UX-HOME-5: a thing quiet for a week leaves the list, and the Briefs stay out too", async () => {
     vi.mocked(listThings).mockResolvedValue([
       thing(),
       thing({ id: "thg_old", title: "Old import", quiet: true, last_activity_at: now - 40 * 86400 }),
@@ -150,5 +152,22 @@ describe("WorkingOn", () => {
     expect(section).toHaveAttribute("data-expanded", "true");
     fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
     expect(section.querySelectorAll(".wiki-working-on-card")).toHaveLength(6);
+  });
+
+  it("UX-HOME-5: Don't show takes a thing off home at once, without opening it", async () => {
+    let list = [thing(), thing({ id: "thg_mac", title: "New Mac" })];
+    vi.mocked(listThings).mockImplementation(async () => list);
+    vi.mocked(hideThing).mockImplementation(async (id) => {
+      list = list.map((t) => (t.id === id ? { ...t, quiet: true } : t));
+      return list.find((t) => t.id === id)!;
+    });
+    const { onOpenThing } = renderWorkingOn();
+    const section = await screen.findByTestId("wiki-working-on");
+    await waitFor(() => expect(section.textContent).toContain("New Mac"));
+    fireEvent.click(screen.getByRole("button", { name: "Don't show New Mac" }));
+    await waitFor(() => expect(hideThing).toHaveBeenCalledWith("thg_mac"));
+    await waitFor(() => expect(section.textContent).not.toContain("New Mac"));
+    expect(section.textContent).toContain("New tagline");
+    expect(onOpenThing).not.toHaveBeenCalled();
   });
 });

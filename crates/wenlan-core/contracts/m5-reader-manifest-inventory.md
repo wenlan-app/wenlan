@@ -709,6 +709,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/sessions/{id}/lines` | main | no | not_applicable | `none` | — | ConversationLinesResponse: one AI tool transcript's lines with its conversation and thing titles, no page prose |
 | `POST` | `/api/things/{id}/map/ops` | main | no | not_applicable | `none` | — | ThingMapOpsResponse: point labels written for the map and conversation ids, no page prose |
 | `PATCH` | `/api/things/{id}` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `POST` | `/api/things/{id}/hide` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
 | `POST` | `/api/pages/{id}/rename` | main | yes | automatic | `none` | `handle_rename_page` | title metadata — core page_write_permit before mutation |

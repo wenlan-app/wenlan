@@ -1555,7 +1555,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 152;
+pub const SCHEMA_VERSION: u32 = 153;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10786,6 +10786,15 @@ impl MemoryDB {
             }
             if version < 152 {
                 self.migrate_152_thing_map(version).await?;
+            }
+
+            // Migration 153 records when the person took a thing off home.
+            // See db/things.rs.
+            if ceiling < 153 {
+                return Ok(());
+            }
+            if version < 153 {
+                self.migrate_153_thing_hidden_at(version).await?;
             }
         }
 

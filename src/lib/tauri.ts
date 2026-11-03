@@ -1077,6 +1077,11 @@ export async function renameThing(id: string, title: string): Promise<ThingSumma
   return invoke("rename_thing", { id, title });
 }
 
+/** Take a thing off "what you're working on" until its next conversation (UX-HOME-5). */
+export async function hideThing(id: string): Promise<ThingSummary> {
+  return invoke("hide_thing", { id });
+}
+
 /** Move a conversation out of one thing into another, or into a new thing
  *  named `newTitle`, in one step (UX-THING-1). Its other things stay. */
 export async function moveSessionThing(

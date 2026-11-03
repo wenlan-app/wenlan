@@ -5454,6 +5454,17 @@ pub async fn rename_thing(
     client.rename_thing(&id, title).await
 }
 
+/// Take a thing off "what you're working on" until its next conversation
+/// (UX-HOME-5).
+#[tauri::command]
+pub async fn hide_thing(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.hide_thing(&id).await
+}
+
 /// Move a conversation between things (UX-THING-1): into `to_thing_id`, or
 /// into a new thing named `new_title`.
 #[tauri::command]
