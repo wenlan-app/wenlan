@@ -133,6 +133,39 @@ fn ux_thing_1_a_codex_conversation_reads_its_meta_and_messages() {
     assert_eq!(found.last_reply, "Fixed.");
     assert!(!found.automated);
 
+    // Newer Codex records the person's turns only as messages; a later
+    // session_meta (a sub-agent it started) does not change whose file it is.
+    let newer = dir.path().join("sessions/2026/11/02/rollout-new.jsonl");
+    write(
+        &newer,
+        &[
+            serde_json::json!({"type": "session_meta", "timestamp": "2026-11-02T09:00:00Z",
+                "payload": {"id": "new", "cwd": "/w/site", "originator": "Codex Desktop", "source": "vscode"}}),
+            serde_json::json!({"type": "response_item", "timestamp": "2026-11-02T09:00:01Z",
+                "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<environment_context>cwd</environment_context>"}]}}),
+            serde_json::json!({"type": "response_item", "timestamp": "2026-11-02T09:00:02Z",
+                "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Rewrite the pricing page"}]}}),
+            serde_json::json!({"type": "session_meta", "timestamp": "2026-11-02T09:01:00Z",
+                "payload": {"id": "child", "source": {"subagent": {"name": "x"}}}}),
+            serde_json::json!({"type": "event_msg", "timestamp": "2026-11-02T09:02:00Z",
+                "payload": {"type": "user_message", "message": "Rewrite the pricing page"}}),
+        ],
+    );
+    let found = read_codex(&newer).unwrap();
+    assert_eq!(found.external_id, "new");
+    assert_eq!(found.said, vec!["Rewrite the pricing page"]);
+    assert!(!found.automated);
+
+    let sub = dir.path().join("sessions/2026/11/02/rollout-sub.jsonl");
+    write(
+        &sub,
+        &[
+            serde_json::json!({"type": "session_meta", "timestamp": "2026-11-02T09:00:00Z",
+        "payload": {"id": "sub", "originator": "Codex Desktop", "source": {"subagent": {"parent": "new"}}}}),
+        ],
+    );
+    assert!(read_codex(&sub).unwrap().automated);
+
     let exec = dir.path().join("sessions/2026/11/01/rollout-exec.jsonl");
     write(
         &exec,

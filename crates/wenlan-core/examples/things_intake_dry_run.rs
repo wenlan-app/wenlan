@@ -2,11 +2,11 @@
 //! Dry run of "what you're working on" from AI-tool transcripts: the same
 //! scan, rules, prompts and parsing the daemon uses
 //! (`wenlan_core::conversation_intake`), with no database. Reads the
-//! transcripts on this computer and writes only `$OUT_DIR/things.json`.
+//! transcripts on this computer and writes only `$THINGS_OUT/things.json`.
 //!
 //! ```sh
 //! LABEL_URL=http://127.0.0.1:11434/v1 LABEL_MODEL=qwen2.5:14b \
-//! SPACES=wenlan,writing UI_LANGUAGE=zh-Hant OUT_DIR=/tmp/things \
+//! SPACES=wenlan,writing UI_LANGUAGE=zh-Hant THINGS_OUT=/tmp/things \
 //! cargo run -p wenlan-core --example things_intake_dry_run
 //! ```
 //!
@@ -36,7 +36,7 @@ fn env(name: &str) -> String {
 
 #[tokio::main]
 async fn main() {
-    let out_dir = std::path::PathBuf::from(env("OUT_DIR"));
+    let things_out = std::path::PathBuf::from(env("THINGS_OUT"));
     let spaces: Vec<String> = env("SPACES")
         .split(',')
         .filter(|s| !s.is_empty())
@@ -171,15 +171,15 @@ async fn main() {
         })).collect::<Vec<_>>(),
         "skipped": skipped,
     });
-    std::fs::create_dir_all(&out_dir).unwrap();
+    std::fs::create_dir_all(&things_out).unwrap();
     std::fs::write(
-        out_dir.join("things.json"),
+        things_out.join("things.json"),
         serde_json::to_string_pretty(&json).unwrap(),
     )
     .unwrap();
     eprintln!(
         "{} things; wrote {}",
         things.len(),
-        out_dir.join("things.json").display()
+        things_out.join("things.json").display()
     );
 }

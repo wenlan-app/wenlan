@@ -393,7 +393,17 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
     let (mut first_at, mut last_at) = (None::<i64>, None::<i64>);
     let (mut said, mut last_reply) = (Vec::<String>::new(), String::new());
     let (mut automated, mut cwd, mut branch, mut id) = (false, None, None, None);
+    let mut seen_meta = false;
     let text_of = |value: &serde_json::Value| value.as_str().map(str::trim).map(str::to_string);
+    let typed = |text: Option<String>, said: &mut Vec<String>| {
+        let Some(text) = text.filter(|t| !t.is_empty() && !injected(t)) else {
+            return;
+        };
+        // Older Codex records a turn twice: as an event and as a message.
+        if said.last().map(String::as_str) != Some(cut(&text, MAX_SAID_CHARS).as_str()) {
+            said.push(cut(&text, MAX_SAID_CHARS));
+        }
+    };
     for raw in lines {
         let Ok(entry) = serde_json::from_slice::<CodexEntry>(&raw) else {
             continue;
@@ -407,20 +417,33 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
             entry.kind.as_deref(),
             p.get("type").and_then(|t| t.as_str()),
         ) {
-            (Some("session_meta"), _) => {
-                id = id.or_else(|| text_of(&p["id"]));
-                cwd = text_of(&p["cwd"]).or(cwd);
-                branch = text_of(&p["git"]["branch"]).or(branch);
-                let origin = text_of(&p["originator"]).or_else(|| text_of(&p["source"]));
-                if origin.as_deref() == Some("codex_exec") || origin.as_deref() == Some("exec") {
+            // The file's own session comes first; later ones describe the
+            // sessions it started.
+            (Some("session_meta"), _) if !seen_meta => {
+                seen_meta = true;
+                id = text_of(&p["id"]);
+                cwd = text_of(&p["cwd"]);
+                branch = text_of(&p["git"]["branch"]);
+                let origin = text_of(&p["originator"]);
+                let source = text_of(&p["source"]);
+                // Run by a program (`codex exec`) or a sub-agent another
+                // conversation started: its prompt is not the person's.
+                if origin.as_deref() == Some("codex_exec")
+                    || source.as_deref() == Some("exec")
+                    || p["source"].get("subagent").is_some()
+                {
                     automated = true;
                 }
             }
-            (Some("event_msg"), Some("user_message")) => {
-                if let Some(text) = text_of(&p["message"]).filter(|t| !t.is_empty() && !injected(t))
-                {
-                    said.push(cut(&text, MAX_SAID_CHARS));
-                }
+            (Some("event_msg"), Some("user_message")) => typed(text_of(&p["message"]), &mut said),
+            (Some("response_item"), Some("message")) if p["role"] == "user" => {
+                let first = p["content"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|c| c["type"] == "input_text" || c["type"] == "text")
+                    .find_map(|c| text_of(&c["text"]).filter(|t| !t.is_empty()));
+                typed(first, &mut said);
             }
             (Some("response_item"), Some("message")) if p["role"] == "assistant" => {
                 let reply = p["content"]
