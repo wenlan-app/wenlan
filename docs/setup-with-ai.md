@@ -88,17 +88,93 @@ wenlan --agent-name grok-bot capture "the decision, in one sentence"
 
 ### MCP over a local shell
 
-On the user's computer, start one `wenlan-mcp` process, pipe it newline-delimited JSON-RPC, read the replies from stdout, and let the process exit. Each invocation is its own session. The connector calls `http://127.0.0.1:7878` on that same computer.
+Run this function in a shell on the computer that holds the library. It starts a short-lived MCP process for each call, waits for that call's reply, and then exits. The connector calls `http://127.0.0.1:7878` on that same computer. Python 3 is required.
 
 ```bash
-~/.wenlan/bin/wenlan-mcp --agent-name grok-bot <<'EOF'
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"grok-bot","version":"1"}}}
-{"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"recall","arguments":{"query":"what we decided"}}}
-EOF
+wenlan_mcp_call() {
+  python3 - "$@" <<'PY'
+import json, os, queue, subprocess, sys, threading, time
+
+RESPONSE_TIMEOUT = 60
+tool, arguments = sys.argv[1], json.loads(sys.argv[2])
+binary = os.path.expanduser("~/.wenlan/bin/wenlan-mcp")
+proc = subprocess.Popen(
+    [binary, "--agent-name", "grok-bot"],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
+)
+chunks = queue.Queue()
+
+def pump_stdout():
+    while True:
+        try:
+            chunk = os.read(proc.stdout.fileno(), 65536)
+        except OSError:
+            chunk = b""
+        chunks.put(chunk)
+        if not chunk:
+            return
+
+threading.Thread(target=pump_stdout, daemon=True).start()
+buffer = b""
+
+def send(message):
+    proc.stdin.write((json.dumps(message) + "\n").encode())
+    proc.stdin.flush()
+
+def receive(request_id):
+    global buffer
+    deadline = time.monotonic() + RESPONSE_TIMEOUT
+    while True:
+        while b"\n" in buffer:
+            line, buffer = buffer.split(b"\n", 1)
+            if not line:
+                continue
+            message = json.loads(line)
+            if message.get("id") == request_id:
+                if "error" in message:
+                    raise RuntimeError("JSON-RPC error: " + json.dumps(message["error"]))
+                result = message.get("result")
+                if not isinstance(result, dict) or result.get("isError"):
+                    raise RuntimeError("tool call failed: " + json.dumps(result))
+                return result
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("timed out waiting for MCP response")
+        try:
+            chunk = chunks.get(timeout=remaining)
+        except queue.Empty:
+            raise RuntimeError("timed out waiting for MCP response")
+        if not chunk:
+            raise RuntimeError("wenlan-mcp closed stdout before replying")
+        buffer += chunk
+
+try:
+    send({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{
+        "protocolVersion":"2025-11-25", "capabilities":{},
+        "clientInfo":{"name":"grok-bot", "version":"1"}}})
+    receive(1)
+    send({"jsonrpc":"2.0", "method":"notifications/initialized"})
+    send({"jsonrpc":"2.0", "id":2, "method":"tools/call", "params":{
+        "name":tool, "arguments":arguments}})
+    print(json.dumps(receive(2), ensure_ascii=False))
+    proc.stdin.close()
+    proc.wait(timeout=5)
+finally:
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+    proc.stdout.close()
+PY
+}
+
+wenlan_mcp_call recall '{"query":"what we decided"}'
 ```
 
-Send `initialize`, then `notifications/initialized`, then the call. Replies are one JSON object per line. `initialize` returns the server info. `tools/call` with `name` `recall` searches the library. The same session shape with `method` `tools/list` returns the local tools, including `recall`, `brief`, `get_page_sources`, `capture`, `write_page`, and `forget`. Logs go to stderr.
+The function waits up to 60 seconds for each response, prints the tool result as JSON, and reports a JSON-RPC or tool error as a failed command. Server logs go to stderr.
 
 ### Verify
 
@@ -110,14 +186,10 @@ wenlan --agent-name grok-bot capture "Wenlan Grok Bot setup check. Disposable."
 wenlan --agent-name grok-bot recall "Wenlan Grok Bot setup check"
 ```
 
-The round trip is proven when `wenlan status` reports a healthy runtime and `recall` returns the captured sentence. `capture` prints `Stored memory <id>`. Delete that memory in a short MCP session with `forget`:
+The round trip is proven when `wenlan status` reports a healthy runtime and `recall` returns the captured sentence. `capture` prints `Stored memory <id>`. After defining `wenlan_mcp_call` above in the same shell, delete that memory with `forget`:
 
 ```bash
-~/.wenlan/bin/wenlan-mcp --agent-name grok-bot <<'EOF'
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"grok-bot","version":"1"}}}
-{"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"forget","arguments":{"memory_id":"<id>"}}}
-EOF
+wenlan_mcp_call forget '{"memory_id":"<id>"}'
 ```
 
 Replace `<id>` with the id `capture` printed. The `wenlan` CLI has no forget command.
