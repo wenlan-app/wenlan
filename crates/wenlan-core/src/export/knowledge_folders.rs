@@ -516,6 +516,79 @@ pub fn follow_external_moves(path: &Path) -> Result<usize, WenlanError> {
     })
 }
 
+/// A page's file and record as they were before a write that went to the
+/// file first (see [`KnowledgeProjectionWrite::write_page_first`]).
+pub(super) struct FileBefore {
+    pub(super) entry: Option<PageFileState>,
+    pub(super) bytes: Option<Vec<u8>>,
+}
+
+pub(super) fn capture_page_file(path: &Path, page_id: &str) -> Result<FileBefore, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let entry = read_state_strict(&capabilities.wenlan)?
+            .pages
+            .get(page_id)
+            .cloned();
+        let bytes = match &entry {
+            Some(entry) => read_page_file_in(&capabilities.root, &entry.file)?,
+            None => None,
+        };
+        Ok(FileBefore { entry, bytes })
+    })
+}
+
+pub(super) fn read_page_file(path: &Path, file: &str) -> Result<Option<Vec<u8>>, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        read_page_file_in(&capabilities.root, file)
+    })
+}
+
+fn read_page_file_in(root: &Dir, file: &str) -> Result<Option<Vec<u8>>, WenlanError> {
+    let Ok((parent, name)) = page_parent(root, file) else {
+        return Ok(None);
+    };
+    let mut budget = RepairReadBudget::new();
+    read_optional_regular_nofollow(&parent, OsStr::new(&name), &mut budget)
+}
+
+/// Puts back what a file-first write replaced, when its database write did
+/// not land: only while the file still holds exactly `written` (a save by
+/// the person since is theirs and stays) and the write did not move the
+/// page to another file. Returns whether it put anything back.
+pub(super) fn undo_file_first(
+    path: &Path,
+    page_id: &str,
+    file: &str,
+    written: &[u8],
+    before: &FileBefore,
+) -> Result<bool, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        if read_page_file_in(&capabilities.root, file)?.as_deref() != Some(written) {
+            return Ok(false);
+        }
+        let (parent, name) = page_parent(&capabilities.root, file)?;
+        match (&before.entry, &before.bytes) {
+            (Some(entry), Some(bytes)) if entry.file == file => {
+                let temporary = format!(
+                    ".{page_id}.{}.{}.tmp",
+                    std::process::id(),
+                    TEMP_FILE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                );
+                write_page_atomically_nofollow(&parent, &name, &temporary, bytes)?;
+                state.pages.insert(page_id.to_string(), entry.clone());
+            }
+            (None, _) => {
+                parent.remove_file(&name)?;
+                state.pages.remove(page_id);
+            }
+            _ => return Ok(false),
+        }
+        save_state(&capabilities.wenlan, &state)?;
+        Ok(true)
+    })
+}
+
 pub fn create_knowledge_folder(
     path: &Path,
     parent_path: &str,
