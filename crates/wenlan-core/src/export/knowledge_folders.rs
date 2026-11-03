@@ -452,31 +452,11 @@ pub fn knowledge_edit_targets(path: &Path) -> Result<HashMap<String, String>, We
 pub fn follow_external_moves(path: &Path) -> Result<usize, WenlanError> {
     KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
         let mut state = read_state_strict(&capabilities.wenlan)?;
-        let gone: Vec<String> = state
-            .pages
-            .iter()
-            .filter(|(_, entry)| {
-                !matches!(
-                    page_parent(&capabilities.root, &entry.file)
-                        .map(|(dir, name)| dir.symlink_metadata(&name).is_ok()),
-                    Ok(true)
-                )
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
+        let gone = pages_without_their_file(&capabilities.root, &state);
         if gone.is_empty() {
             return Ok(0);
         }
-        let mut claims: HashMap<String, Vec<String>> = HashMap::new();
-        for path in scan_tree(&capabilities.root)?.1 {
-            if is_reserved_okf_filename(path.rsplit('/').next().unwrap_or(&path)) {
-                continue;
-            }
-            let (parent, name) = page_parent(&capabilities.root, &path)?;
-            if let Some(id) = KnowledgeWriter::read_origin_id(&parent, &OsString::from(name)) {
-                claims.entry(id).or_default().push(path);
-            }
-        }
+        let claims = files_by_origin_id(&capabilities.root)?;
         let mut recorded: std::collections::HashSet<String> = state
             .pages
             .values()
@@ -513,6 +493,104 @@ pub fn follow_external_moves(path: &Path) -> Result<usize, WenlanError> {
             }
         }
         Ok(followed)
+    })
+}
+
+/// Pages whose recorded file is no longer there. An iCloud placeholder
+/// (`.<name>.icloud`, left when macOS offloads a file) counts as there: the
+/// file is still the person's, only not downloaded.
+fn pages_without_their_file(root: &Dir, state: &KnowledgeState) -> Vec<String> {
+    let mut gone: Vec<String> = state
+        .pages
+        .iter()
+        .filter(|(_, entry)| {
+            !matches!(
+                page_parent(root, &entry.file).map(|(dir, name)| {
+                    dir.symlink_metadata(&name).is_ok()
+                        || dir.symlink_metadata(format!(".{name}.icloud")).is_ok()
+                }),
+                Ok(true)
+            )
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    gone.sort();
+    gone
+}
+
+/// Every Markdown file in the pages folder, by the `origin_id` it carries.
+fn files_by_origin_id(root: &Dir) -> Result<HashMap<String, Vec<String>>, WenlanError> {
+    let mut claims: HashMap<String, Vec<String>> = HashMap::new();
+    for path in scan_tree(root)?.1 {
+        if is_reserved_okf_filename(path.rsplit('/').next().unwrap_or(&path)) {
+            continue;
+        }
+        let (parent, name) = page_parent(root, &path)?;
+        if let Some(id) = KnowledgeWriter::read_origin_id(&parent, &OsString::from(name)) {
+            claims.entry(id).or_default().push(path);
+        }
+    }
+    Ok(claims)
+}
+
+/// A page file must stay gone this long before its page is archived.
+pub const MISSING_SETTLE_SECS: i64 = 60;
+/// More files than this gone at once, and more than half of all pages, is
+/// held: an unmounted drive, a sync tool resetting the folder or a bad
+/// checkout looks exactly like that, and archiving would follow a mistake.
+pub const MASS_MISSING_FLOOR: usize = 10;
+
+/// What [`note_missing_pages`] found.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct MissingPages {
+    /// Pages whose file has stayed gone for [`MISSING_SETTLE_SECS`], with no
+    /// other file carrying their id: deleted in the folder.
+    pub deleted: Vec<String>,
+    /// Gone, but not for long enough yet.
+    pub waiting: usize,
+    /// Set when so many files are gone at once that none is treated as
+    /// deleted: how many are gone.
+    pub held: Option<usize>,
+}
+
+/// Find pages whose file the person deleted from the folder.
+///
+/// A page counts as deleted only when its recorded file is gone, no other
+/// file in the folder carries its id (a move is followed by
+/// [`follow_external_moves`], and a copy or conflict file still holds the
+/// page), and the file has been gone since a pass at least
+/// [`MISSING_SETTLE_SECS`] before `now`. The first sighting is kept in
+/// `state.json`, so a pass that sees the file back clears it.
+pub fn note_missing_pages(path: &Path, now: i64) -> Result<MissingPages, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        let mut gone = pages_without_their_file(&capabilities.root, &state);
+        if !gone.is_empty() {
+            let claims = files_by_origin_id(&capabilities.root)?;
+            gone.retain(|id| !claims.contains_key(id));
+        }
+        let before = state.missing_since.clone();
+        state.missing_since.retain(|id, _| gone.contains(id));
+        for id in &gone {
+            state.missing_since.entry(id.clone()).or_insert(now);
+        }
+        if state.missing_since != before {
+            save_state(&capabilities.wenlan, &state)?;
+        }
+        let mut found = MissingPages::default();
+        if gone.len() > MASS_MISSING_FLOOR && gone.len() * 2 > state.pages.len() {
+            found.held = Some(gone.len());
+            return Ok(found);
+        }
+        for id in gone {
+            let since = state.missing_since.get(&id).copied().unwrap_or(now);
+            if now - since >= MISSING_SETTLE_SECS {
+                found.deleted.push(id);
+            } else {
+                found.waiting += 1;
+            }
+        }
+        Ok(found)
     })
 }
 

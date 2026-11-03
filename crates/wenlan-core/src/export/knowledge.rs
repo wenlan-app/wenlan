@@ -20,8 +20,9 @@ use wenlan_types::CodeBasisLocator;
 mod folders;
 pub use folders::{
     create_knowledge_folder, follow_external_moves, knowledge_edit_targets,
-    knowledge_markdown_paths, list_knowledge_folders, move_projected_page, read_knowledge_markdown,
-    validate_knowledge_folder_path, KnowledgeFolderEntry,
+    knowledge_markdown_paths, list_knowledge_folders, move_projected_page, note_missing_pages,
+    read_knowledge_markdown, validate_knowledge_folder_path, KnowledgeFolderEntry, MissingPages,
+    MASS_MISSING_FLOOR, MISSING_SETTLE_SECS,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;
@@ -84,6 +85,13 @@ struct KnowledgeState {
     /// Dropped with `archived_from`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     archived_versions: BTreeMap<String, i64>,
+    /// When the page watcher first found a page's file gone (page id -> unix
+    /// seconds) with no other file carrying its id. The page is archived only
+    /// once the file has stayed gone for a while, so a save that replaces the
+    /// file or a sync tool that briefly removes it does not archive anything.
+    /// Absent from state files written before this field existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    missing_since: BTreeMap<String, i64>,
 }
 
 impl Default for KnowledgeState {
@@ -95,6 +103,7 @@ impl Default for KnowledgeState {
             index_regeneration_pending: false,
             archived_from: BTreeMap::new(),
             archived_versions: BTreeMap::new(),
+            missing_since: BTreeMap::new(),
         }
     }
 }
@@ -162,6 +171,10 @@ pub struct ReconcileStats {
     pub temp_files_removed: usize,
     /// Repairs that failed; the page keeps its stale file until next boot.
     pub errors: usize,
+    /// Pages whose file is gone. Not written back: the folder is the source
+    /// of truth, so a file the person deleted stays deleted, and the page
+    /// watcher archives its page.
+    pub missing: usize,
 }
 
 /// The `origin_version` stamp `render_markdown` writes into every projected
@@ -225,6 +238,7 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
             "index_regeneration_pending",
             "archived_from",
             "archived_versions",
+            "missing_since",
         ]
         .contains(&key.as_str())
     }) {
@@ -762,6 +776,10 @@ impl KnowledgeWriter {
                 continue;
             };
             stats.checked += 1;
+            if self.projection_file_is_gone(&entry.file) {
+                stats.missing += 1;
+                continue;
+            }
             if !self.projection_is_behind(&entry.file, page) {
                 continue;
             }
@@ -787,6 +805,19 @@ impl KnowledgeWriter {
             }
         }
         Ok(stats)
+    }
+
+    /// Whether nothing at all is at `filename`, its folder included (the
+    /// person may have deleted the whole folder). Any other failure is not
+    /// "gone": that is left to the repair, which reports it.
+    fn projection_file_is_gone(&self, filename: &str) -> bool {
+        folders::validate_page_path(filename).is_ok()
+            && folders::read_root(&self.path).is_ok_and(|root| {
+                matches!(
+                    root.symlink_metadata(filename),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                )
+            })
     }
 
     /// Whether `filename` is missing, unreadable, or stamped with a version
@@ -1346,7 +1377,11 @@ impl KnowledgeWriter {
             }
             for (page_id, entry) in folders::read_state_strict(&capabilities.wenlan)?.pages {
                 let slot = found.entry(page_id).or_default();
-                let (directory, name) = folders::page_parent(&capabilities.root, &entry.file)?;
+                // A folder deleted with the page in it: nothing there to find.
+                let Ok((directory, name)) = folders::page_parent(&capabilities.root, &entry.file)
+                else {
+                    continue;
+                };
                 if directory.symlink_metadata(&name).is_ok() {
                     slot.push(entry.file);
                 }
@@ -6874,10 +6909,11 @@ mod tests {
         );
     }
 
-    /// A projection file that vanished (rename never landed, user deleted it)
-    /// is rewritten from DB truth.
+    /// The folder is the source of truth: a page file the person deleted, or
+    /// whose whole folder they deleted, is not written back at startup. The
+    /// page watcher archives the page instead.
     #[test]
-    fn reconcile_rewrites_page_whose_projection_file_vanished() {
+    fn reconcile_leaves_a_deleted_page_file_deleted() {
         let dir = tempfile::TempDir::new().unwrap();
         let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
         let page = test_concept();
@@ -6889,12 +6925,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(stats.checked, 1);
-        assert_eq!(stats.rewritten, 1);
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            render_markdown_for(&page),
-            "vanished projection was not restored from the DB"
+        assert_eq!(stats.rewritten, 0);
+        assert_eq!(stats.missing, 1);
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "a deleted page file came back"
         );
+    }
+
+    /// Rename reads `state.json` strictly; a page file waiting to count as
+    /// deleted must not make every rename fail.
+    #[test]
+    fn rename_reads_a_state_with_a_missing_page_file() {
+        let mut state = KnowledgeState::default();
+        state.missing_since.insert("page_gone".into(), 1);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let parsed = parse_rename_projection_state(&bytes).unwrap();
+        assert_eq!(parsed.missing_since.get("page_gone"), Some(&1));
     }
 
     /// The fsync-free write buys atomicity, not durability: after a power loss
