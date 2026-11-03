@@ -372,10 +372,10 @@ async fn a_restore_keeps_a_link_to_one_of_two_pages_of_the_same_name() {
     );
 }
 
-/// A document read from a folder Wenlan no longer follows comes back from
-/// the files, chunk by chunk: the folder may be gone.
+/// A document read from a folder comes back from the files, chunk by
+/// chunk: the folder may be gone.
 #[tokio::test]
-async fn a_restore_gives_back_documents_of_folders_no_longer_followed() {
+async fn a_restore_gives_back_documents_read_from_folders() {
     let (db, dir) = fixture().await;
     for (chunk, text) in [(0, "# Trip plan"), (1, "Lisbon in May.")] {
         db.export_fixture_sql(

@@ -4,8 +4,8 @@
 //! shape as the settings files, so nothing is lost before each one gets its
 //! final place (spec sections 3 and 7):
 //!
-//! - `source_annotations`: the person's notes about a source. Many sources
-//!   (connected-folder documents) have no file of their own to hold them.
+//! - `source_annotations`: the person's notes about a source, kept apart
+//!   from the source's own text.
 //! - `okf_concepts`, `okf_concept_links`: an imported OKF page's original
 //!   frontmatter and concept links.
 //! - `page_basis`, `page_code_basis`: every confirmation detail; the page
