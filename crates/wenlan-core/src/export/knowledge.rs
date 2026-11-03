@@ -19,8 +19,8 @@ use wenlan_types::CodeBasisLocator;
 #[path = "knowledge_folders.rs"]
 mod folders;
 pub use folders::{
-    create_knowledge_folder, knowledge_edit_targets, knowledge_markdown_paths,
-    list_knowledge_folders, move_projected_page, read_knowledge_markdown,
+    create_knowledge_folder, follow_external_moves, knowledge_edit_targets,
+    knowledge_markdown_paths, list_knowledge_folders, move_projected_page, read_knowledge_markdown,
     validate_knowledge_folder_path, KnowledgeFolderEntry,
 };
 

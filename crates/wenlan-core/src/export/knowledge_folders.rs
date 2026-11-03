@@ -442,6 +442,80 @@ pub fn knowledge_edit_targets(path: &Path) -> Result<HashMap<String, String>, We
     })
 }
 
+/// Follows pages the person moved or renamed in the pages folder, outside
+/// Wenlan (in Finder, Obsidian, a sync app): a page whose recorded file is
+/// gone, and whose id is now claimed by exactly one other file no page is
+/// recorded at, is recorded at that file. Identity is the `origin_id` in
+/// the file, so a rename or a moved folder keeps the page, its history
+/// and its links. A copy (the old file still there) or two files with the
+/// same id change nothing. Returns how many pages were followed.
+pub fn follow_external_moves(path: &Path) -> Result<usize, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        let gone: Vec<String> = state
+            .pages
+            .iter()
+            .filter(|(_, entry)| {
+                !matches!(
+                    page_parent(&capabilities.root, &entry.file)
+                        .map(|(dir, name)| dir.symlink_metadata(&name).is_ok()),
+                    Ok(true)
+                )
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        if gone.is_empty() {
+            return Ok(0);
+        }
+        let mut claims: HashMap<String, Vec<String>> = HashMap::new();
+        for path in scan_tree(&capabilities.root)?.1 {
+            if is_reserved_okf_filename(path.rsplit('/').next().unwrap_or(&path)) {
+                continue;
+            }
+            let (parent, name) = page_parent(&capabilities.root, &path)?;
+            if let Some(id) = KnowledgeWriter::read_origin_id(&parent, &OsString::from(name)) {
+                claims.entry(id).or_default().push(path);
+            }
+        }
+        let mut recorded: std::collections::HashSet<String> = state
+            .pages
+            .values()
+            .map(|entry| collision_key(&entry.file))
+            .collect();
+        let mut followed = 0;
+        for id in gone {
+            let Some([found]) = claims.get(&id).map(Vec::as_slice) else {
+                continue;
+            };
+            let entry = state.pages.get_mut(&id).ok_or_else(invalid_path)?;
+            let (old_key, new_key) = (collision_key(&entry.file), collision_key(found));
+            // Another page is recorded at that name: not this page's move.
+            if validate_page_path(found).is_err()
+                || (new_key != old_key && recorded.contains(&new_key))
+            {
+                continue;
+            }
+            recorded.remove(&old_key);
+            recorded.insert(new_key);
+            log::info!(
+                "[page-watcher] page {id} moved outside Wenlan: {} -> {found}",
+                entry.file
+            );
+            entry.file = found.clone();
+            followed += 1;
+        }
+        if followed > 0 {
+            save_state(&capabilities.wenlan, &state)?;
+            if let Err(error) = KnowledgeWriter::regenerate_index_cap(capabilities, &state) {
+                log::warn!(
+                    "[knowledge] followed moved pages but index regeneration failed: {error}"
+                );
+            }
+        }
+        Ok(followed)
+    })
+}
+
 pub fn create_knowledge_folder(
     path: &Path,
     parent_path: &str,
