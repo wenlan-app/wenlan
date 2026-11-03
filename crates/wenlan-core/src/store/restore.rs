@@ -9,6 +9,11 @@
 //! hold is cache: page vectors are computed here, memory vectors by the
 //! daemon after it serves.
 //!
+//! The files hold the database as of their log position
+//! ([`super::write_log::POSITION_FILE`]); the write log lines after it are
+//! then applied, so a write acknowledged a moment before the database was
+//! lost is in the rebuilt one too.
+//!
 //! Only a missing database file starts this. An existing database is
 //! never touched, and the files are only read.
 
@@ -22,6 +27,7 @@ use crate::events::NoopEmitter;
 use crate::store::export::MANIFEST_FILE;
 use crate::store::mirror::{mirror_root, FILES_DIR};
 use crate::store::rebuild::rebuild;
+use crate::store::write_log;
 
 /// The database file under the database folder (mirrors `MemoryDB`).
 pub const DATABASE_FILE: &str = "origin_memory.db";
@@ -46,6 +52,8 @@ pub enum Restore {
     /// The database was built again from the files.
     Restored {
         rows: usize,
+        /// Write log transactions applied after the files.
+        logged: usize,
         problems: Vec<String>,
         ms: u64,
         /// Where the files read now are, or `None` when they could not be
@@ -99,7 +107,25 @@ pub async fn restore_missing_database(
         MemoryEmbeddingRecovery::Deferred,
     )
     .await?;
-    let rebuilt = rebuild(&from, &fresh).await?;
+    let mut rebuilt = rebuild(&from, &fresh).await?;
+    // The writes after the files: a log that cannot be read is reported,
+    // and the database is still built from the files.
+    let log_dir = mirror_root(data_root).join(write_log::LOG_DIR);
+    let position = write_log::read_position(&from);
+    let logged = match write_log::read_after(&log_dir, position.as_ref()) {
+        Ok((txs, problems)) => {
+            rebuilt.problems.extend(problems);
+            let replayed = fresh.replay_write_log(&txs).await?;
+            rebuilt.problems.extend(replayed.problems);
+            replayed.txs
+        }
+        Err(error) => {
+            rebuilt
+                .problems
+                .push(format!("the write log could not be read: {error}"));
+            0
+        }
+    };
     // Cache: what backlinks read, worked out from the page text.
     if let Err(error) = fresh.rebuild_page_links().await {
         log::warn!("[restore] page links not worked out: {error}");
@@ -134,13 +160,14 @@ pub async fn restore_missing_database(
     std::fs::rename(&copy, &db_file)?;
     let rows = rebuilt.tables.values().sum();
     let ms = started.elapsed().as_millis() as u64;
-    let report = report_text(&from, &rebuilt.tables, &rebuilt.problems, ms);
+    let report = report_text(&from, &rebuilt.tables, logged, &rebuilt.problems, ms);
     let _ = std::fs::write(mirror_root(data_root).join(RESTORE_REPORT), report);
     let _ = std::fs::remove_dir_all(rebuilt_dir);
     let aside = mirror_root(data_root).join(format!("{RESTORED_PREFIX}{now}"));
     let set_aside = std::fs::rename(&from, &aside).ok().map(|_| aside);
     Ok(Restore::Restored {
         rows,
+        logged,
         problems: rebuilt.problems,
         ms,
         set_aside,
@@ -160,6 +187,7 @@ pub fn keep_files_after_failure(data_root: &Path, now: i64) -> Option<PathBuf> {
 fn report_text(
     from: &Path,
     tables: &std::collections::BTreeMap<String, usize>,
+    logged: usize,
     problems: &[String],
     ms: u64,
 ) -> String {
@@ -167,6 +195,9 @@ fn report_text(
     for (table, rows) in tables {
         out.push_str(&format!("  {table}: {rows} rows\n"));
     }
+    out.push_str(&format!(
+        "{logged} write log transactions applied after the files\n"
+    ));
     out.push_str(&format!("{} problems\n", problems.len()));
     for problem in problems.iter().take(50) {
         out.push_str(&format!("  {problem}\n"));

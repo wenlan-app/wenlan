@@ -444,7 +444,10 @@ fn remove_unlisted(
             removed += remove_unlisted(root, &inner, listed)?;
             // Empty now: the records that were in it are gone.
             let _ = std::fs::remove_dir(entry.path());
-        } else if inner != Path::new(MANIFEST_FILE) && !listed.contains(&inner) {
+        } else if inner != Path::new(MANIFEST_FILE)
+            && inner != Path::new(crate::store::write_log::POSITION_FILE)
+            && !listed.contains(&inner)
+        {
             std::fs::remove_file(entry.path())?;
             removed += 1;
         }

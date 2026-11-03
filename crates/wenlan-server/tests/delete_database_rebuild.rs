@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Process-level proof that the database is only an index: delete it while
 //! the daemon is stopped, start again, and what was saved is back, built
-//! from the files.
+//! from the files and the write log. The last write lands after the file
+//! copy and the daemon is killed right after it, so only the log has it.
 
 #[path = "common/daemon_binary.rs"]
 mod daemon_binary;
@@ -184,7 +185,25 @@ async fn a_deleted_database_is_built_again_from_the_files() {
     })
     .await
     .unwrap_or_else(|_| panic!("the files were never written\n{}", logs(root.path(), 1)));
-    stop(&client, &mut daemon, port).await;
+    // After the copy: only the write log holds this one. The daemon is
+    // killed at once, before any refresh could copy it.
+    let late: serde_json::Value = client
+        .post(format!("{base}/api/memory/store"))
+        .json(&serde_json::json!({
+            "content": "The fog bell rings twice when a ship is near.",
+            "memory_type": "fact"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let late_id = late["source_id"].as_str().unwrap().to_string();
+    daemon.0.kill().unwrap();
+    daemon.0.wait().unwrap();
 
     let removed = database_files(&data_dir);
     assert!(!removed.is_empty(), "no database file to delete");
@@ -230,6 +249,26 @@ async fn a_deleted_database_is_built_again_from_the_files() {
             .to_string()
             .contains("The lighthouse keeper logs the tide every dawn."),
         "{memory}"
+    );
+    let late: serde_json::Value = client
+        .get(format!("{base}/api/memory/{late_id}/detail"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap_or_else(|error| panic!("{error}\n{}", logs(root.path(), 2)))
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        late.to_string()
+            .contains("The fog bell rings twice when a ship is near."),
+        "{late}"
+    );
+    let report = std::fs::read_to_string(data_dir.join("files-mirror/restore-report.txt")).unwrap();
+    assert!(
+        !report.contains("\n0 write log transactions"),
+        "the late write did not come from the log:\n{report}"
     );
     stop(&client, &mut daemon, port).await;
 }

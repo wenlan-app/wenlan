@@ -84,7 +84,7 @@ Your pages and session notes are Markdown files; memories and the graph live in 
 
 - Pages and session notes: `~/.wenlan/`.
 - Database and runtime data: `~/Library/Application Support/wenlan/` on macOS, `~/.local/share/wenlan/` on Linux, or `%LOCALAPPDATA%\wenlan\` on Windows.
-- A file copy of the database: `files-mirror/` in the database folder. It previews the file-based storage a later version switches to. Wenlan updates it within a few minutes of a change and checks once a day that the files rebuild the same database. If the database file is missing or empty when Wenlan starts, it rebuilds the database from this copy, then checks the pages against their sources again in the background. The check reuses the AI's earlier judgments, so text that has not changed needs no new ones. Otherwise it never reads the copy, so deleting it is safe while the database is intact. `WENLAN_FILES_MIRROR=0` turns it off.
+- Your data as files: `files-mirror/` in the database folder. Every change is written to the write log there (`files-mirror/log/`) before the database takes it, and the readable files in `files-mirror/files/` follow within a few minutes. The database is only an index of these files: if the database file is missing or empty when Wenlan starts, Wenlan rebuilds it from the files and the log, the last changes included, then checks the pages against their sources again in the background. The check reuses the AI's earlier judgments, so text that has not changed needs no new ones. Once a day Wenlan also checks that the files rebuild the same database. Do not delete this folder. `WENLAN_FILES_MIRROR=0` turns it off; the database is then written alone, as in earlier versions.
 
 ### Backing up your knowledge
 
