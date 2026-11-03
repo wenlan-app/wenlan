@@ -126,6 +126,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "search_conversations",
     "get_conversation_lines",
     "rename_thing",
+    "hide_thing",
     "move_session_thing",
     "list_registered_sources",
   ],
