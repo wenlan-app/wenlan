@@ -602,7 +602,7 @@ fn replace_person_note(
                 let _ = recovery.remove_file(&aside);
             } else {
                 log::warn!(
-                    "[knowledge] {relative} was saved while Wenlan added its id line; kept \
+                    "[knowledge] {relative} was saved while Wenlan was writing it; kept \
                      both, the earlier one is .wenlan/projection-recovery/{aside}"
                 );
             }
@@ -953,28 +953,27 @@ pub(super) fn undo_file_first(
     written: &[u8],
     before: &FileBefore,
 ) -> Result<bool, WenlanError> {
+    let (Some(entry), Some(bytes)) = (&before.entry, &before.bytes) else {
+        return Ok(false);
+    };
+    if entry.file != file {
+        return Ok(false);
+    }
     KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
         let mut state = read_state_strict(&capabilities.wenlan)?;
         if read_page_file_in(&capabilities.root, file)?.as_deref() != Some(written) {
             return Ok(false);
         }
-        let (parent, name) = page_parent(&capabilities.root, file)?;
-        match (&before.entry, &before.bytes) {
-            (Some(entry), Some(bytes)) if entry.file == file => {
-                let temporary = format!(
-                    ".{page_id}.{}.{}.tmp",
-                    std::process::id(),
-                    TEMP_FILE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                );
-                write_page_atomically_nofollow(&parent, &name, &temporary, bytes)?;
-                state.pages.insert(page_id.to_string(), entry.clone());
+        // Moved aside and checked first, like any write over a page file, so
+        // a save landing in between is kept rather than replaced.
+        match replace_person_note(capabilities, file, written, bytes, page_id) {
+            Ok(()) => {}
+            Err(WenlanError::Conflict(reason)) if reason == "page_adoption_changed" => {
+                return Ok(false)
             }
-            (None, _) => {
-                parent.remove_file(&name)?;
-                state.pages.remove(page_id);
-            }
-            _ => return Ok(false),
+            Err(error) => return Err(error),
         }
+        state.pages.insert(page_id.to_string(), entry.clone());
         save_state(&capabilities.wenlan, &state)?;
         Ok(true)
     })

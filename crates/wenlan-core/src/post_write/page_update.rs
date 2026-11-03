@@ -1566,6 +1566,7 @@ async fn update_page_db_impl(
                     next.content = landing_content.to_string();
                     next.source_memory_ids = effective_sources.clone();
                     next.version = new_version;
+                    next.last_modified = chrono::Utc::now().to_rfc3339();
                     let projection = crate::export::knowledge::KnowledgeProjectionWrite::new(
                         path.to_path_buf(),
                         db,

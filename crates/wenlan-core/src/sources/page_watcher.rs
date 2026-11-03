@@ -473,6 +473,11 @@ async fn sync_one_file(
     if crate::export::knowledge::file_first_in_flight(&page_id) {
         return Ok(Outcome::Unchanged);
     }
+    // Such a write may have finished, and been put back, between the read
+    // above and that check; the file must still be what was read.
+    if crate::export::knowledge::read_knowledge_markdown(knowledge_path, relative)?.0 != raw {
+        return Ok(Outcome::Unchanged);
+    }
     let existing = match db.get_page(&page_id).await? {
         Some(p) => p,
         None => return Ok(Outcome::SkippedUnknownPage { page_id }),

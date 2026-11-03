@@ -8515,4 +8515,17 @@ async fn a_file_written_first_is_put_back_when_its_write_does_not_land() {
         std::fs::read_to_string(&path).unwrap(),
         "the person's own text\n"
     );
+
+    // A new title means a new file name: that write keeps the old order.
+    let mut renamed = next.clone();
+    renamed.title = "Another name".to_string();
+    assert!(projection
+        .write_page_first(&db, &renamed)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "the person's own text\n"
+    );
 }

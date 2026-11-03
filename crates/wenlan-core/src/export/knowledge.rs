@@ -5676,6 +5676,17 @@ impl KnowledgeProjectionWrite {
     ) -> Result<Option<FileFirstWrite>, WenlanError> {
         let in_flight = FileFirstInFlight::mark(&page.id);
         let before = folders::capture_page_file(&self.writer.path, &page.id)?;
+        // Only a page whose file is in place and keeps its name: those are
+        // the writes that can be put back exactly. A first write, a file the
+        // person deleted, and a new title (a new file name) keep the old
+        // order, database then file.
+        let in_place = match (&before.entry, &before.bytes) {
+            (Some(entry), Some(_)) => entry.title.as_deref() == Some(page.title.as_str()),
+            _ => false,
+        };
+        if !in_place {
+            return Ok(None);
+        }
         let Some(written_path) = self.write_page_gated(database, page).await? else {
             return Ok(None);
         };
