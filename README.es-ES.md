@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=67cdf91d8405178c43a6a0837eeed71f1284a8b6ad041569773b85f31c61abfb -->
+<!-- README_SYNC: source=README.md sha256=56f9ff9caff436589bb98772e21096c38651133957cda16f6db7f2a2b28bf861 -->
 
 <p align="center">
   <picture>
@@ -79,12 +79,13 @@ Crea una página o trae una bóveda de Obsidian, un grafo de Logseq, una carpeta
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Guía de Codex](docs/setup-with-ai.md#codex) |
 | Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP y skills | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code y otros clientes MCP | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Grok Bot | CLI en tu ordenador, o MCP | [Guía de Grok Bot](docs/setup-with-ai.md#grok-bot) |
 
 En los ajustes de la aplicación, **Add a tool** encuentra las herramientas de IA de tu ordenador y **Connect all** las configura con un solo clic. Después, inicia una nueva sesión de IA y pide:
 
 > /recall mis páginas y decisiones anteriores sobre esto y luego ayúdame con: …
 
-En Codex, usa `$recall`; con una herramienta solo MCP, pídele que consulte Wenlan primero.
+En Codex, usa `$recall`; con una herramienta solo MCP, pídele que consulte Wenlan primero. Grok Bot ejecuta `wenlan recall` en tu ordenador, o una sesión corta de `wenlan-mcp` allí ([guía de Grok Bot](docs/setup-with-ai.md#grok-bot)).
 
 Cuando termina una importación, la aplicación ofrece **Write pages with** tu herramienta de IA para convertirla en tus primeras páginas con citas. No hace falta ningún comando.
 
