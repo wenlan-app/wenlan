@@ -817,7 +817,7 @@ pub fn sync_home_bin(
         Err(error) => {
             return vec![EntryAction::Failed {
                 path: lock_path,
-                detail: if error.kind() == io::ErrorKind::WouldBlock {
+                detail: if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
                     "another binary refresh is in progress; retry after it finishes".to_string()
                 } else {
                     format!("could not lock the binary refresh: {error}")
