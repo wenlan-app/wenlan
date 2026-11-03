@@ -1784,6 +1784,7 @@ pub fn run() {
             search::set_setup_completed,
             search::get_background_ai_enabled,
             search::set_background_ai_enabled,
+            search::set_ui_language,
             search::should_show_wizard,
             search::local_setup_completed,
             daemon_start::get_startup_preflight_status,

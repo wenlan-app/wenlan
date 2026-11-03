@@ -13,6 +13,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "set_traffic_lights_visible",
     "set_editor_composing",
     "set_setup_completed",
+    // The app's language for what Wenlan writes; the fixture keeps nothing.
+    "set_ui_language",
     // Shared app shell preflight status; the Review fixture has no OS service
     // manager, so it reports the ordinary ready state.
     "get_startup_preflight_status",

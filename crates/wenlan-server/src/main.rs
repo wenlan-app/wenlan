@@ -469,6 +469,7 @@ mod bind_addr_tests;
 use wenlan_server::{
     brief_files, files_mirror, ingest_batcher, lifecycle, repo_wiki_daily, router, scheduler,
     state::{ServerState, SharedState},
+    things_intake,
 };
 
 use clap::{Parser, Subcommand};
@@ -841,6 +842,7 @@ async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow:
     if optional_runtime_workers_allowed(repair_recovery_pending) {
         telemetry.start(shutdown.clone());
         repo_wiki_daily::start(shared.clone(), shutdown.subscribe());
+        things_intake::start(shared.clone(), shutdown.subscribe());
         files_mirror::start(shared.clone(), shutdown.subscribe());
     }
 

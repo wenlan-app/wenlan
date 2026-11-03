@@ -19,6 +19,7 @@ const PRE_EXISTING_CASCADE: &[&str] = &[
     "pages",
     "agent_sessions",
     "session_reads",
+    "conversation_labels",
 ];
 
 /// Tables that carry a `space` column and are deliberately left alone.

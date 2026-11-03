@@ -2261,6 +2261,14 @@ impl WenlanClient {
         Ok(())
     }
 
+    /// Tell the daemon the app's language; titles it writes about
+    /// conversations follow it.
+    pub async fn set_ui_language(&self, language: &str) -> Result<(), String> {
+        let mut req = empty_update();
+        req.ui_language = Some(language.to_string());
+        self.update_config(req).await.map(|_| ())
+    }
+
     /// GET /api/setup/status — return daemon-owned setup/model/key state.
     ///
     /// Bounded by [`HEALTH_TIMEOUT`], not the ingest-sized [`REQUEST_TIMEOUT`]:
@@ -2477,6 +2485,7 @@ fn empty_update() -> wenlan_types::requests::UpdateConfigRequest {
         everyday_source: None,
         synthesis_source: None,
         background_ai_enabled: None,
+        ui_language: None,
         page_map_auto_suggest: None,
         chat_check_enabled: None,
         only_if_unset: None,

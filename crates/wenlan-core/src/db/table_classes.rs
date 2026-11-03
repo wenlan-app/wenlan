@@ -122,6 +122,8 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("libsql_vector_meta_shadow", Cache),
         ("memories_vec_idx_shadow", Cache),
         ("memory_enrichment_summary", Cache),
+        ("conversation_labels", Cache),
+        ("thing_lines", Cache),
         // Links, entities, relations, claims and checks.
         ("page_links", Cache),
         ("memory_entities", Cache),

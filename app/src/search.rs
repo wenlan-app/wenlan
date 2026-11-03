@@ -265,6 +265,16 @@ pub async fn set_background_ai_enabled(
     client.set_background_ai_enabled(enabled).await
 }
 
+/// The app's language, so what Wenlan writes about conversations follows it.
+#[tauri::command]
+pub async fn set_ui_language(
+    state: tauri::State<'_, State>,
+    language: String,
+) -> Result<(), String> {
+    let client = { state.read().await.client.clone() };
+    client.set_ui_language(&language).await
+}
+
 #[tauri::command]
 pub async fn set_setup_completed(
     state: tauri::State<'_, State>,

@@ -751,6 +751,11 @@ pub struct UpdateConfigRequest {
     /// automatic generative work without removing models or routing pins.
     #[serde(default)]
     pub background_ai_enabled: Option<bool>,
+    /// The app's language (`en`, `zh-Hans`, `zh-Hant`…), which the titles
+    /// and lines Wenlan writes about conversations follow. Omitted = preserve;
+    /// `""` = clear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_language: Option<String>,
     /// Gates the proactive Page-Map suggestion phase in the scheduler. Omitted =
     /// preserve stored value; present = set. Never gates the explicit improve route.
     #[serde(default)]

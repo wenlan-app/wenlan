@@ -77,6 +77,17 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   You can see which, and change it in one step. When a conversation fits no
   thing yet, the AI starts a new thing and names it without asking.
   原文：每段對話都歸到至少一件事，看得到歸到哪，一步就能改。選擇卡「自动开新的」（2026-11-01 00:03）：對話不屬於任何一件事時，AI 直接開一件新事並取名，不問你；名字和歸屬都能一步改。
+  Wenlan reads the conversations itself, from the transcripts Claude Code and
+  Codex keep on this computer, so nobody has to remember to tell it. Quick
+  questions, small chores (confirming a merge, sending a file), tests and runs
+  a program started are left out. Wenlan's everyday model reads each
+  conversation; grouping them into things takes a stronger model, which sees
+  only one-line labels: the cloud model when one is set, otherwise the
+  person's own AI tool. A thing is a goal, not a step: a review or a check
+  goes with the goal it served. The grouping model also writes the card's
+  line on where the whole thing stands. Titles and lines follow the app's
+  language. A space with nothing written to it for a month is not suggested.
+  原文：「正在做的事」直接從你跟 AI 的對話來，不用你記得叫 AI 存（2026-11-02）；選擇卡「用你接的 AI 工具（建議）」（2026-11-03 05:52）；「可以的那做完這個吧」（2026-11-03 05:23）；看了第七版：「有比較像最近在做的事情了」「wenlan-app 老早就沒在用的 space。」（2026-11-03 07:02）
 - **UX-THING-2** `planned` After you correct it once, the same case is not
   sorted wrong again.
   原文：改過一次，同樣的情況下次不再分錯。
