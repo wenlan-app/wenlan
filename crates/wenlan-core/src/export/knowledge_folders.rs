@@ -442,6 +442,223 @@ pub fn knowledge_edit_targets(path: &Path) -> Result<HashMap<String, String>, We
     })
 }
 
+/// A note the person put in the folder, as `state.json` records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonPageFile {
+    pub file: String,
+    /// SHA-256 of the bytes last recorded for it.
+    pub digest: Option<String>,
+    pub frontmatter: String,
+}
+
+/// Every page recorded as a note the person put in the folder.
+pub fn person_page_files(path: &Path) -> Result<HashMap<String, PersonPageFile>, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let state = read_state_strict(&capabilities.wenlan)?;
+        Ok(state
+            .pages
+            .into_iter()
+            .filter_map(|(id, entry)| {
+                let frontmatter = entry.person_frontmatter?;
+                Some((
+                    id,
+                    PersonPageFile {
+                        file: entry.file,
+                        digest: entry.content_sha256,
+                        frontmatter,
+                    },
+                ))
+            })
+            .collect())
+    })
+}
+
+/// Adoptions whose id line is written and whose page may not be recorded
+/// yet (page id -> file).
+pub fn pending_adoptions(path: &Path) -> Result<BTreeMap<String, String>, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        Ok(read_state_strict(&capabilities.wenlan)?.pending_adoptions)
+    })
+}
+
+/// The frontmatter of a note (the text between its `---` lines, with LF
+/// line ends), or `None` when it has none.
+pub fn adoption_frontmatter(raw: &str) -> Option<String> {
+    let lf = raw.replace("\r\n", "\n");
+    let (yaml, _) = crate::sources::obsidian::split_frontmatter_untrimmed(&lf)?;
+    Some(yaml.trim_start_matches('\n').to_string())
+}
+
+/// `raw` with an `origin_id` line naming `page_id` as the first key of its
+/// frontmatter, or with a frontmatter holding only that line when it has
+/// none. Nothing else changes, line ends included.
+fn with_origin_id(raw: &str, page_id: &str) -> String {
+    for open in ["---\r\n", "---\n"] {
+        if raw.starts_with(open)
+            && crate::sources::obsidian::split_frontmatter_untrimmed(raw).is_some()
+        {
+            let end = &open[3..];
+            return format!("{open}origin_id: {page_id}{end}{}", &raw[open.len()..]);
+        }
+    }
+    format!("---\norigin_id: {page_id}\n---\n\n{raw}")
+}
+
+fn adoption_taken() -> WenlanError {
+    WenlanError::Conflict("page_adoption_taken".into())
+}
+
+fn read_page_bytes(root: &Dir, relative: &str) -> Result<Vec<u8>, WenlanError> {
+    let (parent, name) = page_parent(root, relative)?;
+    let mut budget = RepairReadBudget::new();
+    read_regular_nofollow(&parent, OsStr::new(&name), &mut budget)
+}
+
+/// Adopts the note at `relative` as page `page_id`: writes the `origin_id`
+/// line into it, when the file still holds exactly `expected` and no page
+/// is recorded at that file or under that id, and returns the new text.
+/// The adoption is recorded as pending first; [`record_person_note`]
+/// finishes it once the page exists.
+pub fn stamp_person_note(
+    path: &Path,
+    relative: &str,
+    expected: &str,
+    page_id: &str,
+) -> Result<String, WenlanError> {
+    validate_page_path(relative)?;
+    if is_reserved_okf_filename(relative.rsplit('/').next().unwrap_or(relative)) {
+        return Err(invalid_path());
+    }
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        let key = collision_key(relative);
+        if state.pages.contains_key(page_id)
+            || state
+                .pages
+                .values()
+                .any(|entry| collision_key(&entry.file) == key)
+            || state.pending_adoptions.contains_key(page_id)
+        {
+            return Err(adoption_taken());
+        }
+        if read_page_bytes(&capabilities.root, relative)? != expected.as_bytes() {
+            return Err(WenlanError::Conflict("page_adoption_changed".into()));
+        }
+        let stamped = with_origin_id(expected, page_id);
+        state
+            .pending_adoptions
+            .insert(page_id.to_string(), relative.to_string());
+        save_state(&capabilities.wenlan, &state)?;
+        let (parent, name) = page_parent(&capabilities.root, relative)?;
+        let temporary = format!(
+            ".{page_id}.{}.{}.tmp",
+            std::process::id(),
+            TEMP_FILE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        if let Err(error) =
+            write_page_atomically_nofollow(&parent, &name, &temporary, stamped.as_bytes())
+        {
+            state.pending_adoptions.remove(page_id);
+            save_state(&capabilities.wenlan, &state)?;
+            return Err(error);
+        }
+        Ok(stamped)
+    })
+}
+
+/// Records `page`, adopted from the note at `relative`, as that note:
+/// Wenlan writes it from then on with the person's own frontmatter.
+pub fn record_person_note(path: &Path, relative: &str, page: &Page) -> Result<(), WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        let key = collision_key(relative);
+        if state.pages.contains_key(&page.id)
+            || state
+                .pages
+                .values()
+                .any(|entry| collision_key(&entry.file) == key)
+        {
+            return Err(adoption_taken());
+        }
+        let bytes = read_page_bytes(&capabilities.root, relative)?;
+        let raw = String::from_utf8(bytes.clone()).map_err(|_| invalid_path())?;
+        let (parent, name) = page_parent(&capabilities.root, relative)?;
+        if KnowledgeWriter::read_origin_id(&parent, &OsString::from(name)).as_deref()
+            != Some(page.id.as_str())
+        {
+            return Err(adoption_taken());
+        }
+        state.pages.insert(
+            page.id.clone(),
+            PageFileState {
+                file: relative.to_string(),
+                content_sha256: Some(projection_digest(&bytes)),
+                version: page.version,
+                last_written: page.last_modified.clone(),
+                title: Some(page.title.clone()),
+                description: page.summary.clone(),
+                space: page.space.clone(),
+                person_frontmatter: Some(adoption_frontmatter(&raw).unwrap_or_default()),
+            },
+        );
+        state.pending_adoptions.remove(&page.id);
+        save_state(&capabilities.wenlan, &state)?;
+        if let Err(error) = KnowledgeWriter::regenerate_index_cap(capabilities, &state) {
+            log::warn!("[knowledge] adopted a note but index regeneration failed: {error}");
+        }
+        Ok(())
+    })
+}
+
+/// Drops a pending adoption whose note is gone.
+pub fn drop_pending_adoption(path: &Path, page_id: &str) -> Result<(), WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        if state.pending_adoptions.remove(page_id).is_some() {
+            save_state(&capabilities.wenlan, &state)?;
+        }
+        Ok(())
+    })
+}
+
+/// After the person changed a note they put in the folder: records its
+/// frontmatter as it is now, so Wenlan's next write keeps it, and, with
+/// `version`, the bytes (`raw`) and version the page now has. Nothing is
+/// recorded when the file changed again since `raw` was read.
+pub fn note_person_file(
+    path: &Path,
+    page_id: &str,
+    raw: &str,
+    version: Option<i64>,
+) -> Result<(), WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        let Some(entry) = state.pages.get_mut(page_id) else {
+            return Ok(());
+        };
+        if entry.person_frontmatter.is_none()
+            || read_page_bytes(&capabilities.root, &entry.file)? != raw.as_bytes()
+        {
+            return Ok(());
+        }
+        let frontmatter = adoption_frontmatter(raw).unwrap_or_default();
+        let digest = projection_digest(raw.as_bytes());
+        let unchanged = entry.person_frontmatter.as_deref() == Some(frontmatter.as_str())
+            && (version.is_none()
+                || (entry.content_sha256.as_deref() == Some(digest.as_str())
+                    && version == Some(entry.version)));
+        if unchanged {
+            return Ok(());
+        }
+        entry.person_frontmatter = Some(frontmatter);
+        if let Some(version) = version {
+            entry.content_sha256 = Some(digest);
+            entry.version = version;
+        }
+        save_state(&capabilities.wenlan, &state)
+    })
+}
+
 pub fn create_knowledge_folder(
     path: &Path,
     parent_path: &str,

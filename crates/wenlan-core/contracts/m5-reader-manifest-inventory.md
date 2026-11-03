@@ -1414,6 +1414,7 @@ carrying the authority of agreement.
 | `core/repair_plan.rs::deterministic_target_still_actionable` | `pub(crate)` | no | no | — | `core/repair_plan/deterministic.rs::target_still_actionable` |
 | `core/sentences.rs::load_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sentences.rs::source_states` | `private` | no | no | — | `core/db/sentence_history.rs::cited_source_state` |
+| `core/sources/page_watcher.rs::create_adopted_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::sync_one_file` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::claim_as` | `private` | yes | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::commit` | `pub` | yes | no | — | `core/db.rs::get_page` |
@@ -1566,6 +1567,8 @@ carrying the authority of agreement.
 | `core/sentences.rs::reject_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
+| `core/sources/page_watcher.rs::adopt_note` | `private` | no | no | — | `core/sources/page_watcher.rs::create_adopted_page` |
+| `core/sources/page_watcher.rs::finish_pending_adoptions` | `private` | no | no | — | `core/sources/page_watcher.rs::create_adopted_page` |
 | `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep_new.rs::claim_new` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
 | `core/steep_organize.rs::plan` | `pub` | no | no | — | `core/db.rs::entity_enrichment_for_claim` |
