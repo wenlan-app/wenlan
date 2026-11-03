@@ -456,7 +456,7 @@ pub fn follow_external_moves(path: &Path) -> Result<usize, WenlanError> {
         if gone.is_empty() {
             return Ok(0);
         }
-        let claims = files_by_origin_id(&capabilities.root)?;
+        let (claims, _) = files_by_origin_id(&capabilities.root)?;
         let mut recorded: std::collections::HashSet<String> = state
             .pages
             .values()
@@ -519,18 +519,91 @@ fn pages_without_their_file(root: &Dir, state: &KnowledgeState) -> Vec<String> {
 }
 
 /// Every Markdown file in the pages folder, by the `origin_id` it carries.
-fn files_by_origin_id(root: &Dir) -> Result<HashMap<String, Vec<String>>, WenlanError> {
+/// Also how many files could not be opened (a sync app holding one, say):
+/// what those carry is unknown.
+fn files_by_origin_id(root: &Dir) -> Result<(HashMap<String, Vec<String>>, usize), WenlanError> {
     let mut claims: HashMap<String, Vec<String>> = HashMap::new();
+    let mut unreadable = 0;
     for path in scan_tree(root)?.1 {
         if is_reserved_okf_filename(path.rsplit('/').next().unwrap_or(&path)) {
             continue;
         }
         let (parent, name) = page_parent(root, &path)?;
-        if let Some(id) = KnowledgeWriter::read_origin_id(&parent, &OsString::from(name)) {
-            claims.entry(id).or_default().push(path);
+        // The quick head read first; long generated frontmatter needs the
+        // full one.
+        let id = KnowledgeWriter::read_origin_id(&parent, &OsString::from(&name))
+            .or_else(|| KnowledgeWriter::read_origin_stamp_in(&parent, &name).map(|(id, _)| id));
+        match id {
+            Some(id) => claims.entry(id).or_default().push(path),
+            None if parent.open(&name).is_err() => unreadable += 1,
+            None => {}
         }
     }
-    Ok(claims)
+    Ok((claims, unreadable))
+}
+
+/// Whether page `page_id`'s recorded file is still gone, checked again just
+/// before it is archived.
+pub fn page_file_still_gone(path: &Path, page_id: &str) -> Result<bool, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let state = read_state_strict(&capabilities.wenlan)?;
+        Ok(state.pages.contains_key(page_id)
+            && pages_without_their_file(&capabilities.root, &state)
+                .iter()
+                .any(|id| id == page_id))
+    })
+}
+
+/// Records the file at `relative` as page `page`'s file again, after the
+/// person brought back the file of a page that was archived (from the
+/// trash, by switching a git branch back): the folder is the source of
+/// truth, so the page is live again at that file. Refused when another
+/// page is recorded at that file or this page has a file already, or the
+/// file no longer carries the page's id.
+pub fn reclaim_returned_page(path: &Path, relative: &str, page: &Page) -> Result<(), WenlanError> {
+    validate_page_path(relative)?;
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        let key = collision_key(relative);
+        if state.pages.contains_key(&page.id)
+            || state
+                .pages
+                .values()
+                .any(|entry| collision_key(&entry.file) == key)
+        {
+            return Err(WenlanError::Conflict(
+                "page_projection_identity_ambiguous".into(),
+            ));
+        }
+        let (parent, name) = page_parent(&capabilities.root, relative)?;
+        if KnowledgeWriter::read_origin_stamp_in(&parent, &name)
+            .map(|(id, _)| id)
+            .as_deref()
+            != Some(page.id.as_str())
+        {
+            return Err(WenlanError::Conflict(
+                "page_projection_identity_ambiguous".into(),
+            ));
+        }
+        let mut budget = RepairReadBudget::new();
+        let bytes = read_regular_nofollow(&parent, OsStr::new(&name), &mut budget)?;
+        state.pages.insert(
+            page.id.clone(),
+            PageFileState {
+                file: relative.to_string(),
+                content_sha256: Some(projection_digest(&bytes)),
+                version: page.version,
+                last_written: page.last_modified.clone(),
+                title: Some(page.title.clone()),
+                description: page.summary.clone(),
+                space: page.space.clone(),
+            },
+        );
+        state.archived_from.remove(&page.id);
+        state.archived_versions.remove(&page.id);
+        state.missing_since.remove(&page.id);
+        save_state(&capabilities.wenlan, &state)
+    })
 }
 
 /// A page file must stay gone this long before its page is archived.
@@ -565,21 +638,35 @@ pub fn note_missing_pages(path: &Path, now: i64) -> Result<MissingPages, WenlanE
     KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
         let mut state = read_state_strict(&capabilities.wenlan)?;
         let mut gone = pages_without_their_file(&capabilities.root, &state);
+        let mut unreadable = 0;
         if !gone.is_empty() {
-            let claims = files_by_origin_id(&capabilities.root)?;
+            let (claims, unknown) = files_by_origin_id(&capabilities.root)?;
             gone.retain(|id| !claims.contains_key(id));
+            unreadable = unknown;
         }
+        let held = gone.len() > MASS_MISSING_FLOOR && gone.len() * 2 > state.pages.len();
         let before = state.missing_since.clone();
-        state.missing_since.retain(|id, _| gone.contains(id));
-        for id in &gone {
-            state.missing_since.entry(id.clone()).or_insert(now);
+        if held {
+            // Not a sighting: once the hold lifts, what is still gone waits
+            // the full time again from then.
+            state.missing_since.clear();
+        } else {
+            state.missing_since.retain(|id, _| gone.contains(id));
+            for id in &gone {
+                state.missing_since.entry(id.clone()).or_insert(now);
+            }
         }
         if state.missing_since != before {
             save_state(&capabilities.wenlan, &state)?;
         }
         let mut found = MissingPages::default();
-        if gone.len() > MASS_MISSING_FLOOR && gone.len() * 2 > state.pages.len() {
+        if held {
             found.held = Some(gone.len());
+            return Ok(found);
+        }
+        if unreadable > 0 {
+            // A file that could not be read may be one of these, moved.
+            found.waiting = gone.len();
             return Ok(found);
         }
         for id in gone {

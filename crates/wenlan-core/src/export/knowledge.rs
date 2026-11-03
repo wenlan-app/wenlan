@@ -9,7 +9,7 @@ use cap_std::fs::{Dir, OpenOptions};
 use fs2::FileExt as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
@@ -21,8 +21,9 @@ mod folders;
 pub use folders::{
     create_knowledge_folder, follow_external_moves, knowledge_edit_targets,
     knowledge_markdown_paths, list_knowledge_folders, move_projected_page, note_missing_pages,
-    read_knowledge_markdown, validate_knowledge_folder_path, KnowledgeFolderEntry, MissingPages,
-    MASS_MISSING_FLOOR, MISSING_SETTLE_SECS,
+    page_file_still_gone, read_knowledge_markdown, reclaim_returned_page,
+    validate_knowledge_folder_path, KnowledgeFolderEntry, MissingPages, MASS_MISSING_FLOOR,
+    MISSING_SETTLE_SECS,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;
@@ -200,6 +201,15 @@ pub(crate) fn projected_origin_version(fm: &crate::sources::obsidian::NoteFrontm
 /// Page ids carry no dots, so "exactly three components, the last two all
 /// digits" is our writer's shape and nobody else's — an editor swap file or a
 /// user's own `.tmp` scratch in the pages directory does not match.
+/// The page a `write_page` temp file was for.
+fn write_page_temp_owner(name: &str) -> Option<&str> {
+    if !is_write_page_temp_file(name) {
+        return None;
+    }
+    let rest = name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    rest.rsplitn(3, '.').nth(2)
+}
+
 fn is_write_page_temp_file(name: &str) -> bool {
     let Some(rest) = name.strip_prefix('.').and_then(|n| n.strip_suffix(".tmp")) else {
         return false;
@@ -762,8 +772,9 @@ impl KnowledgeWriter {
         pages: &[Page],
     ) -> Result<ReconcileStats, WenlanError> {
         self.validate_guard(guard)?;
+        let (temp_files_removed, interrupted) = self.sweep_temp_leftovers();
         let mut stats = ReconcileStats {
-            temp_files_removed: self.sweep_temp_leftovers(),
+            temp_files_removed,
             ..ReconcileStats::default()
         };
 
@@ -776,7 +787,7 @@ impl KnowledgeWriter {
                 continue;
             };
             stats.checked += 1;
-            if self.projection_file_is_gone(&entry.file) {
+            if self.projection_file_is_gone(&entry.file) && !interrupted.contains(&page.id) {
                 stats.missing += 1;
                 continue;
             }
@@ -855,14 +866,19 @@ impl KnowledgeWriter {
     /// Remove `write_page` temp files orphaned by a crash between write and
     /// rename. Safe to run unconditionally at startup: the daemon holds the
     /// port by this point, so no live writer owns any of these.
-    fn sweep_temp_leftovers(&self) -> usize {
+    ///
+    /// Also returns the pages those writes were for: a write stopped after
+    /// it moved the old file aside and before the new one went in leaves
+    /// the page without a file, which is a repair, not a deletion.
+    fn sweep_temp_leftovers(&self) -> (usize, HashSet<String>) {
+        let mut owners = HashSet::new();
         let Ok(root) = folders::read_root(&self.path) else {
-            return 0;
+            return (0, owners);
         };
         let Ok((folders, _)) = folders::scan_tree(&root) else {
-            return 0;
+            return (0, owners);
         };
-        std::iter::once(String::new())
+        let removed = std::iter::once(String::new())
             .chain(folders.into_iter().map(|folder| folder.path))
             .filter_map(|path| folders::open_existing_folder(&root, &path).ok())
             .map(|directory| {
@@ -873,15 +889,23 @@ impl KnowledgeWriter {
                     .flatten()
                     .filter(|entry| {
                         let name = entry.file_name();
-                        is_write_page_temp_file(&name.to_string_lossy())
-                            && directory.symlink_metadata(&name).is_ok_and(|metadata| {
+                        let name = name.to_string_lossy();
+                        let removed = is_write_page_temp_file(&name)
+                            && directory.symlink_metadata(&*name).is_ok_and(|metadata| {
                                 metadata.is_file() && !metadata.file_type().is_symlink()
                             })
-                            && directory.remove_file(&name).is_ok()
+                            && directory.remove_file(&*name).is_ok();
+                        if removed {
+                            if let Some(owner) = write_page_temp_owner(&name) {
+                                owners.insert(owner.to_string());
+                            }
+                        }
+                        removed
                     })
                     .count()
             })
-            .sum()
+            .sum();
+        (removed, owners)
     }
 
     fn unique_filename_in_folder(
@@ -5115,16 +5139,27 @@ fn write_page_preserving_external_edits_with_hook(
                         read_regular_nofollow(&recovery, OsStr::new(&previous), &mut budget)?;
                     Ok::<_, WenlanError>(projection_bytes_replaceable(&displaced, page, baseline))
                 })();
+                // Do not rename-over a new editor file while restoring. If
+                // one appeared, both it and the displaced file survive. A
+                // drive without hard links gets the file renamed back.
+                let put_back = || {
+                    if recovery.hard_link(&previous, root, name).is_err()
+                        && matches!(
+                            root.symlink_metadata(name),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                        )
+                    {
+                        let _ = recovery.rename(&previous, root, name);
+                    }
+                };
                 if !matches!(allowed, Ok(true)) {
-                    // Do not rename-over a new editor file while restoring.
-                    // If one appeared, both it and the displaced file survive.
-                    let _ = recovery.hard_link(&previous, root, name);
+                    put_back();
                     return Err(WenlanError::Conflict(format!(
                         "page_projection_external_edit: preserved {name} and .wenlan/projection-recovery/{previous}"
                     )));
                 }
                 if let Err(error) = root.hard_link(temporary, root, name) {
-                    let _ = recovery.hard_link(&previous, root, name);
+                    put_back();
                     return Err(error.into());
                 }
                 // Retain the displaced inode: an external editor may still
@@ -6906,6 +6941,33 @@ mod tests {
         assert!(
             leftover_temp_files.is_empty(),
             "leftover temp file(s): {leftover_temp_files:?}"
+        );
+    }
+
+    /// A write stopped after it moved the old file aside and before the new
+    /// one went in leaves its temp file behind and no page file: that is
+    /// repaired, not read as the person deleting the page.
+    #[test]
+    fn reconcile_repairs_a_page_whose_write_was_interrupted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        let path = writer.write_page_for_test(&page).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(
+            dir.path().join(format!(".{}.4242.7.tmp", page.id)),
+            "half written",
+        )
+        .unwrap();
+
+        let stats = writer
+            .reconcile_for_test(std::slice::from_ref(&page))
+            .unwrap();
+
+        assert_eq!((stats.rewritten, stats.missing), (1, 0));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            render_markdown_for(&page)
         );
     }
 

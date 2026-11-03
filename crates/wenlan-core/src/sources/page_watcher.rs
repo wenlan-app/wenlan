@@ -85,20 +85,34 @@ async fn archive_deleted_pages(db: &MemoryDB, knowledge_path: &Path, stats: &mut
     }
     LAST_HELD.store(0, Ordering::Relaxed);
     for id in found.deleted {
-        match db.get_page(&id).await {
-            Ok(Some(page)) if page.status == "active" => {}
+        let version = match db.get_page(&id).await {
+            Ok(Some(page)) if page.status == "active" => page.version,
             Ok(_) => continue,
             Err(error) => {
-                log::warn!("[page-watcher] {id}: {error}");
+                warn_once(&id, &format!("[page-watcher] {id}: {error}"));
+                stats.errors += 1;
+                continue;
+            }
+        };
+        // Wenlan may have written the file again since the check; and only
+        // the version seen here is archived, so a write after this keeps it.
+        match crate::export::knowledge::page_file_still_gone(knowledge_path, &id) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(error) => {
+                warn_once(&id, &format!("[page-watcher] {id}: {error}"));
                 stats.errors += 1;
                 continue;
             }
         }
-        let version = match db.archive_page_versioned(&id).await {
+        let version = match db.archive_page_at_version(&id, version).await {
             Ok(Some(version)) => version,
             Ok(None) => continue,
             Err(error) => {
-                log::warn!("[page-watcher] could not archive deleted page {id}: {error}");
+                warn_once(
+                    &id,
+                    &format!("[page-watcher] could not archive deleted page {id}: {error}"),
+                );
                 stats.errors += 1;
                 continue;
             }
@@ -117,10 +131,33 @@ async fn archive_deleted_pages(db: &MemoryDB, knowledge_path: &Path, stats: &mut
             }
             Err(error) => {
                 // The page is archived; its record is cleaned at the next start.
-                log::warn!("[page-watcher] archived deleted page {id}; record kept: {error}");
+                warn_once(
+                    &id,
+                    &format!("[page-watcher] archived deleted page {id}; record kept: {error}"),
+                );
                 stats.errors += 1;
             }
         }
+    }
+}
+
+/// Logs `message` the first time `key` fails in this process, then at debug
+/// level, so a page that cannot be archived does not warn every pass.
+fn warn_once(key: &str, message: &str) {
+    static WARNED: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+        std::sync::Mutex::new(None);
+    let first = WARNED
+        .lock()
+        .map(|mut warned| {
+            warned
+                .get_or_insert_with(Default::default)
+                .insert(key.to_string())
+        })
+        .unwrap_or(true);
+    if first {
+        log::warn!("{message}");
+    } else {
+        log::debug!("{message}");
     }
 }
 
@@ -279,6 +316,14 @@ async fn sync_one_file(
         Some(p) => p,
         None => return Ok(Outcome::SkippedUnknownPage { page_id }),
     };
+    if existing.status == "archived"
+        && crate::export::knowledge::KnowledgeWriter::new(knowledge_path.to_path_buf(), db)
+            .page_filename(&page_id)
+            .is_none()
+    {
+        bring_back_archived_page(db, knowledge_path, relative, &raw, existing).await?;
+        return Ok(Outcome::Applied { page_id });
+    }
 
     // Skip when md is stale relative to DB. `origin_version` in the
     // frontmatter is written by KnowledgeWriter::render_markdown and
@@ -401,6 +446,66 @@ async fn sync_one_file(
     .await?;
 
     Ok(Outcome::Applied { page_id })
+}
+
+/// The file of an archived page is back in the folder (put back from the
+/// trash, a git branch switched back): the page is restored, takes the
+/// file's text when it differs, and is recorded at that file again.
+async fn bring_back_archived_page(
+    db: &MemoryDB,
+    knowledge_path: &Path,
+    relative: &str,
+    raw: &str,
+    archived: crate::pages::Page,
+) -> Result<(), WenlanError> {
+    crate::post_write::restore_page(
+        db,
+        &archived.id,
+        None,
+        archived.version,
+        &crate::read_scope::ReadScope::Global,
+        None,
+    )
+    .await
+    .map_err(|error| WenlanError::Conflict(format!("page_restore_failed: {error}")))?;
+    let mut page = db
+        .get_page(&archived.id)
+        .await?
+        .ok_or_else(|| WenlanError::Conflict("page_restore_lost".into()))?;
+    let body = projected_content(raw);
+    let rendered = crate::export::knowledge::render_markdown_for(&page);
+    if !same_page_text_ignoring_save_noise(&body, &projected_content(&rendered)) {
+        crate::post_write::page_write(
+            db,
+            crate::post_write::PageWrite::UpdatePreservingSources {
+                page_id: &page.id,
+                req: wenlan_types::requests::UpdatePageRequest {
+                    content: body,
+                    source_memory_ids: page.source_memory_ids.clone(),
+                    expected_version: Some(page.version),
+                    caller_id: None,
+                    operation_id: None,
+                },
+                edited_by: "fs_edit",
+                knowledge_path: None,
+                basis: crate::db::BasisWrite::default(),
+            },
+        )
+        .await?;
+        page = db
+            .get_page(&archived.id)
+            .await?
+            .ok_or_else(|| WenlanError::Conflict("page_restore_lost".into()))?;
+    }
+    crate::export::knowledge::reclaim_returned_page(knowledge_path, relative, &page)?;
+    crate::export::knowledge::KnowledgeProjectionWrite::new(knowledge_path.to_path_buf(), db)
+        .write_page_gated(db, &page)
+        .await?;
+    log::info!(
+        "[page-watcher] {relative} is back in the folder; restored page {}",
+        page.id
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1176,6 +1281,137 @@ mod tests {
             db.get_page(&page.id).await.unwrap().unwrap().status,
             "active"
         );
+    }
+
+    #[tokio::test]
+    async fn a_file_put_back_after_its_page_was_archived_brings_the_page_back() {
+        for edited in [false, true] {
+            let (db, _ddir) = fresh_db().await;
+            let dir = TempDir::new().unwrap();
+            let (page, writer, source) = projected_external_page(&db, &dir).await;
+            let path = dir.path().join(&source);
+            let raw = std::fs::read_to_string(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            sync_filesystem_edits(&db, dir.path()).await.unwrap();
+            backdate_missing(dir.path());
+            sync_filesystem_edits(&db, dir.path()).await.unwrap();
+            assert_eq!(
+                db.get_page(&page.id).await.unwrap().unwrap().status,
+                "archived"
+            );
+
+            // Put back from the trash, under another name, edited or not.
+            let back = dir.path().join("put back.md");
+            let text = if edited {
+                raw.replace("original body", "edited while in the trash")
+            } else {
+                raw.clone()
+            };
+            std::fs::write(&back, &text).unwrap();
+            let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+            assert_eq!((stats.applied, stats.errors), (1, 0), "{edited} {stats:?}");
+            let restored = db.get_page(&page.id).await.unwrap().unwrap();
+            assert_eq!(restored.status, "active");
+            let wanted = if edited {
+                "edited while in the trash"
+            } else {
+                "original body"
+            };
+            assert_eq!(restored.content, wanted);
+            assert_eq!(writer.page_filename(&page.id).unwrap(), "put back.md");
+            assert!(std::fs::read_to_string(&back).unwrap().contains(wanted));
+            assert!(!path.exists(), "no second copy");
+
+            let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+            assert_eq!((stats.applied, stats.errors), (0, 0), "{stats:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hold_that_lifts_starts_the_wait_again() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        let writer = tracked_writer(&db, dir.path());
+        let count = crate::export::knowledge::MASS_MISSING_FLOOR + 2;
+        let mut files = Vec::new();
+        for n in 0..count {
+            let page = sample_page(&format!("page_back_{n}"), &format!("Back {n}"), "body");
+            db.insert_page(
+                &page.id,
+                &page.title,
+                None,
+                &page.content,
+                None,
+                None,
+                &["mem_seed"],
+                &page.created_at,
+            )
+            .await
+            .unwrap();
+            project_page(&db, &writer, &page);
+            let path = dir.path().join(writer.page_filename(&page.id).unwrap());
+            files.push((page.id, path.clone(), std::fs::read(&path).unwrap()));
+            std::fs::remove_file(&path).unwrap();
+        }
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert!(stats.held_missing.is_some(), "{stats:?}");
+        backdate_missing(dir.path());
+        // Most come back; the rest wait again instead of archiving at once.
+        for (_, path, bytes) in files.iter().skip(2) {
+            std::fs::write(path, bytes).unwrap();
+        }
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(
+            (stats.held_missing, stats.archived_deleted),
+            (None, 0),
+            "{stats:?}"
+        );
+        for (id, _, _) in &files {
+            assert_eq!(db.get_page(id).await.unwrap().unwrap().status, "active");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_moved_page_with_long_frontmatter_is_not_archived() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        let (page, writer, source) = projected_external_page(&db, &dir).await;
+        let raw = std::fs::read_to_string(dir.path().join(&source)).unwrap();
+        let long = format!("---\nnotes: \"{}\"\n", "x".repeat(9000));
+        std::fs::remove_file(dir.path().join(&source)).unwrap();
+        std::fs::write(
+            dir.path().join("renamed.md"),
+            raw.replacen("---\n", &long, 1),
+        )
+        .unwrap();
+        sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        backdate_missing(dir.path());
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.archived_deleted, 0, "{stats:?}");
+        assert_eq!(
+            db.get_page(&page.id).await.unwrap().unwrap().status,
+            "active"
+        );
+        assert_eq!(writer.page_filename(&page.id).unwrap(), "renamed.md");
+    }
+
+    #[tokio::test]
+    async fn an_archive_fenced_by_version_leaves_a_page_written_since() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        let (page, _writer, _source) = projected_external_page(&db, &dir).await;
+        let seen = db.get_page(&page.id).await.unwrap().unwrap().version;
+        assert_eq!(
+            db.archive_page_at_version(&page.id, seen - 1)
+                .await
+                .unwrap(),
+            None
+        );
+        assert!(db
+            .archive_page_at_version(&page.id, seen)
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
