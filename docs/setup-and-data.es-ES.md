@@ -84,7 +84,7 @@ Tus páginas y notas de sesión son archivos Markdown; las memorias y el grafo s
 
 - Páginas y notas de sesión: `~/.wenlan/`.
 - Base de datos y datos del entorno de ejecución: `~/Library/Application Support/wenlan/` en macOS, `~/.local/share/wenlan/` en Linux o `%LOCALAPPDATA%\wenlan\` en Windows.
-- Una copia en archivos de la base de datos: `files-mirror/` en la carpeta de la base de datos. Es un anticipo del almacenamiento en archivos al que pasará una versión posterior. Wenlan la actualiza pocos minutos después de cada cambio y comprueba una vez al día que los archivos reconstruyen la misma base de datos, Si al iniciar falta el archivo de la base de datos o está vacío, Wenlan reconstruye la base de datos a partir de esta copia. Fuera de eso no la lee, así que borrarla no hace daño mientras la base de datos siga intacta. `WENLAN_FILES_MIRROR=0` la desactiva.
+- Una copia en archivos de la base de datos: `files-mirror/` en la carpeta de la base de datos. Es un anticipo del almacenamiento en archivos al que pasará una versión posterior. Wenlan la actualiza pocos minutos después de cada cambio y comprueba una vez al día que los archivos reconstruyen la misma base de datos. Si al iniciar falta el archivo de la base de datos o está vacío, Wenlan reconstruye la base de datos a partir de esta copia y vuelve a comprobar las páginas con sus fuentes en segundo plano. La comprobación reutiliza los juicios anteriores de la IA, así que el texto que no ha cambiado no necesita otros nuevos. Fuera de eso no la lee, así que borrarla no hace daño mientras la base de datos siga intacta. `WENLAN_FILES_MIRROR=0` la desactiva.
 
 ### Copia de seguridad de tus conocimientos
 

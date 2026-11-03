@@ -85,6 +85,13 @@ pub const FILE_TABLE_HOMES: &[(&str, &str)] = &[
     ("entity_page_map", "records"),
     ("page_evidence", "records"),
     ("page_sources", "records"),
+    ("edges", "records"),
+    ("provenance_roots", "records"),
+    ("provenance_root_minhash_bands", "records"),
+    ("observations", "records"),
+    ("relations", "records"),
+    ("entailment_cache", "records"),
+    ("eval_signals", "records"),
 ];
 
 /// Columns of the tables written field by field (pages, entities, memories,

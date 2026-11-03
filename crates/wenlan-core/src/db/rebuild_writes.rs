@@ -11,6 +11,13 @@ use crate::error::WenlanError;
 /// (row <rowid>)`, a row of `table` naming a `parent` row that is not there.
 pub(crate) const FOREIGN_KEY: &str = "foreign key: ";
 
+/// Tables whose triggers are set aside while the rebuild writes them. The
+/// `edges` triggers check each new edge against its endpoints as they are
+/// now (the space fence refuses an edge whose page moved to another space
+/// or is gone) and mark grouping work; a copy goes back as it was stored,
+/// and one stale edge must not stop a restore.
+const WRITTEN_WITHOUT_TRIGGERS: &[&str] = &["edges"];
+
 impl MemoryDB {
     /// Replaces every row of `table` with `rows`, each holding a value for
     /// each of `columns`, in one transaction. `table` must be one of the
@@ -41,6 +48,28 @@ impl MemoryDB {
         let fail = |e: libsql::Error| WenlanError::VectorDb(format!("rebuild {table}: {e}"));
         conn.execute("BEGIN IMMEDIATE", ()).await.map_err(fail)?;
         let result = async {
+            let mut triggers = Vec::new();
+            if WRITTEN_WITHOUT_TRIGGERS.contains(&table) {
+                let mut found = conn
+                    .query(
+                        "SELECT name, sql FROM sqlite_master \
+                         WHERE type = 'trigger' AND tbl_name = ?1 ORDER BY name",
+                        [table],
+                    )
+                    .await
+                    .map_err(fail)?;
+                while let Some(row) = found.next().await.map_err(fail)? {
+                    let name: String = row.get(0).map_err(fail)?;
+                    let sql: String = row.get(1).map_err(fail)?;
+                    triggers.push((name, sql));
+                }
+                drop(found);
+                for (name, _) in &triggers {
+                    conn.execute(&format!("DROP TRIGGER {}", quote(name)), ())
+                        .await
+                        .map_err(fail)?;
+                }
+            }
             conn.execute(&format!("DELETE FROM {}", quote(table)), ())
                 .await
                 .map_err(fail)?;
@@ -53,6 +82,9 @@ impl MemoryDB {
                     )));
                 }
                 conn.execute(&insert, row.clone()).await.map_err(fail)?;
+            }
+            for (_, sql) in &triggers {
+                conn.execute(sql, ()).await.map_err(fail)?;
             }
             Ok(())
         }
