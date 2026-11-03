@@ -130,6 +130,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "rename_thing",
     "hide_thing",
     "move_session_thing",
+    "answer_thing_merge",
     "list_registered_sources",
   ],
   pageDrafts: [
