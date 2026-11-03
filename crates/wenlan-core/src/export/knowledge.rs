@@ -2495,6 +2495,86 @@ pub struct CutoverPlan {
     pub digest: String,
 }
 
+static FILE_FIRST_IN_FLIGHT: std::sync::Mutex<BTreeMap<String, usize>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+/// Whether a write of `page_id` has put its file in place and not yet
+/// committed to the database. The page watcher leaves such a file alone.
+pub fn file_first_in_flight(page_id: &str) -> bool {
+    FILE_FIRST_IN_FLIGHT
+        .lock()
+        .map(|in_flight| in_flight.contains_key(page_id))
+        .unwrap_or(false)
+}
+
+struct FileFirstInFlight(String);
+
+impl FileFirstInFlight {
+    fn mark(page_id: &str) -> Self {
+        if let Ok(mut in_flight) = FILE_FIRST_IN_FLIGHT.lock() {
+            *in_flight.entry(page_id.to_string()).or_default() += 1;
+        }
+        Self(page_id.to_string())
+    }
+}
+
+impl Drop for FileFirstInFlight {
+    fn drop(&mut self) {
+        if let Ok(mut in_flight) = FILE_FIRST_IN_FLIGHT.lock() {
+            if let Some(count) = in_flight.get_mut(&self.0) {
+                *count -= 1;
+                if *count == 0 {
+                    in_flight.remove(&self.0);
+                }
+            }
+        }
+    }
+}
+
+/// A page file written ahead of its database write; see
+/// [`KnowledgeProjectionWrite::write_page_first`].
+pub struct FileFirstWrite {
+    root: PathBuf,
+    page_id: String,
+    file: String,
+    written: Vec<u8>,
+    before: folders::FileBefore,
+    armed: bool,
+    _in_flight: FileFirstInFlight,
+}
+
+impl FileFirstWrite {
+    /// The database write landed: the file stays.
+    pub fn keep(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for FileFirstWrite {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        match folders::undo_file_first(
+            &self.root,
+            &self.page_id,
+            &self.file,
+            &self.written,
+            &self.before,
+        ) {
+            Ok(true) => {}
+            Ok(false) => log::info!(
+                "[knowledge] {} changed after a write that did not land; left as it is",
+                self.file
+            ),
+            Err(error) => log::warn!(
+                "[knowledge] could not put back {} after a write that did not land: {error}",
+                self.file
+            ),
+        }
+    }
+}
+
 pub struct KnowledgeProjectionWrite {
     writer: KnowledgeWriter,
     guard: crate::page_projection_tracker::PageProjectionWriteGuard,
@@ -5649,6 +5729,56 @@ impl KnowledgeProjectionWrite {
     ) -> Result<String, WenlanError> {
         self.writer
             .write_page_in_folder(&self.guard, page, initial_folder)
+    }
+
+    /// Writes `page`, the version a database write is about to commit, to
+    /// its file first: the folder is the source of truth, so the file holds a
+    /// write before the database does. Keep the returned write once the
+    /// database write lands; dropping it puts the file back as it was, for a
+    /// write that lost its race or failed. `None` when the page is not
+    /// projected (the truth gate, or archived since).
+    ///
+    /// While it is held the page counts as being written, and the page
+    /// watcher leaves its file alone, so it does not read Wenlan's own write
+    /// back as the person's.
+    pub async fn write_page_first(
+        &self,
+        database: &crate::db::MemoryDB,
+        page: &Page,
+    ) -> Result<Option<FileFirstWrite>, WenlanError> {
+        let in_flight = FileFirstInFlight::mark(&page.id);
+        let before = folders::capture_page_file(&self.writer.path, &page.id)?;
+        // Only a page whose file is in place and keeps its name: those are
+        // the writes that can be put back exactly. A first write, a file the
+        // person deleted, and a new title (a new file name) keep the old
+        // order, database then file.
+        let in_place = match (&before.entry, &before.bytes) {
+            (Some(entry), Some(_)) => entry.title.as_deref() == Some(page.title.as_str()),
+            _ => false,
+        };
+        if !in_place {
+            return Ok(None);
+        }
+        let Some(written_path) = self.write_page_gated(database, page).await? else {
+            return Ok(None);
+        };
+        // The writer answers with the full path; the state names files by
+        // their place under the pages folder.
+        let file = Path::new(&written_path)
+            .strip_prefix(&self.writer.path)
+            .unwrap_or(Path::new(&written_path))
+            .to_string_lossy()
+            .replace('\\', "/");
+        let written = folders::read_page_file(&self.writer.path, &file)?.unwrap_or_default();
+        Ok(Some(FileFirstWrite {
+            root: self.writer.path.clone(),
+            page_id: page.id.clone(),
+            file,
+            written,
+            before,
+            armed: true,
+            _in_flight: in_flight,
+        }))
     }
 
     /// Project a page only if an automatic reader may see it.

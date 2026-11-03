@@ -837,8 +837,10 @@ fn no_production_code_projects_a_page_without_a_permit() {
     // `write_page_*` variant is now flagged until someone adds it below, so
     // widening the writer surface cannot silently widen the hole.
     const PREFIX: &str = ".write_page";
-    const PERMITTED: [&str; 3] = [
+    const PERMITTED: [&str; 4] = [
         ".write_page_gated(",
+        // Projects through `write_page_gated`.
+        ".write_page_first(",
         ".write_page_permitted(",
         ".write_page_with_after_target_write_permitted(",
     ];

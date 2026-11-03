@@ -1557,6 +1557,34 @@ async fn update_page_db_impl(
                 _ => None,
             };
 
+            // Files first: the page's file gets this version before the
+            // database does. If the database write below does not land, the
+            // file is put back when `file_first` drops.
+            let file_first = match knowledge_path {
+                Some(path) => {
+                    let mut next = current.clone();
+                    next.content = landing_content.to_string();
+                    next.source_memory_ids = effective_sources.clone();
+                    next.version = new_version;
+                    next.last_modified = chrono::Utc::now().to_rfc3339();
+                    let projection = crate::export::knowledge::KnowledgeProjectionWrite::new(
+                        path.to_path_buf(),
+                        db,
+                    );
+                    match projection.write_page_first(db, &next).await {
+                        Ok(written) => written,
+                        // An edit the person made in the file is not
+                        // overwritten; the write lands in the database and
+                        // the file is brought up to it afterwards, as before.
+                        Err(error) => {
+                            log::info!("[update_page] {page_id}: file first skipped: {error}");
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
+
             pre_write_pause(page_id).await;
             // citations: None -> resets `citations` to SQL NULL (no fresh
             // citation source for this write; a stale claim-map must not
@@ -1649,6 +1677,9 @@ async fn update_page_db_impl(
             };
 
             if let Some(outcome) = landed {
+                if let Some(file_first) = file_first {
+                    file_first.keep();
+                }
                 break 'cas (
                     delta_summary,
                     current_version,

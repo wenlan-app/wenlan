@@ -602,7 +602,7 @@ fn replace_person_note(
                 let _ = recovery.remove_file(&aside);
             } else {
                 log::warn!(
-                    "[knowledge] {relative} was saved while Wenlan added its id line; kept \
+                    "[knowledge] {relative} was saved while Wenlan was writing it; kept \
                      both, the earlier one is .wenlan/projection-recovery/{aside}"
                 );
             }
@@ -884,6 +884,78 @@ pub fn follow_external_moves(path: &Path) -> Result<usize, WenlanError> {
             }
         }
         Ok(followed)
+    })
+}
+
+/// A page's file and record as they were before a write that went to the
+/// file first (see [`KnowledgeProjectionWrite::write_page_first`]).
+pub(super) struct FileBefore {
+    pub(super) entry: Option<PageFileState>,
+    pub(super) bytes: Option<Vec<u8>>,
+}
+
+pub(super) fn capture_page_file(path: &Path, page_id: &str) -> Result<FileBefore, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let entry = read_state_strict(&capabilities.wenlan)?
+            .pages
+            .get(page_id)
+            .cloned();
+        let bytes = match &entry {
+            Some(entry) => read_page_file_in(&capabilities.root, &entry.file)?,
+            None => None,
+        };
+        Ok(FileBefore { entry, bytes })
+    })
+}
+
+pub(super) fn read_page_file(path: &Path, file: &str) -> Result<Option<Vec<u8>>, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        read_page_file_in(&capabilities.root, file)
+    })
+}
+
+fn read_page_file_in(root: &Dir, file: &str) -> Result<Option<Vec<u8>>, WenlanError> {
+    let Ok((parent, name)) = page_parent(root, file) else {
+        return Ok(None);
+    };
+    let mut budget = RepairReadBudget::new();
+    read_optional_regular_nofollow(&parent, OsStr::new(&name), &mut budget)
+}
+
+/// Puts back what a file-first write replaced, when its database write did
+/// not land: only while the file still holds exactly `written` (a save by
+/// the person since is theirs and stays) and the write did not move the
+/// page to another file. Returns whether it put anything back.
+pub(super) fn undo_file_first(
+    path: &Path,
+    page_id: &str,
+    file: &str,
+    written: &[u8],
+    before: &FileBefore,
+) -> Result<bool, WenlanError> {
+    let (Some(entry), Some(bytes)) = (&before.entry, &before.bytes) else {
+        return Ok(false);
+    };
+    if entry.file != file {
+        return Ok(false);
+    }
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        if read_page_file_in(&capabilities.root, file)?.as_deref() != Some(written) {
+            return Ok(false);
+        }
+        // Moved aside and checked first, like any write over a page file, so
+        // a save landing in between is kept rather than replaced.
+        match replace_person_note(capabilities, file, written, bytes, page_id) {
+            Ok(()) => {}
+            Err(WenlanError::Conflict(reason)) if reason == "page_adoption_changed" => {
+                return Ok(false)
+            }
+            Err(error) => return Err(error),
+        }
+        state.pages.insert(page_id.to_string(), entry.clone());
+        save_state(&capabilities.wenlan, &state)?;
+        Ok(true)
     })
 }
 
