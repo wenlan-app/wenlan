@@ -790,6 +790,7 @@ jobs:
               - 'crates/wenlan-server/src/main.rs'
               - 'crates/wenlan-server/src/telemetry.rs'
               - 'crates/wenlan-mcp/npm/install.js'
+              - 'crates/wenlan-cli/src/commands/home_bin.rs'
               - 'install.sh'
               - 'scripts/stage-onnxruntime-windows.ps1'
               - 'scripts/smoke-windows.ps1'
