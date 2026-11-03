@@ -153,7 +153,9 @@ impl MemoryDB {
              ON CONFLICT(session_id) DO UPDATE SET
                 last_at = excluded.last_at, work = excluded.work, title = excluded.title,
                 about = excluded.about, status = excluded.status, space = excluded.space,
-                labeled_at = excluded.labeled_at",
+                labeled_at = excluded.labeled_at,
+                grouped_at = CASE WHEN excluded.work = 1 AND conversation_labels.work = 0
+                                  THEN NULL ELSE conversation_labels.grouped_at END",
             libsql::params![
                 id.as_str(),
                 found.tool.as_str(),
@@ -232,7 +234,8 @@ impl MemoryDB {
     }
 
     /// Work conversations of the past week not yet put into a thing, oldest
-    /// first. A conversation the person already placed is not offered.
+    /// first. A conversation the person or the grouping model already placed
+    /// is not offered, so rebuilding the labels never places one twice.
     pub async fn intake_pending(&self, limit: usize) -> Result<Vec<Pending>, WenlanError> {
         let since = chrono::Utc::now().timestamp() - THING_QUIET_AFTER_SECS;
         let conn = self.conn.lock().await;
@@ -243,8 +246,13 @@ impl MemoryDB {
                   WHERE l.work = 1 AND l.grouped_at IS NULL AND l.last_at >= ?1
                     AND NOT EXISTS (SELECT 1 FROM thing_sessions ts
                                       JOIN things t ON t.id = ts.thing_id
-                                     WHERE ts.session_id = l.session_id
-                                       AND ts.assigned_by = 'person' AND t.merged_into IS NULL)
+                                     WHERE ts.session_id = l.session_id AND t.merged_into IS NULL
+                                       AND (ts.assigned_by = 'person' OR EXISTS
+                                            (SELECT 1 FROM thing_history h
+                                              WHERE h.thing_id = ts.thing_id
+                                                AND h.session_id = ts.session_id
+                                                AND h.op = 'thing.assign'
+                                                AND json_extract(h.data, '$.rule') = 'model')))
                   ORDER BY l.last_at, l.session_id
                   LIMIT ?2",
                 libsql::params![since, limit as i64],
@@ -387,16 +395,34 @@ impl MemoryDB {
         }
         for (c, thing) in targets {
             let session = pending[c].session_id.as_str();
-            super::things::unassign_rule_placements(&tx, now, session).await?;
-            super::things::assign(
-                &tx,
-                now,
-                &thing,
-                session,
-                ThingActor::Ai,
-                serde_json::json!({ "rule": "model" }),
-            )
-            .await?;
+            // The person may have placed it while the model was thinking.
+            let mut placed = tx
+                .query(
+                    "SELECT 1 FROM thing_sessions ts JOIN things t ON t.id = ts.thing_id
+                      WHERE ts.session_id = ?1 AND ts.assigned_by = 'person'
+                        AND t.merged_into IS NULL LIMIT 1",
+                    libsql::params![session],
+                )
+                .await
+                .map_err(db_err("grouping person check"))?;
+            let by_person = placed
+                .next()
+                .await
+                .map_err(db_err("grouping person row"))?
+                .is_some();
+            drop(placed);
+            if !by_person {
+                super::things::unassign_rule_placements(&tx, now, session).await?;
+                super::things::assign(
+                    &tx,
+                    now,
+                    &thing,
+                    session,
+                    ThingActor::Ai,
+                    serde_json::json!({ "rule": "model" }),
+                )
+                .await?;
+            }
             tx.execute(
                 "UPDATE conversation_labels SET grouped_at = ?2 WHERE session_id = ?1",
                 libsql::params![session, now],

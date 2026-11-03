@@ -35,6 +35,8 @@ impl AgentCliProvider {
     /// The program's arguments; the prompt goes on standard input.
     fn args(&self, answer_file: &std::path::Path) -> Vec<String> {
         match self.agent {
+            // Codex has no way to turn its tools off; the read-only sandbox
+            // keeps it from changing anything.
             RepoWikiAgent::Codex => vec![
                 "exec".into(),
                 "--skip-git-repo-check".into(),
@@ -49,7 +51,12 @@ impl AgentCliProvider {
                 "--model".into(),
                 "haiku".into(),
                 "--no-session-persistence".into(),
-                "--allowedTools".into(),
+                // No tools, no MCP servers, no settings (and so no hooks):
+                // the model only answers from the prompt.
+                "--tools".into(),
+                String::new(),
+                "--strict-mcp-config".into(),
+                "--setting-sources".into(),
                 String::new(),
                 "--output-format".into(),
                 "text".into(),

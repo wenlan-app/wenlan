@@ -323,6 +323,7 @@ pub(super) async fn unassign_rule_placements(
         tx,
         "SELECT ts.thing_id FROM thing_sessions ts JOIN things t ON t.id = ts.thing_id
           WHERE ts.session_id = ?1 AND ts.assigned_by = 'ai' AND t.brief_item_id IS NULL
+            AND t.title_by = 'ai'
             AND NOT EXISTS (SELECT 1 FROM thing_history h
                              WHERE h.thing_id = ts.thing_id AND h.session_id = ts.session_id
                                AND h.op = 'thing.assign'

@@ -11,6 +11,7 @@
 //! person's own AI tool (Claude Code or Codex), which spends that tool's
 //! quota. With neither, nothing is read.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,6 +29,39 @@ const FIRST_LOOK: Duration = Duration::from_secs(90);
 const LABEL_BATCH: usize = 30;
 /// Most conversations grouped in one call.
 const GROUP_BATCH: usize = 60;
+
+/// Waits after a model failed, so a conversation the everyday model cannot
+/// read, or a grouping answer that will not parse, does not spend the
+/// person's quota every look. Kept in memory: a restart tries again.
+#[derive(Debug, Default)]
+pub struct Backoff {
+    /// Per conversation: failures so far and when to try again.
+    label: HashMap<String, (u32, i64)>,
+    /// Grouping: failures so far and when to try again.
+    group: (u32, i64),
+}
+
+/// The wait after `fails` failures in a row: one look, doubling, at most a
+/// day.
+fn wait_after(fails: u32) -> i64 {
+    (TICK.as_secs() as i64)
+        .saturating_mul(1 << fails.min(8))
+        .min(86_400)
+}
+
+impl Backoff {
+    fn label_ready(&self, id: &str, now: i64) -> bool {
+        self.label.get(id).is_none_or(|&(_, at)| now >= at)
+    }
+    fn label_failed(&mut self, id: String, now: i64) {
+        let fails = self.label.get(&id).map_or(0, |&(n, _)| n) + 1;
+        self.label.insert(id, (fails, now + wait_after(fails - 1)));
+    }
+    fn group_failed(&mut self, now: i64) {
+        self.group.0 += 1;
+        self.group.1 = now + wait_after(self.group.0 - 1);
+    }
+}
 
 /// What one look did, for the log.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -47,6 +81,7 @@ pub fn start(shared: SharedState, shutdown: tokio::sync::watch::Receiver<bool>) 
 
 async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<bool>) {
     let mut wait = FIRST_LOOK;
+    let mut backoff = Backoff::default();
     loop {
         tokio::select! {
             _ = tokio::time::sleep(wait) => {}
@@ -56,7 +91,7 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
             return;
         }
         wait = TICK;
-        match look_once(&shared).await {
+        match look_once(&shared, &mut backoff).await {
             Ok(Some(report)) if report.labelled > 0 || report.grouped > 0 => {
                 tracing::info!("[things] read conversations: {report:?}");
             }
@@ -113,7 +148,10 @@ async fn models(shared: &SharedState) -> Option<IntakeModels> {
 }
 
 /// One look, now. `None` when it did not run.
-pub async fn look_once(shared: &SharedState) -> Result<Option<LookReport>, String> {
+pub async fn look_once(
+    shared: &SharedState,
+    backoff: &mut Backoff,
+) -> Result<Option<LookReport>, String> {
     let Some(models) = models(shared).await else {
         return Ok(None);
     };
@@ -130,7 +168,9 @@ pub async fn look_once(shared: &SharedState) -> Result<Option<LookReport>, Strin
         tokio::task::spawn_blocking(move || intake::scan(&roots, now, intake::INTAKE_WINDOW_SECS))
             .await
             .map_err(|e| e.to_string())?;
-    look_with(&db, found, &models, language).await.map(Some)
+    look_with(&db, found, &models, language, backoff)
+        .await
+        .map(Some)
 }
 
 /// One look over conversations already found: label what is new or went on,
@@ -140,7 +180,9 @@ pub async fn look_with(
     found: Vec<FoundConversation>,
     models: &IntakeModels,
     language: &str,
+    backoff: &mut Backoff,
 ) -> Result<LookReport, String> {
+    let now = chrono::Utc::now().timestamp();
     let mut report = LookReport {
         found: found.len(),
         ..Default::default()
@@ -156,7 +198,10 @@ pub async fn look_with(
     // Newest first, so a backlog never holds up today's work.
     let to_label: Vec<FoundConversation> = kept
         .into_iter()
-        .filter(|c| found_session_id(c).is_some_and(|id| needs_label(c, reads.get(&id))))
+        .filter(|c| {
+            found_session_id(c)
+                .is_some_and(|id| needs_label(c, reads.get(&id)) && backoff.label_ready(&id, now))
+        })
         .take(LABEL_BATCH)
         .collect();
     for conv in to_label {
@@ -174,12 +219,15 @@ pub async fn look_with(
                 timeout_secs: Some(120),
             })
             .await;
+        let id = found_session_id(&conv).unwrap_or_default();
         let Some(label) = answer
             .ok()
             .and_then(|text| intake::parse_label(&text, &spaces))
         else {
+            backoff.label_failed(id, now);
             continue;
         };
+        backoff.label.remove(&id);
         let repo = conv.cwd.as_deref().and_then(intake::repo_root_of);
         db.record_conversation_label(&conv, &label, repo.as_deref())
             .await
@@ -194,9 +242,32 @@ pub async fn look_with(
         .map_err(|e| e.to_string())?;
     let open = db.intake_open_things().await.map_err(|e| e.to_string())?;
     // Nothing new to sort and no thing whose line is out of date.
-    if pending.is_empty() && open.iter().all(|t| t.news.is_empty()) {
+    if pending.is_empty() && open.iter().all(|t| t.news.is_empty()) || now < backoff.group.1 {
         return Ok(report);
     }
+    let made = group(db, &pending, &open, models, language).await;
+    match made {
+        Ok(made) => {
+            backoff.group = (0, 0);
+            report.things_made = made;
+            report.grouped = pending.len();
+            Ok(report)
+        }
+        Err(error) => {
+            backoff.group_failed(now);
+            Err(error)
+        }
+    }
+}
+
+/// Ask the grouping model and put the conversations where it says.
+async fn group(
+    db: &MemoryDB,
+    pending: &[intake::Pending],
+    open: &[intake::OpenThing],
+    models: &IntakeModels,
+    language: &str,
+) -> Result<usize, String> {
     let answer = models
         .group
         .generate(LlmRequest {
@@ -204,7 +275,7 @@ pub async fn look_with(
                 "You sort a person's conversations into the pieces of work they belong to. Answer with JSON only."
                     .into(),
             ),
-            user_prompt: intake::group_prompt(&pending, &open, language),
+            user_prompt: intake::group_prompt(pending, open, language),
             max_tokens: 4_000,
             temperature: 0.0,
             label: Some("things_group".into()),
@@ -212,14 +283,11 @@ pub async fn look_with(
         })
         .await
         .map_err(|e| format!("grouping: {e}"))?;
-    let grouping = intake::parse_grouping(&answer, &pending, open.len())
+    let grouping = intake::parse_grouping(&answer, pending, open.len())
         .ok_or_else(|| "grouping: the answer was not JSON".to_string())?;
-    report.things_made = db
-        .apply_intake_grouping(&pending, &open, &grouping)
+    db.apply_intake_grouping(pending, open, &grouping)
         .await
-        .map_err(|e| e.to_string())?;
-    report.grouped = pending.len();
-    Ok(report)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

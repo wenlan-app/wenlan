@@ -301,3 +301,99 @@ async fn ux_thing_1_a_space_long_out_of_use_is_not_offered() {
         vec!["wenlan".to_string()]
     );
 }
+
+#[tokio::test]
+async fn ux_thing_1_a_left_out_chore_that_grows_into_work_is_offered_again() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let chore = found("chore", now - 7_200);
+    db.record_conversation_label(&chore, &work("Merge check", "Merged"), None)
+        .await
+        .unwrap();
+    let pending = db.intake_pending(50).await.unwrap();
+    db.apply_intake_grouping(
+        &pending,
+        &[],
+        &Grouping {
+            left_out: vec![0],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(db.intake_pending(50).await.unwrap().is_empty());
+    // It went on and was read again: the grouping model looks at it again.
+    let mut later = chore.clone();
+    later.last_at = now;
+    db.record_conversation_label(&later, &work("Release 0.21", "Tagged"), None)
+        .await
+        .unwrap();
+    let pending = db.intake_pending(50).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].title, "Release 0.21");
+}
+
+#[tokio::test]
+async fn ux_thing_1_grouping_never_overrides_the_person_or_places_a_conversation_twice() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    for (id, title) in [("p1", "Home cards"), ("p2", "Lisbon trip")] {
+        db.record_conversation_label(&found(id, now - 600), &work(title, "Going"), None)
+            .await
+            .unwrap();
+    }
+    let pending = db.intake_pending(50).await.unwrap();
+    assert_eq!(pending.len(), 2);
+    // While the model thinks, the person puts p1 in a thing of their own.
+    db.apply_intake_grouping(
+        &pending[..1],
+        &[],
+        &Grouping {
+            new: vec![("Draft".into(), vec![0])],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let p1 = pending[0].session_id.clone();
+    let draft = db.session_things(&p1).await.unwrap()[0].id.clone();
+    db.move_session_thing(
+        &p1,
+        &draft,
+        &crate::db::things::MoveTarget::NewThing("Mine".into()),
+    )
+    .await
+    .unwrap();
+    db.apply_intake_grouping(
+        &pending,
+        &[],
+        &Grouping {
+            new: vec![("Home".into(), vec![0]), ("Trip".into(), vec![1])],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let p1_things: Vec<_> = db
+        .session_things(&p1)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter_map(|t| t.title)
+        .collect();
+    assert_eq!(p1_things, vec!["Mine".to_string()]);
+
+    // Labels rebuilt from the transcripts: nothing is offered twice.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("DELETE FROM conversation_labels", ())
+            .await
+            .unwrap();
+    }
+    for (id, title) in [("p1", "Home cards"), ("p2", "Lisbon trip")] {
+        db.record_conversation_label(&found(id, now - 600), &work(title, "Going"), None)
+            .await
+            .unwrap();
+    }
+    assert!(db.intake_pending(50).await.unwrap().is_empty());
+}

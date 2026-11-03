@@ -93,9 +93,16 @@ async fn ux_thing_1_conversations_become_things_without_anyone_telling_wenlan() 
         group: group.clone(),
     };
 
-    let report = look_with(&db, found.clone(), &models, "Traditional Chinese")
-        .await
-        .unwrap();
+    let mut backoff = Backoff::default();
+    let report = look_with(
+        &db,
+        found.clone(),
+        &models,
+        "Traditional Chinese",
+        &mut backoff,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         report,
         LookReport {
@@ -124,10 +131,52 @@ async fn ux_thing_1_conversations_become_things_without_anyone_telling_wenlan() 
     assert!(!grouped.contains("hide button") && !grouped.contains("smaller cards"));
 
     // Looking again with nothing new reads nothing and asks nobody.
-    let report = look_with(&db, found, &models, "Traditional Chinese")
+    let report = look_with(&db, found, &models, "Traditional Chinese", &mut backoff)
         .await
         .unwrap();
     assert_eq!((report.labelled, report.grouped), (0, 0));
     assert_eq!(label.prompts.lock().unwrap().len(), 3);
+    assert_eq!(group.prompts.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn ux_thing_1_a_model_that_keeps_failing_is_not_asked_every_look() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let found = vec![
+        conv(
+            "a",
+            &["Make home show what I'm working on", "smaller cards"],
+            30,
+        ),
+        conv("b", &["Plan the Lisbon trip", "book flights"], 10),
+    ];
+    // The everyday model cannot read "a"; the grouping model answers nonsense.
+    let label = Scripted::new(&[
+        r#"{"work": true, "title": "Lisbon trip", "space": "", "about": "trip", "status": "Flights booked"}"#,
+        "not json",
+    ]);
+    let group = Scripted::new(&["no idea"]);
+    let models = IntakeModels {
+        label: label.clone(),
+        group: group.clone(),
+    };
+    let mut backoff = Backoff::default();
+    assert!(
+        look_with(&db, found.clone(), &models, "English", &mut backoff)
+            .await
+            .is_err()
+    );
+    assert_eq!(label.prompts.lock().unwrap().len(), 2);
+    assert_eq!(group.prompts.lock().unwrap().len(), 1);
+
+    // The next look asks neither model again.
+    let report = look_with(&db, found, &models, "English", &mut backoff)
+        .await
+        .unwrap();
+    assert_eq!((report.labelled, report.grouped), (0, 0));
+    assert_eq!(label.prompts.lock().unwrap().len(), 2);
     assert_eq!(group.prompts.lock().unwrap().len(), 1);
 }
