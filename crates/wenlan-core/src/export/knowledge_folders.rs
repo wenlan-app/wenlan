@@ -442,6 +442,397 @@ pub fn knowledge_edit_targets(path: &Path) -> Result<HashMap<String, String>, We
     })
 }
 
+/// A note the person put in the folder, as `state.json` records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonPageFile {
+    pub file: String,
+    /// SHA-256 of the bytes last recorded for it.
+    pub digest: Option<String>,
+    pub frontmatter: String,
+}
+
+/// Every page recorded as a note the person put in the folder.
+pub fn person_page_files(path: &Path) -> Result<HashMap<String, PersonPageFile>, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let state = read_state_strict(&capabilities.wenlan)?;
+        Ok(state
+            .pages
+            .into_iter()
+            .filter_map(|(id, entry)| {
+                let frontmatter = entry.person_frontmatter?;
+                Some((
+                    id,
+                    PersonPageFile {
+                        file: entry.file,
+                        digest: entry.content_sha256,
+                        frontmatter,
+                    },
+                ))
+            })
+            .collect())
+    })
+}
+
+/// Adoptions whose id line is written and whose page may not be recorded
+/// yet (page id -> file).
+pub fn pending_adoptions(path: &Path) -> Result<BTreeMap<String, String>, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        Ok(read_state_strict(&capabilities.wenlan)?.pending_adoptions)
+    })
+}
+
+/// The frontmatter of a note (the text between its `---` lines, with LF
+/// line ends), or `None` when it has none.
+pub fn adoption_frontmatter(raw: &str) -> Option<String> {
+    let lf = raw.replace("\r\n", "\n");
+    let (yaml, _) = crate::sources::obsidian::split_frontmatter_untrimmed(&lf)?;
+    Some(yaml.trim_start_matches('\n').to_string())
+}
+
+/// `raw` with an `origin_id` line naming `page_id` as the first key of its
+/// frontmatter, or with a frontmatter holding only that line when it has
+/// none. Nothing else changes, line ends included.
+fn with_origin_id(raw: &str, page_id: &str) -> String {
+    // A byte-order mark would hide the frontmatter from every reader.
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+    for open in ["---\r\n", "---\n"] {
+        if raw.starts_with(open)
+            && crate::sources::obsidian::split_frontmatter_untrimmed(raw).is_some()
+        {
+            let end = &open[3..];
+            return format!("{open}origin_id: {page_id}{end}{}", &raw[open.len()..]);
+        }
+    }
+    format!("---\norigin_id: {page_id}\n---\n\n{raw}")
+}
+
+/// `raw` without the `origin_id` line [`with_origin_id`] put in it, or
+/// `None` when that line is not where it put it.
+fn without_origin_id(raw: &str, page_id: &str) -> Option<String> {
+    for end in ["\r\n", "\n"] {
+        let added_block = format!("---{end}origin_id: {page_id}{end}---{end}{end}");
+        if let Some(rest) = raw.strip_prefix(&added_block) {
+            return Some(rest.to_string());
+        }
+        let line = format!("---{end}origin_id: {page_id}{end}");
+        if let Some(rest) = raw.strip_prefix(&line) {
+            return Some(format!("---{end}{rest}"));
+        }
+    }
+    None
+}
+
+/// The `origin_id` a note's frontmatter names, read line by line so a note
+/// whose YAML does not parse (`title: Meeting: notes`) still has one.
+pub fn origin_id_line(raw: &str) -> Option<String> {
+    let lf = raw
+        .strip_prefix('\u{feff}')
+        .unwrap_or(raw)
+        .replace("\r\n", "\n");
+    let (yaml, _) = crate::sources::obsidian::split_frontmatter_untrimmed(&lf)?;
+    yaml.lines().find_map(|line| {
+        let value = line.strip_prefix("origin_id:")?.trim();
+        let value = value.trim_matches(|c| c == '"' || c == '\'').trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
+/// Replaces the note at `relative` with `next`, but only while it still
+/// holds `expected`. The note is moved aside first and put back if it
+/// changed, so an editor save that lands at the same moment is never lost:
+/// a save before the move is seen and kept, and one after it recreates the
+/// name, which the new file then does not replace.
+fn replace_person_note(
+    capabilities: &ProjectionCapabilities,
+    relative: &str,
+    expected: &[u8],
+    next: &[u8],
+    page_id: &str,
+) -> Result<(), WenlanError> {
+    let (parent, name) = page_parent(&capabilities.root, relative)?;
+    let temporary = format!(
+        ".{page_id}.{}.{}.tmp",
+        std::process::id(),
+        TEMP_FILE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    let mut file = parent.open_with(&temporary, &options)?;
+    let written = (|| {
+        file.write_all(next)?;
+        if let Ok(permissions) = parent
+            .open_with(&name, &regular_read_options())
+            .and_then(|current| current.metadata())
+            .map(|metadata| metadata.permissions())
+        {
+            file.set_permissions(permissions)?;
+        }
+        file.sync_all()
+    })();
+    drop(file);
+    if let Err(error) = written {
+        let _ = parent.remove_file(&temporary);
+        return Err(error.into());
+    }
+    let result = (|| {
+        match capabilities.wenlan.create_dir("projection-recovery") {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        let recovery = capabilities
+            .wenlan
+            .open_dir_nofollow("projection-recovery")?;
+        let aside = format!("{page_id}.{}.md", uuid::Uuid::new_v4());
+        parent.rename(&name, &recovery, &aside)?;
+        let mut budget = RepairReadBudget::new();
+        let moved = read_regular_nofollow(&recovery, OsStr::new(&aside), &mut budget)?;
+        // Puts the moved-aside note back unless an editor made the name
+        // again, in which case both files stay.
+        let put_back = || {
+            let back = recovery.hard_link(&aside, &parent, &name).is_ok()
+                || (matches!(
+                    parent.symlink_metadata(&name),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                ) && recovery.rename(&aside, &parent, &name).is_ok());
+            if back {
+                let _ = recovery.remove_file(&aside);
+            } else {
+                log::warn!(
+                    "[knowledge] {relative} was saved while Wenlan added its id line; kept \
+                     both, the earlier one is .wenlan/projection-recovery/{aside}"
+                );
+            }
+        };
+        if moved != expected {
+            put_back();
+            return Err(WenlanError::Conflict("page_adoption_changed".into()));
+        }
+        if let Err(error) = parent.hard_link(&temporary, &parent, &name) {
+            put_back();
+            return Err(error.into());
+        }
+        let _ = recovery.remove_file(&aside);
+        Ok(())
+    })();
+    let _ = parent.remove_file(&temporary);
+    result
+}
+
+fn adoption_taken() -> WenlanError {
+    WenlanError::Conflict("page_adoption_taken".into())
+}
+
+fn read_page_bytes(root: &Dir, relative: &str) -> Result<Vec<u8>, WenlanError> {
+    let (parent, name) = page_parent(root, relative)?;
+    let mut budget = RepairReadBudget::new();
+    read_regular_nofollow(&parent, OsStr::new(&name), &mut budget)
+}
+
+/// Adopts the note at `relative` as page `page_id`: writes the `origin_id`
+/// line into it, when the file still holds exactly `expected` and no page
+/// is recorded at that file or under that id, and returns the new text.
+/// The adoption is recorded as pending first; [`record_person_note`]
+/// finishes it once the page exists.
+pub fn stamp_person_note(
+    path: &Path,
+    relative: &str,
+    expected: &str,
+    page_id: &str,
+) -> Result<String, WenlanError> {
+    validate_page_path(relative)?;
+    if is_reserved_okf_filename(relative.rsplit('/').next().unwrap_or(relative)) {
+        return Err(invalid_path());
+    }
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        let key = collision_key(relative);
+        if state.pages.contains_key(page_id)
+            || state
+                .pages
+                .values()
+                .any(|entry| collision_key(&entry.file) == key)
+            || state.pending_adoptions.contains_key(page_id)
+        {
+            return Err(adoption_taken());
+        }
+        if read_page_bytes(&capabilities.root, relative)? != expected.as_bytes() {
+            return Err(WenlanError::Conflict("page_adoption_changed".into()));
+        }
+        let stamped = with_origin_id(expected, page_id);
+        state
+            .pending_adoptions
+            .insert(page_id.to_string(), relative.to_string());
+        save_state(&capabilities.wenlan, &state)?;
+        if let Err(error) = replace_person_note(
+            capabilities,
+            relative,
+            expected.as_bytes(),
+            stamped.as_bytes(),
+            page_id,
+        ) {
+            state.pending_adoptions.remove(page_id);
+            save_state(&capabilities.wenlan, &state)?;
+            return Err(error);
+        }
+        Ok(stamped)
+    })
+}
+
+/// Puts the `origin_id` line back into a note already recorded as page
+/// `page_id` at `relative`, after a save from an editor that had the note
+/// open since before the line was added dropped it. The text the person
+/// saved is kept; the next pass reads it back as their edit.
+pub fn restamp_person_note(
+    path: &Path,
+    relative: &str,
+    expected: &str,
+    page_id: &str,
+) -> Result<(), WenlanError> {
+    validate_page_path(relative)?;
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let state = read_state_strict(&capabilities.wenlan)?;
+        let recorded = state.pages.get(page_id).is_some_and(|entry| {
+            entry.person_frontmatter.is_some()
+                && collision_key(&entry.file) == collision_key(relative)
+        });
+        if !recorded || origin_id_line(expected).is_some() {
+            return Err(adoption_taken());
+        }
+        replace_person_note(
+            capabilities,
+            relative,
+            expected.as_bytes(),
+            with_origin_id(expected, page_id).as_bytes(),
+            page_id,
+        )
+    })
+}
+
+/// Undoes a pending adoption whose page cannot be made (the note was
+/// emptied, say): takes the `origin_id` line out of the note again, when it
+/// is still where it was put, and forgets the adoption.
+pub fn unstamp_person_note(
+    path: &Path,
+    relative: &str,
+    expected: &str,
+    page_id: &str,
+) -> Result<(), WenlanError> {
+    validate_page_path(relative)?;
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        if state.pages.contains_key(page_id) {
+            return Err(adoption_taken());
+        }
+        if let Some(original) = without_origin_id(expected, page_id) {
+            replace_person_note(
+                capabilities,
+                relative,
+                expected.as_bytes(),
+                original.as_bytes(),
+                page_id,
+            )?;
+        }
+        if state.pending_adoptions.remove(page_id).is_some() {
+            save_state(&capabilities.wenlan, &state)?;
+        }
+        Ok(())
+    })
+}
+
+/// Records `page`, adopted from the note at `relative`, as that note:
+/// Wenlan writes it from then on with the person's own frontmatter.
+pub fn record_person_note(path: &Path, relative: &str, page: &Page) -> Result<(), WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        let key = collision_key(relative);
+        if state.pages.contains_key(&page.id)
+            || state
+                .pages
+                .values()
+                .any(|entry| collision_key(&entry.file) == key)
+        {
+            return Err(adoption_taken());
+        }
+        let bytes = read_page_bytes(&capabilities.root, relative)?;
+        let raw = String::from_utf8(bytes.clone()).map_err(|_| invalid_path())?;
+        if origin_id_line(&raw).as_deref() != Some(page.id.as_str()) {
+            return Err(adoption_taken());
+        }
+        state.pages.insert(
+            page.id.clone(),
+            PageFileState {
+                file: relative.to_string(),
+                content_sha256: Some(projection_digest(&bytes)),
+                version: page.version,
+                last_written: page.last_modified.clone(),
+                title: Some(page.title.clone()),
+                description: page.summary.clone(),
+                space: page.space.clone(),
+                person_frontmatter: Some(adoption_frontmatter(&raw).unwrap_or_default()),
+            },
+        );
+        state.pending_adoptions.remove(&page.id);
+        save_state(&capabilities.wenlan, &state)?;
+        if let Err(error) = KnowledgeWriter::regenerate_index_cap(capabilities, &state) {
+            log::warn!("[knowledge] adopted a note but index regeneration failed: {error}");
+        }
+        Ok(())
+    })
+}
+
+/// Drops a pending adoption whose note is gone.
+pub fn drop_pending_adoption(path: &Path, page_id: &str) -> Result<(), WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        if state.pending_adoptions.remove(page_id).is_some() {
+            save_state(&capabilities.wenlan, &state)?;
+        }
+        Ok(())
+    })
+}
+
+/// After the person changed a note they put in the folder: records its
+/// frontmatter as it is now, so Wenlan's next write keeps it, and, with
+/// `version`, the bytes (`raw`) and version the page now has. Nothing is
+/// recorded when the file changed again since `raw` was read.
+pub fn note_person_file(
+    path: &Path,
+    page_id: &str,
+    raw: &str,
+    version: Option<i64>,
+) -> Result<(), WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let mut state = read_state_strict(&capabilities.wenlan)?;
+        let Some(entry) = state.pages.get_mut(page_id) else {
+            return Ok(());
+        };
+        if entry.person_frontmatter.is_none()
+            || read_page_bytes(&capabilities.root, &entry.file)? != raw.as_bytes()
+        {
+            return Ok(());
+        }
+        let frontmatter = adoption_frontmatter(raw).unwrap_or_default();
+        let digest = projection_digest(raw.as_bytes());
+        let unchanged = entry.person_frontmatter.as_deref() == Some(frontmatter.as_str())
+            && (version.is_none()
+                || (entry.content_sha256.as_deref() == Some(digest.as_str())
+                    && version == Some(entry.version)));
+        if unchanged {
+            return Ok(());
+        }
+        entry.person_frontmatter = Some(frontmatter);
+        if let Some(version) = version {
+            entry.content_sha256 = Some(digest);
+            entry.version = version;
+        }
+        save_state(&capabilities.wenlan, &state)
+    })
+}
+
 /// Follows pages the person moved or renamed in the pages folder, outside
 /// Wenlan (in Finder, Obsidian, a sync app): a page whose recorded file is
 /// gone, and whose id is now claimed by exactly one other file no page is

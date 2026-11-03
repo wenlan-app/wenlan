@@ -50,7 +50,17 @@ pub struct WatcherStats {
     pub skipped_unchanged: usize,
     /// IO or parse failures — surfaced via `log::warn!` per file.
     pub errors: usize,
+    /// Notes the person put in the folder that became pages this pass.
+    pub adopted: usize,
 }
+
+/// Notes adopted in one pass at most; the rest follow in the next ones, so
+/// a folder of old notes does not hold the pass for long.
+const ADOPT_PER_PASS: usize = 50;
+
+/// A note is adopted only once it has not changed for this long, so the id
+/// line is never written while an editor is still saving it.
+const ADOPT_AFTER_UNCHANGED: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Scan `knowledge_path` for page md files, reflect external edits back
 /// into the DB. Idempotent and safe to call on every scheduler tick.
@@ -134,16 +144,21 @@ async fn sync_pass(
         }
         Err(error) => log::warn!("[page-watcher] could not follow moved pages: {error}"),
     }
+    if only.is_none() {
+        finish_pending_adoptions(db, knowledge_path).await;
+    }
     // Recovery precedes discovery, so a pending move cannot resurrect its old path.
     let targets = crate::export::knowledge::knowledge_edit_targets(knowledge_path)?;
+    let person = crate::export::knowledge::person_page_files(knowledge_path)?;
     let mut paths = crate::export::knowledge::knowledge_markdown_paths(knowledge_path)?;
     if let Some(only) = only {
         paths.retain(|path| only.contains(path));
     }
+    let mut unclaimed = Vec::new();
     for relative in paths {
         let path = knowledge_path.join(&relative);
         stats.scanned += 1;
-        match sync_one_file(db, &relative, knowledge_path, &targets).await {
+        match sync_one_file(db, &relative, knowledge_path, &targets, &person).await {
             Ok(Outcome::Applied { page_id }) => {
                 stats.applied += 1;
                 log::info!(
@@ -151,7 +166,10 @@ async fn sync_pass(
                     path.display()
                 );
             }
-            Ok(Outcome::SkippedNoOriginId) => stats.skipped_no_origin_id += 1,
+            Ok(Outcome::SkippedNoOriginId) => {
+                stats.skipped_no_origin_id += 1;
+                unclaimed.push(relative);
+            }
             Ok(Outcome::SkippedUnknownPage { page_id }) => {
                 stats.skipped_unknown_page += 1;
                 log::debug!(
@@ -170,7 +188,251 @@ async fn sync_pass(
             }
         }
     }
+    // Notes the person put in the folder become pages. Only on a full
+    // pass: the quick one looks at a page already open in the app.
+    if only.is_none() {
+        for relative in unclaimed {
+            if stats.adopted >= ADOPT_PER_PASS {
+                break;
+            }
+            match adopt_note(db, knowledge_path, &relative, &person).await {
+                Ok(Some(page_id)) => {
+                    stats.adopted += 1;
+                    log::info!("[page-watcher] {relative} became page {page_id}");
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    stats.errors += 1;
+                    log::warn!("[page-watcher] could not adopt {relative}: {e}");
+                }
+            }
+        }
+    }
     Ok(stats)
+}
+
+/// Whether a note in the folder is left as a file and not made a page:
+/// Obsidian templates, sync apps' conflict copies, Excalidraw drawings
+/// (stored as Markdown), and Wenlan's own index and log. Folders whose name
+/// starts with a dot (`.obsidian/`, `.trash/`) are never read at all.
+fn left_as_a_file(relative: &str) -> bool {
+    let lower = relative.to_lowercase();
+    let mut parts: Vec<&str> = lower.split('/').collect();
+    let name = parts.pop().unwrap_or_default();
+    parts
+        .iter()
+        .any(|folder| matches!(*folder, "templates" | "_templates" | "template"))
+        || name.contains("conflicted copy")
+        || name.contains("sync-conflict")
+        || name.contains("(conflict")
+        || name.ends_with(".excalidraw.md")
+        || crate::export::knowledge::is_reserved_okf_filename(name)
+}
+
+/// The page title of a note: its frontmatter `title`, else its file name.
+fn note_title(relative: &str, fm: &obsidian::NoteFrontmatter) -> String {
+    fm.get_str("title")
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            let name = relative.rsplit('/').next().unwrap_or(relative);
+            name.strip_suffix(".md").unwrap_or(name).trim().to_string()
+        })
+}
+
+/// Makes the note at `relative`, which has no `origin_id`, a page: the
+/// person's writing (an authored page, so the AI only proposes changes to
+/// it), with its text exactly as in the file. The file gets one line, the
+/// page id, at the top of its frontmatter; everything else in it stays.
+/// Returns the page id, or `None` when the note is left alone (empty, still
+/// being saved, or one of [`left_as_a_file`]).
+async fn adopt_note(
+    db: &MemoryDB,
+    knowledge_path: &Path,
+    relative: &str,
+    person: &HashMap<String, crate::export::knowledge::PersonPageFile>,
+) -> Result<Option<String>, WenlanError> {
+    if left_as_a_file(relative) {
+        return Ok(None);
+    }
+    let (raw, modified) =
+        crate::export::knowledge::read_knowledge_markdown(knowledge_path, relative)?;
+    let settled = std::time::SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age >= ADOPT_AFTER_UNCHANGED);
+    if !settled || crate::export::knowledge::origin_id_line(&raw).is_some() {
+        return Ok(None);
+    }
+    // Already a page: an editor that had the note open since before its id
+    // line was added saved over it. The line goes back; the text is kept and
+    // read back as the person's edit on the next pass.
+    if let Some((page_id, _)) = person.iter().find(|(_, file)| file.file == relative) {
+        crate::export::knowledge::restamp_person_note(knowledge_path, relative, &raw, page_id)?;
+        log::info!("[page-watcher] put the id line of page {page_id} back into {relative}");
+        return Ok(None);
+    }
+    let text = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+    let (fm, _) = obsidian::extract_frontmatter(text);
+    let content = projected_content(text);
+    if content.trim().is_empty()
+        || crate::export::provenance::validate_canonical_page_content(&content).is_err()
+    {
+        return Ok(None);
+    }
+    let page_id = crate::pages::new_page_id();
+    let stamped =
+        crate::export::knowledge::stamp_person_note(knowledge_path, relative, &raw, &page_id)?;
+    create_adopted_page(
+        db,
+        knowledge_path,
+        relative,
+        &page_id,
+        &stamped,
+        &note_title(relative, &fm),
+    )
+    .await?;
+    Ok(Some(page_id))
+}
+
+async fn create_adopted_page(
+    db: &MemoryDB,
+    knowledge_path: &Path,
+    relative: &str,
+    page_id: &str,
+    stamped: &str,
+    title: &str,
+) -> Result<(), WenlanError> {
+    if db.get_page(page_id).await?.is_none() {
+        let req = wenlan_types::requests::CreateConceptRequest {
+            title: title.to_string(),
+            content: projected_content(stamped),
+            summary: None,
+            entity_id: None,
+            space: wenlan_types::WriteSpaceTarget::Uncategorized,
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".to_string()),
+            workspace: None,
+        };
+        crate::post_write::page_write(
+            db,
+            crate::post_write::PageWrite::Create {
+                page_id: Some(page_id),
+                req,
+                agent: "fs_edit",
+                // The file is already there: the page is recorded at it
+                // below, not written again.
+                knowledge_path: None,
+                page_min_cluster_size: usize::MAX,
+                page_match_threshold: 1.0,
+                citations_json: None,
+                basis_marks: Vec::new(),
+                basis_space_guard: None,
+                skip_protected_title_match: true,
+            },
+        )
+        .await?;
+    }
+    let page = db
+        .get_page(page_id)
+        .await?
+        .ok_or_else(|| WenlanError::Conflict("page_adoption_lost".into()))?;
+    crate::export::knowledge::record_person_note(knowledge_path, relative, &page)
+}
+
+/// Finishes adoptions a stop interrupted after the id line was written.
+async fn finish_pending_adoptions(db: &MemoryDB, knowledge_path: &Path) {
+    let pending = match crate::export::knowledge::pending_adoptions(knowledge_path) {
+        Ok(pending) => pending,
+        Err(error) => {
+            log::warn!("[page-watcher] could not read pending adoptions: {error}");
+            return;
+        }
+    };
+    for (page_id, mut relative) in pending {
+        let result = async {
+            let raw = match crate::export::knowledge::read_knowledge_markdown(
+                knowledge_path,
+                &relative,
+            ) {
+                Ok((raw, _)) => raw,
+                Err(WenlanError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                    // Renamed or moved since its id line went in: finish it
+                    // where it is now.
+                    match find_note_with_id(knowledge_path, &page_id)? {
+                        Some((moved, raw)) => {
+                            relative = moved;
+                            raw
+                        }
+                        None => {
+                            return crate::export::knowledge::drop_pending_adoption(
+                                knowledge_path,
+                                &page_id,
+                            );
+                        }
+                    }
+                }
+                Err(error) => return Err(error),
+            };
+            if crate::export::knowledge::origin_id_line(&raw).as_deref() != Some(page_id.as_str()) {
+                // The id line never landed, or the person took it out: the
+                // note is adopted afresh when it is seen without one.
+                return crate::export::knowledge::drop_pending_adoption(knowledge_path, &page_id);
+            }
+            let content = projected_content(&raw);
+            if db.get_page(&page_id).await?.is_none()
+                && (content.trim().is_empty()
+                    || crate::export::provenance::validate_canonical_page_content(&content)
+                        .is_err())
+            {
+                // Emptied (or given Wenlan's own sources marker) since: it
+                // cannot be a page now, so the id line comes out again.
+                return crate::export::knowledge::unstamp_person_note(
+                    knowledge_path,
+                    &relative,
+                    &raw,
+                    &page_id,
+                );
+            }
+            let (fm, _) = obsidian::extract_frontmatter(&raw);
+            create_adopted_page(
+                db,
+                knowledge_path,
+                &relative,
+                &page_id,
+                &raw,
+                &note_title(&relative, &fm),
+            )
+            .await
+        }
+        .await;
+        if let Err(error) = result {
+            log::warn!("[page-watcher] could not finish adopting {relative}: {error}");
+        }
+    }
+}
+
+/// The note in the folder carrying `page_id`, with its text.
+fn find_note_with_id(
+    knowledge_path: &Path,
+    page_id: &str,
+) -> Result<Option<(String, String)>, WenlanError> {
+    for relative in crate::export::knowledge::knowledge_markdown_paths(knowledge_path)? {
+        let Ok((raw, _)) =
+            crate::export::knowledge::read_knowledge_markdown(knowledge_path, &relative)
+        else {
+            continue;
+        };
+        if crate::export::knowledge::origin_id_line(&raw).as_deref() == Some(page_id) {
+            return Ok(Some((relative, raw)));
+        }
+    }
+    Ok(None)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    format!("{:x}", sha2::Sha256::digest(bytes))
 }
 
 enum Outcome {
@@ -190,12 +452,20 @@ async fn sync_one_file(
     relative: &str,
     knowledge_path: &Path,
     targets: &HashMap<String, String>,
+    person: &HashMap<String, crate::export::knowledge::PersonPageFile>,
 ) -> Result<Outcome, WenlanError> {
     let (raw, _) = crate::export::knowledge::read_knowledge_markdown(knowledge_path, relative)?;
     let (fm, _) = obsidian::extract_frontmatter(&raw);
-    let page_id = match fm.get_str("origin_id") {
-        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
-        _ => return Ok(Outcome::SkippedNoOriginId),
+    // Line by line too, for a note whose frontmatter YAML does not parse.
+    let page_id = match fm
+        .get_str("origin_id")
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .or_else(|| crate::export::knowledge::origin_id_line(&raw))
+    {
+        Some(id) => id,
+        None => return Ok(Outcome::SkippedNoOriginId),
     };
 
     let existing = match db.get_page(&page_id).await? {
@@ -212,9 +482,18 @@ async fn sync_one_file(
     // Shared with the startup reconcile, which repairs exactly the files this
     // branch declines to touch — they must read the stamp identically or
     // reconcile would overwrite what this skip protects.
-    let md_version = crate::export::knowledge::projected_origin_version(&fm);
-    if md_version < existing.version {
-        return Ok(Outcome::SkippedDaemonAhead { page_id });
+    // A note the person put in the folder carries no version stamp: its
+    // bytes are compared with the ones recorded for it instead.
+    let person_file = person.get(&page_id).filter(|file| file.file == relative);
+    if let Some(file) = person_file {
+        if file.digest.as_deref() == Some(sha256_hex(raw.as_bytes()).as_str()) {
+            return Ok(Outcome::Unchanged);
+        }
+    } else {
+        let md_version = crate::export::knowledge::projected_origin_version(&fm);
+        if md_version < existing.version {
+            return Ok(Outcome::SkippedDaemonAhead { page_id });
+        }
     }
 
     // Decode BOTH sides with the projection's own envelope decoder: it drops
@@ -230,7 +509,65 @@ async fn sync_one_file(
     // an editor changes on save without the author typing (see
     // `same_page_text_ignoring_save_noise`); they are not a human edit.
     // Indentation, leading blank lines and inner trailing spaces are.
-    if same_page_text_ignoring_save_noise(&body_norm, &projected_content(&fresh)) {
+    let mut existing = existing;
+    let mut fresh = fresh;
+    if let Some(file) = person_file {
+        // The person changed the `title:` in their own frontmatter: the page
+        // is renamed to it, as a rename in the app would.
+        let title_of = |yaml: &str| {
+            serde_yaml::from_str::<HashMap<String, serde_yaml::Value>>(yaml)
+                .ok()
+                .and_then(|fields| {
+                    fields
+                        .get("title")
+                        .and_then(serde_yaml::Value::as_str)
+                        .map(|title| title.trim().to_string())
+                })
+                .filter(|title| !title.is_empty())
+        };
+        let now = crate::export::knowledge::adoption_frontmatter(&raw)
+            .as_deref()
+            .and_then(title_of);
+        if let Some(title) = now.filter(|title| {
+            Some(title) != title_of(&file.frontmatter).as_ref() && *title != existing.title
+        }) {
+            match crate::post_write::rename_page(
+                db,
+                &page_id,
+                &title,
+                existing.version,
+                &crate::read_scope::ReadScope::Global,
+                None,
+            )
+            .await
+            {
+                Ok(_) => {
+                    if let Some(renamed) = db.get_page(&page_id).await? {
+                        existing = renamed;
+                        fresh = crate::export::knowledge::render_markdown_for(&existing);
+                    }
+                }
+                Err(error) => log::warn!(
+                    "[page-watcher] {relative}: could not rename page {page_id} to its \
+                     new title: {error}"
+                ),
+            }
+        }
+        if same_page_text_ignoring_save_noise(&body_norm, &projected_content(&fresh)) {
+            // The text is the page's; only the frontmatter (or how the
+            // editor saved it) changed. Kept for Wenlan's next write; the
+            // person's file is never rewritten for it.
+            crate::export::knowledge::note_person_file(
+                knowledge_path,
+                &page_id,
+                &raw,
+                Some(existing.version),
+            )?;
+            return Ok(Outcome::Unchanged);
+        }
+        // An edit: the frontmatter as it is now goes with it.
+        crate::export::knowledge::note_person_file(knowledge_path, &page_id, &raw, None)?;
+    } else if same_page_text_ignoring_save_noise(&body_norm, &projected_content(&fresh)) {
         // The page text is unchanged, but the file's body bytes may still
         // differ from what Wenlan writes: the user touched the protected
         // Sources block, or an editor rewrote line endings or trailing
@@ -342,6 +679,380 @@ mod tests {
         let emitter: Arc<dyn crate::events::EventEmitter> = Arc::new(NoopEmitter);
         let db = MemoryDB::new(&path, emitter).await.unwrap();
         (db, dir)
+    }
+
+    /// Writes a note the way a person would, saved long enough ago that the
+    /// watcher takes it as settled.
+    fn drop_note(dir: &Path, relative: &str, text: &str) {
+        let path = dir.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        settle(&path);
+    }
+
+    fn settle(path: &Path) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - 2 * ADOPT_AFTER_UNCHANGED)
+            .unwrap();
+    }
+
+    fn origin_id_of(path: &Path) -> String {
+        let raw = std::fs::read_to_string(path).unwrap();
+        obsidian::extract_frontmatter(&raw)
+            .0
+            .get_str("origin_id")
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn notes_put_in_the_folder_become_pages_and_keep_their_text() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        let book =
+            "---\ntags: [reading]\naliases: [Books]\n---\n# Dune\n\nGreat [[Arrakis]] book.\n";
+        drop_note(dir.path(), "Reading/Book notes.md", book);
+        drop_note(dir.path(), "plain.md", "Just text\n");
+        // Left as files.
+        drop_note(dir.path(), "2026-11-03.md", "\n");
+        drop_note(dir.path(), "Templates/Daily.md", "# {{date}}\n");
+        drop_note(dir.path(), "plain (conflicted copy).md", "Just text\n");
+        drop_note(dir.path(), ".obsidian/workspace.md", "x\n");
+        drop_note(dir.path(), "Drawing.excalidraw.md", "x\n");
+
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.errors, 0, "{stats:?}");
+        assert_eq!(stats.adopted, 2, "{stats:?}");
+
+        let book_path = dir.path().join("Reading/Book notes.md");
+        let book_id = origin_id_of(&book_path);
+        // One line added, as the first key; nothing else in the file moved.
+        assert_eq!(
+            std::fs::read_to_string(&book_path).unwrap(),
+            format!("---\norigin_id: {book_id}\ntags: [reading]\naliases: [Books]\n---\n# Dune\n\nGreat [[Arrakis]] book.\n")
+        );
+        let page = db.get_page(&book_id).await.unwrap().unwrap();
+        assert_eq!(page.title, "Book notes");
+        assert_eq!(page.content, "# Dune\n\nGreat [[Arrakis]] book.");
+        // The person's writing: the AI proposes changes, never makes them.
+        assert_eq!(page.creation_kind, "authored");
+        let writer = tracked_writer(&db, dir.path());
+        assert_eq!(
+            writer.page_filename(&book_id).unwrap(),
+            "Reading/Book notes.md"
+        );
+
+        let plain_path = dir.path().join("plain.md");
+        let plain_id = origin_id_of(&plain_path);
+        assert_eq!(
+            std::fs::read_to_string(&plain_path).unwrap(),
+            format!("---\norigin_id: {plain_id}\n---\n\nJust text\n")
+        );
+        assert_eq!(
+            db.get_page(&plain_id).await.unwrap().unwrap().content,
+            "Just text"
+        );
+        for left in [
+            "2026-11-03.md",
+            "Templates/Daily.md",
+            "plain (conflicted copy).md",
+            "Drawing.excalidraw.md",
+        ] {
+            assert!(
+                !std::fs::read_to_string(dir.path().join(left))
+                    .unwrap()
+                    .contains("origin_id"),
+                "{left}"
+            );
+        }
+
+        // A second pass finds nothing to do.
+        let again = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(
+            (again.adopted, again.applied, again.errors),
+            (0, 0, 0),
+            "{again:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&book_path).unwrap(),
+            format!("---\norigin_id: {book_id}\ntags: [reading]\naliases: [Books]\n---\n# Dune\n\nGreat [[Arrakis]] book.\n")
+        );
+
+        // The person edits the text, and adds a key: the edit is read back,
+        // and the file keeps their frontmatter.
+        let edited = format!(
+            "---\norigin_id: {book_id}\ntags: [reading, scifi]\naliases: [Books]\nrating: 5\n---\n# Dune\n\nGreat [[Arrakis]] book. Read it twice.\n"
+        );
+        std::fs::write(&book_path, &edited).unwrap();
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!((stats.applied, stats.errors), (1, 0), "{stats:?}");
+        let page = db.get_page(&book_id).await.unwrap().unwrap();
+        assert_eq!(
+            page.content,
+            "# Dune\n\nGreat [[Arrakis]] book. Read it twice."
+        );
+        assert!(page.user_edited);
+        let after = std::fs::read_to_string(&book_path).unwrap();
+        assert!(
+            after.starts_with(&format!(
+                "---\norigin_id: {book_id}\ntags: [reading, scifi]\naliases: [Books]\nrating: 5\n---\n"
+            )),
+            "{after}"
+        );
+        assert!(!after.contains("origin_version"), "{after}");
+
+        // Wenlan writes the page (an edit in the app): the person's
+        // frontmatter stays, with the new text under it.
+        let mut next = page.clone();
+        next.content = "# Dune\n\nEdited in Wenlan.".into();
+        next.version += 1;
+        project_page(&db, &writer, &next);
+        assert_eq!(
+            std::fs::read_to_string(&book_path).unwrap(),
+            format!("---\norigin_id: {book_id}\ntags: [reading, scifi]\naliases: [Books]\nrating: 5\n---\n\n# Dune\n\nEdited in Wenlan.\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_note_still_being_saved_is_left_until_it_settles() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("new.md");
+        std::fs::write(&path, "Typing\n").unwrap();
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.adopted, 0);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Typing\n");
+        settle(&path);
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.adopted, 1, "{stats:?}");
+    }
+
+    #[tokio::test]
+    async fn an_adoption_stopped_after_the_id_line_is_finished() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        drop_note(dir.path(), "kept.md", "Text\n");
+        drop_note(dir.path(), "gone.md", "Other\n");
+        // Stopped after the id line was written, before the page existed.
+        crate::export::knowledge::stamp_person_note(dir.path(), "kept.md", "Text\n", "page_kept")
+            .unwrap();
+        crate::export::knowledge::stamp_person_note(dir.path(), "gone.md", "Other\n", "page_gone")
+            .unwrap();
+        std::fs::remove_file(dir.path().join("gone.md")).unwrap();
+
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.errors, 0, "{stats:?}");
+        assert_eq!(
+            db.get_page("page_kept").await.unwrap().unwrap().content,
+            "Text"
+        );
+        assert!(db.get_page("page_gone").await.unwrap().is_none());
+        assert!(crate::export::knowledge::pending_adoptions(dir.path())
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            tracked_writer(&db, dir.path())
+                .page_filename("page_kept")
+                .unwrap(),
+            "kept.md"
+        );
+    }
+
+    #[tokio::test]
+    async fn pages_can_be_renamed_once_notes_are_adopted() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        drop_note(
+            dir.path(),
+            "Plan.md",
+            "---\ntitle: Plan\ntags: [work]\n---\nShip it.\n",
+        );
+        sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        let id = origin_id_of(&dir.path().join("Plan.md"));
+        let page = db.get_page(&id).await.unwrap().unwrap();
+
+        crate::post_write::rename_page(
+            &db,
+            &id,
+            "Launch plan",
+            page.version,
+            &crate::read_scope::ReadScope::Global,
+            Some(dir.path()),
+        )
+        .await
+        .unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("Plan.md")).unwrap();
+        assert!(raw.contains("title: \"Launch plan\""), "{raw}");
+        assert!(raw.contains("tags: [work]"), "{raw}");
+        assert!(raw.contains("Ship it."), "{raw}");
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!((stats.applied, stats.errors), (0, 0), "{stats:?}");
+        assert_eq!(
+            db.get_page(&id).await.unwrap().unwrap().title,
+            "Launch plan"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_title_changed_in_the_note_renames_its_page() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("Draft.md");
+        drop_note(dir.path(), "Draft.md", "---\ntitle: Draft\n---\nBody.\n");
+        sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        let id = origin_id_of(&path);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("title: Draft", "title: Final");
+        std::fs::write(&path, &raw).unwrap();
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.errors, 0, "{stats:?}");
+        assert_eq!(db.get_page(&id).await.unwrap().unwrap().title, "Final");
+
+        // Wenlan's next write keeps the person's title.
+        let mut page = db.get_page(&id).await.unwrap().unwrap();
+        page.content = "Body, edited in Wenlan.".into();
+        page.version += 1;
+        project_page(&db, &tracked_writer(&db, dir.path()), &page);
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("title: Final"), "{after}");
+        assert!(after.contains("edited in Wenlan"), "{after}");
+    }
+
+    #[tokio::test]
+    async fn notes_with_loose_yaml_or_a_byte_order_mark_still_sync() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        // `title: Meeting: notes` is not valid YAML; Obsidian still opens it.
+        let loose = "---\ntitle: Meeting: notes\n---\nAgenda.\n";
+        let bom = "\u{feff}---\ntags: [x]\n---\nWith a mark.\n";
+        drop_note(dir.path(), "loose.md", loose);
+        drop_note(dir.path(), "bom.md", bom);
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!((stats.adopted, stats.errors), (2, 0), "{stats:?}");
+
+        let bom_raw = std::fs::read_to_string(dir.path().join("bom.md")).unwrap();
+        assert!(bom_raw.starts_with("---\norigin_id: "), "{bom_raw:?}");
+        assert!(
+            bom_raw.ends_with("tags: [x]\n---\nWith a mark.\n"),
+            "{bom_raw:?}"
+        );
+        let bom_id = origin_id_of(&dir.path().join("bom.md"));
+        assert_eq!(
+            db.get_page(&bom_id).await.unwrap().unwrap().content,
+            "With a mark."
+        );
+
+        let path = dir.path().join("loose.md");
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let id = crate::export::knowledge::origin_id_line(&raw).unwrap();
+        std::fs::write(&path, raw.replace("Agenda.", "Agenda, then lunch.")).unwrap();
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(
+            (stats.applied, stats.adopted, stats.errors),
+            (1, 0, 0),
+            "{stats:?}"
+        );
+        assert_eq!(
+            db.get_page(&id).await.unwrap().unwrap().content,
+            "Agenda, then lunch."
+        );
+    }
+
+    #[tokio::test]
+    async fn a_save_that_drops_the_id_line_keeps_the_page_and_the_edit() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("open.md");
+        drop_note(dir.path(), "open.md", "First draft.\n");
+        sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        let id = origin_id_of(&path);
+        // The editor had the note open from before the id line and saves.
+        drop_note(dir.path(), "open.md", "First draft, finished.\n");
+
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!((stats.adopted, stats.errors), (0, 0), "{stats:?}");
+        assert_eq!(origin_id_of(&path), id);
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!((stats.applied, stats.errors), (1, 0), "{stats:?}");
+        assert_eq!(
+            db.get_page(&id).await.unwrap().unwrap().content,
+            "First draft, finished."
+        );
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("First draft, finished."));
+    }
+
+    #[tokio::test]
+    async fn a_stopped_adoption_follows_a_rename_and_undoes_an_emptied_note() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        drop_note(dir.path(), "before.md", "Moving text\n");
+        drop_note(dir.path(), "emptied.md", "Soon gone\n");
+        let stamp = |relative: &str, text: &str, id: &str| {
+            crate::export::knowledge::stamp_person_note(dir.path(), relative, text, id).unwrap()
+        };
+        stamp("before.md", "Moving text\n", "page_moving");
+        let stamped = stamp("emptied.md", "Soon gone\n", "page_emptied");
+        std::fs::rename(dir.path().join("before.md"), dir.path().join("after.md")).unwrap();
+        std::fs::write(
+            dir.path().join("emptied.md"),
+            stamped.replace("Soon gone\n", ""),
+        )
+        .unwrap();
+
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.errors, 0, "{stats:?}");
+        assert_eq!(
+            tracked_writer(&db, dir.path())
+                .page_filename("page_moving")
+                .unwrap(),
+            "after.md"
+        );
+        assert!(db.get_page("page_emptied").await.unwrap().is_none());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("emptied.md")).unwrap(),
+            ""
+        );
+        assert!(crate::export::knowledge::pending_adoptions(dir.path())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_adopted_note_moved_to_another_folder_keeps_syncing() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        drop_note(
+            dir.path(),
+            "Inbox/idea.md",
+            "---\ntags: [idea]\n---\nA thought.\n",
+        );
+        sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        let id = origin_id_of(&dir.path().join("Inbox/idea.md"));
+        std::fs::create_dir_all(dir.path().join("Ideas")).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("Inbox/idea.md")).unwrap();
+        std::fs::remove_file(dir.path().join("Inbox/idea.md")).unwrap();
+        std::fs::write(
+            dir.path().join("Ideas/idea.md"),
+            raw.replace("A thought.", "A thought, filed."),
+        )
+        .unwrap();
+
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!((stats.applied, stats.errors), (1, 0), "{stats:?}");
+        assert_eq!(
+            db.get_page(&id).await.unwrap().unwrap().content,
+            "A thought, filed."
+        );
+        assert_eq!(
+            tracked_writer(&db, dir.path()).page_filename(&id).unwrap(),
+            "Ideas/idea.md"
+        );
     }
 
     fn tracked_writer(db: &MemoryDB, path: &Path) -> KnowledgeWriter {
