@@ -39,6 +39,8 @@ pub(crate) struct ExportPageRow {
 /// One `memories` row (one chunk), every column a memory file carries.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ExportMemoryRow {
+    /// The row's own id. Pages and edges name chunks by it, so it is kept.
+    pub id: String,
     pub source: String,
     pub source_id: String,
     pub chunk_index: i64,
@@ -74,6 +76,8 @@ pub(crate) struct ExportMemoryRow {
     pub retrieval_cue: Option<String>,
     /// The person turned down the space enrichment suggested.
     pub space_rejected: bool,
+    /// What enrichment wrote as the chunk's summary.
+    pub summary: Option<String>,
 }
 
 /// Tables the file copy holds only some rows of, with the rows it holds.
@@ -255,7 +259,7 @@ impl MemoryDB {
                         COALESCE(m.is_recap, 0), \
                         COALESCE(o.memory_type_explicit, 1), \
                         COALESCE(o.structured_fields_explicit, 1), m.last_modified, \
-                        m.retrieval_cue, COALESCE(o.space_rejected, 0) \
+                        m.retrieval_cue, COALESCE(o.space_rejected, 0), m.id, m.summary \
                  FROM memories m LEFT JOIN enrichment_origin o ON o.source_id = m.source_id \
                  ORDER BY m.source_id, m.source, m.chunk_index, m.id",
                 (),
@@ -299,6 +303,8 @@ impl MemoryDB {
                 last_modified: row.get(28).map_err(decode)?,
                 retrieval_cue: row.get(29).map_err(decode)?,
                 space_rejected: flag(row.get(30).map_err(decode)?),
+                id: row.get(31).map_err(decode)?,
+                summary: row.get(32).map_err(decode)?,
             });
         }
         Ok(out)

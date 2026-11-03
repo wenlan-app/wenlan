@@ -7,8 +7,12 @@
 //!   the app shows: a quick capture's `authored_content`, otherwise the
 //!   chunks joined with line ends, as `get_memory_detail` joins them.
 //! - `kind` and `fields` are written only when someone stated them
-//!   (`enrichment_origin`); a classified type or extracted fields are
-//!   recomputed by the rebuild.
+//!   (`enrichment_origin`). What enrichment worked out rides in other keys
+//!   (`guessed_kind`, `guessed_fields`, `summaries`, one per chunk): the
+//!   steps record says it was done, so nothing would work it out again.
+//! - `rows` keeps each chunk's row id when it is not `<id>#<chunk>`: pages
+//!   name document chunks by it. A memory file comes back as one row, so
+//!   it keeps the first chunk's only.
 //! - `origin` keeps whether the text counts as the person's writing.
 //! - `about` links each filed entity by its entity file's stem.
 //! - An imported chat (`source_id` `import_<vendor>_<conversation id>`)
@@ -133,7 +137,8 @@ pub async fn export_memories(
             done.keys.insert((source.to_string(), id.to_string()));
             continue;
         }
-        let file = memory_file(id, head, &chunks, &mut about, entity_stems, manifest);
+        let mut file = memory_file(id, head, &chunks, &mut about, entity_stems, manifest);
+        one_row(&mut file);
         let folder = format!("memories/{}", month_of(head.created_at));
         let path = paths.claim(&folder, &file_stem(id), id);
         let text = memory::render(&file);
@@ -192,6 +197,55 @@ fn memory_file(
         .source_text
         .clone()
         .filter(|source| *source != file.text);
+    if file.source_text.is_none() && head.source_text.is_some() {
+        file.other.insert("source_text_is_text".into(), true.into());
+    }
+    // What enrichment worked out without the person saying so: a model
+    // would have to work it out again, and the steps record says it was done.
+    if !head.memory_type_explicit {
+        if let Some(kind) = head.memory_type.as_deref().filter(|kind| !kind.is_empty()) {
+            file.other.insert("guessed_kind".into(), kind.into());
+        }
+    }
+    if !head.structured_fields_explicit {
+        if let Some(fields) = head.structured_fields.as_deref() {
+            file.other
+                .insert("guessed_fields".into(), fields_value(fields));
+        }
+    }
+    if chunks.iter().any(|chunk| chunk.summary.is_some()) {
+        file.other.insert(
+            "summaries".into(),
+            serde_yaml::Value::Sequence(
+                chunks
+                    .iter()
+                    .map(|chunk| {
+                        chunk
+                            .summary
+                            .as_deref()
+                            .map_or(serde_yaml::Value::Null, serde_yaml::Value::from)
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    // Pages and edges name chunks by their row ids; a rebuild that made
+    // new ones would leave those names pointing at nothing.
+    if chunks
+        .iter()
+        .enumerate()
+        .any(|(index, chunk)| chunk.id != format!("{id}#{index}"))
+    {
+        file.other.insert(
+            "rows".into(),
+            serde_yaml::Value::Sequence(
+                chunks
+                    .iter()
+                    .map(|chunk| chunk.id.as_str().into())
+                    .collect(),
+            ),
+        );
+    }
     for entity_id in about.remove(id).unwrap_or_default() {
         match entity_stems.get(&entity_id) {
             Some(stem) => file.about.push(stem.clone()),
@@ -225,6 +279,31 @@ fn memory_file(
         file.other.insert("typed".into(), true.into());
     }
     file
+}
+
+/// A memory file comes back as one row (its chunk boundaries are cache):
+/// it keeps the first chunk's row id and summary only.
+fn one_row(file: &mut MemoryFile) {
+    for (key, default) in [
+        ("rows", Some(format!("{}#0", file.id))),
+        ("summaries", None),
+    ] {
+        let first = match file.other.get(key) {
+            Some(serde_yaml::Value::Sequence(items)) => items.first().cloned(),
+            _ => continue,
+        };
+        let keep =
+            first.filter(|value| !value.is_null() && value.as_str().map(str::to_string) != default);
+        match keep {
+            Some(value) => {
+                file.other
+                    .insert(key.into(), serde_yaml::Value::Sequence(vec![value]));
+            }
+            None => {
+                file.other.shift_remove(key);
+            }
+        }
+    }
 }
 
 /// The person's decisions on a memory that became an original, as keys.

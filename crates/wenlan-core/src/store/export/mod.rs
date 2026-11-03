@@ -152,6 +152,8 @@ pub const FILE_COLUMNS: &[(&str, &[&str])] = &[
             "is_recap",
             "last_modified",
             "retrieval_cue",
+            // What enrichment wrote; a model would have to write it again.
+            "summary",
         ],
     ),
     (
@@ -225,9 +227,9 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
         "cache",
         &[
             "embedding",
-            "summary",
             "confidence",
             "quality",
+            // Worked out again from `confirmed`, as every confirm writes it.
             "stability",
             "enrichment_status",
             "needs_reembed",

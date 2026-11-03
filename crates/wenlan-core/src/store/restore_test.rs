@@ -373,7 +373,8 @@ async fn a_restore_keeps_a_link_to_one_of_two_pages_of_the_same_name() {
 }
 
 /// A document read from a folder comes back from the files, chunk by
-/// chunk: the folder may be gone.
+/// chunk: the folder may be gone. Each chunk keeps its row id (pages name
+/// document chunks by it) and what enrichment worked out.
 #[tokio::test]
 async fn a_restore_gives_back_documents_read_from_folders() {
     let (db, dir) = fixture().await;
@@ -381,14 +382,20 @@ async fn a_restore_gives_back_documents_read_from_folders() {
         db.export_fixture_sql(
             &format!(
                 "INSERT INTO memories (id, content, source, source_id, title, chunk_index, \
-                 last_modified, chunk_type, source_agent, origin_class) VALUES \
-                 ('doc{chunk}', '{text}', 'memory', ?1, 'plan', {chunk}, 0, 'text', 'folder', \
-                 'document_ingest')"
+                 last_modified, chunk_type, source_agent, origin_class, memory_type, summary) \
+                 VALUES ('doc{chunk}', '{text}', 'memory', ?1, 'plan', {chunk}, 0, 'text', \
+                 'folder', 'document_ingest', 'fact', 'about {chunk}')"
             ),
             "old-folder::notes/plan.md",
         )
         .await;
     }
+    db.export_fixture_sql(
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 0, 0, 0)",
+        "old-folder::notes/plan.md",
+    )
+    .await;
     let data_root = tempfile::tempdir().unwrap();
     let embedder = db.shared_embedder().expect("the test database has a model");
     run_once(
@@ -419,20 +426,84 @@ async fn a_restore_gives_back_documents_read_from_folders() {
         .filter(|row| row.source_id == "old-folder::notes/plan.md")
         .map(|row| {
             (
+                row.id.as_str(),
                 row.chunk_index,
                 row.content.as_str(),
                 row.source_agent.as_deref(),
                 row.origin_class.as_deref(),
+                row.memory_type.as_deref(),
+                row.summary.as_deref(),
             )
         })
         .collect();
+    let kept = |id, chunk, text, summary| {
+        (
+            id,
+            chunk,
+            text,
+            Some("folder"),
+            Some("document_ingest"),
+            Some("fact"),
+            Some(summary),
+        )
+    };
     assert_eq!(
         doc,
         [
-            (0, "# Trip plan", Some("folder"), Some("document_ingest")),
-            (1, "Lisbon in May.", Some("folder"), Some("document_ingest")),
+            kept("doc0", 0, "# Trip plan", "about 0"),
+            kept("doc1", 1, "Lisbon in May.", "about 1"),
         ]
     );
+}
+
+/// A memory the person confirmed stays confirmed after a restore, also
+/// once the nightly promotion has run over it; its summary and a source
+/// text that is the text itself come back too.
+#[tokio::test]
+async fn a_restore_keeps_a_confirmed_memory_confirmed() {
+    let (db, dir) = fixture().await;
+    db.export_fixture_sql(
+        "INSERT INTO memories (id, content, source, source_id, title, chunk_index, \
+         last_modified, chunk_type, memory_type, confirmed, stability, summary, \
+         source_text) VALUES ('kept0', 'Ships on Fridays.', 'memory', ?1, 'kept', 0, 0, \
+         'text', 'fact', 1, 'confirmed', 'Release day', 'Ships on Fridays.')",
+        "mem_kept",
+    )
+    .await;
+    let data_root = tempfile::tempdir().unwrap();
+    let embedder = db.shared_embedder().expect("the test database has a model");
+    run_once(
+        &dir.path().join(DATABASE_FILE),
+        &PagesFolder::default(),
+        data_root.path(),
+        &mirror_root(data_root.path()),
+        embedder,
+        false,
+    )
+    .await
+    .unwrap();
+    let db_dir = data_root.path().join("memorydb");
+    let outcome = restore_missing_database(data_root.path(), &db_dir, 1)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, Restore::Restored { .. }), "{outcome:?}");
+    let restored = MemoryDB::new_with_embedding_recovery(
+        &db_dir,
+        Arc::new(NoopEmitter),
+        MemoryEmbeddingRecovery::Deferred,
+    )
+    .await
+    .unwrap();
+    restored.promote_uncontradicted(0).await.unwrap();
+    let memories = restored.export_memory_rows().await.unwrap();
+    let kept = memories
+        .iter()
+        .find(|row| row.source_id == "mem_kept")
+        .expect("the memory came back");
+    assert!(kept.confirmed);
+    assert_eq!(kept.id, "kept0");
+    assert_eq!(kept.summary.as_deref(), Some("Release day"));
+    assert_eq!(kept.source_text.as_deref(), Some("Ships on Fridays."));
 }
 
 /// A refresh that stopped after setting the old history aside and before
