@@ -25,13 +25,15 @@ export function addedWhen(language: string, addedAtSeconds: number, now = Date.n
 /**
  * The one line on where a thing stands. The newest handoff says it best; until
  * a conversation has handed off, the page it wrote, or else the tool it was
- * talked through in, says what there is to pick up.
+ * talked through in, says what there is to pick up. A tool whose mark already
+ * shows on the card is not named again.
  */
 export function whereItStands(t: TFunction, thing: ThingSummary, detail?: ThingDetail): string | null {
   if (thing.status_line?.trim()) return thing.status_line;
   const wrote = detail?.pages.filter((page) => page.via === "wrote").sort((a, b) => b.at - a.at)[0];
   if (wrote) return t("pages.overview.workingOnWrote", { title: wrote.title });
   const session = detail?.sessions.slice().sort((a, b) => b.last_write_at - a.last_write_at)[0];
+  if (hasToolMark(session?.tool)) return null;
   const tool = agentDisplayName(session?.tool);
   return tool ? t("pages.overview.workingOnTalkedIn", { tool }) : null;
 }

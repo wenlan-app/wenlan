@@ -61,6 +61,23 @@ describe("WorkingOn", () => {
     expect(meta.querySelector(".wiki-working-on-where")?.textContent).toBe("Kiro · wenlan");
   });
 
+  it("does not name the tool again when its mark is on the card", async () => {
+    vi.mocked(listThings).mockResolvedValue([
+      thing({ status_line: null }),
+      thing({ id: "thg_2", title: "Old notes", status_line: null }),
+    ]);
+    vi.mocked(getThing).mockImplementation(async (id) => ({
+      ...thing({ id, status_line: null }),
+      sessions: [{ id: `s-${id}`, tool: id === "thg_1" ? "claude-code" : "kiro", title: null, last_write_at: now }],
+      pages: [],
+    }));
+    renderWorkingOn();
+    await screen.findByRole("img", { name: "Claude Code" });
+    const cards = [...(await screen.findByTestId("wiki-working-on")).querySelectorAll(".wiki-working-on-card")];
+    await waitFor(() => expect(cards[1].querySelector(".wiki-working-on-text")?.textContent).toMatch(/Kiro/));
+    expect(cards[0].querySelector(".wiki-working-on-text")?.textContent).toBe("");
+  });
+
   it("UX-HOME-1: each thing shows where it stands and opens that thing", async () => {
     vi.mocked(listThings).mockResolvedValue([
       thing(),
