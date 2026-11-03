@@ -18,13 +18,21 @@ export const WORKING_ON_LISTED = 6;
 /** How wide a name in the "steeped overnight" line may be, in CJK characters. */
 const STEEPED_NAME_WIDTH = 8;
 
-/** Cuts a name to about eight CJK characters (a Latin letter counts half). */
+/** Cuts a name to about eight CJK characters (a Latin letter a bit under half),
+ * never in the middle of an English word. */
 export function shortName(name: string): string {
   let width = 0;
   const chars = Array.from(name);
   for (let index = 0; index < chars.length; index += 1) {
-    width += chars[index].codePointAt(0)! < 0x2e80 ? 0.55 : 1;
-    if (width > STEEPED_NAME_WIDTH) return `${chars.slice(0, index).join("").trimEnd()}…`;
+    width += chars[index].codePointAt(0)! < 0x2e80 ? 0.45 : 1;
+    if (width <= STEEPED_NAME_WIDTH) continue;
+    let cut = index;
+    const inWord = (at: number) => /[\p{L}\p{N}]/u.test(chars[at] ?? "") && chars[at].codePointAt(0)! < 0x2e80;
+    if (inWord(cut) && inWord(cut - 1)) {
+      while (cut > 0 && inWord(cut - 1)) cut -= 1;
+      if (chars.slice(0, cut).join("").trim() === "") cut = index;
+    }
+    return `${chars.slice(0, cut).join("").replace(/[\s,.;:–-]+$/u, "")}…`;
   }
   return name;
 }

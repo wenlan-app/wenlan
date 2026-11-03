@@ -219,6 +219,9 @@ describe("WorkingOn", () => {
     expect(line).not.toHaveTextContent("Zotero workflow");
     expect(shortName("Wenlan 迁移与整合验收")).toBe("Wenlan 迁移与整…");
     expect(shortName("Release notes")).toBe("Release notes");
+    expect(shortName("Launch the public beta")).toBe("Launch the public…");
+    expect(shortName("Onboarding walkthrough")).toBe("Onboarding…");
+    expect(shortName("Internationalization")).toBe("Internationalizat…");
     fireEvent.click(screen.getByRole("button", { name: "and more" }));
     for (const id of ["thg_1", "thg_2", "thg_3"]) {
       expect(document.querySelector(`[data-thing-id="${id}"] .wiki-working-on-card`)).toHaveAttribute("data-glow", "true");
