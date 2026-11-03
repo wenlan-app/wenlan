@@ -397,3 +397,16 @@ async fn ux_thing_1_grouping_never_overrides_the_person_or_places_a_conversation
     }
     assert!(db.intake_pending(50).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn ux_thing_1_a_read_conversation_follows_its_space_when_renamed() {
+    let (db, _dir) = test_db().await;
+    db.create_space("wenlan", None, false).await.unwrap();
+    let conv = found("r", chrono::Utc::now().timestamp() - 60);
+    db.record_conversation_label(&conv, &work("Home", "Cards"), None)
+        .await
+        .unwrap();
+    db.update_space("wenlan", "wenlan-app", None).await.unwrap();
+    let pending = db.intake_pending(50).await.unwrap();
+    assert_eq!(pending[0].space, "wenlan-app");
+}
