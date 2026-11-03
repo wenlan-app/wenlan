@@ -102,4 +102,6 @@
 .thing-steeped-undo:hover { color:var(--mem-text); }
 .thing-steeped-undo:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
 .thing-steeped-undo:disabled { opacity:.6;cursor:default; }
-.thing-recap-group li[data-fresh]::marker { color:var(--mem-accent-page); }
+/* A point last night steeped: a small dot in the indent before it. */
+.thing-recap-group li[data-fresh] { position:relative; }
+.thing-recap-group li[data-fresh]::before { content:"";position:absolute;left:-.8em;top:.72em;width:6px;height:6px;border-radius:50%;background:var(--mem-accent-page); }

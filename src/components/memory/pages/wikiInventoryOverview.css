@@ -87,8 +87,13 @@
 .wiki-working-on-steeped { margin:0 auto 0 0;min-width:0;display:inline-flex;align-items:baseline;gap:6px;color:var(--mem-text-tertiary);font:12.5px/1.4 var(--mem-font-body); }
 .wiki-working-on-steeped .steep-moon { flex:none;align-self:center;color:var(--mem-accent-page); }
 .wiki-working-on-steeped-label { white-space:nowrap; }
-.wiki-working-on-steeped-names { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.wiki-working-on-steeped-names button { padding:0;border:0;background:none;color:var(--mem-text-secondary);font:inherit;cursor:pointer;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--mem-text) 18%,transparent);text-underline-offset:3px; }
+.wiki-working-on-steeped-names { min-width:0;display:inline-flex;align-items:baseline;overflow:hidden;white-space:nowrap; }
+.wiki-working-on-steeped-names button { min-width:0;max-width:16em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;padding:0;border:0;background:none;color:var(--mem-text-secondary);font:inherit;cursor:pointer;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--mem-text) 18%,transparent);text-underline-offset:3px; }
+.wiki-working-on-steeped-sep { white-space:pre; }
+/* Narrow: the line takes its own row under the heading; "See all" stays up. */
+@media (max-width: 640px) {
+  .wiki-working-on-steeped { order:3;flex-basis:100%;margin:0; }
+}
 .wiki-working-on-steeped-names button:hover { color:var(--mem-text); }
 .wiki-working-on-steeped-names button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
 .wiki-working-on-card[data-glow] { border-color:color-mix(in srgb,var(--mem-accent-page) 45%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--mem-accent-page) 16%,transparent);transition:box-shadow .6s ease,border-color .6s ease; }

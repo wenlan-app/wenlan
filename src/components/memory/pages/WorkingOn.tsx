@@ -155,7 +155,7 @@ export function WorkingOn({
             <span className="wiki-working-on-steeped-names">
               {steeped.map((thing, index) => (
                 <Fragment key={thing.id}>
-                  {index > 0 ? t("pages.overview.steepedSeparator") : null}
+                  {index > 0 ? <span className="wiki-working-on-steeped-sep">{t("pages.overview.steepedSeparator")}</span> : null}
                   <button type="button" onClick={() => showSteeped(thing.id)}>{thing.title}</button>
                 </Fragment>
               ))}
