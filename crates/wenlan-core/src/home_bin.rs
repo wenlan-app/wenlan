@@ -797,6 +797,37 @@ pub fn sync_home_bin(
     request: &SyncRequest<'_>,
     version_of: &mut dyn FnMut(&Path) -> Result<Version, String>,
 ) -> Vec<EntryAction> {
+    // Keep this file in place: unlinking a lock lets another process lock a
+    // different inode while the current owner is still replacing binaries.
+    let bin = home_bin_dir(request.home);
+    let lock_path = bin.join(".refresh.lock");
+    let lock = (|| -> io::Result<fs::File> {
+        fs::create_dir_all(&bin)?;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        fs2::FileExt::try_lock_exclusive(&file)?;
+        Ok(file)
+    })();
+    let _lock = match lock {
+        Ok(file) => file,
+        Err(error) => {
+            return vec![EntryAction::Failed {
+                path: lock_path,
+                detail: if error.kind() == io::ErrorKind::WouldBlock {
+                    "another binary refresh is in progress; retry after it finishes".to_string()
+                } else {
+                    format!("could not lock the binary refresh: {error}")
+                },
+                original_kept: true,
+            }];
+        }
+    };
+    // The lock covers classification, backup-name selection, replacement and
+    // rollback for all three entries, including separate app/CLI processes.
     RUNTIME_STEMS
         .iter()
         .map(|stem| sync_one(request, stem, version_of))
@@ -1149,25 +1180,46 @@ pub fn read_binary_version_with_timeout(path: &Path, timeout: Duration) -> Resul
         .stderr(Stdio::null())
         .spawn()
         .map_err(|error| error.to_string())?;
-    let mut stdout = child
+    let started = std::time::Instant::now();
+    let stdout = child
         .stdout
         .take()
         .ok_or_else(|| "version probe had no stdout".to_string())?;
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        let n = stdout.read(&mut buf).unwrap_or(0);
-        let _ = sender.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+        let mut buf = Vec::new();
+        let result = stdout.take(4096).read_to_end(&mut buf);
+        let _ = sender.send(result.map(|_| String::from_utf8_lossy(&buf).into_owned()));
     });
-    match receiver.recv_timeout(timeout) {
-        Ok(text) => {
-            let _ = child.wait();
-            parse_version_output(&text)
-        }
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Err(format!("timed out after {}ms", timeout.as_millis()))
+    let timed_out = || format!("timed out after {}ms", timeout.as_millis());
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return Err(format!("version probe exited with {status}"));
+                }
+                // EOF may lag process exit if a descendant inherited stdout.
+                // Reading output and waiting for exit share one deadline.
+                let remaining = timeout.saturating_sub(started.elapsed());
+                let text = receiver
+                    .recv_timeout(remaining)
+                    .map_err(|_| timed_out())?
+                    .map_err(|error| error.to_string())?;
+                return parse_version_output(&text);
+            }
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(
+                    Duration::from_millis(10).min(timeout.saturating_sub(started.elapsed())),
+                );
+            }
+            result => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(match result {
+                    Err(error) => error.to_string(),
+                    _ => timed_out(),
+                });
+            }
         }
     }
 }
@@ -1639,6 +1691,144 @@ mod tests {
         )
     }
 
+    #[test]
+    fn a_concurrent_refresh_cannot_replace_another_refreshs_backup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let bundle_dir = tmp.path().join("bundle");
+        fs::create_dir_all(&bundle_dir).unwrap();
+        let host = DesktopHost::current();
+        bundle(&bundle_dir, host, "0.20.7\n");
+        let bin = home_bin_dir(&home);
+        for stem in RUNTIME_STEMS {
+            write_runnable(&bin.join(executable_name(stem, host)), "0.18.10\n");
+        }
+        let bundle_version = version("0.20.7");
+        let request = SyncRequest {
+            home: &home,
+            bundle_dir: &bundle_dir,
+            bundle_version: &bundle_version,
+            host,
+            mode: LinkMode::Copy,
+            stamp: "same-second",
+        };
+        let mut contended = false;
+        let actions = sync_home_bin(&request, &mut |path| {
+            if !contended {
+                contended = true;
+                let second = sync_home_bin(&request, &mut text_version);
+                assert!(
+                    second.iter().all(|action| matches!(
+                        action,
+                        EntryAction::Failed {
+                            original_kept: true,
+                            ..
+                        }
+                    )),
+                    "concurrent repair must refuse before touching files: {second:?}"
+                );
+            }
+            text_version(path)
+        });
+        assert!(contended);
+        assert!(actions.iter().all(|action| matches!(
+            action,
+            EntryAction::Copied {
+                backup: Some(_),
+                ..
+            }
+        )));
+        for stem in RUNTIME_STEMS {
+            let name = executable_name(stem, host);
+            assert_eq!(
+                fs::read(bin.join(format!("{name}.bak.0.18.10.same-second"))).unwrap(),
+                b"0.18.10\n"
+            );
+        }
+        let again = sync_home_bin(&request, &mut text_version);
+        assert!(again
+            .iter()
+            .all(|action| matches!(action, EntryAction::AlreadyCurrent { .. })));
+    }
+
+    #[test]
+    fn a_refresh_lock_is_shared_across_processes() {
+        const TEST_ROOT: &str = "WENLAN_HOME_BIN_LOCK_TEST_ROOT";
+        if let Some(root) = std::env::var_os(TEST_ROOT) {
+            let root = PathBuf::from(root);
+            let home = root.join("home");
+            let bundle_dir = root.join("bundle");
+            let actions = sync_fixture(&home, &bundle_dir, LinkMode::Copy, DesktopHost::current());
+            assert!(
+                matches!(&actions[..], [EntryAction::Failed { original_kept: true, detail, .. }]
+                if detail.contains("another binary refresh")),
+                "{actions:?}"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let bundle_dir = tmp.path().join("bundle");
+        let host = DesktopHost::current();
+        fs::create_dir_all(&bundle_dir).unwrap();
+        bundle(&bundle_dir, host, "0.20.7\n");
+        let entry = home_bin_dir(&home).join(executable_name("wenlan", host));
+        write_runnable(&entry, "0.18.10\n");
+        let bundle_version = version("0.20.7");
+        let actions = sync_home_bin(
+            &SyncRequest {
+                home: &home,
+                bundle_dir: &bundle_dir,
+                bundle_version: &bundle_version,
+                host,
+                mode: LinkMode::Copy,
+                stamp: "t",
+            },
+            &mut |path| {
+                let result = Command::new(std::env::current_exe().unwrap())
+                    .arg("a_refresh_lock_is_shared_across_processes")
+                    .arg("--nocapture")
+                    .env(TEST_ROOT, tmp.path())
+                    .env("WENLAN_NO_AUTOSTART", "1")
+                    .output()
+                    .unwrap();
+                assert!(
+                    result.status.success(),
+                    "{}{}",
+                    String::from_utf8_lossy(&result.stdout),
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                assert_eq!(fs::read(&entry).unwrap(), b"0.18.10\n");
+                text_version(path)
+            },
+        );
+        assert!(matches!(
+            actions[0],
+            EntryAction::Copied {
+                backup: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_version_printed_before_hanging_does_not_disable_the_timeout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("hang-after-output");
+        write_runnable(
+            &path,
+            "#!/bin/sh\nprintf 'wenlan 0.18.10\\n'\nexec sleep 2\n",
+        );
+        let start = std::time::Instant::now();
+        let result = read_binary_version_with_timeout(&path, Duration::from_millis(100));
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "probe exceeded its deadline"
+        );
+        assert!(result.unwrap_err().contains("timed out"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn read_binary_version_parses_a_program_and_kills_one_that_hangs() {
@@ -1647,7 +1837,7 @@ mod tests {
         write_runnable(&bin, "#!/bin/sh\nprintf '%s\\n' 'wenlan 0.18.10'\n");
         assert_eq!(read_binary_version(&bin).unwrap().to_string(), "0.18.10");
         let hang = tmp.path().join("hang");
-        write_runnable(&hang, "#!/bin/sh\nsleep 30\n");
+        write_runnable(&hang, "#!/bin/sh\nexec sleep 30\n");
         let error =
             read_binary_version_with_timeout(&hang, Duration::from_millis(200)).unwrap_err();
         assert!(error.contains("timed out"), "{error}");

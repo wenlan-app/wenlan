@@ -218,6 +218,7 @@ jobs:
               - 'crates/wenlan-cli/src/commands/service.rs'
               - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-core/src/config.rs'
+              - 'crates/wenlan-core/src/home_bin.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
               - 'crates/wenlan-cli/src/commands/setup.rs'
               - 'crates/wenlan-cli/src/commands/secret_input.rs'
