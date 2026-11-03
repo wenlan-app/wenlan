@@ -662,6 +662,10 @@ Diagnose runtime, model, and API key setup.
 wenlan doctor [OPTIONS]
 ```
 
+Options:
+
+- `--repair`: Point older ~/.wenlan/bin copies at the app bundle. The previous file is renamed aside, not deleted.
+
 ### `wenlan background`
 
 Control whether Wenlan keeps running in the background.
