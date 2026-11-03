@@ -468,6 +468,7 @@ jobs:
               # The refresh test drives a shell-script stand-in AI tool, so it is `cfg(unix)`.
               - 'crates/wenlan-cli/tests/wiki_refresh_cli.rs'
               - 'crates/wenlan-core/src/config.rs'
+              - 'crates/wenlan-core/src/home_bin.rs'
               - 'crates/wenlan-core/src/community_grouping.rs'
               - 'crates/wenlan-core/src/community_partition.rs'
               - 'crates/wenlan-core/src/edge_grounding.rs'
@@ -601,6 +602,7 @@ jobs:
               - 'crates/wenlan-server/tests/graceful_shutdown.rs'
               - 'crates/wenlan-mcp/npm/install.js'
               - 'crates/wenlan-core/src/config.rs'
+              - 'crates/wenlan-core/src/home_bin.rs'
               - 'crates/wenlan-core/src/db/m5_page_size_snapshot.rs'
               # A code basis may not follow a symlink out of its repository;
               # that case is proved against a real symlink, which is `cfg(unix)`.
