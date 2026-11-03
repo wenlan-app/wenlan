@@ -295,6 +295,83 @@ async fn a_restore_gives_back_links_to_pages_not_written_yet() {
     assert_eq!(after, before);
 }
 
+/// Two pages share a name ("Beta" and "beta"). A link saved to one of
+/// them keeps pointing there after a restore: the restore reads the link
+/// from the files and does not work its target out again by name.
+#[tokio::test]
+async fn a_restore_keeps_a_link_to_one_of_two_pages_of_the_same_name() {
+    let (db, dir) = fixture().await;
+    let body = "See [[Beta]].";
+    db.export_fixture_sql("UPDATE pages SET content = ?1 WHERE id = 'c'", body)
+        .await;
+    db.replace_page_links(
+        "c",
+        &[crate::synthesis::wikilinks::Wikilink {
+            label: "Beta".to_string(),
+            target_page_id: Some("x".to_string()),
+        }],
+    )
+    .await
+    .unwrap();
+    async fn targets(db: &MemoryDB) -> Vec<String> {
+        let edges = db.export_table("edges").await.unwrap().unwrap();
+        let at = |name: &str| edges.columns.iter().position(|c| c == name).unwrap();
+        let text = |value: &libsql::Value| match value {
+            libsql::Value::Text(text) => Some(text.clone()),
+            _ => None,
+        };
+        let mut out: Vec<String> = edges
+            .rows
+            .iter()
+            .filter(|row| {
+                text(&row[at("src_id")]).as_deref() == Some("c")
+                    && text(&row[at("edge_type")]).as_deref() == Some("links")
+                    && matches!(row[at("valid_until")], libsql::Value::Null)
+            })
+            .filter_map(|row| text(&row[at("dst_id")]))
+            .collect();
+        out.sort();
+        out
+    }
+    assert_eq!(targets(&db).await, ["x"]);
+    let data_root = tempfile::tempdir().unwrap();
+    let embedder = db.shared_embedder().expect("the test database has a model");
+    run_once(
+        &dir.path().join(DATABASE_FILE),
+        &PagesFolder::default(),
+        data_root.path(),
+        &mirror_root(data_root.path()),
+        embedder,
+        false,
+    )
+    .await
+    .unwrap();
+    let db_dir = data_root.path().join("memorydb");
+    let outcome = restore_missing_database(data_root.path(), &db_dir, 1)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, Restore::Restored { .. }), "{outcome:?}");
+    let restored = MemoryDB::new_with_embedding_recovery(
+        &db_dir,
+        Arc::new(NoopEmitter),
+        MemoryEmbeddingRecovery::Deferred,
+    )
+    .await
+    .unwrap();
+    assert_eq!(targets(&restored).await, ["x"]);
+    let scope = crate::read_scope::ReadScope::Global;
+    let links = restored
+        .get_page_outbound_links_scoped("c", &scope)
+        .await
+        .unwrap();
+    assert!(
+        links
+            .iter()
+            .all(|link| link.target_page_id.as_deref() == Some("x")),
+        "{links:?}"
+    );
+}
+
 /// A refresh that stopped after setting the old history aside and before
 /// putting the new one in place: the restore reads the old one, and the
 /// next refresh puts it back first.

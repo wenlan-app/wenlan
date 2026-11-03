@@ -193,6 +193,12 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
             "incarnation",
             "basis_revision",
             "source_agent",
+            // What the person is shown about a page: "its sources were
+            // updated", "refresh is blocked". Nothing works these out again
+            // after a restore (spec section 3).
+            "sources_updated_count",
+            "stale_reason",
+            "refresh_blocked_reason",
         ],
     ),
     (
@@ -204,9 +210,6 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
             "community_id",
             "confidence",
             "last_compiled",
-            "sources_updated_count",
-            "stale_reason",
-            "refresh_blocked_reason",
         ],
     ),
     (
