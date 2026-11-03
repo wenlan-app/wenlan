@@ -493,6 +493,9 @@ pub struct CreateRelationResponse {
     pub id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Whether this assertion changed the graph. Absent on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrote: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

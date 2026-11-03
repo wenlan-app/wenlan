@@ -7,10 +7,11 @@ description: >
   turning what was imported or saved into notes and bringing out of date
   notes up to date ("steep", "沉澱", "整理成筆記"), getting to know a code
   repository ("build a wiki for this repo", "認識這個倉庫"), opening or listing notes
-  ("open my note on X", "打開筆記"), checking memory quality or cleaning
+  ("open my note on X", "打開筆記"), organizing existing pages and folders
+  ("organize my notes", "整理我的資料"), checking memory quality or cleaning
   up ("lint", "檢查重複", "清一清"), reviewing pending items ("review what's
   waiting", "看待確認的"), and deleting one memory ("forget <id>", "刪掉這筆").
-  Old command words such as distill, steep, wiki, lint, pages, curate, forget and setup
+  Old command words such as organize, distill, steep, wiki, lint, pages, curate, forget and setup
   still work after `$wenlan`. Invoked as `$wenlan [what you want]`.
 argument-hint: "[what you want]"
 allowed-tools: ["Bash", "mcp__wenlan__brief", "mcp__wenlan__list_pending_revisions", "mcp__wenlan__list_pending_imports"]
@@ -90,6 +91,7 @@ Match the request to one row. Old command words count as their row.
 | Just starting, or not sure what to do next | the status in step 1 | `$wenlan 怎麼開始`, `$wenlan what now?` |
 | Set up, repair, upgrade, check it works | setup | `$wenlan setup`, `$wenlan 好像壞了` |
 | Turn what was imported or saved into notes, and bring out of date notes up to date, with this AI tool | steep | `$wenlan steep`, `$wenlan write my pages`, `$wenlan 整理成筆記`, `$wenlan 沉澱`, `$wenlan 把過期的筆記更新` |
+| Organize existing knowledge, pages, folders, or navigation around a goal | organize | `$wenlan organize my launch notes around the decisions`, `$wenlan 整理我的資料` |
 | Rebuild one note from its sources, or a clustering pass by hand (advanced) | distill | `$wenlan distill rebuild <note>`, `$wenlan distill` |
 | Get to know this repository; write a small wiki about it and keep it current | wiki | `$wenlan wiki`, `$wenlan 認識這個倉庫`, `$wenlan 幫這個倉庫建 wiki` |
 | List, find, open or print a note | pages | `$wenlan pages release`, `$wenlan 打開那篇筆記` |
@@ -115,7 +117,7 @@ Rules:
 
 ## 3. Run the chosen workflow
 
-For setup, distill, steep, pages, lint, curate, forget and wiki, read
+For setup, distill, steep, pages, organize, lint, curate, forget and wiki, read
 `references/<workflow>.md` beside this SKILL.md and follow it to the end,
 treating the arguments below as what the user typed after that workflow word.
 For brief, capture, recall and handoff, use that Wenlan skill. Arguments:
@@ -126,6 +128,10 @@ For brief, capture, recall and handoff, use that Wenlan skill. Arguments:
   actually said, in their words (`$wenlan 打開發布計畫那篇筆記` gives pages
   `發布計畫`). Nothing else from the sentence. When none was said, pass
   nothing.
+- **Organize exception:** pass the complete original user request unchanged
+  to the organize workflow, including goals, constraints, and named areas. Do not
+  reduce it to keywords. If they used `$wenlan organize ...`, pass everything
+  after `organize` unchanged.
 - capture, recall and brief take the user's content as written.
 
 ## Reference
@@ -157,5 +163,7 @@ Answer these from here, without a tool call, and only the part asked:
   on one exact id; distill rebuild overwrites hand edits and says so first.
 - Pass the user's mode, scope, target and approval words through unchanged.
   Never add `repair`, `rebuild`, `--yes`, or an id the user did not give.
-- Reads and saves just happen. Deleting, overwriting, merging or applying a
-  repair always waits for the user's say-so inside that workflow.
+- Reads and saves just happen. Organize may make the scoped non-destructive
+  changes its workflow describes; it never deletes or merges. Deleting,
+  merging, or applying a repair waits for the user's say-so inside that
+  workflow.

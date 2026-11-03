@@ -304,7 +304,7 @@ test("reference: no frontmatter, same body transforms, hidden flag required", ()
   assert.throws(() => generateReference("sample", SAMPLE, {}, contract), /must set user-invocable: false/);
 });
 
-test("real tree: the output holds exactly the front door, four skills, eight references and the resolver", () => {
+test("real tree: the output holds exactly the front door, four skills, nine references and the resolver", () => {
   const hidden = contract.skills.filter((s) => s.status === "hidden_routed").map((s) => s.name);
   const expected = [
     "wenlan-brief/SKILL.md",
@@ -316,7 +316,7 @@ test("real tree: the output holds exactly the front door, four skills, eight ref
     ...hidden.map((h) => `wenlan/references/${h}.md`),
   ].sort();
   assert.deepEqual(treeFiles(), expected);
-  assert.equal(hidden.length, 8);
+  assert.equal(hidden.length, 9);
 });
 
 test("real tree: every SKILL.md is valid Agent Skills with name equal to its folder", () => {

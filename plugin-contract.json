@@ -97,6 +97,11 @@
       "codex_reference": "wenlan/references/pages.md"
     },
     {
+      "name": "organize",
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/organize.md"
+    },
+    {
       "name": "lint",
       "status": "hidden_routed",
       "codex_reference": "wenlan/references/lint.md"

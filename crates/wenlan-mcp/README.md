@@ -59,12 +59,18 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 39 tools. The table below calls
+The local stdio surface is locked at exactly 45 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
 | Tool | Purpose |
 | --- | --- |
+| `list_folders` | Inspect physical wiki folders within the caller's scope |
+| `create_folder` | Create a navigation folder; local stdio only |
+| `move_page` | Move an active page with an expected-path guard, preserving identity and content; local stdio only |
+| `get_page_links` | Check incoming links and resolved outgoing target IDs |
+| `list_entities` | Find existing topics by name, alias, Space and lifecycle status |
+| `read_entity` | Read a topic's identity, observations and current relations |
 | `list_pages` | List wiki pages (id, title, summary, Space, status, last modified, creation kind, source count, review lock) to browse what exists. |
 | `read_page` | Read one wiki page in full, including its version and review lock, together with the source memories it cites, the notes it relies on (`basis`), the code it relies on (`code_basis`), plain links that changed (`linked_changed`), and, with `map: true`, its mind map as a small text tree with a link that opens it in Wenlan. |
 | `write_page` | Create or update a wiki page; sources are optional. Pass `expected_version` from `read_page` on a refresh; a stale version is refused, and a locked page or an unversioned refresh of an edited page goes through a revision card. Pass `basis` (`{page_id, version}` per note read) when the page was written from other notes; the reply lists the page's bases. Pass `code_basis` (`{repo_root, path, line_start, line_end}`) for lines of code the page relies on; Wenlan reads the file when you write and tells you when the lines change. |

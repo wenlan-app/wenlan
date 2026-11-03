@@ -203,6 +203,15 @@ pub struct CreateRelationRequest {
     /// Daemon-internal only -- stripped on the wire route, same as `span`.
     #[serde(default)]
     pub prompt_version: Option<String>,
+    /// Refuse to replace a different active relation for this directed pair.
+    /// When the same canonical relation already exists, preserve its current
+    /// evidence and return it unchanged. Defaults to the legacy behavior.
+    #[serde(default, skip_serializing_if = "is_false_create_relation")]
+    pub preserve_existing: bool,
+}
+
+fn is_false_create_relation(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Debug, Serialize, Deserialize)]

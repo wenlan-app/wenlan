@@ -79,5 +79,7 @@ Do not fetch changelogs during ordinary `$wenlan pages` list/open flows.
 
 ## When NOT to use
 
+- Organizing existing pages, folders, or navigation → use `$wenlan organize`
+  with the complete goal and constraints.
 - Raw memory lookups → `/recall`.
 - Synthesize a new page → `$wenlan distill`.
