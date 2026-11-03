@@ -887,6 +887,34 @@ impl MemoryDB {
         }
         drop(rows);
 
+        // Else where the whole thing stands, as the grouping model last wrote
+        // it, unless a conversation was read again since.
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT t.id, tl.status
+                       FROM thing_lines tl
+                       JOIN things t ON t.id = tl.thing_id
+                      WHERE t.merged_into IS NULL AND trim(tl.status) <> ''
+                        AND tl.written_at >= COALESCE(
+                              (SELECT MAX(l.labeled_at) FROM thing_sessions ts
+                                 JOIN conversation_labels l ON l.session_id = ts.session_id
+                                WHERE ts.thing_id = t.id AND l.work = 1), 0){only_sql}"
+                ),
+                libsql::params_from_iter(params.clone()),
+            )
+            .await
+            .map_err(db_err("things line"))?;
+        while let Some(row) = rows.next().await.map_err(db_err("things line row"))? {
+            let Some(&i) = index.get(&row.get::<String>(0).unwrap_or_default()) else {
+                continue;
+            };
+            if things[i].summary.status_line.is_none() {
+                things[i].summary.status_line = Some(row.get::<String>(1).unwrap_or_default());
+            }
+        }
+        drop(rows);
+
         // Else where its newest conversation Wenlan read stands.
         let mut rows = conn
             .query(

@@ -25,6 +25,7 @@ struct Thing {
     space: String,
     about: String,
     status: String,
+    line: Option<String>,
     last: i64,
     tools: BTreeSet<String>,
     parts: Vec<String>,
@@ -85,6 +86,7 @@ async fn main() {
                     title: l.title.clone(),
                     about: l.about.clone(),
                     space: l.space.clone(),
+                    status: l.status.clone(),
                 },
                 l,
                 conv.last_at,
@@ -109,6 +111,7 @@ async fn main() {
                 title: t.title.clone(),
                 about: t.about.clone(),
                 space: t.space.clone(),
+                news: Vec::new(),
             })
             .collect();
         let answer = group
@@ -141,12 +144,14 @@ async fn main() {
         for &(c, t) in &grouping.joins {
             add(&mut things, t, c);
         }
+        let first_new = things.len();
         for (title, members) in &grouping.new {
             things.push(Thing {
                 title: title.clone(),
                 space: String::new(),
                 about: String::new(),
                 status: String::new(),
+                line: None,
                 last: 0,
                 tools: BTreeSet::new(),
                 parts: Vec::new(),
@@ -154,6 +159,15 @@ async fn main() {
             let i = things.len() - 1;
             for &c in members {
                 add(&mut things, i, c);
+            }
+        }
+        for (piece, line) in &grouping.lines {
+            let i = match *piece {
+                intake::Piece::Open(t) => t,
+                intake::Piece::New(n) => first_new + n,
+            };
+            if let Some(t) = things.get_mut(i) {
+                t.line = Some(line.clone());
             }
         }
         left_out.extend(grouping.left_out.iter().map(|&c| batch[c].0.title.clone()));
@@ -167,7 +181,8 @@ async fn main() {
         "dropped": format!("{dropped:?}"),
         "work": work.len(),
         "things": things.iter().map(|t| serde_json::json!({
-            "title": t.title, "space": t.space, "status": t.status, "about": t.about,
+            "title": t.title, "space": t.space, "status": t.line.as_ref().unwrap_or(&t.status),
+            "last_status": t.status, "about": t.about,
             "last": chrono::DateTime::from_timestamp(t.last, 0).map(|d| d.to_rfc3339()),
             "tools": t.tools, "conversations": t.parts.len(), "parts": t.parts,
         })).collect::<Vec<_>>(),

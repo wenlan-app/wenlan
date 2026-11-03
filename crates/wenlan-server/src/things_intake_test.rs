@@ -85,8 +85,9 @@ async fn ux_thing_1_conversations_become_things_without_anyone_telling_wenlan() 
         r#"{"work": true, "title": "首頁卡片", "space": "wenlan", "about": "卡片可以藏起來", "status": "藏起來的按鈕做好了"}"#,
         r#"{"work": false, "title": "", "space": "", "about": "", "status": ""}"#,
     ]);
-    let group =
-        Scripted::new(&[r#"{"new": [{"title": "首頁改版", "conversations": ["C0", "C1"]}]}"#]);
+    let group = Scripted::new(&[
+        r#"{"new": [{"title": "首頁改版", "conversations": ["C0", "C1"], "now": "卡片和藏起來的按鈕都好了，接著調間距"}]}"#,
+    ]);
     let models = IntakeModels {
         label: label.clone(),
         group: group.clone(),
@@ -109,7 +110,11 @@ async fn ux_thing_1_conversations_become_things_without_anyone_telling_wenlan() 
     let things = db.list_things(&ReadScope::Global, None).await.unwrap();
     assert_eq!(things.len(), 1);
     assert_eq!(things[0].title.as_deref(), Some("首頁改版"));
-    assert_eq!(things[0].status_line.as_deref(), Some("藏起來的按鈕做好了"));
+    // Where it stands is the grouping model's line for the whole thing.
+    assert_eq!(
+        things[0].status_line.as_deref(),
+        Some("卡片和藏起來的按鈕都好了，接著調間距")
+    );
     assert_eq!(things[0].spaces, vec!["wenlan".to_string()]);
     assert!(!things[0].quiet);
 

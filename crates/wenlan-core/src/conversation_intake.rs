@@ -707,6 +707,8 @@ pub struct Pending {
     pub title: String,
     pub about: String,
     pub space: String,
+    /// Where this conversation left things, as its label says.
+    pub status: String,
 }
 
 /// A thing already on the list, as the grouping model sees it.
@@ -716,26 +718,46 @@ pub struct OpenThing {
     pub title: String,
     pub about: String,
     pub space: String,
+    /// Where its conversations stand, newest first, from those read again
+    /// since its line was last written: the line needs writing again.
+    pub news: Vec<String>,
 }
 
-/// The prompt that puts labelled conversations into things: only titles and
-/// one-line abouts, never the conversations.
+/// The prompt that puts labelled conversations into things and writes where
+/// each thing stands: only the labels' one-line titles, abouts and statuses,
+/// never the conversations.
 pub fn group_prompt(pending: &[Pending], open: &[OpenThing], language: &str) -> String {
     let things = if open.is_empty() {
         "(none yet)".to_string()
     } else {
         open.iter()
             .enumerate()
-            .map(|(i, t)| format!("T{i}. {} [{}]: {}", t.title, t.space, t.about))
+            .map(|(i, t)| {
+                let news = if t.news.is_empty() {
+                    String::new()
+                } else {
+                    format!(" | news: {}", t.news.join(" / "))
+                };
+                format!("T{i}. {} [{}]: {}{news}", t.title, t.space, t.about)
+            })
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let convs = pending
-        .iter()
-        .enumerate()
-        .map(|(i, p)| format!("C{i}. {} [{}]: {}", p.title, p.space, p.about))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let convs = if pending.is_empty() {
+        "(none)".to_string()
+    } else {
+        pending
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                format!(
+                    "C{i}. {} [{}]: {} | now: {}",
+                    p.title, p.space, p.about, p.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     format!(
         "A person's pieces of work so far (id, title, [space], about):\n{things}\n\n\
 New conversations they had with AI tools (id, title, [space], about):\n{convs}\n\n\
@@ -746,10 +768,15 @@ A conversation joins an existing piece when it serves the same goal; a shared pr
 folder or space alone is not enough. Conversations that serve the same new goal form one new \
 piece together. Leave out a conversation that is only a small chore with no goal of its own \
 (confirming a merge, sending a file, a one-off cleanup) and that fits no piece.\n\
-Give each new piece a title in {language} of at most 12 words or 12 Chinese characters that \
-names the goal. {KEEP_NAMES}\n\
+Give each new piece a short title in {language} that names the goal: at most 6 words or 10 \
+Chinese characters. {KEEP_NAMES}\n\
+For every new piece, and every existing piece that gains a conversation or shows news, write \
+\"now\": one sentence in {language}, at most 20 words or 30 Chinese characters, on where the \
+whole piece stands and what comes next, from its newest conversations, not only their last \
+small step.\n\
 Answer with JSON only: {{\"join\": [{{\"conversation\": \"C0\", \"piece\": \"T3\"}}], \
-\"new\": [{{\"title\": string, \"conversations\": [\"C1\", \"C2\"]}}], \
+\"new\": [{{\"title\": string, \"conversations\": [\"C1\", \"C2\"], \"now\": string}}], \
+\"now\": [{{\"piece\": \"T3\", \"line\": string}}], \
 \"leave_out\": [\"C4\"]}} and use every conversation exactly once."
     )
 }
@@ -764,7 +791,21 @@ pub struct Grouping {
     pub new: Vec<(String, Vec<usize>)>,
     /// Pending indices that are no piece of work: small chores.
     pub left_out: Vec<usize>,
+    /// Where a piece stands now, written by the model.
+    pub lines: Vec<(Piece, String)>,
 }
+
+/// A piece of work in a [`Grouping`]: an open thing or a new one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Piece {
+    /// Index into the `open` list.
+    Open(usize),
+    /// Index into [`Grouping::new`].
+    New(usize),
+}
+
+/// Longest "where it stands" line kept from the grouping model.
+pub const MAX_LINE_CHARS: usize = 120;
 
 /// A group bigger than this swallowed most of a batch: the failure a weak
 /// model makes, not a real piece of work. Its conversations stay apart.
@@ -785,6 +826,14 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
         title: String,
         #[serde(default)]
         conversations: Vec<String>,
+        #[serde(default)]
+        now: String,
+    }
+    #[derive(Deserialize)]
+    struct Now {
+        piece: String,
+        #[serde(default)]
+        line: String,
     }
     #[derive(Deserialize)]
     struct Answer {
@@ -794,6 +843,8 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
         new: Vec<New>,
         #[serde(default)]
         leave_out: Vec<String>,
+        #[serde(default)]
+        now: Vec<Now>,
     }
     let answer: Answer = serde_json::from_str(json_object(text)?).ok()?;
     let index = |id: &str, prefix: char, len: usize| {
@@ -834,7 +885,18 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
         } else {
             title
         };
+        let line = cut(new.now.trim(), MAX_LINE_CHARS);
+        if !line.is_empty() {
+            grouping.lines.push((Piece::New(grouping.new.len()), line));
+        }
         grouping.new.push((title, members));
+    }
+    for now in &answer.now {
+        let line = cut(now.line.trim(), MAX_LINE_CHARS);
+        if let (Some(t), false) = (index(&now.piece, 'T', open), line.is_empty()) {
+            grouping.lines.retain(|(piece, _)| *piece != Piece::Open(t));
+            grouping.lines.push((Piece::Open(t), line));
+        }
     }
     for id in &answer.leave_out {
         if let Some(c) = index(id, 'C', pending.len()) {

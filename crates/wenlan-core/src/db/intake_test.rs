@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use crate::conversation_intake::{FoundConversation, Grouping, Label};
+use crate::conversation_intake::{FoundConversation, Grouping, Label, Piece};
 use crate::db::tests::test_db;
 use crate::read_scope::ReadScope;
 use std::path::PathBuf;
@@ -124,6 +124,7 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
             ("Lisbon trip".into(), vec![2]),
         ],
         left_out: vec![3],
+        lines: vec![(Piece::New(0), "Cards drafted, hide button in".into())],
     };
     assert_eq!(
         db.apply_intake_grouping(&pending, &[], &grouping)
@@ -138,8 +139,12 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
     assert_eq!(things[0].title.as_deref(), Some("Lisbon trip"));
     assert_eq!(things[0].status_line.as_deref(), Some("Flights booked"));
     assert_eq!(things[1].title.as_deref(), Some("Home redesign"));
-    // Where it stands comes from its newest conversation.
-    assert_eq!(things[1].status_line.as_deref(), Some("Hide button added"));
+    // Where it stands: the grouping model's line for the whole thing, else
+    // its newest conversation's.
+    assert_eq!(
+        things[1].status_line.as_deref(),
+        Some("Cards drafted, hide button in")
+    );
     assert_eq!(things[1].spaces, vec!["wenlan".to_string()]);
 
     // A new conversation can join a thing already there.
@@ -157,8 +162,10 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
         ["Lisbon trip", "Home redesign"]
     );
     assert_eq!(open[1].about, "about Home cards");
+    assert!(open.iter().all(|t| t.news.is_empty()));
     let grouping = Grouping {
         joins: vec![(0, 1)],
+        lines: vec![(Piece::Open(1), "Cards done; two rows tried".into())],
         ..Default::default()
     };
     assert_eq!(
@@ -169,7 +176,34 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
     );
     let things = db.list_things(&ReadScope::Global, None).await.unwrap();
     assert_eq!(things[0].title.as_deref(), Some("Home redesign"));
-    assert_eq!(things[0].status_line.as_deref(), Some("Two rows tried"));
+    assert_eq!(
+        things[0].status_line.as_deref(),
+        Some("Cards done; two rows tried")
+    );
+
+    // A conversation read again after the line was written makes it out of
+    // date: its own status shows, and the thing has news for the model.
+    let mut later = found("d", now);
+    later.last_at = now + 1;
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+    db.record_conversation_label(&later, &work("Home spacing", "Grid dropped"), None)
+        .await
+        .unwrap();
+    let things = db.list_things(&ReadScope::Global, None).await.unwrap();
+    assert_eq!(things[0].status_line.as_deref(), Some("Grid dropped"));
+    let open = db.intake_open_things().await.unwrap();
+    assert_eq!(open[0].title, "Home redesign");
+    assert_eq!(open[0].news, vec!["Grid dropped".to_string()]);
+    // Answered with no line, it is marked written and not offered again.
+    db.apply_intake_grouping(&[], &open, &Grouping::default())
+        .await
+        .unwrap();
+    assert!(db
+        .intake_open_things()
+        .await
+        .unwrap()
+        .iter()
+        .all(|t| t.news.is_empty()));
 }
 
 #[tokio::test]
@@ -233,5 +267,37 @@ async fn ux_thing_1_a_conversation_the_rules_placed_moves_and_the_persons_placem
     assert!(
         !titles.iter().any(|t| t == "Rule made tagline"),
         "the rule-made thing is left empty: {titles:?}"
+    );
+}
+
+#[tokio::test]
+async fn ux_thing_1_a_space_long_out_of_use_is_not_offered() {
+    let (db, _dir) = test_db().await;
+    // No space written to lately: every space is offered.
+    db.create_space("wenlan", None, false).await.unwrap();
+    db.create_space("old-app", None, false).await.unwrap();
+    let all = db.intake_spaces().await.unwrap();
+    assert!(all.contains(&"wenlan".to_string()) && all.contains(&"old-app".to_string()));
+
+    let now = chrono::Utc::now().timestamp();
+    {
+        let conn = db.conn.lock().await;
+        for (id, space, at) in [
+            ("m1", "wenlan", now - 3_600),
+            ("m2", "old-app", now - SPACE_IN_USE_SECS - 86_400),
+        ] {
+            conn.execute(
+                "INSERT INTO memories (id, content, source, source_id, title, chunk_index,
+                                       last_modified, chunk_type, space)
+                 VALUES (?1, 'x', 'memory', ?1, 'x', 0, ?3, 'text', ?2)",
+                libsql::params![id, space, at],
+            )
+            .await
+            .unwrap();
+        }
+    }
+    assert_eq!(
+        db.intake_spaces().await.unwrap(),
+        vec!["wenlan".to_string()]
     );
 }

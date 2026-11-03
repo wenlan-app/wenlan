@@ -284,16 +284,27 @@ fn ux_thing_1_grouping_joins_existing_things_and_gives_every_conversation_a_thin
             title: format!("t{i}"),
             about: String::new(),
             space: String::new(),
+            status: String::new(),
         })
         .collect();
     let answer = r#"{"join": [{"conversation": "C0", "piece": "T1"}, {"conversation": "C0", "piece": "T0"},
         {"conversation": "C9", "piece": "T0"}],
-        "new": [{"title": "Home", "conversations": ["C1", "C2", "C0"]}],
-        "leave_out": ["C4", "C1", "C4", "C8"]}"#;
+        "new": [{"title": "Home", "conversations": ["C1", "C2", "C0"], "now": "Two cards left"}],
+        "leave_out": ["C4", "C1", "C4", "C8"],
+        "now": [{"piece": "T1", "line": "Old line"}, {"piece": "T1", "line": "Cards done; spacing next"},
+                {"piece": "T7", "line": "No such piece"}, {"piece": "T0", "line": "  "}]}"#;
     let grouping = parse_grouping(answer, &pending, 2).unwrap();
     assert_eq!(grouping.joins, vec![(0, 1)]);
     // A chore is left out once; one already in a piece stays there.
     assert_eq!(grouping.left_out, vec![4]);
+    // Where each piece stands: the last line for a piece wins, empty ones go.
+    assert_eq!(
+        grouping.lines,
+        vec![
+            (Piece::New(0), "Two cards left".to_string()),
+            (Piece::Open(1), "Cards done; spacing next".to_string())
+        ]
+    );
     // C3 and C5 the model forgot stand alone under their own titles.
     assert_eq!(
         grouping.new,
@@ -313,6 +324,7 @@ fn ux_thing_1_one_new_group_swallowing_a_batch_is_broken_up() {
             title: format!("t{i}"),
             about: String::new(),
             space: String::new(),
+            status: String::new(),
         })
         .collect();
     let all: Vec<String> = (0..20).map(|i| format!("\"C{i}\"")).collect();

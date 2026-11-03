@@ -152,13 +152,7 @@ pub async fn look_with(
         .conversation_reads(&ids)
         .await
         .map_err(|e| e.to_string())?;
-    let spaces: Vec<String> = db
-        .list_spaces()
-        .await
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|s| s.name)
-        .collect();
+    let spaces = db.intake_spaces().await.map_err(|e| e.to_string())?;
     // Newest first, so a backlog never holds up today's work.
     let to_label: Vec<FoundConversation> = kept
         .into_iter()
@@ -198,10 +192,11 @@ pub async fn look_with(
         .intake_pending(GROUP_BATCH)
         .await
         .map_err(|e| e.to_string())?;
-    if pending.is_empty() {
+    let open = db.intake_open_things().await.map_err(|e| e.to_string())?;
+    // Nothing new to sort and no thing whose line is out of date.
+    if pending.is_empty() && open.iter().all(|t| t.news.is_empty()) {
         return Ok(report);
     }
-    let open = db.intake_open_things().await.map_err(|e| e.to_string())?;
     let answer = models
         .group
         .generate(LlmRequest {

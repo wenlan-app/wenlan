@@ -5,13 +5,15 @@
 //!
 //! Migration 154 adds `conversation_labels`: one row per conversation a model
 //! has read, whether or not it was work, so it is not read again until it goes
-//! on. The table is derived: it is rebuilt by reading the transcripts again.
+//! on; and `thing_lines`: where a whole thing stands, written by the grouping
+//! model from its conversations' labels. Both are derived: they are rebuilt by
+//! reading the transcripts again.
 //! A conversation that is work becomes an `agent_sessions` row like one that
 //! wrote to Wenlan, so the rest of the app shows it the same way.
 
 use super::sessions::{session_row_id, upsert_session_span};
 use super::MemoryDB;
-use crate::conversation_intake::{FoundConversation, Grouping, Label, OpenThing, Pending};
+use crate::conversation_intake::{FoundConversation, Grouping, Label, OpenThing, Pending, Piece};
 use crate::WenlanError;
 use std::collections::HashMap;
 use wenlan_types::{SessionRef, ThingActor, THING_QUIET_AFTER_SECS};
@@ -30,6 +32,11 @@ CREATE TABLE IF NOT EXISTS conversation_labels (
     labeled_at INTEGER NOT NULL,
     grouped_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS thing_lines (
+    thing_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    written_at INTEGER NOT NULL
+);
 ";
 
 /// A conversation that goes on is read again once its last line is this much
@@ -38,6 +45,11 @@ CREATE TABLE IF NOT EXISTS conversation_labels (
 pub const RELABEL_AFTER_SECS: i64 = 30 * 60;
 /// Most things the grouping model is shown.
 const OPEN_THINGS: i64 = 80;
+/// A space with nothing written to it for this long is not offered to the
+/// labelling model.
+pub const SPACE_IN_USE_SECS: i64 = 30 * 86_400;
+/// Most news lines shown for one thing.
+const NEWS_PER_THING: usize = 3;
 
 fn db_err(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
     move |e| WenlanError::VectorDb(format!("{context}: {e}"))
@@ -183,6 +195,42 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// The spaces a conversation may be put in: those with a page or memory
+    /// written in the past [`SPACE_IN_USE_SECS`], so a space long out of use
+    /// is not offered; every space when none was written to lately.
+    pub async fn intake_spaces(&self) -> Result<Vec<String>, WenlanError> {
+        let since = chrono::Utc::now().timestamp() - SPACE_IN_USE_SECS;
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT s.name FROM spaces s
+                  WHERE EXISTS (SELECT 1 FROM memories m
+                                 WHERE m.space = s.name AND m.last_modified >= ?1)
+                     OR EXISTS (SELECT 1 FROM pages p
+                                 WHERE p.space = s.name AND p.status = 'active'
+                                   AND CAST(strftime('%s', p.last_modified) AS INTEGER) >= ?1)
+                  ORDER BY s.sort_order, s.name",
+                libsql::params![since],
+            )
+            .await
+            .map_err(db_err("intake spaces"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(db_err("intake spaces row"))? {
+            out.push(row.get::<String>(0).unwrap_or_default());
+        }
+        drop(rows);
+        drop(conn);
+        if out.is_empty() {
+            out = self
+                .list_spaces()
+                .await?
+                .into_iter()
+                .map(|s| s.name)
+                .collect();
+        }
+        Ok(out)
+    }
+
     /// Work conversations of the past week not yet put into a thing, oldest
     /// first. A conversation the person already placed is not offered.
     pub async fn intake_pending(&self, limit: usize) -> Result<Vec<Pending>, WenlanError> {
@@ -190,7 +238,7 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT l.session_id, l.title, l.about, l.space FROM conversation_labels l
+                "SELECT l.session_id, l.title, l.about, l.space, l.status FROM conversation_labels l
                    JOIN agent_sessions a ON a.id = l.session_id
                   WHERE l.work = 1 AND l.grouped_at IS NULL AND l.last_at >= ?1
                     AND NOT EXISTS (SELECT 1 FROM thing_sessions ts
@@ -210,6 +258,7 @@ impl MemoryDB {
                 title: row.get::<String>(1).unwrap_or_default(),
                 about: row.get::<String>(2).unwrap_or_default(),
                 space: row.get::<String>(3).unwrap_or_default(),
+                status: row.get::<String>(4).unwrap_or_default(),
             });
         }
         Ok(out)
@@ -262,7 +311,34 @@ impl MemoryDB {
                     .unwrap_or(None)
                     .or(row.get::<Option<String>>(5).unwrap_or(None))
                     .unwrap_or_default(),
+                news: Vec::new(),
             });
+        }
+        drop(rows);
+        // Conversations read since the thing's line was written.
+        let at: HashMap<String, usize> = out
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.id.clone(), i))
+            .collect();
+        let mut rows = conn
+            .query(
+                "SELECT ts.thing_id, l.status FROM thing_sessions ts
+                   JOIN conversation_labels l ON l.session_id = ts.session_id
+                   LEFT JOIN thing_lines tl ON tl.thing_id = ts.thing_id
+                  WHERE l.work = 1 AND trim(l.status) <> ''
+                    AND l.labeled_at > COALESCE(tl.written_at, 0)
+                  ORDER BY l.last_at DESC",
+                (),
+            )
+            .await
+            .map_err(db_err("intake news"))?;
+        while let Some(row) = rows.next().await.map_err(db_err("intake news row"))? {
+            if let Some(&i) = at.get(&row.get::<String>(0).unwrap_or_default()) {
+                if out[i].news.len() < NEWS_PER_THING {
+                    out[i].news.push(row.get::<String>(1).unwrap_or_default());
+                }
+            }
         }
         Ok(out)
     }
@@ -290,22 +366,23 @@ impl MemoryDB {
             }
         }
         let mut made = 0;
+        let mut created: Vec<Option<String>> = Vec::with_capacity(grouping.new.len());
         for (title, members) in &grouping.new {
             let members: Vec<usize> = members
                 .iter()
                 .copied()
                 .filter(|&c| c < pending.len())
                 .collect();
-            if members.is_empty() {
-                continue;
-            }
-            let Some(title) = super::things::clean_thing_title(title) else {
+            let title = super::things::clean_thing_title(title);
+            let (Some(title), false) = (title, members.is_empty()) else {
+                created.push(None);
                 continue;
             };
             let thing =
                 super::things::create_thing(&tx, now, Some(&title), ThingActor::Ai, None, "model")
                     .await?;
             made += 1;
+            created.push(Some(thing.clone()));
             targets.extend(members.into_iter().map(|c| (c, thing.clone())));
         }
         for (c, thing) in targets {
@@ -326,6 +403,41 @@ impl MemoryDB {
             )
             .await
             .map_err(db_err("grouping mark"))?;
+        }
+        // Where each piece stands now. A new thing, or an open one that
+        // gained a conversation or had news, that got no line is marked
+        // written with an empty one, so it shows its newest conversation's status and is not
+        // offered again for nothing.
+        let mut lines: HashMap<String, String> = HashMap::new();
+        for (c, t) in &grouping.joins {
+            if let (Some(_), Some(thing)) = (pending.get(*c), open.get(*t)) {
+                lines.entry(thing.id.clone()).or_default();
+            }
+        }
+        for thing in open.iter().filter(|t| !t.news.is_empty()) {
+            lines.entry(thing.id.clone()).or_default();
+        }
+        for thing in created.iter().flatten() {
+            lines.entry(thing.clone()).or_default();
+        }
+        for (piece, line) in &grouping.lines {
+            let thing = match *piece {
+                Piece::Open(t) => open.get(t).map(|t| t.id.clone()),
+                Piece::New(n) => created.get(n).cloned().flatten(),
+            };
+            if let Some(thing) = thing {
+                lines.insert(thing, line.clone());
+            }
+        }
+        for (thing, line) in &lines {
+            tx.execute(
+                "INSERT INTO thing_lines (thing_id, status, written_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(thing_id) DO UPDATE SET status = excluded.status,
+                                                     written_at = excluded.written_at",
+                libsql::params![thing.as_str(), line.as_str(), now],
+            )
+            .await
+            .map_err(db_err("grouping line"))?;
         }
         // A small chore is no piece of work: it leaves any thing the rules
         // gave it and is not offered for grouping again.
