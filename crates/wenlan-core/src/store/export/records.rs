@@ -23,6 +23,10 @@
 //!   derivation call no model for text that has not changed.
 //! - `eval_signals`: the person's feedback (confirm, pin, edit, a search
 //!   result opened).
+//! - `enrichment_steps`: which AI steps (classify, extract entities, title,
+//!   page growth) each memory has had, at which version. Their results are
+//!   in the memory, entity and page files; without this record a restore
+//!   would run every step again over every memory.
 
 use super::settings::write_tables;
 use super::{ExportDirs, Manifest};
@@ -45,6 +49,7 @@ pub const RECORD_TABLES: &[&str] = &[
     "relations",
     "entailment_cache",
     "eval_signals",
+    "enrichment_steps",
 ];
 
 /// Writes one file per record table; returns how many rows they hold.

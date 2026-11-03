@@ -569,8 +569,8 @@ async fn an_export_of_the_rebuild_is_the_same_export() {
     assert!(refused.is_err());
 }
 
-/// The graph, the judge's scores and the person's feedback come back from
-/// the files; the support edges, which name claims, do not: the claims are
+/// The graph, the judge's scores, the person's feedback and which AI steps
+/// each memory had come back from the files; the support edges, which name claims, do not: the claims are
 /// derived again, and their edges with them.
 #[tokio::test]
 async fn what_the_ai_worked_out_comes_back_without_its_support_edges() {
@@ -599,8 +599,12 @@ async fn what_the_ai_worked_out_comes_back_without_its_support_edges() {
          'claude', 0.9, 1, 10)",
         "INSERT INTO relations (id, from_entity, to_entity, relation_type, source_agent, \
          created_at) VALUES ('rel_1', 'ent_a', 'ent_b', 'works_with', ?1, 11)",
+        "INSERT INTO enrichment_steps (source_id, step_name, status, attempts, updated_at, \
+         input_version) VALUES (?1, 'entity_extract', 'ok', 1, 12, 3)",
     ];
-    let ids = ["root_1", "", "root_1", "p1", "mem_1", "mem_1", "claude"];
+    let ids = [
+        "root_1", "", "root_1", "p1", "mem_1", "mem_1", "claude", "mem_1",
+    ];
     for (statement, id) in statements.iter().zip(ids) {
         sql(&db, statement, id).await;
     }
@@ -630,6 +634,7 @@ async fn what_the_ai_worked_out_comes_back_without_its_support_edges() {
         ("eval_signals", 1),
         ("observations", 1),
         ("relations", 1),
+        ("enrichment_steps", 1),
     ] {
         let copied = fresh.export_table(table).await.unwrap().unwrap();
         assert_eq!(copied.rows.len(), rows, "{table}");
@@ -641,7 +646,7 @@ async fn what_the_ai_worked_out_comes_back_without_its_support_edges() {
         .export_fixture_sql_result(
             "INSERT INTO edges (edge_id, src_id, src_kind, dst_id, dst_kind, edge_type, \
              lineage, grounded, space, created_at) VALUES (?1, 'ent_x', 'entity', 'ent_y', \
-             'entity', 'relates', 'assertion', 0, 'sp', 12)",
+             'entity', 'relates', 'assertion', 0, 'sp', 13)",
             "edge_new",
         )
         .await;

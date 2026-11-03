@@ -64,7 +64,10 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         // graph (`edges` without the support edges, which name claims), the
         // provenance roots the graph names, observations and relations, the
         // judge's scores for each sentence and source span, and the
-        // person's feedback signals.
+        // person's feedback signals. `enrichment_steps` records which AI
+        // steps each memory has had, so a restore does not run them again
+        // over memories whose results its files already hold.
+        ("enrichment_steps", File),
         ("edges", File),
         ("provenance_roots", File),
         ("provenance_root_minhash_bands", File),
@@ -150,7 +153,6 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("summary_nodes", Cache),
         ("summary_node_sources", Cache),
         // Work queues and caches.
-        ("enrichment_steps", Cache),
         ("document_enrichment_queue", Cache),
         ("derived_artifact_sweeps", Cache),
         ("refinement_queue", Cache),
