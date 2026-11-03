@@ -9,7 +9,7 @@ use cap_std::fs::{Dir, OpenOptions};
 use fs2::FileExt as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
@@ -20,10 +20,12 @@ use wenlan_types::CodeBasisLocator;
 mod folders;
 pub use folders::{
     adoption_frontmatter, create_knowledge_folder, drop_pending_adoption, follow_external_moves,
-    knowledge_edit_targets, knowledge_markdown_paths, list_knowledge_folders, move_projected_page,
-    note_person_file, origin_id_line, pending_adoptions, person_page_files,
-    read_knowledge_markdown, record_person_note, restamp_person_note, stamp_person_note,
-    unstamp_person_note, validate_knowledge_folder_path, KnowledgeFolderEntry, PersonPageFile,
+    has_origin_version, knowledge_edit_targets, knowledge_markdown_paths, list_knowledge_folders,
+    move_projected_page, note_missing_pages, note_person_file, origin_id_line,
+    page_file_still_gone, pending_adoptions, person_page_files, read_knowledge_markdown,
+    reclaim_returned_page, record_person_note, restamp_person_note, stamp_person_note,
+    unstamp_person_note, validate_knowledge_folder_path, KnowledgeFolderEntry, MissingPages,
+    PersonPageFile, MASS_MISSING_FLOOR, MISSING_SETTLE_SECS,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;
@@ -86,6 +88,13 @@ struct KnowledgeState {
     /// Dropped with `archived_from`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     archived_versions: BTreeMap<String, i64>,
+    /// When the page watcher first found a page's file gone (page id -> unix
+    /// seconds) with no other file carrying its id. The page is archived only
+    /// once the file has stayed gone for a while, so a save that replaces the
+    /// file or a sync tool that briefly removes it does not archive anything.
+    /// Absent from state files written before this field existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    missing_since: BTreeMap<String, i64>,
     /// Notes the person put in the folder whose id line is written but
     /// whose page may not exist yet (page id -> file). Recorded before the
     /// id line, so a stop between the two never leaves a stamped note the
@@ -103,6 +112,7 @@ impl Default for KnowledgeState {
             index_regeneration_pending: false,
             archived_from: BTreeMap::new(),
             archived_versions: BTreeMap::new(),
+            missing_since: BTreeMap::new(),
             pending_adoptions: BTreeMap::new(),
         }
     }
@@ -178,6 +188,10 @@ pub struct ReconcileStats {
     pub temp_files_removed: usize,
     /// Repairs that failed; the page keeps its stale file until next boot.
     pub errors: usize,
+    /// Pages whose file is gone. Not written back: the folder is the source
+    /// of truth, so a file the person deleted stays deleted, and the page
+    /// watcher archives its page.
+    pub missing: usize,
 }
 
 /// The `origin_version` stamp `render_markdown` writes into every projected
@@ -203,6 +217,15 @@ pub(crate) fn projected_origin_version(fm: &crate::sources::obsidian::NoteFrontm
 /// Page ids carry no dots, so "exactly three components, the last two all
 /// digits" is our writer's shape and nobody else's — an editor swap file or a
 /// user's own `.tmp` scratch in the pages directory does not match.
+/// The page a `write_page` temp file was for.
+fn write_page_temp_owner(name: &str) -> Option<&str> {
+    if !is_write_page_temp_file(name) {
+        return None;
+    }
+    let rest = name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    rest.rsplitn(3, '.').nth(2)
+}
+
 fn is_write_page_temp_file(name: &str) -> bool {
     let Some(rest) = name.strip_prefix('.').and_then(|n| n.strip_suffix(".tmp")) else {
         return false;
@@ -241,6 +264,7 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
             "index_regeneration_pending",
             "archived_from",
             "archived_versions",
+            "missing_since",
             "pending_adoptions",
         ]
         .contains(&key.as_str())
@@ -446,7 +470,7 @@ impl KnowledgeWriter {
     }
 
     #[cfg(test)]
-    fn reconcile_for_test(&self, pages: &[Page]) -> Result<ReconcileStats, WenlanError> {
+    pub(crate) fn reconcile_for_test(&self, pages: &[Page]) -> Result<ReconcileStats, WenlanError> {
         let guard = self.begin_test_write();
         self.reconcile(&guard, pages)
     }
@@ -776,8 +800,9 @@ impl KnowledgeWriter {
         pages: &[Page],
     ) -> Result<ReconcileStats, WenlanError> {
         self.validate_guard(guard)?;
+        let (temp_files_removed, interrupted) = self.sweep_temp_leftovers();
         let mut stats = ReconcileStats {
-            temp_files_removed: self.sweep_temp_leftovers(),
+            temp_files_removed,
             ..ReconcileStats::default()
         };
 
@@ -790,6 +815,10 @@ impl KnowledgeWriter {
                 continue;
             };
             stats.checked += 1;
+            if self.projection_file_is_gone(&entry.file) && !interrupted.contains(&page.id) {
+                stats.missing += 1;
+                continue;
+            }
             let behind = if entry.person_frontmatter.is_some() {
                 self.person_file_is_behind(entry, page)
             } else {
@@ -822,10 +851,25 @@ impl KnowledgeWriter {
         Ok(stats)
     }
 
+    /// Whether nothing at all is at `filename`, its folder included (the
+    /// person may have deleted the whole folder). Any other failure is not
+    /// "gone": that is left to the repair, which reports it.
+    fn projection_file_is_gone(&self, filename: &str) -> bool {
+        folders::validate_page_path(filename).is_ok()
+            && folders::read_root(&self.path).is_ok_and(|root| {
+                matches!(
+                    root.symlink_metadata(filename),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                )
+            })
+    }
+
     /// For a note the person put in the folder, which carries no version
-    /// stamp: whether its file is missing, or still holds exactly the bytes
-    /// Wenlan recorded for an older version (Wenlan saved a newer one and
-    /// stopped before writing the file). A file the person changed since
+    /// stamp: whether its file is missing (reconcile asks only when
+    /// Wenlan's own write of it stopped halfway; a note the person deleted
+    /// stays deleted), or still holds exactly the bytes Wenlan recorded for
+    /// an older version (Wenlan saved a newer one and stopped before writing
+    /// the file). A file the person changed since
     /// is theirs, and the watcher reads it.
     fn person_file_is_behind(&self, entry: &PageFileState, page: &Page) -> bool {
         let bytes = (|| {
@@ -879,14 +923,19 @@ impl KnowledgeWriter {
     /// Remove `write_page` temp files orphaned by a crash between write and
     /// rename. Safe to run unconditionally at startup: the daemon holds the
     /// port by this point, so no live writer owns any of these.
-    fn sweep_temp_leftovers(&self) -> usize {
+    ///
+    /// Also returns the pages those writes were for: a write stopped after
+    /// it moved the old file aside and before the new one went in leaves
+    /// the page without a file, which is a repair, not a deletion.
+    fn sweep_temp_leftovers(&self) -> (usize, HashSet<String>) {
+        let mut owners = HashSet::new();
         let Ok(root) = folders::read_root(&self.path) else {
-            return 0;
+            return (0, owners);
         };
         let Ok((folders, _)) = folders::scan_tree(&root) else {
-            return 0;
+            return (0, owners);
         };
-        std::iter::once(String::new())
+        let removed = std::iter::once(String::new())
             .chain(folders.into_iter().map(|folder| folder.path))
             .filter_map(|path| folders::open_existing_folder(&root, &path).ok())
             .map(|directory| {
@@ -897,15 +946,23 @@ impl KnowledgeWriter {
                     .flatten()
                     .filter(|entry| {
                         let name = entry.file_name();
-                        is_write_page_temp_file(&name.to_string_lossy())
-                            && directory.symlink_metadata(&name).is_ok_and(|metadata| {
+                        let name = name.to_string_lossy();
+                        let removed = is_write_page_temp_file(&name)
+                            && directory.symlink_metadata(&*name).is_ok_and(|metadata| {
                                 metadata.is_file() && !metadata.file_type().is_symlink()
                             })
-                            && directory.remove_file(&name).is_ok()
+                            && directory.remove_file(&*name).is_ok();
+                        if removed {
+                            if let Some(owner) = write_page_temp_owner(&name) {
+                                owners.insert(owner.to_string());
+                            }
+                        }
+                        removed
                     })
                     .count()
             })
-            .sum()
+            .sum();
+        (removed, owners)
     }
 
     fn unique_filename_in_folder(
@@ -1401,7 +1458,11 @@ impl KnowledgeWriter {
             }
             for (page_id, entry) in folders::read_state_strict(&capabilities.wenlan)?.pages {
                 let slot = found.entry(page_id).or_default();
-                let (directory, name) = folders::page_parent(&capabilities.root, &entry.file)?;
+                // A folder deleted with the page in it: nothing there to find.
+                let Ok((directory, name)) = folders::page_parent(&capabilities.root, &entry.file)
+                else {
+                    continue;
+                };
                 if directory.symlink_metadata(&name).is_ok() {
                     slot.push(entry.file);
                 }
@@ -5159,16 +5220,27 @@ fn write_page_preserving_external_edits_with_hook(
                         read_regular_nofollow(&recovery, OsStr::new(&previous), &mut budget)?;
                     Ok::<_, WenlanError>(projection_bytes_replaceable(&displaced, page, baseline))
                 })();
+                // Do not rename-over a new editor file while restoring. If
+                // one appeared, both it and the displaced file survive. A
+                // drive without hard links gets the file renamed back.
+                let put_back = || {
+                    if recovery.hard_link(&previous, root, name).is_err()
+                        && matches!(
+                            root.symlink_metadata(name),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                        )
+                    {
+                        let _ = recovery.rename(&previous, root, name);
+                    }
+                };
                 if !matches!(allowed, Ok(true)) {
-                    // Do not rename-over a new editor file while restoring.
-                    // If one appeared, both it and the displaced file survive.
-                    let _ = recovery.hard_link(&previous, root, name);
+                    put_back();
                     return Err(WenlanError::Conflict(format!(
                         "page_projection_external_edit: preserved {name} and .wenlan/projection-recovery/{previous}"
                     )));
                 }
                 if let Err(error) = root.hard_link(temporary, root, name) {
-                    let _ = recovery.hard_link(&previous, root, name);
+                    put_back();
                     return Err(error.into());
                 }
                 // Retain the displaced inode: an external editor may still
@@ -7010,10 +7082,38 @@ mod tests {
         );
     }
 
-    /// A projection file that vanished (rename never landed, user deleted it)
-    /// is rewritten from DB truth.
+    /// A write stopped after it moved the old file aside and before the new
+    /// one went in leaves its temp file behind and no page file: that is
+    /// repaired, not read as the person deleting the page.
     #[test]
-    fn reconcile_rewrites_page_whose_projection_file_vanished() {
+    fn reconcile_repairs_a_page_whose_write_was_interrupted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        let path = writer.write_page_for_test(&page).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(
+            dir.path().join(format!(".{}.4242.7.tmp", page.id)),
+            "half written",
+        )
+        .unwrap();
+
+        let stats = writer
+            .reconcile_for_test(std::slice::from_ref(&page))
+            .unwrap();
+
+        assert_eq!((stats.rewritten, stats.missing), (1, 0));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            render_markdown_for(&page)
+        );
+    }
+
+    /// The folder is the source of truth: a page file the person deleted, or
+    /// whose whole folder they deleted, is not written back at startup. The
+    /// page watcher archives the page instead.
+    #[test]
+    fn reconcile_leaves_a_deleted_page_file_deleted() {
         let dir = tempfile::TempDir::new().unwrap();
         let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
         let page = test_concept();
@@ -7025,12 +7125,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(stats.checked, 1);
-        assert_eq!(stats.rewritten, 1);
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            render_markdown_for(&page),
-            "vanished projection was not restored from the DB"
+        assert_eq!(stats.rewritten, 0);
+        assert_eq!(stats.missing, 1);
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "a deleted page file came back"
         );
+    }
+
+    /// Rename reads `state.json` strictly; a page file waiting to count as
+    /// deleted must not make every rename fail.
+    #[test]
+    fn rename_reads_a_state_with_a_missing_page_file() {
+        let mut state = KnowledgeState::default();
+        state.missing_since.insert("page_gone".into(), 1);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let parsed = parse_rename_projection_state(&bytes).unwrap();
+        assert_eq!(parsed.missing_since.get("page_gone"), Some(&1));
     }
 
     /// The fsync-free write buys atomicity, not durability: after a power loss
