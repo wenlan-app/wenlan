@@ -422,3 +422,101 @@ async fn migration_149_adds_the_thing_tables() {
         assert!(rows.next().await.unwrap().is_some(), "{table}");
     }
 }
+
+#[tokio::test]
+async fn ux_home_5_a_thing_quiet_for_two_weeks_leaves_working_on_and_comes_back() {
+    let (db, _temp) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let day = 24 * 60 * 60;
+    let fresh = conversation(
+        &db,
+        "codex:fresh",
+        Some("Fresh work"),
+        None,
+        None,
+        now - day,
+    )
+    .await;
+    let old = conversation(
+        &db,
+        "codex:old",
+        Some("Old chat import"),
+        None,
+        None,
+        now - 40 * day,
+    )
+    .await;
+    db.sort_sessions_into_things().await.unwrap();
+    let things = db.list_things(&ReadScope::Global, None).await.unwrap();
+    assert_eq!(things.len(), 2, "a quiet thing is still listed, for search");
+    let quiet = |id: &str| {
+        let thing = things_of_list(&things, id);
+        thing.quiet
+    };
+    let fresh_thing = things_of(&db, &fresh).await.remove(0);
+    let old_thing = things_of(&db, &old).await.remove(0);
+    assert!(!quiet(&fresh_thing));
+    assert!(quiet(&old_thing));
+    assert_eq!(things[0].id, fresh_thing, "newest activity first");
+
+    // A new conversation in it brings it back.
+    let conn = db.conn.lock().await;
+    conn.execute(
+        "UPDATE agent_sessions SET last_write_at = ?1 WHERE id = ?2",
+        libsql::params![now, old.as_str()],
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    let back = db
+        .get_thing(&old_thing, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!back.quiet);
+}
+
+#[tokio::test]
+async fn ux_home_5_a_thing_from_an_old_brief_item_is_as_old_as_the_item() {
+    let (db, _temp) = test_db().await;
+    db.create_space("site", None, false).await.unwrap();
+    let now = chrono::Utc::now().timestamp();
+    db.apply_brief_update(&BriefUpdateRequest {
+        space: "site".into(),
+        caller_id: "things-test".into(),
+        operation_id: "old-item".into(),
+        summary: None,
+        mutations: vec![BriefMutation::Add {
+            text: "Rewrite the pricing page".into(),
+            state: BriefItemState::Active,
+            added_at: Some(now - 30 * 24 * 60 * 60),
+            gate: None,
+        }],
+    })
+    .await
+    .unwrap();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE brief_items SET updated_at = ?1",
+            libsql::params![now - 30 * 24 * 60 * 60],
+        )
+        .await
+        .unwrap();
+    }
+    db.sort_sessions_into_things().await.unwrap();
+    let things = db.list_things(&ReadScope::Global, None).await.unwrap();
+    assert_eq!(things.len(), 1);
+    assert!(
+        things[0].quiet,
+        "made today from a month-old item, still quiet"
+    );
+    assert!(things[0].last_activity_at <= now - 29 * 24 * 60 * 60);
+}
+
+fn things_of_list<'a>(
+    things: &'a [wenlan_types::ThingSummary],
+    id: &str,
+) -> &'a wenlan_types::ThingSummary {
+    things.iter().find(|t| t.id == id).unwrap()
+}

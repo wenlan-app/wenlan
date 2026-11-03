@@ -93,4 +93,45 @@ describe("WorkingOn", () => {
     await waitFor(() => expect(listWorkingOn).toHaveBeenCalled());
     expect(screen.queryByTestId("wiki-working-on")).toBeNull();
   });
+
+  it("UX-HOME-5: a thing quiet for two weeks leaves the list, and the Briefs stay out too", async () => {
+    vi.mocked(listThings).mockResolvedValue([
+      thing(),
+      thing({ id: "thg_old", title: "Old import", quiet: true, last_activity_at: now - 40 * 86400 }),
+    ]);
+    renderWorkingOn();
+    const section = await screen.findByTestId("wiki-working-on");
+    expect(section.textContent).toContain("New tagline");
+    expect(section.textContent).not.toContain("Old import");
+    expect(screen.queryByRole("button", { name: "See all" })).toBeNull();
+  });
+
+  it("UX-HOME-5: when every thing is quiet, home shows nothing rather than old Brief items", async () => {
+    vi.mocked(listThings).mockResolvedValue([thing({ quiet: true })]);
+    vi.mocked(listWorkingOn).mockResolvedValue([
+      { space: "wenlan", id: "b1", text: "Ship the grey line", added_at: now - 60 * 86400 },
+    ]);
+    renderWorkingOn();
+    await waitFor(() => expect(listThings).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByTestId("wiki-working-on")).toBeNull();
+    expect(listWorkingOn).not.toHaveBeenCalled();
+  });
+
+  it("UX-HOME-5: no cap: past six, See all opens the rest in place, with no count", async () => {
+    vi.mocked(listThings).mockResolvedValue(
+      Array.from({ length: 9 }, (_, i) => thing({ id: `thg_${i}`, title: `Work ${i}` })),
+    );
+    renderWorkingOn();
+    const section = await screen.findByTestId("wiki-working-on");
+    expect(section.querySelectorAll(".wiki-working-on-card")).toHaveLength(6);
+    const all = screen.getByRole("button", { name: "See all" });
+    expect(all).toHaveAttribute("aria-expanded", "false");
+    expect(section.textContent).not.toMatch(/\d+ more/);
+    fireEvent.click(all);
+    expect(section.querySelectorAll(".wiki-working-on-card")).toHaveLength(9);
+    expect(section).toHaveAttribute("data-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(section.querySelectorAll(".wiki-working-on-card")).toHaveLength(6);
+  });
 });
