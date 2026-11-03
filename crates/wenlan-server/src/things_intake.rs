@@ -378,7 +378,8 @@ pub async fn dream_with(
                 memory_type: Some(if point.decided { "decision" } else { "fact" }.into()),
                 space,
                 source_agent: None,
-                title: None,
+                // The point is its own title: short, and what the page lists.
+                title: Some(point.text.clone()),
                 confidence: None,
                 supersedes: point.replaces.map(|p| prior[p].id.clone()),
                 entity: None,

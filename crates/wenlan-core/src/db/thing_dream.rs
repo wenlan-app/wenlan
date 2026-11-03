@@ -277,6 +277,13 @@ impl MemoryDB {
                 at: night.at,
                 decided: night.entry.decided.len(),
                 open: night.entry.open.len(),
+                fresh: night
+                    .entry
+                    .decided
+                    .iter()
+                    .chain(&night.entry.open)
+                    .cloned()
+                    .collect(),
             }))
     }
 

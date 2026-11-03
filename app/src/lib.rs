@@ -1857,6 +1857,7 @@ pub fn run() {
             search::rename_thing,
             search::hide_thing,
             search::answer_thing_merge,
+            search::undo_thing_dream,
             search::move_session_thing,
             search::get_page_sessions,
             search::set_page_review_required,

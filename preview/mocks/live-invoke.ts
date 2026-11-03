@@ -1084,6 +1084,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     post(`/api/things/${enc(String(a?.id ?? ""))}/${a?.merge ? "merge" : "keep-apart"}`, {
       other_thing_id: a?.otherId,
     }),
+  undo_thing_dream: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/dream/undo`, {}),
   move_session_thing: (a) => post(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/things/move`, {
     from_thing_id: a?.fromThingId,
     ...(a?.toThingId == null ? {} : { to_thing_id: a.toThingId }),

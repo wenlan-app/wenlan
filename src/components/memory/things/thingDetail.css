@@ -94,3 +94,12 @@
 .thing-merge-actions button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:1px; }
 .thing-merge-actions button:disabled { opacity:.6;cursor:default; }
 .thing-merge-error { flex-basis:100%;margin:0;color:var(--mem-text-secondary);font:13px/1.5 var(--mem-font-body); }
+/* What last night steeped (UX-CHAT-5): a quiet line, never a banner. */
+.thing-steeped { margin-top:14px;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;min-width:0; }
+.thing-steeped-text { margin:0;display:inline-flex;align-items:baseline;gap:6px;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body);overflow-wrap:anywhere; }
+.steep-moon { flex:none;align-self:center;color:var(--mem-accent-page); }
+.thing-steeped-undo { padding:0;border:0;background:none;color:var(--mem-text-secondary);font:13px/1.5 var(--mem-font-body);cursor:pointer;text-decoration:underline;text-decoration-color:var(--mem-border);text-underline-offset:3px;white-space:nowrap; }
+.thing-steeped-undo:hover { color:var(--mem-text); }
+.thing-steeped-undo:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.thing-steeped-undo:disabled { opacity:.6;cursor:default; }
+.thing-recap-group li[data-fresh]::marker { color:var(--mem-accent-page); }

@@ -156,6 +156,12 @@ async fn ux_chat_5_each_night_what_a_thing_settled_goes_into_long_term_memory() 
         .unwrap();
     let dream = detail.dream.expect("the page says what was put away");
     assert_eq!((dream.decided, dream.open), (1, 1));
+    assert_eq!(dream.fresh, ["mem_tagline", "mem_pricing"]);
+    assert_eq!(
+        detail.open_points,
+        ["mem_pricing"],
+        "the page can group what is open"
+    );
     let listed: Vec<&str> = detail
         .memories
         .iter()
@@ -168,6 +174,15 @@ async fn ux_chat_5_each_night_what_a_thing_settled_goes_into_long_term_memory() 
         .unwrap()[0]
         .last_activity_at;
     assert_eq!(site_after, site_before, "reading at night is not activity");
+    let listed = db
+        .list_things(&ReadScope::Global, Some(&site))
+        .await
+        .unwrap();
+    assert_eq!(
+        listed[0].dreamed_at,
+        Some(dream.at),
+        "home can say it was steeped"
+    );
 
     // Read conversations are not read again until they go on.
     let due = db.things_to_dream(now, 10).await.unwrap();
@@ -221,6 +236,11 @@ async fn ux_chat_5_each_night_what_a_thing_settled_goes_into_long_term_memory() 
     );
     assert_eq!(db.undo_thing_dream(&site).await.unwrap().len(), 2);
     assert!(db.thing_dream(&site).await.unwrap().is_none());
+    let listed = db
+        .list_things(&ReadScope::Global, Some(&site))
+        .await
+        .unwrap();
+    assert_eq!(listed[0].dreamed_at, None, "taken back, home says nothing");
     assert!(db.undo_thing_dream(&site).await.unwrap().is_empty());
     assert!(db.dream_points(&site).await.unwrap().is_empty());
     // Taken back is not read again for the same lines.

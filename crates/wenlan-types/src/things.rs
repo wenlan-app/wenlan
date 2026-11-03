@@ -37,6 +37,10 @@ pub struct ThingSummary {
     /// own with the next conversation (UX-HOME-5).
     #[serde(default)]
     pub quiet: bool,
+    /// Unix seconds: the newest night that steeped what it settled into
+    /// long-term memory and was not taken back (UX-CHAT-5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dreamed_at: Option<i64>,
 }
 
 /// How long a thing goes without a conversation or Brief change before it
@@ -97,6 +101,9 @@ pub struct ThingDetailResponse {
     /// and was not taken back (UX-CHAT-5). Older daemons leave it out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dream: Option<ThingDream>,
+    /// Points steeped from this thing that are still open, not settled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open_points: Vec<String>,
 }
 
 /// One night's points of a thing, put into long-term memory: how many were
@@ -107,6 +114,9 @@ pub struct ThingDream {
     pub at: i64,
     pub decided: usize,
     pub open: usize,
+    /// The memories that night wrote, so the page can mark them as new.
+    #[serde(default)]
+    pub fresh: Vec<String>,
 }
 
 /// `POST /api/things/{id}/merge` and `POST /api/things/{id}/keep-apart`: the

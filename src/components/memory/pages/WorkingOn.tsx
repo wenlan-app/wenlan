@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { hasToolMark, ToolMark } from "../assets/toolMarks";
+import { SteepMoon } from "../things/ThingSteeped";
+import { steepedToday } from "../things/ThingViews";
 import { agentDisplayName, getThing, hideThing, listThings, listWorkingOn, setUiLanguage, type ThingDetail, type ThingSummary, type WorkingOnItem } from "../../../lib/tauri";
 
 export const WORKING_ON_QUERY_KEY = ["working-on"] as const;
@@ -13,6 +15,12 @@ const RETRY_SOON = { retry: 5, retryDelay: (attempt: number) => Math.min(2_000 *
 
 /** How many lines of work home shows before "See all". */
 export const WORKING_ON_LISTED = 6;
+/** Most things the "steeped overnight" line names. */
+const STEEPED_NAMED = 3;
+/** Steeping before this local hour happened overnight. */
+const NIGHT_ENDS = 7;
+/** How long a card lights up when its name is pressed. */
+const GLOW_MS = 1_600;
 
 /** "Today", "yesterday", "3 days ago" in the interface language: when the
  *  work was added, a day and never a counter of things. */
@@ -90,6 +98,31 @@ export function WorkingOn({
   const current: ThingSummary[] = onOpenThing ? (things.data ?? []).filter((thing) => !thing.quiet) : [];
   const more = current.length > WORKING_ON_LISTED;
   const thingItems = showAll ? current : current.slice(0, WORKING_ON_LISTED);
+  // What Wenlan steeped from today's things into long-term memory (UX-CHAT-5),
+  // named in one quiet line beside the heading so the night's work is seen.
+  // It names things, never counts them, and is gone tomorrow.
+  const steeped = onOpenThing
+    ? (things.data ?? []).filter((thing) => thing.title && thing.dreamed_at && steepedToday(thing.dreamed_at)).slice(0, STEEPED_NAMED)
+    : [];
+  const overnight = steeped.every((thing) => new Date((thing.dreamed_at ?? 0) * 1000).getHours() < NIGHT_ENDS);
+  const [glowing, setGlowing] = useState<string | null>(null);
+  const glowTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(glowTimer.current), []);
+  // A name opens nothing new: its card lights up for a moment where it is.
+  // A thing gone quiet has no card, so its name opens the thing.
+  const showSteeped = (id: string) => {
+    const at = current.findIndex((thing) => thing.id === id);
+    if (at < 0) {
+      onOpenThing?.(id);
+      return;
+    }
+    if (at >= WORKING_ON_LISTED) setShowAll(true);
+    setGlowing(id);
+    window.clearTimeout(glowTimer.current);
+    glowTimer.current = window.setTimeout(() => setGlowing(null), GLOW_MS);
+    window.requestAnimationFrame(() =>
+      document.querySelector(`[data-thing-id="${CSS.escape(id)}"]`)?.scrollIntoView?.({ behavior: "smooth", block: "nearest", inline: "nearest" }));
+  };
   // Each card names the pages its work wrote and the tool it happened in.
   const details = useQueries({
     queries: thingItems.map((thing) => ({
@@ -115,6 +148,20 @@ export function WorkingOn({
     <section className="wiki-working-on" data-testid="wiki-working-on" data-expanded={showAll ? "true" : undefined} aria-labelledby="wiki-working-on-title">
       <header className="wiki-new-pages-header wiki-working-on-header">
         <h2 id="wiki-working-on-title">{t("pages.overview.workingOnTitle")}</h2>
+        {steeped.length > 0 ? (
+          <p className="wiki-working-on-steeped" data-testid="wiki-working-on-steeped">
+            <SteepMoon />
+            <span className="wiki-working-on-steeped-label">{t(overnight ? "pages.overview.steepedOvernight" : "pages.overview.steepedToday")}</span>
+            <span className="wiki-working-on-steeped-names">
+              {steeped.map((thing, index) => (
+                <Fragment key={thing.id}>
+                  {index > 0 ? t("pages.overview.steepedSeparator") : null}
+                  <button type="button" onClick={() => showSteeped(thing.id)}>{thing.title}</button>
+                </Fragment>
+              ))}
+            </span>
+          </p>
+        ) : null}
         {more ? (
           <button type="button" className="wiki-new-pages-all" aria-expanded={showAll} onClick={() => setShowAll((shown) => !shown)}>
             {showAll ? t("pages.overview.workingOnFewer") : t("pages.overview.workingOnAll")}
@@ -131,8 +178,8 @@ export function WorkingOn({
           const named = [...new Set(slugs.filter((tool) => !hasToolMark(tool)).map((tool) => agentDisplayName(tool)).filter(Boolean))];
           const where = [...named, ...thing.spaces].join(" · ");
           return (
-            <li key={thing.id}>
-              <button type="button" className="wiki-working-on-card" onClick={() => onOpenThing?.(thing.id)}>
+            <li key={thing.id} data-thing-id={thing.id}>
+              <button type="button" className="wiki-working-on-card" data-glow={glowing === thing.id ? "true" : undefined} onClick={() => onOpenThing?.(thing.id)}>
                 <span className="wiki-working-on-title">{thing.title ?? t("thing.untitled")}</span>
                 <span className="wiki-working-on-text">{line ?? ""}</span>
                 <span className="wiki-working-on-foot">

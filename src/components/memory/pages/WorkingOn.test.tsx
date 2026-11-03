@@ -178,4 +178,36 @@ describe("WorkingOn", () => {
     expect(section.textContent).toContain("New tagline");
     expect(onOpenThing).not.toHaveBeenCalled();
   });
+
+  it("UX-CHAT-5: names what was steeped overnight beside the heading, and pressing a name lights its card", async () => {
+    const tonight = new Date();
+    tonight.setHours(3, 0, 0, 0);
+    const at = Math.floor(tonight.getTime() / 1000);
+    vi.mocked(listThings).mockResolvedValue([
+      thing({ id: "thg_1", title: "Site redesign", dreamed_at: at }),
+      thing({ id: "thg_2", title: "Release notes", dreamed_at: at - 86_400 * 2 }),
+      thing({ id: "thg_3", title: "Old work", quiet: true, dreamed_at: at }),
+    ]);
+    const { onOpenThing } = renderWorkingOn();
+    const line = await screen.findByTestId("wiki-working-on-steeped");
+    expect(line).toHaveTextContent("Steeped overnight:");
+    expect(line).toHaveTextContent("Site redesign, Old work");
+    expect(line).not.toHaveTextContent("Release notes");
+    // Names, never a count.
+    expect(line.textContent).not.toMatch(/\d/);
+    fireEvent.click(screen.getByRole("button", { name: "Site redesign" }));
+    expect(onOpenThing).not.toHaveBeenCalled();
+    const card = document.querySelector('[data-thing-id="thg_1"] .wiki-working-on-card');
+    expect(card).toHaveAttribute("data-glow", "true");
+    // A quiet thing has no card: its name opens it.
+    fireEvent.click(screen.getByRole("button", { name: "Old work" }));
+    expect(onOpenThing).toHaveBeenCalledWith("thg_3");
+  });
+
+  it("UX-CHAT-5: says nothing about steeping that was not today", async () => {
+    vi.mocked(listThings).mockResolvedValue([thing({ dreamed_at: now - 86_400 * 3 })]);
+    renderWorkingOn();
+    await screen.findByText("New tagline");
+    expect(screen.queryByTestId("wiki-working-on-steeped")).toBeNull();
+  });
 });
