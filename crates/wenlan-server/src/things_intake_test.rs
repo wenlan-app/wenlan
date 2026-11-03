@@ -180,3 +180,67 @@ async fn ux_thing_1_a_model_that_keeps_failing_is_not_asked_every_look() {
     assert_eq!(label.prompts.lock().unwrap().len(), 2);
     assert_eq!(group.prompts.lock().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn ux_thing_2_a_conversation_moved_once_steers_the_next_grouping() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    db.create_space("wenlan", None, false).await.unwrap();
+    let first = vec![conv("z1", &["sync Zotero into drafts", "ok"], 30)];
+    let label = Scripted::new(&[
+        r#"{"work": true, "title": "Zotero 同步", "space": "wenlan", "about": "把 Zotero 同步成草稿", "status": "同步好了"}"#,
+        r#"{"work": true, "title": "Zotero 草稿", "space": "wenlan", "about": "Zotero 的草稿格式", "status": "格式改好了"}"#,
+    ]);
+    let group = Scripted::new(&[
+        r#"{"new": [{"title": "Wenlan 推廣", "conversations": ["C0"], "now": "同步好了"}]}"#,
+        r#"{"join": [{"conversation": "C0", "piece": "T0"}], "now": [{"piece": "T0", "line": "草稿格式也好了"}]}"#,
+    ]);
+    let models = IntakeModels {
+        label: label.clone(),
+        group: group.clone(),
+    };
+    let mut backoff = Backoff::default();
+    look_with(
+        &db,
+        first.clone(),
+        &models,
+        "Traditional Chinese",
+        &mut backoff,
+    )
+    .await
+    .unwrap();
+    // The model got it wrong; the person moves it once.
+    let z1 = found_session_id(&first[0]).unwrap();
+    let wrong = db.session_things(&z1).await.unwrap()[0].id.clone();
+    db.move_session_thing(
+        &z1,
+        &wrong,
+        &wenlan_core::db::things::MoveTarget::NewThing("Zotero 工作流".into()),
+    )
+    .await
+    .unwrap();
+
+    // A new conversation like it: the grouping model is told how the person sorted that case.
+    let mut second = first;
+    second.push(conv("z2", &["fix the Zotero draft format", "ok"], 5));
+    look_with(&db, second, &models, "Traditional Chinese", &mut backoff)
+        .await
+        .unwrap();
+    let prompts = group.prompts.lock().unwrap().clone();
+    assert_eq!(prompts.len(), 2);
+    assert!(!prompts[0].contains("corrected"));
+    assert!(prompts[1].contains(
+        "- \"Zotero 同步\" (把 Zotero 同步成草稿): not \"Wenlan 推廣\" but \"Zotero 工作流\""
+    ));
+    // And the person's placement stays where they put it.
+    let titles: Vec<_> = db
+        .session_things(&z1)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter_map(|t| t.title)
+        .collect();
+    assert_eq!(titles, vec!["Zotero 工作流".to_string()]);
+}

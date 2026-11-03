@@ -245,7 +245,8 @@ pub async fn look_with(
     if pending.is_empty() && open.iter().all(|t| t.news.is_empty()) || now < backoff.group.1 {
         return Ok(report);
     }
-    let made = group(db, &pending, &open, models, language).await;
+    let corrections = db.intake_corrections().await.map_err(|e| e.to_string())?;
+    let made = group(db, &pending, &open, &corrections, models, language).await;
     match made {
         Ok(made) => {
             backoff.group = (0, 0);
@@ -265,6 +266,7 @@ async fn group(
     db: &MemoryDB,
     pending: &[intake::Pending],
     open: &[intake::OpenThing],
+    corrections: &[intake::Correction],
     models: &IntakeModels,
     language: &str,
 ) -> Result<usize, String> {
@@ -275,7 +277,7 @@ async fn group(
                 "You sort a person's conversations into the pieces of work they belong to. Answer with JSON only."
                     .into(),
             ),
-            user_prompt: intake::group_prompt(pending, open, language),
+            user_prompt: intake::group_prompt(pending, open, corrections, language),
             max_tokens: 4_000,
             temperature: 0.0,
             label: Some("things_group".into()),
