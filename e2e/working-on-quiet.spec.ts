@@ -64,7 +64,9 @@ for (const cfg of [
       if (command === "get_thing") {
         const found = list.find((thing) => thing.id === args?.id);
         if (!found) throw new Error("unknown thing");
-        return { ...found, sessions: [], pages: [], memories: [] };
+        // Each card shows the tool it was talked through in by its mark.
+        const tool = Number(found.id.slice(5)) % 2 ? "codex" : "claude-code";
+        return { ...found, sessions: [{ id: `s-${found.id}`, tool, title: null, last_write_at: found.last_activity_at }], pages: [], memories: [] };
       }
       throw new Error(`Unexpected command: ${command}`);
     });
@@ -78,6 +80,7 @@ for (const cfg of [
     const section = page.getByTestId("wiki-working-on");
     await expect(section.locator(".wiki-working-on-card")).toHaveCount(6);
     await expect(section).toContainText("New tagline");
+    await expect(section.locator(".wiki-working-on-card").first().locator(".tool-mark")).toBeVisible();
     for (const old of ["Trip planning", "Pricing page rewrite", "Summer reading list"]) {
       await expect(section).not.toContainText(old);
     }
