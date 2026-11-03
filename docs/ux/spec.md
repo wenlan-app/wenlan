@@ -167,7 +167,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   with the date and the source, and it can be opened. Both your words and the
   AI's are checked. It is a Beta setting, off by default.
   原文：AI 說了跟以前定的相反的話，同一輪就出現一句提醒，帶日期和出處，點得開。「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31；檢查改成要你打開才有）；選擇卡「你和 AI 说的都看」（2026-10-31 16:51）
-- **UX-CHAT-2** `planned` Nothing is said when the reply has nothing to do with
+- **UX-CHAT-2** `shipped` Nothing is said when the reply has nothing to do with
   earlier decisions. If Wenlan is closed or does not answer within one second,
   the check is skipped and the chat is not held up. At most five reminders a
   day.
@@ -192,7 +192,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   recorded and can be undone. The AI asks you only when a point conflicts with
   something you wrote or decided.
   原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。（2026-10-30 17:19 PT 定了：安靜幾天後問一次「收尾？」，算在一天 5 條裡，不猜。）選擇卡「对不上时才问」（2026-10-31 23:50）：AI 自己把整理好的點搬進大圖，可還原；只有跟你寫過、定過的東西對不上時才問你。「我觉得不一定只有我点头」。「如果是 AI 要自己收，我觉得要自己收」（2026-11-01 00:06）「就有点像 working memory 嘛…过一段时间没做，没有动作，它就自己收到图里面去，大图里面去，就更新了。然后呢，下一次你又有什么新的？跟就算跟这件事情是有关的话，它可能就有点像是在一个新的 working memory…然后它过一段时间，它又会回去更，就会自己回去更新的」（2026-11-01 00:08）「做到一半…他想要回去找到他的话，他要重开一个新的，这是不合理的」「他界面上面看到的样子，跟你实际上背后做的样子…不一定要全部都一致的」（2026-11-01 00:10）
-- **UX-CHAT-6** `planned` The check's rules live in Wenlan itself, not in each
+- **UX-CHAT-6** `shipped` The check's rules live in Wenlan itself, not in each
   tool's plugin, so every AI tool gets the same result.
   原文：檢查的規則寫在文瀾本身，不寫在各家外掛裡；換哪個 AI 工具結果都一樣。
 - **UX-CHAT-7** `planned` The AI tool tells you in one quiet line, with a

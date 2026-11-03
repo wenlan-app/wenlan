@@ -176,8 +176,9 @@ async fn check_returns_a_reminder_with_date_and_source_and_logs_it() {
     assert_eq!(log[0]["actor"]["session"], "claude-code:abc");
 }
 
+/// UX-CHAT-2: nothing conflicts, nothing is said.
 #[tokio::test]
-async fn check_is_silent_when_nothing_conflicts() {
+async fn ux_chat_2_check_is_silent_when_nothing_conflicts() {
     let _on = check_setting(true).await;
     let (state, db, _tmp) = state_with_db().await;
     store(
@@ -254,4 +255,40 @@ async fn check_context_hands_back_relevant_decisions() {
     .await;
     let empty: ChatContextResponse = serde_json::from_value(empty).unwrap();
     assert_eq!(empty.skipped, Some(ChatCheckSkipped::Empty));
+}
+
+/// UX-CHAT-6: the rules live in Wenlan, so every AI tool gets the same result.
+#[tokio::test]
+async fn ux_chat_6_every_ai_tool_gets_the_same_reminder_from_wenlan() {
+    let _on = check_setting(true).await;
+    let (state, db, _tmp) = state_with_db().await;
+    store(
+        &db,
+        "mem_storage",
+        "decision",
+        "Use libSQL instead of a dedicated graph database.",
+    )
+    .await;
+    // The Claude Code hook and Codex's check_reply tool both only forward the
+    // reply; the rules that decide live in the daemon, so the answer is the same.
+    let mut answers = Vec::new();
+    for session in ["claude-code:abc", "codex:019a-77b"] {
+        let (status, json) = call(
+            &state,
+            "POST",
+            "/api/check",
+            Some(serde_json::json!({
+                "reply": "Let's switch to a dedicated graph database.",
+                "session": session,
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{json}");
+        let response: ChatCheckResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(response.reminders.len(), 1);
+        answers.push(response.reminders[0].clone());
+    }
+    assert_eq!(answers[0].text, answers[1].text);
+    assert_eq!(answers[0].source.memory_id, answers[1].source.memory_id);
+    assert_eq!(answers[0].decided_on, answers[1].decided_on);
 }
