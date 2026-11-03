@@ -285,7 +285,9 @@ async fn export_into(
         }
     }
     lap(&mut summary, "pages folder copies");
-    let kept = memories::export_memories(db, &done.entity_stems, dirs, &mut manifest).await?;
+    let followed = memories::Followed::read(data_root);
+    let kept =
+        memories::export_memories(db, &done.entity_stems, &followed, dirs, &mut manifest).await?;
     lap(&mut summary, "memories");
     summary.memories = kept.memories;
     summary.originals = kept.originals;

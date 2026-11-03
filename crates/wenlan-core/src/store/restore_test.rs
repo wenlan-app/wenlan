@@ -372,6 +372,69 @@ async fn a_restore_keeps_a_link_to_one_of_two_pages_of_the_same_name() {
     );
 }
 
+/// A document read from a folder Wenlan no longer follows comes back from
+/// the files, chunk by chunk: the folder may be gone.
+#[tokio::test]
+async fn a_restore_gives_back_documents_of_folders_no_longer_followed() {
+    let (db, dir) = fixture().await;
+    for (chunk, text) in [(0, "# Trip plan"), (1, "Lisbon in May.")] {
+        db.export_fixture_sql(
+            &format!(
+                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, \
+                 last_modified, chunk_type, source_agent, origin_class) VALUES \
+                 ('doc{chunk}', '{text}', 'memory', ?1, 'plan', {chunk}, 0, 'text', 'folder', \
+                 'document_ingest')"
+            ),
+            "old-folder::notes/plan.md",
+        )
+        .await;
+    }
+    let data_root = tempfile::tempdir().unwrap();
+    let embedder = db.shared_embedder().expect("the test database has a model");
+    run_once(
+        &dir.path().join(DATABASE_FILE),
+        &PagesFolder::default(),
+        data_root.path(),
+        &mirror_root(data_root.path()),
+        embedder,
+        false,
+    )
+    .await
+    .unwrap();
+    let db_dir = data_root.path().join("memorydb");
+    let outcome = restore_missing_database(data_root.path(), &db_dir, 1)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, Restore::Restored { .. }), "{outcome:?}");
+    let restored = MemoryDB::new_with_embedding_recovery(
+        &db_dir,
+        Arc::new(NoopEmitter),
+        MemoryEmbeddingRecovery::Deferred,
+    )
+    .await
+    .unwrap();
+    let memories = restored.export_memory_rows().await.unwrap();
+    let doc: Vec<_> = memories
+        .iter()
+        .filter(|row| row.source_id == "old-folder::notes/plan.md")
+        .map(|row| {
+            (
+                row.chunk_index,
+                row.content.as_str(),
+                row.source_agent.as_deref(),
+                row.origin_class.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        doc,
+        [
+            (0, "# Trip plan", Some("folder"), Some("document_ingest")),
+            (1, "Lisbon in May.", Some("folder"), Some("document_ingest")),
+        ]
+    );
+}
+
 /// A refresh that stopped after setting the old history aside and before
 /// putting the new one in place: the restore reads the old one, and the
 /// next refresh puts it back first.

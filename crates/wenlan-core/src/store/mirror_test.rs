@@ -405,9 +405,11 @@ async fn an_emptied_database_does_not_empty_the_files() {
         );
     }
     // A small copy is not compared: a new database grows past it.
-    assert!(refuse_a_collapse(&db, &mirror.join("nothing-here"))
-        .await
-        .is_ok());
+    assert!(
+        refuse_a_collapse(&db, &mirror.join("nothing-here"), &Default::default())
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]

@@ -22,13 +22,19 @@
 //!   `source` (when not `memory`), `modified`, `cue` (retrieval cue) and
 //!   `space_rejected`. An original carries the same person decisions (pin,
 //!   confirm, entity, supersedes, stated kind and fields, `about`, …) there.
-//! - Not files: document chunks (their connected folder is their truth) and
-//!   rows derived from pages, summaries and episodes, which the rebuild
-//!   recomputes. Pending revisions become proposals in a later part. Each is
+//! - A document read from a folder Wenlan still follows (a connected source
+//!   that is not paused) is not a file: the folder is its truth, and the
+//!   folder is read again after a restore. A document from any other folder
+//!   (disconnected, paused, imported once, or gone) becomes
+//!   `backstage/originals/folder/<id stem>.md`, one `document` message per
+//!   chunk, so it survives a restore whatever happened to the folder.
+//! - Not files: rows derived from pages, summaries and episodes, which the
+//!   rebuild recomputes. Pending revisions become proposals in a later part. Each is
 //!   counted in the manifest. A source this export does not know is listed
 //!   as left out, never counted as derived.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
 use super::pages::Paths;
 use super::{ExportDirs, LeftOut, Manifest, NotFiles};
@@ -45,8 +51,56 @@ use crate::store::format::original::{self, Message, OriginalFile};
 const MEMORY_SOURCES: &[&str] = &["memory", "manual", "clipboard"];
 
 /// Rows the rebuild recomputes: episodes (a verbatim slice of their parent),
-/// page and summary rows, and connected-folder documents.
-const DERIVED_SOURCES: &[&str] = &["episode", "page", "summary", "local_files"];
+/// page and summary rows.
+const DERIVED_SOURCES: &[&str] = &["episode", "page", "summary"];
+
+/// Documents of older folder sources.
+const LOCAL_FILES_SOURCE: &str = "local_files";
+
+/// The connected sources Wenlan keeps reading: what is in `config.json`
+/// under `sources`, not paused. A document's memory id starts with its
+/// source's id (`<source id>::<path>`), so a document from one of these is
+/// read again after a restore, and any other document is kept as a file.
+#[derive(Debug, Clone, Default)]
+pub struct Followed(HashSet<String>);
+
+impl Followed {
+    /// The sources `config.json` in `data_root` lists, not paused. A
+    /// missing or unreadable config follows nothing, so every document is
+    /// kept.
+    pub fn read(data_root: &Path) -> Self {
+        let Ok(text) = std::fs::read_to_string(data_root.join("config.json")) else {
+            return Self::default();
+        };
+        let Ok(config) = serde_json::from_str::<crate::config::Config>(&text) else {
+            return Self::default();
+        };
+        Self::of(&config.sources)
+    }
+
+    pub fn of(sources: &[wenlan_types::sources::Source]) -> Self {
+        Self(
+            sources
+                .iter()
+                .filter(|source| {
+                    !matches!(source.status, wenlan_types::sources::SyncStatus::Paused)
+                })
+                .map(|source| source.id.clone())
+                .collect(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ids(ids: &[&str]) -> Self {
+        Self(ids.iter().map(|id| id.to_string()).collect())
+    }
+
+    fn follows(&self, source_id: &str) -> bool {
+        source_id
+            .split_once("::")
+            .is_some_and(|(source, _)| self.0.contains(source))
+    }
+}
 
 /// A person's saved web page.
 const WEB_SOURCE: &str = "webpage";
@@ -66,6 +120,7 @@ pub struct MemoriesExported {
 pub async fn export_memories(
     db: &MemoryDB,
     entity_stems: &HashMap<String, String>,
+    followed: &Followed,
     dirs: &ExportDirs,
     manifest: &mut Manifest,
 ) -> Result<MemoriesExported, WenlanError> {
@@ -88,10 +143,11 @@ pub async fn export_memories(
     let mut paths = Paths::default();
     for ((id, source), chunks) in groups {
         let head = chunks[0];
-        match class_of(head) {
-            Class::Memory | Class::Original => {}
+        let class = class_of(head, followed);
+        match &class {
+            Class::Memory | Class::Original | Class::Document => {}
             Class::Derived(reason) => {
-                *skipped.entry(reason).or_default() += 1;
+                *skipped.entry(reason.clone()).or_default() += 1;
                 continue;
             }
             Class::Unknown => {
@@ -103,7 +159,9 @@ pub async fn export_memories(
                 continue;
             }
         }
-        let original = if source == WEB_SOURCE {
+        let original = if matches!(class, Class::Document) {
+            Some(("folder", id, "document"))
+        } else if source == WEB_SOURCE {
             Some(("web", id, "page"))
         } else if source == FILE_SOURCE {
             Some(("file", id, "document"))
@@ -139,7 +197,8 @@ pub async fn export_memories(
         manifest.not_files.push(NotFiles {
             what,
             count,
-            why: "derived or owned by a connected folder; the rebuild recomputes it".to_string(),
+            why: "derived, or read again from a folder Wenlan follows; the rebuild recomputes it"
+                .to_string(),
         });
     }
     Ok(done)
@@ -331,16 +390,21 @@ enum Class {
     Memory,
     /// A saved web page or watched file, written as an original.
     Original,
+    /// A document from a folder Wenlan does not follow, written as an
+    /// original.
+    Document,
     /// Recomputed by the rebuild, counted under this name.
     Derived(String),
     Unknown,
 }
 
-fn class_of(head: &ExportMemoryRow) -> Class {
+fn class_of(head: &ExportMemoryRow, followed: &Followed) -> Class {
     class_by(
         &head.source,
+        &head.source_id,
         head.origin_class.as_deref(),
         head.source_agent.as_deref(),
+        followed,
     )
 }
 
@@ -348,22 +412,33 @@ fn class_of(head: &ExportMemoryRow) -> Class {
 /// own (a memory or an original), by the same rule the export uses.
 pub(crate) fn gets_a_file(
     source: &str,
+    source_id: &str,
     origin_class: Option<&str>,
     source_agent: Option<&str>,
+    followed: &Followed,
 ) -> bool {
     matches!(
-        class_by(source, origin_class, source_agent),
-        Class::Memory | Class::Original
+        class_by(source, source_id, origin_class, source_agent, followed),
+        Class::Memory | Class::Original | Class::Document
     )
 }
 
-fn class_by(source: &str, origin_class: Option<&str>, source_agent: Option<&str>) -> Class {
-    let ingest = origin_class == Some("document_ingest")
+fn class_by(
+    source: &str,
+    source_id: &str,
+    origin_class: Option<&str>,
+    source_agent: Option<&str>,
+    followed: &Followed,
+) -> Class {
+    let ingest = source == LOCAL_FILES_SOURCE
+        || origin_class == Some("document_ingest")
         || source_agent.is_some_and(crate::origin::is_document_ingest_source_agent);
     if DERIVED_SOURCES.contains(&source) {
         Class::Derived(format!("memories with source {source}"))
+    } else if ingest && followed.follows(source_id) {
+        Class::Derived("documents of followed folders".to_string())
     } else if ingest {
-        Class::Derived("document chunks".to_string())
+        Class::Document
     } else if MEMORY_SOURCES.contains(&source) {
         Class::Memory
     } else if source == WEB_SOURCE || source == FILE_SOURCE {

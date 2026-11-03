@@ -36,6 +36,15 @@ pub(crate) struct ExportPageRow {
     pub entity_updated_at: Option<i64>,
 }
 
+/// A memory's first chunk, as much as the export classifies it by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContentHead {
+    pub source: String,
+    pub source_id: String,
+    pub origin_class: Option<String>,
+    pub source_agent: Option<String>,
+}
+
 /// One `memories` row (one chunk), every column a memory file carries.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ExportMemoryRow {
@@ -208,7 +217,7 @@ impl MemoryDB {
     /// tell which memories it writes a file for, read cheaply.
     pub(crate) async fn export_content_heads(
         &self,
-    ) -> Result<(usize, Vec<(String, Option<String>, Option<String>)>), WenlanError> {
+    ) -> Result<(usize, Vec<ContentHead>), WenlanError> {
         let conn = self.conn.lock().await;
         let err = |e: libsql::Error| WenlanError::VectorDb(format!("export_content_heads: {e}"));
         let mut rows = conn
@@ -224,7 +233,7 @@ impl MemoryDB {
         // memory's first chunk, the one the export classifies it by.
         let mut rows = conn
             .query(
-                "SELECT source, origin_class, source_agent, MIN(chunk_index) \
+                "SELECT source, source_id, origin_class, source_agent, MIN(chunk_index) \
                  FROM memories GROUP BY source_id, source",
                 (),
             )
@@ -232,11 +241,12 @@ impl MemoryDB {
             .map_err(err)?;
         let mut heads = Vec::new();
         while let Some(row) = rows.next().await.map_err(err)? {
-            heads.push((
-                row.get(0).map_err(err)?,
-                row.get(1).map_err(err)?,
-                row.get(2).map_err(err)?,
-            ));
+            heads.push(ContentHead {
+                source: row.get(0).map_err(err)?,
+                source_id: row.get(1).map_err(err)?,
+                origin_class: row.get(2).map_err(err)?,
+                source_agent: row.get(3).map_err(err)?,
+            });
         }
         Ok((pages.max(0) as usize, heads))
     }

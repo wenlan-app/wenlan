@@ -299,6 +299,15 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
         ", 'memory', 'a note chunk', 'obsidian'",
     )
     .await;
+    // A document of a folder Wenlan follows: read again, not a file.
+    memory_row(
+        &db,
+        "notes::a.md",
+        0,
+        ", source_agent",
+        ", 'memory', 'a followed chunk', 'folder'",
+    )
+    .await;
     memory_row(&db, "page_derived", 0, "", ", 'page', 'from a page'").await;
     // An episode shares its parent's id and is not part of its text.
     sql(
@@ -362,10 +371,24 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     let dirs = ExportDirs::create(out.path().join("export")).unwrap();
     let stems = HashMap::from([("ent_bob".to_string(), "Bob-ent_bob".to_string())]);
     let mut manifest = Manifest::new();
-    let done = export_memories(&db, &stems, &dirs, &mut manifest)
+    let followed = super::memories::Followed::ids(&["notes"]);
+    let done = export_memories(&db, &stems, &followed, &dirs, &mut manifest)
         .await
         .unwrap();
-    assert_eq!((done.memories, done.originals), (4, 2));
+    assert_eq!((done.memories, done.originals), (4, 3));
+    // A document of a folder no longer followed is kept as written.
+    let kept = crate::store::format::original::parse(&read(
+        &dirs,
+        "backstage/originals/folder/mem_doc.md",
+    ))
+    .unwrap();
+    assert_eq!(kept.vendor, "folder");
+    assert_eq!(kept.messages[0].role, "document");
+    assert_eq!(kept.messages[0].text, "a note chunk");
+    assert_eq!(kept.other["agent"], "obsidian");
+    assert!(!done
+        .keys
+        .contains(&("memory".to_string(), "notes::a.md".to_string())));
     let clip = memory::parse(&read(&dirs, "backstage/memories/undated/clipboard_1.md")).unwrap();
     assert_eq!(clip.text, "copied text");
     assert_eq!(clip.other["source"], "clipboard");
@@ -438,7 +461,7 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     assert_eq!(
         skipped,
         [
-            ("document chunks", 1),
+            ("documents of followed folders", 1),
             ("memories with source episode", 1),
             ("memories with source page", 1)
         ]
@@ -476,9 +499,15 @@ async fn an_imported_chat_becomes_an_original_with_its_messages_in_order() {
     let out = tempfile::tempdir().unwrap();
     let dirs = ExportDirs::create(out.path().join("export")).unwrap();
     let mut manifest = Manifest::new();
-    let done = export_memories(&db, &HashMap::new(), &dirs, &mut manifest)
-        .await
-        .unwrap();
+    let done = export_memories(
+        &db,
+        &HashMap::new(),
+        &Default::default(),
+        &dirs,
+        &mut manifest,
+    )
+    .await
+    .unwrap();
     assert_eq!((done.memories, done.originals), (0, 1));
     let chat = original::parse(&read(&dirs, "backstage/originals/claude/6720-abc.md")).unwrap();
     assert_eq!(chat.id, "import_claude_6720-abc");

@@ -121,7 +121,11 @@ const COLLAPSE_FLOOR: usize = 20;
 /// could be rebuilt from. Pages and memories are compared apart, and only
 /// what the export writes a file for is counted, so many memories (or
 /// connected-folder documents, which get no file) cannot hide lost pages.
-pub async fn refuse_a_collapse(db: &MemoryDB, files: &Path) -> Result<(), WenlanError> {
+pub async fn refuse_a_collapse(
+    db: &MemoryDB,
+    files: &Path,
+    followed: &crate::store::export::memories::Followed,
+) -> Result<(), WenlanError> {
     let Some(old) = crate::store::export::read_manifest(files) else {
         return Ok(());
     };
@@ -141,8 +145,14 @@ pub async fn refuse_a_collapse(db: &MemoryDB, files: &Path) -> Result<(), Wenlan
     let (pages, heads) = db.export_content_heads().await?;
     let memories = heads
         .iter()
-        .filter(|(source, class, agent)| {
-            crate::store::export::memories::gets_a_file(source, class.as_deref(), agent.as_deref())
+        .filter(|head| {
+            crate::store::export::memories::gets_a_file(
+                &head.source,
+                &head.source_id,
+                head.origin_class.as_deref(),
+                head.source_agent.as_deref(),
+                followed,
+            )
         })
         .count();
     for (what, now, listed) in [
@@ -173,7 +183,12 @@ pub async fn refresh(
     let files = prepare(mirror)?;
     let started = Instant::now();
     let db = MemoryDB::open_read_snapshot(db_file).await?;
-    refuse_a_collapse(&db, &files).await?;
+    refuse_a_collapse(
+        &db,
+        &files,
+        &crate::store::export::memories::Followed::read(data_root),
+    )
+    .await?;
     let summary = refresh_lossless(&db, pages, data_root, &files).await?;
     Ok(MirrorRun {
         files: summary.files,
@@ -222,7 +237,12 @@ pub async fn run_once(
             MemoryEmbeddingRecovery::Deferred,
         )
         .await?;
-        refuse_a_collapse(&snapshot, &files).await?;
+        refuse_a_collapse(
+            &snapshot,
+            &files,
+            &crate::store::export::memories::Followed::read(data_root),
+        )
+        .await?;
         let summary = refresh_lossless(&snapshot, pages, data_root, &files).await?;
         let mut run = MirrorRun {
             files: summary.files,
