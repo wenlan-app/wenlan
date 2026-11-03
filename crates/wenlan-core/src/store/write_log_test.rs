@@ -60,9 +60,15 @@ fn lines_round_trip_and_a_cut_tail_is_dropped() {
             ("gone".into(), Value::Null),
         ],
     };
-    let first = log.append(std::slice::from_ref(&change)).unwrap();
-    let second = log.append(&[change.clone(), change.clone()]).unwrap();
-    assert_eq!(log.position().seq, second);
+    let (_, first) = log.append(std::slice::from_ref(&change)).unwrap();
+    let (second_tx, second) = log.append(&[change.clone(), change.clone()]).unwrap();
+    // No database commit was seen: nothing is applied yet.
+    assert_eq!(log.position().seq, 0);
+    assert_eq!(
+        second_tx,
+        first + 1,
+        "a transaction is named by its first line"
+    );
     // A write cut off mid-line: its transaction never committed.
     let segment = segments(dir.path()).unwrap().pop().unwrap().1;
     let mut file = OpenOptions::new().append(true).open(&segment).unwrap();
@@ -79,7 +85,9 @@ fn lines_round_trip_and_a_cut_tail_is_dropped() {
     assert_eq!(all[1].changes.len(), 2);
 
     let reopened = WriteLog::open(dir.path()).unwrap();
+    reopened.arm(HashMap::new(), 7);
     assert_eq!(reopened.position().seq, second);
+    assert_eq!(read_applied(dir.path()).unwrap().seq, second);
     let epoch = reopened.epoch().to_string();
     let (after_first, problems) = read_after(
         dir.path(),

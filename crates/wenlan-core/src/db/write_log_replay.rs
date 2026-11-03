@@ -241,6 +241,24 @@ async fn columns_of(conn: &Connection, table: &str) -> Result<Option<Columns>, W
     }))
 }
 
+/// What `m5_page_update_enqueues_derivation` does for a page (see
+/// `claim_derivation.rs`), for a page the replay wrote with its triggers
+/// set aside.
+const ENQUEUE_DERIVATION: &str = "
+    INSERT INTO claim_derivation_jobs
+        (job_id, page_id, page_version, status, attempts, created_at, updated_at)
+    SELECT id || ':' || version, id, version, 'pending', 0,
+           CAST(strftime('%s','now') AS INTEGER), CAST(strftime('%s','now') AS INTEGER)
+    FROM pages WHERE id = ?1 AND status = 'active' AND kind <> 'entity'
+    ON CONFLICT(job_id) DO UPDATE SET
+        status = 'pending',
+        lease_owner = NULL,
+        lease_expires_at = NULL,
+        attempts = 0,
+        last_error = NULL,
+        updated_at = CAST(strftime('%s','now') AS INTEGER)
+    WHERE claim_derivation_jobs.status = 'done'";
+
 /// Search indexes kept by triggers on a logged table.
 const INDEXES: &[(&str, &str)] = &[("memories", "memories_fts"), ("pages", "pages_fts")];
 
@@ -297,6 +315,7 @@ async fn replay_in_transaction(
         }
         let mut known: HashMap<String, Option<Columns>> = HashMap::new();
         let mut touched = BTreeSet::new();
+        let mut pages = BTreeSet::new();
         for tx in txs {
             for change in &tx.changes {
                 if !known.contains_key(&change.table) {
@@ -313,6 +332,13 @@ async fn replay_in_transaction(
                     Ok(()) => {
                         replayed.changes += 1;
                         touched.insert(change.table.clone());
+                        if change.table == "pages" && change.op != RowOp::Delete {
+                            if let Some((_, Value::Text(id))) =
+                                change.row.iter().find(|(name, _)| name == "id")
+                            {
+                                pages.insert(id.clone());
+                            }
+                        }
                     }
                     Err(error) => replayed
                         .problems
@@ -325,6 +351,16 @@ async fn replay_in_transaction(
             conn.execute(sql, ())
                 .await
                 .map_err(fail("put triggers back"))?;
+        }
+        // What the page triggers would have queued: the replayed page
+        // versions get their claims worked out (claims are not in the
+        // files).
+        for page in &pages {
+            if let Err(error) = conn.execute(ENQUEUE_DERIVATION, [page.as_str()]).await {
+                replayed
+                    .problems
+                    .push(format!("claims of page {page} not queued: {error}"));
+            }
         }
         for (table, index) in INDEXES {
             if touched.contains(*table) {
@@ -384,22 +420,30 @@ async fn holds(conn: &Connection, change: &Change) -> Result<bool, WenlanError> 
     Ok((found == 1) != gone)
 }
 
-/// At start, before anything else opens `db_file`: when the last
-/// transaction in the log at `log_dir` is not in the database (the process
-/// stopped after the log line and before the database commit), applies
-/// it. Only a database at this build's schema that the same build wrote
-/// is touched. Returns what it did, when it did something.
+/// At start, before anything else opens `db_file`: applies the logged
+/// transactions the database does not hold (the process stopped after
+/// their log lines and before their database commit). The log's `applied`
+/// file names the last line the database held; without it, only the last
+/// transaction can be missing. Nothing is done when the database already
+/// holds the last logged change, or when it is at another schema version
+/// than the lines (a migration would have to run first). Returns what it
+/// did, when it applied something.
 pub async fn settle(db_file: &Path, log_dir: &Path) -> Result<Option<Replayed>, WenlanError> {
     if !db_file.is_file() {
         return Ok(None);
     }
-    let Some(last) = write_log::last_committed(log_dir)? else {
+    let Some(epoch) = write_log::read_epoch(log_dir) else {
         return Ok(None);
     };
-    if last.schema != i64::from(super::SCHEMA_VERSION) {
+    let applied = write_log::read_applied(log_dir).filter(|position| position.epoch == epoch);
+    let txs: Vec<Tx> = match &applied {
+        Some(position) => write_log::read_after(log_dir, Some(position))?.0,
+        None => write_log::last_committed(log_dir)?.into_iter().collect(),
+    };
+    let Some(last) = txs.last() else {
         return Ok(None);
-    }
-    let Some(change) = last.changes.last() else {
+    };
+    let Some(change) = txs.iter().rev().find_map(|tx| tx.changes.last()) else {
         return Ok(None);
     };
     let path = db_file.to_str().ok_or_else(|| {
@@ -422,10 +466,21 @@ pub async fn settle(db_file: &Path, log_dir: &Path) -> Result<Option<Replayed>, 
             None => 0,
         }
     };
-    if version != last.schema || holds(&conn, change).await? {
+    if txs.iter().any(|tx| tx.schema != version) {
         return Ok(None);
     }
-    let replayed = replay_changes(&conn, std::slice::from_ref(&last)).await?;
+    let position = LogPosition {
+        epoch,
+        seq: last.seq,
+    };
+    // Commits land in log order: holding the last change means holding
+    // them all (the `applied` file was not written after the last one).
+    if holds(&conn, change).await? {
+        let _ = write_log::write_applied(log_dir, &position);
+        return Ok(None);
+    }
+    let replayed = replay_changes(&conn, &txs).await?;
+    let _ = write_log::write_applied(log_dir, &position);
     Ok(Some(replayed))
 }
 
@@ -442,7 +497,12 @@ impl MemoryDB {
     /// The position of `log` with no write running: every line up to it is
     /// in this database.
     pub async fn write_log_position(&self, log: &WriteLog) -> LogPosition {
-        let _writer = self.conn.lock().await;
+        let conn = self.conn.lock().await;
+        // Any statement tells the hooks the last commit finished (it did:
+        // no write runs while the lock is held).
+        if let Err(error) = conn.query("SELECT 1", ()).await {
+            log::warn!("[write_log] position read without a statement: {error}");
+        }
         log.position()
     }
 

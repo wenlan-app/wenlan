@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::*;
 use crate::events::NoopEmitter;
 use crate::store::export::tests::fixture;
-use crate::store::write_log::{read_after, register, unregister};
+use crate::store::write_log::{read_after, read_applied, register, unregister, write_applied};
 
 const DB_FILE: &str = "origin_memory.db";
 
@@ -214,6 +214,7 @@ async fn a_copy_plus_the_log_after_it_is_the_database() {
 #[tokio::test]
 async fn the_last_write_a_database_lost_is_applied_at_start() {
     let (db, dir, log_dir, _log) = logged_fixture().await;
+    let before = read_applied(log_dir.path()).expect("arming records the position");
     let (_copy_dir, copy_file) = copy_of(&db).await;
     {
         let conn = db.conn.lock().await;
@@ -225,7 +226,13 @@ async fn the_last_write_a_database_lost_is_applied_at_start() {
         )
         .await;
     }
-    // The copy is the database as it was before that commit.
+    // The connection's next statement shows the commit landed.
+    let after = db.write_log_position(&_log).await;
+    assert_eq!(read_applied(log_dir.path()).unwrap(), after);
+    assert!(after.seq > before.seq, "{before:?} -> {after:?}");
+    // The process stopped after the log line, before the database commit:
+    // the copy is the database, and the position was never moved.
+    write_applied(log_dir.path(), &before).unwrap();
     let settled = settle(&copy_file, log_dir.path()).await.unwrap();
     assert!(settled.is_some_and(|r| r.changes > 0 && r.problems.is_empty()));
     let (_copy, copy) = open(&copy_file).await;
@@ -234,12 +241,40 @@ async fn the_last_write_a_database_lost_is_applied_at_start() {
         1
     );
     drop(copy);
+    assert_eq!(read_applied(log_dir.path()).unwrap().seq, after.seq);
     // Once there, nothing more is done; the live database had it already.
     assert!(settle(&copy_file, log_dir.path()).await.unwrap().is_none());
+    write_applied(log_dir.path(), &before).unwrap();
     assert!(settle(&dir.path().join(DB_FILE), log_dir.path())
         .await
         .unwrap()
         .is_none());
+    unregister(&dir.path().join(DB_FILE));
+}
+
+#[tokio::test]
+async fn a_change_made_without_the_log_is_not_undone_at_start() {
+    let (db, dir, log_dir, _log) = logged_fixture().await;
+    {
+        let conn = db.conn.lock().await;
+        run(&conn, "UPDATE pages SET title = 'Logged' WHERE id = 'a';").await;
+    }
+    let (_copy_dir, copy_file) = copy_of(&db).await;
+    {
+        // A session with the log turned off changes the same row.
+        let (_copy, copy) = open(&copy_file).await;
+        run(&copy, "UPDATE pages SET title = 'Unlogged' WHERE id = 'a';").await;
+    }
+    assert!(settle(&copy_file, log_dir.path()).await.unwrap().is_none());
+    let (_copy, copy) = open(&copy_file).await;
+    assert_eq!(
+        count(
+            &copy,
+            "SELECT COUNT(*) FROM pages WHERE id = 'a' AND title = 'Unlogged'"
+        )
+        .await,
+        1
+    );
     unregister(&dir.path().join(DB_FILE));
 }
 

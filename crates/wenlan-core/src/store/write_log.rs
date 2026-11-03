@@ -36,7 +36,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Once, RwLock};
 
 use libsql::ffi;
@@ -51,6 +51,10 @@ pub const LOG_DIR: &str = "log";
 /// Written into a file copy: the last log line it holds.
 pub const POSITION_FILE: &str = "log-position.json";
 const EPOCH_FILE: &str = "epoch";
+/// The last log line the database is known to hold: written once the
+/// connection runs its next statement after a commit (a commit that fails
+/// rolls back inside its own statement), best effort and not synced, read by [`crate::db::write_log_replay::settle`].
+const APPLIED_FILE: &str = "applied";
 const SEGMENT_SUFFIX: &str = ".jsonl";
 /// A new segment starts once the current one is this large.
 const SEGMENT_BYTES: u64 = 64 * 1024 * 1024;
@@ -73,12 +77,28 @@ pub fn read_position(files: &Path) -> Option<LogPosition> {
 /// Records `position` in the file copy `files` (written beside, then
 /// renamed over).
 pub fn write_position(files: &Path, position: &LogPosition) -> Result<(), WenlanError> {
+    write_json(&files.join(POSITION_FILE), position)
+}
+
+fn write_json(path: &Path, position: &LogPosition) -> Result<(), WenlanError> {
     let json = serde_json::to_string(position)
         .map_err(|error| WenlanError::Validation(format!("log position: {error}")))?;
-    let temp = files.join(format!("{POSITION_FILE}.tmp"));
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(".tmp");
     std::fs::write(&temp, json + "\n")?;
-    std::fs::rename(&temp, files.join(POSITION_FILE))?;
+    std::fs::rename(&temp, path)?;
     Ok(())
+}
+
+/// The last line the database at the log in `dir` is known to hold.
+pub fn read_applied(dir: &Path) -> Option<LogPosition> {
+    let text = std::fs::read_to_string(dir.join(APPLIED_FILE)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Records that the database holds every line up to `position`.
+pub fn write_applied(dir: &Path, position: &LogPosition) -> Result<(), WenlanError> {
+    write_json(&dir.join(APPLIED_FILE), position)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +176,6 @@ struct Appender {
     file: Option<File>,
     segment_bytes: u64,
     next_seq: u64,
-    next_tx: u64,
     /// Seq of the last `commit` line written.
     last_commit: u64,
 }
@@ -171,6 +190,8 @@ pub struct WriteLog {
     schema: AtomicI64,
     shapes: RwLock<HashMap<String, Shape>>,
     appender: Mutex<Appender>,
+    /// Seq of the last `commit` line whose database commit finished.
+    applied: AtomicU64,
 }
 
 fn io(context: &str, error: std::io::Error) -> WenlanError {
@@ -247,14 +268,13 @@ impl WriteLog {
             file: None,
             segment_bytes: 0,
             next_seq: 1,
-            next_tx: 1,
             last_commit: 0,
         };
         if let Some((start, path)) = segments(dir)?.pop() {
             let bytes = std::fs::read(&path).map_err(|error| io("read segment", error))?;
             let mut keep = 0usize;
             let mut offset = 0usize;
-            let (mut last_seq, mut last_tx) = (start.saturating_sub(1), 0u64);
+            let mut last_seq = start.saturating_sub(1);
             for line in bytes.split_inclusive(|byte| *byte == b'\n') {
                 offset += line.len();
                 if !line.ends_with(b"\n") {
@@ -264,9 +284,7 @@ impl WriteLog {
                     continue;
                 };
                 let seq = value["seq"].as_u64().unwrap_or(0);
-                let tx = value["tx"].as_u64().unwrap_or(0);
                 last_seq = last_seq.max(seq);
-                last_tx = last_tx.max(tx);
                 if matches!(value["op"].as_str(), Some("commit") | Some("abort")) {
                     keep = offset;
                     if value["op"] == "commit" {
@@ -284,7 +302,6 @@ impl WriteLog {
                 file.sync_all().map_err(|error| io("sync segment", error))?;
             }
             appender.next_seq = last_seq + 1;
-            appender.next_tx = last_tx + 1;
             appender.segment_bytes = keep as u64;
             appender.file = Some(
                 OpenOptions::new()
@@ -300,6 +317,7 @@ impl WriteLog {
             schema: AtomicI64::new(0),
             shapes: RwLock::new(HashMap::new()),
             appender: Mutex::new(appender),
+            applied: AtomicU64::new(0),
         }))
     }
 
@@ -314,30 +332,67 @@ impl WriteLog {
     /// Starts logging: from now on every change to a table in `shapes` is
     /// written here before it commits. `schema` is the database's schema
     /// version, written on each `commit` line.
+    /// Call it once the database holds every line ([`crate::db::write_log_replay::settle`]
+    /// ran).
     pub fn arm(&self, shapes: HashMap<String, Shape>, schema: i64) {
         *self.shapes.write().unwrap_or_else(|e| e.into_inner()) = shapes;
         self.schema.store(schema, Ordering::SeqCst);
+        let last = self
+            .appender
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last_commit;
+        self.mark_applied(last);
         self.armed.store(true, Ordering::SeqCst);
+    }
+
+    /// The database finished committing the transaction whose `commit`
+    /// line is `commit`.
+    fn mark_applied(&self, commit: u64) {
+        let seq = self.applied.fetch_max(commit, Ordering::SeqCst).max(commit);
+        let position = LogPosition {
+            epoch: self.epoch.clone(),
+            seq,
+        };
+        if let Err(error) = write_applied(&self.dir, &position) {
+            log::warn!("[write_log] applied position not recorded: {error}");
+        }
+    }
+
+    /// The database refused the transaction `tx` after its lines were
+    /// written: an `abort` line takes it back.
+    fn abort(&self, tx: u64) {
+        let mut appender = self.appender.lock().unwrap_or_else(|e| e.into_inner());
+        let seq = appender.next_seq;
+        appender.next_seq += 1;
+        let line = json!({"seq": seq, "tx": tx, "op": "abort"}).to_string() + "\n";
+        let written = match appender.file.as_mut() {
+            Some(file) => file.write_all(line.as_bytes()).and_then(|()| sync(file)),
+            None => Err(std::io::Error::other("no segment open")),
+        };
+        match written {
+            Ok(()) => appender.segment_bytes += line.len() as u64,
+            Err(error) => log::error!("[write_log] could not take back transaction {tx}: {error}"),
+        }
     }
 
     pub fn is_armed(&self) -> bool {
         self.armed.load(Ordering::SeqCst)
     }
 
-    /// The last committed line. Read it while no write is running (the
-    /// database's writer lock held): every transaction up to it is then in
-    /// the database too.
+    /// The last line whose database commit finished: every transaction up
+    /// to it is in the database. A snapshot read after this holds them.
     pub fn position(&self) -> LogPosition {
-        let appender = self.appender.lock().unwrap_or_else(|e| e.into_inner());
         LogPosition {
             epoch: self.epoch.clone(),
-            seq: appender.last_commit,
+            seq: self.applied.load(Ordering::SeqCst),
         }
     }
 
     /// Appends `changes` as one transaction and syncs the file. Returns the
-    /// seq of its `commit` line.
-    pub fn append(&self, changes: &[Change]) -> Result<u64, WenlanError> {
+    /// transaction (the seq of its first line) and the seq of its `commit`
+    /// line.
+    pub fn append(&self, changes: &[Change]) -> Result<(u64, u64), WenlanError> {
         let mut appender = self.appender.lock().unwrap_or_else(|e| e.into_inner());
         if appender.file.is_none() || appender.segment_bytes >= SEGMENT_BYTES {
             let path = self.dir.join(segment_name(appender.next_seq));
@@ -351,8 +406,9 @@ impl WriteLog {
             );
             appender.segment_bytes = 0;
         }
-        let tx = appender.next_tx;
-        appender.next_tx += 1;
+        // The seq of its first line: never used twice, whatever a segment
+        // that was cut or removed held.
+        let tx = appender.next_seq;
         let mut text = String::new();
         let mut seq = appender.next_seq;
         for change in changes {
@@ -397,7 +453,7 @@ impl WriteLog {
         }
         appender.segment_bytes += text.len() as u64;
         appender.last_commit = commit;
-        Ok(commit)
+        Ok((tx, commit))
     }
 
     /// Removes the segments whose every line is at or before `position`
@@ -643,6 +699,9 @@ struct Pending {
     changes: Vec<Change>,
     /// Open savepoints and how many changes came before each.
     savepoints: Vec<(String, usize)>,
+    /// The transaction and `commit` seq written by the commit hook whose
+    /// database commit has not been seen to finish yet.
+    flushed: Option<(u64, u64)>,
 }
 
 /// One connection's hooks.
@@ -732,18 +791,10 @@ unsafe extern "C" fn on_open(
             pending: Mutex::new(Pending::default()),
         }));
         let arg = capture as *mut c_void;
-        sqlite3_preupdate_hook(db, Some(on_preupdate), arg);
-        ffi::sqlite3_commit_hook(db, Some(on_commit), arg);
-        ffi::sqlite3_rollback_hook(db, Some(on_rollback), arg);
-        ffi::sqlite3_trace_v2(
-            db,
-            ffi::SQLITE_TRACE_STMT as c_uint,
-            Some(on_statement),
-            arg,
-        );
         // A function nobody calls, so SQLite frees `capture` when the
-        // connection closes.
-        ffi::sqlite3_create_function_v2(
+        // connection closes. When it fails SQLite has freed it already, and
+        // no hook may point to it.
+        let created = ffi::sqlite3_create_function_v2(
             db,
             c"wenlan_write_log".as_ptr(),
             0,
@@ -753,6 +804,19 @@ unsafe extern "C" fn on_open(
             None,
             None,
             Some(free_capture),
+        );
+        if created != ffi::SQLITE_OK {
+            log::error!("[write_log] hooks not installed on {name}: SQLite error {created}");
+            return;
+        }
+        sqlite3_preupdate_hook(db, Some(on_preupdate), arg);
+        ffi::sqlite3_commit_hook(db, Some(on_commit), arg);
+        ffi::sqlite3_rollback_hook(db, Some(on_rollback), arg);
+        ffi::sqlite3_trace_v2(
+            db,
+            ffi::SQLITE_TRACE_STMT as c_uint,
+            Some(on_statement),
+            arg,
         );
     }));
     ffi::SQLITE_OK as c_int
@@ -901,16 +965,21 @@ unsafe extern "C" fn on_preupdate(
 unsafe extern "C" fn on_commit(arg: *mut c_void) -> c_int {
     let capture = &*(arg as *const Capture);
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let changes = {
-            let mut pending = capture.pending.lock().unwrap_or_else(|e| e.into_inner());
-            pending.savepoints.clear();
-            std::mem::take(&mut pending.changes)
-        };
+        let mut pending = capture.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.savepoints.clear();
+        // A new commit: the one before it finished.
+        if let Some((_, commit)) = pending.flushed.take() {
+            capture.log.mark_applied(commit);
+        }
+        let changes = std::mem::take(&mut pending.changes);
         if changes.is_empty() {
             return 0;
         }
         match capture.log.append(&changes) {
-            Ok(_) => 0,
+            Ok(flushed) => {
+                pending.flushed = Some(flushed);
+                0
+            }
             Err(error) => {
                 log::error!(
                     "[write_log] could not write {} changes to {}: {error}; the database \
@@ -925,11 +994,18 @@ unsafe extern "C" fn on_commit(arg: *mut c_void) -> c_int {
     result.unwrap_or(1)
 }
 
+/// A rollback, including one right after the commit hook (the database
+/// commit then failed): its logged transaction is taken back.
 unsafe extern "C" fn on_rollback(arg: *mut c_void) {
     let capture = &*(arg as *const Capture);
-    let mut pending = capture.pending.lock().unwrap_or_else(|e| e.into_inner());
-    pending.changes.clear();
-    pending.savepoints.clear();
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut pending = capture.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.changes.clear();
+        pending.savepoints.clear();
+        if let Some((tx, _)) = pending.flushed.take() {
+            capture.log.abort(tx);
+        }
+    }));
 }
 
 /// Savepoints: a `ROLLBACK TO` takes back the changes made since its
@@ -946,8 +1022,14 @@ unsafe extern "C" fn on_statement(
     let capture = &*(arg as *const Capture);
     let sql = CStr::from_ptr(sql as *const c_char).to_bytes();
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut pending = capture.pending.lock().unwrap_or_else(|e| e.into_inner());
+        // A statement after a commit: that commit finished (a failed one
+        // rolls back inside its own statement). libsql's WAL reports no
+        // frames to a WAL hook, so this is where a commit is seen to land.
+        if let Some((_, commit)) = pending.flushed.take() {
+            capture.log.mark_applied(commit);
+        }
         if let Some(step) = savepoint_step(sql) {
-            let mut pending = capture.pending.lock().unwrap_or_else(|e| e.into_inner());
             apply_savepoint_step(&mut pending, step);
         }
     }));
