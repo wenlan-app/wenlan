@@ -93,6 +93,20 @@ pub struct ThingDetailResponse {
     /// leave it out.
     #[serde(default)]
     pub merge_proposals: Vec<ThingRef>,
+    /// The newest night that put this thing's points into long-term memory
+    /// and was not taken back (UX-CHAT-5). Older daemons leave it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dream: Option<ThingDream>,
+}
+
+/// One night's points of a thing, put into long-term memory: how many were
+/// settled and how many still open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingDream {
+    /// Unix seconds.
+    pub at: i64,
+    pub decided: usize,
+    pub open: usize,
 }
 
 /// `POST /api/things/{id}/merge` and `POST /api/things/{id}/keep-apart`: the

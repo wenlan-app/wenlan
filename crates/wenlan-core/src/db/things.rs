@@ -1103,12 +1103,14 @@ impl MemoryDB {
                 .then_with(|| a.source_id.cmp(&b.source_id))
         });
         memories.truncate(THING_DETAIL_CAP);
+        let dream = self.thing_dream(&thing.id).await?;
         Ok(Some(ThingDetailResponse {
             thing,
             sessions,
             pages,
             memories,
             merge_proposals: Vec::new(),
+            dream,
         }))
     }
 

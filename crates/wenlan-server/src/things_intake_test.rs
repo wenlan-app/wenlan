@@ -111,7 +111,8 @@ async fn ux_thing_1_conversations_become_things_without_anyone_telling_wenlan() 
             labelled: 3,
             work: 2,
             grouped: 2,
-            things_made: 1
+            things_made: 1,
+            ..Default::default()
         }
     );
     let things = db.list_things(&ReadScope::Global, None).await.unwrap();
@@ -243,4 +244,176 @@ async fn ux_thing_2_a_conversation_moved_once_steers_the_next_grouping() {
         .filter_map(|t| t.title)
         .collect();
     assert_eq!(titles, vec!["Zotero 工作流".to_string()]);
+}
+
+/// Stores points straight into the database, as the daemon's store would.
+struct Keep<'a>(&'a MemoryDB, std::sync::atomic::AtomicUsize);
+
+impl PointWriter for Keep<'_> {
+    fn write(&self, request: StoreMemoryRequest) -> Written<'_> {
+        Box::pin(async move {
+            let n = self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let id = format!("mem_{n}");
+            self.0
+                .upsert_documents(vec![wenlan_core::sources::RawDocument {
+                    source: "memory".into(),
+                    source_id: id.clone(),
+                    title: id.clone(),
+                    content: request.content,
+                    last_modified: chrono::Utc::now().timestamp(),
+                    memory_type: request.memory_type,
+                    supersedes: request.supersedes,
+                    space: request.space.named().map(str::to_string),
+                    ..Default::default()
+                }])
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(id)
+        })
+    }
+}
+
+#[test]
+fn ux_chat_5_points_are_read_at_night_or_after_a_day() {
+    let now = 1_000_000;
+    assert_eq!(dream_quiet_since(now, 3), now - 30 * 60);
+    assert_eq!(dream_quiet_since(now, 14), now - 86_400);
+}
+
+/// UX-CHAT-5: at night, what a thing's conversations settled becomes memories
+/// on its page; the next night sees them and replaces the one that changed.
+#[tokio::test]
+async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    db.create_space("wenlan", None, false).await.unwrap();
+    let mut a = conv(
+        "a",
+        &[
+            "Tagline: go with You do the thinking",
+            "pricing page later?",
+        ],
+        90,
+    );
+    a.last_reply = "Done: the tagline is in place.".into();
+    let found = vec![
+        a.clone(),
+        conv("b", &["make the hero image smaller", "ok ship it"], 60),
+    ];
+    let label = Scripted::new(&[
+        r#"{"work": true, "title": "Site redesign", "space": "wenlan", "about": "a", "status": "s"}"#,
+        r#"{"work": true, "title": "Site redesign", "space": "wenlan", "about": "b", "status": "s"}"#,
+    ]);
+    let group = Scripted::new(&[
+        r#"{"new": [{"title": "Site redesign", "conversations": ["C0", "C1"], "now": "Tagline done"}]}"#,
+        r#"{"points": [
+            {"text": "The site tagline is \"You do the thinking\".", "settled": true, "from": "C1", "replaces": null},
+            {"text": "Whether the site gets a pricing page is still open.", "settled": false, "from": "C1", "replaces": "P7"},
+            {"text": "", "settled": true, "from": "C0"},
+            {"text": "A point from nowhere.", "settled": true, "from": "C9"}
+        ]}"#,
+        r#"{"points": [
+            {"text": "The site gets no pricing page for now.", "settled": true, "from": "C0", "replaces": "P1"}
+        ]}"#,
+    ]);
+    let models = IntakeModels {
+        label: label.clone(),
+        group: group.clone(),
+    };
+    let keep = Keep(&db, Default::default());
+    let mut backoff = Backoff::default();
+    look_with(&db, found.clone(), &models, "English", &mut backoff)
+        .await
+        .unwrap();
+    let thing = db.list_things(&ReadScope::Global, None).await.unwrap()[0].clone();
+
+    // A night: both conversations went quiet over half an hour ago.
+    let now = chrono::Utc::now().timestamp();
+    let due = db
+        .things_to_dream(dream_quiet_since(now, 3), 10)
+        .await
+        .unwrap();
+    assert_eq!(due.len(), 1);
+    let by_session: HashMap<String, FoundConversation> = found
+        .iter()
+        .map(|c| (found_session_id(c).unwrap(), c.clone()))
+        .collect();
+    let done = dream_with(&db, &due, &by_session, group.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+    assert_eq!(done, (1, 2));
+    // The model read what the person typed and the end of the last reply.
+    let asked = group.prompts.lock().unwrap().last().unwrap().clone();
+    assert!(asked.contains("Tagline: go with You do the thinking"));
+    assert!(asked.contains("the tagline is in place"));
+    assert!(asked.contains("\"Site redesign\""));
+
+    let detail = db
+        .get_thing_detail(&thing.id, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    let dream = detail.dream.unwrap();
+    assert_eq!((dream.decided, dream.open), (1, 1));
+    assert_eq!(
+        detail.memories.len(),
+        2,
+        "the points are on the thing's page"
+    );
+    let after = db
+        .list_things(&ReadScope::Global, Some(&thing.id))
+        .await
+        .unwrap()[0]
+        .clone();
+    assert_eq!(after.last_activity_at, thing.last_activity_at);
+
+    // Nothing new: the next look reads nothing.
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    assert!(due.is_empty());
+
+    // Conversation a goes on; the next night sees the kept points and
+    // replaces the open one.
+    let mut a2 = a.clone();
+    a2.last_at = now - 45 * 60;
+    a2.said.push("no pricing page for now".into());
+    let label2 = Scripted::new(&[
+        r#"{"work": true, "title": "Site redesign", "space": "wenlan", "about": "a", "status": "s"}"#,
+    ]);
+    let models2 = IntakeModels {
+        label: label2,
+        group: Scripted::new(&[]),
+    };
+    look_with(&db, vec![a2.clone()], &models2, "English", &mut backoff)
+        .await
+        .ok();
+    let due = db
+        .things_to_dream(dream_quiet_since(now, 3), 10)
+        .await
+        .unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].conversations.len(), 1);
+    let by_session: HashMap<String, FoundConversation> =
+        [(found_session_id(&a2).unwrap(), a2.clone())].into();
+    let done = dream_with(&db, &due, &by_session, group.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+    assert_eq!(done, (1, 1));
+    let asked = group.prompts.lock().unwrap().last().unwrap().clone();
+    assert!(asked.contains("P1 (open): Whether the site gets a pricing page is still open."));
+    let kept: Vec<String> = db
+        .dream_points(&thing.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.text)
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            "The site tagline is \"You do the thinking\".",
+            "The site gets no pricing page for now."
+        ]
+    );
 }
