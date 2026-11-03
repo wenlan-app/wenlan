@@ -1453,18 +1453,36 @@ mod tests {
         bundle(&bundle_dir, host, "0.20.7\n");
         let entry = home_bin_dir(&home).join("wenlan");
         write_runnable(&entry, "0.18.10\n");
-        sync_fixture(&home, &bundle_dir, LinkMode::Symlink, host);
+        let first = sync_fixture(&home, &bundle_dir, LinkMode::Symlink, host);
         fs::remove_file(&entry).unwrap();
         write_runnable(&entry, "0.18.10\n");
-        sync_fixture(&home, &bundle_dir, LinkMode::Symlink, host);
+        let mut second = sync_fixture(&home, &bundle_dir, LinkMode::Symlink, host);
+        // Other tests can spawn a child while this process has the lock open.
+        // On Unix, the child may briefly retain that open file description
+        // before exec closes it. Retry only an explicit lock-contention result;
+        // every other failure still reaches the backup assertions below.
+        for _ in 0..100 {
+            if !matches!(&second[..], [EntryAction::Failed { detail, .. }]
+                if detail.contains("another binary refresh"))
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            second = sync_fixture(&home, &bundle_dir, LinkMode::Symlink, host);
+        }
         let bin = home_bin_dir(&home);
+        let backups: Vec<_> = fs::read_dir(&bin)
+            .unwrap()
+            .map(|item| item.unwrap().file_name())
+            .collect();
         assert_eq!(
             fs::read_to_string(bin.join("wenlan.bak.0.18.10.t")).unwrap(),
             "0.18.10\n"
         );
-        assert_eq!(
-            fs::read_to_string(bin.join("wenlan.bak.0.18.10.t-2")).unwrap(),
-            "0.18.10\n"
+        let backup2 = fs::read_to_string(bin.join("wenlan.bak.0.18.10.t-2"));
+        assert!(
+            matches!(backup2.as_deref(), Ok("0.18.10\n")),
+            "backup2={backup2:?}; first={first:?}; second={second:?}; entries={backups:?}"
         );
     }
 
@@ -1620,8 +1638,12 @@ mod tests {
         let text = render_binary_report(&stale);
         assert!(text.contains("0.18.10 (regular file)"), "{text}");
         assert!(text.contains("WARNING:"), "{text}");
+        let repair_command = bundle_dir
+            .join(executable_name("wenlan", DesktopHost::MacOs))
+            .display()
+            .to_string();
         assert!(
-            text.contains("/Applications/Wenlan.app/Contents/MacOS/wenlan doctor --repair"),
+            text.contains(&format!("{repair_command} doctor --repair")),
             "{text}"
         );
         assert!(text.contains(".bak.<version>.<time>"), "{text}");
