@@ -101,6 +101,13 @@ impl IntoResponse for ServerError {
             }
         };
 
+        // The caller may drop the message (the MCP passes on only known
+        // reason codes), so a refused or failed request is logged here.
+        // Without this a 422 from the repair plan left no trace anywhere.
+        if status == StatusCode::UNPROCESSABLE_ENTITY || status.is_server_error() {
+            tracing::warn!(status = status.as_u16(), error = %error_message, "request refused");
+        }
+
         let body = Json(json!({
             "error": error_message,
         }));
