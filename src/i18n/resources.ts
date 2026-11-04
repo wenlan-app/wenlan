@@ -967,7 +967,7 @@ const en = {
     open: "Open →",
   },
   reference: {
-    type: { page: "Page", memory: "Memory", file: "File", url: "Web link", authored: "Wenlan citation" },
+    type: { page: "Page", memory: "Memory", file: "File", url: "Web link", authored: "Wenlan citation", thing: "Working on" },
     loading: "Loading preview…",
     unavailable: "Preview unavailable. Open the original to read it.",
     error: "Could not load this preview.",
@@ -2103,6 +2103,7 @@ const en = {
     hideSmallGroups: "Hide small groups",
     hint: "scroll to zoom · more labels appear as you approach",
     layer: {
+      thing: "Working on",
       page: "Pages",
       entity: "Topics",
       memory: "Memories",
@@ -4176,7 +4177,7 @@ const zhHans = {
     open: "打开 →",
   },
   reference: {
-    type: { page: "笔记", memory: "记忆", file: "文件", url: "网页链接", authored: "文澜引用" },
+    type: { page: "笔记", memory: "记忆", file: "文件", url: "网页链接", authored: "文澜引用", thing: "一件事" },
     loading: "正在加载预览…",
     unavailable: "无法预览。可打开原始来源阅读。",
     error: "无法加载此预览。",
@@ -5293,6 +5294,7 @@ const zhHans = {
     hideSmallGroups: "隐藏小群组",
     hint: "滚动缩放 · 靠近可见更多标签",
     layer: {
+      thing: "正在做的事",
       page: "笔记",
       entity: "主题",
       memory: "记忆",
@@ -7341,7 +7343,7 @@ const zhHant = {
     open: "開啟 →",
   },
   reference: {
-    type: { page: "筆記", memory: "記憶", file: "檔案", url: "網頁連結", authored: "文瀾引用" },
+    type: { page: "筆記", memory: "記憶", file: "檔案", url: "網頁連結", authored: "文瀾引用", thing: "一件事" },
     loading: "正在載入預覽…",
     unavailable: "無法預覽。可開啟原始來源閱讀。",
     error: "無法載入此預覽。",
@@ -8458,6 +8460,7 @@ const zhHant = {
     hideSmallGroups: "隱藏小群組",
     hint: "捲動縮放 · 靠近可見更多標籤",
     layer: {
+      thing: "正在做的事",
       page: "筆記",
       entity: "主題",
       memory: "記憶",

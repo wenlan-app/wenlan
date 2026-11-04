@@ -66,7 +66,10 @@ export function atlasFrameNodeIds(
     const componentId = graph.getNodeAttribute(id, "componentId") as string | undefined;
     return componentId !== undefined && representedComponents.has(componentId);
   });
-  return main.length > 0 ? main : visible;
+  // What the person is working on opens in view: every thing's points
+  // (UX-CHAT-5), whatever component their hidden centre sits in.
+  const work = visible.filter((id) => graph.getNodeAttribute(id, "night") === true);
+  return main.length > 0 ? [...main, ...work] : visible;
 }
 
 function graphCorrectionRatio(

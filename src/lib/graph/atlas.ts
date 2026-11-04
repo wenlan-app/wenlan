@@ -17,6 +17,7 @@ import {
   WIKILINK_EDGE_TYPE,
   CITES_EDGE_TYPE,
   MEMORY_EDGE_TYPE,
+  THING_NODE_TYPE,
 } from "./model";
 import { compositeOver, nodeFillFor, type GraphPalette } from "./palette";
 
@@ -32,6 +33,12 @@ const PAGE_NODE_BASE = 3;
  *  outgrow the entities themselves. */
 const MEMORY_NODE_BASE = 1.5;
 const MEMORY_MAX_SIZE = 3;
+/** A thing is never drawn as a node: AtlasView frames its points instead
+ *  (night.ts). Its node is the hidden centre its points cluster round, kept
+ *  tiny so the cluster starts right at it. */
+const THING_NODE_SIZE = 1;
+/** Graph-space distance from a thing's centre to its nearest points. */
+const THING_CLUSTER_CORE = 3;
 /** Px added per doubling of degree. Linear growth (round 1's degree * 0.5)
  *  saturated the cap on real data — 1,600 entities where the hubs run to
  *  hundreds of links drew as one uniform field of 8s. log2 keeps the hubs
@@ -48,6 +55,7 @@ function nodeSizeFor(confirmed: boolean | null, degree: number, entityType?: str
   if (entityType === MEMORY_NODE_TYPE) {
     return Math.min(MEMORY_MAX_SIZE, MEMORY_NODE_BASE + growth);
   }
+  if (entityType === THING_NODE_TYPE) return THING_NODE_SIZE;
   const base =
     entityType === PAGE_NODE_TYPE ? PAGE_NODE_BASE : confirmed === true ? 4 : MIN_NODE_SIZE;
   return Math.min(MAX_NODE_SIZE, base + growth);
@@ -92,13 +100,18 @@ export function buildAtlasGraph(model: GraphModel, palette: GraphPalette): Graph
   // Seed circle over the nodes the layout will move — memories are not among
   // them (see nonSimulatedIds: a memory rides its anchor), so they are left
   // off the circle and out of its count. That is what keeps the seed, and so
-  // the whole layout, identical with the memory layer on and off.
-  const seeded = model.nodes.filter((node) => node.entityType !== MEMORY_NODE_TYPE);
+  // the whole layout, identical with the memory layer on and off. Things
+  // stay off it too (FA2 skips them, see runAtlasLayout): a thing's first
+  // night must not reshuffle a fresh map of pages and entities. They start
+  // on the same circle at an angle of their own and are shelved as islands,
+  // which puts each cluster in free space beside the map.
+  const seeded = model.nodes.filter((node) => node.entityType !== MEMORY_NODE_TYPE && node.entityType !== THING_NODE_TYPE);
   const n = seeded.length;
   const seedIndex = new Map(seeded.map((node, i) => [node.id, i]));
   model.nodes.forEach((node) => {
     const i = seedIndex.get(node.id);
-    const angle = i === undefined ? 0 : (2 * Math.PI * i) / Math.max(n, 1);
+    const thing = node.entityType === THING_NODE_TYPE;
+    const angle = thing ? stableAngle(node.id) : i === undefined ? 0 : (2 * Math.PI * i) / Math.max(n, 1);
     const sizingDegree = Math.max(0, node.degree - (sharedSourceIncident.get(node.id) ?? 0));
     graph.addNode(node.id, {
       label: node.name,
@@ -108,8 +121,11 @@ export function buildAtlasGraph(model: GraphModel, palette: GraphPalette): Graph
       // Kept on the node so the theme-flip recolor (AtlasView) can recompute
       // the stability-tiered fill without re-reading the model.
       confirmed: node.confirmed,
-      x: i === undefined ? 0 : Math.cos(angle),
-      y: i === undefined ? 0 : Math.sin(angle),
+      // A night's point keeps its moon and its age: satellitePlan puts a
+      // thing's points in the order they were written.
+      ...(node.night ? { night: true, createdAt: node.createdAt } : {}),
+      x: i === undefined && !thing ? 0 : Math.cos(angle),
+      y: i === undefined && !thing ? 0 : Math.sin(angle),
     });
   });
 
@@ -275,6 +291,11 @@ function settleTicks(order: number): number {
  */
 export function runAtlasLayout(graph: Graph): void {
   const excluded = new Set(nonSimulatedIds(graph));
+  // A thing has no structural link (only its points), so FA2 has nothing to
+  // say about it beyond pushing the map around; it is shelved as an island.
+  graph.forEachNode((id, attrs) => {
+    if (attrs.entityType === THING_NODE_TYPE) excluded.add(id);
+  });
   if (excluded.size === 0) {
     forceAtlas2.assign(graph, {
       iterations: layoutIterations(graph.order),
@@ -328,22 +349,30 @@ export function nonSimulatedIds(graph: Graph): string[] {
   return ids;
 }
 
-/** The node a memory rides: its most-connected non-memory neighbour, ties to
- *  the smaller id so the answer never depends on edge order. A memory linked
- *  to three entities sits by the hub among them, where the eye looks for it;
- *  its other links are drawn on hover only (see edgeDisplay). */
+/** The node a memory rides: its thing's centre when a night wrote it (UX-CHAT-5),
+ *  else its most-connected non-memory neighbour, ties to the smaller id so
+ *  the answer never depends on edge order. A memory linked to three entities
+ *  sits by the hub among them, where the eye looks for it; its other links
+ *  are drawn on hover only (see edgeDisplay). A night's point stays by its
+ *  thing when it later gains an entity link, so the link never moves it. */
 export function satelliteAnchor(graph: Graph, id: string): string | undefined {
   let best: string | undefined;
   let bestDegree = -1;
+  let thing: string | undefined;
   for (const neighbour of graph.neighbors(id)) {
-    if (graph.getNodeAttribute(neighbour, "entityType") === MEMORY_NODE_TYPE) continue;
+    const type = graph.getNodeAttribute(neighbour, "entityType");
+    if (type === THING_NODE_TYPE) {
+      if (thing === undefined || neighbour < thing) thing = neighbour;
+      continue;
+    }
+    if (type === MEMORY_NODE_TYPE) continue;
     const degree = graph.degree(neighbour);
     if (degree > bestDegree || (degree === bestDegree && best !== undefined && neighbour < best)) {
       best = neighbour;
       bestDegree = degree;
     }
   }
-  return best;
+  return thing ?? best;
 }
 
 /** Where one memory sits relative to the node it rides. */
@@ -371,13 +400,24 @@ export function satellitePlan(graph: Graph): Satellite[] {
   }
   const plan: Satellite[] = [];
   for (const [anchor, leaves] of leavesByAnchor) {
-    const sorted = [...leaves].sort();
+    // A thing's points are placed in the order its nights wrote them, so a
+    // new night's points settle round the older ones and never move them.
+    // Everything else: stable id order.
+    const byAge = graph.getNodeAttribute(anchor, "entityType") === THING_NODE_TYPE;
+    const at = (id: string) => (graph.getNodeAttribute(id, "createdAt") as number | undefined) ?? 0;
+    const sorted = byAge
+      ? [...leaves].sort((a, b) => at(a) - at(b) || (a < b ? -1 : a > b ? 1 : 0))
+      : [...leaves].sort();
     // Uniform clearance based on the widest leaf keeps every pair separated.
     let leafSize = 0;
     for (const id of sorted) {
       leafSize = Math.max(leafSize, (graph.getNodeAttribute(id, "size") as number) ?? 0);
     }
     const clearance = 2 * leafSize + 3;
+    if (byAge) {
+      plan.push(...thingCluster(anchor, sorted, clearance));
+      continue;
+    }
     const startRadius = (graph.getNodeAttribute(anchor, "size") as number) + SATELLITE_GAP;
     let seed = 0;
     for (const char of anchor) seed = (Math.imul(seed, 31) + char.charCodeAt(0)) >>> 0;
@@ -397,6 +437,47 @@ export function satellitePlan(graph: Graph): Satellite[] {
     }
   }
   return plan;
+}
+
+/**
+ * A thing's points as one tight cluster round its centre (UX-CHAT-5): each
+ * point's direction and first distance come from a hash of its id, and it
+ * steps outward only until it clears the points already placed. `ordered` is
+ * oldest first, so a new night's point fits round the older ones and none of
+ * them moves; the same points always land in the same places.
+ */
+function thingCluster(anchor: string, ordered: readonly string[], clearance: number): Satellite[] {
+  const placed: { x: number; y: number }[] = [];
+  return ordered.map((id, rank) => {
+    const angle = mixedUnit(id) * 2 * Math.PI;
+    let radius = THING_CLUSTER_CORE + mixedUnit(`${id}#r`) * clearance;
+    let x = radius * Math.cos(angle);
+    let y = radius * Math.sin(angle);
+    while (placed.some((point) => Math.hypot(point.x - x, point.y - y) < clearance)) {
+      radius += clearance / 3;
+      x = radius * Math.cos(angle);
+      y = radius * Math.sin(angle);
+    }
+    placed.push({ x, y });
+    return { id, anchor, angle, radius, rank };
+  });
+}
+
+/** A well-mixed hash of `id` in [0, 1). FNV-1a alone barely moves when only
+ *  the last character differs (point ids often do), so its result is run
+ *  through murmur3's finaliser to spread nearby ids round the whole circle. */
+function mixedUnit(id: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < id.length; index += 1) {
+    hash ^= id.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35);
+  hash ^= hash >>> 16;
+  return (hash >>> 0) / 4294967296;
 }
 
 /** Write a satellite plan onto the graph. Cheap enough (two trig calls per
@@ -423,10 +504,18 @@ export function placeSatellites(graph: Graph, plan: Satellite[], skipId?: string
  *  at paint time without a lookup. */
 export function annotateDust(graph: Graph, plan: Satellite[]): void {
   const counts = new Map<string, number>();
+  const reach = new Map<string, number>();
   for (const satellite of plan) {
     graph.mergeNodeAttributes(satellite.id, { dustRank: satellite.rank, dustOf: satellite.anchor });
     counts.set(satellite.anchor, (counts.get(satellite.anchor) ?? 0) + 1);
+    if (graph.getNodeAttribute(satellite.anchor, "entityType") === THING_NODE_TYPE) {
+      const size = (graph.getNodeAttribute(satellite.id, "size") as number | undefined) ?? 0;
+      reach.set(satellite.anchor, Math.max(reach.get(satellite.anchor) ?? 0, satellite.radius + size));
+    }
   }
+  // A thing's cluster takes room on the map like a disc of that radius: the
+  // shelf and the collide force keep other ink off its frame.
+  for (const [anchor, radius] of reach) graph.setNodeAttribute(anchor, "clusterRadius", radius);
   for (const [anchor, count] of counts) graph.setNodeAttribute(anchor, "dustCount", count);
 }
 
@@ -568,7 +657,7 @@ function measureComponent(graph: Graph, ids: string[], satellites: Set<string>):
     if (satellites.has(id)) continue;
     const x = graph.getNodeAttribute(id, "x") as number;
     const y = graph.getNodeAttribute(id, "y") as number;
-    const pad = (graph.getNodeAttribute(id, "size") as number) ?? 0;
+    const pad = bodyRadius(graph.getNodeAttributes(id));
     minX = Math.min(minX, x - pad);
     maxX = Math.max(maxX, x + pad);
     minY = Math.min(minY, y - pad);
@@ -580,6 +669,11 @@ function measureComponent(graph: Graph, ids: string[], satellites: Set<string>):
     return { ids, minX: 0, maxX: 0, minY: 0, maxY: 0 };
   }
   return { ids, minX, maxX, minY, maxY };
+}
+
+/** The room a node's ink takes: its disc, or a thing's whole cluster. */
+function bodyRadius(attrs: Record<string, unknown>): number {
+  return Math.max((attrs.size as number | undefined) ?? 0, (attrs.clusterRadius as number | undefined) ?? 0);
 }
 
 /** A placed island: centre and the radius of the circle it claims. */
@@ -1807,7 +1901,7 @@ export function createAtlasSimulation(
       id,
       x: attrs.x as number,
       y: attrs.y as number,
-      radius: (attrs.size as number) + COLLIDE_PAD,
+      radius: bodyRadius(attrs) + COLLIDE_PAD,
     });
   });
   const simNodeById = new Map(nodes.map((node) => [node.id, node]));
@@ -2079,13 +2173,19 @@ export function nodeDisplay(
   palette: GraphPalette,
   lod: LodState = OPENING_LOD,
 ): Record<string, any> {
+  // A thing is its frame (AtlasView paints it round the points); its node is
+  // only the centre they cluster on.
+  if (attrs.entityType === THING_NODE_TYPE) return { ...attrs, hidden: true };
   const dustRank = attrs.dustRank as number | undefined;
-  if (dustRank !== undefined && dustRank >= lod.dustVisible) {
+  // A night's points are the thing's whole picture: never folded into a count.
+  if (dustRank !== undefined && dustRank >= lod.dustVisible && attrs.night !== true) {
     const anchorHovered = state.hovered === attrs.dustOf && dustRank < Math.max(lod.dustVisible, HOVER_DUST_MAX);
     if (!anchorHovered && state.hovered !== nodeId) return { ...attrs, hidden: true };
   }
   let base = attrs;
-  if (attrs.island && !lod.islandsSolid) {
+  // A night's point is the work itself: drawn whole at every zoom, never as
+  // part of a dim island.
+  if (attrs.island && !lod.islandsSolid && attrs.night !== true) {
     base = { ...attrs, color: dimFill(attrs.color as string, palette.surface), label: "" };
   }
   // Keep orientation names through the middle zoom range, where ordinary
@@ -2153,6 +2253,12 @@ export function edgeDisplay(
   if (state.hovered !== null) return { ...attrs, hidden: true };
   if (endpointAttrs) {
     const { source: s, target: t } = endpointAttrs;
+    // A night's point that also links to an entity shows that line at rest:
+    // it stays in its thing's cluster, so the line is what says what else it
+    // is about. Its tie to the (hidden) thing centre is never drawn.
+    const night = s.night === true ? s : t.night === true ? t : null;
+    const other = night === s ? t : s;
+    if (night && other.entityType !== THING_NODE_TYPE && other.dustRank === undefined) return attrs;
     // Satellite position is enough context at rest. Every memory edge waits
     // for the memory or one of its endpoints to be hovered/focused, including
     // the anchor thread; this removes the baseline spoke clutter while

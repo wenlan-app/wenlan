@@ -37,8 +37,8 @@ import AtlasSelect from "./AtlasSelect";
 import AtlasTooltip from "./AtlasTooltip";
 import AtlasTypeFilters from "./AtlasTypeFilters";
 import { entityTypeHidden, filterGraphEntityTypes } from "../../lib/graph/typeFilter";
-import { getKnowledgeGraph } from "../../lib/tauri";
-import type { Entity, KnowledgeGraph } from "../../lib/tauri";
+import { getKnowledgeGraph, listThingNightPoints } from "../../lib/tauri";
+import type { Entity, KnowledgeGraph, ThingNightPoints } from "../../lib/tauri";
 import {
   buildKnowledgeGraphModel,
   entitySpace,
@@ -48,6 +48,8 @@ import {
   pageNodeId,
   drawableModel,
   attachMemories,
+  attachThingPoints,
+  thingIdOf,
   smallGroupNodeCount,
   DEFAULT_LAYERS,
   MEMORY_NODE_TYPE,
@@ -72,6 +74,7 @@ import {
 } from "../../lib/graph/atlas";
 import type { HoverState, AtlasSimulation, LodState, LabelPlacement } from "../../lib/graph/atlas";
 import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
+import { drawNightMarks, nightMarks } from "../../lib/graph/night";
 import { readStoredPositions, startRearrange, storePositions, undoRearrange } from "../../lib/graph/positions";
 import type { CartographyScene } from "../../lib/graph/cartography";
 import {
@@ -113,6 +116,8 @@ const EMPTY_GRAPH: KnowledgeGraph = {
   pages: [],
   page_links: [],
 };
+
+const EMPTY_THING_POINTS: ThingNightPoints[] = [];
 
 /** Where the layer choice survives a reload. */
 const LAYERS_STORAGE_KEY = "atlas.layers";
@@ -165,12 +170,15 @@ export function readStoredLayers(raw: string | null): GraphLayers {
 export type AtlasNodeTarget =
   | { kind: "entity"; id: string }
   | { kind: "memory"; id: string }
-  | { kind: "page"; id: string };
+  | { kind: "page"; id: string }
+  | { kind: "thing"; id: string };
 
 /** The node id a click landed on, resolved to a navigable target. */
 function targetForNode(nodeId: string): AtlasNodeTarget {
   const sourceId = memorySourceId(nodeId);
   if (sourceId !== null) return { kind: "memory", id: sourceId };
+  const thingId = thingIdOf(nodeId);
+  if (thingId !== null) return { kind: "thing", id: thingId };
   const pageId = pageIdOf(nodeId);
   if (pageId !== null) return { kind: "page", id: pageId };
   return { kind: "entity", id: nodeId };
@@ -267,6 +275,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     refetchInterval: 120_000,
   });
   const entities = graph.entities;
+  // Each thing with the points its nights wrote (UX-CHAT-5). Those points have
+  // no entity or page link of their own, so this is the only way they reach
+  // the map. An older daemon without the route leaves the map as it was.
+  const { data: thingPoints = EMPTY_THING_POINTS, isPending: thingPointsPending } = useQuery({
+    queryKey: ["thing-night-points"],
+    queryFn: async (): Promise<ThingNightPoints[]> => {
+      try {
+        return (await listThingNightPoints()) ?? EMPTY_THING_POINTS;
+      } catch {
+        return EMPTY_THING_POINTS;
+      }
+    },
+    refetchInterval: 120_000,
+  });
 
   // Same field precedence as the entity page (EntityDetail's space-then-domain
   // rule), through model.ts's entitySpace so the list, the filter, and the
@@ -405,12 +427,19 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     ) {
       drawable = drawableModel(baseModel, true);
     }
-    if (!layers.memory) return drawable;
-    // Nothing to hang the memories on (entity and page layers both off):
-    // fall back to drawing the memory model as it is.
-    if (baseModel.nodes.length === 0) return drawableModel(model, showSmallGroups);
-    return attachMemories(drawable, model);
-  }, [baseModel, model, layers.memory, showSmallGroups, effectiveFocusId]);
+    let withMemories = drawable;
+    if (layers.memory) {
+      // Nothing to hang the memories on (entity and page layers both off):
+      // fall back to drawing the memory model as it is.
+      withMemories = baseModel.nodes.length === 0 ? drawableModel(model, showSmallGroups) : attachMemories(drawable, model);
+    }
+    // Things and their night's points are drawn whatever the memory layer
+    // says: they are the work, not a layer of evidence.
+    return attachThingPoints(withMemories, thingPoints, scopedGraph.memory_links, spaceFilter);
+  }, [baseModel, model, layers.memory, showSmallGroups, effectiveFocusId, thingPoints, scopedGraph, spaceFilter]);
+  const hasThings = visibleModel.nodes.some((node) => node.kind === "thing");
+  const hasThingsRef = useRef(hasThings);
+  hasThingsRef.current = hasThings;
   // Counted off the FULL base model, so the chip keeps its number when the
   // groups are showing and can offer to hide them again — and keeps it when
   // the memory chip flips, since memories never make or break a group.
@@ -725,7 +754,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // are all smaller than MIN_COMPONENT_SIZE draws nothing but must still
     // mount, so the map frame and the "N unconnected or paired, hidden" chip
     // explain the emptiness instead of the view silently showing a blank slot.
-    if (!container || model.nodes.length === 0) return;
+    if (!container || (model.nodes.length === 0 && visibleModel.nodes.length === 0)) return;
 
     const graph = buildAtlasGraph(visibleModel, palette);
     runAtlasLayout(graph);
@@ -761,9 +790,17 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       );
       if (survivorPositions.size > 0) sim.restorePositions(survivorPositions);
     }
-    const bodyPositions = () => new Map(graph.nodes()
-      .filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE)
-      .map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }]));
+    const bodyPositions = () => {
+      const positions = new Map(graph.nodes()
+        .filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE)
+        .map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }]));
+      // A thing gone quiet has no frame on this map, but keeps its spot, so
+      // its frame comes back where it was when the thing is active again.
+      for (const [id, position] of kept) {
+        if (thingIdOf(id) !== null && !positions.has(id)) positions.set(id, position);
+      }
+      return positions;
+    };
     // Keep this layout now, so it holds even if the app quits without
     // unmounting the map, and again when the window goes away.
     storePositions(spaceFilter, bodyPositions());
@@ -819,7 +856,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     overlay.style.width = "100%";
     overlay.style.height = "100%";
     overlay.style.pointerEvents = "none";
-    overlay.style.display = showRegionsRef.current || layers.memory ? "" : "none";
+    overlay.style.display = showRegionsRef.current || layers.memory || hasThingsRef.current ? "" : "none";
     overlayRef.current = overlay;
     const areas = overlay.cloneNode() as HTMLCanvasElement;
     areas.dataset.testid = "atlas-community-areas";
@@ -1060,6 +1097,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
         renderer.scaleSize(1),
         labelBoxes,
       );
+      drawNightMarks(ctx, nightMarks(graph, (id) => {
+        const display = renderer.getNodeDisplayData(id);
+        if (!display || display.hidden) return null;
+        const at = renderer.framedGraphToViewport(display);
+        return { x: at.x, y: at.y, r: renderer.scaleSize(display.size) };
+      }, hoverStateRef.current, { width, height }), paletteRef.current, labelBoxes);
     };
     // One handler paints the overlay from one scene — rebuilt only when a
     // paint marked it dirty — and sigma sees a single afterRender listener.
@@ -1383,12 +1426,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
-    overlay.style.display = showRegions || layers.memory ? "" : "none";
+    overlay.style.display = showRegions || layers.memory || hasThings ? "" : "none";
     if (areasRef.current) areasRef.current.style.display = showRegions ? "" : "none";
     // The canvas keeps its last frame while hidden; repaint on re-show so it
     // matches wherever the camera and drags went in the meantime.
     if (showRegions) sigmaRef.current?.refresh();
-  }, [showRegions, layers.memory]);
+  }, [showRegions, layers.memory, hasThings]);
 
   const statusStyle = {
     height: "100%",
@@ -1422,7 +1465,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     );
   }
 
-  if (graphLoading) {
+  // The things' points are waited for too (their read never fails, see
+  // above), so the first layout and the opening frame already hold them.
+  if (graphLoading || thingPointsPending) {
     return (
       <div data-testid="atlas-view" style={statusStyle}>
         <span className="entity-empty">{t("constellationMap.loading")}</span>
@@ -1432,7 +1477,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
 
   // Nothing to draw only when the daemon has neither entities NOR wiki pages:
   // a knowledge base made purely of pages is a real map, not an empty one.
-  if (entities.length === 0 && graph.pages.length === 0) {
+  if (entities.length === 0 && graph.pages.length === 0 && !hasThings) {
     return (
       <div data-testid="atlas-view" style={statusStyle}>
         <TabEmptyMark tab="graph" />
@@ -1447,7 +1492,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   const drawn = filteredModel.nodes;
   const pageCount = drawn.filter((node) => node.kind === "page").length;
   const memoryCount = drawn.filter((node) => node.kind === "memory").length;
-  const entityCount = drawn.length - pageCount - memoryCount;
+  const entityCount = drawn.filter((node) => node.kind === "entity").length;
   // A kind appears when its layer is on and it actually contributed nodes.
   // Entities are the exception and always report, zero included — the round-1
   // line did, and "0 entities" is the honest answer to an empty entity layer.

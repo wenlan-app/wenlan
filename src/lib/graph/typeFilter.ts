@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { GraphModel } from "./model";
-import { MEMORY_NODE_TYPE, PAGE_NODE_TYPE } from "./model";
+import { MEMORY_NODE_TYPE, PAGE_NODE_TYPE, THING_NODE_TYPE } from "./model";
 
 /** Readable fallback without changing stored types or their filter identity. */
 export function entityTypeLabel(type: string): string {
@@ -9,7 +9,7 @@ export function entityTypeLabel(type: string): string {
 }
 
 export function entityTypeHidden(entityType: string, excluded: ReadonlySet<string>): boolean {
-  return entityType !== MEMORY_NODE_TYPE && entityType !== PAGE_NODE_TYPE && excluded.has(entityType);
+  return entityType !== MEMORY_NODE_TYPE && entityType !== PAGE_NODE_TYPE && entityType !== THING_NODE_TYPE && excluded.has(entityType);
 }
 
 /** Filter presentation only: retain the model's original positions and degrees. */

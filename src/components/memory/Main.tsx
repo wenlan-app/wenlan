@@ -1848,7 +1848,9 @@ export default function Main({
                     ? navigateTo({ kind: "memory", sourceId: target.id })
                     : target.kind === "page"
                       ? navigateTo({ kind: "page", pageId: target.id })
-                      : handleEntityClick(target.id)
+                      : target.kind === "thing"
+                        ? navigateTo({ kind: "thing", thingId: target.id })
+                        : handleEntityClick(target.id)
                 }
                 onBack={navigateBack}
               />
