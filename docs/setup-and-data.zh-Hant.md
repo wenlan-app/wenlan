@@ -68,7 +68,7 @@ npx -y wenlan setup
 ### 模型選項與技術細節
 
 - **本地基礎檢索：** [BGE 向量模型](https://huggingface.co/Qdrant/bge-base-en-v1.5-onnx-Q) 透過 FastEmbed 在你的裝置上執行，用於混合搜尋，不需要 API key。
-- **可選的裝置端整理：** 內容補充與頁面彙整可使用你選擇的 [`Qwen3 4B`](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF) 或 [`Qwen3.5 9B`](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF)，透過 [llama.cpp](https://github.com/ggml-org/llama.cpp) 執行。未經選擇，不會下載或啟用語言模型。
+- **可選的裝置端整理：** 內容補充與頁面彙整可使用你選擇的 [`Qwen3.5 4B`](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF) 或 [`Qwen3.5 9B`](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF)，透過 [llama.cpp](https://github.com/ggml-org/llama.cpp) 執行。未經選擇，不會下載或啟用語言模型。
 - **其他模型來源：** Ollama 或 LM Studio 等 OpenAI 相容的本地端點，或已設定的雲端 provider，也可以提供模型支援的內容補充與頁面彙整。
 - **雲端說明：** 如果你選擇的模型端點位於遠端，Wenlan 會把該任務需要的 system prompt 與 user prompt 傳給它。本地檢索與裝置端整理仍留在你的裝置上。
 

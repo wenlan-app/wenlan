@@ -183,7 +183,8 @@ what a `verified` status does and does not establish.
 | Dense embedding | `Qdrant/bge-base-en-v1.5-onnx-Q` | Quantized ONNX, 768 dimensions, English; runs locally through FastEmbed. |
 | Light cross-encoder | `jinaai/jina-reranker-v1-turbo-en` | Optional English reranker for latency-sensitive paths. |
 | Deep cross-encoder | `BAAI/bge-reranker-base` | Optional reranker for explicit deep search in `full` mode. |
-| On-device language model | [`unsloth/Qwen3-4B-Instruct-2507-GGUF`](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF), file `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | Smaller user-selected option for enrichment and synthesis. |
+| On-device language model | [`unsloth/Qwen3.5-4B-GGUF`](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF), file `Qwen3.5-4B-Q4_K_M.gguf` | Smaller user-selected option for enrichment and synthesis; the default. |
+| On-device language model | [`unsloth/Qwen3-4B-Instruct-2507-GGUF`](https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF), file `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | Earlier small option, kept for existing setups. |
 | On-device language model | [`unsloth/Qwen3.5-9B-GGUF`](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF), file `Qwen3.5-9B-Q4_K_M.gguf` | Larger user-selected option for enrichment and synthesis. |
 
 On-device language models run through Rust bindings for

@@ -3,10 +3,10 @@
 //! Registry of on-device GGUF models Wenlan can download and run itself.
 //!
 //! The list spans several families and sizes, ordered by memory. Which ones a
-//! computer is offered follows its hardware ([`model_fit`], [`shortlist`]). Qwen 3 4B
-//! stays the default: it runs on any laptop. Only Qwen 3 4B and Qwen 3.5 9B
-//! have been quality-measured on Wenlan's jobs; the others are offered as
-//! choices and measured later.
+//! computer is offered follows its hardware ([`model_fit`], [`shortlist`]). Qwen 3.5 4B
+//! is the default: it runs on any laptop and passes the support-check
+//! qualification batch in both item orders (Mac, 2026-11-04), which Qwen 3 4B
+//! does not. Qwen 3 4B stays listed so existing setups keep their model.
 //!
 //! ## Token budget calibration (2026-04-18)
 //!
@@ -84,6 +84,20 @@ pub const MODELS: &[OnDeviceModel] = &[
         context_size: 8_192,          // 25% of 32K. KV cache ~2GB on Metal.
         max_output_tokens: 1_024,     // 4B quality degrades past ~750 words
         thinking_mode: false,         // Instruct-2507 has no thinking mode
+        prompt_format: PromptFormat::ChatMl,
+    },
+    OnDeviceModel {
+        id: "qwen3.5-4b",
+        display_name: "Qwen 3.5 4B",
+        repo_id: "unsloth/Qwen3.5-4B-GGUF",
+        filename: "Qwen3.5-4B-Q4_K_M.gguf",
+        param_count: "4B",
+        ram_required_gb: 3.5, // measured RSS 3.2 GB on a Mac (2026-11-04)
+        file_size_gb: 2.7,
+        synthesis_token_limit: 6_000,
+        context_size: 8_192,
+        max_output_tokens: 1_024,
+        thinking_mode: true, // Qwen 3.5 family, thinking-on by default
         prompt_format: PromptFormat::ChatMl,
     },
     OnDeviceModel {
@@ -203,9 +217,13 @@ pub fn prompt_format_for_model_file(path: &std::path::Path) -> PromptFormat {
         .unwrap_or(PromptFormat::ModelTemplate)
 }
 
-/// Get the default model (smallest tier, runs on any laptop).
+/// Id of the default model: small enough for any laptop, and it passes the
+/// support-check qualification batch.
+pub const DEFAULT_MODEL_ID: &str = "qwen3.5-4b";
+
+/// Get the default model (small tier, runs on any laptop).
 pub fn get_default_model() -> &'static OnDeviceModel {
-    &MODELS[0]
+    get_model(DEFAULT_MODEL_ID).expect("default model is in the registry")
 }
 
 /// Resolve a possibly-unknown model id to a concrete model, falling back to
@@ -241,9 +259,9 @@ pub fn fits_ram(model: &OnDeviceModel, total_ram_gb: f64) -> bool {
 /// only as the CLI's default answer; the app shows no "recommended" mark.
 pub fn recommend_for_ram(total_ram_gb: f64) -> &'static OnDeviceModel {
     if total_ram_gb >= 16.0 {
-        &MODELS[2] // qwen3.5-9b
+        get_model("qwen3.5-9b").expect("qwen3.5-9b is in the registry")
     } else {
-        &MODELS[0] // qwen3-4b
+        get_default_model()
     }
 }
 
@@ -459,8 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_is_ordered_by_memory_with_the_default_first() {
-        assert_eq!(MODELS[0].id, "qwen3-4b");
+    fn registry_is_ordered_by_memory() {
         assert!(MODELS
             .windows(2)
             .all(|pair| pair[0].ram_required_gb <= pair[1].ram_required_gb));
@@ -539,7 +556,10 @@ mod tests {
                 .map(|m| m.id)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(ids(&mac(8.0)), vec!["qwen3-4b", "gemma4-e4b", "qwen3.5-9b"]);
+        assert_eq!(
+            ids(&mac(8.0)),
+            vec!["qwen3.5-4b", "gemma4-e4b", "qwen3.5-9b"]
+        );
         assert_eq!(
             ids(&mac(16.0)),
             vec!["gemma4-e4b", "qwen3.5-9b", "gemma4-12b"]
@@ -554,8 +574,8 @@ mod tests {
             dedicated_vram_gb: Some(4.0),
             free_disk_gb: Some(500.0),
         };
-        // Only the smallest fits a 4 GB GPU; the next smallest top it up.
-        assert_eq!(ids(&pc), vec!["qwen3-4b", "gemma4-e4b", "qwen3.5-9b"]);
+        // Only the 4B models fit a 4 GB GPU; the next smallest tops them up.
+        assert_eq!(ids(&pc), vec!["qwen3-4b", "qwen3.5-4b", "gemma4-e4b"]);
     }
 
     #[test]
@@ -568,25 +588,26 @@ mod tests {
     #[test]
     fn resolve_or_default_handles_unknown() {
         // Unknown id → default
-        assert_eq!(resolve_or_default(Some("qwen3.5-4b")).id, "qwen3-4b");
-        assert_eq!(resolve_or_default(Some("nonexistent")).id, "qwen3-4b");
+        assert_eq!(resolve_or_default(Some("nonexistent")).id, "qwen3.5-4b");
         // None → default
-        assert_eq!(resolve_or_default(None).id, "qwen3-4b");
+        assert_eq!(resolve_or_default(None).id, "qwen3.5-4b");
+        // An existing Qwen 3 4B setup keeps its model
+        assert_eq!(resolve_or_default(Some("qwen3-4b")).id, "qwen3-4b");
         // Known id → that id
         assert_eq!(resolve_or_default(Some("qwen3.5-9b")).id, "qwen3.5-9b");
     }
 
     #[test]
     fn recommendation_by_ram() {
-        assert_eq!(recommend_for_ram(4.0).id, "qwen3-4b");
-        assert_eq!(recommend_for_ram(8.0).id, "qwen3-4b");
+        assert_eq!(recommend_for_ram(4.0).id, "qwen3.5-4b");
+        assert_eq!(recommend_for_ram(8.0).id, "qwen3.5-4b");
         assert_eq!(recommend_for_ram(16.0).id, "qwen3.5-9b");
         assert_eq!(recommend_for_ram(32.0).id, "qwen3.5-9b");
         assert_eq!(recommend_for_ram(64.0).id, "qwen3.5-9b");
     }
 
     #[test]
-    fn default_is_qwen3_4b() {
-        assert_eq!(get_default_model().id, "qwen3-4b");
+    fn default_is_qwen3_5_4b() {
+        assert_eq!(get_default_model().id, "qwen3.5-4b");
     }
 }
