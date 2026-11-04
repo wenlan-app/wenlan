@@ -55111,6 +55111,24 @@ impl MemoryDB {
             workspace,
             allow_user_edited,
             false,
+            false,
+        )
+        .await
+    }
+
+    /// Post-ingest growth (`grow_page`): the dedup scoping of
+    /// `find_matching_page_scoped` with human-owned pages allowed (the
+    /// ownership gate turns those writes into revision cards), but the topic
+    /// only narrows the candidates -- the page must also be similar.
+    pub(crate) async fn find_page_to_grow_scoped(
+        &self,
+        entity_id: Option<&str>,
+        embedding: &[f32],
+        threshold: f64,
+        workspace: Option<&str>,
+    ) -> Result<Option<Page>, WenlanError> {
+        self.find_matching_page_with_policy(
+            entity_id, embedding, threshold, workspace, true, false, true,
         )
         .await
     }
@@ -55129,10 +55147,13 @@ impl MemoryDB {
     ) -> Result<Option<Page>, WenlanError> {
         // Matching must not collapse a temporary write veto into a terminal
         // no-match. The growth caller checks the permit and defers the receipt.
-        self.find_matching_page_with_policy(entity_id, embedding, threshold, workspace, false, true)
-            .await
+        self.find_matching_page_with_policy(
+            entity_id, embedding, threshold, workspace, false, true, true,
+        )
+        .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn find_matching_page_with_policy(
         &self,
         entity_id: Option<&str>,
@@ -55141,9 +55162,50 @@ impl MemoryDB {
         workspace: Option<&str>,
         allow_user_edited: bool,
         growth: bool,
+        grows: bool,
     ) -> Result<Option<Page>, WenlanError> {
+        // A memory that will be written INTO the page (`grows`): the memory's
+        // topic narrows the candidates but does not decide the page. Among
+        // that topic's pages the closest one is taken, and only when it clears
+        // the same similarity bar as any other page. Taking the topic's
+        // lowest-id page unconditionally made every memory filed under one
+        // broad topic grow the same page (756 versions of one page on real
+        // data, 2026-11-04). Dedup (`grows=false`) keeps entity-first: there
+        // the topic match is the point.
+        if grows {
+            if let Some(eid) = entity_id {
+                let emb_sql = Self::vec_to_sql(embedding);
+                let allow_human_owned = i64::from(allow_user_edited);
+                let conn = self.conn.lock().await;
+                let mut rows = conn
+                    .query(
+                        "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0),
+                                vector_distance_cos(embedding, vector32(?6)) as dist
+                         FROM pages
+                         WHERE entity_id = ?1 AND status = 'active' AND embedding IS NOT NULL
+                           AND ((?5=0 AND COALESCE(creation_kind, 'distilled') <> 'source' AND COALESCE(kind, 'concept') <> 'entity') OR (?5=1 AND creation_kind IN ('distilled','research') AND LOWER(title) <> 'overview' AND COALESCE(kind, 'concept') <> 'entity'))
+                           AND (?2 IS NULL OR (?2 = ?4 AND space IS NULL) OR space = ?2)
+                           AND (?3 != 0 OR (COALESCE(user_edited, 0) = 0 AND COALESCE(creation_kind, 'distilled') <> 'authored'))
+                           AND (?5 = 0 OR COALESCE(review_required, 0) = 0)
+                         ORDER BY dist ASC, id ASC LIMIT 1",
+                        libsql::params![eid, workspace, allow_human_owned, UNFILED_SPACE_ID, i64::from(growth), emb_sql],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("growth page entity match: {e}")))?;
+                if let Some(row) = rows
+                    .next()
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?
+                {
+                    let dist: f64 = row.get(23).unwrap_or(1.0);
+                    if 1.0 - dist >= threshold {
+                        return Ok(Some(Self::row_to_page(&row)?));
+                    }
+                }
+            }
+        }
         // Entity-first, but scoped.
-        if let Some(eid) = entity_id {
+        if let Some(eid) = entity_id.filter(|_| !grows) {
             let allow_human_owned = i64::from(allow_user_edited);
             let conn = self.conn.lock().await;
             let mut rows = conn

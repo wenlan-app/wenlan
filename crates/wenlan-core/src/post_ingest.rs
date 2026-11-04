@@ -1108,7 +1108,7 @@ pub(crate) async fn grow_page(
     };
 
     let page = match db
-        .find_matching_page_scoped(entity_id, mem_embedding, growth_threshold, space, true)
+        .find_page_to_grow_scoped(entity_id, mem_embedding, growth_threshold, space)
         .await?
     {
         Some(c) => c,
@@ -1127,10 +1127,10 @@ pub(crate) async fn grow_page(
     };
 
     // Same recheck as `run_page_growth_slice`, same reason: the reload refreshes
-    // the row but not the decision, and a page that stopped being a legal dedup
+    // the row but not the decision, and a page that stopped being a legal growth
     // target in the match-to-reload window must not reach the model.
     if db
-        .find_matching_page_scoped(entity_id, mem_embedding, growth_threshold, space, true)
+        .find_page_to_grow_scoped(entity_id, mem_embedding, growth_threshold, space)
         .await?
         .is_none_or(|matched| matched.id != page.id)
     {
@@ -2167,7 +2167,7 @@ mod tests {
         });
         let llm: Arc<dyn LlmProvider> = provider.clone();
 
-        let report = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+        let report = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), -1.0, None)
             .await
             .unwrap();
 
@@ -2223,7 +2223,7 @@ mod tests {
         });
         let llm: Arc<dyn LlmProvider> = provider.clone();
         let lease = db.begin_cutover().await.unwrap();
-        let deferred = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+        let deferred = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), -1.0, None)
             .await
             .unwrap();
         assert!(deferred.selected && deferred.matched);
@@ -2236,7 +2236,7 @@ mod tests {
             .iter()
             .all(|step| step.step != "page_growth"));
         db.abort_cutover(lease).await.unwrap();
-        let retried = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+        let retried = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), -1.0, None)
             .await
             .unwrap();
         assert!(retried.committed);
@@ -2385,7 +2385,7 @@ mod tests {
             .await
             .unwrap();
         let open_entity = db
-            .create_entity("Open Growth", "Topic", Some("work"))
+            .create_entity("Open Growth", "Topic", Some("personal"))
             .await
             .unwrap();
         insert_growth_page(
@@ -2400,7 +2400,7 @@ mod tests {
             &db,
             "growth-open-page",
             &open_entity,
-            "work",
+            "personal",
             "existing machine-owned page body",
         )
         .await;
@@ -2421,7 +2421,7 @@ mod tests {
             "growth-lock-b-memory",
             "new evidence for the open page",
             Some(&open_entity),
-            Some("work"),
+            Some("personal"),
         )
         .await;
         let provider = Arc::new(MutatingGrowthProvider {
@@ -2432,7 +2432,9 @@ mod tests {
         });
         let llm: Arc<dyn LlmProvider> = provider.clone();
 
-        let first = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+        // The open page lives in another space: any similarity clears the bar,
+        // so only scope keeps the locked page's memory from growing it.
+        let first = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), -1.0, None)
             .await
             .unwrap();
         assert!(first.selected);
@@ -2452,7 +2454,7 @@ mod tests {
             .expect("the skipped attempt is recorded");
         assert_eq!(receipt.status, "ok");
 
-        let second = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+        let second = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), -1.0, None)
             .await
             .unwrap();
         assert!(second.matched && second.committed, "{second:?}");
@@ -2498,7 +2500,7 @@ mod tests {
             calls: std::sync::atomic::AtomicUsize::new(0),
         });
 
-        let report = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+        let report = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), -1.0, None)
             .await
             .unwrap();
 
@@ -2591,7 +2593,7 @@ mod tests {
             calls: std::sync::atomic::AtomicUsize::new(0),
         });
 
-        let report = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+        let report = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), -1.0, None)
             .await
             .unwrap();
 
@@ -2693,7 +2695,7 @@ mod tests {
             Some(("match-reload-page".to_string(), parked_tx, go_rx));
 
         let prompts = PromptRegistry::default();
-        let slice = run_page_growth_slice(&db, &llm, &prompts, 2.0, None);
+        let slice = run_page_growth_slice(&db, &llm, &prompts, -1.0, None);
         let detach = async {
             parked_rx
                 .await
@@ -2779,7 +2781,7 @@ mod tests {
             Some(("recheck-page".to_string(), parked_tx, go_rx));
 
         let prompts = PromptRegistry::default();
-        let slice = run_page_growth_slice(&db, &llm, &prompts, 2.0, None);
+        let slice = run_page_growth_slice(&db, &llm, &prompts, -1.0, None);
         let take_over = async {
             parked_rx
                 .await
@@ -2861,7 +2863,7 @@ mod tests {
             calls: std::sync::atomic::AtomicUsize::new(0),
         });
 
-        let report = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+        let report = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), -1.0, None)
             .await
             .unwrap();
 
@@ -2915,10 +2917,10 @@ mod tests {
             response: "work page accepts the new evidence.[1]".to_string(),
             captured_prompt: std::sync::Mutex::new(None),
         });
-        // Force the entity-first path. A global entity lookup would see the
-        // personal Page first and then fail the scoped match.
+        // Any similarity clears the bar, so this pins scoping only: a global
+        // entity lookup would see the personal Page first.
         let distillation = crate::tuning::DistillationConfig {
-            page_growth_threshold: 2.0,
+            page_growth_threshold: -1.0,
             ..Default::default()
         };
         run_post_ingest_enrichment(
@@ -3014,7 +3016,7 @@ mod tests {
             ..Default::default()
         };
         let distillation = crate::tuning::DistillationConfig {
-            page_growth_threshold: 2.0,
+            page_growth_threshold: -1.0,
             ..Default::default()
         };
 
@@ -3405,7 +3407,7 @@ mod tests {
             Some("work"),
             Some(&llm),
             &prompts,
-            2.0,
+            -1.0,
         );
         let detach = async {
             parked_rx
@@ -3502,7 +3504,7 @@ mod tests {
             Some("work"),
             Some(&llm),
             &prompts,
-            2.0,
+            -1.0,
         );
         let unconfirm = async {
             parked_rx

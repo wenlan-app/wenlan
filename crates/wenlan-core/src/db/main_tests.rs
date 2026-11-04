@@ -59699,3 +59699,102 @@ fn daemon_cache_dir_never_falls_through_to_the_cwd_default() {
         db_path.join("fastembed_cache")
     );
 }
+
+/// Growth: the memory's topic narrows the candidate pages, similarity picks
+/// among them and must clear the bar. Vectors are set by hand so the test does
+/// not depend on what the embedding model thinks is similar.
+#[tokio::test]
+async fn growth_takes_the_closest_page_of_the_topic_and_needs_similarity() {
+    let (db, _dir) = test_db().await;
+    let entity_id = db
+        .create_entity("Broad Topic", "Topic", Some("work"))
+        .await
+        .unwrap();
+    for id in ["a-unrelated-page", "b-related-page"] {
+        db.insert_page_with_kind(
+            id,
+            id,
+            None,
+            "machine-owned page body",
+            Some(&entity_id),
+            Some("work"),
+            &[],
+            &chrono::Utc::now().to_rfc3339(),
+            "research",
+            "confirmed",
+            Some("work"),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    let dims = db.generate_embeddings(&["x".to_string()]).unwrap()[0].len();
+    let unit = |axis: usize, weight: f32, other: Option<(usize, f32)>| {
+        let mut v = vec![0.0f32; dims];
+        v[axis] = weight;
+        if let Some((axis, weight)) = other {
+            v[axis] = weight;
+        }
+        v
+    };
+    {
+        let conn = db.conn.lock().await;
+        // The lowest id is the unrelated page: entity-first used to take it.
+        for (id, vector) in [
+            ("a-unrelated-page", unit(1, 1.0, None)),
+            ("b-related-page", unit(0, 0.9, Some((1, 0.1)))),
+        ] {
+            conn.execute(
+                "UPDATE pages SET embedding = vector32(?1) WHERE id = ?2",
+                libsql::params![MemoryDB::vec_to_sql(&vector), id],
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let related = unit(0, 1.0, None);
+    let unrelated = unit(2, 1.0, None);
+
+    for (name, matched) in [
+        (
+            "slice",
+            db.find_growable_page_scoped(Some(&entity_id), &related, 0.75, Some("work"))
+                .await
+                .unwrap(),
+        ),
+        (
+            "post-ingest",
+            db.find_page_to_grow_scoped(Some(&entity_id), &related, 0.75, Some("work"))
+                .await
+                .unwrap(),
+        ),
+    ] {
+        assert_eq!(
+            matched.map(|page| page.id).as_deref(),
+            Some("b-related-page"),
+            "{name}: the topic's closest page grows, not its oldest"
+        );
+    }
+
+    assert!(
+        db.find_growable_page_scoped(Some(&entity_id), &unrelated, 0.75, Some("work"))
+            .await
+            .unwrap()
+            .is_none(),
+        "sharing a topic is not enough: an unrelated memory grows no page"
+    );
+    assert!(db
+        .find_page_to_grow_scoped(Some(&entity_id), &unrelated, 0.75, Some("work"))
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        db.find_matching_page_scoped(Some(&entity_id), &unrelated, 0.75, Some("work"), false)
+            .await
+            .unwrap()
+            .map(|page| page.id)
+            .as_deref(),
+        Some("a-unrelated-page"),
+        "dedup keeps entity-first"
+    );
+}
