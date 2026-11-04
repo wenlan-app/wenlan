@@ -37,7 +37,6 @@ import "./assets/collectionToolbar.css";
 import AtlasInspector from "./AtlasInspector";
 import AtlasSelect from "./AtlasSelect";
 import AtlasTooltip from "./AtlasTooltip";
-import AtlasTypeFilters from "./AtlasTypeFilters";
 import { entityTypeHidden, filterGraphEntityTypes } from "../../lib/graph/typeFilter";
 import { getKnowledgeGraph, listThingNightPoints } from "../../lib/tauri";
 import type { Entity, KnowledgeGraph, ThingNightPoints } from "../../lib/tauri";
@@ -542,16 +541,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const communitiesRef = useRef<Map<string, string>>(communities);
 
   const filteredModel = useMemo(() => filterGraphEntityTypes(visibleModel, excludedTypes), [visibleModel, excludedTypes]);
-  const entityTypes = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const node of visibleModel.nodes) if (node.kind === "entity") counts.set(node.entityType, (counts.get(node.entityType) ?? 0) + 1);
-    return [...counts].sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b));
-  }, [visibleModel]);
-  const toggleEntityType = (type: string) => setExcludedTypes((previous) => {
-    const next = new Set(previous);
-    if (next.has(type)) next.delete(type); else next.add(type);
-    return next;
-  });
 
   // Region count for the toolbar count line — membership only, so it agrees
   // with the regions the cartography scene actually names without needing
@@ -1945,11 +1934,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           })}
           <div className="atlas-content-actions">
             <div className="atlas-content-toolgroup">
-            {layers.entity && entityTypes.length > 0 && <AtlasTypeFilters
-              types={entityTypes} excluded={excludedTypes} palette={palette} onToggle={toggleEntityType}
-              onReset={() => setExcludedTypes(new Set())}
-            />}
-
             <AtlasTooltip content={t("atlas.regionsDescription")}>
             <button
               type="button"

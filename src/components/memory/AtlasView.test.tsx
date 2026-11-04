@@ -809,53 +809,12 @@ describe("AtlasView", () => {
     expect(onNodeClick).toHaveBeenCalledWith({ kind: "entity", id: "e1" });
   });
 
-  it("filters entity types without remounting or moving the map and clears a hidden selection", async () => {
-    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  it("keeps the Display menu to layers and map switches, without a topic-type filter", async () => {
     mockConnectedPair();
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
-    const instance = capturedSigmaInstances[0];
-    const positions = instance.graph.nodes().map((id: string) => [id, instance.graph.getNodeAttribute(id, "x"), instance.graph.getNodeAttribute(id, "y")]);
-    act(() => instance.handlers.get("clickNode")?.({ node: "e1" }));
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeInTheDocument();
     openDisplayControls();
-    const typesTrigger = screen.getByRole("button", { name: "Filter topic types" });
-    fireEvent.click(typesTrigger);
-    fireEvent.keyDown(screen.getByRole("dialog", { name: "Topic types" }), { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Topic types" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Alice" })).toBeInTheDocument();
-    expect(typesTrigger).toHaveFocus();
-    fireEvent.click(typesTrigger);
-    fireEvent.click(screen.getByRole("button", { name: "Concept" }));
-    expect(screen.queryByRole("heading", { name: "Alice" })).not.toBeInTheDocument();
-    expect(screen.getByText("No nodes match these type filters.")).toBeInTheDocument();
-    expect(instance.settings.nodeReducer!("e1", instance.graph.getNodeAttributes("e1")).hidden).toBe(true);
-    const edge = instance.graph.edges()[0];
-    expect(instance.settings.edgeReducer!(edge, instance.graph.getEdgeAttributes(edge)).hidden).toBe(true);
-    expect(capturedSigmaInstances).toHaveLength(1);
-    expect(instance.graph.nodes().map((id: string) => [id, instance.graph.getNodeAttribute(id, "x"), instance.graph.getNodeAttribute(id, "y")])).toEqual(positions);
-    fireEvent.click(screen.getByRole("button", { name: "Restore all" }));
-    expect(screen.queryByText("No nodes match these type filters.")).not.toBeInTheDocument();
-    expect(instance.settings.nodeReducer!("e1", instance.graph.getNodeAttributes("e1")).hidden).not.toBe(true);
-  });
-
-  it("removes a hidden type from search and selected connections", async () => {
-    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-    const entities = mockConnectedPair();
-    entities[0].entity_type = "technology";
-    entities[1].entity_type = "person";
-    renderWithQuery(<AtlasView />);
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
-    act(() => capturedSigmaInstances[0].handlers.get("clickNode")?.({ node: "e1" }));
-    expect(await screen.findByRole("button", { name: "Bob" })).toBeInTheDocument();
-    openDisplayControls();
-    fireEvent.click(screen.getByRole("button", { name: "Filter topic types" }));
-    fireEvent.click(screen.getByRole("button", { name: "Person" }));
-    expect(screen.queryByRole("button", { name: "Bob" })).not.toBeInTheDocument();
-    fireEvent.focus(screen.getByRole("combobox", { name: "Filter nodes" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Filter nodes" }), { target: { value: "Bob" } });
-    expect(screen.queryByRole("option", { name: "Bob" })).not.toBeInTheDocument();
-    expect(screen.getByText("No matches")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Filter topic types" })).not.toBeInTheDocument();
   });
 
   it("mounts the map when the things' read lands after the graph's and adds nothing (UX-CHAT-5)", async () => {

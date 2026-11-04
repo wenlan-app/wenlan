@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type Graph from "graphology";
 import { satelliteAnchor, type HoverState } from "./atlas";
+import { convexHull, traceRoundedArea } from "./cartography";
 import { MEMORY_NODE_TYPE, THING_NODE_TYPE } from "./model";
 import type { GraphPalette } from "./palette";
 
@@ -27,6 +28,9 @@ export interface ThingFrame {
   dim: boolean;
   /** A night wrote one of its points in the last day: a moon after the title. */
   steeping?: boolean;
+  /** Its points' centres and radii, viewport CSS px: the halo is grown round
+   *  these (and its sentences), so it takes the shape of what it holds. */
+  spots?: readonly { x: number; y: number; r: number }[];
 }
 
 /** Where a point is drawn this frame. */
@@ -124,6 +128,7 @@ export function nightMarks(
       bottom: frameBottom,
       dim: !anyLit,
       steeping,
+      spots: points.map(({ x, y, r }) => ({ x, y, r })),
     };
     if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) return;
     frames.push(frame);
@@ -139,6 +144,22 @@ const MOON_PX = 11;
 /** Gap between a title and its moon, CSS px. */
 const MOON_GAP = 4;
 const FRAME_RADIUS = 10;
+/** Room for a point's own dot inside the halo's padding, CSS px. */
+const HALO_DOT_ROOM = 2;
+
+/** The hull a thing's halo is grown round: its points and the corners of its
+ *  sentences, so the halo follows what it holds, the way a region does,
+ *  rather than a box. Null when there is nothing to grow round. */
+export function haloOutline(frame: ThingFrame, sentences: readonly PlacedSentence[] = []): { x: number; y: number }[] | null {
+  const around: { x: number; y: number }[] = (frame.spots ?? []).map(({ x, y }) => ({ x, y }));
+  for (const sentence of sentences) {
+    if (sentence.thing !== frame.thing) continue;
+    const { left, right, top, bottom } = sentence.box;
+    around.push({ x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom });
+  }
+  if (around.length === 0) return null;
+  return convexHull(around);
+}
 const TITLE_FONT = '500 12px "Instrument Sans", -apple-system, sans-serif';
 const TITLE_MAX_PX = 240;
 /** Shorter cuts a crowded frame's title is tried at, CSS px. */
@@ -452,8 +473,11 @@ export function drawNightMarks(
     const frameWidth = frame.right - frame.left;
     const frameHeight = frame.bottom - frame.top;
     ctx.beginPath();
-    if (typeof ctx.roundRect === "function") ctx.roundRect(frame.left, frame.top, frameWidth, frameHeight, Math.min(FRAME_RADIUS, frameHeight / 2));
+    const outline = haloOutline(frame, kept);
+    if (outline) traceRoundedArea(ctx, outline, FRAME_PAD + HALO_DOT_ROOM);
+    else if (typeof ctx.roundRect === "function") ctx.roundRect(frame.left, frame.top, frameWidth, frameHeight, Math.min(FRAME_RADIUS, frameHeight / 2));
     else ctx.rect(frame.left, frame.top, frameWidth, frameHeight);
+    ctx.closePath();
     ctx.fill();
     hits.push({ thing: frame.thing, left: frame.left, top: frame.top, right: frame.right, bottom: frame.bottom });
   }
