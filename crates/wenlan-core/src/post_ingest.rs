@@ -430,7 +430,8 @@ pub async fn run_page_growth_slice(
 
     let (updated_body, citations, stats) =
         crate::citations::process_citation_output(updated, &numbered);
-    if let Some(threshold) = crate::post_write::merge_shrink_threshold() {
+    {
+        let threshold = page_growth_shrink_threshold();
         if !crate::retrieval::integrity::body_shrink_ok(&page.content, &updated_body, threshold) {
             let committed = record_stage_failure(
                 db,
@@ -908,6 +909,20 @@ pub(crate) async fn enrich_title(
     }
 }
 
+/// The smallest share of a page's length a page-growth rewrite may keep.
+///
+/// Page growth adds one memory to a page, so a much shorter result is a
+/// failed rewrite, not an edit: a 9B model on the dev app shrank one page
+/// 2522 -> 2375 -> 1964 -> 209 chars over four rewrites (2026-11-04). The
+/// guard used to be off unless `WENLAN_MERGE_SHRINK_GUARD` was set; page
+/// growth now uses 0.7 by default, and the variable still overrides it
+/// (`0` turns it off).
+const PAGE_GROWTH_MIN_KEPT: f64 = 0.7;
+
+fn page_growth_shrink_threshold() -> f64 {
+    crate::post_write::merge_shrink_threshold().unwrap_or(PAGE_GROWTH_MIN_KEPT)
+}
+
 /// Check if new memory matches an existing page; if so, update it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn grow_page(
@@ -1050,7 +1065,8 @@ pub(crate) async fn grow_page(
     // update_page has its own shrink-guard backstop, but this early-exit
     // preserves the Ok(false) contract (skipped-growth) rather than Err.
     // Matches the is_empty() early-return contract at line 572.
-    if let Some(threshold) = crate::post_write::merge_shrink_threshold() {
+    {
+        let threshold = page_growth_shrink_threshold();
         if !crate::retrieval::integrity::body_shrink_ok(&page.content, &updated_body, threshold) {
             log::warn!(
                 "[grow_page] shrink-guard skipped growth for page {}: new body ({} chars) < {}% of old ({} chars)",
@@ -2941,6 +2957,69 @@ mod tests {
         let log: Vec<wenlan_types::responses::PageChangelogEntry> =
             serde_json::from_str(&db.get_page_changelog(&page_id).await.unwrap()).unwrap();
         assert!(log.last().unwrap().citations_summary.is_some());
+    }
+
+    /// A rewrite that keeps only a fragment of the page is a failed rewrite:
+    /// with no shrink variable set, page growth still refuses it and the page
+    /// keeps its body.
+    #[tokio::test]
+    async fn grow_page_refuses_a_rewrite_that_loses_most_of_the_page() {
+        std::env::remove_var("WENLAN_MERGE_SHRINK_GUARD");
+        let (db, _dir) = test_db().await;
+        let mem_v1 = "mem_shrink_v1";
+        let v1_content = "Hybrid search fuses keyword and vector results with reciprocal rank \
+            fusion, then reranks the top fifty with a cross encoder before graph expansion";
+        db.upsert_documents(vec![make_doc(mem_v1, v1_content)])
+            .await
+            .unwrap();
+        let body = format!("{v1_content}. ").repeat(6);
+        let page_id = crate::post_write::create_page(
+            &db,
+            wenlan_types::requests::CreateConceptRequest {
+                title: "Hybrid search".to_string(),
+                content: body.clone(),
+                summary: None,
+                entity_id: None,
+                space: None.into(),
+                source_memory_ids: vec![mem_v1.to_string()],
+                creation_kind: Some("research".to_string()),
+                workspace: None,
+            },
+            "test",
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+        db.set_page_review_status(&page_id, "confirmed")
+            .await
+            .unwrap();
+        let mem_new = "mem_shrink_new";
+        let new_content = "Hybrid search keeps graph_stream off by default after the ablation";
+        db.upsert_documents(vec![make_doc(mem_new, new_content)])
+            .await
+            .unwrap();
+        let llm: std::sync::Arc<dyn LlmProvider> = std::sync::Arc::new(CapturingStubProvider {
+            response: "0, p<1e-5), graph_stream OFF is firm.[2]".to_string(),
+            captured_prompt: std::sync::Mutex::new(None),
+        });
+
+        let grew = grow_page(
+            &db,
+            mem_new,
+            new_content,
+            None,
+            None,
+            Some(&llm),
+            &crate::prompts::PromptRegistry::default(),
+            0.0,
+        )
+        .await
+        .unwrap();
+
+        assert!(!grew, "a fragment must not replace the page");
+        let page = db.get_page(&page_id).await.unwrap().unwrap();
+        assert_eq!(page.content, body);
     }
 
     /// G2(b): same class of bug as G1's `run_page_growth_slice` seam, but for

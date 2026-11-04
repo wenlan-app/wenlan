@@ -93,6 +93,38 @@ fn decode_piece(decoder: &mut encoding_rs::Decoder, bytes: &[u8]) -> String {
     piece
 }
 
+/// Fit a tokenized chat prompt into `budget` tokens.
+///
+/// A chat prompt ends with the turn markers that tell the model to answer
+/// (`<|im_start|>assistant`, the empty think block) right after the newest
+/// input. Cutting the end, as this code used to, removed those markers and
+/// the newest input, so the model carried on writing the user's text instead
+/// of answering: a page rewrite then came back starting mid-sentence and a
+/// fraction of its old length (2026-11-04, "Origin: Hybrid Search Memory
+/// System", 1964 -> 209 chars). This keeps the start (the instructions and
+/// the current page) and the end (the newest input and the answer markers)
+/// and drops tokens from the middle.
+pub(crate) fn fit_prompt_tokens<T: Copy>(tokens: Vec<T>, budget: usize) -> Vec<T> {
+    if tokens.len() <= budget {
+        return tokens;
+    }
+    let tail = (budget / 3).min(PROMPT_TAIL_TOKENS);
+    let head = budget - tail;
+    log::warn!(
+        "[llm_engine] prompt has {} tokens, over the {} budget; dropping {} from the middle",
+        tokens.len(),
+        budget,
+        tokens.len() - budget
+    );
+    let mut kept = Vec::with_capacity(budget);
+    kept.extend_from_slice(&tokens[..head]);
+    kept.extend_from_slice(&tokens[tokens.len() - tail..]);
+    kept
+}
+
+/// How many tokens at the end of an over-long prompt are always kept.
+const PROMPT_TAIL_TOKENS: usize = 768;
+
 /// Maximum input chars sent to the LLM (truncated at word boundary).
 pub const MAX_INPUT_CHARS: usize = 20_000;
 /// Maximum tokens the LLM can generate per request.
@@ -792,11 +824,7 @@ impl LlmEngine {
             );
             return None;
         }
-        let tokens = if tokens.len() > max_prompt_tokens {
-            tokens[..max_prompt_tokens].to_vec()
-        } else {
-            tokens
-        };
+        let tokens = fit_prompt_tokens(tokens, max_prompt_tokens);
 
         let n_batch = tokens.len().max(512) as u32;
         let ctx_params = self.context_params(
@@ -983,11 +1011,7 @@ impl LlmEngine {
             );
             return None;
         }
-        let tokens = if tokens.len() > max_prompt_tokens {
-            tokens[..max_prompt_tokens].to_vec()
-        } else {
-            tokens
-        };
+        let tokens = fit_prompt_tokens(tokens, max_prompt_tokens);
 
         let mut batch = LlamaBatch::new(tokens.len(), 1);
         for (i, token) in tokens.iter().enumerate() {
@@ -1724,11 +1748,7 @@ impl LlmEngine {
             );
             return None;
         }
-        let tokens = if tokens.len() > max_prompt_tokens {
-            tokens[..max_prompt_tokens].to_vec()
-        } else {
-            tokens
-        };
+        let tokens = fit_prompt_tokens(tokens, max_prompt_tokens);
 
         let n_batch = tokens.len().max(512) as u32;
         let ctx_params = self.context_params(
@@ -1845,11 +1865,7 @@ impl LlmEngine {
 
         // Truncate if needed
         let max_prompt_tokens = CTX_SIZE as usize - MAX_OUTPUT_TOKENS as usize;
-        let tokens = if tokens.len() > max_prompt_tokens {
-            tokens[..max_prompt_tokens].to_vec()
-        } else {
-            tokens
-        };
+        let tokens = fit_prompt_tokens(tokens, max_prompt_tokens);
 
         // Create context
         let n_batch = tokens.len().max(512) as u32;
@@ -2226,6 +2242,20 @@ impl BackfillScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_over_long_prompt_keeps_its_end() {
+        let tokens: Vec<u32> = (0..10_000).collect();
+        let kept = fit_prompt_tokens(tokens.clone(), 3_000);
+        assert_eq!(kept.len(), 3_000);
+        assert_eq!(kept[0], 0, "the instructions stay");
+        assert_eq!(*kept.last().unwrap(), 9_999, "the answer markers stay");
+        assert_eq!(kept[3_000 - 768], 10_000 - 768);
+        assert_eq!(fit_prompt_tokens(tokens[..50].to_vec(), 3_000).len(), 50);
+        let small = fit_prompt_tokens(tokens, 300);
+        assert_eq!(small.len(), 300);
+        assert_eq!(*small.last().unwrap(), 9_999);
+    }
 
     /// Tokens that split CJK characters must decode to the whole text. The
     /// old `token_to_piece` lost the first character of 目的 when a token
