@@ -444,6 +444,12 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
     );
     assert!(prompt.contains("P0 (open): Kept.") && prompt.contains("in English"));
     assert!(prompt.contains("N0: Which tagline?"), "{prompt}");
+    // Real use (2026-11-04): merge approvals, handoffs and long sentences
+    // made noisy points, and a question answered later stayed open.
+    assert!(prompt.contains("approving a merge, a review, a handoff or a run"));
+    assert!(prompt.contains("answered or done later in the same conversations is settled"));
+    assert!(prompt.contains("at most 15 words"));
+    assert!(prompt.contains("where a pull request stands are not decisions"));
 }
 
 /// UX-CHAT-5: a point can say which point on the thing's map it is, once

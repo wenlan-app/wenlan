@@ -1086,11 +1086,17 @@ pub fn dream_prompt(
 Its conversations since the last time they were read:\n{chats}\
 Points already kept from it:\n{prior_text}\n\n\
 Points on its map, not kept yet:\n{map_text}\n\n\
-Write down what these conversations settled and what the person left open, so they can be \
-remembered after the work goes quiet. Only things the person decided, chose or asked to keep \
-open; not steps the assistant took, not chores, not greetings. One sentence each, standing on \
-its own (name what it is about), in {language}. {KEEP_NAMES} Leave out anything already kept \
-above. When a kept point no longer holds (it was decided differently, or what was open is now \
+Write down what these conversations settled and what the person left open about the work \
+itself, so they can be remembered after it goes quiet. Only what the person themself decided \
+or chose about the work (settled), and questions about the work they left unanswered (open). \
+What was built, what a review found and where a pull request stands are not decisions. Leave \
+out: steps the assistant took, chores, greetings; approving a merge, a review, a handoff or a run; \
+how the person wants the assistant to work; where files are or problems with tools; and \
+details nobody could follow without the conversation. Agreeing to go on is not an open \
+question. A question answered or done later in the same conversations is settled, not open. \
+One short sentence each, at most 15 words, that someone who did not read the conversation \
+understands (name what it is about), in {language}. {KEEP_NAMES} Leave out anything already \
+kept above. When a kept point no longer holds (it was decided differently, or what was open is now \
 settled), give the new point and name the old one in \"replaces\". When a point you write is \
 one of the map points above (the same point, perhaps now settled), name it in \"map\". At most \
 {MAX_DREAM_POINTS} points; none is a fine answer.\n\
