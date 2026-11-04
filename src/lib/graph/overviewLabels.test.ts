@@ -20,6 +20,14 @@ describe("overview label sizing", () => {
     expect(measured.measureText(truncateOverviewLabel(measured, "Atlas network", 60)).width).toBeLessThanOrEqual(60);
   });
 
+  it("cuts at a word's end, never part way through one, while CJK may end anywhere", () => {
+    expect(truncateOverviewLabel(measured, "Pricing page stays open", 100)).toBe("Pricing…");
+    expect(truncateOverviewLabel(measured, "Tagline, pricing", 100)).toBe("Tagline…");
+    // One long word has no end to go back to: cut where it must.
+    expect(truncateOverviewLabel(measured, "Supercalifragilistic", 60)).toBe("Super…");
+    expect(truncateOverviewLabel(measured, "週末重寫了定價頁", 60)).toBe("週末重寫了…");
+  });
+
   it("uses a smaller readable budget on narrow viewports", () => {
     expect(overviewLabelMaxWidth(1200)).toBe(160);
     expect(overviewLabelMaxWidth(320)).toBe(134.4);

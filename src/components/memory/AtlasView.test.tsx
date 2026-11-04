@@ -874,6 +874,8 @@ describe("AtlasView", () => {
 
   it("picks a thing found by search and offers its three zoom stops (UX-CHAT-5)", async () => {
     mockConnectedPair();
+    // n2 is also about Alice, so the thing has a neighbourhood.
+    mockMemories([], [{ memory_id: "n2", entity_id: "e1" }]);
     vi.mocked(listThingNightPoints).mockResolvedValue([{
       thing_id: "t1",
       title: "Site redesign",
@@ -902,6 +904,58 @@ describe("AtlasView", () => {
     // Back to the map: the stops go with the selection.
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("group", { name: "Zoom to" })).not.toBeInTheDocument());
+  });
+
+  it("gives a picked thing's points no forced labels at 全部 (UX-CHAT-5)", async () => {
+    mockConnectedPair();
+    mockMemories([], [{ memory_id: "n2", entity_id: "e1" }]);
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [
+        { memory_id: "n1", title: "Tagline settled after the long review", decided: true, created_at: 10 },
+        { memory_id: "n2", title: "Pricing page open", decided: false, created_at: 20 },
+      ],
+    }]);
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const { settings, graph } = capturedSigmaInstances[0];
+    const search = screen.getByRole("combobox", { name: "Filter nodes" });
+    fireEvent.focus(search);
+    fireEvent.change(search, { target: { value: "Site" } });
+    fireEvent.click(screen.getByRole("option", { name: "Site redesign" }));
+    const stops = await screen.findByRole("group", { name: "Zoom to" });
+    fireEvent.click(within(stops).getByRole("button", { name: "All" }));
+    const point = graph.nodes().find((id: string) => graph.getNodeAttribute(id, "night") === true && String(graph.getNodeAttribute(id, "label")).startsWith("Tagline"));
+    expect(point).toBeDefined();
+    const ctx = {
+      font: "", fillStyle: "", strokeStyle: "", lineWidth: 0, lineJoin: "", globalAlpha: 1, textAlign: "", textBaseline: "",
+      measureText: (text: string) => ({ width: text.length * 7 }),
+      fillText: vi.fn(), strokeText: vi.fn(), save: vi.fn(), restore: vi.fn(),
+    };
+    settings.defaultDrawNodeLabel(ctx, { key: point, label: graph.getNodeAttribute(point, "label"), x: 10, y: 10, size: 4 }, { labelSize: 12, labelFont: "sans", labelWeight: "normal", labelColor: { color: "#000" } });
+    settings.defaultDrawNodeHover(ctx, { key: point, label: graph.getNodeAttribute(point, "label"), x: 10, y: 10, size: 4 }, { labelSize: 12, labelFont: "sans", labelWeight: "normal", labelColor: { color: "#000" } });
+    expect(ctx.fillText).not.toHaveBeenCalled();
+  });
+
+  it("offers no 附近 for a thing whose points link to nothing (UX-CHAT-5)", async () => {
+    mockConnectedPair();
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [{ memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 }],
+    }]);
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const search = screen.getByRole("combobox", { name: "Filter nodes" });
+    fireEvent.focus(search);
+    fireEvent.change(search, { target: { value: "Site" } });
+    fireEvent.click(screen.getByRole("option", { name: "Site redesign" }));
+    const stops = await screen.findByRole("group", { name: "Zoom to" });
+    // Nearby would frame exactly what This does.
+    expect(within(stops).getAllByRole("button").map((button) => button.textContent)).toEqual(["This", "All"]);
   });
 
   it("replaces an in-flight camera animation when returning to the map", async () => {

@@ -26,8 +26,20 @@ export function truncateOverviewLabel(
     if (context.measureText(candidate).width <= maxWidth) low = middle;
     else high = middle - 1;
   }
-  return `${characters.slice(0, low).join("")}…`;
+  let end = low;
+  // Never part way through a word: back to the last whole one when there is
+  // one. CJK text can end at any character.
+  const word = (char: string | undefined) => char !== undefined && /[\p{L}\p{N}]/u.test(char) && !CJK_CHAR.test(char);
+  if (word(characters[end]) && word(characters[end - 1])) {
+    let space = end - 1;
+    while (space > 0 && !/\s/u.test(characters[space] as string)) space -= 1;
+    if (space > 0) end = space;
+  }
+  const kept = characters.slice(0, end).join("").replace(/[\s,;:–—\-，、；：]+$/u, "");
+  return `${kept || characters.slice(0, low).join("")}…`;
 }
+
+const CJK_CHAR = /[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/u;
 
 /** Keep overview names readable on a narrow canvas without letting one name
  * consume the entire map. At desktop this resolves to the requested ~160px. */

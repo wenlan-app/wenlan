@@ -2425,12 +2425,10 @@ export function edgeDisplay(
   if (state.hovered !== null) return { ...attrs, hidden: true };
   if (endpointAttrs) {
     const { source: s, target: t } = endpointAttrs;
-    // A night's point that also links to an entity shows that line at rest:
-    // it stays in its thing's cluster, so the line is what says what else it
-    // is about. Its tie to the (hidden) thing centre is never drawn.
-    const night = s.night === true ? s : t.night === true ? t : null;
-    const other = night === s ? t : s;
-    if (night && other.entityType !== THING_NODE_TYPE && other.dustRank === undefined) return attrs;
+    // A night's point stays in its thing's cluster, so its line to an entity
+    // can cross the whole map; at rest it is not drawn (UX-CHAT-5), only
+    // when the point is hovered (above) or its thing is picked.
+    if (s.night === true || t.night === true) return { ...attrs, hidden: true };
     // Satellite position is enough context at rest. Every memory edge waits
     // for the memory or one of its endpoints to be hovered/focused, including
     // the anchor thread; this removes the baseline spoke clutter while

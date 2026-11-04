@@ -16,6 +16,8 @@ import {
 import { attachThingPoints, buildKnowledgeGraphModel, DEFAULT_LAYERS, drawableModel, MEMORY_NODE_TYPE } from "./model";
 import {
   applyNightOffsets,
+  cutToFit,
+  encloseSentences,
   frameAt,
   growthAt,
   GROWTH_MS,
@@ -24,8 +26,13 @@ import {
   nightMarks,
   nightOffsetsOf,
   nightPointIds,
+  placeFrameTitles,
+  SENTENCE_LINE,
+  SENTENCE_MAX_PX,
   thingFocusState,
   thingStopNodeIds,
+  thingStopsFor,
+  wrapText,
   type NightSentence,
 } from "./night";
 import type { GraphPalette } from "./palette";
@@ -282,14 +289,33 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     expect(map.getNodeAttribute("thing:t1", "clusterRadius")).toBeGreaterThan(3);
   });
 
-  it("shows a point's line to an entity at rest, while its tie to the thing centre stays quiet", () => {
+  it("draws a point's line to an entity only on hover or pick, never at rest, and never its tie to the thing centre", () => {
     const rest = { hovered: null, neighbors: new Set<string>() };
     const attrs = { color: "#abcdef", size: 1 };
     const point = { entityType: "memory", night: true, dustRank: 40, island: true };
     const entity = { entityType: "concept", landmark: true };
     const thing = { entityType: "thing", island: true };
-    expect(edgeDisplay(rest, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: entity }).hidden).toBeUndefined();
+    const ends = { source: point, target: entity };
+    // At the overview the line would cross the map from the thing's cluster.
+    expect(edgeDisplay(rest, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), ends).hidden).toBe(true);
+    expect(edgeDisplay(rest, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(8), ends).hidden).toBe(true);
+    const hovered = { hovered: "mem:n2", neighbors: new Set(["hub"]) };
+    expect(edgeDisplay(hovered, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), ends).hidden).toBeUndefined();
+    const picked = { hovered: "thing:t1", neighbors: new Set(["mem:n2", "hub"]), thing: "thing:t1" };
+    expect(edgeDisplay(picked, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), ends).hidden).toBeUndefined();
     expect(edgeDisplay(rest, "e", "thing:t1", "mem:n2", attrs, PALETTE, lodFor(1), { source: thing, target: point }).hidden).toBe(true);
+  });
+
+  it("keeps a frame visibly a frame when its points are drawn tiny", () => {
+    const map = mapWith(things());
+    annotateDust(map, satellitePlan(map));
+    const drawnAt = (id: string) => (id === "mem:n1" ? { x: 100, y: 100, r: 1 } : null);
+    const [frame] = nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, { width: 400, height: 400 }).frames;
+    expect(frame!.right - frame!.left).toBeGreaterThanOrEqual(30);
+    expect(frame!.bottom - frame!.top).toBeGreaterThanOrEqual(22);
+    // Grown evenly: still centred on the point.
+    expect((frame!.left + frame!.right) / 2).toBe(100);
+    expect((frame!.top + frame!.bottom) / 2).toBe(100);
   });
 
   it("frames each thing's drawn points with its title above, and puts a moon by each point", () => {
@@ -329,7 +355,11 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
 
 /** 6 px a character: enough to reason about room in the tests below. */
 const measure = (text: string) => text.length * 6;
-const sentence = (id: string, x: number, y: number, text: string, open = false): NightSentence => ({ id, x, y, r: 4, text, open, dim: false });
+const sentence = (id: string, x: number, y: number, text: string, open = false, thing = "thing:t1"): NightSentence => ({ id, thing, x, y, r: 4, text, open, dim: false });
+/** CJK characters are about twice as wide as Latin ones. */
+const measureWide = (text: string) => [...text].reduce((sum, char) => sum + (/[\u2e80-\u9fff\uff00-\uffef]/u.test(char) ? 12 : 6), 0);
+const LONG = "Pricing page stays open until the owner confirms the annual discount with the finance team";
+const LONG_ZH = "週末重寫了定價頁的文案，年繳方案的折扣還要等財務確認後才能定下來，先不放到首頁上";
 
 describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
   it("writes each sentence to the right of its point, or to the left where the right would cut it short", () => {
@@ -340,37 +370,136 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
     ], measure);
     const byId = new Map(placed.map((p) => [p.id, p]));
     // b's disc at 216 would cut a short on the right: the left shows it whole.
-    expect(byId.get("a")).toMatchObject({ align: "right", x: 90, y: 100, text: "Things are frames, not nodes" });
-    expect(byId.get("b")).toMatchObject({ align: "left", x: 230, text: "Night points cluster by id hash" });
-    expect(byId.get("c")).toMatchObject({ align: "left", text: "Moon marks what a night wrote", open: true });
-    // Hemmed in on both sides: cut short with an ellipsis where it fits best.
-    const [hemmed] = layoutNightSentences([sentence("a", 100, 100, "Things are frames, not nodes")], measure, [
-      { left: 0, right: 20, top: 90, bottom: 110 },
-      { left: 216, right: 400, top: 90, bottom: 110 },
+    expect(byId.get("a")).toMatchObject({ align: "right", x: 90, y: 100, lines: ["Things are frames, not nodes"] });
+    expect(byId.get("b")).toMatchObject({ align: "left", x: 230, lines: ["Night points cluster by id hash"] });
+    expect(byId.get("c")).toMatchObject({ align: "left", lines: ["Moon marks what a night wrote"], open: true, thing: "thing:t1" });
+  });
+
+  it("shows a long sentence whole, wrapped at 320 px onto at most three lines", () => {
+    const [latin] = layoutNightSentences([sentence("a", 100, 100, LONG)], measure);
+    expect(latin!.lines.length).toBe(2);
+    expect(latin!.lines.join(" ")).toBe(LONG);
+    for (const line of latin!.lines) expect(measure(line)).toBeLessThanOrEqual(SENTENCE_MAX_PX);
+    expect(latin!.box.bottom - latin!.box.top).toBe(2 * SENTENCE_LINE);
+    // Chinese wraps between characters, never with a space added.
+    const [zh] = layoutNightSentences([sentence("b", 100, 100, LONG_ZH)], measureWide);
+    expect(zh!.lines.length).toBe(2);
+    expect(zh!.lines.join("")).toBe(LONG_ZH);
+    for (const line of zh!.lines) expect(measureWide(line)).toBeLessThanOrEqual(SENTENCE_MAX_PX);
+  });
+
+  it("narrows the block where the full width would cover something, and cuts only past three lines", () => {
+    // Room on the right up to 240 only, the left taken.
+    const [hemmed] = layoutNightSentences([sentence("a", 100, 100, LONG)], measure, [
+      { left: 0, right: 88, top: 90, bottom: 150 },
+      { left: 240, right: 400, top: 90, bottom: 150 },
     ]);
-    expect(hemmed!.text.endsWith("…")).toBe(true);
-    expect(hemmed!.box.right).toBeLessThanOrEqual(216);
+    expect(hemmed).toMatchObject({ align: "left" });
+    expect(hemmed!.lines.length).toBe(3);
+    expect(hemmed!.lines[2]!.endsWith("…")).toBe(true);
+    expect(hemmed!.box.right).toBeLessThanOrEqual(240);
   });
 
   it("goes to the left when the right is taken, and is left out rather than printed over a word", () => {
     const occupied = [{ left: 205, right: 400, top: 90, bottom: 110 }];
     const left = layoutNightSentences([sentence("a", 200, 100, "Left side")], measure, [...occupied]);
-    expect(left).toEqual([expect.objectContaining({ align: "right", x: 190, text: "Left side" })]);
+    expect(left).toEqual([expect.objectContaining({ align: "right", x: 190, lines: ["Left side"] })]);
     expect(layoutNightSentences([sentence("a", 200, 100, "Nowhere")], measure, [{ left: 0, right: 400, top: 90, bottom: 110 }])).toEqual([]);
+    // Another body on the map (an entity's disc) is kept clear of too, and
+    // is only read, never taken as placed text.
+    const bodies = [{ left: 230, right: 240, top: 95, bottom: 105 }];
+    const occupiedNow: { left: number; right: number; top: number; bottom: number }[] = [];
+    const [clear] = layoutNightSentences([sentence("a", 200, 100, "Left side")], measure, occupiedNow, undefined, bodies);
+    expect(clear).toMatchObject({ align: "right", x: 190 });
+    expect(occupiedNow).toEqual([clear!.box]);
   });
 
-  it("never runs longer than 240 px, nor past the edge of the screen", () => {
+  it("never runs wider than 320 px, nor past the edge of the screen", () => {
     const [only] = layoutNightSentences([sentence("a", 0, 0, "x".repeat(200))], measure);
-    expect(measure(only!.text)).toBeLessThanOrEqual(240);
-    // A phone: the right edge is near, so the sentence goes left, cut at
-    // 240 px; with the left edge near too it is cut at the right edge.
-    const [phone] = layoutNightSentences([sentence("a", 250, 0, "Frames never jump when a night adds points")], measure, [], { width: 400 });
-    expect(phone).toMatchObject({ align: "right" });
-    expect(phone!.box.left).toBeGreaterThanOrEqual(0);
-    const [edge] = layoutNightSentences([sentence("a", 60, 0, "Frames never jump when a night adds points")], measure, [], { width: 200 });
+    expect(only!.lines.length).toBe(3);
+    for (const line of only!.lines) expect(measure(line)).toBeLessThanOrEqual(SENTENCE_MAX_PX);
+    expect(only!.lines[2]!.endsWith("…")).toBe(true);
+    // A phone: the right edge is near, so the sentence wraps narrower there,
+    // still whole.
+    const text = "Frames never jump when a night adds points";
+    const [phone] = layoutNightSentences([sentence("a", 250, 0, text)], measure, [], { width: 400 });
+    expect(phone).toMatchObject({ align: "left" });
+    expect(phone!.lines.join(" ")).toBe(text);
+    expect(phone!.box.right).toBeLessThanOrEqual(400);
+    // Both edges near: cut on the third line, inside the screen.
+    const [edge] = layoutNightSentences([sentence("a", 60, 0, LONG)], measure, [], { width: 200 });
     expect(edge).toMatchObject({ align: "left" });
     expect(edge!.box.right).toBeLessThanOrEqual(200);
-    expect(edge!.text.endsWith("…")).toBe(true);
+    expect(edge!.lines[edge!.lines.length - 1]!.endsWith("…")).toBe(true);
+  });
+
+  it("wraps between words, or between Chinese characters, ending the third line with an ellipsis", () => {
+    const lines = wrapText(measure, LONG, 120);
+    expect(lines.length).toBe(3);
+    for (const line of lines) expect(measure(line)).toBeLessThanOrEqual(120);
+    expect(lines[2]!.endsWith("…")).toBe(true);
+    // Every line, the cut one too, ends on a whole word.
+    const words = new Set(LONG.split(" "));
+    for (const line of lines) expect(words.has(line.replace(/…$/u, "").split(" ").pop()!)).toBe(true);
+    expect(LONG.startsWith(`${lines[0]} ${lines[1]}`)).toBe(true);
+    const zh = wrapText(measureWide, LONG_ZH, 60);
+    expect(zh.slice(0, 2)).toEqual([LONG_ZH.slice(0, 5), LONG_ZH.slice(5, 10)]);
+    expect(zh[2]).toBe(`${LONG_ZH.slice(10, 14)}…`);
+    // A word wider than a line breaks where it must.
+    expect(wrapText(measure, "a".repeat(50), 60)).toEqual(["a".repeat(10), "a".repeat(10), `${"a".repeat(9)}…`]);
+    expect(wrapText(measure, "Short one", 120)).toEqual(["Short one"]);
+    expect(wrapText(measure, "   ", 120)).toEqual([]);
+  });
+
+  it("cuts a name at a word's end, or at any Chinese character, with an ellipsis", () => {
+    expect(cutToFit(measure, "Short", 100)).toBe("Short");
+    expect(cutToFit(measure, "Pricing page stays open", 80)).toBe("Pricing page…");
+    // "Pricing pa…" would cut the word: back to "Pricing".
+    expect(cutToFit(measure, "Pricing page stays open", 70)).toBe("Pricing…");
+    expect(cutToFit(measure, "Tagline, pricing", 60)).toBe("Tagline…");
+    expect(cutToFit(measureWide, "週末重寫了定價頁的文案", 60)).toBe("週末重寫…");
+  });
+
+  it("grows a frame round its own points' sentences, so its border never runs through text", () => {
+    const placed = layoutNightSentences([sentence("a", 100, 100, LONG), sentence("b", 400, 300, "Other thing", false, "thing:t2")], measure);
+    const frames = [
+      { thing: "thing:t1", title: "Site", left: 85, top: 85, right: 115, bottom: 115, dim: false },
+      { thing: "thing:t2", title: "Other", left: 385, top: 285, right: 415, bottom: 315, dim: false },
+    ];
+    const [grown, other] = encloseSentences(frames, placed);
+    const box = placed.find((p) => p.id === "a")!.box;
+    expect(grown!.left).toBeLessThanOrEqual(box.left - 8);
+    expect(grown!.right).toBeGreaterThanOrEqual(box.right + 8);
+    expect(grown!.top).toBeLessThanOrEqual(box.top - 8);
+    expect(grown!.bottom).toBeGreaterThanOrEqual(box.bottom + 8);
+    // Its points stay inside; the other thing grows only round its own.
+    expect(grown!.left).toBe(85);
+    expect(other!.right).toBeGreaterThan(415);
+    expect(other!.left).toBe(385);
+  });
+
+  it("puts each frame's title clear of other titles, names and frames' borders, cut at a word", () => {
+    const frame = (thing: string, title: string, left: number, top: number, right: number, bottom: number) => ({ thing, title, left, top, right, bottom, dim: false });
+    const row = [0, 70, 140, 210].map((left, index) => frame(`thing:${index}`, "Site redesign", left, 100, left + 60, 140));
+    const titles = placeFrameTitles(row, measure);
+    expect(titles.length).toBe(4);
+    for (const [index, a] of titles.entries()) {
+      for (const b of titles.slice(index + 1)) {
+        expect(a.box.left < b.box.right && b.box.left < a.box.right && a.box.top < b.box.bottom && b.box.top < a.box.bottom).toBe(false);
+      }
+    }
+    // A frame just under another: its title goes below rather than over the
+    // upper frame's border.
+    const stacked = placeFrameTitles([frame("thing:a", "Upper", 0, 100, 200, 160), frame("thing:b", "Lower", 10, 170, 200, 240)], measure);
+    expect(stacked.find((t) => t.thing === "thing:b")!.baseline).toBeGreaterThan(240);
+    // A frame inside another still gets its title.
+    const nested = placeFrameTitles([frame("thing:a", "Outer", 0, 0, 400, 400), frame("thing:b", "Inner", 100, 100, 200, 200)], measure);
+    expect(nested.map((t) => t.thing).sort()).toEqual(["thing:a", "thing:b"]);
+    // Cut at a word.
+    const [long] = placeFrameTitles([frame("thing:c", "Rewrite the pricing page before the launch", 0, 100, 100, 140)], measure);
+    expect(long!.text).toBe("Rewrite the pricing page before the…");
+    // No room anywhere: left out.
+    expect(placeFrameTitles(row, measure, [{ left: -1000, right: 1000, top: -1000, bottom: 1000 }])).toEqual([]);
   });
 
   it("picks a thing from a click on its frame or title, the smaller frame where two overlap", () => {
@@ -387,6 +516,15 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
 });
 
 describe("a thing's three zoom stops (UX-CHAT-5)", () => {
+  it("offers 附近 only when the thing's points link to something", () => {
+    const linked = mapWith(things());
+    annotateDust(linked, satellitePlan(linked));
+    expect(thingStopsFor(linked, "thing:t1")).toEqual(["this", "nearby", "all"]);
+    const alone = mapWith(things(), []);
+    annotateDust(alone, satellitePlan(alone));
+    expect(thingStopsFor(alone, "thing:t1")).toEqual(["this", "all"]);
+  });
+
   it("frames its points, then what they link to and those bodies' neighbours, then the whole map", () => {
     const map = mapWith(things());
     annotateDust(map, satellitePlan(map));

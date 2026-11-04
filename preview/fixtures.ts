@@ -1507,11 +1507,11 @@ export const THING_MAP_POINTS: ThingNightPoints[] = [
     title: "Big map growth loop",
     spaces: ["wenlan"],
     points: [
-      nightPoint("tm-n-site-1", "Things are frames, not nodes", 48),
-      nightPoint("tm-n-site-2", "Night points cluster by id hash", 48, false),
-      nightPoint("tm-n-site-3", "A moon marks what a night wrote", 24),
-      nightPoint("tm-n-site-4", "Positions are kept per space", 24),
-      nightPoint("tm-n-site-5", "Frames never jump when a night adds points", 1, false),
+      nightPoint("tm-n-site-1", "Things are drawn as dashed frames round their points, never as one more node competing with the entities", 48),
+      nightPoint("tm-n-site-2", "夜裡寫下的點按 id 雜湊排在事情的中心附近，所以每次打開地圖位置都一樣，不會跳動；拖動過的點記在本機，下次打開還在同一個地方", 48, false),
+      nightPoint("tm-n-site-3", "A small moon marks each point a night wrote, so the owner can tell it from what they saved themselves", 24),
+      nightPoint("tm-n-site-4", "Positions are kept per space and per viewer; a point dragged once stays where it was put across restarts", 24),
+      nightPoint("tm-n-site-5", "新的一晚加了點，框只會往外長一點，原本的點不會移動，標題也留在原來的位置", 1, false),
     ],
   },
   {
@@ -1519,9 +1519,9 @@ export const THING_MAP_POINTS: ThingNightPoints[] = [
     title: "Release notes for 0.21",
     spaces: ["wenlan"],
     points: [
-      nightPoint("tm-n-rel-1", "Changelog groups by feature", 2),
-      nightPoint("tm-n-rel-2", "Ship after the merge queue", 1, false),
-      nightPoint("tm-n-rel-3", "Screenshots go in the notes", 0.2),
+      nightPoint("tm-n-rel-1", "The changelog groups entries by feature rather than by pull request, so the release reads like a story", 2),
+      nightPoint("tm-n-rel-2", "Ship only after the merge queue has drained and the release PR is the last thing queued, alone", 1, false),
+      nightPoint("tm-n-rel-3", "發布說明要附上新地圖的截圖，淺色和深色各一張，寬度 1280，放在每一段功能說明的下面，並且在說明裡寫清楚這張圖是在哪個縮放層級拍的", 0.2),
     ],
   },
   {
@@ -1529,8 +1529,8 @@ export const THING_MAP_POINTS: ThingNightPoints[] = [
     title: "Reading list",
     spaces: ["wenlan"],
     points: [
-      nightPoint("tm-n-read-1", "One book a month", 2),
-      nightPoint("tm-n-read-2", "Which shelf first", 1, false),
+      nightPoint("tm-n-read-1", "Read one book a month, and write a short note on each chapter the same evening while it is still fresh", 2),
+      nightPoint("tm-n-read-2", "先讀哪一層書架還沒決定：工作相關的放前面，還是先把去年買了沒讀的那幾本讀完", 1, false),
     ],
   },
 ];

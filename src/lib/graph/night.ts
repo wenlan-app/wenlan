@@ -40,14 +40,20 @@ export interface NightSentence extends NightMoon {
   text: string;
   /** Still open (not decided): written in the muted ink. */
   open: boolean;
+  /** Its thing's node id: the frame it belongs inside. */
+  thing: string;
 }
 
 /** Where a node is drawn this frame, in viewport CSS px, or null when sigma
  *  does not draw it (hidden by a reducer, such as a filtered type). */
 export type DrawnAt = (id: string) => { x: number; y: number; r: number } | null;
 
-/** Room between a point's disc and the frame, CSS px. */
+/** Room between a point's disc (or a sentence) and the frame, CSS px. */
 const FRAME_PAD = 8;
+/** The smallest a frame is drawn, CSS px: a cluster seen from far off is
+ *  still plainly a frame, titled or not. */
+const MIN_FRAME_WIDTH = 30;
+const MIN_FRAME_HEIGHT = 22;
 /** Extra viewport margin inside which a mark is still drawn. */
 const CULL_PAD = 24;
 
@@ -82,16 +88,22 @@ export function nightMarks(
       top = Math.min(top, at.y - at.r);
       bottom = Math.max(bottom, at.y + at.r);
       if (lit(point)) anyLit = true;
-      points.push({ ...at, dim: !lit(point), id: point, text: String(pointAttrs.label ?? ""), open: pointAttrs.open === true });
+      points.push({ ...at, dim: !lit(point), id: point, text: String(pointAttrs.label ?? ""), open: pointAttrs.open === true, thing });
     });
     if (points.length === 0) return;
+    const grow = (low: number, high: number, least: number) => {
+      const short = Math.max(0, least - (high - low)) / 2;
+      return [low - short, high + short] as const;
+    };
+    const [frameLeft, frameRight] = grow(left - FRAME_PAD, right + FRAME_PAD, MIN_FRAME_WIDTH);
+    const [frameTop, frameBottom] = grow(top - FRAME_PAD, bottom + FRAME_PAD, MIN_FRAME_HEIGHT);
     const frame = {
       thing,
       title: String(attrs.label ?? ""),
-      left: left - FRAME_PAD,
-      top: top - FRAME_PAD,
-      right: right + FRAME_PAD,
-      bottom: bottom + FRAME_PAD,
+      left: frameLeft,
+      top: frameTop,
+      right: frameRight,
+      bottom: frameBottom,
       dim: !anyLit,
     };
     if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) return;
@@ -109,38 +121,97 @@ const MOON_PX = 7;
 const FRAME_RADIUS = 10;
 const TITLE_FONT = '500 12px "Instrument Sans", -apple-system, sans-serif';
 const TITLE_MAX_PX = 240;
-
+/** A title's line, CSS px: the 12px face's ascent and descent with room. */
+const TITLE_LINE = 17;
 const SENTENCE_FONT = '12px "Instrument Sans", -apple-system, sans-serif';
-/** A sentence is never longer than this on screen; past it, an ellipsis. */
-export const SENTENCE_MAX_PX = 240;
-/** A sentence with less room than this beside its point is left out. */
-const SENTENCE_MIN_PX = 56;
+/** A sentence wraps at this width, CSS px. */
+export const SENTENCE_MAX_PX = 320;
+/** ...onto at most this many lines; past them, an ellipsis. */
+export const SENTENCE_MAX_LINES = 3;
+/** Narrower and narrower blocks are tried where the widest would cover
+ *  another point or word; narrower than the last, the side is given up. */
+const SENTENCE_WIDTHS = [SENTENCE_MAX_PX, 260, 200, 150, 110];
 /** Gap between a point's disc and its sentence, CSS px. */
 const SENTENCE_GAP = 6;
 /** One line of sentence, CSS px, with its halo. */
-const SENTENCE_LINE = 16;
+export const SENTENCE_LINE = 15;
 
 type Measure = (text: string) => number;
 
-/** `text` cut with an ellipsis to fit `max` px. */
-function fitWith(measure: Measure, text: string, max: number): string {
+/** One wrappable piece: a word with the space after it, or a single CJK
+ *  character (those wrap anywhere). */
+const PIECE = /[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]|[^\s\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]+\s*|\s+/gu;
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+const CJK = /[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/u;
+
+/**
+ * `text` cut with an ellipsis to fit `max` px, at a word's end where the
+ * text has words, never part way through one; CJK text can end at any
+ * character. Unchanged when it fits.
+ */
+export function cutToFit(measure: Measure, text: string, max: number): string {
   if (measure(text) <= max) return text;
   let cut = text;
-  while (cut.length > 1 && measure(`${cut}…`) > max) cut = cut.slice(0, -1);
-  return `${cut.trimEnd()}…`;
+  while (cut.length > 1 && measure(`${cut.trimEnd()}…`) > max) cut = cut.slice(0, -1);
+  const next = text.charAt(cut.length);
+  const last = cut.charAt(cut.length - 1);
+  if (WORD_CHAR.test(next) && WORD_CHAR.test(last) && !CJK.test(next) && !CJK.test(last)) {
+    // Mid-word: back to the end of the last whole word, if there is one.
+    const space = cut.search(/\s\S*$/u);
+    if (space > 0) cut = cut.slice(0, space);
+  }
+  return `${cut.trimEnd().replace(/[\s,;:–—\-，、；：]+$/u, "")}…`;
 }
 
-const fit = (ctx: CanvasRenderingContext2D, text: string, max: number) => fitWith((t) => ctx.measureText(t).width, text, max);
+/**
+ * `text` wrapped into lines no wider than `width`, breaking between words
+ * (or between CJK characters), at most `maxLines` of them; the last is cut
+ * with an ellipsis when the text runs on. A word wider than a line is
+ * broken where it must be.
+ */
+export function wrapText(measure: Measure, text: string, width: number, maxLines = SENTENCE_MAX_LINES): string[] {
+  const source = text.trim().replace(/\s+/gu, " ");
+  // Each piece with where it starts; a word wider than a line becomes its
+  // characters, so it breaks where it must.
+  const units: { text: string; at: number }[] = [];
+  let at = 0;
+  for (const piece of source.match(PIECE) ?? []) {
+    if (measure(piece.trimEnd()) <= width) units.push({ text: piece, at });
+    else [...piece].reduce((offset, char) => (units.push({ text: char, at: offset }), offset + char.length), at);
+    at += piece.length;
+  }
+  const lines: string[] = [];
+  const starts: number[] = [];
+  let line = "";
+  for (const unit of units) {
+    if (line && measure((line + unit.text).trimEnd()) > width) {
+      lines.push(line.trimEnd());
+      line = "";
+    }
+    if (!line) {
+      if (!unit.text.trim()) continue;
+      starts.push(unit.at);
+      line = unit.text.trimStart();
+    } else line += unit.text;
+  }
+  if (line.trim()) lines.push(line.trimEnd());
+  if (lines.length <= maxLines) return lines;
+  const kept = lines.slice(0, maxLines);
+  // The last kept line runs on with everything after it, cut to fit.
+  kept[maxLines - 1] = cutToFit(measure, source.slice(starts[maxLines - 1]), width);
+  return kept;
+}
 
 export type Box = { left: number; right: number; top: number; bottom: number };
 
 const overlapping = (a: Box, b: Box) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 
-/** A sentence as it will be painted: its text (cut to the room it has), the
- *  x its text starts or ends at, and its vertical middle. */
+/** A sentence as it will be painted: its lines, the x they start (or end)
+ *  at, and the middle of its first line, level with its point. */
 export interface PlacedSentence {
   id: string;
-  text: string;
+  thing: string;
+  lines: string[];
   x: number;
   y: number;
   align: "left" | "right";
@@ -149,55 +220,55 @@ export interface PlacedSentence {
   box: Box;
 }
 
+const shown = (lines: readonly string[]) => lines.join(" ").replace(/…$/u, "").length;
+
 /**
- * Where each shown sentence goes (UX-CHAT-5): on the line of its point, to
- * the right of it, cut short with an ellipsis where the next point or an
- * already placed word would be; to the left instead when that shows more of
- * it; left out when neither side has room, rather than printed over
- * something. At most SENTENCE_MAX_PX long, and
- * never past the viewport's edge when one is given. Points are taken top to
- * bottom, so the result does not depend on graph order. `occupied` (names
- * already painted) is read and extended.
+ * Where each shown sentence goes (UX-CHAT-5): beside its point, its first
+ * line level with it, wrapped at SENTENCE_MAX_PX onto at most
+ * SENTENCE_MAX_LINES lines. It goes to the right of the point, or to the
+ * left when that shows more of it; where the full width would cover another
+ * point or a word already placed, narrower blocks are tried, so it is cut
+ * only when no room is left; it is left out rather than printed over
+ * something, a point or another body on the map (`bodies`, which are only
+ * read). Never past the viewport's edge when one is given. Points are
+ * taken top to bottom, so the result does not depend on graph order.
+ * `occupied` (names already painted) is read and extended.
  */
 export function layoutNightSentences(
   sentences: readonly NightSentence[],
   measure: Measure,
   occupied: Box[] = [],
   viewport?: { width: number },
+  bodies: readonly Box[] = [],
 ): PlacedSentence[] {
   const ordered = [...sentences].sort((a, b) => a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : 1));
   const discs = sentences.map((point) => ({ id: point.id, left: point.x - point.r, right: point.x + point.r, top: point.y - point.r, bottom: point.y + point.r }));
   const placed: PlacedSentence[] = [];
   for (const point of ordered) {
-    const top = point.y - SENTENCE_LINE / 2;
-    const bottom = point.y + SENTENCE_LINE / 2;
-    const inLine = (box: Box) => box.top < bottom && top < box.bottom;
-    const blockers: Box[] = [...discs.filter((disc) => disc.id !== point.id), ...occupied].filter(inLine);
+    const blockers: Box[] = [...discs.filter((disc) => disc.id !== point.id), ...bodies, ...occupied];
+    // `align` is the text's anchor, so "left" writes to the right of the point.
     const trySide = (align: "left" | "right"): PlacedSentence | null => {
       const start = align === "left" ? point.x + point.r + SENTENCE_GAP : point.x - point.r - SENTENCE_GAP;
-      let room = SENTENCE_MAX_PX;
-      if (viewport) room = Math.min(room, align === "left" ? viewport.width - SENTENCE_GAP - start : start - SENTENCE_GAP);
-      for (const box of blockers) {
-        const distance = align === "left" ? box.left - start : start - box.right;
-        // Something already across the start of the line: no room at all.
-        if (distance < 0 && (align === "left" ? box.right > start : box.left < start)) return null;
-        if (distance >= 0) room = Math.min(room, distance - SENTENCE_GAP);
+      const edge = viewport ? (align === "left" ? viewport.width - SENTENCE_GAP - start : start - SENTENCE_GAP) : Infinity;
+      for (const widest of SENTENCE_WIDTHS) {
+        const width = Math.min(widest, edge);
+        if (width < SENTENCE_WIDTHS[SENTENCE_WIDTHS.length - 1]!) return null;
+        const lines = wrapText(measure, point.text, width);
+        if (lines.length === 0) return null;
+        const inked = Math.max(...lines.map(measure));
+        const top = point.y - SENTENCE_LINE / 2;
+        const box = align === "left"
+          ? { left: start - 2, right: start + inked + 2, top, bottom: top + lines.length * SENTENCE_LINE }
+          : { left: start - inked - 2, right: start + 2, top, bottom: top + lines.length * SENTENCE_LINE };
+        if (blockers.some((other) => overlapping(other, box))) continue;
+        return { id: point.id, thing: point.thing, lines, x: start, y: point.y, align, open: point.open, dim: point.dim, box };
       }
-      if (room < SENTENCE_MIN_PX) return null;
-      const text = fitWith(measure, point.text, room);
-      const width = measure(text);
-      const box = align === "left"
-        ? { left: start - 2, right: start + width + 2, top, bottom }
-        : { left: start - width - 2, right: start + 2, top, bottom };
-      if (occupied.some((other) => overlapping(other, box))) return null;
-      return { id: point.id, text, x: start, y: point.y, align, open: point.open, dim: point.dim, box };
+      return null;
     };
-    // `align` is the text's anchor, so "left" writes to the right of the
-    // point. That side first; the other only when it shows more of the
-    // sentence (the right is cut short or taken).
     const after = trySide("left");
-    const before = after && after.text === point.text ? null : trySide("right");
-    const spot = before && (!after || before.text.length > after.text.length) ? before : after;
+    const whole = (spot: PlacedSentence | null) => spot !== null && !spot.lines[spot.lines.length - 1]!.endsWith("…");
+    const before = whole(after) ? null : trySide("right");
+    const spot = before && (!after || shown(before.lines) > shown(after.lines)) ? before : after;
     if (!spot) continue;
     occupied.push(spot.box);
     placed.push(spot);
@@ -223,71 +294,116 @@ export function frameAt(hits: readonly FrameHit[], x: number, y: number): string
   return best?.thing ?? null;
 }
 
+/** A frame grown round the sentences laid out for its points, so its
+ *  border never runs through their text. */
+export function encloseSentences<F extends ThingFrame>(frames: readonly F[], placed: readonly PlacedSentence[]): F[] {
+  return frames.map((frame) => {
+    let { left, top, right, bottom } = frame;
+    for (const sentence of placed) {
+      if (sentence.thing !== frame.thing) continue;
+      left = Math.min(left, sentence.box.left - FRAME_PAD);
+      right = Math.max(right, sentence.box.right + FRAME_PAD);
+      top = Math.min(top, sentence.box.top - FRAME_PAD);
+      bottom = Math.max(bottom, sentence.box.bottom + FRAME_PAD);
+    }
+    return { ...frame, left, top, right, bottom };
+  });
+}
+
+/** Where each frame's title goes: above the frame, else below it, at most
+ *  TITLE_MAX_PX (or the frame's width) long and cut at a word; left out
+ *  where both spots would cover a name, a sentence, another title or
+ *  another frame's border. `occupied` is read and extended. */
+export function placeFrameTitles(
+  frames: readonly ThingFrame[],
+  measure: Measure,
+  occupied: Box[] = [],
+): { thing: string; text: string; x: number; baseline: number; box: Box }[] {
+  const out: { thing: string; text: string; x: number; baseline: number; box: Box }[] = [];
+  for (const frame of frames) {
+    if (!frame.title) continue;
+    const text = cutToFit(measure, frame.title, Math.max(TITLE_MAX_PX, frame.right - frame.left));
+    const width = measure(text);
+    const x = frame.left + 2;
+    // Another frame's border counts as ink; its own does not, nor the
+    // inside of a frame this one sits in.
+    const borders = frames.filter((other) => other !== frame);
+    const crosses = (box: Box, other: Box) =>
+      overlapping(box, other) && !(box.left > other.left && box.right < other.right && box.top > other.top && box.bottom < other.bottom);
+    const spot = [frame.top - 4, frame.bottom + TITLE_LINE]
+      .map((baseline) => ({ baseline, box: { left: x - 3, right: x + width + 3, top: baseline - TITLE_LINE + 2, bottom: baseline + 3 } }))
+      .find(({ box }) => !occupied.some((other) => overlapping(other, box)) && !borders.some((other) => crosses(box, other)));
+    if (!spot) continue;
+    occupied.push(spot.box);
+    out.push({ thing: frame.thing, text, x, baseline: spot.baseline, box: spot.box });
+  }
+  return out;
+}
+
 /**
- * Paint the frames, their titles, the moons and the shown sentences. A title
- * goes above its frame, else below it when that spot is taken by a name
- * already painted (`occupied`, shared with the node labels) or another
- * thing's title, else it is left out for that frame rather than printed over
- * another word. Sentences follow layoutNightSentences; a settled point's
- * sentence is in the label ink, an open one's in the muted ink. Returns where
- * a click picks each thing (frameAt).
+ * Paint the frames, their titles, the moons and the shown sentences.
+ * Sentences are laid out first (layoutNightSentences) and each frame grows
+ * round its own, then titles take a free spot (placeFrameTitles); a settled
+ * point's sentence is in the label ink, an open one's in the muted ink.
+ * Everything placed is added to `occupied`, shared with the node labels.
+ * Returns where a click picks each thing (frameAt).
  */
 export function drawNightMarks(
   ctx: CanvasRenderingContext2D,
   marks: { frames: readonly ThingFrame[]; moons: readonly NightMoon[]; sentences?: readonly NightSentence[] },
   palette: GraphPalette,
   occupied: Box[] = [],
+  bodies: readonly Box[] = [],
 ): FrameHit[] {
   const hits: FrameHit[] = [];
   if (marks.frames.length === 0) return hits;
   ctx.save();
+  ctx.font = SENTENCE_FONT;
+  const width = ctx.canvas.width / (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
+  const placed = marks.sentences && marks.sentences.length > 0
+    ? layoutNightSentences(marks.sentences, (text) => ctx.measureText(text).width, occupied, { width }, bodies)
+    : [];
+  const frames = encloseSentences(marks.frames, placed);
   ctx.lineWidth = 1.25;
   ctx.setLineDash([5, 4]);
   ctx.strokeStyle = palette.bridge;
-  for (const frame of marks.frames) {
-    ctx.globalAlpha = frame.dim ? 0.2 : 0.8;
-    const width = frame.right - frame.left;
-    const height = frame.bottom - frame.top;
+  for (const frame of frames) {
+    ctx.globalAlpha = frame.dim ? 0.25 : 0.85;
+    const frameWidth = frame.right - frame.left;
+    const frameHeight = frame.bottom - frame.top;
     ctx.beginPath();
-    if (typeof ctx.roundRect === "function") ctx.roundRect(frame.left, frame.top, width, height, FRAME_RADIUS);
-    else ctx.rect(frame.left, frame.top, width, height);
+    if (typeof ctx.roundRect === "function") ctx.roundRect(frame.left, frame.top, frameWidth, frameHeight, Math.min(FRAME_RADIUS, frameHeight / 2));
+    else ctx.rect(frame.left, frame.top, frameWidth, frameHeight);
     ctx.stroke();
     hits.push({ thing: frame.thing, left: frame.left, top: frame.top, right: frame.right, bottom: frame.bottom });
   }
   ctx.setLineDash([]);
   ctx.font = TITLE_FONT;
   ctx.textAlign = "left";
-  ctx.textBaseline = "bottom";
+  ctx.textBaseline = "alphabetic";
   ctx.lineJoin = "round";
   ctx.lineWidth = 3;
   ctx.strokeStyle = palette.surface;
   ctx.fillStyle = palette.label;
-  for (const frame of marks.frames) {
-    if (!frame.title) continue;
-    ctx.globalAlpha = frame.dim ? 0.3 : 1;
-    const title = fit(ctx, frame.title, Math.max(TITLE_MAX_PX, frame.right - frame.left));
-    const width = ctx.measureText(title).width;
-    const x = frame.left + 2;
-    const spot = [frame.top - 3, frame.bottom + 17]
-      .map((baseline) => ({ baseline, box: { left: x - 3, right: x + width + 3, top: baseline - 15, bottom: baseline + 2 } }))
-      .find(({ box }) => !occupied.some((other) => other.left < box.right && box.left < other.right && other.top < box.bottom && box.top < other.bottom));
-    if (!spot) continue;
-    occupied.push(spot.box);
-    hits.push({ thing: frame.thing, ...spot.box });
-    ctx.strokeText(title, x, spot.baseline);
-    ctx.fillText(title, x, spot.baseline);
+  const dimOf = new Map(frames.map((frame) => [frame.thing, frame.dim]));
+  for (const title of placeFrameTitles(frames, (text) => ctx.measureText(text).width, occupied)) {
+    ctx.globalAlpha = dimOf.get(title.thing) ? 0.3 : 1;
+    hits.push({ thing: title.thing, ...title.box });
+    ctx.strokeText(title.text, title.x, title.baseline);
+    ctx.fillText(title.text, title.x, title.baseline);
   }
-  if (marks.sentences && marks.sentences.length > 0) {
+  if (placed.length > 0) {
     ctx.font = SENTENCE_FONT;
     ctx.textBaseline = "middle";
-    const width = ctx.canvas.width / (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
-    const placed = layoutNightSentences(marks.sentences, (text) => ctx.measureText(text).width, occupied, { width });
     for (const sentence of placed) {
       ctx.globalAlpha = sentence.dim ? 0.3 : 1;
       ctx.textAlign = sentence.align;
       ctx.fillStyle = sentence.open ? palette.labelMuted : palette.label;
-      ctx.strokeText(sentence.text, sentence.x, sentence.y);
-      ctx.fillText(sentence.text, sentence.x, sentence.y);
+      sentence.lines.forEach((line, index) => {
+        const y = sentence.y + index * SENTENCE_LINE;
+        ctx.strokeText(line, sentence.x, y);
+        ctx.fillText(line, sentence.x, y);
+      });
     }
     ctx.textAlign = "left";
   }
@@ -347,6 +463,12 @@ export function thingStopNodeIds(graph: Graph, thing: string, stop: ThingStop): 
     });
   }
   return [...near].sort();
+}
+
+/** The stops a thing offers: 附近 only when its points link to something
+ *  on the map, since without links it would frame just what 這件事 does. */
+export function thingStopsFor(graph: Graph, thing: string): ThingStop[] {
+  return linkedBodies(graph, thingPointIds(graph, thing)).length > 0 ? [...THING_STOPS] : ["this", "all"];
 }
 
 /** The lit set while a thing is selected: its points and what they link to,

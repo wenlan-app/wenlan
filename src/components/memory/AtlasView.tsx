@@ -91,6 +91,7 @@ import {
   SENTENCE_MAX_PX,
   THING_STOPS,
   thingFocusState,
+  thingStopsFor,
   thingStopNodeIds,
   type FrameHit,
   type ThingStop,
@@ -295,6 +296,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   // frame and title, so a click there picks its thing.
   const [thingStop, setThingStop] = useState<ThingStop>("this");
   const [selectedThing, setSelectedThing] = useState<string | null>(null);
+  const [thingStops, setThingStops] = useState<readonly ThingStop[]>(THING_STOPS);
   const thingStopRef = useRef<ThingStop>("this");
   const selectThingRef = useRef<(thing: string, stop: ThingStop) => void>(() => {});
   const frameHitsRef = useRef<FrameHit[]>([]);
@@ -649,6 +651,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     else if (selectedRef.current !== thing) setSelectedId(null);
     selectedRef.current = thing;
     setSelectedThing(thing);
+    setThingStops(thingStopsFor(drawn, thing));
     thingStopRef.current = stop;
     setThingStop(stop);
     hoverStateRef.current = thingFocusState(drawn, thing, stop);
@@ -1041,23 +1044,39 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // Sigma's grid budgets label count, but long labels can cross cell boundaries.
     // Reserve actual painted rectangles and share them with the region overlay.
     const labelBoxes: { left: number; right: number; top: number; bottom: number }[] = [];
-    const reserveLabel = (ctx: CanvasRenderingContext2D, label: string, at: LabelPlacement) => {
+    // The things' frames and titles as last painted: no other name is
+    // printed across them (UX-CHAT-5). Frames are painted after the labels,
+    // so the labels go by the previous paint's (see drawOverlay).
+    let frameGuards: readonly { left: number; right: number; top: number; bottom: number }[] = [];
+    let guardRender = false;
+    let guardPasses = 0;
+    const reserveLabel = (ctx: CanvasRenderingContext2D, label: string, at: LabelPlacement, guarded = false) => {
       ctx.font = NODE_LABEL_FONT;
       const width = ctx.measureText(label).width;
       const left = at.align === "center" ? at.x - width / 2 : at.align === "right" ? at.x - width : at.x;
       const top = at.baseline === "middle" ? at.y - 6 : at.baseline === "top" ? at.y : at.y - 12;
       const box = { left: left - 4, right: left + width + 4, top: top - 3, bottom: top + 15 };
-      if (labelBoxes.some((other) => other.left < box.right && box.left < other.right && other.top < box.bottom && box.top < other.bottom)) return false;
+      const taken = (other: { left: number; right: number; top: number; bottom: number }) =>
+        other.left < box.right && box.left < other.right && other.top < box.bottom && box.top < other.bottom;
+      if (labelBoxes.some(taken) || (guarded && frameGuards.some(taken))) return false;
       labelBoxes.push(box);
       return true;
     };
     // A thing's points show their sentences at its own zoom stop, or anywhere
     // closer in than the overview; the overlay paints them (night.ts).
+    // The node under the pointer, whatever the hover state shows.
+    let pointerNode: string | null = null;
     const sentencesFor = (thing: string) =>
       (selectedRef.current === thing && thingStopRef.current === "this") || lodRef.current.phase !== "overview";
     const drawLabel = (ctx: CanvasRenderingContext2D, data: Record<string, any>, s: Record<string, any>) => {
       const nodeAttrs = graph.hasNode(data.key) ? graph.getNodeAttributes(data.key) : null;
-      if (nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string" && sentencesFor(nodeAttrs.dustOf)) return;
+      if (nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string") {
+        // Its sentence is painted by the overlay, wrapped and inside the
+        // frame; and a picked thing's points are not given forced labels at
+        // 全部 (they would run across other frames), only the one hovered.
+        if (sentencesFor(nodeAttrs.dustOf)) return;
+        if (pointerNode !== data.key && selectedRef.current === nodeAttrs.dustOf) return;
+      }
       // Truncation, collision reservation, and drawNodeLabelAt must all use
       // the same body face or a measured width is not a screen-space bound.
       ctx.font = NODE_LABEL_FONT;
@@ -1094,7 +1113,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       const angle = Math.atan2(-(graph.getNodeAttribute(data.key, "y") as number), graph.getNodeAttribute(data.key, "x") as number);
       const sector = Math.round((angle + Math.PI) / (Math.PI / 2)) % 4;
       const at = labelAnchor(data.x, data.y, data.size, sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above");
-      if (reserveLabel(ctx, label, at)) drawNodeLabelAt(ctx, { ...data, label }, s, at, paletteRef.current.surface);
+      if (reserveLabel(ctx, label, at, nodeAttrs?.night !== true)) drawNodeLabelAt(ctx, { ...data, label }, s, at, paletteRef.current.surface);
     };
     let minimumGraphRadius = 0;
     let graphUnitsPerPixel = Infinity;
@@ -1234,6 +1253,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       // drops the field the names simply stay on, as before.
       const labelledNodes = (renderer as unknown as { displayedNodeLabels?: ReadonlySet<string> })
         .displayedNodeLabels;
+      // Region names and counts keep off the frames too; the frames' own
+      // marks are placed against the fresh labels only.
+      const guardStart = labelBoxes.length;
+      labelBoxes.push(...frameGuards);
       if (showRegionsRef.current) drawRegionNames(ctx, named, project, paletteRef.current, { width, height }, labelledNodes, labelBoxes);
       drawDustCounts(
         ctx,
@@ -1247,12 +1270,39 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
         renderer.scaleSize(1),
         labelBoxes,
       );
-      frameHitsRef.current = drawNightMarks(ctx, nightMarks(graph, (id) => {
+      labelBoxes.splice(guardStart, frameGuards.length);
+      const drawnAt = (id: string) => {
         const display = renderer.getNodeDisplayData(id);
         if (!display || display.hidden) return null;
         const at = renderer.framedGraphToViewport(display);
         return { x: at.x, y: at.y, r: renderer.scaleSize(display.size) };
-      }, hoverStateRef.current, { width, height }, sentencesFor), paletteRef.current, labelBoxes);
+      };
+      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor);
+      // Sentences keep off the other bodies on screen, not only the labels.
+      const bodies: { left: number; right: number; top: number; bottom: number }[] = [];
+      if (marks.sentences.length > 0) {
+        graph.forEachNode((id, attrs) => {
+          if (attrs.night === true || attrs.entityType === THING_NODE_TYPE) return;
+          const at = drawnAt(id);
+          if (!at || at.x < -at.r || at.y < -at.r || at.x > width + at.r || at.y > height + at.r) return;
+          bodies.push({ left: at.x - at.r, right: at.x + at.r, top: at.y - at.r, bottom: at.y + at.r });
+        });
+      }
+      const hits = drawNightMarks(ctx, marks, paletteRef.current, labelBoxes, bodies);
+      frameHitsRef.current = hits;
+      // Where the frames moved, paint the labels once more against them;
+      // twice at most in a row, so the two can never chase each other.
+      const moved = hits.length !== frameGuards.length || hits.some((hit, index) => {
+        const was = frameGuards[index]!;
+        return Math.abs(hit.left - was.left) > 0.5 || Math.abs(hit.top - was.top) > 0.5 || Math.abs(hit.right - was.right) > 0.5 || Math.abs(hit.bottom - was.bottom) > 0.5;
+      });
+      frameGuards = hits;
+      guardPasses = guardRender ? guardPasses + 1 : 0;
+      guardRender = false;
+      if (moved && guardPasses < 2) {
+        guardRender = true;
+        renderer.scheduleRender();
+      }
     };
     // One handler paints the overlay from one scene — rebuilt only when a
     // paint marked it dirty — and sigma sees a single afterRender listener.
@@ -1346,9 +1396,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     if (selectedRef.current && graph.hasNode(selectedRef.current)) {
       // A picked thing keeps its lit set across a rebuild (a new night's
       // points arriving while it is open, UX-CHAT-5).
-      hoverStateRef.current = graph.getNodeAttribute(selectedRef.current, "entityType") === THING_NODE_TYPE
+      const isThing = graph.getNodeAttribute(selectedRef.current, "entityType") === THING_NODE_TYPE;
+      hoverStateRef.current = isThing
         ? thingFocusState(graph, selectedRef.current, thingStopRef.current)
         : hoverStateFor(graph, selectedRef.current);
+      // A new link can bring 附近 in.
+      if (isThing) setThingStops(thingStopsFor(graph, selectedRef.current));
     }
     // First paint of THIS renderer, and the only thing that draws the
     // overlay canvas above at all. Sigma's constructor render already happened
@@ -1402,6 +1455,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     let overNode = false;
     renderer.on("enterNode", ({ node }) => {
       overNode = true;
+      pointerNode = node;
       if (draggedNodeRef.current || selectedRef.current) return;
       hoverStateRef.current = hoverStateFor(graph, node);
       container.style.cursor = "pointer";
@@ -1409,6 +1463,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     });
     renderer.on("leaveNode", () => {
       overNode = false;
+      pointerNode = null;
       if (draggedNodeRef.current || selectedRef.current) return;
       hoverStateRef.current = hoverStateFor(graph, null);
       container.style.cursor = "default";
@@ -1887,7 +1942,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
         // A picked thing's three zoom stops, in the camera controls' own
         // style, where the count line sits (UX-CHAT-5).
         <div className="atlas-camera-controls atlas-thing-stops" role="group" aria-label={t("atlas.thingStops")}>
-          {THING_STOPS.map((stop) => (
+          {thingStops.map((stop) => (
             <button
               key={stop}
               type="button"
