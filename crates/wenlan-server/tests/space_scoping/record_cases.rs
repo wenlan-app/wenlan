@@ -21,6 +21,63 @@ async fn json_body(response: Response<Body>) -> (StatusCode, Value) {
     )
 }
 
+pub async fn document_tag_patch_is_scoped() {
+    let fixture = ScopeFixture::new().await;
+    fixture
+        .seed_record(
+            "file",
+            "tagged-document",
+            Some("work"),
+            "fact",
+            1,
+            None,
+            false,
+        )
+        .await;
+    fixture
+        .db
+        .set_document_tags("file", "tagged-document", vec!["keep".into()])
+        .await
+        .unwrap();
+    for (space, expected) in [
+        ("missing-space", StatusCode::UNPROCESSABLE_ENTITY),
+        ("personal", StatusCode::NOT_FOUND),
+    ] {
+        let response = fixture
+            .send(
+                HttpMethod::POST,
+                "/api/documents/tagged-document/tags",
+                Some(serde_json::json!({"source":"file", "tag":"keep", "action":"remove"})),
+                Some(space),
+            )
+            .await;
+        assert_eq!(response.status(), expected, "{space}");
+        assert_eq!(
+            fixture
+                .db
+                .get_document_tags("file", "tagged-document")
+                .await
+                .unwrap(),
+            vec!["keep"]
+        );
+    }
+    let response = fixture
+        .send(
+            HttpMethod::POST,
+            "/api/documents/tagged-document/tags",
+            Some(serde_json::json!({"source":"file", "tag":"keep", "action":"remove"})),
+            Some("work"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(fixture
+        .db
+        .get_document_tags("file", "tagged-document")
+        .await
+        .unwrap()
+        .is_empty());
+}
+
 pub async fn unknown_selectors_are_rejected() {
     let fixture = ScopeFixture::new().await;
     let probes = [

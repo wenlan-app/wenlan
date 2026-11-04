@@ -398,18 +398,20 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // thing's map one more. Conversation search and a conversation's
     // lines add two more. Protected relation creation adds one EntitySpace-scoped
     // route; the organization MCP integration covers its endpoint and source gates.
-    assert_eq!(rows.len(), 104);
+    // Zotero collection discovery adds one Global reader; document metadata,
+    // PDF attachments and atomic document tagging add three MemorySpace routes.
+    assert_eq!(rows.len(), 108);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        24
+        25
     );
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        80
+        83
     );
     assert_eq!(
         rows.iter()
@@ -447,7 +449,7 @@ pub fn assert_global_executed_keys(executed: impl IntoIterator<Item = (Method, &
     let executed = executed.into_iter().collect::<Vec<_>>();
     let unique = executed.iter().copied().collect::<BTreeSet<_>>();
 
-    assert_eq!(expected.len(), 24, "Global route catalog count drifted");
+    assert_eq!(expected.len(), 25, "Global route catalog count drifted");
     assert_eq!(
         unique.len(),
         executed.len(),

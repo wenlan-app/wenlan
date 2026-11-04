@@ -32,6 +32,13 @@ impl ZoteroClient {
         Self::build(DEFAULT_ENDPOINT, None, false)
     }
 
+    /// Isolated integration fixtures may use a test-owned loopback port.
+    /// This constructor is absent from normal production builds.
+    #[cfg(feature = "scratch-config")]
+    pub fn for_test_endpoint(endpoint: &str) -> Result<Self> {
+        Self::build(endpoint, None, true)
+    }
+
     /// Connect while requiring the observed server identity to match a value
     /// persisted by the caller. `None` captures the first identity observed.
     pub fn with_server_id(expected: Option<String>) -> Result<Self> {

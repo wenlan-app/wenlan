@@ -9,6 +9,11 @@ async fn global_routes_enforce_scope_contracts() {
 }
 
 #[tokio::test]
+async fn document_tag_patch_enforces_scope_contract() {
+    space_scoping::record_cases::document_tag_patch_is_scoped().await;
+}
+
+#[tokio::test]
 async fn wave_1_rejects_unknown_selectors() {
     space_scoping::retrieval_cases::unknown_selectors_are_rejected().await;
 }

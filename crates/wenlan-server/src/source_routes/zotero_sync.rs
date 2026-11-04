@@ -11,6 +11,7 @@ use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, HeaderValue},
     response::{IntoResponse, Json},
+    Extension,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -86,8 +87,15 @@ impl ZoteroApi for ZoteroClient {
     }
 }
 
-pub async fn handle_list_collections() -> Result<Json<ZoteroCollectionsResponse>, ServerError> {
-    let mut client = ZoteroClient::new().map_err(|e| ServerError::Upstream(e.to_string()))?;
+pub async fn handle_list_collections(
+    client: Option<Extension<ZoteroClient>>,
+) -> Result<Json<ZoteroCollectionsResponse>, ServerError> {
+    // Only isolated test routers install this extension. Production uses the
+    // fixed local Zotero endpoint, with no user-configurable URL.
+    let mut client = match client {
+        Some(Extension(client)) => client,
+        None => ZoteroClient::new().map_err(|e| ServerError::Upstream(e.to_string()))?,
+    };
     let page = client
         .list_collections()
         .await

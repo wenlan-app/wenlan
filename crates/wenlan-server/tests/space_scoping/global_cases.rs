@@ -3,13 +3,84 @@
 use super::case_runner::assert_global_executed_keys;
 use super::fixture::ScopeFixture;
 use axum::body::{to_bytes, Body};
-use axum::http::{Method as HttpMethod, Response, StatusCode};
+use axum::http::{Method as HttpMethod, Request, Response, StatusCode};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+use tower::ServiceExt;
+use wenlan_core::sources::zotero::ZoteroClient;
 use wenlan_server::sensitive_read_routes::Method;
 
 async fn response_parts(response: Response<Body>) -> (StatusCode, Vec<u8>) {
     let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     (status, bytes.to_vec())
+}
+
+async fn zotero_collections_ignore_space(fixture: &ScopeFixture) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/api", listener.local_addr().unwrap());
+    let client = ZoteroClient::for_test_endpoint(&endpoint).unwrap();
+    let requests = Arc::new(AtomicUsize::new(0));
+    let observed = requests.clone();
+    let upstream = axum::Router::new().route(
+        "/api/users/0/collections",
+        axum::routing::get(move || {
+            let observed = observed.clone();
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                (
+                    [
+                        ("Zotero-Server-ID", "scope-fixture"),
+                        ("Total-Results", "1"),
+                    ],
+                    axum::Json(serde_json::json!([{
+                        "key": "TEST1234", "version": 1,
+                        "data": {"name": "Global Zotero collection"},
+                        "meta": {"numItems": 3}
+                    }])),
+                )
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+    let mut responses = Vec::new();
+    for space in [None, Some("work"), Some("missing-space")] {
+        // Request-local extension: no process environment or production router
+        // configuration changes, and no request can reach the user's Zotero.
+        let mut request = Request::builder()
+            .uri("/api/zotero/collections")
+            .extension(client.clone());
+        if let Some(space) = space {
+            request = request.header("x-wenlan-space", space);
+        }
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        responses.push(response_parts(response).await);
+    }
+    server.abort();
+    let _ = server.await;
+    assert_eq!(requests.load(Ordering::SeqCst), 3);
+    let baseline = &responses[0];
+    assert_eq!(baseline.0, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&baseline.1).unwrap(),
+        serde_json::json!({
+            "server_id": "scope-fixture",
+            "collections": [{"key": "TEST1234", "name": "Global Zotero collection", "item_count": 3}]
+        })
+    );
+    for selected in &responses[1..] {
+        assert_eq!(
+            selected, baseline,
+            "Global Zotero collection route honored Space"
+        );
+    }
 }
 
 pub async fn global_routes_enforce_scope_contracts() {
@@ -96,6 +167,7 @@ pub async fn global_routes_enforce_scope_contracts() {
     assert!(!fixture._tmp.path().join("pages/Forbidden-folder").exists());
 
     executed.push((Method::Post, "/api/knowledge/folders"));
-
+    zotero_collections_ignore_space(&fixture).await;
+    executed.push((Method::Get, "/api/zotero/collections"));
     assert_global_executed_keys(executed);
 }
