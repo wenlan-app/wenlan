@@ -693,6 +693,16 @@ describe("componentSizeByNode / drawableModel", () => {
     expect(drawableModel(full, false).nodes).toHaveLength(5);
   });
 
+  it("draws a small group that an active thing's steeped point links to, with its edges", () => {
+    const full = model(
+      ["a", "b", "c", "d", "e", "f", "g", "h"],
+      [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"], ["f", "g"]],
+    );
+    const drawable = drawableModel(full, false, new Set(["g"]));
+    expect(drawable.nodes.map((n) => n.id)).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
+    expect(drawable.edges.map((e) => e.id)).toContain("e4");
+  });
+
   it("counts the nodes in the small groups for the chip", () => {
     const full = model(
       ["a", "b", "c", "d", "e", "f", "g", "h"],

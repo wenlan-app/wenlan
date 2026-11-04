@@ -332,6 +332,32 @@ export function encloseSentences<F extends ThingFrame>(frames: readonly F[], pla
   });
 }
 
+/** The sentences to keep: where a thing's sentences would grow its frame
+ *  onto another thing's, it shows only its points (the picked thing always
+ *  keeps its sentences). With "Working on" every active thing is drawn, and
+ *  neighbours' sentences would otherwise run their halos into each other. */
+export function uncrowdedSentences<F extends ThingFrame>(frames: readonly F[], placed: readonly PlacedSentence[], picked: string | null = null): PlacedSentence[] {
+  if (frames.length < 2) return [...placed];
+  const grown = encloseSentences(frames, placed);
+  const meets = (a: ThingFrame, b: ThingFrame) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const crowded = new Set<string>();
+  // Sentences that reach another thing's points go first...
+  for (const frame of grown) {
+    if (frame.thing === picked) continue;
+    if (frames.some((other) => other.thing !== frame.thing && meets(frame, other))) crowded.add(frame.thing);
+  }
+  // ...then, of two grown halos that still meet, the later one gives way
+  // (the picked thing is taken first and never gives way).
+  const accepted: ThingFrame[] = [];
+  const ordered = [...grown.filter((frame) => frame.thing === picked), ...grown.filter((frame) => frame.thing !== picked)];
+  for (const frame of ordered) {
+    if (crowded.has(frame.thing)) continue;
+    if (frame.thing !== picked && accepted.some((other) => meets(frame, other))) crowded.add(frame.thing);
+    else accepted.push(frame);
+  }
+  return crowded.size === 0 ? [...placed] : placed.filter((sentence) => !crowded.has(sentence.thing));
+}
+
 /** Where each frame's title goes: above the frame, else below it, each
  *  flush with the frame's left edge, else its right; at most TITLE_MAX_PX
  *  (or the frame's width) long and cut at a word. Where none of those spots
@@ -416,7 +442,8 @@ export function drawNightMarks(
   const placed = marks.sentences && marks.sentences.length > 0
     ? layoutNightSentences(marks.sentences, (text) => ctx.measureText(text).width, occupied, { width }, bodies)
     : [];
-  const frames = encloseSentences(marks.frames, placed);
+  const kept = uncrowdedSentences(marks.frames, placed, picked);
+  const frames = encloseSentences(marks.frames, kept);
   // A soft ground under the thing's points, in the region names' manner
   // (Fable's design: a faint halo and its name, no drawn border).
   ctx.fillStyle = palette.bridge;
@@ -455,10 +482,10 @@ export function drawNightMarks(
       ctx.restore();
     }
   }
-  if (placed.length > 0) {
+  if (kept.length > 0) {
     ctx.font = SENTENCE_FONT;
     ctx.textBaseline = "middle";
-    for (const sentence of placed) {
+    for (const sentence of kept) {
       ctx.globalAlpha = sentence.dim ? 0.3 : 1;
       ctx.textAlign = sentence.align;
       ctx.fillStyle = sentence.open ? palette.labelMuted : palette.label;

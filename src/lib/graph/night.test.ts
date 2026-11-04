@@ -33,6 +33,7 @@ import {
   thingFocusState,
   thingStopNodeIds,
   thingStopsFor,
+  uncrowdedSentences,
   wrapText,
   type NightSentence,
 } from "./night";
@@ -491,6 +492,24 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
     expect(grown!.left).toBe(85);
     expect(other!.right).toBeGreaterThan(415);
     expect(other!.left).toBe(385);
+  });
+
+  it("drops a thing's sentences where they would run its halo into another thing's, but never the picked thing's", () => {
+    const sentence = (id: string, thing: string, left: number, right: number) => ({
+      id, thing, lines: [id], x: left, y: 100, align: "left" as const, open: false, dim: false,
+      box: { left, right, top: 95, bottom: 105 },
+    });
+    const frames = [
+      { thing: "thing:a", title: "A", left: 0, top: 90, right: 20, bottom: 110, dim: false },
+      { thing: "thing:b", title: "B", left: 200, top: 90, right: 220, bottom: 110, dim: false },
+    ];
+    // a's sentence runs right up to b's halo: a shows points only.
+    const crowded = [sentence("s1", "thing:a", 30, 210), sentence("s2", "thing:b", 230, 300)];
+    expect(uncrowdedSentences(frames, crowded).map((s) => s.id)).toEqual(["s2"]);
+    expect(uncrowdedSentences(frames, crowded, "thing:a").map((s) => s.id)).toEqual(["s1"]);
+    // Room for both: both keep their sentences.
+    const roomy = [sentence("s1", "thing:a", 30, 120), sentence("s2", "thing:b", 230, 300)];
+    expect(uncrowdedSentences(frames, roomy).map((s) => s.id)).toEqual(["s1", "s2"]);
   });
 
   it("keeps room after a steeping thing's title for its one moon", () => {

@@ -624,10 +624,36 @@ export function componentSizeByNode(model: GraphModel): Map<string, number> {
  * `showSmallGroups` is the reader's own call, made through the toolbar chip:
  * with it on, nothing is dropped and the small components join the shelf.
  */
-export function drawableModel(model: GraphModel, showSmallGroups = false): GraphModel {
+export function drawableModel(
+  model: GraphModel,
+  showSmallGroups = false,
+  /** Nodes whose small group is drawn anyway: what an active thing's
+   *  steeped points link to, so the thing reaches them (its 附近 stop). */
+  anchors: ReadonlySet<string> = new Set(),
+): GraphModel {
   if (showSmallGroups) return model;
   const kept = drawableByComponentSize(model);
   if (kept === null || kept.size === model.nodes.length) return model;
+  const missing = [...anchors].filter((id) => !kept.has(id));
+  if (missing.length > 0) {
+    const nodeIds = new Set(model.nodes.map((node) => node.id));
+    const around = new Map<string, string[]>();
+    for (const edge of model.edges) {
+      around.set(edge.source, [...(around.get(edge.source) ?? []), edge.target]);
+      around.set(edge.target, [...(around.get(edge.target) ?? []), edge.source]);
+    }
+    const queue = missing.filter((id) => nodeIds.has(id));
+    for (const id of queue) kept.add(id);
+    while (queue.length > 0) {
+      for (const next of around.get(queue.pop()!) ?? []) {
+        if (nodeIds.has(next) && !kept.has(next)) {
+          kept.add(next);
+          queue.push(next);
+        }
+      }
+    }
+    if (kept.size === model.nodes.length) return model;
+  }
   return {
     ...model,
     nodes: model.nodes.filter((node) => kept.has(node.id)),

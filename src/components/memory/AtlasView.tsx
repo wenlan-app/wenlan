@@ -469,8 +469,14 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // Overlay entry point: a focused entity that sits in a small group would
   // otherwise vanish with it and the mount focus below would silently not
   // fire, so the small groups are drawn for that mount whatever the chip says.
+  // What active things' steeped points link to: drawn even in a small group,
+  // or a linked thing would have no 附近 to go to.
+  const thingAnchors = useMemo(() => {
+    const points = new Set(thingPoints.filter((thing) => !thing.quiet).flatMap((thing) => thing.points.map((point) => point.memory_id)));
+    return new Set(scopedGraph.memory_links.filter((link) => points.has(link.memory_id)).map((link) => link.entity_id));
+  }, [thingPoints, scopedGraph]);
   const visibleModel = useMemo<GraphModel>(() => {
-    let drawable = drawableModel(baseModel, showSmallGroups);
+    let drawable = drawableModel(baseModel, showSmallGroups, thingAnchors);
     if (
       effectiveFocusId &&
       !drawable.nodes.some((n) => n.id === effectiveFocusId) &&
@@ -487,7 +493,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // Things and their night's points are drawn whatever the memory layer
     // says: they are the work, not a layer of evidence.
     return attachThingPoints(withMemories, thingPoints, scopedGraph.memory_links, spaceFilter);
-  }, [baseModel, model, layers.memory, showSmallGroups, effectiveFocusId, thingPoints, scopedGraph, spaceFilter]);
+  }, [baseModel, model, layers.memory, showSmallGroups, effectiveFocusId, thingPoints, scopedGraph, spaceFilter, thingAnchors]);
   const hasThings = visibleModel.nodes.some((node) => node.kind === "thing");
   const hasThingsRef = useRef(hasThings);
   hasThingsRef.current = hasThings;
