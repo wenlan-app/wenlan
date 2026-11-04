@@ -39,9 +39,12 @@ const BACKSTOP_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const DAILY_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Poll interval — how often the scheduler checks trigger conditions.
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
-/// A full two-sample scheduler window without keyboard, mouse, or tablet input.
-/// Unlike Wenlan write recency, this is a real OS foreground-activity signal.
-const FOREGROUND_INPUT_IDLE_THRESHOLD: Duration = Duration::from_secs(60);
+/// Time without keyboard, mouse, or tablet input before heavy background work
+/// may start (UX-QUIET-1). Unlike Wenlan write recency, this is a real OS
+/// foreground-activity signal. Three minutes is BOINC's default
+/// (`idle_time_to_run = 3` in lib/prefs.cpp), whose GPU work, like a local
+/// model here, waits while the computer is in use.
+const FOREGROUND_INPUT_IDLE_THRESHOLD: Duration = Duration::from_secs(180);
 /// Initial delay — lets on-device model warm up before first backstop.
 const INITIAL_DELAY: Duration = Duration::from_secs(60);
 const DERIVED_RECEIPT_SWEEP_INTERVAL: Duration = Duration::from_secs(30 * 60);

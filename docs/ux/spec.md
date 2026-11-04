@@ -296,25 +296,29 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   growing pages, checking sources) waits until all of these hold, and checks
   them again before every item:
   1. Background AI is on (Automatic).
-  2. Nobody has touched the keyboard, mouse or trackpad for 60 seconds (our
-     choice; Chrome's idle detection allows 60 seconds at the least, Windows
-     Task Scheduler and Android wait about 4 minutes). Short pauses while you
-     read or wait for an AI are enough.
+  2. Nobody has touched the keyboard, mouse or trackpad for 3 minutes
+     (BOINC's default, which also holds GPU work while the computer is in
+     use; KDE's file indexer uses 1 minute, Windows Task Scheduler about 4).
+     A coffee break or a meeting is enough.
   3. The battery is not low: plugged in, or above 20% (resuming at 25%),
      Android's default low-battery level, which its "battery not low" job
-     condition uses; Windows Battery Saver also turns on at 20%. A cloud
-     model may run on any battery level.
+     condition uses; Windows Battery Saver also turns on at 20%. BOINC and
+     KDE stop on any battery, Folding@home and GNOME's indexer run on it;
+     you asked for "run while there is enough charge". A cloud model may
+     run on any battery level.
   4. The computer is not warm: macOS reports its thermal state as nominal
      (Apple: "fair" may start reducing work; we stop one step early, our
      choice).
   5. The rest of the system is quiet: CPU under 20% busy on two samples 30
-     seconds apart (Windows Task Scheduler's idle test since Windows 8), and
-     at least 2 GB or 15% of memory free, plus 2 GB more for a model on this
+     seconds apart (Windows Task Scheduler's idle test since Windows 8; BOINC
+     stops at 25% from other programs), and at least 2 GB or 15% of memory
+     free, plus 2 GB more for a model on this
      computer (no published benchmark; the 2 GB is the memory one local
      inference was measured to add on the reference Mac).
   6. After an item on a model on this computer, Wenlan rests at least four
      times as long as the item ran, and at least 2 minutes (no published
-     benchmark; measured: a 2-hour idle run on the reference Mac stayed at
+     benchmark, and BOINC, KDE and Folding@home have no rest rule; kept as
+     extra care, measured: a 2-hour idle run on the reference Mac stayed at
      nominal throughout). After a cloud item, 2 minutes.
 
   Light work runs while you work: reading your AI conversations keeps
@@ -325,4 +329,4 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   short of memory. Where a condition cannot be read (today: 2 and 4 on Windows
   and Linux, 3 on Windows and Linux) the others still apply, and the gap is
   named, never treated as fine.
-  原文：「我们当时加是因为了要就是确保说它不是用占用整个电脑的资源，让用户的就是整个电脑很烫，然后导致它的体验很糟」（2026-11-04）；選擇卡「写规格并补上缺口」（2026-11-04 18:02）；「如果它的电够的话，跑本地模型也没有问题啊」「读 AI 对话的那部分工作，你打字它也会跑，这很正常啊」（2026-11-04 19:50）
+  原文：「我们当时加是因为了要就是确保说它不是用占用整个电脑的资源，让用户的就是整个电脑很烫，然后导致它的体验很糟」（2026-11-04）；選擇卡「写规格并补上缺口」（2026-11-04 18:02）；「如果它的电够的话，跑本地模型也没有问题啊」「读 AI 对话的那部分工作，你打字它也会跑，这很正常啊」（2026-11-04 19:50）；「能不能一些數字不要自己猜，看別人有沒有實測過的基準」（21:02）「那不能看其他開源項目怎麼決定？」（21:34）
