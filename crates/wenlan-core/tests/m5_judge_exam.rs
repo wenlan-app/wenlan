@@ -9,7 +9,7 @@
 //! `WENLAN_M5_JUDGE_MODEL=qwen3.5-4b cargo test -p wenlan-core --features eval-harness \
 //!   --test m5_judge_exam -- --ignored --nocapture`
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 const EXAM_BYTES: &[u8] = include_bytes!("fixtures/m5_judge_exam_v2.jsonl");
 const LANGS: [&str; 4] = ["en", "zh-Hans", "zh-Hant", "mixed"];
@@ -67,6 +67,7 @@ fn exam_fixture_is_well_formed_and_balanced() {
 #[tokio::test]
 #[ignore = "requires a cached on-device model and local inference runtime"]
 async fn live_m5_judge_exam_receipt() {
+    use std::collections::BTreeMap;
     use wenlan_core::claim_judge::{
         build_m5_claim_entailment_batch_user_prompt, parse_m5_claim_entailment_batch_scores,
         M5ClaimEntailmentItem, M5_CLAIM_ENTAILMENT_SYSTEM_PROMPT, M5_CLAIM_JUDGE_TIMEOUT_SECS,
