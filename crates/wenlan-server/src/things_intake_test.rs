@@ -417,34 +417,3 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
         ]
     );
 }
-
-#[test]
-fn ux_quiet_1_reading_conversations_waits_for_a_current_open_gate() {
-    let gate = |admitted, sampled_at_epoch| crate::scheduler::AmbientGateSnapshot {
-        admitted,
-        import_priority_admitted: false,
-        blocked_reason: None,
-        sampled_at_epoch,
-    };
-    let now = 1_000_000;
-    assert!(background_gate_open(Some(&gate(true, now - 30)), now));
-    assert!(
-        !background_gate_open(Some(&gate(false, now - 30)), now),
-        "someone at the keyboard, warm, on battery or busy"
-    );
-    assert!(
-        !background_gate_open(Some(&gate(true, now - 600)), now),
-        "a stale reading is not a current one"
-    );
-    assert!(
-        !background_gate_open(None, now),
-        "no reading yet at startup"
-    );
-    // The import lane being open is work the person asked for; it does not
-    // open the gate for Wenlan's own reading.
-    let import_only = crate::scheduler::AmbientGateSnapshot {
-        import_priority_admitted: true,
-        ..gate(false, now)
-    };
-    assert!(!background_gate_open(Some(&import_only), now));
-}

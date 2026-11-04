@@ -4698,7 +4698,7 @@ fn quiet_admitted_status() -> ResourceStatus {
 }
 
 #[test]
-fn ux_quiet_1_battery_holds_back_work_on_this_computer_but_not_a_cloud_model() {
+fn ux_quiet_1_low_battery_holds_back_work_on_this_computer_but_not_a_cloud_model() {
     use wenlan_core::refinery::EverydaySource;
     for local in [
         Some(EverydaySource::OnDevice),
@@ -4710,19 +4710,22 @@ fn ux_quiet_1_battery_holds_back_work_on_this_computer_but_not_a_cloud_model() {
             true,
             background_route_runs_here(local),
         );
-        assert!(!status.admitted, "{local:?} on battery must wait");
-        assert_eq!(status.block_reason, Some(ResourceBlockReason::OnBattery));
+        assert!(!status.admitted, "{local:?} on a low battery must wait");
+        assert_eq!(status.block_reason, Some(ResourceBlockReason::LowBattery));
     }
     let cloud = apply_power_source(
         quiet_admitted_status(),
         true,
         background_route_runs_here(Some(EverydaySource::Anthropic)),
     );
-    assert!(cloud.admitted, "a cloud model may run on battery");
-    let plugged_in = apply_power_source(quiet_admitted_status(), false, true);
-    assert!(plugged_in.admitted);
+    assert!(cloud.admitted, "a cloud model may run on a low battery");
+    let charged = apply_power_source(quiet_admitted_status(), false, true);
+    assert!(
+        charged.admitted,
+        "plugged in, or on battery above the floor"
+    );
 
-    // An earlier, more specific reason is kept, not replaced by OnBattery.
+    // An earlier, more specific reason is kept, not replaced by LowBattery.
     let busy = ResourceStatus {
         admitted: false,
         block_reason: Some(ResourceBlockReason::CpuBusy),
@@ -4759,7 +4762,7 @@ fn ux_quiet_1_each_item_of_a_lap_rechecks_the_person_heat_and_power() {
         false,
         true,
     ));
-    // Unplugged mid-lap: a local model stops, a cloud model goes on.
+    // The battery ran low mid-lap: a local model stops, a cloud model goes on.
     assert!(!ambient_item_may_start(away, true, true));
     assert!(ambient_item_may_start(away, true, false));
     // Telemetry that should exist but failed counts as "not safe".
@@ -4768,4 +4771,55 @@ fn ux_quiet_1_each_item_of_a_lap_rechecks_the_person_heat_and_power() {
         false,
         true
     ));
+}
+
+#[test]
+fn ux_quiet_1_reading_conversations_runs_while_the_person_works_but_not_when_warm_short_or_low() {
+    use wenlan_core::refinery::EverydaySource;
+    let typing = HostActivitySnapshot::Observed {
+        thermal_state: 0,
+        idle_for: Duration::from_secs(2),
+    };
+    let roomy = Some(ResourceSnapshot {
+        cpu_usage_percent: 90.0,
+        available_memory_bytes: 20 * GIB,
+        total_memory_bytes: 48 * GIB,
+    });
+    let local = Some(EverydaySource::OnDevice);
+    assert_eq!(
+        light_background_block_reason(typing, false, local, roomy),
+        None,
+        "typing and a busy CPU do not hold back light work"
+    );
+    assert_eq!(
+        light_background_block_reason(
+            HostActivitySnapshot::Observed {
+                thermal_state: 1,
+                idle_for: Duration::from_secs(2),
+            },
+            false,
+            local,
+            roomy,
+        ),
+        Some(ResourceBlockReason::ThermalPressure)
+    );
+    assert_eq!(
+        light_background_block_reason(typing, true, local, roomy),
+        Some(ResourceBlockReason::LowBattery)
+    );
+    assert_eq!(
+        light_background_block_reason(typing, true, Some(EverydaySource::Anthropic), roomy),
+        None,
+        "a cloud model may read on a low battery"
+    );
+    let tight = Some(ResourceSnapshot {
+        cpu_usage_percent: 0.0,
+        available_memory_bytes: 3 * GIB,
+        total_memory_bytes: 16 * GIB,
+    });
+    assert_eq!(
+        light_background_block_reason(typing, false, local, tight),
+        Some(ResourceBlockReason::MemoryPressure),
+        "a model on this computer needs its extra 2 GB"
+    );
 }

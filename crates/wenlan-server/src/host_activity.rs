@@ -22,7 +22,7 @@ pub(crate) enum HostActivitySnapshot {
 unsafe extern "C" {
     fn wenlan_macos_thermal_state() -> i32;
     fn wenlan_macos_seconds_since_last_input() -> f64;
-    fn wenlan_macos_on_battery() -> i32;
+    fn wenlan_macos_battery_percent_on_battery() -> i32;
 }
 
 #[cfg(target_os = "macos")]
@@ -57,17 +57,25 @@ pub(crate) fn sample_host_activity() -> HostActivitySnapshot {
     HostActivitySnapshot::Unsupported
 }
 
-/// Whether the computer is running on battery right now. An unreadable power
-/// source, a desktop, and every platform without a probe count as plugged in,
-/// so this can only ever hold work back on a laptop that reports battery.
+/// Below this charge on battery, background work that runs a model on this
+/// computer waits (UX-QUIET-1). Our choice: Android's "battery not low"
+/// constraint is the same idea; Windows Task Scheduler waits for AC power.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) const LOW_BATTERY_PERCENT: i32 = 30;
+
+/// Whether the computer is on battery with less than [`LOW_BATTERY_PERCENT`]
+/// left. AC power, a desktop, an unreadable power source, and every platform
+/// without a probe count as "not low", so this can only hold work back on a
+/// laptop that reports a low battery.
 #[cfg(target_os = "macos")]
-pub(crate) fn sample_on_battery() -> bool {
+pub(crate) fn sample_low_battery() -> bool {
     // SAFETY: zero-argument wrapper compiled into this crate; it returns a
     // scalar and retains nothing.
-    unsafe { wenlan_macos_on_battery() == 1 }
+    let percent = unsafe { wenlan_macos_battery_percent_on_battery() };
+    (0..LOW_BATTERY_PERCENT).contains(&percent)
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn sample_on_battery() -> bool {
+pub(crate) fn sample_low_battery() -> bool {
     false
 }

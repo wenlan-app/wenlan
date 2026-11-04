@@ -122,13 +122,12 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
             return;
         }
         wait = TICK;
-        // UX-QUIET-1: reading conversations runs models on Wenlan's own
-        // initiative, so it waits for the same gate as the rest of the
-        // background work: nobody at the keyboard, not warm, plugged in,
-        // CPU and memory free.
-        let gate = shared.read().await.ambient_gate.lock().unwrap().clone();
-        if !background_gate_open(gate.as_ref(), chrono::Utc::now().timestamp()) {
-            tracing::debug!("[things] look deferred: background gate closed");
+        // UX-QUIET-1: reading conversations is light work that keeps
+        // "Working on" current while the person works, so it runs while they
+        // type, but not when the computer is warm, short of memory, or low on
+        // battery.
+        if !still_quiet() {
+            tracing::debug!("[things] look deferred: warm, short of memory or low battery");
             continue;
         }
         match look_once(&shared, &mut backoff).await {
@@ -141,23 +140,10 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
     }
 }
 
-/// How old the scheduler's last gate reading may be before it no longer
-/// counts as current. The scheduler publishes one every 30 s poll.
-const GATE_FRESH_SECS: i64 = 120;
-
-/// The background gate as the scheduler last read it is open and current.
-/// No reading yet (startup) or a stale one counts as closed.
-pub fn background_gate_open(
-    gate: Option<&crate::scheduler::AmbientGateSnapshot>,
-    now_epoch: i64,
-) -> bool {
-    gate.is_some_and(|gate| gate.admitted && now_epoch - gate.sampled_at_epoch <= GATE_FRESH_SECS)
-}
-
-/// The computer can still spare background work right now: re-read between
-/// items of one look, so a person who comes back stops the next model call.
+/// The computer can still spare light background work right now: read
+/// before a look and again between its model calls.
 fn still_quiet() -> bool {
-    crate::scheduler::background_item_may_start_now()
+    crate::scheduler::light_background_may_run_now()
 }
 
 /// The models one look uses: the everyday model to label, and the one that
@@ -459,7 +445,8 @@ pub async fn look_with(
 }
 
 /// [`look_with`], stopping before the next model call once `keep_going`
-/// says the computer is no longer free (UX-QUIET-1).
+/// says the computer is warm, short of memory or low on battery
+/// (UX-QUIET-1).
 pub async fn look_with_until(
     db: &MemoryDB,
     found: Vec<FoundConversation>,

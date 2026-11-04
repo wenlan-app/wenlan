@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 
-use crate::host_activity::{sample_host_activity, sample_on_battery, HostActivitySnapshot};
+use crate::host_activity::{sample_host_activity, sample_low_battery, HostActivitySnapshot};
 use crate::state::SharedState;
 
 mod ambient;
@@ -86,9 +86,9 @@ enum ResourceBlockReason {
     ForegroundActive,
     HostActivityUnavailable,
     ThermalPressure,
-    /// A laptop on battery, with a route that runs its model on this
-    /// computer (UX-QUIET-1).
-    OnBattery,
+    /// A laptop on battery below `LOW_BATTERY_PERCENT`, with a route that
+    /// runs its model on this computer (UX-QUIET-1).
+    LowBattery,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -236,7 +236,7 @@ impl Rb01ProfileAdmission {
                     Rb01ProfileBlockReason::ThermalUnavailable
                 }
                 ResourceBlockReason::ThermalPressure => Rb01ProfileBlockReason::ThermalPressure,
-                ResourceBlockReason::OnBattery => Rb01ProfileBlockReason::ResourceUnavailable,
+                ResourceBlockReason::LowBattery => Rb01ProfileBlockReason::ResourceUnavailable,
             });
         }
 
@@ -354,48 +354,99 @@ fn background_route_runs_here(everyday_pin: Option<wenlan_core::refinery::Everyd
 }
 
 /// UX-QUIET-1: background work that runs on this computer waits while a
-/// laptop is on battery. Work the person asked for (the import lane) reads
-/// its own admission and is not held back here.
+/// laptop's battery is low. Work the person asked for (the import lane)
+/// reads its own admission and is not held back here.
 fn apply_power_source(
     status: ResourceStatus,
-    on_battery: bool,
+    low_battery: bool,
     route_runs_here: bool,
 ) -> ResourceStatus {
-    if !(on_battery && route_runs_here && status.admitted) {
+    if !(low_battery && route_runs_here && status.admitted) {
         return status;
     }
     ResourceStatus {
         admitted: false,
-        block_reason: Some(ResourceBlockReason::OnBattery),
+        block_reason: Some(ResourceBlockReason::LowBattery),
         ..status
     }
 }
 
 /// UX-QUIET-1: re-checked before every item of an ambient lap, so a person
-/// who comes back mid-lap, a computer that warms up, or a laptop unplugged
-/// mid-lap stops the next item instead of waiting for the lap to end. The
+/// who comes back mid-lap, a computer that warms up, or a battery that runs
+/// low mid-lap stops the next item instead of waiting for the lap to end. The
 /// rest window is deliberately not re-checked: the lap's own cooldown is
 /// charged after the lap.
 fn ambient_item_may_start(
     host_activity: HostActivitySnapshot,
-    on_battery: bool,
+    low_battery: bool,
     route_runs_here: bool,
 ) -> bool {
-    host_activity_block_reason(host_activity).is_none() && !(on_battery && route_runs_here)
+    host_activity_block_reason(host_activity).is_none() && !(low_battery && route_runs_here)
 }
 
-/// [`ambient_item_may_start`] read now, for background work outside the
-/// scheduler loop (conversation intake). The route comes from the saved
-/// everyday-model setting.
-pub(crate) fn background_item_may_start_now() -> bool {
+/// UX-QUIET-1, light work: reading conversations keeps "Working on" current
+/// while the person works, so it does not wait for input idle or a quiet
+/// CPU, and charges no rest. It still stops when the computer is warm,
+/// short of memory, or low on battery with a model on this computer.
+fn light_background_block_reason(
+    host_activity: HostActivitySnapshot,
+    low_battery: bool,
+    everyday_pin: Option<wenlan_core::refinery::EverydaySource>,
+    memory: Option<ResourceSnapshot>,
+) -> Option<ResourceBlockReason> {
+    match host_activity {
+        HostActivitySnapshot::Unavailable => {
+            return Some(ResourceBlockReason::HostActivityUnavailable)
+        }
+        HostActivitySnapshot::Observed { thermal_state, .. } if thermal_state != 0 => {
+            return Some(ResourceBlockReason::ThermalPressure)
+        }
+        _ => {}
+    }
+    let runs_here = background_route_runs_here(everyday_pin);
+    if low_battery && runs_here {
+        return Some(ResourceBlockReason::LowBattery);
+    }
+    let Some(memory) = memory else {
+        return Some(ResourceBlockReason::Unavailable);
+    };
+    let on_device = matches!(
+        everyday_pin,
+        Some(wenlan_core::refinery::EverydaySource::OnDevice)
+    );
+    let policy = ResourcePolicy::conservative().with_additional_memory_headroom(if on_device {
+        ON_DEVICE_INFERENCE_HEADROOM_BYTES
+    } else {
+        0
+    });
+    // The CPU limit is for heavy work; light work only needs the memory.
+    policy.block_reason(ResourceSnapshot {
+        cpu_usage_percent: 0.0,
+        ..memory
+    })
+}
+
+/// [`light_background_block_reason`] read now, for conversation intake. The
+/// route comes from the saved everyday-model setting.
+pub(crate) fn light_background_may_run_now() -> bool {
     let config = wenlan_core::config::load_config();
-    ambient_item_may_start(
+    let mut system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing()
+            .with_memory(sysinfo::MemoryRefreshKind::nothing().with_ram()),
+    );
+    system.refresh_memory();
+    let memory = ResourceSnapshot {
+        cpu_usage_percent: 0.0,
+        available_memory_bytes: system.available_memory(),
+        total_memory_bytes: system.total_memory(),
+    };
+    light_background_block_reason(
         sample_host_activity(),
-        sample_on_battery(),
-        background_route_runs_here(wenlan_core::refinery::EverydaySource::parse(
-            config.everyday_source.as_deref(),
-        )),
+        sample_low_battery(),
+        wenlan_core::refinery::EverydaySource::parse(config.everyday_source.as_deref()),
+        Some(memory),
     )
+    .is_none()
 }
 
 struct SystemResourceProbe {
@@ -1570,7 +1621,7 @@ pub fn spawn_scheduler(
             let host_activity = sample_host_activity();
             let resource_status = apply_power_source(
                 apply_host_activity(resource_probe.sample(now, resource_policy), host_activity),
-                sample_on_battery(),
+                sample_low_battery(),
                 background_route_runs_here(everyday_pin),
             );
             let import_route_uses_on_device = matches!(
@@ -2302,12 +2353,12 @@ pub fn spawn_scheduler(
                             if !std::mem::take(&mut first_item)
                                 && !ambient_item_may_start(
                                     sample_host_activity(),
-                                    sample_on_battery(),
+                                    sample_low_battery(),
                                     background_route_runs_here(everyday_pin),
                                 )
                             {
                                 tracing::info!(
-                                    "[scheduler] ambient lap stopped before job={job:?}: the computer is in use, warm, or on battery"
+                                    "[scheduler] ambient lap stopped before job={job:?}: the computer is in use, warm, or low on battery"
                                 );
                                 break;
                             }

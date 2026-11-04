@@ -290,17 +290,18 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## Working in the background
 
-- **UX-QUIET-1** `shipped` Wenlan does its own work only while you are away
-  and the computer can spare it, so it never makes the computer hot, slow or
-  short of battery while you use it. Work Wenlan starts by itself (linking
-  records to the map, growing pages, checking sources, reading your
-  conversations) waits until all of these hold, and checks them again before
-  every item:
+- **UX-QUIET-1** `shipped` Wenlan does its own work only when the computer
+  can spare it, so it never makes the computer hot, slow or flat while you
+  use it. Heavy work Wenlan starts by itself (linking records to the map,
+  growing pages, checking sources) waits until all of these hold, and checks
+  them again before every item:
   1. Background AI is on (Automatic).
   2. Nobody has touched the keyboard, mouse or trackpad for 60 seconds (our
-     choice; Windows Task Scheduler waits about 4 minutes).
-  3. The computer is plugged in (the Windows Task Scheduler default; macOS
-     Photos analysis does the same). A cloud model may still run on battery.
+     choice; Windows Task Scheduler waits about 4 minutes). Short pauses while
+     you read or wait for an AI are enough.
+  3. The battery is not low: plugged in, or above 30% (our choice; Android's
+     "battery not low" is the same idea, Windows Task Scheduler waits for AC
+     power). A cloud model may run on any battery level.
   4. The computer is not warm: macOS reports its thermal state as nominal
      (Apple: "fair" may start reducing work; we stop one step early, our
      choice).
@@ -313,9 +314,12 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
      2-hour idle run on the reference Mac stayed at nominal). After a cloud
      item, 2 minutes.
 
-  What you just asked for (an import, "steep now", a search, a save from your
-  AI tool) runs at once and skips 2, 3, 5 and 6, but still stops when the
-  computer is warm or short of memory. Where a condition cannot be read
-  (today: 2 and 4 on Windows and Linux) the others still apply, and the gap is
+  Light work runs while you work: reading your AI conversations keeps
+  "Working on" current, so it skips 2, 5's CPU limit and 6, and only stops
+  when the computer is warm, short of memory, or low on battery. What you just
+  asked for (an import, "steep now", a search, a save from your AI tool) runs
+  at once and skips 2, 3, 5 and 6, but still stops when the computer is warm or
+  short of memory. Where a condition cannot be read (today: 2 and 4 on Windows
+  and Linux, 3 on Windows and Linux) the others still apply, and the gap is
   named, never treated as fine.
-  原文：「我们当时加是因为了要就是确保说它不是用占用整个电脑的资源，让用户的就是整个电脑很烫，然后导致它的体验很糟」（2026-11-04）；選擇卡「写规格并补上缺口」（2026-11-04 18:02）
+  原文：「我们当时加是因为了要就是确保说它不是用占用整个电脑的资源，让用户的就是整个电脑很烫，然后导致它的体验很糟」（2026-11-04）；選擇卡「写规格并补上缺口」（2026-11-04 18:02）；「如果它的电够的话，跑本地模型也没有问题啊」「读 AI 对话的那部分工作，你打字它也会跑，这很正常啊」（2026-11-04 19:50）
