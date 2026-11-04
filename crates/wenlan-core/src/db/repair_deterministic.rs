@@ -187,7 +187,8 @@ where
                                 SELECT 1 FROM entity_page_map epm
                                 JOIN pages p ON p.id = epm.page_id
                                 WHERE epm.entity_id = memory_entities.entity_id
-                                  AND p.kind = 'entity' AND p.status = 'active'))",
+                                  AND p.kind = 'entity'
+                                  AND p.status IN ('active', 'archived')))",
                         libsql::params![memory_id.clone(), entity_id.clone()],
                     )
                     .await
