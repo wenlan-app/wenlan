@@ -1506,7 +1506,7 @@ describe("isolated authored Page preview bridge", () => {
       { page: { ...page, title: "Revised title", content: "published body", version: 3, status: "active" }, folder_path: "", projection_status: "not_configured" },
       { status: "deleted" },
     ];
-    const fetch = vi.fn(async () => new Response(JSON.stringify(responses.shift()), { status: 200 }));
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(responses.shift()), { status: 200 }));
     vi.stubGlobal("fetch", fetch);
 
     const draftId = page.id;
