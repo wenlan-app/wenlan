@@ -115,6 +115,7 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/brief/history/{version}"),
         (Method::Get, "/api/sessions/{id}"),
         (Method::Get, "/api/things"),
+        (Method::Get, "/api/things/points"),
         (Method::Get, "/api/things/{id}"),
         (Method::Get, "/api/things/{id}/map"),
         (Method::Get, "/api/conversations/search"),

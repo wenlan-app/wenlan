@@ -266,10 +266,12 @@ fn manifest_counts_match_the_spec() {
     // returns its summary). Then 271 after POST `/api/things/{id}/merge` and
     // `/api/things/{id}/keep-apart` (the person answers a merge proposal).
     // Then 272 after POST `/api/things/{id}/dream/undo` (takes a night's
-    // points back, returns the thing's summary).
+    // points back, returns the thing's summary). Then 273 after GET
+    // `/api/things/points` (every thing's night points for the big map;
+    // thing and memory titles, not page-bearing).
     assert_eq!(
         HTTP_READERS.len(),
-        272,
+        273,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 39, "#[tool( declarations");
@@ -280,7 +282,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        284,
+        285,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -288,7 +290,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        267,
+        268,
         "main builder entries"
     );
     assert_eq!(
@@ -471,7 +473,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        264 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited (removed again: -1), +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +6: sentences, +2: in-chat check, +1: page original, +1: embed lookup, +1: sentence revert, +4: things, +2: thing map, +1: saved-in, +2: conversation words, +1: hide thing, +2: merge or keep things apart, +1: take a night's points back)
+        265 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited (removed again: -1), +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +6: sentences, +2: in-chat check, +1: page original, +1: embed lookup, +1: sentence revert, +4: things, +2: thing map, +1: saved-in, +2: conversation words, +1: hide thing, +2: merge or keep things apart, +1: take a night's points back, +1: night points on the big map)
     );
 }
 

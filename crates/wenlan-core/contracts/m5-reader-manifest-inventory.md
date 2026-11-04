@@ -703,6 +703,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/sessions/{id}/things/move` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/sessions/{id}/saved-in` | main | no | not_applicable | `none` | — | SavedInResponse: thing id, thing title and an app link, no page prose |
 | `GET` | `/api/things` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `GET` | `/api/things/points` | main | no | not_applicable | `none` | — | ThingNightPointsResponse: thing titles and Space names, memory ids and titles, no page prose |
 | `GET` | `/api/things/{id}` | main | yes | automatic | `none` | `handle_get_thing` | ThingPageEntry.title |
 | `GET` | `/api/things/{id}/map` | main | no | not_applicable | `none` | — | ThingMapResponse: point labels written for the map and conversation ids, no page prose |
 | `GET` | `/api/conversations/search` | main | no | not_applicable | `none` | — | ConversationSearchResponse: sentences from AI tool transcripts with conversation and thing titles, no page prose |

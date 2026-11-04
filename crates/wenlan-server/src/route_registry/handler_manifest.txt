@@ -73,6 +73,7 @@ main|get|/api/repairs/runtime|wenlan_server::repair_runtime_routes::handle_runti
 main|get|/api/retrievals/recent|wenlan_server::routes::handle_recent_retrievals
 main|get|/api/sessions/{id}|wenlan_server::session_routes::handle_get_session
 main|get|/api/things|wenlan_server::things_routes::handle_list_things
+main|get|/api/things/points|wenlan_server::things_routes::handle_thing_night_points
 main|get|/api/things/{id}|wenlan_server::things_routes::handle_get_thing
 main|get|/api/things/{id}/map|wenlan_server::things_routes::handle_get_thing_map
 main|get|/api/conversations/search|wenlan_server::conversation_routes::handle_search_conversations

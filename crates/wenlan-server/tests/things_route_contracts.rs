@@ -12,7 +12,8 @@ use std::sync::OnceLock;
 use tower::ServiceExt;
 use wenlan_types::{
     SavedInResponse, SessionDetailResponse, ThingActor, ThingDetailResponse, ThingMapAuthor,
-    ThingMapOpsResponse, ThingMapResponse, ThingMapState, ThingSummary, ThingsResponse,
+    ThingMapOpsResponse, ThingMapResponse, ThingMapState, ThingNightPointsResponse, ThingSummary,
+    ThingsResponse,
 };
 
 /// Every test points `WENLAN_DATA_DIR` (and so the knowledge path and
@@ -171,6 +172,19 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
     assert_eq!(detail.thing, thing);
     assert_eq!(detail.sessions.len(), 1);
     assert_eq!(detail.sessions[0].id, session_id);
+
+    // The big map's night points answer typed, not as a thing named
+    // "points"; with no night yet there is no thing to draw.
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        "/api/things/points",
+        None,
+        Caller::Reader,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(typed::<ThingNightPointsResponse>(body).things.is_empty());
 
     // Its map is empty until something writes it.
     let (status, body) = call(

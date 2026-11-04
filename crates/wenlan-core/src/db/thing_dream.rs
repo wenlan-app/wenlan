@@ -21,9 +21,10 @@ use super::thing_map::DreamMapChanges;
 use super::things::history;
 use super::MemoryDB;
 use crate::conversation_intake::{PriorPoint, MAX_DREAM_CONVERSATIONS};
+use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use std::collections::HashSet;
-use wenlan_types::{ThingActor, ThingDream};
+use wenlan_types::{ThingActor, ThingDream, ThingNightPoint, ThingNightPoints};
 
 /// `thing_history` with the two operations added. Same columns, rows and
 /// sequence numbers as before.
@@ -191,6 +192,64 @@ impl MemoryDB {
     /// The points earlier nights wrote for a thing that still stand: not
     /// taken back, not forgotten, not replaced. Oldest first.
     pub async fn dream_points(&self, thing_id: &str) -> Result<Vec<PriorPoint>, WenlanError> {
+        Ok(self
+            .standing_dream_points(thing_id)
+            .await?
+            .into_iter()
+            .map(|point| PriorPoint {
+                id: point.id,
+                text: point.text,
+                decided: point.decided,
+            })
+            .collect())
+    }
+
+    /// Every live thing the caller may see with points its nights wrote that
+    /// still stand, as the big map draws them: the thing, and each point's
+    /// memory, title and when it was written (UX-CHAT-5). The point's own
+    /// Space must be in scope too. Newest activity first, as `list_things`.
+    pub async fn thing_night_points(
+        &self,
+        scope: &ReadScope,
+    ) -> Result<Vec<ThingNightPoints>, WenlanError> {
+        let mut out = Vec::new();
+        for thing in self.list_things(scope, None).await? {
+            // `dreamed_at` is the newest night not taken back: none, no points.
+            if thing.dreamed_at.is_none() {
+                continue;
+            }
+            let points: Vec<ThingNightPoint> = self
+                .standing_dream_points(&thing.id)
+                .await?
+                .into_iter()
+                .filter(|point| scope.matches(point.space.as_deref()))
+                .map(|point| ThingNightPoint {
+                    title: short_title(&point.title, &point.text),
+                    memory_id: point.id,
+                    decided: point.decided,
+                    created_at: point.created_at,
+                })
+                .collect();
+            if points.is_empty() {
+                continue;
+            }
+            out.push(ThingNightPoints {
+                thing_id: thing.id,
+                title: thing.title,
+                spaces: thing.spaces,
+                quiet: thing.quiet,
+                points,
+            });
+        }
+        Ok(out)
+    }
+
+    /// The points of a thing's nights that were not taken back and whose
+    /// memory still stands (not forgotten, not replaced), oldest first.
+    async fn standing_dream_points(
+        &self,
+        thing_id: &str,
+    ) -> Result<Vec<StandingPoint>, WenlanError> {
         let nights = self.dream_nights(thing_id).await?;
         let mut decided = HashSet::new();
         let mut ids = Vec::new();
@@ -208,7 +267,9 @@ impl MemoryDB {
         for id in ids {
             let mut rows = conn
                 .query(
-                    "SELECT MAX(m.content) FROM memories m
+                    "SELECT MAX(m.content), MAX(m.title),
+                            COALESCE(MIN(m.created_at), MIN(m.last_modified)), MAX(m.space)
+                       FROM memories m
                       WHERE m.source = 'memory' AND m.source_id = ?1 AND m.pending_revision = 0
                         AND NOT EXISTS (SELECT 1 FROM memories s
                                          WHERE s.supersedes = m.source_id AND s.source = 'memory'
@@ -221,10 +282,15 @@ impl MemoryDB {
             if let Some(row) = rows.next().await.map_err(db_err("dream point row"))? {
                 let text = row.get::<String>(0).unwrap_or_default();
                 if !text.is_empty() {
-                    points.push(PriorPoint {
+                    points.push(StandingPoint {
                         decided: decided.contains(&id),
                         id,
                         text,
+                        title: row.get::<String>(1).unwrap_or_default(),
+                        created_at: row.get::<i64>(2).unwrap_or(0),
+                        space: crate::space_context::normalize_unfiled_space(
+                            row.get::<Option<String>>(3).unwrap_or(None),
+                        ),
                     });
                 }
             }
@@ -385,6 +451,39 @@ impl MemoryDB {
         ids.extend(night.entry.open);
         Ok(ids)
     }
+}
+
+/// A night point whose memory still stands.
+#[derive(Debug)]
+struct StandingPoint {
+    id: String,
+    text: String,
+    title: String,
+    created_at: i64,
+    /// The memory's Space, `None` when unfiled.
+    space: Option<String>,
+    decided: bool,
+}
+
+/// Longest title the map labels a point with, in characters.
+const POINT_TITLE_MAX_CHARS: usize = 120;
+
+/// A point's title, else the first line of its text, cut to
+/// [`POINT_TITLE_MAX_CHARS`].
+fn short_title(title: &str, text: &str) -> String {
+    let source = if title.trim().is_empty() {
+        text.lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("")
+    } else {
+        title
+    };
+    let source = source.trim();
+    if source.chars().count() <= POINT_TITLE_MAX_CHARS {
+        return source.to_string();
+    }
+    let cut: String = source.chars().take(POINT_TITLE_MAX_CHARS - 1).collect();
+    format!("{}…", cut.trim_end())
 }
 
 /// One night's entry and when it ran.

@@ -253,3 +253,131 @@ async fn ux_chat_5_each_night_what_a_thing_settled_goes_into_long_term_memory() 
         .iter()
         .all(|d| d.thing_id != site));
 }
+
+async fn remember_in(db: &MemoryDB, id: &str, title: &str, content: &str, space: &str) {
+    db.upsert_documents(vec![RawDocument {
+        source: "memory".to_string(),
+        source_id: id.to_string(),
+        title: title.to_string(),
+        content: content.to_string(),
+        last_modified: chrono::Utc::now().timestamp(),
+        metadata: HashMap::new(),
+        memory_type: Some("decision".to_string()),
+        space: Some(space.to_string()),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+}
+
+/// UX-CHAT-5: the big map draws each thing with the points its nights wrote,
+/// read from the thing's history: a night taken back is left out even while
+/// its memories are still there, a thing with no night is not listed, and a
+/// point in another Space stays out of a Space-scoped read.
+#[tokio::test]
+async fn ux_chat_5_the_big_map_reads_each_things_night_points() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _notes) = two_things(&db, now).await;
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let site_due = due.iter().find(|d| d.thing_id == site).unwrap();
+
+    remember_in(
+        &db,
+        "mem_tagline",
+        "Tagline: You do the thinking",
+        "The site tagline is \"You do the thinking\".",
+        "wenlan",
+    )
+    .await;
+    remember_in(
+        &db,
+        "mem_pricing",
+        "",
+        "Pricing page is open.\nMore.",
+        "wenlan",
+    )
+    .await;
+    remember_in(&db, "mem_other", "Elsewhere", "Filed elsewhere.", "other").await;
+    db.record_dream(
+        &site,
+        &["mem_tagline".into(), "mem_other".into()],
+        &["mem_pricing".into()],
+        &Default::default(),
+        &site_due.conversations,
+    )
+    .await
+    .unwrap();
+    // A second night, taken back; its memory is not forgotten here, so only
+    // the history keeps it off the map.
+    remember_in(&db, "mem_undone", "Undone", "A point taken back.", "wenlan").await;
+    db.record_dream(&site, &["mem_undone".into()], &[], &Default::default(), &[])
+        .await
+        .unwrap();
+    assert_eq!(db.undo_thing_dream(&site).await.unwrap(), ["mem_undone"]);
+
+    let things = db.thing_night_points(&ReadScope::Global).await.unwrap();
+    assert_eq!(things.len(), 1, "the thing with no night is not listed");
+    assert_eq!(things[0].thing_id, site);
+    assert_eq!(things[0].title.as_deref(), Some("Site redesign"));
+    let points: Vec<(&str, &str, bool)> = things[0]
+        .points
+        .iter()
+        .map(|p| (p.memory_id.as_str(), p.title.as_str(), p.decided))
+        .collect();
+    assert_eq!(
+        points,
+        [
+            ("mem_tagline", "Tagline: You do the thinking", true),
+            ("mem_other", "Elsewhere", true),
+            // No title: the first line of its text.
+            ("mem_pricing", "Pricing page is open.", false),
+        ],
+        "the night taken back is left out"
+    );
+    assert!(things[0].points.iter().all(|p| p.created_at > 0));
+    assert!(!things[0].quiet, "it went on today: home shows it");
+
+    // Taken off home, it is still listed, marked quiet as home has it.
+    db.hide_thing(&site).await.unwrap();
+    let hidden = db.thing_night_points(&ReadScope::Global).await.unwrap();
+    assert!(hidden[0].quiet);
+    assert_eq!(hidden[0].points.len(), 3);
+
+    // A Space-scoped caller sees the thing's points in that Space only.
+    let scoped = db
+        .thing_night_points(&ReadScope::Space("wenlan".into()))
+        .await
+        .unwrap();
+    let ids: Vec<(&str, Vec<&str>)> = scoped
+        .iter()
+        .map(|t| {
+            (
+                t.thing_id.as_str(),
+                t.points.iter().map(|p| p.memory_id.as_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        ids,
+        [(site.as_str(), vec!["mem_tagline", "mem_pricing"])],
+        "a point filed in another Space stays out"
+    );
+    assert_eq!(scoped[0].spaces, ["wenlan"]);
+    let other = db
+        .thing_night_points(&ReadScope::Space("nowhere".into()))
+        .await
+        .unwrap();
+    assert!(
+        other.is_empty(),
+        "a Space with none of its conversations sees no thing"
+    );
+
+    // Taking the last night back leaves the map with no thing at all.
+    db.undo_thing_dream(&site).await.unwrap();
+    assert!(db
+        .thing_night_points(&ReadScope::Global)
+        .await
+        .unwrap()
+        .is_empty());
+}
