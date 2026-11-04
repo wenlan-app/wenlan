@@ -866,53 +866,6 @@ async fn missing_entity_link_uses_memory_scope_and_exact_pair_rollback() {
     snapshot.finish().await.unwrap();
 }
 
-/// A link to a merged-away (archived) topic is kept on purpose, so repair
-/// never plans to delete it, the same rule as lint's integrity check.
-#[tokio::test]
-async fn archived_entity_link_is_not_a_repair() {
-    let (db, _dir) = test_db().await;
-    db.test_seed_entity_shadow_page(crate::db::TestEntity::new(
-        "entity_archived",
-        "Merged Away",
-        "concept",
-    ))
-    .await
-    .unwrap();
-    db.test_primary_session()
-        .await
-        .execute_batch(
-            "INSERT INTO spaces(id,name,created_at,updated_at)
-             VALUES ('space_wenlan','wenlan',1,1);
-             INSERT INTO memories
-                 (id,content,source,source_id,title,chunk_index,last_modified,chunk_type,
-                  pending_revision,is_recap,supersede_mode,memory_type,source_agent,
-                  supersedes,pinned,confirmed,stability,space,version)
-             VALUES
-                 ('row_present','present','memory','mem_present','present',0,1,'text',
-                  0,0,'hide','fact','test',NULL,0,0,'new','wenlan',1);
-             UPDATE pages SET status='archived'
-              WHERE id IN (SELECT page_id FROM entity_page_map WHERE entity_id='entity_archived');
-             INSERT INTO memory_entities(memory_id,entity_id)
-             VALUES ('mem_present','entity_archived');",
-        )
-        .await
-        .unwrap();
-    let snapshot = db.open_isolated_lint_snapshot_for_test().await.unwrap();
-
-    let resolutions = resolve_current(&snapshot, &RepairLintScope::Global, None)
-        .await
-        .unwrap();
-    assert!(
-        !resolutions.iter().any(|resolution| matches!(
-            resolution,
-            DeterministicResolution::Exact(exact)
-                if exact.writer == RepairWriter::DeleteMemoryEntityLink
-        )),
-        "an archived topic's link is history, not a broken link"
-    );
-    snapshot.finish().await.unwrap();
-}
-
 #[tokio::test]
 #[cfg_attr(not(unix), ignore = "repair artifacts are unix-only")]
 async fn imported_document_owner_with_missing_entity_prepares_and_applies_in_scope() {

@@ -1007,8 +1007,7 @@ async fn resolve_memory_entity_links(
     // G6 Stage 1.5a: entity-existence side moved onto the `kind='entity'`
     // shadow page via `entity_page_map` -- safe because `scoped_memory_entity_clause`
     // filters only on the memories-derived alias `m`, never on `entities`/the
-    // entity side's space. An archived (merged-away) entity still exists: its
-    // links are kept on purpose, same rule as lint's `memory_entities.integrity`.
+    // entity side's space.
     let (scope_clause, params) = scoped_memory_entity_clause(scope);
     let sql = format!(
         "SELECT me.memory_id,me.entity_id,m.source_id,m.space,e.entity_id
@@ -1017,9 +1016,9 @@ async fn resolve_memory_entity_links(
                 SELECT source_id,MAX(space) AS space
                   FROM memories GROUP BY source_id
            ) m ON m.source_id=me.memory_id
-           LEFT JOIN (SELECT DISTINCT epm.entity_id FROM entity_page_map epm
+           LEFT JOIN (SELECT epm.entity_id FROM entity_page_map epm
                       JOIN pages p ON p.id = epm.page_id
-                      WHERE p.kind = 'entity' AND p.status IN ('active', 'archived')) e
+                      WHERE p.kind = 'entity' AND p.status = 'active') e
              ON e.entity_id=me.entity_id
           WHERE (m.source_id IS NULL OR e.entity_id IS NULL){scope_clause}
           ORDER BY me.memory_id,me.entity_id"

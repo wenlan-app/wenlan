@@ -7,7 +7,6 @@ pub(in crate::lint::kg) struct AggregateCounts {
     relations: u64,
     observations: u64,
     links: u64,
-    archived_entity_links: u64,
 }
 
 impl AggregateCounts {
@@ -24,10 +23,6 @@ impl AggregateCounts {
             metric(LintMetricCode::KgRelations, self.relations),
             metric(LintMetricCode::KgObservations, self.observations),
             metric(LintMetricCode::KgMemoryEntityLinks, self.links),
-            metric(
-                LintMetricCode::KgArchivedEntityLinks,
-                self.archived_entity_links,
-            ),
         ]
     }
 }
@@ -80,18 +75,9 @@ pub(super) async fn aggregate_counts(context: &LintContext<'_, '_>) -> Result<Ag
         "SELECT (SELECT COUNT(*) FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id
                   WHERE p.kind = 'entity' AND p.status = 'active'),
                 (SELECT COUNT(*) FROM edges WHERE edge_type='relates' AND valid_until IS NULL),
-                (SELECT COUNT(*) FROM observations), (SELECT COUNT(*) FROM memory_entities),
-                (SELECT COUNT(*) FROM memory_entities me
-                  WHERE NOT EXISTS (SELECT 1 FROM entity_page_map epm
-                                      JOIN pages p ON p.id = epm.page_id
-                                     WHERE epm.entity_id = me.entity_id
-                                       AND p.kind = 'entity' AND p.status = 'active')
-                    AND EXISTS (SELECT 1 FROM entity_page_map epm
-                                  JOIN pages p ON p.id = epm.page_id
-                                 WHERE epm.entity_id = me.entity_id
-                                   AND p.kind = 'entity' AND p.status = 'archived'))",
+                (SELECT COUNT(*) FROM observations), (SELECT COUNT(*) FROM memory_entities)",
         libsql::params::Params::None,
-        5,
+        4,
     )
     .await?;
     Ok(AggregateCounts {
@@ -99,7 +85,6 @@ pub(super) async fn aggregate_counts(context: &LintContext<'_, '_>) -> Result<Ag
         relations: values[1],
         observations: values[2],
         links: values[3],
-        archived_entity_links: values[4],
     })
 }
 

@@ -76,38 +76,6 @@ async fn imported_document_entity_links_have_a_valid_memory_owner() {
     assert_eq!(check(&report, LINKS).outcome(), LintOutcome::Pass);
 }
 
-/// A link to an archived topic is kept on purpose (the memory's history), so
-/// it is counted on its own, not reported as a broken link.
-#[tokio::test]
-async fn links_to_an_archived_entity_are_counted_not_broken() {
-    let (db, _tmp) = test_db().await;
-    insert_memory(&db, "mem-archived-link", None).await;
-    db.test_seed_entity_shadow_page(crate::db::TestEntity::new(
-        "entity-archived",
-        "Merged Away",
-        "concept",
-    ))
-    .await
-    .unwrap();
-    db.test_primary_session()
-        .await
-        .execute_batch(
-            "UPDATE pages SET status = 'archived'
-              WHERE id IN (SELECT page_id FROM entity_page_map WHERE entity_id = 'entity-archived');
-             INSERT INTO memory_entities (memory_id,entity_id)
-             VALUES ('mem-archived-link','entity-archived');",
-        )
-        .await
-        .unwrap();
-
-    let report = run(&db, None, test_config(true)).await;
-
-    assert_eq!(check(&report, LINKS).outcome(), LintOutcome::Pass);
-    let aggregates = check(&report, AGGREGATES);
-    assert_eq!(metric(aggregates, LintMetricCode::KgMemoryEntityLinks), 1);
-    assert_eq!(metric(aggregates, LintMetricCode::KgArchivedEntityLinks), 1);
-}
-
 #[tokio::test]
 async fn scoped_rows_follow_memory_or_entity_ownership_but_aggregates_stay_global() {
     let (db, _tmp) = test_db().await;
