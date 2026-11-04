@@ -86,6 +86,12 @@ specifically asks to change them. For stale pages, use the
 
 ## Verify links and outcomes
 
+Put entry-page navigation in ordinary Markdown paragraphs or bullet lists.
+The editor's table preview displays link labels without usable link targets;
+do not make table cells the only route to a page. Existing navigation tables
+need a normal linked list when completing this request, even if API link
+resolution already succeeds. Tables can still hold comparisons.
+
 Wikilinks resolve by title, not page ID. Use `[[Title]]` only for a unique
 same-Space title. For a cross-Space target, use `[[Space/Title]]`. A duplicate
 same-Space title has no safe ID-target link: leave it unlinked and report the

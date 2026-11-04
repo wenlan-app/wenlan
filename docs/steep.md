@@ -156,8 +156,18 @@ background/model-driven rebuild execution. Those were not exercised by this run.
 
 After integrating main at `35efea38`, a third fresh cold session repeated the
 arrangement on a new isolated library (48 MCP calls, 11 original pages retained,
-3 added, 8 moves). Readback and browser navigation passed again. A separate
-isolated probe moved a page, updated its body, and verified the new file and
+3 added, 8 moves). Readback passed. Browser acceptance exposed a pre-existing editor limitation:
+links in table previews are labels, so the reshape procedure now requires
+ordinary paragraph/list navigation. A fresh session made 27 MCP calls and updated
+only the brand entry page; browser clicks then opened all three platform plans
+(Reddit, Show HN and Product Hunt) without page errors. A separate isolated probe moved a page, updated its body, and verified the new file and
 readback matched, the old path remained absent, and page ID/Space were unchanged.
 The route-manifest, protected-relation and real-router organization tests also
-passed on the integrated state. The Skill input hashes were unchanged by the merge.
+passed on the integrated state. The merge itself preserved Skill input hashes;
+the subsequent navigation instruction was regenerated into both distributions
+and the desktop bundle.
+
+A final fresh session on the navigation-fixed state made 23 read-only MCP calls.
+Readback confirmed all page IDs, bodies and versions were unchanged, including
+the separate projection probe page (15 pages total; 14 from the organization run).
+It loaded the front door, Steep, reshape and capture instructions as needed.
