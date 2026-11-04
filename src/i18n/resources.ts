@@ -2061,6 +2061,8 @@ const en = {
 
     display: "Display",
     cameraControls: "Graph navigation",
+    thingStops: "Zoom to",
+    thingStop: { this: "This", nearby: "Nearby", all: "All" },
     mainNetwork: "Reset view",
     fitAll: "Fit entire graph",
     rearrange: "Rearrange",
@@ -5252,6 +5254,8 @@ const zhHans = {
 
     display: "显示",
     cameraControls: "图谱导航",
+    thingStops: "缩放到",
+    thingStop: { this: "这件事", nearby: "附近", all: "全部" },
     mainNetwork: "重置视野",
     fitAll: "缩放至完整图谱",
     rearrange: "重新排列",
@@ -8418,6 +8422,8 @@ const zhHant = {
 
     display: "顯示",
     cameraControls: "圖譜導覽",
+    thingStops: "縮放到",
+    thingStop: { this: "這件事", nearby: "附近", all: "全部" },
     mainNetwork: "重設視野",
     fitAll: "縮放至完整圖譜",
     rearrange: "重新排列",

@@ -10,6 +10,7 @@ import Sigma from "sigma";
 import { EdgeRectangleProgram } from "sigma/rendering";
 import {
   ArrowCounterClockwise,
+  ArrowRight,
   CaretDown,
   CornersOut,
   Minus,
@@ -19,6 +20,7 @@ import {
   SlidersHorizontal,
 } from "@phosphor-icons/react";
 import {
+  ATLAS_CONTROL_INSETS,
   captureAtlasViewpoint,
   frameAtlasView,
   restoreAtlasViewpoint,
@@ -54,6 +56,7 @@ import {
   DEFAULT_LAYERS,
   MEMORY_NODE_TYPE,
   PAGE_NODE_TYPE,
+  THING_NODE_TYPE,
 } from "../../lib/graph/model";
 import type { GraphLayers, GraphModel, GraphNode } from "../../lib/graph/model";
 import {
@@ -71,11 +74,37 @@ import {
   layoutFocusLabels,
   NEIGHBOR_LABEL_MAX,
   NODE_LABEL_FONT,
+  nodeSizeCapPx,
 } from "../../lib/graph/atlas";
 import type { HoverState, AtlasSimulation, LodState, LabelPlacement } from "../../lib/graph/atlas";
 import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
-import { drawNightMarks, nightMarks } from "../../lib/graph/night";
-import { readStoredPositions, startRearrange, storePositions, undoRearrange } from "../../lib/graph/positions";
+import {
+  applyNightOffsets,
+  drawNightMarks,
+  frameAt,
+  growthAt,
+  GROWTH_MS,
+  newNightPoints,
+  nightMarks,
+  nightOffsetsOf,
+  nightPointIds,
+  SENTENCE_MAX_PX,
+  THING_STOPS,
+  thingFocusState,
+  thingStopNodeIds,
+  type FrameHit,
+  type ThingStop,
+} from "../../lib/graph/night";
+import {
+  readNightOffsets,
+  readSeenNightPoints,
+  readStoredPositions,
+  startRearrange,
+  storeNightOffsets,
+  storePositions,
+  storeSeenNightPoints,
+  undoRearrange,
+} from "../../lib/graph/positions";
 import type { CartographyScene } from "../../lib/graph/cartography";
 import {
   communitiesFor,
@@ -105,6 +134,10 @@ class ScreenSpaceEdgeProgram extends EdgeRectangleProgram {
 // community climb and the place-name overlay — a new identity re-runs the climb
 // and repaints every edge each render until the fetch lands.
 const EMPTY_CARTOGRAPHY: Map<string, SpaceCartography> = new Map();
+
+/** The closest a thing's own stop (這件事) zooms, CSS px per graph unit:
+ *  its points a sentence's line apart or more, not a screen apart. */
+const THING_STOP_DENSITY = 12;
 
 // Same reason as EMPTY_CARTOGRAPHY: a stable identity for the unresolved
 // graph query, so the model memo below doesn't rebuild on every render.
@@ -258,6 +291,17 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   const openingRatioRef = useRef(1);
   const focusNodeRef = useRef<(id: string) => void>(() => {});
   const returnToMapRef = useRef<() => void>(() => {});
+  // A picked thing's zoom stop (UX-CHAT-5), and where the last paint put each
+  // frame and title, so a click there picks its thing.
+  const [thingStop, setThingStop] = useState<ThingStop>("this");
+  const [selectedThing, setSelectedThing] = useState<string | null>(null);
+  const thingStopRef = useRef<ThingStop>("this");
+  const selectThingRef = useRef<(thing: string, stop: ThingStop) => void>(() => {});
+  const frameHitsRef = useRef<FrameHit[]>([]);
+  // Night points that are new to this viewer and have not finished growing
+  // in yet. They are marked seen as soon as they are found, so this is what
+  // carries them over a rebuild that cuts their growth short.
+  const growQueueRef = useRef<Set<string>>(new Set());
   const sceneRef = useRef<CartographyScene | null>(null);
   const sceneDirtyRef = useRef(true);
 
@@ -541,8 +585,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return [];
-    return model.nodes.filter((node) => !entityTypeHidden(node.entityType, excludedTypes) && node.name.toLowerCase().includes(needle)).slice(0, 8);
-  }, [model, query, excludedTypes]);
+    // A thing being worked on is found by its title too (UX-CHAT-5).
+    const things = visibleModel.nodes.filter((node) => node.kind === "thing");
+    return [...things, ...model.nodes].filter((node) => !entityTypeHidden(node.entityType, excludedTypes) && node.name.toLowerCase().includes(needle)).slice(0, 8);
+  }, [model, visibleModel, query, excludedTypes]);
 
 
   const focusEntity = (nodeId: string) => {
@@ -564,9 +610,15 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     }
     const graph = drawn;
     if (!renderer) return;
+    // A thing (found by search) is picked like a click on its frame.
+    if (graph.getNodeAttribute(nodeId, "entityType") === THING_NODE_TYPE) {
+      selectThing(nodeId, "this");
+      return;
+    }
     if (!selectedRef.current) overviewRef.current = captureAtlasViewpoint(renderer, graph);
     selectedRef.current = nodeId;
     setSelectedId(nodeId);
+    setSelectedThing(null);
     // Selection persists while reading the inspector or traversing neighbors.
     hoverStateRef.current = hoverStateFor(graph, nodeId);
     const display = renderer.getNodeDisplayData(nodeId);
@@ -582,9 +634,52 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   };
 
   focusNodeRef.current = focusEntity;
+  /**
+   * Pick a thing and move to one of its three zoom stops (UX-CHAT-5): 這件事
+   * fits its frame with room for the sentences, 附近 adds what its points
+   * link to and their neighbours, 全部 fits the whole map. The thing stays
+   * picked (its lit set lit, the stops offered) at every stop. The map itself
+   * is its picture, so no inspector opens over it.
+   */
+  const selectThing = (thing: string, stop: ThingStop) => {
+    const renderer = sigmaRef.current;
+    const drawn = graphRef.current;
+    if (!renderer || !drawn || !drawn.hasNode(thing)) return;
+    if (!selectedRef.current) overviewRef.current = captureAtlasViewpoint(renderer, drawn);
+    else if (selectedRef.current !== thing) setSelectedId(null);
+    selectedRef.current = thing;
+    setSelectedThing(thing);
+    thingStopRef.current = stop;
+    setThingStop(stop);
+    hoverStateRef.current = thingFocusState(drawn, thing, stop);
+    focusLayoutRef.current = null;
+    const { width } = renderer.getDimensions();
+    // The sentences run to the right of their points; the title sits above.
+    const insets = stop === "this"
+      ? { ...ATLAS_CONTROL_INSETS, top: ATLAS_CONTROL_INSETS.top + 24, right: ATLAS_CONTROL_INSETS.right + Math.min(SENTENCE_MAX_PX, width * 0.3) }
+      : ATLAS_CONTROL_INSETS;
+    const duration = prefersReducedMotion() ? 0 : 450;
+    if (stop === "all") {
+      const visibleNodeIds = new Set(
+        drawn.nodes().filter((id) => !entityTypeHidden(drawn.getNodeAttribute(id, "entityType"), excludedTypesRef.current)),
+      );
+      frameAtlasView(renderer, drawn, { mode: "all", visibleNodeIds, insets, duration });
+    } else {
+      frameAtlasView(renderer, drawn, {
+        nodeIds: thingStopNodeIds(drawn, thing, stop),
+        insets,
+        duration,
+        padding: 40,
+        maxDensity: stop === "this" ? THING_STOP_DENSITY : undefined,
+      });
+    }
+    renderer.refresh();
+  };
+  selectThingRef.current = selectThing;
   const returnToMap = () => {
     selectedRef.current = null;
     setSelectedId(null);
+    setSelectedThing(null);
     restoreSearchFocusOnCloseRef.current = true;
     const renderer = sigmaRef.current;
     const drawn = graphRef.current;
@@ -605,6 +700,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     const drawn = graphRef.current;
     selectedRef.current = null;
     setSelectedId(null);
+    setSelectedThing(null);
     overviewRef.current = null;
     focusLayoutRef.current = null;
     if (!renderer || !drawn) return;
@@ -614,7 +710,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     const visibleNodeIds = new Set(
       drawn.nodes().filter((id) => !entityTypeHidden(drawn.getNodeAttribute(id, "entityType"), excludedTypesRef.current)),
     );
-    frameAtlasView(renderer, drawn, { mode, visibleNodeIds, padding: 56 });
+    frameAtlasView(renderer, drawn, { mode, visibleNodeIds, padding: 56, insets: ATLAS_CONTROL_INSETS });
     // Replace a pending search animation with the NEW frame. Animating the
     // old state before fitting would overwrite the fit on its next frame.
     if (wasAnimated) void camera.animate({ x: camera.x, y: camera.y, ratio: camera.ratio, angle: camera.angle }, { duration: 1 });
@@ -687,12 +783,14 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     if (selectedRef.current && !filteredModel.nodes.some((node) => node.id === selectedRef.current)) {
       selectedRef.current = null;
       setSelectedId(null);
+      setSelectedThing(null);
       overviewRef.current = null;
     }
   }, [filteredModel]);
   useEffect(() => {
     selectedRef.current = null;
     setSelectedId(null);
+    setSelectedThing(null);
     overviewRef.current = null;
   }, [spaceFilter]);
   const selectedNode = filteredModel.nodes.find((node) => node.id === selectedId);
@@ -757,6 +855,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     if (!container || (model.nodes.length === 0 && visibleModel.nodes.length === 0)) return;
 
     const graph = buildAtlasGraph(visibleModel, palette);
+    // Each night point goes back to the spot it was given the first time it
+    // was on the map; only new ones are placed (UX-CHAT-5).
+    applyNightOffsets(graph, readNightOffsets());
     runAtlasLayout(graph);
     graphRef.current = graph;
     hoverStateRef.current = hoverStateFor(graph, null);
@@ -804,6 +905,41 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // Keep this layout now, so it holds even if the app quits without
     // unmounting the map, and again when the window goes away.
     storePositions(spaceFilter, bodyPositions());
+    storeNightOffsets(nightOffsetsOf(graph));
+    // A point new since the map was last opened grows out of its thing's
+    // centre, once (UX-CHAT-5); it is seen from now on, so it never does again.
+    const nightNow = nightPointIds(graph);
+    for (const id of newNightPoints(nightNow, readSeenNightPoints())) growQueueRef.current.add(id);
+    storeSeenNightPoints(nightNow);
+    const growing = prefersReducedMotion() ? [] : nightNow.filter((id) => growQueueRef.current.has(id));
+    if (prefersReducedMotion()) growQueueRef.current.clear();
+    // Sigma (3.0.3) takes a node's place from the graph on every full paint,
+    // not from the reducer, so a growing point is moved on the graph itself:
+    // out from its thing's centre to the spot just kept, which it ends on
+    // exactly. Nothing kept is touched (its spot was stored above).
+    let growth: { targets: Map<string, { x: number; y: number }>; start: number; at: number } | null = growing.length > 0
+      ? {
+        targets: new Map(growing.map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }])),
+        start: 0,
+        at: 0,
+      }
+      : null;
+    const placeGrowth = (at: number) => {
+      if (!growth) return;
+      growth.at = at;
+      for (const [id, target] of growth.targets) {
+        const thing = graph.getNodeAttribute(id, "dustOf") as string | undefined;
+        if (at >= 1 || !thing || !graph.hasNode(thing)) {
+          graph.mergeNodeAttributes(id, target);
+          continue;
+        }
+        const cx = graph.getNodeAttribute(thing, "x") as number;
+        const cy = graph.getNodeAttribute(thing, "y") as number;
+        graph.mergeNodeAttributes(id, { x: cx + (target.x - cx) * at, y: cy + (target.y - cy) * at });
+      }
+    };
+    placeGrowth(0);
+    let growthFrame = 0;
     const keepOnHide = () => storePositions(spaceFilter, bodyPositions());
     window.addEventListener("pagehide", keepOnHide);
     applyAtlasHierarchy(graph);
@@ -909,7 +1045,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       labelBoxes.push(box);
       return true;
     };
+    // A thing's points show their sentences at its own zoom stop, or anywhere
+    // closer in than the overview; the overlay paints them (night.ts).
+    const sentencesFor = (thing: string) =>
+      (selectedRef.current === thing && thingStopRef.current === "this") || lodRef.current.phase !== "overview";
     const drawLabel = (ctx: CanvasRenderingContext2D, data: Record<string, any>, s: Record<string, any>) => {
+      const nodeAttrs = graph.hasNode(data.key) ? graph.getNodeAttributes(data.key) : null;
+      if (nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string" && sentencesFor(nodeAttrs.dustOf)) return;
       // Truncation, collision reservation, and drawNodeLabelAt must all use
       // the same body face or a measured width is not a screen-space bound.
       ctx.font = NODE_LABEL_FONT;
@@ -1023,8 +1165,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
           display.highlighted = true;
         }
         const floor = lodRef.current.phase === "overview" && attrs.landmark ? minimumGraphRadius * 2 : minimumGraphRadius;
-        const cap = node === hoverStateRef.current.hovered ? 12 : attrs.entityType === MEMORY_NODE_TYPE ? 2.8 : 8;
-        return { ...display, size: Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel) };
+        const cap = nodeSizeCapPx(attrs, node === hoverStateRef.current.hovered);
+        const size = Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel);
+        if (growth && growth.targets.has(node)) return { ...display, size: size * Math.max(0.15, growth.at) };
+        return { ...display, size };
       },
       edgeReducer: (edge, attrs) => {
         const [source, target] = graph.extremities(edge);
@@ -1097,12 +1241,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
         renderer.scaleSize(1),
         labelBoxes,
       );
-      drawNightMarks(ctx, nightMarks(graph, (id) => {
+      frameHitsRef.current = drawNightMarks(ctx, nightMarks(graph, (id) => {
         const display = renderer.getNodeDisplayData(id);
         if (!display || display.hidden) return null;
         const at = renderer.framedGraphToViewport(display);
         return { x: at.x, y: at.y, r: renderer.scaleSize(display.size) };
-      }, hoverStateRef.current, { width, height }), paletteRef.current, labelBoxes);
+      }, hoverStateRef.current, { width, height }, sentencesFor), paletteRef.current, labelBoxes);
     };
     // One handler paints the overlay from one scene — rebuilt only when a
     // paint marked it dirty — and sigma sees a single afterRender listener.
@@ -1126,7 +1270,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     );
     const saved = viewpointRef.current;
     const restored = saved?.scope === spaceFilter && restoreAtlasViewpoint(renderer, graph, saved.view);
-    if (!restored) frameAtlasView(renderer, graph, { mode: "main", visibleNodeIds, padding: 56 });
+    // The opening view keeps the toolbar's band clear: no frame starts
+    // under the search field (UX-CHAT-5).
+    if (!restored) frameAtlasView(renderer, graph, { mode: "main", visibleNodeIds, padding: 56, insets: ATLAS_CONTROL_INSETS });
     // Zoom level of detail, relative to THIS opening view: how much memory
     // dust each anchor shows, and whether the islands are solid yet (see
     // atlas.ts's lodFor). The reducers only re-run on refresh(), not on a
@@ -1192,7 +1338,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       focusNodeRef.current(pendingFocus);
     }
     if (selectedRef.current && graph.hasNode(selectedRef.current)) {
-      hoverStateRef.current = hoverStateFor(graph, selectedRef.current);
+      // A picked thing keeps its lit set across a rebuild (a new night's
+      // points arriving while it is open, UX-CHAT-5).
+      hoverStateRef.current = graph.getNodeAttribute(selectedRef.current, "entityType") === THING_NODE_TYPE
+        ? thingFocusState(graph, selectedRef.current, thingStopRef.current)
+        : hoverStateFor(graph, selectedRef.current);
     }
     // First paint of THIS renderer, and the only thing that draws the
     // overlay canvas above at all. Sigma's constructor render already happened
@@ -1206,25 +1356,53 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // the fresh canvas stayed at its untouched 300x150 default and every
     // region name vanished from the map.
     renderer.refresh();
+    // New points grow in from the first painted frame on.
+    if (growth) {
+      const grow = () => {
+        if (!growth) return;
+        if (growth.start === 0) growth.start = performance.now();
+        const elapsed = performance.now() - growth.start;
+        placeGrowth(growthAt(elapsed));
+        if (elapsed >= GROWTH_MS) {
+          for (const id of growth.targets.keys()) growQueueRef.current.delete(id);
+          growth = null;
+        }
+        sceneDirtyRef.current = true;
+        renderer.refresh();
+        if (growth) growthFrame = requestAnimationFrame(grow);
+      };
+      growthFrame = requestAnimationFrame(grow);
+    }
     renderer.on("clickNode", ({ node }) => {
       // A moved drag must not also navigate on release.
       if (movedDuringPressRef.current) return;
       focusNodeRef.current(node);
     });
-    renderer.on("clickStage", () => { if (selectedRef.current) returnToMapRef.current(); });
+    renderer.on("clickStage", ({ event }) => {
+      // A click on a frame or its title picks its thing, at its own stop.
+      const thing = frameAt(frameHitsRef.current, event.x, event.y);
+      if (thing) {
+        selectThingRef.current(thing, "this");
+        return;
+      }
+      if (selectedRef.current) returnToMapRef.current();
+    });
     // Hover is LOCKED while a drag is live: our drag doesn't capture the
     // pointer (sigma's captor keeps picking), so sweeping the grabbed node
     // across other hit areas would fire enter/leave mid-drag — the graph
     // dims/undims, labels pop, and the cursor flickers grabbing→pointer→
     // default. force-graph never shows this (d3-drag captures the pointer,
     // hover is inert mid-drag), and the flashing reads as jank.
+    let overNode = false;
     renderer.on("enterNode", ({ node }) => {
+      overNode = true;
       if (draggedNodeRef.current || selectedRef.current) return;
       hoverStateRef.current = hoverStateFor(graph, node);
       container.style.cursor = "pointer";
       renderer.refresh();
     });
     renderer.on("leaveNode", () => {
+      overNode = false;
       if (draggedNodeRef.current || selectedRef.current) return;
       hoverStateRef.current = hoverStateFor(graph, null);
       container.style.cursor = "default";
@@ -1271,7 +1449,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     });
     mouseCaptor.on("mousemovebody", (e) => {
       const draggedNode = draggedNodeRef.current;
-      if (!draggedNode) return;
+      if (!draggedNode) {
+        // A frame and its title answer a click, so they show the hand.
+        if (!overNode) container.style.cursor = frameAt(frameHitsRef.current, e.x, e.y) ? "pointer" : "default";
+        return;
+      }
       movedDuringPressRef.current = true;
       const pos = renderer.viewportToGraph(e);
       graph.setNodeAttribute(draggedNode, "x", pos.x);
@@ -1348,6 +1530,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       if (disposed) return;
       disposed = true;
       containerSizeObserver?.disconnect();
+      cancelAnimationFrame(growthFrame);
+      placeGrowth(1);
+      growth = null;
       // Sigma only detaches its own camera listener; release our listener too.
       camera.off("updated", onCameraUpdated);
       window.removeEventListener("pagehide", keepOnHide);
@@ -1565,6 +1750,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
                       backgroundColor:
                         node.entityType === MEMORY_NODE_TYPE
                           ? palette.memory
+                          : node.entityType === THING_NODE_TYPE
+                            ? palette.bridge
                           : node.entityType === PAGE_NODE_TYPE
                             ? palette.page
                             : colorForEntityType(node.entityType, palette),
@@ -1690,7 +1877,31 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
         )}
       </div>
 
-      <div className="atlas-count-line" aria-live="polite">{countLine}</div>
+      {selectedThing ? (
+        // A picked thing's three zoom stops, in the camera controls' own
+        // style, where the count line sits (UX-CHAT-5).
+        <div className="atlas-camera-controls atlas-thing-stops" role="group" aria-label={t("atlas.thingStops")}>
+          {THING_STOPS.map((stop) => (
+            <button
+              key={stop}
+              type="button"
+              className="atlas-icon-button atlas-thing-stop"
+              aria-pressed={thingStop === stop}
+              onClick={() => selectThing(selectedThing, stop)}
+            >
+              {t(`atlas.thingStop.${stop}`)}
+            </button>
+          ))}
+          {onNodeClick && (
+            <button type="button" className="atlas-icon-button atlas-thing-stop" onClick={() => onNodeClick(targetForNode(selectedThing))}>
+              {t("atlas.openDetails")}
+              <ArrowRight size={14} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="atlas-count-line" aria-live="polite">{countLine}</div>
+      )}
 
       {filteredModel.nodes.length === 0 && excludedTypes.size > 0 && <div className="atlas-filter-empty">
         <p>{t("atlas.noTypeMatches")}</p><button type="button" className="atlas-action" onClick={() => setExcludedTypes(new Set())}>{t("atlas.allEntityTypes")}</button>

@@ -10,6 +10,7 @@ vi.mock("../../lib/tauri", async () => {
   return {
     ...actual,
     getKnowledgeGraph: vi.fn(),
+    listThingNightPoints: vi.fn(),
     listCommunities: vi.fn(),
     listCommunityMembers: vi.fn(),
   };
@@ -88,7 +89,18 @@ vi.mock("sigma", () => {
         y: mockDimensions.height / 2 + coords.y * 6,
       };
     }
-    viewportToFramedGraph(coords: { x: number; y: number }) { return coords; }
+    // Identity, except when asked where a viewport point lands under a given
+    // camera (frameAtlasView's inset shift): then the real linear map, one
+    // framed unit across the viewport's shorter side, screen y running down.
+    viewportToFramedGraph(coords: { x: number; y: number }, override?: { cameraState?: { x: number; y: number; ratio: number } }) {
+      const state = override?.cameraState;
+      if (!state) return coords;
+      const unit = Math.min(mockDimensions.width, mockDimensions.height);
+      return {
+        x: state.x + (coords.x - mockDimensions.width / 2) * state.ratio / unit,
+        y: state.y - (coords.y - mockDimensions.height / 2) * state.ratio / unit,
+      };
+    }
     camera = {
       x: 0.5, y: 0.5, angle: 0,
       ratio: 1,
@@ -125,7 +137,7 @@ vi.mock("sigma", () => {
   return { default: SigmaMock };
 });
 
-import { getKnowledgeGraph, listCommunities, listCommunityMembers } from "../../lib/tauri";
+import { getKnowledgeGraph, listCommunities, listCommunityMembers, listThingNightPoints } from "../../lib/tauri";
 import type {
   Entity,
   EntityDetail,
@@ -137,6 +149,7 @@ import type {
   KnowledgeGraph,
 } from "../../lib/tauri";
 import AtlasView from "./AtlasView";
+import { ATLAS_CONTROL_INSETS } from "../../lib/graph/viewpoint";
 
 const mockGetKnowledgeGraph = vi.mocked(getKnowledgeGraph);
 const mockListCommunities = vi.mocked(listCommunities);
@@ -410,6 +423,7 @@ describe("AtlasView", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     vi.clearAllMocks();
+    vi.mocked(listThingNightPoints).mockReset();
     capturedSigmaInstances.length = 0;
     rendererLifecycle.length = 0;
     mockDimensions = { width: 400, height: 600 };
@@ -843,6 +857,38 @@ describe("AtlasView", () => {
     expect(screen.getByText("No matches")).toBeInTheDocument();
   });
 
+  it("picks a thing found by search and offers its three zoom stops (UX-CHAT-5)", async () => {
+    mockConnectedPair();
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [
+        { memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 },
+        { memory_id: "n2", title: "Pricing page open", decided: false, created_at: 20 },
+      ],
+    }]);
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const instance = capturedSigmaInstances[0];
+    expect(screen.queryByRole("group", { name: "Zoom to" })).not.toBeInTheDocument();
+    const search = screen.getByRole("combobox", { name: "Filter nodes" });
+    fireEvent.focus(search);
+    fireEvent.change(search, { target: { value: "Site" } });
+    fireEvent.click(screen.getByRole("option", { name: "Site redesign" }));
+    const stops = await screen.findByRole("group", { name: "Zoom to" });
+    expect(within(stops).getAllByRole("button").map((button) => button.textContent)).toEqual(["This", "Nearby", "All"]);
+    expect(within(stops).getByRole("button", { name: "This" })).toHaveAttribute("aria-pressed", "true");
+    const moves = instance.camera.setState.mock.calls.length + instance.camera.animate.mock.calls.length;
+    fireEvent.click(within(stops).getByRole("button", { name: "Nearby" }));
+    expect(within(stops).getByRole("button", { name: "Nearby" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(stops).getByRole("button", { name: "This" })).toHaveAttribute("aria-pressed", "false");
+    expect(instance.camera.setState.mock.calls.length + instance.camera.animate.mock.calls.length).toBeGreaterThan(moves);
+    // Back to the map: the stops go with the selection.
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Zoom to" })).not.toBeInTheDocument());
+  });
+
   it("replaces an in-flight camera animation when returning to the map", async () => {
     mockConnectedPair();
     renderWithQuery(<AtlasView />);
@@ -972,9 +1018,12 @@ describe("AtlasView", () => {
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
     const instance = capturedSigmaInstances[0];
-    expect(instance.camera.setState).toHaveBeenCalledWith(expect.objectContaining({
-      x: 0.42, y: 0.24, ratio: expect.any(Number),
-    }));
+    const opening = instance.camera.setState.mock.calls[0][0];
+    // Centred on the network, nudged down by half the difference between the
+    // toolbar's band at the top and the controls' at the bottom (UX-CHAT-5).
+    const unit = Math.min(mockDimensions.width, mockDimensions.height);
+    expect(opening.x).toBeCloseTo(0.42, 9);
+    expect(opening.y).toBeCloseTo(0.24 + ((ATLAS_CONTROL_INSETS.top - ATLAS_CONTROL_INSETS.bottom) / 2) * opening.ratio / unit, 9);
     instance.camera.setState.mockImplementation((state: Record<string, number>) => Object.assign(instance.camera, state));
     instance.camera.isAnimated.mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "Fit entire graph" }));

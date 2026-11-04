@@ -169,3 +169,13 @@
   .atlas-canvas-shell { --atlas-control-inset: 24px; }
   .atlas-top-controls { width: min(240px, calc(100% - 2 * var(--atlas-control-inset) - 56px)); }
 }
+
+/* UX-CHAT-5: a picked thing's zoom stops, a group of the camera controls'
+   own kind in the count line's corner; the pressed stop carries the pressed
+   fill the other segmented controls use. */
+.atlas-camera-controls.atlas-thing-stops { right: auto; left: 14px; }
+.atlas-camera-controls .atlas-thing-stop { min-width: 0; gap: 4px; padding: 7px 10px; white-space: nowrap; font: 500 12.5px/1.2 var(--mem-font-body); }
+.atlas-camera-controls .atlas-thing-stop[aria-pressed="true"] { background: var(--mem-hover-strong); color: var(--mem-text); }
+@media (max-width: 640px) {
+  .atlas-camera-controls.atlas-thing-stops { left: 12px; bottom: 58px; }
+}

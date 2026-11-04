@@ -104,4 +104,51 @@ describe("Atlas viewpoint across model rebuilds", () => {
     expect(restoreAtlasViewpoint(renderer, graph, { density: 3, angle: 0, anchors: [{ id: "gone", x: 0.5, y: 0.5 }] })).toBe(false);
     expect(renderer.getCamera().ratio).toBe(0.3);
   });
+
+  it("keeps the toolbar's band free and frames exactly the nodes a thing's stop names (UX-CHAT-5)", () => {
+    const graph = new Graph();
+    graph.addNode("a", { x: 0, y: 0, entityType: MEMORY_NODE_TYPE, night: true });
+    graph.addNode("b", { x: 1, y: 0, entityType: MEMORY_NODE_TYPE, night: true });
+    graph.addNode("far", { x: 9, y: 9, entityType: "project" });
+    const spot: Record<string, { x: number; y: number }> = { a: { x: 0.4, y: 0.5 }, b: { x: 0.6, y: 0.52 }, far: { x: 0.9, y: 0.9 } };
+    type State = { x: number; y: number; ratio: number; angle: number };
+    const animated: State[] = [];
+    const camera = {
+      x: 0.5, y: 0.5, angle: 0, ratio: 1,
+      getBoundedRatio: (ratio: number) => ratio,
+      setState(state: Partial<State>) { Object.assign(camera, state); },
+      animate(state: State) { animated.push(state); Object.assign(camera, state); return Promise.resolve(); },
+    };
+    // 600 px of screen per framed unit at ratio 1; screen y runs down.
+    const toViewport = (point: { x: number; y: number }, state: State = camera) => ({
+      x: 500 + (point.x - state.x) * 600 / state.ratio,
+      y: 300 - (point.y - state.y) * 600 / state.ratio,
+    });
+    const renderer = {
+      getCamera: () => camera,
+      getDimensions: () => ({ width: 1000, height: 600 }),
+      getNodeDisplayData: (id: string) => spot[id],
+      getGraphDimensions: () => ({ width: 10, height: 10 }),
+      getSetting: () => 0,
+      viewportToFramedGraph: (v: { x: number; y: number }, override?: { cameraState?: State }) => {
+        const state = override?.cameraState ?? camera;
+        return { x: state.x + (v.x - 500) * state.ratio / 600, y: state.y - (v.y - 300) * state.ratio / 600 };
+      },
+    };
+    const insets = { top: 120, right: 56, bottom: 60, left: 56 };
+    expect(frameAtlasView(renderer as unknown as Sigma, graph, { nodeIds: ["a", "b"], insets, padding: 40 })).toBe(true);
+    const a = toViewport(spot.a!);
+    const b = toViewport(spot.b!);
+    // The pair sits in the middle of the room the insets leave...
+    expect((a.x + b.x) / 2).toBeCloseTo((56 + 1000 - 56) / 2, 6);
+    expect((a.y + b.y) / 2).toBeCloseTo((120 + 600 - 60) / 2, 6);
+    // ...filling its width, and nothing is under the toolbar's band.
+    expect(Math.min(a.x, b.x)).toBeCloseTo(56, 6);
+    expect(Math.min(a.y, b.y)).toBeGreaterThanOrEqual(120);
+    // The distant node is not part of this frame.
+    expect(toViewport(spot.far!).x).toBeGreaterThan(1000);
+    // A stop moves there over time when asked to.
+    frameAtlasView(renderer as unknown as Sigma, graph, { nodeIds: ["a", "b", "far"], insets, duration: 450 });
+    expect(animated).toHaveLength(1);
+  });
 });

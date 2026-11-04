@@ -5,9 +5,14 @@ import {
   canUndoRearrange,
   decodePositions,
   encodePositions,
+  NIGHT_SEEN_STORAGE_KEY,
+  readNightOffsets,
+  readSeenNightPoints,
   readStoredPositions,
   startRearrange,
+  storeNightOffsets,
   storePositions,
+  storeSeenNightPoints,
   undoRearrange,
 } from "./positions";
 import { placeNewBesideKept } from "./atlas";
@@ -61,5 +66,26 @@ describe("kept map layout (UX-GRAPH-1)", () => {
     expect(near("newer", "new")).toBeLessThan(20);
     const again = build();
     expect(again.getNodeAttributes("new")).toEqual(graph.getNodeAttributes("new"));
+  });
+
+  it("keeps each night point's spot round its thing across opens, newest on top (UX-CHAT-5)", () => {
+    expect(readNightOffsets().size).toBe(0);
+    storeNightOffsets(new Map([["thing:t1>mem:n1", { x: 3.5, y: -4 }]]));
+    storeNightOffsets(new Map([["thing:t1>mem:n2", { x: -6, y: 1 }], ["thing:t1>mem:n1", { x: 3.5, y: -4 }]]));
+    expect(readNightOffsets()).toEqual(new Map([["thing:t1>mem:n2", { x: -6, y: 1 }], ["thing:t1>mem:n1", { x: 3.5, y: -4 }]]));
+    // A thing gone quiet is not on the map, but its points keep their spots.
+    storeNightOffsets(new Map([["thing:t2>mem:q1", { x: 1, y: 1 }]]));
+    expect(readNightOffsets().get("thing:t1>mem:n1")).toEqual({ x: 3.5, y: -4 });
+  });
+
+  it("remembers which night points this viewer has seen, and has no record before the first look (UX-CHAT-5)", () => {
+    expect(readSeenNightPoints()).toBeNull();
+    storeSeenNightPoints([]);
+    expect(readSeenNightPoints()).toEqual(new Set());
+    storeSeenNightPoints(["mem:n1"]);
+    storeSeenNightPoints(["mem:n2"]);
+    expect(readSeenNightPoints()).toEqual(new Set(["mem:n1", "mem:n2"]));
+    window.localStorage.setItem(NIGHT_SEEN_STORAGE_KEY, "{broken");
+    expect(readSeenNightPoints()).toBeNull();
   });
 });

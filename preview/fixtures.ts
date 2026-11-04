@@ -21,6 +21,8 @@ import type {
   RegisteredSource,
   SessionDetail,
   PageSessionEntry,
+  KnowledgeGraph,
+  ThingNightPoints,
 } from "../src/lib/tauri";
 
 const cite = (
@@ -1446,5 +1448,89 @@ export const SOURCE_LIBRARY_FILES = [
     url: null,
     chunk_count: 4,
     last_modified: 1_783_500_000,
+  },
+];
+
+// ── The big map with things being worked on (UX-CHAT-5) ────────────────────
+// `/preview/?mode=atlas&things=1`: a small fixed map of twenty topics and
+// three pages, and three things whose nights wrote points onto it. Two of
+// "Big map growth loop"'s points and one of "Release notes"' link to topics,
+// so those frames sit beside what they are about; "Reading list" links to
+// nothing and sits beside the map. Fictional throughout.
+const THING_MAP_AT = 1_783_700_000;
+const THING_MAP_TOPICS = ["Wenlan", "SQLite", "Tauri", "React", "Rust", "Sigma", "Graph", "Search", "Embeddings", "Daemon", "MCP", "CLI", "Pages", "Spaces", "Brief", "Atlas", "Release", "Vite", "Playwright", "Docs"];
+export const THING_MAP_GRAPH: KnowledgeGraph = {
+  entities: THING_MAP_TOPICS.map((name, i) => ({
+    id: `tm-e${i}`,
+    name,
+    entity_type: ["project", "technology", "concept", "organization"][i % 4]!,
+    domain: null,
+    space: "wenlan",
+    source_agent: null,
+    confidence: null,
+    confirmed: true,
+    created_at: THING_MAP_AT,
+    updated_at: THING_MAP_AT,
+    memory_count: 0,
+    status: "detected",
+    established_by: null,
+  })) as unknown as KnowledgeGraph["entities"],
+  relations: [
+    ...THING_MAP_TOPICS.slice(1).map((_, k) => {
+      const i = k + 1;
+      return { id: `tm-r${i}`, from_entity: `tm-e${i % 5 === 0 ? 0 : i - 1}`, to_entity: `tm-e${i}`, relation_type: "uses", source_agent: null, created_at: THING_MAP_AT };
+    }),
+    { id: "tm-rx1", from_entity: "tm-e0", to_entity: "tm-e7", relation_type: "uses", source_agent: null, created_at: THING_MAP_AT },
+    { id: "tm-rx2", from_entity: "tm-e3", to_entity: "tm-e12", relation_type: "uses", source_agent: null, created_at: THING_MAP_AT },
+  ] as unknown as KnowledgeGraph["relations"],
+  memories: [],
+  memory_links: [
+    { memory_id: "tm-n-site-2", entity_id: "tm-e15" },
+    { memory_id: "tm-n-site-4", entity_id: "tm-e15" },
+    { memory_id: "tm-n-rel-2", entity_id: "tm-e16" },
+  ],
+  pages: ["Release checklist", "Map design", "Search tuning"].map((title, i) => ({
+    id: `tm-p${i}`, title, space: "wenlan", creation_kind: "distilled", entity_id: null, last_modified: "2026-07-01T12:00:00Z",
+  })) as unknown as KnowledgeGraph["pages"],
+  page_links: [
+    { from: { kind: "page", id: "tm-p0" }, to: { kind: "entity", id: "tm-e16" }, link_type: "about" },
+    { from: { kind: "page", id: "tm-p1" }, to: { kind: "entity", id: "tm-e15" }, link_type: "about" },
+    { from: { kind: "page", id: "tm-p2" }, to: { kind: "entity", id: "tm-e7" }, link_type: "about" },
+  ] as unknown as KnowledgeGraph["page_links"],
+};
+const nightPoint = (memory_id: string, title: string, hoursAgo: number, decided = true) => ({
+  memory_id, title, decided, created_at: THING_MAP_AT - hoursAgo * 3600,
+});
+export const THING_MAP_POINTS: ThingNightPoints[] = [
+  {
+    thing_id: "tm-site",
+    title: "Big map growth loop",
+    spaces: ["wenlan"],
+    points: [
+      nightPoint("tm-n-site-1", "Things are frames, not nodes", 48),
+      nightPoint("tm-n-site-2", "Night points cluster by id hash", 48, false),
+      nightPoint("tm-n-site-3", "A moon marks what a night wrote", 24),
+      nightPoint("tm-n-site-4", "Positions are kept per space", 24),
+      nightPoint("tm-n-site-5", "Frames never jump when a night adds points", 1, false),
+    ],
+  },
+  {
+    thing_id: "tm-rel",
+    title: "Release notes for 0.21",
+    spaces: ["wenlan"],
+    points: [
+      nightPoint("tm-n-rel-1", "Changelog groups by feature", 2),
+      nightPoint("tm-n-rel-2", "Ship after the merge queue", 1, false),
+      nightPoint("tm-n-rel-3", "Screenshots go in the notes", 0.2),
+    ],
+  },
+  {
+    thing_id: "tm-read",
+    title: "Reading list",
+    spaces: ["wenlan"],
+    points: [
+      nightPoint("tm-n-read-1", "One book a month", 2),
+      nightPoint("tm-n-read-2", "Which shelf first", 1, false),
+    ],
   },
 ];

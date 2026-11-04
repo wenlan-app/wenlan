@@ -42,6 +42,9 @@ export interface GraphNode {
   updatedAt: number;
   /** A memory a night wrote for a thing (UX-CHAT-5): drawn with the moon. */
   night?: boolean;
+  /** A night's point that is still open, not yet decided (UX-CHAT-5): its
+   *  sentence is written in the muted ink. */
+  open?: boolean;
 }
 
 export interface GraphEdge {
@@ -783,7 +786,7 @@ export function attachThingPoints(
       const memoryId = memoryNodeId(point.memory_id);
       const existing = nodes.get(memoryId);
       nodes.set(memoryId, existing
-        ? { ...existing, night: true }
+        ? { ...existing, night: true, open: !point.decided }
         : {
           id: memoryId,
           kind: "memory",
@@ -795,6 +798,7 @@ export function attachThingPoints(
           createdAt: point.created_at,
           updatedAt: point.created_at,
           night: true,
+          open: !point.decided,
         });
       pointIds.add(point.memory_id);
       addEdge({

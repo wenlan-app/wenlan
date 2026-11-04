@@ -88,3 +88,65 @@ export function undoRearrange(scope: string | null): void {
 
 /** The undo is offered once; any later choice drops it. */
 export const dropRearrangeUndo = (scope: string | null) => write(PREVIOUS_POSITIONS_STORAGE_PREFIX, scope, null);
+
+// UX-CHAT-5: each night point's spot round its thing's centre is worked out
+// once and kept, for every scope (it is relative to the centre, which the
+// body positions above keep per scope). A later open puts a kept point back
+// exactly there and places only the points it has not seen.
+export const NIGHT_OFFSETS_STORAGE_KEY = "atlas.nightOffsets";
+/** The night points this viewer has seen on the map: a point not among them
+ *  grows in once when it first appears. */
+export const NIGHT_SEEN_STORAGE_KEY = "atlas.night.seen";
+/** Most kept night entries; the ones on the map now always stay. */
+const MAX_NIGHT_ENTRIES = 5_000;
+
+export function readNightOffsets(): BodyPositions {
+  try {
+    return decodePositions(window.localStorage.getItem(NIGHT_OFFSETS_STORAGE_KEY));
+  } catch {
+    return new Map();
+  }
+}
+
+/** Keep `current` (what is on the map now) on top of what was kept before,
+ *  dropping the oldest other entries past the cap. */
+export function storeNightOffsets(current: BodyPositions): void {
+  try {
+    const merged: BodyPositions = new Map(current);
+    for (const [key, value] of readNightOffsets()) {
+      if (merged.size >= MAX_NIGHT_ENTRIES) break;
+      if (!merged.has(key)) merged.set(key, value);
+    }
+    if (merged.size === 0) return;
+    window.localStorage.setItem(NIGHT_OFFSETS_STORAGE_KEY, encodePositions(merged));
+  } catch {
+    // Unavailable storage: points are placed by the same rule next time.
+  }
+}
+
+/** The night points seen before, or null when this viewer has no record
+ *  (never opened the map, or storage is unavailable). */
+export function readSeenNightPoints(): Set<string> | null {
+  try {
+    const raw = window.localStorage.getItem(NIGHT_SEEN_STORAGE_KEY);
+    if (raw === null) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? new Set(parsed.filter((id): id is string => typeof id === "string")) : new Set();
+  } catch {
+    return null;
+  }
+}
+
+/** Record `current` as seen, on top of what was seen before. */
+export function storeSeenNightPoints(current: Iterable<string>): void {
+  try {
+    const seen = new Set(current);
+    for (const id of readSeenNightPoints() ?? []) {
+      if (seen.size >= MAX_NIGHT_ENTRIES) break;
+      seen.add(id);
+    }
+    window.localStorage.setItem(NIGHT_SEEN_STORAGE_KEY, JSON.stringify([...seen]));
+  } catch {
+    // Unavailable storage: nothing grows next time either (no record).
+  }
+}
