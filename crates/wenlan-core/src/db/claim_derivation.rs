@@ -2711,7 +2711,7 @@ impl MemoryDB {
                     max_tokens: M5_JUDGE_MAX_OUTPUT_TOKENS as u32,
                     temperature: 0.0,
                     label: Some("m5_claim_entailment".to_string()),
-                    timeout_secs: None,
+                    timeout_secs: Some(crate::claim_judge::M5_CLAIM_JUDGE_TIMEOUT_SECS),
                 })
                 .await
             {

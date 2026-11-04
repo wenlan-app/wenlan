@@ -4146,6 +4146,8 @@ struct ProducerJudge {
     qualifying: bool,
     calls: AtomicUsize,
     saw_unlocked_db: AtomicBool,
+    /// Set when any request left the timeout to the runtime's 30 s default.
+    saw_default_timeout: AtomicBool,
     conn: Arc<tokio::sync::Mutex<libsql::Connection>>,
 }
 
@@ -4159,6 +4161,7 @@ impl ProducerJudge {
             qualifying: false,
             calls: AtomicUsize::new(0),
             saw_unlocked_db: AtomicBool::new(true),
+            saw_default_timeout: AtomicBool::new(false),
             conn: Arc::clone(&db.conn),
         }
     }
@@ -4175,6 +4178,9 @@ impl ProducerJudge {
 impl LlmProvider for ProducerJudge {
     async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if request.timeout_secs != Some(crate::claim_judge::M5_CLAIM_JUDGE_TIMEOUT_SECS) {
+            self.saw_default_timeout.store(true, Ordering::SeqCst);
+        }
         if self.conn.try_lock().is_err() {
             self.saw_unlocked_db.store(false, Ordering::SeqCst);
         }
@@ -4654,6 +4660,10 @@ async fn unmeasured_on_device_judge_that_passes_the_frozen_batch_promotes_pages(
         "supported"
     );
     assert!(judge.saw_unlocked_db.load(Ordering::SeqCst));
+    assert!(
+        !judge.saw_default_timeout.load(Ordering::SeqCst),
+        "qualification and page batches carry the M5 judge timeout"
+    );
     let calls_after_first_turn = judge.calls.load(Ordering::SeqCst);
     assert!(
         calls_after_first_turn >= 2,
