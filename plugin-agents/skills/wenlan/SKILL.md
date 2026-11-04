@@ -1,6 +1,6 @@
 ---
 name: wenlan
-description: "The one front door to Wenlan. Takes plain words after `/wenlan` and runs the right Wenlan workflow; bare `/wenlan` shows status or starts setup. Use for: setting up or fixing Wenlan (\"set up wenlan\", \"is wenlan working\", \"裝好了嗎\"), turning what was imported or saved into notes and bringing out of date notes up to date (\"steep\", \"沉澱\", \"整理成筆記\"), getting to know a code repository (\"build a wiki for this repo\", \"認識這個倉庫\"), opening or listing notes (\"open my note on X\", \"打開筆記\"), organizing existing pages and folders (\"organize my notes\", \"整理我的資料\"), checking memory quality or cleaning up (\"lint\", \"檢查重複\", \"清一清\"), reviewing pending items (\"review what's waiting\", \"看待確認的\"), and deleting one memory (\"forget <id>\", \"刪掉這筆\"). Old command words such as organize, distill, steep, wiki, lint, pages, curate, forget and setup still work after `/wenlan`. Invoked as `/wenlan [what you want]`."
+description: "The one front door to Wenlan. Takes plain words after `/wenlan` and runs the right Wenlan workflow; bare `/wenlan` shows status or starts setup. Use for: setting up or fixing Wenlan (\"set up wenlan\", \"is wenlan working\", \"裝好了嗎\"), turning what was imported or saved into notes and bringing out of date notes up to date (\"steep\", \"沉澱\", \"整理成筆記\"), getting to know a code repository (\"build a wiki for this repo\", \"認識這個倉庫\"), opening or listing notes (\"open my note on X\", \"打開筆記\"), organizing existing pages and folders (\"organize my notes\", \"整理我的資料\"), checking memory quality or cleaning up (\"lint\", \"檢查重複\", \"清一清\"), reviewing pending items (\"review what's waiting\", \"看待確認的\"), and deleting one memory (\"forget <id>\", \"刪掉這筆\"). Say what to prepare, update, or rearrange; these all use steep. Invoked as `/wenlan [what you want]`."
 ---
 
 # /wenlan
@@ -12,58 +12,8 @@ workflow says. Reply in the user's language.
 
 ## 1. No words: status
 
-When the argument is empty, report status. Read only; change nothing. Run
-the three checks in order; only a failed connection check stops early.
-
-1. Project: resolve it.
-
-   ```bash
-   resolved="$("{{WENLAN_SKILLS_DIR}}/wenlan/scripts/resolve-space.sh" --cwd "$PWD" --args "")"
-   space="$(printf '%s\n' "$resolved" | cut -f1)"
-   ```
-
-2. Connection: call `brief` with `space` when non-empty. Success means Wenlan
-   is running and this AI tool reaches it; there is nothing else to check.
-   - It says the Space is not resolved: the connection works, and this folder
-     is not linked to a project yet. Do not guess one.
-   - Any other answer from Wenlan, including an error about the Space or the
-     request: the connection still works. Say Wenlan is connected but could
-     not find this folder's project, and do not run setup.
-   - Only when Wenlan cannot be reached at all (the call fails to connect or
-     the tool is missing): say Wenlan is not running or this AI tool cannot
-     reach it, and run the **setup** workflow (step 3). Setup asks before it
-     installs anything; do not skip its consent.
-3. Waiting items: call `list_pending_revisions(limit=10)`. If exactly 10 come
-   back, say "at least 10".
-
-**New user.** When `brief` ends with a "Getting started" line, the person is
-new to Wenlan: answer with that instead of the usual status. In one or two
-plain sentences say that Wenlan is connected, how far they are (pages so far,
-items waiting), and the one next step it names, as the exact thing to type or
-do, in the person's language. Leave out the project sentence and the
-waiting-changes count, and never say "steep", "distill" or other internal
-words: name writing pages in plain words. For example: "Wenlan is connected.
-12 of your notes are waiting to become pages; type `/wenlan write my pages`
-and I'll write them." (Chinese: `/wenlan 整理成筆記`) or "Wenlan is connected
-and you have 8 pages. Ask me anything about them, like `/wenlan what do my
-pages say about the trip?`". Use a real page title only when you already
-know one. Do not ask them to link a project. Then stop; no second list of
-examples.
-
-Otherwise, answer in one to three short, plain sentences, the way you
-would tell a person: that Wenlan is connected, which project this folder belongs to (or
-that it is not linked to one yet), and how many changes wait for their OK
-(leave this out when there are none). For example: "Wenlan is connected.
-This folder is not linked to a project yet." No label
-lines such as "Runtime:" or "Project:", nothing about a check that was
-skipped or could not run, and no internal words such as runtime, daemon,
-Space, MCP, tool names or HTTP status codes. Then give two concrete examples of what to type
-next, one of them about notes or waiting items, for example
-`/wenlan open my note on the release plan` and `/wenlan review what's
-waiting`. Do not print the Brief body here; that is `/wenlan-brief`.
-
-Import progress only when the user asks about an import: call
-`list_pending_imports`. Never call it during plain status.
+Read [references/status.md](references/status.md) and follow it. It uses
+the Wenlan `brief` tool and pending-revision reads; change nothing.
 
 ## 2. Words: pick one workflow
 
@@ -73,9 +23,7 @@ Match the request to one row. Old command words count as their row.
 |---|---|---|
 | Just starting, or not sure what to do next | the status in step 1 | `/wenlan 怎麼開始`, `/wenlan what now?` |
 | Set up, repair, upgrade, check it works | setup | `/wenlan setup`, `/wenlan 好像壞了` |
-| Turn what was imported or saved into notes, and bring out of date notes up to date, with this AI tool | steep | `/wenlan steep`, `/wenlan write my pages`, `/wenlan 整理成筆記`, `/wenlan 沉澱`, `/wenlan 把過期的筆記更新` |
-| Organize existing knowledge, pages, folders, or navigation around a goal | organize | `/wenlan organize my launch notes around the decisions`, `/wenlan 整理我的資料` |
-| Rebuild one note from its sources, or a clustering pass by hand (advanced) | distill | `/wenlan distill rebuild <note>`, `/wenlan distill` |
+| Prepare new material, update stale pages, arrange existing knowledge around a goal, or explicitly rebuild/merge pages | steep | `/wenlan steep`, `/wenlan 整理我的資料`, `/wenlan 沉澱`, `/wenlan steep rebuild <page-id>` |
 | Get to know this repository; write a small wiki about it and keep it current | wiki | `/wenlan wiki`, `/wenlan 認識這個倉庫`, `/wenlan 幫這個倉庫建 wiki` |
 | List, find, open or print a note | pages | `/wenlan pages release`, `/wenlan 打開那篇筆記` |
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `/wenlan lint`, `/wenlan lint repair`, `/wenlan 檢查重複` |
@@ -100,7 +48,7 @@ Rules:
 
 ## 3. Run the chosen workflow
 
-For setup, distill, steep, pages, organize, lint, curate, forget and wiki, read
+For setup, steep, pages, lint, curate, forget and wiki, read
 `references/<workflow>.md` beside this SKILL.md and follow it to the end,
 treating the arguments below as what the user typed after that workflow word.
 For brief, capture, recall and handoff, use the `wenlan-<workflow>` skill.
@@ -108,14 +56,13 @@ Arguments:
 
 - Old command form (`/wenlan lint repair notes`): the words after the
   workflow word, unchanged (`repair notes`).
-- Plain words: only the mode, scope, target, id or `space:<name>` the user
+- For steep, pass the complete original request, including goals, constraints,
+  named areas, and approval words. For `/wenlan steep ...`, pass everything
+  after `steep` unchanged. Never reduce a knowledge task to keywords.
+- Other plain words: only the mode, scope, target, id or `space:<name>` the user
   actually said, in their words (`/wenlan 打開發布計畫那篇筆記` gives pages
   `發布計畫`). Nothing else from the sentence. When none was said, pass
   nothing.
-- **Organize exception:** pass the complete original user request unchanged
-  to the organize workflow, including goals, constraints, and named areas. Do not
-  reduce it to keywords. If they used `/wenlan organize ...`, pass everything
-  after `organize` unchanged.
 - capture, recall and brief take the user's content as written.
 
 ## Reference
@@ -145,10 +92,9 @@ Answer these from here, without a tool call, and only the part asked:
 - Always run the workflow; never shortcut it. Load the workflow's
   instructions before calling any of its MCP tools, then follow them. Each
   workflow carries its own protections and they all apply: lint repair needs a later turn and an exact approval; forget acts
-  on one exact id; distill rebuild overwrites hand edits and says so first.
+  on one exact id; steep preserves sources, review locks and authored content.
 - Pass the user's mode, scope, target and approval words through unchanged.
   Never add `repair`, `rebuild`, `--yes`, or an id the user did not give.
-- Reads and saves just happen. Organize may make the scoped non-destructive
-  changes its workflow describes; it never deletes or merges. Deleting,
-  merging, or applying a repair waits for the user's say-so inside that
-  workflow.
+- Reads, saves and scoped non-destructive steep changes proceed within the
+  request, with no fixed plan-approval step. Deleting, merging, forced rebuilds
+  and protected repairs retain their operation-specific authorization rules.

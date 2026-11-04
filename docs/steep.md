@@ -2,7 +2,29 @@
 
 [English](steep.md) · [繁體中文](steep.zh-Hant.md) · [Back to README](../README.md#keep-knowledge-current-and-preserve-history)
 
-Steep is Wenlan’s optional background upkeep. It prepares saved material for retrieval and maintains pages from their supporting evidence, so later work can reuse what you already learned. You do not have to run a daily sequence of commands.
+Steep (沉澱) is Wenlan’s process for keeping knowledge useful. It takes new material, changes to existing sources, and a goal you give it, then updates the affected memories, pages, folders, topics, and relationships when needed. It keeps sources, review protections, and history attached so later work can build on what you learned.
+
+There is one user-facing workflow: `/wenlan steep` (or `$wenlan steep` in Codex). Say what you want to organize after `/wenlan`; the front door routes the full request to this workflow. Steep inspects the current material and acts on the relevant parts. An explicit reorganization request can run even when no new material or stale page is queued. It does not ask for a fixed plan confirmation before every run.
+
+```text
+New material / changed source / your organization goal
+                         |
+                         v
+                    Steep (沉澱)
+                         |
+       +-- Memories: add a confirmed finding or preserve a correction
+       +-- Pages: create, enrich, refresh, merge, or rebuild when needed
+       +-- Folders: improve grouping and navigation when useful
+       +-- Topics: add or update a clearly supported subject
+       `-- Relations: add source-backed links; protect conflicts for review
+                         |
+                         v
+              Keep sources, review rules, and history
+```
+
+On-demand Steep uses the connected AI tool for the requested work. Automatic Steep processes eligible background work using the configured models; it does not infer or carry out a free-form organization goal you have not given it. The modes have different triggers and available checks. See [when work runs](#when-it-runs) and [how to invoke Steep](#enable-steep-and-check-its-work).
+
+The short Steep entry routes to one of four focused procedures: [new material](../plugin/skills/steep/references/new-material.md), [source changes](../plugin/skills/steep/references/refresh-pages.md), [a reorganization goal](../plugin/skills/steep/references/reshape-knowledge.md), or [an explicit page rebuild](../plugin/skills/steep/references/rebuild-pages.md). Read only the procedure needed for the request. Page synthesis, clustering, merging, and rebuild remain internal operations; `/wenlan distill` is not a separate workflow.
 
 ## Memory lifecycle: preserve and refine individual findings
 
@@ -19,7 +41,7 @@ A newer document does not automatically replace an earlier memory. Once a replac
 
 ## Page lifecycle: maintain an editable synthesis
 
-A page combines related sources and memories into cited Markdown that you can read and edit. You can write it in the App, ask your AI to write it, or synthesize accumulated material with `/wenlan distill`; `/wenlan distill` is not a prerequisite for writing a new page.
+A page combines related sources and memories into cited Markdown that you can read and edit. You can write it in the App, ask your AI to write it, or let Steep synthesize accumulated material when that work is needed. No separate command is required to create a page.
 
 | Stage | What changes |
 |---|---|
@@ -52,7 +74,7 @@ The background-organization and page-synthesis tasks have separate model assignm
 
 ## Automatic update or review?
 
-These are the rules for **background page refresh**, not every possible edit:
+These are the rules for **background page refresh**, not every possible edit or goal-driven organization request:
 
 | Page state | Result |
 |---|---|
@@ -63,7 +85,24 @@ These are the rules for **background page refresh**, not every possible edit:
 
 A pending revision applies to its named page, not every page touched by the same source. You can inspect the change and accept or skip it. History remains available to inspect earlier changes.
 
-**Explicit edits differ:** a connected AI that reads the current page and submits a matching version can update it directly unless review is locked. Your manual edits do not enter this queue. An explicitly forced rebuild can replace an edited generated page; authored pages still require review. [Full update and history reference](knowledge-guide.md#updates-and-history).
+## Organize existing knowledge around a goal
+
+When you ask Steep to reorganize existing knowledge, it reads the request and relevant current material, then updates only what the goal calls for:
+
+- Add a confirmed new finding once. Preserve corrections through the existing `supersedes` behavior; a pending correction remains pending.
+- Update or create page content, plans, and navigation while preserving page IDs, sources, Space, and version checks. A plan stays a plan; Steep does not claim an action happened without evidence.
+- Create or move pages into folders when that helps navigation. Folder names alone do not establish a topic or semantic relationship.
+- Reuse or create a topic/entity when the material supports a clear identity.
+- Add relationships only from current source evidence. Same facts remain unchanged; a conflicting edge is protected for the existing repair and review path.
+- Read back the changed content, resolved links, locations, and semantic state. Report applied, pending, blocked, or unchecked work, and skip unchanged work on a rerun.
+
+Goal-driven reorganization follows the whole request across the accessible scope, including when no automatic work is waiting. It does not make every mode scan everything, and a routine request does not require a separate plan approval. Destructive deletion and protected repairs keep their existing controls.
+
+Folder creation and page movement in the Standard MCP profile are local stdio operations. A locked connection cannot create folders outside its ownership. The `create_relation` preserve operation uses `/api/memory/relations/preserve`: the source must still be current, predicates must be recognized, active conflicts are refused, retired edges cannot be revived, and a same-triple retry leaves the original evidence intact. Older daemons fail closed. These are write-path protections; they do not turn folder placement into evidence of a semantic relation.
+
+Other workflows' pages keep their content unless the user asks to change it. Ambiguous same-Space page targets stay blocked; same-title pages in different Spaces use qualified links whose resolved IDs are checked. Page state does not establish publication or measured outcomes.
+
+**Explicit edits differ:** a connected AI that reads the current page and submits a matching version can update it directly unless review is locked. Your manual edits do not enter this queue. An explicitly forced rebuild can replace an edited generated page; authored pages still require review. That rebuild is available inside Steep when you directly request it, but it is not the default for ordinary steeping. [Full update and history reference](knowledge-guide.md#updates-and-history).
 
 <a id="enable-steep"></a>
 
@@ -71,8 +110,8 @@ A pending revision applies to its named page, not every page touched by the same
 
 In Settings, under **Steeping**, choose a mode:
 
-- **On demand** (new installs start here) needs no model. When your AI tool saves or writes into Wenlan, it steeps as it goes. Run `/wenlan steep` (`$wenlan steep` in Codex) to finish the rest at once.
-- **Automatic** steeps in the background while your computer is idle. Configure an AI service and assign it to background organization and/or page synthesis.
+- **On demand** (new installs start here) needs no background model. Your AI tool handles a requested organization goal and can work through new or stale material. Run `/wenlan steep` (`$wenlan steep` in Codex) to catch up on eligible new material and pages awaiting refresh.
+- **Automatic** processes eligible background enrichment, synthesis, and page refresh while the computer is idle. Configure an AI service and assign it to background organization and/or page synthesis. It does not perform an unrequested goal-driven reorganization.
 
 The model check of each sentence against its source runs only in Automatic for now; in On demand, pages show “Not checked”.
 
@@ -92,4 +131,25 @@ Use Activity to check processing status, and the affected page’s revision and 
 
 Reusable memories and cited pages can reduce repeated context gathering and rereading of originals. Local models can handle background tasks without per-request cloud API charges. Results depend on the material, model, and task; Steep does not guarantee lower total cost, faster responses, or more accurate answers.
 
-Implementation references: [background scheduling](../crates/wenlan-server/src/scheduler.rs), [new-memory page growth](../crates/wenlan-core/src/post_ingest.rs), [entity matching](../crates/wenlan-core/src/post_write/entity_graph.rs), [page refresh and citation checks](../crates/wenlan-core/src/synthesis/distill.rs), [page ownership and review rules](../crates/wenlan-core/src/post_write/page_update.rs).
+Implementation references: [background scheduling](../crates/wenlan-server/src/scheduler.rs), [new-memory page growth](../crates/wenlan-core/src/post_ingest.rs), [entity matching](../crates/wenlan-core/src/post_write/entity_graph.rs), [page synthesis and refresh](../crates/wenlan-core/src/synthesis/distill.rs), [page ownership and review rules](../crates/wenlan-core/src/post_write/page_update.rs).
+
+## Isolated workflow acceptance
+
+PR #1140's consolidated workflow was exercised against a fresh synthetic library,
+with a separate daemon port, data root and pages directory. Two fresh Claude
+sessions (Sonnet, high effort) used the generated host-neutral skill and only the
+scratch Wenlan MCP for knowledge operations. Each read only the front door, the
+steep entry and `reshape-knowledge.md`; no other procedure was loaded.
+
+The first session made 45 MCP calls: it retained the original 11 pages, added 3,
+and performed 8 page moves. Readback checked identities, Spaces, original sources,
+unrelated content and resolved links. The second session made 29 read-only MCP
+calls; page IDs, contents and versions stayed unchanged. The same fixture and
+checks are reproducible with `scripts/organize-acceptance.py` (`seed`, `verify`,
+`verify-rerun`) after starting an isolated daemon. The script refuses the production
+port and checks the live pages root before operating.
+
+Folder-to-home-to-brand-to-plan navigation was exercised and inspected in the
+project's Playwright Chromium headless shell (149.0.7827.55). This verifies the
+requested knowledge-arrangement path, not native Tauri integration or automatic
+background/model-driven rebuild execution. Those were not exercised by this run.

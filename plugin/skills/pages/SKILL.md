@@ -42,7 +42,7 @@ W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
 Act on its output — do NOT re-fetch, list again, or read bodies:
 
 - **`Opened <path>`** → one page matched and is now open. Print that line. Done.
-- **`no page matches: …`** → print it; suggest `/wenlan distill <query>`.
+- **`no page matches: …`** → print it; suggest `/wenlan steep <query>`.
 - **`N matches for … `** followed by `title · filename` lines → several matched:
   - **2-4 matches** → present them with `AskUserQuestion`, one option each:
     **label** = title, **description** = filename (titles can repeat, so the
@@ -102,7 +102,7 @@ Do not fetch changelogs during ordinary `/wenlan pages` list/open flows.
 
 ## When NOT to use
 
-- Organizing existing pages, folders, or navigation → use `/wenlan organize`
+- Organizing existing pages, folders, or navigation → use `/wenlan steep`
   with the complete goal and constraints.
 - Raw memory lookups → `/recall`.
-- Synthesize a new page → `/wenlan distill`.
+- Synthesize a new page → `/wenlan steep`.

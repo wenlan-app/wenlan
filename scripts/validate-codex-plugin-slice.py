@@ -38,9 +38,9 @@ REQUIRED_SKILL_INTERFACE = {
 }
 # Workflows hidden from the Claude menu are reference files under the wenlan
 # skill in Codex (plugin-contract.json `hidden_routed`), not separate skills.
-REQUIRED_REFERENCES = {"setup", "pages", "lint", "curate", "forget", "distill", "wiki", "steep", "organize"}
+REQUIRED_REFERENCES = {"setup", "pages", "lint", "curate", "forget", "wiki", "steep"}
 SKILLS_WITHOUT_MCP_REFERENCE = {"handoff", "pages"}
-SKILLS_USING_RESOLVER = {"brief", "capture", "distill", "handoff", "lint", "wiki", "recall", "steep"}
+SKILLS_USING_RESOLVER = {"brief", "capture", "handoff", "lint", "wiki", "recall", "steep"}
 # Installed plugins live under ~/.codex/plugins/cache/<marketplace>/wenlan/<version>/;
 # the checkout-relative `plugin-codex/bin/...` path only resolves inside this repo.
 RESOLVER_LOCATOR = (
@@ -57,11 +57,6 @@ REQUIRED_GUARDRAILS = {
         "cannot be undone",
         "delete <id>",
         "Always confirm with the user before calling forget",
-    ],
-    "distill": [
-        "rebuild <page-id>",
-        "force=true",
-        "changes to your sentences come back as proposals",
     ],
     "curate": [
         "revision_source_id",
@@ -232,6 +227,8 @@ def validate_references() -> None:
     refs = hidden_codex_references()
     if set(refs) != REQUIRED_REFERENCES:
         fail(f"REQUIRED_REFERENCES must exactly match hidden_routed skills: {sorted(refs)}")
+    contract = read_json(ROOT / "plugin-contract.json")
+    entries = {item["name"]: item for item in contract.get("skills", []) if isinstance(item, dict) and isinstance(item.get("name"), str)}
     for skill, ref in sorted(refs.items()):
         path = PLUGIN / "skills" / ref
         assert_file(path)
@@ -242,10 +239,55 @@ def validate_references() -> None:
         if text.startswith("---"):
             fail(f"{path.relative_to(ROOT)} is a reference file and must not carry frontmatter")
         check_content(path, skill, text, reference=True)
+        entry = entries[skill]
+        combined = [text]
+        for filename in entry.get("supporting_references", []):
+            support = path.parent / Path(skill) / filename
+            assert_file(support)
+            assert_no_claude_tokens(support)
+            support_text = support.read_text(encoding="utf-8")
+            if support_text.startswith("---"):
+                fail(f"{support.relative_to(ROOT)} is a supporting reference and must not carry frontmatter")
+            if "mcp__plugin_wenlan_wenlan__" in support_text:
+                fail(f"{support.relative_to(ROOT)} contains a Claude MCP tool prefix")
+            combined.append(support_text)
+        if skill == "steep":
+            normalized = " ".join(" ".join(combined).split())
+            for needle in (
+                "force=true",
+                "User-authored lines remain protected",
+                "obtain the user's explicit confirmation",
+            ):
+                if needle not in normalized:
+                    fail(f"steep supporting references must preserve guardrail {needle!r}")
+            reshape = path.parent / "steep" / "reshape-knowledge.md"
+            reshape_text = reshape.read_text(encoding="utf-8") if reshape.is_file() else ""
+            for needle in ("stable page ID", "expected_version", "source_memory_id"):
+                if needle not in reshape_text:
+                    fail(f"steep reshape reference must preserve safeguard {needle!r}")
+    for skill, entry in entries.items():
+        if entry.get("status") != "shared_now":
+            continue
+        for filename in entry.get("supporting_references", []):
+            support = PLUGIN / "skills" / skill / "references" / filename
+            assert_file(support)
+            assert_no_claude_tokens(support)
+            support_text = support.read_text(encoding="utf-8")
+            if support_text.startswith("---"):
+                fail(f"{support.relative_to(ROOT)} is a supporting reference and must not carry frontmatter")
+            if "mcp__plugin_wenlan_wenlan__" in support_text:
+                fail(f"{support.relative_to(ROOT)} contains a Claude MCP tool prefix")
     stray = sorted(
         p.relative_to(ROOT).as_posix()
         for p in (PLUGIN / "skills" / "wenlan" / "references").rglob("*")
-        if p.is_file() and p.name not in {f"{s}.md" for s in refs}
+        if p.is_file() and p.relative_to(PLUGIN / "skills" / "wenlan" / "references").as_posix() not in (
+            {f"{s}.md" for s in refs}
+            | {
+                f"{s}/{filename}" if item.get("status") == "hidden_routed" else filename
+                for s, item in entries.items()
+                for filename in item.get("supporting_references", [])
+            }
+        )
     )
     if stray:
         fail(f"unexpected files under the wenlan references: {stray}")

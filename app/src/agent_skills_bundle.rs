@@ -12,7 +12,7 @@
 
 /// First 16 hex digits of the SHA-256 over every file's path and contents in
 /// `FILES`, sorted by path. Changes whenever any installed skill changes.
-pub const BUNDLE_VERSION: &str = "3e8baf65f0f0c344";
+pub const BUNDLE_VERSION: &str = "c9ea50669ed987e3";
 
 /// Every file of the bundle as (path relative to the skills folder, contents),
 /// sorted by path.
@@ -42,20 +42,12 @@ pub const FILES: &[(&str, &str)] = &[
         include_str!("../../plugin-agents/skills/wenlan/references/curate.md"),
     ),
     (
-        "wenlan/references/distill.md",
-        include_str!("../../plugin-agents/skills/wenlan/references/distill.md"),
-    ),
-    (
         "wenlan/references/forget.md",
         include_str!("../../plugin-agents/skills/wenlan/references/forget.md"),
     ),
     (
         "wenlan/references/lint.md",
         include_str!("../../plugin-agents/skills/wenlan/references/lint.md"),
-    ),
-    (
-        "wenlan/references/organize.md",
-        include_str!("../../plugin-agents/skills/wenlan/references/organize.md"),
     ),
     (
         "wenlan/references/pages.md",
@@ -66,8 +58,28 @@ pub const FILES: &[(&str, &str)] = &[
         include_str!("../../plugin-agents/skills/wenlan/references/setup.md"),
     ),
     (
+        "wenlan/references/status.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/status.md"),
+    ),
+    (
         "wenlan/references/steep.md",
         include_str!("../../plugin-agents/skills/wenlan/references/steep.md"),
+    ),
+    (
+        "wenlan/references/steep/new-material.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/steep/new-material.md"),
+    ),
+    (
+        "wenlan/references/steep/rebuild-pages.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/steep/rebuild-pages.md"),
+    ),
+    (
+        "wenlan/references/steep/refresh-pages.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/steep/refresh-pages.md"),
+    ),
+    (
+        "wenlan/references/steep/reshape-knowledge.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/steep/reshape-knowledge.md"),
     ),
     (
         "wenlan/references/wiki.md",

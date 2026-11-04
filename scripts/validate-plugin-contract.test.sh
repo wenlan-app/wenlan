@@ -82,17 +82,17 @@ assert_rejects "claude handoff dropped page_basis permission" \
     perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__page_basis"//' \
     "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md"
 
-assert_rejects "codex distill forgot to confirm a pending basis" \
-    perl -0pi -e 's/`action="confirm"`/`action="accept"`/g' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/distill.md"
-
 assert_rejects "claude handoff forgot the pending-basis diff" \
     perl -0pi -e 's/`action: "diff"`/`action: "look"`/g' \
     "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md"
 
-assert_rejects "claude distill forgot to leave unconfirmable bases alone" \
-    perl -0pi -e 's/`archived`,\n`deleted` or `unavailable`/`archived`/' \
-    "$TMPDIR_TEST/root/plugin/skills/distill/SKILL.md"
+assert_rejects "steep reshape dropped stable source memory IDs" \
+    bash -c 'perl -0pi -e "s/source_memory_id/source_reference/g" "$1/plugin/skills/steep/references/reshape-knowledge.md"; node "$PWD/scripts/gen-codex-plugin.mjs" --root "$1" >/dev/null' _ \
+    "$TMPDIR_TEST/root"
+
+assert_rejects "steep rebuild dropped forced-page protection" \
+    bash -c 'perl -0pi -e "s/force=true/force=false/g" "$1/plugin/skills/steep/references/rebuild-pages.md"; node "$PWD/scripts/gen-codex-plugin.mjs" --root "$1" >/dev/null' _ \
+    "$TMPDIR_TEST/root"
 
 python3 - "$TMPDIR_TEST/root/plugin-codex/.mcp.json" <<'PY'
 import json
@@ -487,7 +487,7 @@ assert_rejects "codex stale hidden skill dir left behind" \
     "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/forget.md"
 
 assert_rejects "codex hidden reference missing" \
-    rm "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/distill.md"
+    rm "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/steep.md"
 
 assert_rejects "contract hidden workflow without codex reference" \
     python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); [s.pop("codex_reference",None) for s in d["skills"] if s.get("name")=="forget"] if isinstance(d["skills"],list) else d["skills"]["forget"].pop("codex_reference"); json.dump(d,open(p,"w"),indent=2)' \

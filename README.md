@@ -132,14 +132,15 @@ Saving material is only the start. **Steep prepares it for reuse and keeps suppo
 
 Choose one of two modes in Settings:
 
-- **On demand** (new installs start here): when your AI tool saves or writes into Wenlan, it steeps as it goes, and while it works it hears which pages are out of date and which material is in no page yet. No command needed; `/wenlan steep` is there if you want to catch up on everything at once.
-- **Automatic:** Wenlan steeps in the background with the model you assign.
+- **On demand** (new installs start here): your AI tool handles the knowledge work you request and can catch up on new material and pages waiting for refresh. Saving material also makes eligible work available to the tool; `/wenlan steep` asks it to catch up in one pass.
+- **Automatic:** Wenlan processes eligible background work with the models you assign. It does not infer a goal to reorganize existing knowledge; tell your AI what you want changed.
 
 What steep does:
 
 - **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
 - **Follow the evidence:** Changed sources, memories, or cited code flag dependent pages for refresh; new memories can enrich eligible pages. Refresh keeps the saved page if a draft fails citation checks. Passing these checks does not establish factual correctness.
 - **Keep control and history:** Background refresh updates eligible AI-maintained pages; your authored or edited pages receive proposed revisions. Explicit memory replacements hide or archive earlier memories while preserving their links. Page revisions remain inspectable.
+- **Organize around your goal:** Ask Steep to reorganize existing knowledge when you want changes across memories, pages, folders, topics, or relationships. It follows the request and updates only what is needed; routine organization does not require a separate plan confirmation.
 - **Ask me first:** With **Ask me first on pages I wrote** on, as it is for new installs, AI changes to pages you wrote or edited wait for your OK. Each page's **AI changes** setting shows **Allowed** or **Ask me first**. Pages AI wrote keep updating.
 
 <a id="what-it-does-on-its-own"></a>
@@ -150,7 +151,7 @@ In both modes, without a model, Wenlan:
 
 - **Flags out-of-date pages** when their sources, memories, or cited code change. Repository wiki pages show what changed in the code.
 - **Suggests merging near-duplicate pages** as a card for you or your AI to accept or dismiss.
-- **Tidies links:** lists `[[links]]` that point to no page yet, and drops citations to memories you deleted.
+- **Tidies page links:** lists `[[links]]` that point to no page yet, and drops citations to memories you deleted.
 
 Rewriting a flagged page takes a model. In Automatic, Wenlan does it in the background. In On demand, your AI tool is told which pages are waiting and can bring them up to date while it works.
 
@@ -215,7 +216,7 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 - **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
 - **Pause and resume.** Save findings and a session log, update affected pages, and record progress and next steps in the project Brief (`/handoff`). Pick up that context next time (`/brief`).
 
-**Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/wenlan distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
+**Organize existing knowledge around your goal:** Ask Steep (`/wenlan steep`) to update the memories, pages, folders, topics, or relationships relevant to your request. [Steep guide](docs/steep.md) and [plugin commands](plugin/skills/README.md).
 
 <a id="how-wenlan-works"></a>
 <a id="how-does-it-work"></a>

@@ -975,7 +975,7 @@ pub struct DistillParams {
     pub target: Option<String>,
 
     #[schemars(
-        description = "When true, clears the user_edited flag on the target page before recompile. Use for /distill rebuild <page> to explicitly wipe user prose and regenerate from sources. Only valid when target is a single page id; the daemon ignores it otherwise. Requires daemon LLM."
+        description = "Internal single-page rebuild used by steep after explicit target-specific authorization. Regenerates AI-written prose from current sources; authored text and review locks retain their proposal protections. The old page and protection remain intact if generation fails or is discarded. Only valid for a single page id; other targets return a hint without rebuilding. Requires an available daemon model."
     )]
     #[serde(default)]
     pub force: Option<bool>,

@@ -13,7 +13,7 @@
             "then follow that skill to the end. Its arguments:"
           ],
           "to": [
-            "For setup, distill, steep, pages, organize, lint, curate, forget and wiki, read",
+            "For setup, steep, pages, lint, curate, forget and wiki, read",
             "`references/<workflow>.md` beside this SKILL.md and follow it to the end,",
             "treating the arguments below as what the user typed after that workflow word.",
             "For brief, capture, recall and handoff, use that Wenlan skill. Arguments:"
@@ -218,20 +218,6 @@
         }
       ]
     },
-    "distill": {
-      "replace": [
-        {
-          "from": [
-            "When the session start printed a `Wenlan session:` line, pass its value as",
-            "`session` on `write_page`."
-          ],
-          "to": [
-            "Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass",
-            "`session: \"codex:<that id>\"` on `write_page`."
-          ]
-        }
-      ]
-    },
     "pages": {
       "sections": {
         "## `/wenlan pages <query>` — open, or pick when ambiguous": [
@@ -248,7 +234,7 @@
           "",
           "- **`Opened <path>`** → one page matched and is now open. Print that line. Done.",
           "- **A bare path** → print it and say the OS launcher did not open it automatically.",
-          "- **`no page matches: …`** → print it; suggest `/wenlan distill <query>`.",
+          "- **`no page matches: …`** → print it; suggest `/wenlan steep <query>`.",
           "- **`N matches for … `** followed by `title · filename` lines → several matched.",
           "  If several pages match, print the CLI output verbatim and ask the user to rerun",
           "  `/wenlan pages` with one of the filenames or a narrower query (titles can repeat, so",
@@ -384,48 +370,12 @@
       "replace": [
         {
           "from": [
-            "   judgment, so give it to a helper on a small model: in Claude Code, start an",
-            "   `Agent` with `model: \"haiku\"`, hand it the page and the numbered sources,",
-            "   and ask one question: does every sentence of the page still match the",
-            "   sources, yes or no. When it says yes, call `steep` with"
+            "When the session start printed a `Wenlan session:` line, pass its value as",
+            "`session` on every steep commit and write."
           ],
           "to": [
-            "   judgment, so give it to a helper on a small model when you can start one",
-            "   (a subagent on a smaller model), hand it the page and the numbered sources,",
-            "   and ask one question: does every sentence of the page still match the",
-            "   sources, yes or no. When it says yes, call `steep` with"
-          ]
-        },
-        {
-          "from": [
-            "   judged whether that matters. Give each entry of `code_checks` to a helper",
-            "   on a small model (in Claude Code, an `Agent` with `model: \"haiku\"`):"
-          ],
-          "to": [
-            "   judged whether that matters. Give each entry of `code_checks` to a helper",
-            "   on a small model when you can start one (a subagent on a smaller model):"
-          ]
-        },
-        {
-          "from": [
-            "model, so they do not spend your main model. In Claude Code, start an",
-            "`Agent` with `model: \"haiku\"`."
-          ],
-          "to": [
-            "model, so they do not spend your main model. Spawn a subagent on",
-            "`gpt-6-luna`; when subagents are off, run",
-            "`codex exec -m gpt-6-luna \"<the task>\"` and use what it prints."
-          ]
-        },
-        {
-          "from": [
-            "   The helpers run at the same time when your tool runs helpers in the",
-            "   background. In Claude Code, send one message with one `Agent` call per",
-            "   claim, each with `model: \"haiku\"` and `run_in_background: true`."
-          ],
-          "to": [
-            "   The helpers run at the same time: spawn one subagent per claim, all in",
-            "   parallel."
+            "Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass",
+            "`session: \"codex:<that id>\"` on every steep commit and write."
           ]
         }
       ]
