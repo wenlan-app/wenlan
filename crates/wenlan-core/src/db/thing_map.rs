@@ -1000,3 +1000,200 @@ impl MemoryDB {
         Ok(())
     }
 }
+
+/// The points a proposal's change names.
+fn proposal_points(change: &ThingMapOp) -> Vec<&str> {
+    match change {
+        ThingMapOp::Add { id, parent_id, .. } => id
+            .iter()
+            .chain(parent_id.iter())
+            .map(String::as_str)
+            .collect(),
+        ThingMapOp::Edit { id, .. } | ThingMapOp::Remove { id } => vec![id.as_str()],
+        ThingMapOp::Move { id, parent_id, .. } => vec![id.as_str(), parent_id.as_str()],
+        ThingMapOp::Link { from, to, .. } | ThingMapOp::Unlink { from, to, .. } => {
+            vec![from.as_str(), to.as_str()]
+        }
+        ThingMapOp::Accept { .. } | ThingMapOp::Reject { .. } => Vec::new(),
+    }
+}
+
+/// The map's top point, made from the thing's title when the map is empty.
+async fn root_of(
+    conn: &libsql::Connection,
+    thing_id: &str,
+    map: &mut Stored,
+    now: i64,
+) -> Result<String, WenlanError> {
+    if let Some((root, _, _)) = map.nodes.iter().find(|(n, _, _)| n.parent_id.is_none()) {
+        return Ok(root.id.clone());
+    }
+    let mut rows = conn
+        .query(
+            "SELECT title FROM things WHERE id = ?1",
+            libsql::params![thing_id],
+        )
+        .await
+        .map_err(db_err("thing map title"))?;
+    let title = match rows.next().await.map_err(db_err("thing map title row"))? {
+        Some(row) => row.get::<Option<String>>(0).unwrap_or(None),
+        None => None,
+    }
+    .filter(|t| !t.trim().is_empty())
+    .unwrap_or_else(|| "…".to_string());
+    let root = ThingMapNode {
+        id: new_node_id(),
+        parent_id: None,
+        rank: 0.0,
+        kind: "topic".into(),
+        state: None,
+        label: cut_label(&title),
+        by: ThingMapAuthor::Local,
+        sources: Vec::new(),
+    };
+    let id = root.id.clone();
+    map.nodes.push((root, now, now));
+    Ok(id)
+}
+
+/// A conversation moved from `from` to `to` (UX-THING-1): the points that
+/// came only from it go with it, each keeping its id, its memory and what
+/// sits under it, and land under the top point of `to`'s map. A point under
+/// one of them that came from elsewhere stays, under the nearest point that
+/// stays. A link or proposal goes along when every point it names goes,
+/// and is dropped when only some do. Runs inside the caller's transaction.
+pub(super) async fn carry_session_points(
+    conn: &libsql::Connection,
+    from: &str,
+    to: &str,
+    session_id: &str,
+    now: i64,
+) -> Result<(), WenlanError> {
+    let mut source = read_map(conn, from).await?;
+    let moving: HashSet<String> = source
+        .nodes
+        .iter()
+        .map(|(n, _, _)| n)
+        .filter(|n| {
+            n.parent_id.is_some()
+                && !n.sources.is_empty()
+                && n.sources.iter().all(|s| s.session_id == session_id)
+        })
+        .map(|n| n.id.clone())
+        .collect();
+    if moving.is_empty() {
+        return Ok(());
+    }
+    let parents: std::collections::HashMap<String, Option<String>> = source
+        .nodes
+        .iter()
+        .map(|(n, _, _)| (n.id.clone(), n.parent_id.clone()))
+        .collect();
+    let staying_above = |id: &str| -> Option<String> {
+        let mut at = parents.get(id).cloned().flatten();
+        while let Some(parent) = at {
+            if !moving.contains(&parent) {
+                return Some(parent);
+            }
+            at = parents.get(&parent).cloned().flatten();
+        }
+        None
+    };
+    let mut target = read_map(conn, to).await?;
+    let root = root_of(conn, to, &mut target, now).await?;
+    let (carried, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut source.nodes)
+        .into_iter()
+        .partition(|(n, _, _)| moving.contains(&n.id));
+    source.nodes = kept;
+    // A point left without its parent goes after the last point under the
+    // nearest one that stays.
+    let orphans: Vec<String> = source
+        .nodes
+        .iter()
+        .filter(|(n, _, _)| n.parent_id.as_ref().is_some_and(|p| moving.contains(p)))
+        .map(|(n, _, _)| n.id.clone())
+        .collect();
+    for id in orphans {
+        let parent = staying_above(&id);
+        let rank = source
+            .nodes
+            .iter()
+            .filter(|(n, _, _)| n.id != id && n.parent_id == parent)
+            .map(|(n, _, _)| n.rank)
+            .fold(None, |best: Option<f64>, r| {
+                Some(best.map_or(r, |b| b.max(r)))
+            })
+            .map_or(0.0, |r| r + 1.0);
+        if let Some(i) = source.index(&id) {
+            source.nodes[i].0.parent_id = parent;
+            source.nodes[i].0.rank = rank;
+            source.nodes[i].2 = now;
+        }
+    }
+    let mut carried = carried;
+    carried.sort_by(|a, b| a.0.rank.total_cmp(&b.0.rank).then(a.0.id.cmp(&b.0.id)));
+    for (mut node, created, _) in carried {
+        if !node.parent_id.as_ref().is_some_and(|p| moving.contains(p)) {
+            node.parent_id = Some(root.clone());
+            node.rank = target.next_rank(Some(&root));
+        }
+        target.nodes.push((node, created, now));
+    }
+    let (edges, other_edges): (Vec<_>, Vec<_>) = std::mem::take(&mut source.edges)
+        .into_iter()
+        .partition(|e| moving.contains(&e.from) || moving.contains(&e.to));
+    source.edges = other_edges;
+    target.edges.extend(
+        edges
+            .into_iter()
+            .filter(|e| moving.contains(&e.from) && moving.contains(&e.to)),
+    );
+    let mut stay = Vec::new();
+    for proposal in std::mem::take(&mut source.proposals) {
+        let named = proposal_points(&proposal.change);
+        let going = named.iter().filter(|id| moving.contains(**id)).count();
+        if going == 0 {
+            stay.push(proposal);
+        } else if going == named.len() {
+            target.proposals.push(proposal);
+        }
+    }
+    source.proposals = stay;
+    source.revision += 1;
+    target.revision += 1;
+    write_rows(conn, from, &source, now).await?;
+    write_rows(conn, to, &target, now).await?;
+    Ok(())
+}
+
+/// `other` merged into `id` (UX-THING-3): its whole map, top point and all,
+/// goes under the top point of `id`'s map, with its links and proposals.
+/// Runs inside the caller's transaction.
+pub(super) async fn carry_whole_map(
+    conn: &libsql::Connection,
+    id: &str,
+    other: &str,
+    now: i64,
+) -> Result<(), WenlanError> {
+    let mut merged = read_map(conn, other).await?;
+    if merged.nodes.is_empty() && merged.proposals.is_empty() {
+        return Ok(());
+    }
+    let mut kept = read_map(conn, id).await?;
+    let root = root_of(conn, id, &mut kept, now).await?;
+    let rank = kept.next_rank(Some(&root));
+    for (mut node, created, updated) in std::mem::take(&mut merged.nodes) {
+        if node.parent_id.is_none() {
+            node.parent_id = Some(root.clone());
+            node.rank = rank;
+        }
+        kept.nodes.push((node, created, updated));
+    }
+    kept.edges.append(&mut merged.edges);
+    kept.proposals.append(&mut merged.proposals);
+    kept.revision += 1;
+    merged.revision += 1;
+    write_rows(conn, id, &kept, now).await?;
+    write_rows(conn, other, &merged, now).await?;
+    Ok(())
+}
