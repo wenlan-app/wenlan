@@ -261,7 +261,7 @@ async fn live_m5_claim_judge_activation_receipt() {
     assert!(!parse_accuracy_jsonl(ACCURACY_BYTES).unwrap().is_empty());
     assert_eq!(M5_CLAIM_JUDGE_MAX_BATCH_ITEMS, 25);
 
-    let requested_model = std::env::var(MODEL_ENV).unwrap_or_else(|_| "qwen3-4b".to_string());
+    let requested_model = std::env::var(MODEL_ENV).unwrap_or_else(|_| "gemma4-e4b".to_string());
     let selected_model = get_model(&requested_model)
         .unwrap_or_else(|| panic!("{MODEL_ENV} must name a registered on-device model"));
     assert!(

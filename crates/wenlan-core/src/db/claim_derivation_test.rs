@@ -4152,7 +4152,17 @@ struct ProducerJudge {
 }
 
 impl ProducerJudge {
+    /// The fixture judge. Its triple is marked as having passed the frozen
+    /// batch, so tests about promotion are not also tests of qualification.
     fn pinned(db: &MemoryDB) -> Self {
+        crate::claim_judge::mark_m5_judge_qualified_for_test(
+            &crate::claim_judge::M5ClaimJudgeSnapshot {
+                model_id: M5_PRODUCTION_JUDGE_MODEL_ID.to_string(),
+                model_version: M5_PRODUCTION_JUDGE_MODEL_VERSION.to_string(),
+                prompt_version: crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION,
+                backend: LlmBackend::OnDevice,
+            },
+        );
         Self {
             backend: LlmBackend::OnDevice,
             model_id: M5_PRODUCTION_JUDGE_MODEL_ID,
