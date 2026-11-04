@@ -522,9 +522,14 @@ async fn stage_page_revision_card_inner(
     Ok(Some(result))
 }
 
+/// The smallest share of a page an LLM rewrite may keep when
+/// `WENLAN_MERGE_SHRINK_GUARD` is not set. Page growth, which only adds,
+/// holds itself to 0.7 against the last good version before it gets here.
+pub(crate) const REWRITE_MIN_KEPT: f64 = 0.5;
+
 /// Parse WENLAN_MERGE_SHRINK_GUARD env var as f64 threshold.
-/// Returns Some(t) when set to a valid float; None when unset/unparseable
-/// (guard OFF = byte-identical behavior to pre-T17).
+/// Returns Some(t) when set to a valid float; None when unset/unparseable,
+/// in which case callers use their default ([`REWRITE_MIN_KEPT`]).
 /// Mirrors page_channel_enabled() env-read discipline in db.rs.
 pub(crate) fn merge_shrink_threshold() -> Option<f64> {
     std::env::var("WENLAN_MERGE_SHRINK_GUARD")
@@ -1278,29 +1283,48 @@ async fn update_page_db_impl(
                 None => citations.clone(),
             };
 
-            // Shrink-guard (T17): opt-in via WENLAN_MERGE_SHRINK_GUARD=<f64>.
-            // OFF by default: unset/unparseable = None = zero regression.
-            // Only fires for LLM-rewrite edited_by; human edits are never blocked.
-            // Placed AFTER current page load (needs old body), BEFORE early-return.
-            // NOT inside the skips_hallucination_guard block: that skips page_growth/re_distill.
+            // Shrink-guard: on for every LLM rewrite. A rewrite that keeps
+            // less than half the page is a failed rewrite, not an edit (a 9B
+            // model shrank one page 2522 -> 209 chars on 2026-11-04).
+            // WENLAN_MERGE_SHRINK_GUARD=<f64> overrides the floor; `0` turns
+            // it off. Human edits are never blocked. Placed AFTER current page
+            // load (needs old body), BEFORE early-return. NOT inside the
+            // skips_hallucination_guard block: that skips page_growth/re_distill.
             if writer.is_llm_rewrite() {
-                if let Some(threshold) = merge_shrink_threshold() {
-                    if !crate::retrieval::integrity::body_shrink_ok(
-                        &current.content,
-                        landing_content,
-                        threshold,
-                    ) {
-                        log::warn!(
-                            "[update_page] shrink-guard rejected {edited_by} on {page_id}: new body ({} chars) < {}% of old ({} chars)",
-                            landing_content.chars().count(),
-                            (threshold * 100.0) as u32,
-                            current.content.chars().count(),
-                        );
-                        return Err(WenlanError::Validation(format!(
-                            "page body shrank below {:.0}% of original (shrink-guard); update rejected",
-                            threshold * 100.0
-                        )));
-                    }
+                let threshold = merge_shrink_threshold().unwrap_or(REWRITE_MIN_KEPT);
+                if !crate::retrieval::integrity::body_shrink_ok(
+                    &current.content,
+                    landing_content,
+                    threshold,
+                ) {
+                    log::warn!(
+                        "[update_page] shrink-guard rejected {edited_by} on {page_id}: new body ({} chars) < {}% of old ({} chars)",
+                        landing_content.chars().count(),
+                        (threshold * 100.0) as u32,
+                        current.content.chars().count(),
+                    );
+                    return Err(WenlanError::Validation(format!(
+                        "page body shrank below {:.0}% of original (shrink-guard); update rejected",
+                        threshold * 100.0
+                    )));
+                }
+            }
+            // Damage guard: a machine rewrite that brings in broken
+            // characters, a chat preamble or a repeated paragraph does not
+            // land, and neither does an LLM rewrite that stops mid-sentence.
+            // Only what this write introduced counts.
+            if writer.is_llm_rewrite() || matches!(writer, Writer::Agent(_)) {
+                if let Some(reason) = crate::retrieval::integrity::rewrite_damage(
+                    &current.content,
+                    landing_content,
+                    writer.is_llm_rewrite(),
+                ) {
+                    log::warn!(
+                        "[update_page] damage-guard rejected {edited_by} on {page_id}: {reason}"
+                    );
+                    return Err(WenlanError::Validation(format!(
+                        "page rewrite refused because {reason} (damage-guard); update rejected"
+                    )));
                 }
             }
 
