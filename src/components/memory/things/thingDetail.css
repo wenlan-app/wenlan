@@ -104,8 +104,6 @@
 .thing-steeped-undo:disabled { opacity:.6;cursor:default; }
 /* A point last night steeped: the night's moon in the indent before it. */
 .thing-recap-group li[data-fresh] { position:relative; }
-.thing-steeped-mark { position:absolute;left:-1.05em;top:.42em;display:inline-flex;color:var(--mem-accent-page); }
-.thing-tree-node .thing-tree-moon { fill:var(--mem-accent-page); }
 /* A night read something different from a point the person wrote (UX-WHO-2):
    one quiet line under it, with their two answers. */
 .thing-recap-proposal { display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px;margin-top:4px;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body);overflow-wrap:anywhere; }

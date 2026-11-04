@@ -184,7 +184,6 @@ function RecapGroup({
       <ul>
         {shown.map((point) => (
           <li key={point.source_id} data-fresh={fresh.has(point.source_id) ? "true" : undefined}>
-            {fresh.has(point.source_id) ? <SteepedMark /> : null}
             {withStop(point.title)}
           </li>
         ))}
@@ -442,19 +441,6 @@ function memoryOf(node: ThingMapNode): string | null {
   return node.sources.find((source) => source.memory_id)?.memory_id ?? null;
 }
 
-/** A moon before a point last night steeped (UX-CHAT-5): the same mark as
- *  the line that says so. */
-function SteepedMark() {
-  const { t } = useTranslation();
-  return (
-    <span className="thing-steeped-mark" title={t("thing.steepedMark")} role="img" aria-label={t("thing.steepedMark")}>
-      <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-        <path d="M10.5 1.5a6.5 6.5 0 1 0 4 11.6A6 6 0 0 1 10.5 1.5z" fill="currentColor" />
-      </svg>
-    </span>
-  );
-}
-
 /** One line of the recap: a map point, or a point of the thing the map does
  *  not hold yet. */
 interface RecapItem {
@@ -536,7 +522,6 @@ function TreeRecapGroup({
       <ul>
         {shown.map((item) => (
           <li key={item.key} data-fresh={item.fresh ? "true" : undefined}>
-            {item.fresh ? <SteepedMark /> : null}
             {item.context ? <span className="thing-recap-context">{item.context} </span> : null}
             {withStop(item.text, item.context ?? "")}
             {item.proposal ? <ProposalRow proposal={item.proposal} onAnswer={onAnswer} /> : null}
@@ -662,13 +647,6 @@ function TreeMap({ tree, fresh }: { readonly tree: Tree; readonly fresh: Readonl
                 <rect x={xOf(item.depth)} y={shift + item.y} width={boxWidth} height={item.height} rx={isRoot ? 14 : 10} />
               )}
               <NodeText x={xOf(item.depth) + (kind === "reason" ? 2 : 12)} y={shift + item.y} lines={lines} />
-              {steeped ? (
-                <path
-                  className="thing-tree-moon"
-                  transform={`translate(${xOf(item.depth) + boxWidth - 18} ${shift + item.y + NODE_PAD_Y + 1}) scale(0.75)`}
-                  d="M10.5 1.5a6.5 6.5 0 1 0 4 11.6A6 6 0 0 1 10.5 1.5z"
-                />
-              ) : null}
             </g>
           );
         })}

@@ -298,7 +298,8 @@ describe("ThingDetail", () => {
     const decided = await screen.findByRole("region", { name: "Decided" });
     const point = within(decided).getByText(/Pricing page\?/).closest("li");
     expect(point).toHaveAttribute("data-fresh", "true");
-    expect(within(point as HTMLElement).getByRole("img", { name: "Steeped overnight" })).toBeTruthy();
+    // One moon per thing, on the line above; none on each point.
+    expect(within(point as HTMLElement).queryByRole("img", { name: "Steeped overnight" })).toBeNull();
     // The memory the map holds shows once, as the map's point.
     expect(screen.getByTestId("thing-short")).not.toHaveTextContent("No pricing page for now");
     // Points of the thing that no map point holds join their group.
