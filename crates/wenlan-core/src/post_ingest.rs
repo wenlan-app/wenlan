@@ -356,6 +356,7 @@ pub async fn run_page_growth_slice(
             llm_calls: 0,
         });
     }
+    let numbered = pick_growth_sources(numbered, &input.content);
     let existing_sources = &numbered[..numbered.len() - 1];
     let user_prompt = format!(
         "## Current Concept\n{}\n\n## Numbered Sources\n{}\n\n## New Memory\n[{}] {}",
@@ -1034,6 +1035,95 @@ fn page_growth_keeps_enough(reference_chars: usize, new_body: &str, threshold: f
     reference_chars == 0 || new_body.chars().count() as f64 >= reference_chars as f64 * threshold
 }
 
+/// How much source text one page-growth prompt carries, in characters.
+/// With the page itself and the instructions this stays inside an 8K
+/// on-device context, so nothing has to be dropped from the middle.
+const GROWTH_SOURCE_CHAR_BUDGET: usize = 12_000;
+
+/// Choose which of a page's sources go into a growth prompt.
+///
+/// `numbered` is the page's sources in linked order with the new memory
+/// last. A page can cite hundreds of sources (588 on one real page), far
+/// more than fit; sending them all meant the middle was dropped and the
+/// rewrite drifted to whatever unrelated sources survived. This keeps the
+/// new memory and the existing sources that share the most words with it
+/// (Chinese, Japanese and Korean text compared by character pairs), up to
+/// [`GROWTH_SOURCE_CHAR_BUDGET`], in their original order, numbered from 1.
+fn pick_growth_sources(
+    numbered: Vec<crate::citations::NumberedSource>,
+    new_content: &str,
+) -> Vec<crate::citations::NumberedSource> {
+    let total: usize = numbered.iter().map(|s| s.text.chars().count()).sum();
+    if total <= GROWTH_SOURCE_CHAR_BUDGET || numbered.len() < 2 {
+        return numbered;
+    }
+    let target = overlap_terms(new_content);
+    let last = numbered.len() - 1;
+    let mut ranked: Vec<(usize, f64)> = numbered[..last]
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let terms = overlap_terms(&s.text);
+            let shared = terms.intersection(&target).count() as f64;
+            let norm = ((terms.len().max(1) * target.len().max(1)) as f64).sqrt();
+            (i, shared / norm)
+        })
+        .collect();
+    // Higher score first; among equals the newer (later linked) source wins.
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.0.cmp(&a.0)));
+    let mut budget = GROWTH_SOURCE_CHAR_BUDGET.saturating_sub(numbered[last].text.chars().count());
+    let mut keep = vec![false; numbered.len()];
+    keep[last] = true;
+    for (i, _) in ranked {
+        let len = numbered[i].text.chars().count();
+        if len <= budget {
+            budget -= len;
+            keep[i] = true;
+        }
+    }
+    numbered
+        .into_iter()
+        .zip(keep)
+        .filter(|(_, kept)| *kept)
+        .enumerate()
+        .map(|(i, (mut source, _))| {
+            source.index = (i + 1) as u32;
+            source
+        })
+        .collect()
+}
+
+/// Lowercased words of two or more letters or digits, plus each pair of
+/// adjacent CJK characters.
+fn overlap_terms(text: &str) -> std::collections::HashSet<String> {
+    let mut terms = std::collections::HashSet::new();
+    let mut word = String::new();
+    let mut previous_cjk: Option<char> = None;
+    for c in text.chars() {
+        let cjk = matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF);
+        if cjk {
+            if let Some(p) = previous_cjk {
+                terms.insert(format!("{p}{c}"));
+            }
+            previous_cjk = Some(c);
+        } else {
+            previous_cjk = None;
+        }
+        if c.is_alphanumeric() && !cjk {
+            word.extend(c.to_lowercase());
+        } else {
+            if word.chars().count() >= 2 {
+                terms.insert(std::mem::take(&mut word));
+            }
+            word.clear();
+        }
+    }
+    if word.chars().count() >= 2 {
+        terms.insert(word);
+    }
+    terms
+}
+
 /// Check if new memory matches an existing page; if so, update it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn grow_page(
@@ -1132,6 +1222,7 @@ pub(crate) async fn grow_page(
         // nothing to cite against.
         return Ok(false);
     }
+    let numbered = pick_growth_sources(numbered, content);
     let existing_sources = &numbered[..numbered.len() - 1];
 
     // LLM: update page with new memory
@@ -3076,6 +3167,51 @@ mod tests {
         let log: Vec<wenlan_types::responses::PageChangelogEntry> =
             serde_json::from_str(&db.get_page_changelog(&page_id).await.unwrap()).unwrap();
         assert!(log.last().unwrap().citations_summary.is_some());
+    }
+
+    #[test]
+    fn growth_keeps_the_sources_related_to_the_new_memory() {
+        let source = |index: u32, text: String| crate::citations::NumberedSource {
+            index,
+            source_kind: "memory".to_string(),
+            locator: format!("m{index}"),
+            text,
+        };
+        let filler = |topic: &str| format!("{topic} ").repeat(150);
+        let mut numbered: Vec<_> = (1..=40)
+            .map(|i| source(i, filler(&format!("relay lease renewal step{i}"))))
+            .collect();
+        numbered[9] = source(10, filler("reranker cross encoder graph_stream ablation"));
+        numbered.push(source(
+            41,
+            "graph_stream stays off after the reranker ablation".to_string(),
+        ));
+
+        let picked = pick_growth_sources(
+            numbered,
+            "graph_stream stays off after the reranker ablation",
+        );
+
+        let total: usize = picked.iter().map(|s| s.text.chars().count()).sum();
+        assert!(total <= GROWTH_SOURCE_CHAR_BUDGET);
+        assert_eq!(
+            picked.last().unwrap().locator,
+            "m41",
+            "the new memory stays last"
+        );
+        assert!(
+            picked.iter().any(|s| s.locator == "m10"),
+            "the related source is kept"
+        );
+        assert!(picked.len() < 41);
+        let indexes: Vec<u32> = picked.iter().map(|s| s.index).collect();
+        assert_eq!(indexes, (1..=picked.len() as u32).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn chinese_sources_are_compared_by_character_pairs() {
+        let terms = overlap_terms("混合搜尋 hybrid");
+        assert!(terms.contains("混合") && terms.contains("搜尋") && terms.contains("hybrid"));
     }
 
     #[test]
