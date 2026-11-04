@@ -549,6 +549,13 @@ async fn run_citation_backfill_with_page_limit(
     prompts: &PromptRegistry,
     page_limit: usize,
 ) -> Result<usize, WenlanError> {
+    match db.rearm_citation_timeouts_once().await {
+        Ok(0) => {}
+        Ok(rearmed) => log::info!(
+            "[citation_backfill] re-armed {rearmed} page(s) that gave up on model timeouts"
+        ),
+        Err(e) => log::warn!("[citation_backfill] timeout re-arm skipped: {e}"),
+    }
     let page_ids = db.get_pages_missing_citations(page_limit).await?;
     let selected = page_ids.len();
     for page_id in page_ids {
@@ -1276,6 +1283,67 @@ mod tests {
         assert_eq!(
             *provider.timeouts.lock().unwrap(),
             vec![Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS)]
+        );
+    }
+
+    /// Pages that gave up only on model timeouts get one more round, once;
+    /// a give-up for another reason, or one a later write superseded, stays.
+    #[tokio::test]
+    async fn timeout_give_ups_are_re_armed_once() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        seed_backfill_page(&db, "p_timeout", true).await;
+        for id in ["p_zero_markers", "p_timeout_then_edited"] {
+            seed_backfill_page(&db, id, false).await;
+            db.link_page_evidence(id, "memory", Some("mem_a"), None, "test")
+                .await
+                .unwrap();
+        }
+        let gave_up = |reason: &str| {
+            serde_json::json!([{
+                "version": 1, "at": 1, "edited_by": "citation_backfill",
+                "citations_summary": format!("citation backfill gave up: {reason}"),
+            }])
+            .to_string()
+        };
+        let edited_after = serde_json::json!([
+            {"version": 1, "at": 1, "edited_by": "citation_backfill",
+             "citations_summary": "citation backfill gave up: provider error after 3 attempts"},
+            {"version": 2, "at": 2, "edited_by": "fs_edit"},
+        ])
+        .to_string();
+        let conn = db.test_primary_session().await;
+        for (id, changelog) in [
+            ("p_timeout", gave_up("provider error after 3 attempts")),
+            ("p_zero_markers", gave_up("zero markers after 3 attempts")),
+            ("p_timeout_then_edited", edited_after),
+        ] {
+            conn.execute(
+                "UPDATE pages SET citations = '[]', changelog = ?2 WHERE id = ?1",
+                libsql::params![id, changelog],
+            )
+            .await
+            .unwrap();
+        }
+        drop(conn);
+
+        assert_eq!(db.rearm_citation_timeouts_once().await.unwrap(), 1);
+        let missing = db.get_pages_missing_citations(10).await.unwrap();
+        assert!(missing.contains(&"p_timeout".to_string()));
+        assert!(!missing.contains(&"p_zero_markers".to_string()));
+        assert!(!missing.contains(&"p_timeout_then_edited".to_string()));
+
+        let conn = db.test_primary_session().await;
+        conn.execute(
+            "UPDATE pages SET citations = '[]' WHERE id = 'p_timeout'",
+            (),
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        assert_eq!(
+            db.rearm_citation_timeouts_once().await.unwrap(),
+            0,
+            "the re-arm runs once per database"
         );
     }
 

@@ -61737,6 +61737,75 @@ impl MemoryDB {
     }
 
     /// Set a value in the app_metadata key-value store (upsert).
+    /// One-time re-arm of pages whose citation backfill gave up only because
+    /// the model kept timing out. Until whole-page requests got their own
+    /// budget, a long page could not be annotated inside the 30 s default, so
+    /// three timeouts poison-pilled it to `citations = '[]'` and the
+    /// `citations IS NULL` sweep never looked at it again. Clearing the pill
+    /// (as migration 126 did for another cause) gives each such page one more
+    /// round of three attempts. Only a give-up that is still the page's latest
+    /// changelog entry counts: any later write already re-decided the page.
+    /// Gated by an `app_metadata` marker so it runs once per database; returns
+    /// how many pages were re-armed (0 when it already ran).
+    pub async fn rearm_citation_timeouts_once(&self) -> Result<u64, WenlanError> {
+        const MARKER: &str = "citation_backfill_rearm_provider_errors_v1";
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM app_metadata WHERE key = ?1",
+                libsql::params![MARKER],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("citation rearm marker: {e}")))?;
+        if rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(e.to_string()))?
+            .is_some()
+        {
+            return Ok(0);
+        }
+        drop(rows);
+        conn.execute("BEGIN IMMEDIATE", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("citation rearm begin: {e}")))?;
+        let result: Result<u64, WenlanError> = async {
+            let rearmed = conn
+                .execute(
+                    "UPDATE pages SET citations = NULL
+                      WHERE status = 'active' AND citations = '[]'
+                        AND json_valid(changelog)
+                        AND json_extract(changelog, '$[#-1].edited_by') = 'citation_backfill'
+                        AND json_extract(changelog, '$[#-1].citations_summary')
+                            LIKE 'citation backfill gave up: provider error%'",
+                    (),
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("citation rearm: {e}")))?;
+            conn.execute(
+                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                libsql::params![MARKER, rearmed.to_string()],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("citation rearm marker write: {e}")))?;
+            Ok(rearmed)
+        }
+        .await;
+        match result {
+            Ok(rearmed) => {
+                commit_or_rollback(&conn)
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("citation rearm commit: {e}")))?;
+                Ok(rearmed)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(e)
+            }
+        }
+    }
+
     pub async fn set_app_metadata(&self, key: &str, value: &str) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute(
