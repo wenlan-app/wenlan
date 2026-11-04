@@ -50,6 +50,10 @@ Match the request to one row. Old command words count as their row.
 
 Rules:
 
+- **Legacy `distill`**: route `/wenlan distill ...` to steep with the full
+  original request. It is an internal capability, not a separate workflow.
+  The old command word alone does not authorize a forced rebuild or merge;
+  use steep's rebuild reference for a named page and its specific approval.
 - **Unclear**: ask one question with two or three options. Do not guess.
   "清一清" alone is unclear (lint, curate, or forget): ask.
 - **Negation and quotes**: "don't delete anything, just look" is read-only;

@@ -7,7 +7,7 @@ Wenlan is local-first. Memories, pages, and session notes live on your machine u
 ## What the plugin contains
 
 - **Skills**: one front door, `/wenlan`, plus `/brief`, `/capture`, `/recall`, and `/handoff`. Setup, page lookup, wiki, lint, curate, and forget are reached by saying them after `/wenlan` and stay out of the slash menu. Knowledge organization and maintenance share the Steep (沉澱) workflow. Each skill talks to the local daemon over HTTP on `127.0.0.1:7878`.
-- **One local MCP server** (`wenlan`), started by `plugin/scripts/wenlan-mcp-runner.sh`. It exposes memory tools (capture, recall, brief, distill, and friends) to Claude Code and Cowork. Claude chat on the web ignores local MCP servers.
+- **One local MCP server** (`wenlan`), started by `plugin/scripts/wenlan-mcp-runner.sh`. It exposes memory tools, including the internal `distill` operation, to Claude Code and Cowork. User-directed knowledge organization and maintenance use the Steep Skill as their guided workflow. Claude chat on the web ignores local MCP servers.
 - **Two `SessionStart` hooks.** `plugin/hooks/session-context.sh` reads the session id Claude Code passes it, exports `WENLAN_SESSION=claude-code:<id>` for the commands Claude runs, and prints one line so Claude can pass that session when it saves a memory, note, or handoff; Wenlan then shows which conversation a memory or note came from. It makes no network call. `plugin/hooks/check-daemon.sh` probes the local daemon, tells a running daemon that Claude Code is connected (the same `POST /api/agents` the app sends when you connect a tool there, so Claude's first recall already sees your pages; a tool you changed or turned off in Connections stays as it is), and prints at most a few lines: a reminder if the daemon is not running, a count of handoff notes waiting to sync (from the local `wenlan outbox status` command, parsed with `python3`), and a notice if the daemon and plugin versions have drifted apart. It never blocks a session and never installs anything.
 - **A `UserPromptSubmit` hook and a `Stop` hook (Beta, off until you turn the in-chat check on).** `plugin/hooks/prompt-context.sh` sends your prompt to the local daemon (`POST /api/check/context`) and hands Claude the earlier decisions that bear on it, each with its date and a `wenlan://` link. `plugin/hooks/stop-check.sh` sends Claude's latest reply to the local daemon (`POST /api/check`); when the reply goes against something you decided earlier, Claude Code shows you a reminder with the date and a link to where it was decided (at most five a day). Both wait at most one second, parse JSON with `python3`, and print nothing when the check is off, the daemon is not running, or nothing applies.
 
@@ -56,7 +56,7 @@ Browse with any editor, or symlink `~/.wenlan/pages/` into an Obsidian vault for
 
 ## Local memory and agent-side model phases
 
-By default setup configures local memory: no model download beyond the embedder, no API key, no prompts. The daemon stores, embeds, dedupes, and serves hybrid search. Where the daemon would normally call a model, the skill asks Claude itself to do the equivalent step and posts the result back over HTTP:
+By default setup configures local memory: no model download beyond the embedder, no API key, no prompts. The daemon stores, embeds, dedupes, and serves hybrid search. When you request on-demand work, the connected AI reads the relevant Skill procedure and uses MCP tools; it may use a small AI helper for a bounded enrichment or judgment step. The daemon owns queues, claim tokens, guarded writes, and the single-writer path. Automatic work instead uses the models configured for daemon background jobs; it is not dispatched to arbitrary connected AI tools:
 
 | Phase | Model-equipped daemon | Local memory plus skill |
 |---|---|---|
@@ -66,7 +66,7 @@ By default setup configures local memory: no model download beyond the embedder,
 | Maintain knowledge around a goal | Requires an explicit user request | `/wenlan steep` follows the request and updates the relevant memories, pages, folders, topics, or relationships |
 | Expand a query or rerank hits | daemon expansion and rerank | `/recall` rewrites the query before search and reorders hits after |
 
-The daemon stays the single writer and storage owner. Claude does the thinking. In automatic mode, the daemon processes eligible background work; it does not invent a goal-driven reorganization request.
+The daemon stays the single writer and storage owner. The connected AI handles on-demand reasoning. In automatic mode, the daemon processes eligible background work with its configured models; it does not invent a goal-driven reorganization request.
 
 ## Daily commands
 

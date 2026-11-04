@@ -22,7 +22,7 @@ New material / changed source / your organization goal
               Keep sources, review rules, and history
 ```
 
-On-demand Steep uses the connected AI tool for the requested work. Automatic Steep processes eligible background work using the configured models; it does not infer or carry out a free-form organization goal you have not given it. The modes have different triggers and available checks. See [when work runs](#when-it-runs) and [how to invoke Steep](#enable-steep-and-check-its-work).
+On demand, the connected AI reads the relevant Steep procedure and carries out the request through Wenlan's MCP tools. The AI decides what the evidence supports; the daemon owns queues, claim tokens, guarded writes, and the single-writer path. Some steps can use a small AI helper for bounded enrichment or judgment. Automatic Steep is different: the daemon handles eligible background work with the models configured for those jobs. It does not dispatch work to arbitrary connected AI tools or infer a free-form organization goal. See [when work runs](#when-it-runs) and [how to invoke Steep](#enable-steep-and-check-its-work).
 
 The short Steep entry routes to one of four focused procedures: [new material](../plugin/skills/steep/references/new-material.md), [source changes](../plugin/skills/steep/references/refresh-pages.md), [a reorganization goal](../plugin/skills/steep/references/reshape-knowledge.md), or [an explicit page rebuild](../plugin/skills/steep/references/rebuild-pages.md). Read only the procedure needed for the request. Page synthesis, clustering, merging, and rebuild remain internal operations; `/wenlan distill` is not a separate workflow.
 
@@ -96,9 +96,9 @@ When you ask Steep to reorganize existing knowledge, it reads the request and re
 - Add relationships only from current source evidence. Same facts remain unchanged; a conflicting edge is protected for the existing repair and review path.
 - Read back the changed content, resolved links, locations, and semantic state. Report applied, pending, blocked, or unchecked work, and skip unchanged work on a rerun.
 
-Goal-driven reorganization follows the whole request across the accessible scope, including when no automatic work is waiting. It does not make every mode scan everything, and a routine request does not require a separate plan approval. Destructive deletion and protected repairs keep their existing controls.
+For an explicit goal, Steep checks its pending-work list at the start and refreshes it after evidence changes, then handles or reports relevant items within a bounded scope; unrelated backlog is outside the request. It can discover matching material in other accessible Spaces when the goal calls for it, using targeted, bounded reads rather than requiring a full crawl of every status. No separate plan approval is required for a routine request. Destructive deletion and protected repairs keep their existing controls.
 
-Folder creation and page movement in the Standard MCP profile are local stdio operations. A locked connection cannot create folders outside its ownership. The `create_relation` preserve operation uses `/api/memory/relations/preserve`: the source must still be current, predicates must be recognized, active conflicts are refused, retired edges cannot be revived, and a same-triple retry leaves the original evidence intact. Older daemons fail closed. These are write-path protections; they do not turn folder placement into evidence of a semantic relation.
+Folder creation and page movement in the Standard MCP profile are local stdio operations. Folder creation is rejected for every scoped connection, including a Space-locked one; use an unscoped local connection when a new folder is needed. The `create_relation` preserve operation uses `/api/memory/relations/preserve`: the source must still be current, predicates must be recognized, active conflicts are refused, retired edges cannot be revived, and a same-triple retry leaves the original evidence intact. Older daemons fail closed. These are write-path protections; they do not turn folder placement into evidence of a semantic relation.
 
 Other workflows' pages keep their content unless the user asks to change it. Ambiguous same-Space page targets stay blocked; same-title pages in different Spaces use qualified links whose resolved IDs are checked. Page state does not establish publication or measured outcomes.
 
@@ -135,39 +135,19 @@ Implementation references: [background scheduling](../crates/wenlan-server/src/s
 
 ## Isolated workflow acceptance
 
-PR #1140's consolidated workflow was exercised against a fresh synthetic library,
-with a separate daemon port, data root and pages directory. Two fresh Claude
-sessions (Sonnet, high effort) used the generated host-neutral skill and only the
-scratch Wenlan MCP for knowledge operations. Each read only the front door, the
-steep entry and `reshape-knowledge.md`; no other procedure was loaded.
+The synthetic organization fixture can be exercised without touching a real
+library. Start a scratch daemon with a separate port, data root, and pages
+directory; create the fixture marker in that root; then use
+[`scripts/organize-acceptance.py`](../scripts/organize-acceptance.py) with the
+`seed`, `verify`, and `verify-rerun` actions around a cold agent run. The driver
+refuses the default production port and verifies the daemon's live pages path
+before it reads or writes. Its checks cover retained page identity, Space and
+sources, expected content and navigation, unrelated pages, and an unchanged
+rerun. It is a fixture/readback check, not a substitute for exercising the
+connected AI, UI, native Tauri app, or automatic background model path; those
+need their own evidence.
 
-The first session made 45 MCP calls: it retained the original 11 pages, added 3,
-and performed 8 page moves. Readback checked identities, Spaces, original sources,
-unrelated content and resolved links. The second session made 29 read-only MCP
-calls; page IDs, contents and versions stayed unchanged. The same fixture and
-checks are reproducible with `scripts/organize-acceptance.py` (`seed`, `verify`,
-`verify-rerun`) after starting an isolated daemon. The script refuses the production
-port and checks the live pages root before operating.
-
-Folder-to-home-to-brand-to-plan navigation was exercised and inspected in the
-project's Playwright Chromium headless shell (149.0.7827.55). This verifies the
-requested knowledge-arrangement path, not native Tauri integration or automatic
-background/model-driven rebuild execution. Those were not exercised by this run.
-
-After integrating main at `35efea38`, a third fresh cold session repeated the
-arrangement on a new isolated library (48 MCP calls, 11 original pages retained,
-3 added, 8 moves). Readback passed. Browser acceptance exposed a pre-existing editor limitation:
-links in table previews are labels, so the reshape procedure now requires
-ordinary paragraph/list navigation. A fresh session made 27 MCP calls and updated
-only the brand entry page; browser clicks then opened all three platform plans
-(Reddit, Show HN and Product Hunt) without page errors. A separate isolated probe moved a page, updated its body, and verified the new file and
-readback matched, the old path remained absent, and page ID/Space were unchanged.
-The route-manifest, protected-relation and real-router organization tests also
-passed on the integrated state. The merge itself preserved Skill input hashes;
-the subsequent navigation instruction was regenerated into both distributions
-and the desktop bundle.
-
-A final fresh session on the navigation-fixed state made 23 read-only MCP calls.
-Readback confirmed all page IDs, bodies and versions were unchanged, including
-the separate projection probe page (15 pages total; 14 from the organization run).
-It loaded the front door, Steep, reshape and capture instructions as needed.
+Add `--with-maintenance` when seeding to put a relevant authored page and an
+unrelated page in the same Space's stale queue. Verification requires a pending
+revision for the relevant page, unchanged original bodies, and no revision for
+the unrelated page; a rerun must preserve the pending revision too.

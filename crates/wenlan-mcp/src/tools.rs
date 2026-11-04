@@ -1508,7 +1508,7 @@ pub struct MovePageParams {
     )]
     pub folder_path: String,
     #[schemars(
-        description = "Stable idempotency key. Reuse only when retrying this identical move request."
+        description = "Move journal identifier, not a server-side deduplication key. Use a unique value per intended move; reuse only for an identical retry. Read back the current path after an uncertain result."
     )]
     pub operation_id: String,
 }

@@ -8,18 +8,24 @@ changes and verify them.
 
 ## Inspect the requested scope
 
-Honor an explicit `space:<name>` exactly. If none is named, inspect all Spaces
+Honor an explicit `space:<name>` exactly. If none is named, search across Spaces
 the connection can access; a Space lock remains authoritative. Don't guess an
 inaccessible Space or silently narrow scope.
 
-Inventory `list_pages` for each requested Space and each status (`active`,
-`draft`, `archived`), paginating with `limit=200` and increasing `offset` until
-a page returns fewer than 200. Record stable page ID, Space, status,
-`storage_path`, `creation_kind`, and review/source metadata. Also call
-`list_folders` in the same scope. Search `recall` for the goal and explicit
-decisions; its results are ranked, so no hit does not prove a memory is absent.
-Read the body of every page you may change, reuse, or rely on using
-`read_page(page_id=...)`.
+Start with targeted `recall` queries for the goal, named topics and decisions.
+Use `list_pages(status="active", limit=200, ...)` for navigation metadata;
+omit Space to search across accessible Spaces when none was requested. Read
+at most 200 inventory records and 20 candidate page bodies in this run. Do not
+scan every Space/status to exhaustion. Include draft or archived inventory
+only when the request or inspected evidence points there, within the same
+budget. Record stable IDs, Space, status, `storage_path`, `creation_kind`, and
+review/source metadata; call `list_folders` in the same scope. Read every page
+you may change, reuse, or rely on with `read_page(page_id=...)`.
+
+Ranked search and bounded inventory cannot prove absence. If coverage is
+incomplete, don't create a possibly duplicate page or claim the whole library
+is organized. Complete the supported subset and report remaining scope and
+the cursor/offset for a later pass.
 
 For central names, use targeted `list_entities` queries and read matching
 entities by stable ID. Before capturing a new durable fact, search for an
@@ -30,6 +36,29 @@ source. Don't infer facts or create duplicates.
 If a required MCP capability is missing on the connected Wenlan version,
 stop that portion and report the compatibility limit. Do not substitute raw
 HTTP, shell scripts, direct database access, or an installed upgrade.
+
+## Include relevant maintenance
+
+Use the caller's initial `steep(action="list", limit=100, space=...)`; if
+missing, obtain it before writes. Match waiting page IDs to the goal and
+inspected pages. A nonzero total is not permission to process an unrelated
+backlog, even in the same Space. Keep exclusions for other managed workflows.
+
+If `new_total > 0`, load [new-material.md](new-material.md) to inspect one
+bounded new-material batch and claim only groups relevant to this goal.
+Then load [refresh-pages.md](refresh-pages.md) for relevant waiting pages.
+Before directly editing an existing page, inspect its `read_page` stale state;
+queued or stale content uses the guarded refresh path. If maintenance leaves
+it pending, blocked or leased, preserve it and defer conflicting content edits.
+Pending content review does not block a folder move. When the goal calls for
+grouping, include matching active pages with pending revisions in the same
+folder pass, preserving their body and revision card. Defer only moves whose
+own preconditions fail or whose pages the user excluded.
+
+Across this whole goal run, process at most eight new groups and ten refresh
+pages; do not restart the budget or loop until queues are empty. Report
+truncated or unhandled relevant work as pending/unchecked, not as a completed
+refresh of the whole scope.
 
 ## Decide and apply changes
 
@@ -58,11 +87,15 @@ Choose the mix the goal calls for:
   stable page IDs and read versions in `basis` when content relies on those
   pages. Re-read on version conflicts. Never present planned work as applied.
 - **Folders:** create only useful folders grounded in the material. Under a
-  Space lock, do not create unowned folders; reuse an existing folder or
+  Space lock, `create_folder` is unavailable; reuse an existing folder or
   report blocked. Move active pages with their current `page_id` and
   `storage_path`; preserve ID, body, version, sources, and Space. Draft and
-  archived page moves are blocked. Use a unique `operation_id` for a retry
-  of the same operation. Re-read after conflicts and skip unchanged moves.
+  archived page moves are unsupported: skip them before calling `move_page`.
+  That route can return NotFound for a known inactive page; do not report it
+  deleted or recreate it. Choose a unique `operation_id` per intended move
+  and reuse it only for an identical retry. It labels the move journal; it is
+  not a server-side deduplication key. Re-read after uncertainty/conflicts,
+  check the actual path, and skip already completed moves.
 - **Topics and entities:** create a named person, project, or topic only when
   the user established it durably and no matching entity exists. A folder
   name is not an entity.
@@ -105,7 +138,13 @@ content states. Report social outcomes as measured only when inspected
 material establishes them; otherwise unknown. A deleted post remains deleted;
 a plan stays planned until verified as executed.
 
-After edits, re-list affected statuses and folders, re-read every changed
+Before reporting, if this run captured, replaced or attached any source,
+call `steep(action="list", limit=100, space=...)` again after the last such
+change (a child operation's equally fresh list counts). Handle or report
+newly relevant waiting pages within the remaining run budget; leave unrelated
+work alone. The initial worklist cannot establish the final waiting state.
+
+Then re-list affected statuses and folders, re-read every changed
 page, and inspect current entity relations when relevant. Report concise
 **applied**, **pending**, **blocked**, and **unchecked** groups. Include an
 entry page's location as `Space / title`; report ambiguity and unknown

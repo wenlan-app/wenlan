@@ -16,7 +16,7 @@ approval rule.
 ## Choose only the work this request needs
 
 For an explicit reorganization goal with no named Space, skip the project
-resolver and inspect all accessible Spaces as the reshape reference describes.
+resolver and search across accessible Spaces within the reshape reference's bounds.
 For ordinary catch-up, new material, or source refresh, resolve the Space once
 from the full arguments using the same project resolver as other workflows:
 
@@ -29,13 +29,15 @@ space="$(printf '%s\n' "$resolved" | cut -f1)"
 An explicit Space or configured lock takes precedence; otherwise this keeps
 the current project context. When the user explicitly asks to reorganize
 existing knowledge and gives no Space, the reshape operation instead inspects
-all accessible Spaces, as described in its reference.
+accessible Spaces, as described in its reference.
 
-For a plain `/wenlan steep` or a request to process new material or catch up
-on changed sources, call `steep(action="list", limit=100, space=...)` once.
+For catch-up or an explicit reorganization goal, first call
+`steep(action="list", limit=100, space=...)` once in the requested scope.
 Use its `new_total` and `total` to choose the references below: load
 `new-material.md` only when `new_total > 0`, and `refresh-pages.md` only when
-`total > 0`. If both are zero, report no queued work. An explicit
+`total > 0`. For a goal, apply the reshape reference's relevance filter before
+loading either maintenance reference; counts alone do not authorize unrelated
+work. If both are zero, report no queued work. An explicit
 reorganization goal still loads `reshape-knowledge.md` and runs even when
 both counts are zero. An explicit one-page rebuild loads `rebuild-pages.md`;
 don't substitute a global pass. Pass the worklist into the chosen references
@@ -47,8 +49,9 @@ instead of listing it again.
   read [refresh-pages.md](steep/refresh-pages.md).
 - The user gives a goal to reorganize existing knowledge, whether or not there
   is queued work: read [reshape-knowledge.md](steep/reshape-knowledge.md).
-- The user explicitly asks to rebuild one page, or to review a specific page
-  merge proposal: read [rebuild-pages.md](steep/rebuild-pages.md).
+- The user explicitly asks to rebuild one page, review a specific page merge
+  proposal, or uses legacy `distill <page>`: read
+  [rebuild-pages.md](steep/rebuild-pages.md).
 
 Requests can need more than one operation. Read each relevant reference, then
 do the work in an order that preserves its evidence and protections. Do not
@@ -64,7 +67,7 @@ and waiting page updates now. Background processing does not infer a user's
 broader reorganization goal; perform that only when the user asks.
 
 Resolve and honor the requested Space. An explicit Space lock takes precedence;
-for explicit reshaping without a named Space, inspect all accessible Spaces.
+for explicit reshaping without a named Space, search across accessible Spaces.
 For ordinary catch-up, retain the resolved project scope. If a necessary tool is unavailable, stop that portion and say
 what could not be done. Never use raw HTTP, shell scripts, or direct database
 access as a substitute for the supported Wenlan tools.

@@ -106,7 +106,7 @@ def snapshot(mcp):
             if p.get("creation_kind") != "entity"}
 
 
-def seed(mcp, root):
+def seed(mcp, root, origin, maintenance=False):
     if inventory(mcp):
         raise RuntimeError("seed requires an empty scratch library")
     for space in ("personal", "writing", "site", "other"):
@@ -114,9 +114,15 @@ def seed(mcp, root):
                  mutations=[{"kind": "add", "text": "Public synthetic organization fixture.", "state": "backlog"}])
     source = mcp.call("capture", content="跨平台寫作先展示真實產品與工作流程，保留限制，不虛構成效。", space="writing", memory_type="preference")
     source_id = re.search(r"source_memory_id: (\S+)", source).group(1)
+    unrelated_source_id = None
+    if maintenance:
+        unrelated_source = mcp.call("capture", content="公司現金流筆記：每季檢查現金。", space="writing", memory_type="fact")
+        unrelated_source_id = re.search(r"source_memory_id: (\S+)", unrelated_source).group(1)
     ids = {}
     for space, title, content, role in PAGES:
         sources = [source_id] if role == "shared" else []
+        if maintenance and role == "unrelated":
+            sources = [unrelated_source_id]
         reply = mcp.call("write_page", title=title, content=content, space=space, source_memory_ids=sources)
         match = re.search(r"(?:Created page|Attached to existing page) (\S+)", reply)
         if not match:
@@ -124,6 +130,22 @@ def seed(mcp, root):
         ids[role] = match.group(1)
     mcp.call("create_entity", name="林以安", entity_type="person", space="personal")
     mcp.call("create_entity", name="青禾網站", entity_type="project", space="site")
+    if maintenance:
+        # Exercise the real editor update boundary so both related and unrelated
+        # pages enter the queue. This HTTP setup is fixture-only, not agent access.
+        for memory_id, content in (
+            (source_id, "跨平台寫作先展示真實產品與工作流程，保留限制，不虛構成效。每篇案例都必須標明驗證日期。"),
+            (unrelated_source_id, "公司現金流筆記：改為每月檢查現金。"),
+        ):
+            request = urllib.request.Request(origin + f"/api/memory/{memory_id}/update",
+                data=json.dumps({"content": content}).encode(), method="PUT",
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(request, timeout=10) as response:
+                assert json.load(response)["ok"]
+        worklist = mcp.call("steep", action="list", limit=100)
+        waiting = {item["page_id"] for item in worklist["items"]}
+        assert {ids["shared"], ids["unrelated"]} <= waiting, "fixture did not create both stale pages"
+        (root / "maintenance-worklist-before.json").write_text(json.dumps(worklist, ensure_ascii=False, indent=2))
     (root / "fixture-ids.json").write_text(json.dumps(ids, ensure_ascii=False, indent=2))
     (root / "before.json").write_text(json.dumps(snapshot(mcp), ensure_ascii=False, indent=2))
     (root / "request.txt").write_text(REQUEST)
@@ -134,6 +156,7 @@ def verify(mcp, root, rerun):
     before = json.loads((root / "before.json").read_text())
     ids = json.loads((root / "fixture-ids.json").read_text())
     after = snapshot(mcp)
+    maintenance = (root / "maintenance-worklist-before.json").is_file()
     for role, page_id in ids.items():
         old, new = before[page_id]["page"], after[page_id]["page"]
         for field in ("id", "created_at", "space"):
@@ -146,6 +169,22 @@ def verify(mcp, root, rerun):
             assert before[page_id]["sources"] == after[page_id]["sources"], (role, "sources")
         if role in ("unrelated", "same_name", "site"):
             assert old.get("storage_path") == new.get("storage_path"), (role, "path")
+    if maintenance:
+        # Authored pages must keep their original body and stage a review card.
+        # A direct rewrite would fail the preservation checks above.
+        revisions = mcp.call("list_pending_revisions", limit=100)
+        revisions = json.loads(revisions[revisions.index("["):])
+        relevant = [r for r in revisions if r["target_source_id"] == ids["shared"]]
+        assert len(relevant) == 1, "related stale page needs exactly one pending revision"
+        assert "驗證日期" in relevant[0]["revision_content"], "new evidence missing from revision"
+        assert not any(r["target_source_id"] == ids["unrelated"] for r in revisions), "unrelated revision proposed"
+        assert after[ids["unrelated"]]["page"]["stale_reason"] == "source_updated", "unrelated backlog was processed"
+        assert Path(after[ids["shared"]]["page"]["storage_path"]).parent != Path("."), "pending review should not omit the shared page from grouping"
+        receipt = root / "maintenance-revisions-first.json"
+        if rerun:
+            assert json.loads(receipt.read_text()) == revisions, "rerun changed pending revisions"
+        else:
+            receipt.write_text(json.dumps(revisions, ensure_ascii=False, indent=2))
     assert "builder" in after[ids["brand"]]["page"]["content"], "brand positioning not updated"
     combined = "\n".join(p["page"]["content"] for p in after.values())
     for platform in ("Reddit", "Show HN", "Product Hunt"):
@@ -166,6 +205,7 @@ def verify(mcp, root, rerun):
         for pid, previous in first.items():
             assert previous["page"]["content"] == after[pid]["page"]["content"], (pid, "rerun rewrote content")
             assert previous["page"]["version"] == after[pid]["page"]["version"], (pid, "rerun bumped version")
+            assert previous["page"].get("storage_path") == after[pid]["page"].get("storage_path"), (pid, "rerun moved page")
     else:
         (root / "after-first.json").write_text(json.dumps(after, ensure_ascii=False, indent=2))
     print(json.dumps({"verified": True, "pages": len(after), "moved_roles": moved, "rerun": rerun}, ensure_ascii=False))
@@ -177,6 +217,7 @@ def main():
     parser.add_argument("--binary", required=True)
     parser.add_argument("--origin", required=True)
     parser.add_argument("--root", required=True, type=Path)
+    parser.add_argument("--with-maintenance", action="store_true", help="Seed related and unrelated stale pages to check goal-scoped maintenance")
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
     from urllib.parse import urlparse
@@ -189,7 +230,7 @@ def main():
     mcp = Mcp(args.binary, args.origin, root)
     try:
         if args.action == "seed":
-            seed(mcp, root)
+            seed(mcp, root, args.origin, args.with_maintenance)
         elif args.action == "snapshot":
             print(json.dumps(snapshot(mcp), ensure_ascii=False, indent=2))
         else:

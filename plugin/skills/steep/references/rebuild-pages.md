@@ -1,6 +1,7 @@
 # Rebuild a page or review a specific merge proposal
 
-Load this only when the user explicitly asks to regenerate a particular page
+Load this for legacy `distill <page>` requests routed here, or when the user
+explicitly asks to regenerate a particular page
 from its current supporting memories, or explicitly asks to review a page
 merge proposal. A rebuild replaces generated prose. State that before
 proceeding and obtain the user's explicit confirmation for the target page.

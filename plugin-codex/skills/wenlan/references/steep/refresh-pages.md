@@ -5,7 +5,8 @@ material was attached to a page. Use a current `steep(action="list", space=...)`
 worklist for the operation's scope. If the caller has none, or captures,
 replacements or attachments since that list could have added stale pages,
 list again first. For explicit reshaping, retain its requested accessible
-scope rather than silently reverting to a current-project default. Process
+scope and relevance/exclusion filter rather than silently reverting to a
+current-project default or processing unrelated waiting pages. Process
 at most ten pages per run, newest first. Skip leased pages and report pages
 marked `needs_you` with their reason.
 

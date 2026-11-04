@@ -13,7 +13,7 @@ wenlan connect codex              # or: claude-code, cursor, claude-desktop, vsc
 wenlan connect cursor --dry-run   # preview before editing JSON config
 ```
 
-MCP-only setup gives agents the whole tool surface: capture and recall, reading and writing wiki pages, the Space-owned Brief with `update_brief` for handoff, and page distillation. It does not install the Claude Code slash skills (`/wenlan`, `/brief`, `/handoff`), which wrap those same tools in a guided flow; install the Wenlan plugin if you want them.
+MCP-only setup gives agents the whole tool surface: capture and recall, reading and writing wiki pages, the Space-owned Brief with `update_brief` for handoff, and the internal `distill` tool for page synthesis. It does not install the Claude Code slash skills (`/wenlan`, `/brief`, `/handoff`), which wrap the tools in a guided flow; install the Wenlan plugin if you want them. Steep is that guided, on-demand knowledge-maintenance workflow. The connected AI reads its relevant Skill procedure and uses MCP; it may delegate a bounded enrichment or judgment step to a small AI helper. The daemon owns queues, claim tokens, guarded writes, and the single-writer path. Automatic Steep instead runs eligible background jobs with their configured models, not with arbitrary connected AI tools.
 
 If you only need the raw MCP connector config, add this to your MCP client:
 
@@ -66,7 +66,7 @@ queue.
 | Tool | Purpose |
 | --- | --- |
 | `list_folders` | Inspect physical wiki folders within the caller's scope |
-| `create_folder` | Create a navigation folder; local stdio only |
+| `create_folder` | Create a navigation folder; local stdio only and unavailable to scoped connections |
 | `move_page` | Move an active page with an expected-path guard, preserving identity and content; local stdio only |
 | `get_page_links` | Check incoming links and resolved outgoing target IDs |
 | `list_entities` | Find existing topics by name, alias, Space and lifecycle status |
@@ -87,7 +87,7 @@ queue.
 | `propose_note_change` | Propose a change to one of the person's own Obsidian notes. Nothing is written until the person accepts it in Wenlan; a note set to Never takes no proposal. Local stdio only. |
 | `check_reply` | Check a reply against the person's earlier decisions, for AI tools without hooks. Returns a dated reminder with a `wenlan://` link for each decision the reply goes against (at most five a day), or says nothing conflicts. |
 | `recall` | Search memories and pages by natural-language query. |
-| `distill` | Trigger page distillation for new clusters or a specific `page_id`. |
+| `distill` | Internal MCP operation for page synthesis: process new clusters or target a specific `page_id`. It remains available as a tool; Steep is the user-facing guided workflow. |
 | `list_pending` | List pending captures waiting for review. |
 | `confirm_memory` | Confirm a pending memory by `source_id`. |
 | `forget` | Delete a memory by ID. Destructive. |
