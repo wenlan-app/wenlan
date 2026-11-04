@@ -201,23 +201,38 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
             "sources_updated_count",
             "stale_reason",
             "refresh_blocked_reason",
+            // Worked out by jobs that do not run again for an unchanged
+            // page, so a restore keeps them as they were.
+            "community_id",
+            "confidence",
         ],
     ),
     (
         "pages",
         "cache",
-        &[
-            "embedding",
-            "embedding_updated_at",
-            "community_id",
-            "confidence",
-            "last_compiled",
-        ],
+        &["embedding", "embedding_updated_at", "last_compiled"],
     ),
     (
         "memories",
         "history",
-        &["version", "changelog", "access_count", "last_accessed"],
+        &[
+            "version",
+            "changelog",
+            "access_count",
+            "last_accessed",
+            // What enrichment and the jobs after it worked out, and whether
+            // a memory still waits for enrichment: nothing works these out
+            // again for a memory the steps record says is done.
+            "confidence",
+            "quality",
+            "enrichment_status",
+            "last_distilled_at",
+            // A folder document's file hash: what the folder sync compares,
+            // and what keeps a document from seeding a page.
+            "content_hash",
+            // New, learned or confirmed: the nightly promotion reads it.
+            "stability",
+        ],
     ),
     // A quick capture's `content` (the tidied text) is also cache: its
     // file holds what the person typed. Chunk boundaries are cache too: the
@@ -227,13 +242,7 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
         "cache",
         &[
             "embedding",
-            "confidence",
-            "quality",
-            // Worked out again from `confirmed`, as every confirm writes it.
-            "stability",
-            "enrichment_status",
             "needs_reembed",
-            "content_hash",
             "refinement_status",
             "effective_confidence",
             "word_count",
@@ -242,7 +251,6 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
             "byte_start",
             "byte_end",
             "semantic_unit",
-            "last_distilled_at",
         ],
     ),
     ("brief_items", "history", &["updated_at"]),

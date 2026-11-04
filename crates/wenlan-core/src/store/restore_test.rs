@@ -457,16 +457,18 @@ async fn a_restore_gives_back_documents_read_from_folders() {
 }
 
 /// A memory the person confirmed stays confirmed after a restore, also
-/// once the nightly promotion has run over it; its summary and a source
-/// text that is the text itself come back too.
+/// once the nightly promotion has run over it; its summary, a source text
+/// that is the text itself, and what enrichment and the jobs worked out
+/// come back too.
 #[tokio::test]
 async fn a_restore_keeps_a_confirmed_memory_confirmed() {
     let (db, dir) = fixture().await;
     db.export_fixture_sql(
         "INSERT INTO memories (id, content, source, source_id, title, chunk_index, \
          last_modified, chunk_type, memory_type, confirmed, stability, summary, \
-         source_text) VALUES ('kept0', 'Ships on Fridays.', 'memory', ?1, 'kept', 0, 0, \
-         'text', 'fact', 1, 'confirmed', 'Release day', 'Ships on Fridays.')",
+         source_text, quality, confidence, enrichment_status, content_hash) VALUES \
+         ('kept0', 'Ships on Fridays.', 'memory', ?1, 'kept', 0, 0, 'text', 'fact', 1, \
+         'confirmed', 'Release day', 'Ships on Fridays.', 'high', 0.75, 'raw', 'h1')",
         "mem_kept",
     )
     .await;
@@ -504,6 +506,20 @@ async fn a_restore_keeps_a_confirmed_memory_confirmed() {
     assert_eq!(kept.id, "kept0");
     assert_eq!(kept.summary.as_deref(), Some("Release day"));
     assert_eq!(kept.source_text.as_deref(), Some("Ships on Fridays."));
+    let table = restored.export_table("memories").await.unwrap().unwrap();
+    let at = |name: &str| table.columns.iter().position(|c| c == name).unwrap();
+    let row = table
+        .rows
+        .iter()
+        .find(|row| row[at("id")] == libsql::Value::Text("kept0".into()))
+        .expect("the row came back");
+    assert_eq!(row[at("quality")], libsql::Value::Text("high".into()));
+    assert_eq!(row[at("confidence")], libsql::Value::Real(0.75));
+    assert_eq!(
+        row[at("enrichment_status")],
+        libsql::Value::Text("raw".into())
+    );
+    assert_eq!(row[at("content_hash")], libsql::Value::Text("h1".into()));
 }
 
 /// A refresh that stopped after setting the old history aside and before
