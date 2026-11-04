@@ -719,7 +719,7 @@ async fn run_citation_backfill_with_page_limit(
                 max_tokens: llm.recommended_max_output(),
                 temperature: 0.0,
                 label: Some("citation_annotate".to_string()),
-                timeout_secs: None,
+                timeout_secs: Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS),
             })
             .await
         {
@@ -1226,6 +1226,56 @@ mod tests {
                 .unwrap()
                 .contains(&"p_happy".to_string()),
             "page should no longer be citations-missing"
+        );
+    }
+
+    struct TimeoutCapturingProvider {
+        response: String,
+        timeouts: std::sync::Mutex<Vec<Option<u64>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for TimeoutCapturingProvider {
+        async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+            self.timeouts.lock().unwrap().push(request.timeout_secs);
+            Ok(self.response.clone())
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn name(&self) -> &str {
+            "timeout-capturing"
+        }
+
+        fn backend(&self) -> LlmBackend {
+            LlmBackend::OnDevice
+        }
+
+        fn kind(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    /// The annotate answer is the whole page, which a 9B model cannot write
+    /// within the runtime's 30 s default, so the request carries its own
+    /// budget.
+    #[tokio::test]
+    async fn backfill_annotate_carries_the_page_output_timeout() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        seed_backfill_page(&db, "p_timeout", true).await;
+        let provider = Arc::new(TimeoutCapturingProvider {
+            response: format!("{BACKFILL_BODY}[1]"),
+            timeouts: std::sync::Mutex::new(Vec::new()),
+        });
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        run_citation_backfill_tick(&db, &llm, &PromptRegistry::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            *provider.timeouts.lock().unwrap(),
+            vec![Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS)]
         );
     }
 
