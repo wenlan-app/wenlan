@@ -632,6 +632,23 @@ class PlatformPlanTests(unittest.TestCase):
             patterns,
         )
 
+    def test_libsql_backport_keeps_native_lifecycle_and_windows_scale_gates(self) -> None:
+        path = "vendor/libsql/src/local/connection.rs"
+        self.assertEqual(plan_for(path)["mode"], "full")
+        workflow_path = Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        for name in ("rust", "windows", "windows-lint", "workspace-platform"):
+            with self.subTest(filter=name):
+                block = workflow.split(f"            {name}:\n", 1)[1]
+                block = re.split(
+                    r"^ {12}[A-Za-z0-9_-]+:\s*$", block, maxsplit=1, flags=re.MULTILINE
+                )[0]
+                patterns = re.findall(r"^\s+- '([^']+)'\s*$", block, re.MULTILINE)
+                self.assertTrue(
+                    any(fnmatchcase(path, pattern) for pattern in patterns),
+                    f"{name} filter does not route the libsql backport",
+                )
+
     def test_app_filter_covers_every_app_only_planner_input(self) -> None:
         """Missing app globs would silently skip app-check, the sole owner.
 
@@ -673,7 +690,8 @@ class PlatformPlanTests(unittest.TestCase):
             )
 
     def test_relay_ci_is_required_and_uses_its_own_toolchain(self) -> None:
-        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text()
+        workflow_path = Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
         self.assertTrue("relay:   ${{ steps.filter.outputs.relay }}" in workflow,
                         "relay path-filter output is missing")
         relay_filter = workflow.split("            relay:\n", 1)[1].split("            macos:\n", 1)[0]

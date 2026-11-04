@@ -122,6 +122,7 @@ lto = "off"
 strip = "debuginfo"
 incremental = false
 
-# Installer safety backports; see vendor/tauri-plugin-updater/WENLAN-PATCH.md.
+# Native safety backports; see each vendor crate's WENLAN-PATCH.md.
 [patch.crates-io]
+libsql = { path = "vendor/libsql" }
 tauri-plugin-updater = { path = "vendor/tauri-plugin-updater" }
