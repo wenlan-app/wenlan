@@ -953,54 +953,7 @@ const PAGE_GROWTH_TIMEOUT_SECS: u64 = 120;
 /// out whole, so the rewrite stopped mid-sentence.
 const PAGE_GROWTH_MAX_TOKENS: u32 = 2048;
 
-/// True when a rewrite ends inside a prose sentence: the model ran out of
-/// tokens or time. A last line that is a heading, list item, table row,
-/// quote or code fence is left alone, because those often end without
-/// punctuation.
-fn looks_cut_off(body: &str) -> bool {
-    let Some(last) = body.lines().map(str::trim).rfind(|line| !line.is_empty()) else {
-        return false;
-    };
-    let structured = last.starts_with(['#', '|', '-', '*', '+', '>', '`'])
-        || last
-            .split_once(['.', ')'])
-            .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
-    if structured {
-        return false;
-    }
-    let Some(end) = last.chars().last() else {
-        return false;
-    };
-    !matches!(
-        end,
-        '.' | '!'
-            | '?'
-            | ':'
-            | ';'
-            | ')'
-            | ']'
-            | '}'
-            | '"'
-            | '\''
-            | '`'
-            | '*'
-            | '_'
-            | '~'
-            | '…'
-            | '。'
-            | '！'
-            | '？'
-            | '：'
-            | '；'
-            | '）'
-            | '」'
-            | '』'
-            | '》'
-            | '”'
-            | '’'
-            | '】'
-    )
-}
+use crate::retrieval::integrity::looks_cut_off;
 
 /// The length a page-growth rewrite is measured against: the longest body
 /// among the page's recent machine-written versions, back to (and including)
@@ -3311,25 +3264,40 @@ mod tests {
     async fn grow_page_measures_against_the_last_good_length() {
         std::env::remove_var("WENLAN_MERGE_SHRINK_GUARD");
         let (db, _dir) = test_db().await;
-        let (page_id, _body) = seed_growth_page(&db).await;
+        let (page_id, body) = seed_growth_page(&db).await;
         let broken = "graph_stream OFF is firm.";
-        crate::post_write::update_page(
-            &db,
-            &page_id,
-            UpdatePageRequest {
-                content: broken.to_string(),
-                source_memory_ids: vec!["mem_shrink_v1".to_string()],
-                expected_version: None,
-                caller_id: None,
-                operation_id: None,
-            },
-            "page_growth",
-            false,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        // Walk the page down to the broken body the way a run of bad machine
+        // rewrites would, each step small enough to pass the general
+        // shrink-guard on its own.
+        let mut len = body.chars().count();
+        let mut steps = Vec::new();
+        while len > 48 {
+            len = len * 3 / 5;
+            steps.push(format!(
+                "graph_stream OFF is firm {}.",
+                "x".repeat(len.saturating_sub(26))
+            ));
+        }
+        steps.push(broken.to_string());
+        for content in steps {
+            crate::post_write::update_page(
+                &db,
+                &page_id,
+                UpdatePageRequest {
+                    content,
+                    source_memory_ids: vec!["mem_shrink_v1".to_string()],
+                    expected_version: None,
+                    caller_id: None,
+                    operation_id: None,
+                },
+                "page_growth",
+                false,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
 
         // Three times the broken body, still far short of the good one.
         let grew = grow_with(

@@ -7026,17 +7026,46 @@ async fn update_page_shrink_guard_allows_growth() {
 }
 
 #[tokio::test]
-async fn update_page_shrink_guard_off_by_default() {
+async fn update_page_shrink_guard_on_by_default() {
     let _lock = env_lock().await;
-    // Guard UNSET: even extreme truncation must succeed (zero regression)
+    // Guard UNSET: an LLM rewrite that keeps less than half the page is refused.
     std::env::remove_var("WENLAN_MERGE_SHRINK_GUARD");
+    let (db, _dir) = test_db().await;
+    let mem_id = "mem-sg-default";
+    let old_body = "a".repeat(100);
+    seed_memory(&db, mem_id, &old_body).await;
+    let page_id = seed_page(&db, mem_id, &old_body).await;
+
+    let req = UpdatePageRequest {
+        content: "a".repeat(5),
+        source_memory_ids: vec![mem_id.to_string()],
+        expected_version: None,
+        caller_id: None,
+        operation_id: None,
+    };
+    let result = update_page(&db, &page_id, req, "distill", false, None, None).await;
+    assert!(
+        matches!(result, Err(WenlanError::Validation(_))),
+        "default shrink-guard must reject a rewrite that keeps 5% of the page"
+    );
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(
+        page.content, old_body,
+        "body must be unchanged after rejection"
+    );
+}
+
+#[tokio::test]
+async fn update_page_shrink_guard_zero_turns_it_off() {
+    let _lock = env_lock().await;
+    std::env::set_var("WENLAN_MERGE_SHRINK_GUARD", "0");
     let (db, _dir) = test_db().await;
     let mem_id = "mem-sg-off";
     let old_body = "a".repeat(100);
     seed_memory(&db, mem_id, &old_body).await;
     let page_id = seed_page(&db, mem_id, &old_body).await;
 
-    let tiny_body = "a".repeat(5); // 5 < 100 * 0.7 = 70, would fail if guard were ON
+    let tiny_body = "a".repeat(5);
     let req = UpdatePageRequest {
         content: tiny_body.clone(),
         source_memory_ids: vec![mem_id.to_string()],
@@ -7047,12 +7076,58 @@ async fn update_page_shrink_guard_off_by_default() {
     let result = update_page(&db, &page_id, req, "distill", false, None, None)
         .await
         .unwrap();
-    assert!(result.wrote, "guard OFF must allow any size update");
+    std::env::remove_var("WENLAN_MERGE_SHRINK_GUARD");
+    assert!(result.wrote, "guard set to 0 must allow any size update");
     let page = db.get_page(&page_id).await.unwrap().unwrap();
-    assert_eq!(
-        page.content, tiny_body,
-        "content must update when guard is OFF"
-    );
+    assert_eq!(page.content, tiny_body);
+}
+
+#[tokio::test]
+async fn update_page_damage_guard_refuses_damaged_machine_rewrites() {
+    let _lock = env_lock().await;
+    std::env::remove_var("WENLAN_MERGE_SHRINK_GUARD");
+    let (db, _dir) = test_db().await;
+    let mem_id = "mem-dg";
+    let para = "Hybrid search fuses keyword and vector results, then reranks them by how close each one is to the question.";
+    seed_memory(&db, mem_id, para).await;
+    let page_id = seed_page(&db, mem_id, para).await;
+
+    for (content, edited_by) in [
+        (format!("{para}\n\n{para}"), "agent_refresh"),
+        (format!("Here is the updated page:\n\n{para}"), "re_distill"),
+        (format!("{para} 混合\u{FFFD}搜尋。"), "page_growth"),
+        (format!("{para}\n\nIt also keeps the"), "refinery_merge"),
+    ] {
+        let req = UpdatePageRequest {
+            content,
+            source_memory_ids: vec![mem_id.to_string()],
+            expected_version: None,
+            caller_id: None,
+            operation_id: None,
+        };
+        let result = update_page(&db, &page_id, req, edited_by, false, None, None).await;
+        assert!(
+            matches!(&result, Err(WenlanError::Validation(m)) if m.contains("damage-guard")),
+            "{edited_by} damaged rewrite must be refused"
+        );
+    }
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(page.content, para, "no damaged rewrite may land");
+    assert_eq!(page.version, 1);
+
+    // A clean rewrite still lands.
+    let grown = format!("{para}\n\nIt also keeps exact matches near the top.");
+    let req = UpdatePageRequest {
+        content: grown.clone(),
+        source_memory_ids: vec![mem_id.to_string()],
+        expected_version: None,
+        caller_id: None,
+        operation_id: None,
+    };
+    update_page(&db, &page_id, req, "page_growth", false, None, None)
+        .await
+        .unwrap();
+    assert_eq!(db.get_page(&page_id).await.unwrap().unwrap().content, grown);
 }
 
 #[tokio::test]
