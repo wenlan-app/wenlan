@@ -203,10 +203,15 @@ export function frameAtlasView(
   // left between them, not of the canvas. Sigma maps viewport to graph
   // linearly for a given camera, so the shift is read off that map.
   const wanted = { x: (insets.left + width - insets.right) / 2, y: (insets.top + height - insets.bottom) / 2 };
-  if ((wanted.x !== width / 2 || wanted.y !== height / 2) && typeof renderer.viewportToFramedGraph === "function") {
+  // Only on a canvas with room for the insets: a canvas not laid out yet
+  // (0 x 0) has no meaningful middle, and its projection is not finite.
+  const roomy = width > insets.left + insets.right && height > insets.top + insets.bottom;
+  if (roomy && (wanted.x !== width / 2 || wanted.y !== height / 2) && typeof renderer.viewportToFramedGraph === "function") {
     const landed = renderer.viewportToFramedGraph(wanted, { cameraState: target });
-    target.x = 2 * target.x - landed.x;
-    target.y = 2 * target.y - landed.y;
+    if (Number.isFinite(landed.x) && Number.isFinite(landed.y)) {
+      target.x = 2 * target.x - landed.x;
+      target.y = 2 * target.y - landed.y;
+    }
   }
   if (options.duration && options.duration > 0) void camera.animate(target, { duration: options.duration });
   else camera.setState(target);

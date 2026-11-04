@@ -835,6 +835,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     }
   };
 
+  // The map's host only exists once both reads are in (see the loading state
+  // below). The things' read can land after the graph's and leave the model
+  // as it was (no thing has points), so readiness itself must re-run the
+  // mount: keyed on the model alone, the effect already ran with no host and
+  // never ran again, and the map stayed blank.
+  const mapReady = !graphLoading && !thingPointsPending;
   // Mount/rebuild sigma whenever the model changes. `palette` is read here
   // (fresh at build time) but deliberately not a dependency — a theme flip
   // recolors the existing graph in place (below) instead of tearing down and
@@ -844,7 +850,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // Dispose the current imperative renderer before React mutates or detaches
     // its host. Mount/rebuild stays passive so large layouts do not block paint.
     return () => rendererDisposeRef.current?.();
-  }, [visibleModel, layoutVersion]);
+  }, [visibleModel, layoutVersion, mapReady]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1564,7 +1570,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     rendererDisposeRef.current = dispose;
     return dispose;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleModel, layoutVersion]);
+  }, [visibleModel, layoutVersion, mapReady]);
 
   // Theme flip: recolor the live graph and repaint — no remount. Also keeps
   // paletteRef current so nodeReducer/edgeReducer (read at paint time) see

@@ -147,6 +147,7 @@ import type {
   GraphPageNode,
   GraphRelation,
   KnowledgeGraph,
+  ThingNightPoints,
 } from "../../lib/tauri";
 import AtlasView from "./AtlasView";
 import { ATLAS_CONTROL_INSETS } from "../../lib/graph/viewpoint";
@@ -855,6 +856,20 @@ describe("AtlasView", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Filter nodes" }), { target: { value: "Bob" } });
     expect(screen.queryByRole("option", { name: "Bob" })).not.toBeInTheDocument();
     expect(screen.getByText("No matches")).toBeInTheDocument();
+  });
+
+  it("mounts the map when the things' read lands after the graph's and adds nothing (UX-CHAT-5)", async () => {
+    mockConnectedPair();
+    let release: (things: ThingNightPoints[]) => void = () => {};
+    vi.mocked(listThingNightPoints).mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    renderWithQuery(<AtlasView />);
+    // The graph is in; the things are not, so the map is still loading.
+    await waitFor(() => expect(mockGetKnowledgeGraph).toHaveBeenCalled());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    expect(capturedSigmaInstances).toHaveLength(0);
+    // No thing has points: the model is unchanged, and the map still mounts.
+    await act(async () => { release([]); });
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
   });
 
   it("picks a thing found by search and offers its three zoom stops (UX-CHAT-5)", async () => {
