@@ -1288,7 +1288,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
           bodies.push({ left: at.x - at.r, right: at.x + at.r, top: at.y - at.r, bottom: at.y + at.r });
         });
       }
-      const hits = drawNightMarks(ctx, marks, paletteRef.current, labelBoxes, bodies);
+      const hits = drawNightMarks(ctx, marks, paletteRef.current, labelBoxes, bodies, selectedRef.current);
       frameHitsRef.current = hits;
       // Where the frames moved, paint the labels once more against them;
       // twice at most in a row, so the two can never chase each other.

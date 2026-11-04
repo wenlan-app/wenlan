@@ -502,6 +502,21 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
     expect(placeFrameTitles(row, measure, [{ left: -1000, right: 1000, top: -1000, bottom: 1000 }])).toEqual([]);
   });
 
+  it("always shows the picked thing's title, and tries the frame's right edge before giving up", () => {
+    const frame = (thing: string, title: string, left: number, top: number, right: number, bottom: number) => ({ thing, title, left, top, right, bottom, dim: false });
+    const wide = frame("thing:w", "Merge queue", 0, 100, 300, 160);
+    // A name over the frame's left corners: the title moves to the right edge.
+    const leftNames = [{ left: -10, right: 60, top: 70, bottom: 100 }, { left: -10, right: 60, top: 160, bottom: 190 }];
+    const [right] = placeFrameTitles([wide], measure, [...leftNames]);
+    expect(right!.box.right).toBeLessThanOrEqual(301 + 3);
+    expect(right!.box.left).toBeGreaterThan(60);
+    // Picked, with no room anywhere: placed anyway, and first.
+    const full = [{ left: -1000, right: 1000, top: -1000, bottom: 1000 }];
+    const picked = placeFrameTitles([frame("thing:a", "Other", 0, 300, 100, 340), wide], measure, [...full], "thing:w");
+    expect(picked.map((t) => t.thing)).toEqual(["thing:w"]);
+    expect(picked[0]!.baseline).toBe(96);
+  });
+
   it("picks a thing from a click on its frame or title, the smaller frame where two overlap", () => {
     const hits = [
       { thing: "thing:big", left: 0, top: 0, right: 300, bottom: 300 },

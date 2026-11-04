@@ -310,32 +310,43 @@ export function encloseSentences<F extends ThingFrame>(frames: readonly F[], pla
   });
 }
 
-/** Where each frame's title goes: above the frame, else below it, at most
- *  TITLE_MAX_PX (or the frame's width) long and cut at a word; left out
- *  where both spots would cover a name, a sentence, another title or
- *  another frame's border. `occupied` is read and extended. */
+/** Where each frame's title goes: above the frame, else below it, each
+ *  flush with the frame's left edge, else its right; at most TITLE_MAX_PX
+ *  (or the frame's width) long and cut at a word. A title is left out where
+ *  every spot would cover a name, a sentence, another title or another
+ *  frame's border, except the picked thing's: it is placed first and always
+ *  gets one, so what is picked can be read. `occupied` is read and extended. */
 export function placeFrameTitles(
   frames: readonly ThingFrame[],
   measure: Measure,
   occupied: Box[] = [],
+  picked: string | null = null,
 ): { thing: string; text: string; x: number; baseline: number; box: Box }[] {
   const out: { thing: string; text: string; x: number; baseline: number; box: Box }[] = [];
-  for (const frame of frames) {
+  const ordered = picked === null ? frames : [...frames.filter((frame) => frame.thing === picked), ...frames.filter((frame) => frame.thing !== picked)];
+  for (const frame of ordered) {
     if (!frame.title) continue;
     const text = cutToFit(measure, frame.title, Math.max(TITLE_MAX_PX, frame.right - frame.left));
     const width = measure(text);
-    const x = frame.left + 2;
     // Another frame's border counts as ink; its own does not, nor the
     // inside of a frame this one sits in.
     const borders = frames.filter((other) => other !== frame);
     const crosses = (box: Box, other: Box) =>
       overlapping(box, other) && !(box.left > other.left && box.right < other.right && box.top > other.top && box.bottom < other.bottom);
-    const spot = [frame.top - 4, frame.bottom + TITLE_LINE]
-      .map((baseline) => ({ baseline, box: { left: x - 3, right: x + width + 3, top: baseline - TITLE_LINE + 2, bottom: baseline + 3 } }))
-      .find(({ box }) => !occupied.some((other) => overlapping(other, box)) && !borders.some((other) => crosses(box, other)));
+    const xs = [frame.left + 2, frame.right - 2 - width];
+    const spots = [frame.top - 4, frame.bottom + TITLE_LINE].flatMap((baseline) =>
+      (xs[1]! > xs[0]! + 0.5 ? xs : [xs[0]!]).map((x) => ({
+        x,
+        baseline,
+        box: { left: x - 3, right: x + width + 3, top: baseline - TITLE_LINE + 2, bottom: baseline + 3 },
+      })),
+    );
+    const spot =
+      spots.find(({ box }) => !occupied.some((other) => overlapping(other, box)) && !borders.some((other) => crosses(box, other))) ??
+      (frame.thing === picked ? spots[0] : undefined);
     if (!spot) continue;
     occupied.push(spot.box);
-    out.push({ thing: frame.thing, text, x, baseline: spot.baseline, box: spot.box });
+    out.push({ thing: frame.thing, text, x: spot.x, baseline: spot.baseline, box: spot.box });
   }
   return out;
 }
@@ -354,6 +365,8 @@ export function drawNightMarks(
   palette: GraphPalette,
   occupied: Box[] = [],
   bodies: readonly Box[] = [],
+  /** The picked thing, whose title always shows (placeFrameTitles). */
+  picked: string | null = null,
 ): FrameHit[] {
   const hits: FrameHit[] = [];
   if (marks.frames.length === 0) return hits;
@@ -386,7 +399,7 @@ export function drawNightMarks(
   ctx.strokeStyle = palette.surface;
   ctx.fillStyle = palette.label;
   const dimOf = new Map(frames.map((frame) => [frame.thing, frame.dim]));
-  for (const title of placeFrameTitles(frames, (text) => ctx.measureText(text).width, occupied)) {
+  for (const title of placeFrameTitles(frames, (text) => ctx.measureText(text).width, occupied, picked)) {
     ctx.globalAlpha = dimOf.get(title.thing) ? 0.3 : 1;
     hits.push({ thing: title.thing, ...title.box });
     ctx.strokeText(title.text, title.x, title.baseline);
