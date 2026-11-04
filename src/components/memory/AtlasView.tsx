@@ -494,12 +494,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
 
   // Region count for the toolbar count line — membership only, so it agrees
   // with the regions the cartography scene actually names without needing
-  // node positions. Counted over the DRAWN nodes for the same reason:
-  // communities come from the full model, but a hidden small group's
-  // community is not on the map.
+  // node positions. Counted over the nodes on the map at rest for the same
+  // reason: communities come from the full model, but a small group's
+  // community is out of sight until zoomed in.
   const regionCount = useMemo(() => {
     const groups = new Map<string, GraphNode[]>();
     for (const node of filteredModel.nodes) {
+      if (tucked.has(node.id)) continue;
       const community = communities.get(node.id);
       if (community === undefined) continue;
       const list = groups.get(community);
@@ -511,7 +512,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       if (members.length >= MIN_REGION_SIZE) count += 1;
     }
     return count;
-  }, [filteredModel, communities]);
+  }, [filteredModel, communities, tucked]);
 
   // Toolbar search (artifact screen 01): type → listbox of entity names,
   // Enter/click → camera fly + the same emphasis hover applies.
@@ -1747,10 +1748,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     );
   }
 
-  // Counts describe what is actually ON THE MAP: layer on, and connected to
-  // something. What the degree-0 filter took out is reported by its own chip,
-  // and a layer that is off contributes nothing rather than a zero.
-  const drawn = filteredModel.nodes;
+  // Counts describe what is ON THE MAP at rest: layer on, and not tucked
+  // away in a small group until zoomed in. A layer that is off contributes
+  // nothing rather than a zero.
+  const drawn = filteredModel.nodes.filter((node) => !tucked.has(node.id));
   const pageCount = drawn.filter((node) => node.kind === "page").length;
   const memoryCount = drawn.filter((node) => node.kind === "memory").length;
   const entityCount = drawn.filter((node) => node.kind === "entity").length;

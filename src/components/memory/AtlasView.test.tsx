@@ -1437,13 +1437,15 @@ describe("AtlasView", () => {
     }
   });
 
-  it("counts the small groups' topics and regions with the rest of the map", async () => {
+  it("counts what is on the map at rest: a small group adds no topics or regions", async () => {
     mockStarWithSmallStar();
 
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
 
-    expect(screen.getByText("9 topics · 2 regions")).toBeInTheDocument();
+    // The small star is its own community in the full model, but it is out
+    // of sight until zoomed in, so it is not counted.
+    expect(screen.getByText("5 topics · 1 region")).toBeInTheDocument();
   });
 
   it("mounts community areas below sigma and names above it, and removes both on unmount", async () => {
@@ -1773,7 +1775,7 @@ describe("AtlasView", () => {
       screen.getAllByRole("option").map((o) => o.textContent),
     ).toEqual(["All spaces", "personal", "wenlan-dev"]);
     // The isolate is in "personal": scoping to wenlan-dev takes it off the map.
-    expect(screen.getByText("6 topics · 1 region")).toBeInTheDocument();
+    expect(screen.getByText("5 topics · 1 region")).toBeInTheDocument();
     expect(latestGraph().hasNode("e4")).toBe(true);
 
     fireEvent.click(screen.getByRole("option", { name: "wenlan-dev" }));
@@ -1782,7 +1784,7 @@ describe("AtlasView", () => {
 
     fireEvent.click(select);
     fireEvent.click(screen.getByRole("option", { name: "All spaces" }));
-    expect(await screen.findByText("6 topics · 1 region")).toBeInTheDocument();
+    await waitFor(() => expect(latestGraph().hasNode("e4")).toBe(true));
   });
 
   it("hides the Space selector when no entity carries a space", async () => {
