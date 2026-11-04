@@ -299,6 +299,15 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
         ", 'memory', 'a note chunk', 'obsidian'",
     )
     .await;
+    // A document of a folder still connected: kept as well.
+    memory_row(
+        &db,
+        "notes::a.md",
+        0,
+        ", source_agent",
+        ", 'memory', 'a connected chunk', 'folder'",
+    )
+    .await;
     memory_row(&db, "page_derived", 0, "", ", 'page', 'from a page'").await;
     // An episode shares its parent's id and is not part of its text.
     sql(
@@ -365,7 +374,20 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     let done = export_memories(&db, &stems, &dirs, &mut manifest)
         .await
         .unwrap();
-    assert_eq!((done.memories, done.originals), (4, 2));
+    assert_eq!((done.memories, done.originals), (4, 4));
+    // A document read from a folder is kept as written.
+    let kept = crate::store::format::original::parse(&read(
+        &dirs,
+        "backstage/originals/folder/mem_doc.md",
+    ))
+    .unwrap();
+    assert_eq!(kept.vendor, "folder");
+    assert_eq!(kept.messages[0].role, "document");
+    assert_eq!(kept.messages[0].text, "a note chunk");
+    assert_eq!(kept.other["agent"], "obsidian");
+    assert!(done
+        .keys
+        .contains(&("memory".to_string(), "notes::a.md".to_string())));
     let clip = memory::parse(&read(&dirs, "backstage/memories/undated/clipboard_1.md")).unwrap();
     assert_eq!(clip.text, "copied text");
     assert_eq!(clip.other["source"], "clipboard");
@@ -438,7 +460,6 @@ async fn each_memory_becomes_one_file_with_what_someone_stated() {
     assert_eq!(
         skipped,
         [
-            ("document chunks", 1),
             ("memories with source episode", 1),
             ("memories with source page", 1)
         ]

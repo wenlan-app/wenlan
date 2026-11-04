@@ -570,8 +570,8 @@ pub struct DistillRequest {
     #[serde(default, alias = "page_id")]
     pub target: Option<String>,
 
-    /// When true, clears `user_edited` on the resolved page before recompile.
-    /// Used by `/distill rebuild <page>` to opt into wiping user prose.
+    /// Explicit single-page rebuild used internally by steep. Protection is
+    /// retained during generation; authored content and review locks stay gated.
     /// Only valid when target resolves to a single page; otherwise returns a hint.
     /// Requires daemon LLM.
     #[serde(default)]

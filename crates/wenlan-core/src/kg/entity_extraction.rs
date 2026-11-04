@@ -94,6 +94,7 @@ pub async fn extract_entities_for_content(
             let to_id = entity_cache.get(&rel.to.to_lowercase()).cloned();
             if let (Some(from), Some(to)) = (from_id, to_id) {
                 let req = wenlan_types::requests::CreateRelationRequest {
+                    preserve_existing: false,
                     from_entity: from,
                     to_entity: to,
                     relation_type: rel.relation_type.clone(),
@@ -236,6 +237,7 @@ pub async fn commit_kg(
             let to_id = entity_cache.get(&rel.to.to_lowercase()).cloned();
             if let (Some(from), Some(to)) = (from_id, to_id) {
                 let req = wenlan_types::requests::CreateRelationRequest {
+                    preserve_existing: false,
                     from_entity: from,
                     to_entity: to,
                     relation_type: rel.relation_type.clone(),

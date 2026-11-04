@@ -19,9 +19,11 @@ pub(crate) const FOREIGN_KEY: &str = "foreign key: ";
 const WRITTEN_WITHOUT_TRIGGERS: &[&str] = &["edges"];
 
 impl MemoryDB {
-    /// After a restore: works out each page's links (`page_links`, what
-    /// backlinks read) again from its text, as a save does. The rebuild
-    /// writes pages as stored, and `page_links` is not in the files.
+    /// After a restore: works out each page's links to pages not written
+    /// yet (`page_links`, which is not in the files) again from its text.
+    /// A link that has a target is an edge, and the edges come back from
+    /// the files as stored: resolving them again by title could send a
+    /// link to another page of the same name, so they are left alone.
     /// Returns how many pages were done; a page that fails is logged and
     /// skipped.
     pub async fn rebuild_page_links(&self) -> Result<usize, WenlanError> {
@@ -42,12 +44,64 @@ impl MemoryDB {
         };
         let mut done = 0;
         for (id, content) in pages {
-            match self.refresh_page_wikilinks(&id, &content).await {
+            match self.rebuild_unwritten_links(&id, &content).await {
                 Ok(()) => done += 1,
                 Err(error) => log::warn!("[restore] links of page {id} not worked out: {error}"),
             }
         }
         Ok(done)
+    }
+
+    /// One page's links that have no stored edge, written as `page_links`
+    /// rows with no target, as a save left them: the next resolve pass
+    /// gives each a target once its page exists.
+    async fn rebuild_unwritten_links(
+        &self,
+        page_id: &str,
+        content: &str,
+    ) -> Result<(), WenlanError> {
+        let labels = crate::synthesis::wikilinks::extract_wikilinks(content);
+        if labels.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().await;
+        let fail = |e: libsql::Error| WenlanError::VectorDb(format!("rebuild page links: {e}"));
+        let mut stored = std::collections::HashSet::new();
+        let mut rows = conn
+            .query(
+                "SELECT json_extract(payload, '$.label') FROM edges \
+                 WHERE src_id = ?1 AND src_kind = 'page' AND edge_type = 'links' \
+                   AND valid_until IS NULL AND json_valid(payload)",
+                [page_id],
+            )
+            .await
+            .map_err(fail)?;
+        while let Some(row) = rows.next().await.map_err(fail)? {
+            if let Some(label) = row.get::<Option<String>>(0).map_err(fail)? {
+                stored.insert(Self::page_title_key(&label));
+            }
+        }
+        drop(rows);
+        conn.execute(
+            "DELETE FROM page_links WHERE source_page_id = ?1",
+            [page_id],
+        )
+        .await
+        .map_err(fail)?;
+        for label in labels {
+            let key = Self::page_title_key(&label);
+            if stored.contains(&key) {
+                continue;
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO page_links (source_page_id, target_page_id, label_key, label) \
+                 VALUES (?1, NULL, ?2, ?3)",
+                libsql::params![page_id, key, label],
+            )
+            .await
+            .map_err(fail)?;
+        }
+        Ok(())
     }
 
     /// Replaces every row of `table` with `rows`, each holding a value for

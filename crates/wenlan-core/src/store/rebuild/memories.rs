@@ -47,6 +47,8 @@ const COLUMNS: &[&str] = &[
     "retrieval_cue",
     "chunk_type",
     "authored_content",
+    "stability",
+    "summary",
 ];
 
 /// What the rebuild wrote.
@@ -180,10 +182,73 @@ struct Decisions {
     cue: Option<String>,
     /// The text is what the person typed: it is also `authored_content`.
     typed: bool,
+    /// Each chunk's row id as stored, when not the rebuild's own.
+    rows: Vec<String>,
+    /// Each chunk's summary.
+    summaries: Vec<Option<String>>,
+}
+
+/// What enrichment worked out, and the row ids, kept in a file's other
+/// keys; see `store::export::memories::memory_file`.
+struct Kept {
+    kind: Option<String>,
+    fields: Option<String>,
+    source_text_is_text: bool,
+    rows: Vec<String>,
+    summaries: Vec<Option<String>>,
+}
+
+fn kept_of(other: &mut serde_yaml::Mapping) -> Kept {
+    let list = |value: Option<serde_yaml::Value>| -> Vec<Option<String>> {
+        value
+            .and_then(|value| match value {
+                serde_yaml::Value::Sequence(items) => Some(items),
+                _ => None,
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| item.as_str().map(str::to_string))
+            .collect()
+    };
+    Kept {
+        kind: text_key(other, "guessed_kind"),
+        fields: other
+            .shift_remove("guessed_fields")
+            .as_ref()
+            .map(fields_text),
+        source_text_is_text: other
+            .shift_remove("source_text_is_text")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false),
+        rows: list(other.shift_remove("rows"))
+            .into_iter()
+            .flatten()
+            .collect(),
+        summaries: list(other.shift_remove("summaries")),
+    }
+}
+
+impl Decisions {
+    /// The row id of chunk `index` of `source_id`.
+    fn row_id(&self, source_id: &str, index: usize) -> String {
+        self.rows
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| format!("{source_id}#{index}"))
+    }
+
+    fn summary(&self, index: usize) -> Option<String> {
+        self.summaries.get(index).cloned().flatten()
+    }
 }
 
 fn memory_row(mut file: MemoryFile, problems: &mut Vec<String>) -> Vec<libsql::Value> {
     let id = file.id.clone();
+    let kept = kept_of(&mut file.other);
+    let source_text = file
+        .source_text
+        .take()
+        .or_else(|| kept.source_text_is_text.then(|| file.text.clone()));
     let mut time = |text: Option<String>, what: &str| time_of(text, &id, what, problems);
     let created = time(file.created.take(), "created");
     let event_date = time(file.event_date.take(), "event_date");
@@ -191,7 +256,7 @@ fn memory_row(mut file: MemoryFile, problems: &mut Vec<String>) -> Vec<libsql::V
     let modified = time(text_key(&mut file.other, "modified"), "modified");
     let decisions = Decisions {
         source: text_key(&mut file.other, "source").unwrap_or_else(|| "memory".to_string()),
-        kind: file.kind,
+        kind: file.kind.or(kept.kind),
         space: file.space,
         agent: file.agent,
         created,
@@ -212,8 +277,8 @@ fn memory_row(mut file: MemoryFile, problems: &mut Vec<String>) -> Vec<libsql::V
             .shift_remove("pending")
             .and_then(|value| value.as_bool())
             .unwrap_or(false),
-        fields: file.fields.as_ref().map(fields_text),
-        source_text: file.source_text,
+        fields: file.fields.as_ref().map(fields_text).or(kept.fields),
+        source_text,
         modified,
         cue: text_key(&mut file.other, "cue"),
         typed: file
@@ -221,6 +286,8 @@ fn memory_row(mut file: MemoryFile, problems: &mut Vec<String>) -> Vec<libsql::V
             .shift_remove("typed")
             .and_then(|value| value.as_bool())
             .unwrap_or(false),
+        rows: kept.rows,
+        summaries: kept.summaries,
     };
     row_of(
         &file.id, 0, file.text, file.title, file.url, &decisions, None,
@@ -230,6 +297,7 @@ fn memory_row(mut file: MemoryFile, problems: &mut Vec<String>) -> Vec<libsql::V
 fn original_rows(mut file: OriginalFile, problems: &mut Vec<String>) -> Vec<Vec<libsql::Value>> {
     let other = &mut file.other;
     let id = file.id.clone();
+    let kept = kept_of(other);
     let mut time = |text: Option<String>, what: &str| time_of(text, &id, what, problems);
     let created = time(text_key(other, "created"), "created");
     let event_date = time(text_key(other, "event_date"), "event_date");
@@ -243,7 +311,7 @@ fn original_rows(mut file: OriginalFile, problems: &mut Vec<String>) -> Vec<Vec<
     };
     let decisions = Decisions {
         source: text_key(other, "source").unwrap_or_else(|| "memory".to_string()),
-        kind: text_key(other, "kind"),
+        kind: text_key(other, "kind").or(kept.kind),
         space: text_key(other, "space"),
         agent: text_key(other, "agent"),
         created,
@@ -260,11 +328,25 @@ fn original_rows(mut file: OriginalFile, problems: &mut Vec<String>) -> Vec<Vec<
         entity: text_key(other, "entity"),
         recap: flag(other, "recap"),
         pending: flag(other, "pending"),
-        fields: other.shift_remove("fields").as_ref().map(fields_text),
-        source_text: text_key(other, "source_text"),
+        fields: other
+            .shift_remove("fields")
+            .as_ref()
+            .map(fields_text)
+            .or(kept.fields),
+        source_text: text_key(other, "source_text").or_else(|| {
+            kept.source_text_is_text.then(|| {
+                file.messages
+                    .iter()
+                    .map(|message| message.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        }),
         modified,
         cue: text_key(other, "cue"),
         typed: flag(other, "typed"),
+        rows: kept.rows,
+        summaries: kept.summaries,
     };
     file.messages
         .into_iter()
@@ -273,7 +355,7 @@ fn original_rows(mut file: OriginalFile, problems: &mut Vec<String>) -> Vec<Vec<
             let at = message.at.as_deref().and_then(seconds_of);
             row_of(
                 &file.id,
-                index as i64,
+                index,
                 message.text,
                 file.title.clone(),
                 file.url.clone(),
@@ -286,7 +368,7 @@ fn original_rows(mut file: OriginalFile, problems: &mut Vec<String>) -> Vec<Vec<
 
 fn row_of(
     source_id: &str,
-    chunk: i64,
+    chunk: usize,
     content: String,
     title: Option<String>,
     url: Option<String>,
@@ -306,11 +388,11 @@ fn row_of(
         libsql::Value::Null
     };
     vec![
-        // Row ids are not part of a memory; a stable one per chunk.
-        libsql::Value::Text(format!("{source_id}#{chunk}")),
+        // The row id as stored, or a stable one per chunk.
+        libsql::Value::Text(d.row_id(source_id, chunk)),
         libsql::Value::Text(d.source.clone()),
         libsql::Value::Text(source_id.to_string()),
-        libsql::Value::Integer(chunk),
+        libsql::Value::Integer(chunk as i64),
         libsql::Value::Text(content),
         libsql::Value::Text(title.unwrap_or_default()),
         text(&url),
@@ -341,6 +423,18 @@ fn row_of(
         text(&d.cue),
         libsql::Value::Text("text".to_string()),
         authored,
+        // A memory the person confirmed is `confirmed` in its stability too,
+        // as every confirm writes it. Left at the default `new`, the nightly
+        // promotion would turn it into an unconfirmed `learned` memory.
+        libsql::Value::Text(
+            if d.confirmed && d.source == "memory" {
+                "confirmed"
+            } else {
+                "new"
+            }
+            .to_string(),
+        ),
+        text(&d.summary(chunk)),
     ]
 }
 

@@ -6,8 +6,8 @@ Wenlan is local-first. Memories, pages, and session notes live on your machine u
 
 ## What the plugin contains
 
-- **Skills**: one front door, `/wenlan`, plus `/brief`, `/capture`, `/recall`, and `/handoff`. Setup, notes, distill, wiki, lint, curate, and forget are reached by saying them after `/wenlan` and stay out of the slash menu. Each skill talks to the local daemon over HTTP on `127.0.0.1:7878`.
-- **One local MCP server** (`wenlan`), started by `plugin/scripts/wenlan-mcp-runner.sh`. It exposes memory tools (capture, recall, brief, distill, and friends) to Claude Code and Cowork. Claude chat on the web ignores local MCP servers.
+- **Skills**: one front door, `/wenlan`, plus `/brief`, `/capture`, `/recall`, and `/handoff`. Setup, page lookup, wiki, lint, curate, and forget are reached by saying them after `/wenlan` and stay out of the slash menu. Knowledge organization and maintenance share the Steep (沉澱) workflow. Each skill talks to the local daemon over HTTP on `127.0.0.1:7878`.
+- **One local MCP server** (`wenlan`), started by `plugin/scripts/wenlan-mcp-runner.sh`. It exposes memory tools, including the internal `distill` operation, to Claude Code and Cowork. User-directed knowledge organization and maintenance use the Steep Skill as their guided workflow. Claude chat on the web ignores local MCP servers.
 - **Two `SessionStart` hooks.** `plugin/hooks/session-context.sh` reads the session id Claude Code passes it, exports `WENLAN_SESSION=claude-code:<id>` for the commands Claude runs, and prints one line so Claude can pass that session when it saves a memory, note, or handoff; Wenlan then shows which conversation a memory or note came from. It makes no network call. `plugin/hooks/check-daemon.sh` probes the local daemon, tells a running daemon that Claude Code is connected (the same `POST /api/agents` the app sends when you connect a tool there, so Claude's first recall already sees your pages; a tool you changed or turned off in Connections stays as it is), and prints at most a few lines: a reminder if the daemon is not running, a count of handoff notes waiting to sync (from the local `wenlan outbox status` command, parsed with `python3`), and a notice if the daemon and plugin versions have drifted apart. It never blocks a session and never installs anything.
 - **A `UserPromptSubmit` hook and a `Stop` hook (Beta, off until you turn the in-chat check on).** `plugin/hooks/prompt-context.sh` sends your prompt to the local daemon (`POST /api/check/context`) and hands Claude the earlier decisions that bear on it, each with its date and a `wenlan://` link. `plugin/hooks/stop-check.sh` sends Claude's latest reply to the local daemon (`POST /api/check`); when the reply goes against something you decided earlier, Claude Code shows you a reminder with the date and a link to where it was decided (at most five a day). Both wait at most one second, parse JSON with `python3`, and print nothing when the check is off, the daemon is not running, or nothing applies.
 
@@ -37,7 +37,7 @@ Everything the plugin does is listed here so you can decide whether to install i
 | `UserPromptSubmit` and `Stop` hooks | When you turn the in-chat check on, send the prompt or the latest reply to the local daemon to check it against your earlier decisions | `127.0.0.1:7878` only |
 | Local daemon, first start | Downloads the search embedding model (about 210 MB, `Qdrant/bge-base-en-v1.5-onnx-Q`) once | `huggingface.co`. No memory content is sent. If a Hugging Face token is already saved on the machine, the download library attaches it |
 
-No memory content, prompts, or file contents leave your machine through this plugin. The daemon's full privacy notes are in [docs/PRIVACY.md](../docs/PRIVACY.md). Steep, the model-backed background enrichment (classification, entity extraction, page synthesis, reranking), is opt-in and configured in the daemon with `wenlan steep configure`, not in the plugin.
+No memory content, prompts, or file contents leave your machine through this plugin. The daemon's full privacy notes are in [docs/PRIVACY.md](../docs/PRIVACY.md). Automatic Steep’s model-backed background work is opt-in and configured in the daemon with `wenlan steep configure`. On-demand Steep uses the connected AI tool; user-directed reorganization runs only when requested.
 
 The MCP runner picks a binary in this order: the `WENLAN_MCP_DEV_BIN` environment variable, a local override file next to the script, the installed `~/.wenlan/bin/wenlan-mcp`, then the pinned npm package. The runner reads `$HOME` to find the installed binary, which is why a reviewer may hold the local MCP command for a manual look.
 
@@ -56,17 +56,17 @@ Browse with any editor, or symlink `~/.wenlan/pages/` into an Obsidian vault for
 
 ## Local memory and agent-side model phases
 
-By default setup configures local memory: no model download beyond the embedder, no API key, no prompts. The daemon stores, embeds, dedupes, and serves hybrid search. Where the daemon would normally call a model, the skill asks Claude itself to do the equivalent step and posts the result back over HTTP:
+By default setup configures local memory: no model download beyond the embedder, no API key, no prompts. The daemon stores, embeds, dedupes, and serves hybrid search. When you request on-demand work, the connected AI reads the relevant Skill procedure and uses MCP tools; it may use a small AI helper for a bounded enrichment or judgment step. The daemon owns queues, claim tokens, guarded writes, and the single-writer path. Automatic work instead uses the models configured for daemon background jobs; it is not dispatched to arbitrary connected AI tools:
 
 | Phase | Model-equipped daemon | Local memory plus skill |
 |---|---|---|
 | Pick `memory_type` | daemon classifier | `/capture` picks one of 6 types from content |
 | Extract entities and relations | daemon `extract.rs` | `/capture` posts to `/api/memory/entities` and `/api/memory/relations` |
-| Synthesize a page | daemon distill cycles | `/wenlan distill` reads the cluster, writes the page, posts to `/api/pages` |
-| Steep out of date pages | automatic steep | `/wenlan steep` claims each stale page, rewrites it from its sources, and commits through `/api/steep/commit` |
+| Synthesize or refresh a page | daemon distill cycles | Steep handles the requested page work and posts through the page API; distillation is an internal operation, not a separate workflow |
+| Maintain knowledge around a goal | Requires an explicit user request | `/wenlan steep` follows the request and updates the relevant memories, pages, folders, topics, or relationships |
 | Expand a query or rerank hits | daemon expansion and rerank | `/recall` rewrites the query before search and reorders hits after |
 
-The daemon stays the single writer and storage owner. Claude does the thinking.
+The daemon stays the single writer and storage owner. The connected AI handles on-demand reasoning. In automatic mode, the daemon processes eligible background work with its configured models; it does not invent a goal-driven reorganization request.
 
 ## Daily commands
 
@@ -80,8 +80,7 @@ The daemon stays the single writer and storage owner. Claude does the thinking.
 - `/handoff` - end-of-session debrief: captures, session log, Brief update
 - `/wenlan setup` - set up or repair Wenlan (installs the local runtime)
 - `/wenlan lint [deep|repair] [scope]` - diagnose, or resolve all findings safely
-- `/wenlan distill [t]` - advanced: synthesize or refresh source-backed pages for the active Space
-- `/wenlan steep [space:<name>]` - write pages from new material and bring out of date ones up to date with this AI tool (steep on demand)
+- `/wenlan steep [request] [space:<name>]` - prepare new material, update pages, or arrange existing knowledge around your goal
 - `/wenlan wiki [space:<name>]` - read this repository and write a wiki about it, sized to the repository, each page tied to the code lines it relies on
 - `/wenlan pages [q]` - browse and open distilled pages
 - `/wenlan curate <surface>` - deep audit of captures, revisions or refinements

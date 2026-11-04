@@ -101,6 +101,7 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/palace/layout"),
     ];
     const SCOPED: &[(Method, &str)] = &[
+        (Method::Post, "/api/memory/relations/preserve"),
         (Method::Post, "/api/check"),
         (Method::Post, "/api/check/context"),
         (Method::Get, "/api/knowledge/folders"),

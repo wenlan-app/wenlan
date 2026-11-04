@@ -42,8 +42,11 @@ to the pinned `npx` version in
 
 The skills under `skills/` are generated. Edit the Claude skill of the same
 name in `plugin/skills/<skill>/SKILL.md`. Workflows hidden from the Claude menu
-(setup, distill, pages, lint, curate, forget) are generated as reference files
-under `skills/wenlan/references/`, because Codex cannot hide a skill; put anything Codex does differently
+(setup, steep, pages, lint, curate, forget, wiki) are generated as reference files
+under `skills/wenlan/references/`, because Codex cannot hide a skill. Steep loads
+only the needed procedure from `references/steep/`; the bare front-door status
+loads `references/status.md`. Supporting files are generated from the canonical
+skill’s `references/` directory. Put anything Codex does differently
 (a dropped section, a replaced paragraph, the `agents/openai.yaml` text) in
 [`overlay.json`](overlay.json); then run:
 

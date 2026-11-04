@@ -14,6 +14,9 @@ import { openCanvas } from "./helpers/pageCanvas";
 async function dragConnectorToEmptySpace(page: Page): Promise<void> {
   const handle = page.locator(".page-canvas-grow").first();
   await expect(handle).toBeVisible();
+  // Wait for the small connector to be stable and hit-testable before measuring
+  // its raw coordinates and starting the drag. Visibility alone does not do this.
+  await handle.hover();
   const from = await handle.boundingBox();
   if (!from) throw new Error("connector handle has no box");
   const startX = from.x + from.width / 2;

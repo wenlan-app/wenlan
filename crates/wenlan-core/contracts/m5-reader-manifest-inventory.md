@@ -633,6 +633,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/memory/reclassify/{source_id}` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/memory/rejections` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `POST` | `/api/memory/relations` | main | no | not_applicable | `none` | — | no prose fields |
+| `POST` | `/api/memory/relations/preserve` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/memory/revision/{id}/accept` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/memory/revision/{id}/dismiss` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/memory/search` | main | yes | automatic | `none` | `handle_search_memory` | SearchResult.content, SearchResult.content_hash, SearchResult.last |
@@ -830,6 +831,12 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 
 | Tool | Page-bearing | Class | Marker-shape | Adapter |
 |---|---|---|---|---|
+| `create_folder` | no | not_applicable | `none` | — |
+| `get_page_links` | yes | automatic | `none` | tool handler |
+| `list_entities` | no | not_applicable | `none` | — |
+| `list_folders` | yes | automatic | `none` | tool handler |
+| `move_page` | yes | automatic | `none` | tool handler |
+| `read_entity` | no | not_applicable | `none` | — |
 | `accept_refinement` | yes | automatic | `none` | tool handler |
 | `accept_revision` | yes | automatic | `none` | tool handler |
 | `attach_file` | yes | automatic | `none` | tool handler |
@@ -1103,7 +1110,7 @@ carrying the authority of agreement.
 | `core/db/repair_deterministic.rs::apply_deterministic_repair_cas` | `pub` | no | no | — | — |
 | `core/db/repair_page_rename.rs::page_on_connection` | `private` | no | no | — | — |
 | `core/db/repair_page_rename.rs::rename_page_title_cas_inner` | `pub(crate)` | no | no | — | — |
-| `core/db/scoped_entities.rs::get_entity_detail_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_get_entity_detail` | — |
+| `core/db/scoped_entities.rs::get_entity_detail_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_create_relation_preserving`, `server/entity_graph_routes.rs::handle_get_entity_detail` | — |
 | `core/db/scoped_entities.rs::get_knowledge_graph_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_get_knowledge_graph` | — |
 | `core/db/scoped_entities.rs::get_observations_for_entities_scoped` | `pub(super)` | no | no | — | — |
 | `core/db/scoped_entities.rs::list_entities_scoped` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_list_entities` | — |
@@ -1252,6 +1259,7 @@ carrying the authority of agreement.
 | `core/synthesis/wikilinks.rs::resolve_against_pages` | `pub` | no | no | — | `core/db.rs::find_unique_active_page_id_by_title_scoped` |
 | `server/cmd_backfill.rs::run` | `pub` | yes | no | — | `core/db.rs::find_stale_archived_pages` |
 | `server/entity_graph_routes.rs::handle_create_entity` | `pub` | no | no | — | `core/db.rs::get_entity_detail` |
+| `server/entity_graph_routes.rs::handle_create_relation_preserving` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_entity_detail_scoped` |
 | `server/entity_graph_routes.rs::handle_get_entity_detail` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_entity_detail_scoped` |
 | `server/entity_graph_routes.rs::handle_get_knowledge_graph` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_knowledge_graph_scoped` |
 | `server/entity_graph_routes.rs::handle_list_entities` | `pub` | no | no | — | `core/db/scoped_entities.rs::list_entities_scoped` |

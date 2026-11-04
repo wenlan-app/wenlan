@@ -60,7 +60,10 @@
       "name": "wenlan",
       "status": "shared_now",
       "codex_user_invocable": true,
-      "codex_openai_interface": true
+      "codex_openai_interface": true,
+      "supporting_references": [
+        "status.md"
+      ]
     },
     {
       "name": "brief",
@@ -112,11 +115,6 @@
       "codex_reference": "wenlan/references/forget.md"
     },
     {
-      "name": "distill",
-      "status": "hidden_routed",
-      "codex_reference": "wenlan/references/distill.md"
-    },
-    {
       "name": "wiki",
       "status": "hidden_routed",
       "codex_reference": "wenlan/references/wiki.md"
@@ -124,7 +122,13 @@
     {
       "name": "steep",
       "status": "hidden_routed",
-      "codex_reference": "wenlan/references/steep.md"
+      "codex_reference": "wenlan/references/steep.md",
+      "supporting_references": [
+        "new-material.md",
+        "refresh-pages.md",
+        "reshape-knowledge.md",
+        "rebuild-pages.md"
+      ]
     }
   ]
 }

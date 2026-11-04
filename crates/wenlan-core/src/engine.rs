@@ -54,6 +54,77 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// One generated token as text, with no characters lost.
+///
+/// `LlamaModel::token_to_piece` (llama-cpp-2 0.1.143) decodes into a `String`
+/// sized to the token's own byte count and ignores the decoder's
+/// `OutputFull`. When a CJK character is split across two tokens, the
+/// decoder holds the first bytes back, and the next token can then produce
+/// more text than its own byte count: the overflow was silently dropped
+/// (2026-08-07: a Chinese page lost the first character of 22 words, such
+/// as 目的 -> 的). This reads the raw bytes and decodes them into a buffer
+/// sized for the worst case, so held-back bytes always come out.
+fn token_text(
+    model: &LlamaCppModel,
+    token: llama_cpp_2::token::LlamaToken,
+    decoder: &mut encoding_rs::Decoder,
+) -> Result<String, llama_cpp_2::TokenToStringError> {
+    let bytes = match model.token_to_piece_bytes(token, 32, true, None) {
+        Err(llama_cpp_2::TokenToStringError::InsufficientBufferSpace(needed)) => {
+            model.token_to_piece_bytes(token, needed.unsigned_abs() as usize, true, None)
+        }
+        other => other,
+    }?;
+    Ok(decode_piece(decoder, &bytes))
+}
+
+/// Decode one token's bytes, keeping any incomplete character in `decoder`
+/// for the next token. The output buffer is sized with
+/// `max_utf8_buffer_length`, which counts the bytes the decoder is still
+/// holding, so the decode can never stop early on a full buffer.
+fn decode_piece(decoder: &mut encoding_rs::Decoder, bytes: &[u8]) -> String {
+    let capacity = decoder
+        .max_utf8_buffer_length(bytes.len())
+        .unwrap_or(bytes.len().saturating_mul(3).saturating_add(16));
+    let mut piece = String::with_capacity(capacity);
+    let (result, read, _) = decoder.decode_to_string(bytes, &mut piece, false);
+    debug_assert_eq!(result, encoding_rs::CoderResult::InputEmpty);
+    debug_assert_eq!(read, bytes.len());
+    piece
+}
+
+/// Fit a tokenized chat prompt into `budget` tokens.
+///
+/// A chat prompt ends with the turn markers that tell the model to answer
+/// (`<|im_start|>assistant`, the empty think block) right after the newest
+/// input. Cutting the end, as this code used to, removed those markers and
+/// the newest input, so the model carried on writing the user's text instead
+/// of answering: a page rewrite then came back starting mid-sentence and a
+/// fraction of its old length (2026-11-04, "Origin: Hybrid Search Memory
+/// System", 1964 -> 209 chars). This keeps the start (the instructions and
+/// the current page) and the end (the newest input and the answer markers)
+/// and drops tokens from the middle.
+pub(crate) fn fit_prompt_tokens<T: Copy>(tokens: Vec<T>, budget: usize) -> Vec<T> {
+    if tokens.len() <= budget {
+        return tokens;
+    }
+    let tail = (budget / 3).min(PROMPT_TAIL_TOKENS);
+    let head = budget - tail;
+    log::warn!(
+        "[llm_engine] prompt has {} tokens, over the {} budget; dropping {} from the middle",
+        tokens.len(),
+        budget,
+        tokens.len() - budget
+    );
+    let mut kept = Vec::with_capacity(budget);
+    kept.extend_from_slice(&tokens[..head]);
+    kept.extend_from_slice(&tokens[tokens.len() - tail..]);
+    kept
+}
+
+/// How many tokens at the end of an over-long prompt are always kept.
+const PROMPT_TAIL_TOKENS: usize = 768;
+
 /// Maximum input chars sent to the LLM (truncated at word boundary).
 pub const MAX_INPUT_CHARS: usize = 20_000;
 /// Maximum tokens the LLM can generate per request.
@@ -753,11 +824,7 @@ impl LlmEngine {
             );
             return None;
         }
-        let tokens = if tokens.len() > max_prompt_tokens {
-            tokens[..max_prompt_tokens].to_vec()
-        } else {
-            tokens
-        };
+        let tokens = fit_prompt_tokens(tokens, max_prompt_tokens);
 
         let n_batch = tokens.len().max(512) as u32;
         let ctx_params = self.context_params(
@@ -797,8 +864,12 @@ impl LlmEngine {
 
         while n_cur < max_pos {
             if start.elapsed() > std::time::Duration::from_secs(30) {
-                log::warn!("[llm_engine] inference timeout");
-                break;
+                // A timed-out answer stops wherever the clock ran out, often
+                // mid-sentence; returning it let page growth save a cut-off
+                // rewrite (2026-11-04, v752 of a page). The continuous-batch
+                // path already treats a timeout as a failure.
+                log::warn!("[llm_engine] inference timeout; discarding partial output");
+                return None;
             }
 
             // sample() also accepts the token; accepting twice corrupts grammar state.
@@ -808,7 +879,7 @@ impl LlmEngine {
                 break;
             }
 
-            match self.model.token_to_piece(token, &mut decoder, true, None) {
+            match token_text(&self.model, token, &mut decoder) {
                 Ok(piece) => output.push_str(&piece),
                 Err(_) => break,
             }
@@ -944,11 +1015,7 @@ impl LlmEngine {
             );
             return None;
         }
-        let tokens = if tokens.len() > max_prompt_tokens {
-            tokens[..max_prompt_tokens].to_vec()
-        } else {
-            tokens
-        };
+        let tokens = fit_prompt_tokens(tokens, max_prompt_tokens);
 
         let mut batch = LlamaBatch::new(tokens.len(), 1);
         for (i, token) in tokens.iter().enumerate() {
@@ -976,10 +1043,11 @@ impl LlmEngine {
         while n_cur < max_pos {
             if start.elapsed() > std::time::Duration::from_secs(timeout_secs) {
                 log::warn!(
-                    "[llm_engine] persistent inference timeout at {}s",
-                    timeout_secs
+                    "[llm_engine] persistent inference timeout at {}s; discarding {} partial chars",
+                    timeout_secs,
+                    output.len()
                 );
-                break;
+                return None;
             }
 
             // sample() also accepts the token; accepting twice corrupts grammar state.
@@ -989,7 +1057,7 @@ impl LlmEngine {
                 break;
             }
 
-            match self.model.token_to_piece(token, &mut decoder, true, None) {
+            match token_text(&self.model, token, &mut decoder) {
                 Ok(piece) => output.push_str(&piece),
                 Err(e) => {
                     log::warn!("[llm_engine] persistent token decode failed: {e}");
@@ -1379,10 +1447,7 @@ impl LlmEngine {
                     if self.model.is_eog_token(token) {
                         true
                     } else {
-                        match self
-                            .model
-                            .token_to_piece(token, &mut st.decoder, true, None)
-                        {
+                        match token_text(&self.model, token, &mut st.decoder) {
                             Ok(piece) => {
                                 outputs[req].push_str(&piece);
                                 st.tokens_gen += 1;
@@ -1688,11 +1753,7 @@ impl LlmEngine {
             );
             return None;
         }
-        let tokens = if tokens.len() > max_prompt_tokens {
-            tokens[..max_prompt_tokens].to_vec()
-        } else {
-            tokens
-        };
+        let tokens = fit_prompt_tokens(tokens, max_prompt_tokens);
 
         let n_batch = tokens.len().max(512) as u32;
         let ctx_params = self.context_params(
@@ -1732,8 +1793,11 @@ impl LlmEngine {
 
         while n_cur < max_pos {
             if start.elapsed() > std::time::Duration::from_secs(timeout_secs) {
-                log::warn!("[llm_engine] raw inference timeout at {}s", timeout_secs);
-                break;
+                log::warn!(
+                    "[llm_engine] raw inference timeout at {}s; discarding partial output",
+                    timeout_secs
+                );
+                return None;
             }
 
             // sample() also accepts the token; accepting twice corrupts grammar state.
@@ -1743,7 +1807,7 @@ impl LlmEngine {
                 break;
             }
 
-            match self.model.token_to_piece(token, &mut decoder, true, None) {
+            match token_text(&self.model, token, &mut decoder) {
                 Ok(piece) => output.push_str(&piece),
                 Err(_) => break,
             }
@@ -1809,11 +1873,7 @@ impl LlmEngine {
 
         // Truncate if needed
         let max_prompt_tokens = CTX_SIZE as usize - MAX_OUTPUT_TOKENS as usize;
-        let tokens = if tokens.len() > max_prompt_tokens {
-            tokens[..max_prompt_tokens].to_vec()
-        } else {
-            tokens
-        };
+        let tokens = fit_prompt_tokens(tokens, max_prompt_tokens);
 
         // Create context
         let n_batch = tokens.len().max(512) as u32;
@@ -1855,8 +1915,8 @@ impl LlmEngine {
 
         while n_cur < MAX_OUTPUT_TOKENS {
             if start.elapsed() > INFERENCE_TIMEOUT {
-                log::warn!("[llm_engine] session inference timeout");
-                break;
+                log::warn!("[llm_engine] session inference timeout; discarding partial output");
+                return None;
             }
 
             // sample() already advances stateful samplers exactly once.
@@ -1866,7 +1926,7 @@ impl LlmEngine {
                 break;
             }
 
-            match self.model.token_to_piece(token, &mut decoder, true, None) {
+            match token_text(&self.model, token, &mut decoder) {
                 Ok(piece) => output.push_str(&piece),
                 Err(e) => {
                     log::warn!("[llm_engine] session token decode failed: {e}");
@@ -2190,6 +2250,49 @@ impl BackfillScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_over_long_prompt_keeps_its_end() {
+        let tokens: Vec<u32> = (0..10_000).collect();
+        let kept = fit_prompt_tokens(tokens.clone(), 3_000);
+        assert_eq!(kept.len(), 3_000);
+        assert_eq!(kept[0], 0, "the instructions stay");
+        assert_eq!(*kept.last().unwrap(), 9_999, "the answer markers stay");
+        assert_eq!(kept[3_000 - 768], 10_000 - 768);
+        assert_eq!(fit_prompt_tokens(tokens[..50].to_vec(), 3_000).len(), 50);
+        let small = fit_prompt_tokens(tokens, 300);
+        assert_eq!(small.len(), 300);
+        assert_eq!(*small.last().unwrap(), 9_999);
+    }
+
+    /// Tokens that split CJK characters must decode to the whole text. The
+    /// old `token_to_piece` lost the first character of 目的 when a token
+    /// finished one held-back character and carried a whole new one.
+    #[test]
+    fn split_characters_are_never_dropped() {
+        let text = "目的是同時保留原文，混合 English 與中文。";
+        let bytes = text.as_bytes();
+        for first in 1..bytes.len() {
+            for width in 1..=5 {
+                let mut decoder = encoding_rs::UTF_8.new_decoder();
+                let mut out = decode_piece(&mut decoder, &bytes[..first]);
+                for chunk in bytes[first..].chunks(width) {
+                    out.push_str(&decode_piece(&mut decoder, chunk));
+                }
+                assert_eq!(out, text, "split at {first}, then every {width} bytes");
+            }
+        }
+    }
+
+    /// The case from the damaged page: a token that ends 目 and holds all of
+    /// 的 yields six bytes from four.
+    #[test]
+    fn a_token_can_yield_more_text_than_its_own_bytes() {
+        let mut decoder = encoding_rs::UTF_8.new_decoder();
+        let bytes = "目的".as_bytes();
+        assert_eq!(decode_piece(&mut decoder, &bytes[..2]), "");
+        assert_eq!(decode_piece(&mut decoder, &bytes[2..]), "目的");
+    }
 
     #[test]
     fn inference_backend_plan_uses_cpu_when_gpu_offload_is_unavailable() {

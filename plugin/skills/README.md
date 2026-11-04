@@ -24,8 +24,7 @@ Skills must write `${CLAUDE_PLUGIN_ROOT}` with braces and no `:-` default: Claud
 | `/handoff` | end-of-session debrief: captures, session log, Brief update |
 | `/wenlan setup` | set up or repair Wenlan (installs the local runtime) |
 | `/wenlan lint [deep\|repair] [scope]` | diagnose, or resolve all findings safely |
-| `/wenlan distill [t]` | advanced: synthesize or refresh source-backed pages for the active Space |
-| `/wenlan steep [space:<name>]` | write pages from new material and bring out of date ones up to date with this AI tool (steep on demand) |
+| `/wenlan steep [request] [space:<name>]` | prepare new material, update pages, or arrange existing knowledge around your goal |
 | `/wenlan wiki [space:<name>]` | read this repository and write a wiki about it, sized to the repository, each page tied to the code lines it relies on |
 | `/wenlan pages [q]` | browse and open distilled pages |
 | `/wenlan curate <surface>` | deep audit of captures, revisions or refinements |

@@ -1112,17 +1112,28 @@ pub struct MissingPages {
 /// page), and the file has been gone since a pass at least
 /// [`MISSING_SETTLE_SECS`] before `now`. The first sighting is kept in
 /// `state.json`, so a pass that sees the file back clears it.
-pub fn note_missing_pages(path: &Path, now: i64) -> Result<MissingPages, WenlanError> {
+///
+/// Only records of pages in `known` (every page the database has) count,
+/// for what is gone and for how many pages there are: a record left from a
+/// page the database no longer has names nothing to archive, and hundreds
+/// of them would otherwise hold every real deletion.
+pub fn note_missing_pages(
+    path: &Path,
+    now: i64,
+    known: &std::collections::HashSet<String>,
+) -> Result<MissingPages, WenlanError> {
     KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
         let mut state = read_state_strict(&capabilities.wenlan)?;
         let mut gone = pages_without_their_file(&capabilities.root, &state);
+        gone.retain(|id| known.contains(id));
+        let recorded = state.pages.keys().filter(|id| known.contains(*id)).count();
         let mut unreadable = 0;
         if !gone.is_empty() {
             let (claims, unknown) = files_by_origin_id(&capabilities.root)?;
             gone.retain(|id| !claims.contains_key(id));
             unreadable = unknown;
         }
-        let held = gone.len() > MASS_MISSING_FLOOR && gone.len() * 2 > state.pages.len();
+        let held = gone.len() > MASS_MISSING_FLOOR && gone.len() * 2 > recorded;
         let before = state.missing_since.clone();
         if held {
             // Not a sighting: once the hold lifts, what is still gone waits

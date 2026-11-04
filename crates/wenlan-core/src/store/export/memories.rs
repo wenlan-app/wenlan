@@ -7,8 +7,12 @@
 //!   the app shows: a quick capture's `authored_content`, otherwise the
 //!   chunks joined with line ends, as `get_memory_detail` joins them.
 //! - `kind` and `fields` are written only when someone stated them
-//!   (`enrichment_origin`); a classified type or extracted fields are
-//!   recomputed by the rebuild.
+//!   (`enrichment_origin`). What enrichment worked out rides in other keys
+//!   (`guessed_kind`, `guessed_fields`, `summaries`, one per chunk): the
+//!   steps record says it was done, so nothing would work it out again.
+//! - `rows` keeps each chunk's row id when it is not `<id>#<chunk>`: pages
+//!   name document chunks by it. A memory file comes back as one row, so
+//!   it keeps the first chunk's only.
 //! - `origin` keeps whether the text counts as the person's writing.
 //! - `about` links each filed entity by its entity file's stem.
 //! - An imported chat (`source_id` `import_<vendor>_<conversation id>`)
@@ -22,9 +26,12 @@
 //!   `source` (when not `memory`), `modified`, `cue` (retrieval cue) and
 //!   `space_rejected`. An original carries the same person decisions (pin,
 //!   confirm, entity, supersedes, stated kind and fields, `about`, …) there.
-//! - Not files: document chunks (their connected folder is their truth) and
-//!   rows derived from pages, summaries and episodes, which the rebuild
-//!   recomputes. Pending revisions become proposals in a later part. Each is
+//! - A document read from a folder becomes
+//!   `backstage/originals/folder/<id stem>.md`, one `document` message per
+//!   chunk, whether or not the folder is still connected: what Wenlan read
+//!   survives a restore whatever happened to the folder since.
+//! - Not files: rows derived from pages, summaries and episodes, which the
+//!   rebuild recomputes. Pending revisions become proposals in a later part. Each is
 //!   counted in the manifest. A source this export does not know is listed
 //!   as left out, never counted as derived.
 
@@ -45,8 +52,11 @@ use crate::store::format::original::{self, Message, OriginalFile};
 const MEMORY_SOURCES: &[&str] = &["memory", "manual", "clipboard"];
 
 /// Rows the rebuild recomputes: episodes (a verbatim slice of their parent),
-/// page and summary rows, and connected-folder documents.
-const DERIVED_SOURCES: &[&str] = &["episode", "page", "summary", "local_files"];
+/// page and summary rows.
+const DERIVED_SOURCES: &[&str] = &["episode", "page", "summary"];
+
+/// Documents of older folder sources.
+const LOCAL_FILES_SOURCE: &str = "local_files";
 
 /// A person's saved web page.
 const WEB_SOURCE: &str = "webpage";
@@ -88,10 +98,11 @@ pub async fn export_memories(
     let mut paths = Paths::default();
     for ((id, source), chunks) in groups {
         let head = chunks[0];
-        match class_of(head) {
-            Class::Memory | Class::Original => {}
+        let class = class_of(head);
+        match &class {
+            Class::Memory | Class::Original | Class::Document => {}
             Class::Derived(reason) => {
-                *skipped.entry(reason).or_default() += 1;
+                *skipped.entry(reason.clone()).or_default() += 1;
                 continue;
             }
             Class::Unknown => {
@@ -103,7 +114,9 @@ pub async fn export_memories(
                 continue;
             }
         }
-        let original = if source == WEB_SOURCE {
+        let original = if matches!(class, Class::Document) {
+            Some(("folder", id, "document"))
+        } else if source == WEB_SOURCE {
             Some(("web", id, "page"))
         } else if source == FILE_SOURCE {
             Some(("file", id, "document"))
@@ -124,7 +137,8 @@ pub async fn export_memories(
             done.keys.insert((source.to_string(), id.to_string()));
             continue;
         }
-        let file = memory_file(id, head, &chunks, &mut about, entity_stems, manifest);
+        let mut file = memory_file(id, head, &chunks, &mut about, entity_stems, manifest);
+        one_row(&mut file);
         let folder = format!("memories/{}", month_of(head.created_at));
         let path = paths.claim(&folder, &file_stem(id), id);
         let text = memory::render(&file);
@@ -139,7 +153,7 @@ pub async fn export_memories(
         manifest.not_files.push(NotFiles {
             what,
             count,
-            why: "derived or owned by a connected folder; the rebuild recomputes it".to_string(),
+            why: "derived; the rebuild recomputes it".to_string(),
         });
     }
     Ok(done)
@@ -183,6 +197,55 @@ fn memory_file(
         .source_text
         .clone()
         .filter(|source| *source != file.text);
+    if file.source_text.is_none() && head.source_text.is_some() {
+        file.other.insert("source_text_is_text".into(), true.into());
+    }
+    // What enrichment worked out without the person saying so: a model
+    // would have to work it out again, and the steps record says it was done.
+    if !head.memory_type_explicit {
+        if let Some(kind) = head.memory_type.as_deref().filter(|kind| !kind.is_empty()) {
+            file.other.insert("guessed_kind".into(), kind.into());
+        }
+    }
+    if !head.structured_fields_explicit {
+        if let Some(fields) = head.structured_fields.as_deref() {
+            file.other
+                .insert("guessed_fields".into(), fields_value(fields));
+        }
+    }
+    if chunks.iter().any(|chunk| chunk.summary.is_some()) {
+        file.other.insert(
+            "summaries".into(),
+            serde_yaml::Value::Sequence(
+                chunks
+                    .iter()
+                    .map(|chunk| {
+                        chunk
+                            .summary
+                            .as_deref()
+                            .map_or(serde_yaml::Value::Null, serde_yaml::Value::from)
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    // Pages and edges name chunks by their row ids; a rebuild that made
+    // new ones would leave those names pointing at nothing.
+    if chunks
+        .iter()
+        .enumerate()
+        .any(|(index, chunk)| chunk.id != format!("{id}#{index}"))
+    {
+        file.other.insert(
+            "rows".into(),
+            serde_yaml::Value::Sequence(
+                chunks
+                    .iter()
+                    .map(|chunk| chunk.id.as_str().into())
+                    .collect(),
+            ),
+        );
+    }
     for entity_id in about.remove(id).unwrap_or_default() {
         match entity_stems.get(&entity_id) {
             Some(stem) => file.about.push(stem.clone()),
@@ -216,6 +279,31 @@ fn memory_file(
         file.other.insert("typed".into(), true.into());
     }
     file
+}
+
+/// A memory file comes back as one row (its chunk boundaries are cache):
+/// it keeps the first chunk's row id and summary only.
+fn one_row(file: &mut MemoryFile) {
+    for (key, default) in [
+        ("rows", Some(format!("{}#0", file.id))),
+        ("summaries", None),
+    ] {
+        let first = match file.other.get(key) {
+            Some(serde_yaml::Value::Sequence(items)) => items.first().cloned(),
+            _ => continue,
+        };
+        let keep =
+            first.filter(|value| !value.is_null() && value.as_str().map(str::to_string) != default);
+        match keep {
+            Some(value) => {
+                file.other
+                    .insert(key.into(), serde_yaml::Value::Sequence(vec![value]));
+            }
+            None => {
+                file.other.shift_remove(key);
+            }
+        }
+    }
 }
 
 /// The person's decisions on a memory that became an original, as keys.
@@ -331,6 +419,8 @@ enum Class {
     Memory,
     /// A saved web page or watched file, written as an original.
     Original,
+    /// A document read from a folder, written as an original.
+    Document,
     /// Recomputed by the rebuild, counted under this name.
     Derived(String),
     Unknown,
@@ -353,17 +443,18 @@ pub(crate) fn gets_a_file(
 ) -> bool {
     matches!(
         class_by(source, origin_class, source_agent),
-        Class::Memory | Class::Original
+        Class::Memory | Class::Original | Class::Document
     )
 }
 
 fn class_by(source: &str, origin_class: Option<&str>, source_agent: Option<&str>) -> Class {
-    let ingest = origin_class == Some("document_ingest")
+    let ingest = source == LOCAL_FILES_SOURCE
+        || origin_class == Some("document_ingest")
         || source_agent.is_some_and(crate::origin::is_document_ingest_source_agent);
     if DERIVED_SOURCES.contains(&source) {
         Class::Derived(format!("memories with source {source}"))
     } else if ingest {
-        Class::Derived("document chunks".to_string())
+        Class::Document
     } else if MEMORY_SOURCES.contains(&source) {
         Class::Memory
     } else if source == WEB_SOURCE || source == FILE_SOURCE {

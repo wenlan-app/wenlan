@@ -58,7 +58,7 @@ their own words: "save this as a note", "write this up", "存成筆記",
 "寫成一篇筆記", or `/capture` text that starts with "note:". Proactive
 captures are always memories; never create a note on your own initiative, and
 never save the same thing as both a memory and a note in one turn. Turning many
-memories into notes is a different job: that is `$wenlan distill`.
+memories into notes is a different job: that is `$wenlan steep`.
 
 To save a note, follow "Save a note" below and skip the memory steps.
 

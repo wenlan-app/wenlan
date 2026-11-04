@@ -2,7 +2,7 @@
 //! Storage migration steps 3 and 4: keep a file copy of the database
 //! current, and check it every day.
 //!
-//! The database is still where a write lands. Shortly after it changes,
+//! A write lands in the write log, then the database. Shortly after it changes,
 //! [`refresh`] reads it through a snapshot and brings
 //! `<data root>/files-mirror/files/` up to date where it is: only the files
 //! whose bytes changed are written (each beside the old one, then renamed
@@ -10,8 +10,9 @@
 //! [`run_once`] copies the database (`VACUUM INTO`), refreshes the files
 //! from the copy, rebuilds them into a new database and compares it with
 //! the copy ([`check_export_with`]). A run that fails leaves every file
-//! whole; the next one finishes it. The files are not read back yet, so
-//! turning this off loses nothing.
+//! whole; the next one finishes it. With the write log
+//! ([`super::write_log`]) the files are the truth: a restore reads them
+//! back, then applies the log lines after them.
 //!
 //! Everything is written under `<data root>/files-mirror/`. The person's
 //! pages folder is only read (its `state.json` and file ids), never written.
@@ -119,7 +120,7 @@ const COLLAPSE_FLOOR: usize = 20;
 /// database that came back empty or damaged must not empty the copy it
 /// could be rebuilt from. Pages and memories are compared apart, and only
 /// what the export writes a file for is counted, so many memories (or
-/// connected-folder documents, which get no file) cannot hide lost pages.
+/// derived rows, which get no file) cannot hide lost pages.
 pub async fn refuse_a_collapse(db: &MemoryDB, files: &Path) -> Result<(), WenlanError> {
     let Some(old) = crate::store::export::read_manifest(files) else {
         return Ok(());

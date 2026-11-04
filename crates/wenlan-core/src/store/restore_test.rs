@@ -295,6 +295,233 @@ async fn a_restore_gives_back_links_to_pages_not_written_yet() {
     assert_eq!(after, before);
 }
 
+/// Two pages share a name ("Beta" and "beta"). A link saved to one of
+/// them keeps pointing there after a restore: the restore reads the link
+/// from the files and does not work its target out again by name.
+#[tokio::test]
+async fn a_restore_keeps_a_link_to_one_of_two_pages_of_the_same_name() {
+    let (db, dir) = fixture().await;
+    let body = "See [[Beta]].";
+    db.export_fixture_sql("UPDATE pages SET content = ?1 WHERE id = 'c'", body)
+        .await;
+    db.replace_page_links(
+        "c",
+        &[crate::synthesis::wikilinks::Wikilink {
+            label: "Beta".to_string(),
+            target_page_id: Some("x".to_string()),
+        }],
+    )
+    .await
+    .unwrap();
+    async fn targets(db: &MemoryDB) -> Vec<String> {
+        let edges = db.export_table("edges").await.unwrap().unwrap();
+        let at = |name: &str| edges.columns.iter().position(|c| c == name).unwrap();
+        let text = |value: &libsql::Value| match value {
+            libsql::Value::Text(text) => Some(text.clone()),
+            _ => None,
+        };
+        let mut out: Vec<String> = edges
+            .rows
+            .iter()
+            .filter(|row| {
+                text(&row[at("src_id")]).as_deref() == Some("c")
+                    && text(&row[at("edge_type")]).as_deref() == Some("links")
+                    && matches!(row[at("valid_until")], libsql::Value::Null)
+            })
+            .filter_map(|row| text(&row[at("dst_id")]))
+            .collect();
+        out.sort();
+        out
+    }
+    assert_eq!(targets(&db).await, ["x"]);
+    let data_root = tempfile::tempdir().unwrap();
+    let embedder = db.shared_embedder().expect("the test database has a model");
+    run_once(
+        &dir.path().join(DATABASE_FILE),
+        &PagesFolder::default(),
+        data_root.path(),
+        &mirror_root(data_root.path()),
+        embedder,
+        false,
+    )
+    .await
+    .unwrap();
+    let db_dir = data_root.path().join("memorydb");
+    let outcome = restore_missing_database(data_root.path(), &db_dir, 1)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, Restore::Restored { .. }), "{outcome:?}");
+    let restored = MemoryDB::new_with_embedding_recovery(
+        &db_dir,
+        Arc::new(NoopEmitter),
+        MemoryEmbeddingRecovery::Deferred,
+    )
+    .await
+    .unwrap();
+    assert_eq!(targets(&restored).await, ["x"]);
+    let scope = crate::read_scope::ReadScope::Global;
+    let links = restored
+        .get_page_outbound_links_scoped("c", &scope)
+        .await
+        .unwrap();
+    assert!(
+        links
+            .iter()
+            .all(|link| link.target_page_id.as_deref() == Some("x")),
+        "{links:?}"
+    );
+}
+
+/// A document read from a folder comes back from the files, chunk by
+/// chunk: the folder may be gone. Each chunk keeps its row id (pages name
+/// document chunks by it) and what enrichment worked out.
+#[tokio::test]
+async fn a_restore_gives_back_documents_read_from_folders() {
+    let (db, dir) = fixture().await;
+    for (chunk, text) in [(0, "# Trip plan"), (1, "Lisbon in May.")] {
+        db.export_fixture_sql(
+            &format!(
+                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, \
+                 last_modified, chunk_type, source_agent, origin_class, memory_type, summary) \
+                 VALUES ('doc{chunk}', '{text}', 'memory', ?1, 'plan', {chunk}, 0, 'text', \
+                 'folder', 'document_ingest', 'fact', 'about {chunk}')"
+            ),
+            "old-folder::notes/plan.md",
+        )
+        .await;
+    }
+    db.export_fixture_sql(
+        "INSERT INTO enrichment_origin (source_id, memory_type_explicit, \
+         structured_fields_explicit, space_rejected) VALUES (?1, 0, 0, 0)",
+        "old-folder::notes/plan.md",
+    )
+    .await;
+    let data_root = tempfile::tempdir().unwrap();
+    let embedder = db.shared_embedder().expect("the test database has a model");
+    run_once(
+        &dir.path().join(DATABASE_FILE),
+        &PagesFolder::default(),
+        data_root.path(),
+        &mirror_root(data_root.path()),
+        embedder,
+        false,
+    )
+    .await
+    .unwrap();
+    let db_dir = data_root.path().join("memorydb");
+    let outcome = restore_missing_database(data_root.path(), &db_dir, 1)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, Restore::Restored { .. }), "{outcome:?}");
+    let restored = MemoryDB::new_with_embedding_recovery(
+        &db_dir,
+        Arc::new(NoopEmitter),
+        MemoryEmbeddingRecovery::Deferred,
+    )
+    .await
+    .unwrap();
+    let memories = restored.export_memory_rows().await.unwrap();
+    let doc: Vec<_> = memories
+        .iter()
+        .filter(|row| row.source_id == "old-folder::notes/plan.md")
+        .map(|row| {
+            (
+                row.id.as_str(),
+                row.chunk_index,
+                row.content.as_str(),
+                row.source_agent.as_deref(),
+                row.origin_class.as_deref(),
+                row.memory_type.as_deref(),
+                row.summary.as_deref(),
+            )
+        })
+        .collect();
+    let kept = |id, chunk, text, summary| {
+        (
+            id,
+            chunk,
+            text,
+            Some("folder"),
+            Some("document_ingest"),
+            Some("fact"),
+            Some(summary),
+        )
+    };
+    assert_eq!(
+        doc,
+        [
+            kept("doc0", 0, "# Trip plan", "about 0"),
+            kept("doc1", 1, "Lisbon in May.", "about 1"),
+        ]
+    );
+}
+
+/// A memory the person confirmed stays confirmed after a restore, also
+/// once the nightly promotion has run over it; its summary, a source text
+/// that is the text itself, and what enrichment and the jobs worked out
+/// come back too.
+#[tokio::test]
+async fn a_restore_keeps_a_confirmed_memory_confirmed() {
+    let (db, dir) = fixture().await;
+    db.export_fixture_sql(
+        "INSERT INTO memories (id, content, source, source_id, title, chunk_index, \
+         last_modified, chunk_type, memory_type, confirmed, stability, summary, \
+         source_text, quality, confidence, enrichment_status, content_hash) VALUES \
+         ('kept0', 'Ships on Fridays.', 'memory', ?1, 'kept', 0, 0, 'text', 'fact', 1, \
+         'confirmed', 'Release day', 'Ships on Fridays.', 'high', 0.75, 'raw', 'h1')",
+        "mem_kept",
+    )
+    .await;
+    let data_root = tempfile::tempdir().unwrap();
+    let embedder = db.shared_embedder().expect("the test database has a model");
+    run_once(
+        &dir.path().join(DATABASE_FILE),
+        &PagesFolder::default(),
+        data_root.path(),
+        &mirror_root(data_root.path()),
+        embedder,
+        false,
+    )
+    .await
+    .unwrap();
+    let db_dir = data_root.path().join("memorydb");
+    let outcome = restore_missing_database(data_root.path(), &db_dir, 1)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, Restore::Restored { .. }), "{outcome:?}");
+    let restored = MemoryDB::new_with_embedding_recovery(
+        &db_dir,
+        Arc::new(NoopEmitter),
+        MemoryEmbeddingRecovery::Deferred,
+    )
+    .await
+    .unwrap();
+    restored.promote_uncontradicted(0).await.unwrap();
+    let memories = restored.export_memory_rows().await.unwrap();
+    let kept = memories
+        .iter()
+        .find(|row| row.source_id == "mem_kept")
+        .expect("the memory came back");
+    assert!(kept.confirmed);
+    assert_eq!(kept.id, "kept0");
+    assert_eq!(kept.summary.as_deref(), Some("Release day"));
+    assert_eq!(kept.source_text.as_deref(), Some("Ships on Fridays."));
+    let table = restored.export_table("memories").await.unwrap().unwrap();
+    let at = |name: &str| table.columns.iter().position(|c| c == name).unwrap();
+    let row = table
+        .rows
+        .iter()
+        .find(|row| row[at("id")] == libsql::Value::Text("kept0".into()))
+        .expect("the row came back");
+    assert_eq!(row[at("quality")], libsql::Value::Text("high".into()));
+    assert_eq!(row[at("confidence")], libsql::Value::Real(0.75));
+    assert_eq!(
+        row[at("enrichment_status")],
+        libsql::Value::Text("raw".into())
+    );
+    assert_eq!(row[at("content_hash")], libsql::Value::Text("h1".into()));
+}
+
 /// A refresh that stopped after setting the old history aside and before
 /// putting the new one in place: the restore reads the old one, and the
 /// next refresh puts it back first.

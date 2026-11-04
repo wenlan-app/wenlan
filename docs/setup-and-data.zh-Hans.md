@@ -84,7 +84,7 @@ npx -y wenlan setup
 
 - 页面与会话笔记：`~/.wenlan/`。
 - 数据库与运行环境数据：macOS 为 `~/Library/Application Support/wenlan/`，Linux 为 `~/.local/share/wenlan/`，Windows 为 `%LOCALAPPDATA%\wenlan\`。
-- 数据库的文件副本：数据库文件夹里的 `files-mirror/`。这是之后版本改用文件存储的预览。有改动后几分钟内 Wenlan 会更新它，每天检查一次这些文件能重建出同样的数据库，Wenlan 启动时如果数据库文件不见了或是空的，会用这份副本重建数据库，然后在后台重新检查页面和出处。检查沿用 AI 之前的判断，没改过的内容不用再判断一次。除此之外不会读它，所以数据库还在时删掉也没关系。设置 `WENLAN_FILES_MIRROR=0` 可以关闭。
+- 以文件保存的数据：数据库文件夹里的 `files-mirror/`。每个改动都会先写进这里的写入记录（`files-mirror/log/`），再写进数据库；`files-mirror/files/` 里可读的文件会在几分钟内跟上。数据库只是这些文件的索引：Wenlan 启动时如果数据库文件不见了或是空的，会用这些文件和写入记录重建数据库，连最后的改动也在，然后在后台重新检查页面和出处。检查沿用 AI 之前的判断，没改过的内容不用再判断一次。Wenlan 每天也会检查一次这些文件能重建出同样的数据库。请不要删除这个文件夹。设置 `WENLAN_FILES_MIRROR=0` 可以关闭，那时就像以前的版本一样只写数据库。
 
 ### 备份知识数据
 

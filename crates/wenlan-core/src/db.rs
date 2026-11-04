@@ -72,6 +72,7 @@ mod presence_review;
 mod quick_capture_repair;
 pub(crate) mod relation_write;
 pub mod table_classes;
+pub mod write_log_replay;
 pub(crate) use relation_write::RelationWriteInput;
 pub(crate) mod repair_deterministic;
 mod repair_memory_cas;
@@ -38877,6 +38878,75 @@ impl MemoryDB {
         model_version: Option<&str>,
         prompt_version: Option<&str>,
     ) -> Result<String, WenlanError> {
+        self.create_relation_with_span_policy(
+            from_entity,
+            to_entity,
+            relation_type,
+            source_agent,
+            confidence,
+            explanation,
+            source_memory_id,
+            span_quote,
+            source_content,
+            model_version,
+            prompt_version,
+            false,
+        )
+        .await
+        .map(|(id, _)| id)
+    }
+
+    /// Create a relation while preserving any existing relation for this
+    /// directed endpoint pair. A differing active type returns a conflict;
+    /// a matching active type is returned unchanged, including its evidence.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_relation_with_span_preserving(
+        &self,
+        from_entity: &str,
+        to_entity: &str,
+        relation_type: &str,
+        source_agent: Option<&str>,
+        confidence: Option<f64>,
+        explanation: Option<&str>,
+        source_memory_id: Option<&str>,
+        span_quote: Option<&str>,
+        source_content: Option<&str>,
+        model_version: Option<&str>,
+        prompt_version: Option<&str>,
+    ) -> Result<(String, bool), WenlanError> {
+        self.create_relation_with_span_policy(
+            from_entity,
+            to_entity,
+            relation_type,
+            source_agent,
+            confidence,
+            explanation,
+            source_memory_id,
+            span_quote,
+            source_content,
+            model_version,
+            prompt_version,
+            true,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn create_relation_with_span_policy(
+        &self,
+        from_entity: &str,
+        to_entity: &str,
+        relation_type: &str,
+        source_agent: Option<&str>,
+        confidence: Option<f64>,
+        explanation: Option<&str>,
+        source_memory_id: Option<&str>,
+        span_quote: Option<&str>,
+        source_content: Option<&str>,
+        model_version: Option<&str>,
+        prompt_version: Option<&str>,
+        preserve_existing: bool,
+    ) -> Result<(String, bool), WenlanError> {
         // A self-loop carries no information and would only draw a loop on
         // the map; refuse it before any vocabulary side effect.
         if from_entity == to_entity {
@@ -38889,6 +38959,11 @@ impl MemoryDB {
         let canonical = match self.resolve_relation_type(relation_type).await? {
             Some(c) => c,
             None => {
+                if preserve_existing {
+                    return Err(WenlanError::Validation(format!(
+                        "unknown relation type '{relation_type}'; no relation written; use an established predicate or protected vocabulary review"
+                    )));
+                }
                 log::warn!(
                     "[create_relation] non-vocabulary type '{}' coerced to 'related_to' (queued as promote candidate)",
                     relation_type
@@ -38915,6 +38990,150 @@ impl MemoryDB {
         conn.execute("BEGIN", ())
             .await
             .map_err(|e| WenlanError::VectorDb(format!("create_relation begin: {e}")))?;
+
+        if preserve_existing {
+            if let Some(source_memory_id) = source_memory_id {
+                // Protected relation assertions are grounded in a source that
+                // must still be current. Keep this check in the edge-write
+                // transaction so a concurrent revision cannot invalidate the
+                // source between validation and relation creation.
+                let live = not_self_archived("m");
+                let not_superseded = not_hidden_by_superseder(&ReadScope::Global, "m");
+                let archived = superseder_archives(&ReadScope::Global, "m");
+                let source_is_current = format!(
+                    "SELECT 1 FROM memories m \
+                     WHERE m.source = 'memory' AND m.source_id = ?1 \
+                       AND m.pending_revision = 0 AND {live} AND {not_superseded} \
+                       AND NOT {archived} LIMIT 1"
+                );
+                let mut rows = match conn
+                    .query(&source_is_current, libsql::params![source_memory_id])
+                    .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        let _ = conn.execute("ROLLBACK", ()).await;
+                        return Err(WenlanError::VectorDb(format!(
+                            "create_relation source read: {e}"
+                        )));
+                    }
+                };
+                let source_exists = match rows.next().await {
+                    Ok(row) => row.is_some(),
+                    Err(e) => {
+                        drop(rows);
+                        let _ = conn.execute("ROLLBACK", ()).await;
+                        return Err(WenlanError::VectorDb(format!(
+                            "create_relation source read row: {e}"
+                        )));
+                    }
+                };
+                drop(rows);
+                if !source_exists {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::Conflict(format!(
+                        "relation_source_changed: source memory '{source_memory_id}' is absent, pending, or no longer current"
+                    )));
+                }
+            }
+
+            let mut rows = match conn
+                .query(
+                    "SELECT edge_id, semantic_type FROM edges \
+                     WHERE edge_type = 'relates' AND src_kind = 'entity' AND dst_kind = 'entity' \
+                       AND src_id = ?1 AND dst_id = ?2 AND valid_until IS NULL",
+                    libsql::params![from_entity.to_string(), to_entity.to_string()],
+                )
+                .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "create_relation preserve read: {e}"
+                    )));
+                }
+            };
+            let mut matching = None;
+            let mut differing = None;
+            loop {
+                let row = match rows.next().await {
+                    Ok(Some(row)) => row,
+                    Ok(None) => break,
+                    Err(e) => {
+                        drop(rows);
+                        let _ = conn.execute("ROLLBACK", ()).await;
+                        return Err(WenlanError::VectorDb(format!(
+                            "create_relation preserve read row: {e}"
+                        )));
+                    }
+                };
+                let edge_id = row.get::<String>(0).unwrap_or_default();
+                let edge_type = row.get::<String>(1).unwrap_or_default();
+                if edge_type == canonical {
+                    matching.get_or_insert(edge_id);
+                } else {
+                    differing.get_or_insert(edge_type);
+                }
+            }
+            drop(rows);
+            if let Some(existing_type) = differing {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::Conflict(format!(
+                    "relation_changed: active relation type '{existing_type}' now exists for {from_entity} -> {to_entity}; re-read before protected repair"
+                )));
+            }
+            if let Some(existing_id) = matching {
+                commit_or_rollback(&conn)
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("create_relation commit: {e}")))?;
+                return Ok((existing_id, false));
+            }
+
+            // A retired same-triple edge is an explicit lifecycle decision.
+            // Do not let a protected create resurrect it through the normal
+            // content-addressed writer; that requires the repair path.
+            let target_edge_id = crate::provenance::compute_edge_id(
+                "relates",
+                "entity",
+                from_entity,
+                "entity",
+                to_entity,
+                &canonical,
+            );
+            let mut retired_rows = match conn
+                .query(
+                    "SELECT 1 FROM edges WHERE edge_id = ?1 AND valid_until IS NOT NULL LIMIT 1",
+                    libsql::params![target_edge_id],
+                )
+                .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "create_relation retired read: {e}"
+                    )));
+                }
+            };
+            let retired = match retired_rows.next().await {
+                Ok(row) => row.is_some(),
+                Err(e) => {
+                    drop(retired_rows);
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "create_relation retired read row: {e}"
+                    )));
+                }
+            };
+            drop(retired_rows);
+            if retired {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::Conflict(format!(
+                    "relation_changed: {from_entity} -> {to_entity} relation '{canonical}' was retired; re-read before protected repair"
+                )));
+            }
+        }
 
         // Inner write lives in `relation_write.rs`: runs on the caller-owned
         // transaction above; graph updates publish (and the fresh-mint
@@ -38949,7 +39168,7 @@ impl MemoryDB {
                 if !existed_before {
                     self.increment_relation_type_count(&canonical).await.ok();
                 }
-                Ok(edge_id)
+                Ok((edge_id, true))
             }
             Err(e) => {
                 let _ = conn.execute("ROLLBACK", ()).await;
@@ -62344,3 +62563,7 @@ pub(crate) mod tests;
 #[cfg(test)]
 #[path = "db/entity_lifecycle_test.rs"]
 mod entity_lifecycle_test;
+
+#[cfg(test)]
+#[path = "db/relation_preserve_tests.rs"]
+mod relation_preserve_tests;

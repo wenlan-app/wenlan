@@ -319,9 +319,10 @@ async fn create_relation_successful_preflight_maps_source_into_post() {
         .mount(&mock)
         .await;
     Mock::given(method("POST"))
-        .and(path("/api/memory/relations"))
+        .and(path("/api/memory/relations/preserve"))
         .respond_with(
             ResponseTemplate::new(200).set_body_json(CreateRelationResponse {
+                wrote: Some(true),
                 id: "rel_1".into(),
                 warnings: Vec::new(),
             }),

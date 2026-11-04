@@ -218,6 +218,15 @@ async fn run_serve(
     origin_url: Option<String>,
     agent_name: EffectiveAgentName,
 ) -> anyhow::Result<()> {
+    run_serve_with_token_resolver(args, origin_url, agent_name, resolve_token).await
+}
+
+async fn run_serve_with_token_resolver(
+    args: ServeArgs,
+    origin_url: Option<String>,
+    agent_name: EffectiveAgentName,
+    resolve_token: impl FnOnce(&ServeArgs) -> anyhow::Result<Option<String>>,
+) -> anyhow::Result<()> {
     let connector_profile = serve::is_connector_profile(args.tool_profile);
     if connector_profile && args.no_auth {
         anyhow::bail!("{}", serve::connector_auth_error(args.tool_profile));
@@ -544,10 +553,11 @@ mod tests {
                 whole_library: false,
             };
 
-            let error = run_serve(
+            let error = run_serve_with_token_resolver(
                 args,
                 Some("http://127.0.0.1:19999".into()),
                 explicit_agent("test"),
+                |args| Ok(args.token.clone()),
             )
             .await
             .expect_err("web-write without a bearer token must be rejected");

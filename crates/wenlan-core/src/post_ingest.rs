@@ -356,6 +356,7 @@ pub async fn run_page_growth_slice(
             llm_calls: 0,
         });
     }
+    let numbered = pick_growth_sources(numbered, &input.content);
     let existing_sources = &numbered[..numbered.len() - 1];
     let user_prompt = format!(
         "## Current Concept\n{}\n\n## Numbered Sources\n{}\n\n## New Memory\n[{}] {}",
@@ -369,10 +370,10 @@ pub async fn run_page_growth_slice(
         .generate(crate::llm_provider::LlmRequest {
             system_prompt: Some(prompts.update_page.clone()),
             user_prompt,
-            max_tokens: 1024,
+            max_tokens: PAGE_GROWTH_MAX_TOKENS,
             temperature: 0.1,
             label: Some("update_page".to_string()),
-            timeout_secs: None,
+            timeout_secs: Some(PAGE_GROWTH_TIMEOUT_SECS),
         })
         .await
     {
@@ -430,8 +431,28 @@ pub async fn run_page_growth_slice(
 
     let (updated_body, citations, stats) =
         crate::citations::process_citation_output(updated, &numbered);
-    if let Some(threshold) = crate::post_write::merge_shrink_threshold() {
-        if !crate::retrieval::integrity::body_shrink_ok(&page.content, &updated_body, threshold) {
+    if looks_cut_off(&updated_body) {
+        let committed = record_stage_failure(
+            db,
+            &input.source_id,
+            "page_growth",
+            input.prior_attempts,
+            input.version,
+            "page growth output stops mid-sentence",
+        )
+        .await?;
+        return Ok(PageGrowthSliceReport {
+            selected: true,
+            matched: true,
+            terminal_no_match: false,
+            committed,
+            llm_calls: 1,
+        });
+    }
+    {
+        let threshold = page_growth_shrink_threshold();
+        let reference = page_growth_reference_len(db, &page).await;
+        if !page_growth_keeps_enough(reference, &updated_body, threshold) {
             let committed = record_stage_failure(
                 db,
                 &input.source_id,
@@ -908,6 +929,201 @@ pub(crate) async fn enrich_title(
     }
 }
 
+/// The smallest share of a page's length a page-growth rewrite may keep.
+///
+/// Page growth adds one memory to a page, so a much shorter result is a
+/// failed rewrite, not an edit: a 9B model on the dev app shrank one page
+/// 2522 -> 2375 -> 1964 -> 209 chars over four rewrites (2026-11-04). The
+/// guard used to be off unless `WENLAN_MERGE_SHRINK_GUARD` was set; page
+/// growth now uses 0.7 by default, and the variable still overrides it
+/// (`0` turns it off).
+const PAGE_GROWTH_MIN_KEPT: f64 = 0.7;
+
+fn page_growth_shrink_threshold() -> f64 {
+    crate::post_write::merge_shrink_threshold().unwrap_or(PAGE_GROWTH_MIN_KEPT)
+}
+
+/// How long one page-growth rewrite may run. The default on-device cap is
+/// 30 s including the prompt read, and a 9B model reading a full 8K prompt
+/// used most of it, so rewrites of big pages were cut off.
+const PAGE_GROWTH_TIMEOUT_SECS: u64 = 120;
+
+/// The longest rewrite page growth asks for. At 1024 tokens a page of about
+/// 5,000 English characters (or 1,000 Chinese ones) could never be written
+/// out whole, so the rewrite stopped mid-sentence.
+const PAGE_GROWTH_MAX_TOKENS: u32 = 2048;
+
+/// True when a rewrite ends inside a prose sentence: the model ran out of
+/// tokens or time. A last line that is a heading, list item, table row,
+/// quote or code fence is left alone, because those often end without
+/// punctuation.
+fn looks_cut_off(body: &str) -> bool {
+    let Some(last) = body.lines().map(str::trim).rfind(|line| !line.is_empty()) else {
+        return false;
+    };
+    let structured = last.starts_with(['#', '|', '-', '*', '+', '>', '`'])
+        || last
+            .split_once(['.', ')'])
+            .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    if structured {
+        return false;
+    }
+    let Some(end) = last.chars().last() else {
+        return false;
+    };
+    !matches!(
+        end,
+        '.' | '!'
+            | '?'
+            | ':'
+            | ';'
+            | ')'
+            | ']'
+            | '}'
+            | '"'
+            | '\''
+            | '`'
+            | '*'
+            | '_'
+            | '~'
+            | '…'
+            | '。'
+            | '！'
+            | '？'
+            | '：'
+            | '；'
+            | '）'
+            | '」'
+            | '』'
+            | '》'
+            | '”'
+            | '’'
+            | '】'
+    )
+}
+
+/// The length a page-growth rewrite is measured against: the longest body
+/// among the page's recent machine-written versions, back to (and including)
+/// the latest version a person or anything else wrote. Measuring against
+/// only the current version let one bad rewrite lower the bar for the next:
+/// after a page fell to 209 chars, a cut-off 714-char rewrite passed.
+async fn page_growth_reference_len(db: &MemoryDB, page: &crate::pages::Page) -> usize {
+    let mut longest = page.content.chars().count();
+    let history = db
+        .list_page_history(&page.id, PAGE_GROWTH_HISTORY_DEPTH)
+        .await
+        .unwrap_or_default();
+    for entry in history {
+        longest = longest.max(entry.content.chars().count());
+        if !is_machine_rewrite(&entry.edited_by) {
+            break;
+        }
+    }
+    longest
+}
+
+const PAGE_GROWTH_HISTORY_DEPTH: i64 = 10;
+
+fn is_machine_rewrite(edited_by: &str) -> bool {
+    matches!(
+        edited_by,
+        "page_growth" | "agent_refresh" | "re_distill" | "distill" | "refinery_merge"
+    )
+}
+
+fn page_growth_keeps_enough(reference_chars: usize, new_body: &str, threshold: f64) -> bool {
+    reference_chars == 0 || new_body.chars().count() as f64 >= reference_chars as f64 * threshold
+}
+
+/// How much source text one page-growth prompt carries, in characters.
+/// With the page itself and the instructions this stays inside an 8K
+/// on-device context, so nothing has to be dropped from the middle.
+const GROWTH_SOURCE_CHAR_BUDGET: usize = 12_000;
+
+/// Choose which of a page's sources go into a growth prompt.
+///
+/// `numbered` is the page's sources in linked order with the new memory
+/// last. A page can cite hundreds of sources (588 on one real page), far
+/// more than fit; sending them all meant the middle was dropped and the
+/// rewrite drifted to whatever unrelated sources survived. This keeps the
+/// new memory and the existing sources that share the most words with it
+/// (Chinese, Japanese and Korean text compared by character pairs), up to
+/// [`GROWTH_SOURCE_CHAR_BUDGET`], in their original order, numbered from 1.
+fn pick_growth_sources(
+    numbered: Vec<crate::citations::NumberedSource>,
+    new_content: &str,
+) -> Vec<crate::citations::NumberedSource> {
+    let total: usize = numbered.iter().map(|s| s.text.chars().count()).sum();
+    if total <= GROWTH_SOURCE_CHAR_BUDGET || numbered.len() < 2 {
+        return numbered;
+    }
+    let target = overlap_terms(new_content);
+    let last = numbered.len() - 1;
+    let mut ranked: Vec<(usize, f64)> = numbered[..last]
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let terms = overlap_terms(&s.text);
+            let shared = terms.intersection(&target).count() as f64;
+            let norm = ((terms.len().max(1) * target.len().max(1)) as f64).sqrt();
+            (i, shared / norm)
+        })
+        .collect();
+    // Higher score first; among equals the newer (later linked) source wins.
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.0.cmp(&a.0)));
+    let mut budget = GROWTH_SOURCE_CHAR_BUDGET.saturating_sub(numbered[last].text.chars().count());
+    let mut keep = vec![false; numbered.len()];
+    keep[last] = true;
+    for (i, _) in ranked {
+        let len = numbered[i].text.chars().count();
+        if len <= budget {
+            budget -= len;
+            keep[i] = true;
+        }
+    }
+    numbered
+        .into_iter()
+        .zip(keep)
+        .filter(|(_, kept)| *kept)
+        .enumerate()
+        .map(|(i, (mut source, _))| {
+            source.index = (i + 1) as u32;
+            source
+        })
+        .collect()
+}
+
+/// Lowercased words of two or more letters or digits, plus each pair of
+/// adjacent CJK characters.
+fn overlap_terms(text: &str) -> std::collections::HashSet<String> {
+    let mut terms = std::collections::HashSet::new();
+    let mut word = String::new();
+    let mut previous_cjk: Option<char> = None;
+    for c in text.chars() {
+        let cjk = matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF);
+        if cjk {
+            if let Some(p) = previous_cjk {
+                terms.insert(format!("{p}{c}"));
+            }
+            previous_cjk = Some(c);
+        } else {
+            previous_cjk = None;
+        }
+        if c.is_alphanumeric() && !cjk {
+            word.extend(c.to_lowercase());
+        } else {
+            if word.chars().count() >= 2 {
+                terms.insert(std::mem::take(&mut word));
+            }
+            word.clear();
+        }
+    }
+    if word.chars().count() >= 2 {
+        terms.insert(word);
+    }
+    terms
+}
+
 /// Check if new memory matches an existing page; if so, update it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn grow_page(
@@ -1006,6 +1222,7 @@ pub(crate) async fn grow_page(
         // nothing to cite against.
         return Ok(false);
     }
+    let numbered = pick_growth_sources(numbered, content);
     let existing_sources = &numbered[..numbered.len() - 1];
 
     // LLM: update page with new memory
@@ -1021,10 +1238,10 @@ pub(crate) async fn grow_page(
         .generate(crate::llm_provider::LlmRequest {
             system_prompt: Some(prompts.update_page.clone()),
             user_prompt,
-            max_tokens: 1024,
+            max_tokens: PAGE_GROWTH_MAX_TOKENS,
             temperature: 0.1,
             label: Some("update_page".to_string()),
-            timeout_secs: None,
+            timeout_secs: Some(PAGE_GROWTH_TIMEOUT_SECS),
         })
         .await
         .map_err(|e| WenlanError::Llm(format!("page growth LLM: {e}")))?;
@@ -1050,14 +1267,23 @@ pub(crate) async fn grow_page(
     // update_page has its own shrink-guard backstop, but this early-exit
     // preserves the Ok(false) contract (skipped-growth) rather than Err.
     // Matches the is_empty() early-return contract at line 572.
-    if let Some(threshold) = crate::post_write::merge_shrink_threshold() {
-        if !crate::retrieval::integrity::body_shrink_ok(&page.content, &updated_body, threshold) {
+    if looks_cut_off(&updated_body) {
+        log::warn!(
+            "[grow_page] skipped growth for page {}: the rewrite stops mid-sentence",
+            page.id
+        );
+        return Ok(false);
+    }
+    {
+        let threshold = page_growth_shrink_threshold();
+        let reference = page_growth_reference_len(db, &page).await;
+        if !page_growth_keeps_enough(reference, &updated_body, threshold) {
             log::warn!(
-                "[grow_page] shrink-guard skipped growth for page {}: new body ({} chars) < {}% of old ({} chars)",
+                "[grow_page] shrink-guard skipped growth for page {}: new body ({} chars) < {}% of {} chars",
                 page.id,
                 updated_body.chars().count(),
                 (threshold * 100.0) as u32,
-                page.content.chars().count(),
+                reference,
             );
             return Ok(false);
         }
@@ -2941,6 +3167,184 @@ mod tests {
         let log: Vec<wenlan_types::responses::PageChangelogEntry> =
             serde_json::from_str(&db.get_page_changelog(&page_id).await.unwrap()).unwrap();
         assert!(log.last().unwrap().citations_summary.is_some());
+    }
+
+    #[test]
+    fn growth_keeps_the_sources_related_to_the_new_memory() {
+        let source = |index: u32, text: String| crate::citations::NumberedSource {
+            index,
+            source_kind: "memory".to_string(),
+            locator: format!("m{index}"),
+            text,
+        };
+        let filler = |topic: &str| format!("{topic} ").repeat(150);
+        let mut numbered: Vec<_> = (1..=40)
+            .map(|i| source(i, filler(&format!("relay lease renewal step{i}"))))
+            .collect();
+        numbered[9] = source(10, filler("reranker cross encoder graph_stream ablation"));
+        numbered.push(source(
+            41,
+            "graph_stream stays off after the reranker ablation".to_string(),
+        ));
+
+        let picked = pick_growth_sources(
+            numbered,
+            "graph_stream stays off after the reranker ablation",
+        );
+
+        let total: usize = picked.iter().map(|s| s.text.chars().count()).sum();
+        assert!(total <= GROWTH_SOURCE_CHAR_BUDGET);
+        assert_eq!(
+            picked.last().unwrap().locator,
+            "m41",
+            "the new memory stays last"
+        );
+        assert!(
+            picked.iter().any(|s| s.locator == "m10"),
+            "the related source is kept"
+        );
+        assert!(picked.len() < 41);
+        let indexes: Vec<u32> = picked.iter().map(|s| s.index).collect();
+        assert_eq!(indexes, (1..=picked.len() as u32).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn chinese_sources_are_compared_by_character_pairs() {
+        let terms = overlap_terms("混合搜尋 hybrid");
+        assert!(terms.contains("混合") && terms.contains("搜尋") && terms.contains("hybrid"));
+    }
+
+    #[test]
+    fn a_rewrite_that_stops_mid_sentence_is_cut_off() {
+        assert!(looks_cut_off(
+            "Hybrid search fuses results.\n\nIt ranks with fusion for quality gate"
+        ));
+        assert!(looks_cut_off("…while web searches help"));
+        assert!(looks_cut_off("混合搜尋先融合結果，再"));
+        assert!(!looks_cut_off("Hybrid search fuses results.[3]"));
+        assert!(!looks_cut_off("混合搜尋先融合結果。"));
+        assert!(!looks_cut_off("Notes:\n- keyword search\n- vector search"));
+        assert!(!looks_cut_off("## Open questions"));
+        assert!(!looks_cut_off("| a | b |"));
+        assert!(!looks_cut_off("1. first step"));
+        assert!(!looks_cut_off(""));
+    }
+
+    /// A machine-owned page with a long body, plus the memory that triggers
+    /// growth. Returns (page id, body).
+    async fn seed_growth_page(db: &MemoryDB) -> (String, String) {
+        let mem_v1 = "mem_shrink_v1";
+        let v1_content = "Hybrid search fuses keyword and vector results with reciprocal rank \
+            fusion, then reranks the top fifty with a cross encoder before graph expansion";
+        db.upsert_documents(vec![make_doc(mem_v1, v1_content)])
+            .await
+            .unwrap();
+        let body = format!("{v1_content}. ").repeat(6);
+        let page_id = crate::post_write::create_page(
+            db,
+            wenlan_types::requests::CreateConceptRequest {
+                title: "Hybrid search".to_string(),
+                content: body.clone(),
+                summary: None,
+                entity_id: None,
+                space: None.into(),
+                source_memory_ids: vec![mem_v1.to_string()],
+                creation_kind: Some("research".to_string()),
+                workspace: None,
+            },
+            "test",
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+        db.set_page_review_status(&page_id, "confirmed")
+            .await
+            .unwrap();
+        db.upsert_documents(vec![make_doc(
+            "mem_shrink_new",
+            "Hybrid search keeps graph_stream off by default after the ablation",
+        )])
+        .await
+        .unwrap();
+        (page_id, body)
+    }
+
+    async fn grow_with(db: &MemoryDB, response: &str) -> bool {
+        let llm: std::sync::Arc<dyn LlmProvider> = std::sync::Arc::new(CapturingStubProvider {
+            response: response.to_string(),
+            captured_prompt: std::sync::Mutex::new(None),
+        });
+        grow_page(
+            db,
+            "mem_shrink_new",
+            "Hybrid search keeps graph_stream off by default after the ablation",
+            None,
+            None,
+            Some(&llm),
+            &crate::prompts::PromptRegistry::default(),
+            0.0,
+        )
+        .await
+        .unwrap()
+    }
+
+    /// A rewrite that keeps only a fragment of the page is a failed rewrite:
+    /// with no shrink variable set, page growth still refuses it and the page
+    /// keeps its body.
+    #[tokio::test]
+    async fn grow_page_refuses_a_rewrite_that_loses_most_of_the_page() {
+        std::env::remove_var("WENLAN_MERGE_SHRINK_GUARD");
+        let (db, _dir) = test_db().await;
+        let (page_id, body) = seed_growth_page(&db).await;
+
+        let grew = grow_with(&db, "0, p<1e-5), graph_stream OFF is firm.[2]").await;
+
+        assert!(!grew, "a fragment must not replace the page");
+        let page = db.get_page(&page_id).await.unwrap().unwrap();
+        assert_eq!(page.content, body);
+    }
+
+    /// One bad machine rewrite must not lower the bar for the next one: the
+    /// guard measures against the longest recent machine version.
+    #[tokio::test]
+    async fn grow_page_measures_against_the_last_good_length() {
+        std::env::remove_var("WENLAN_MERGE_SHRINK_GUARD");
+        let (db, _dir) = test_db().await;
+        let (page_id, _body) = seed_growth_page(&db).await;
+        let broken = "graph_stream OFF is firm.";
+        crate::post_write::update_page(
+            &db,
+            &page_id,
+            UpdatePageRequest {
+                content: broken.to_string(),
+                source_memory_ids: vec!["mem_shrink_v1".to_string()],
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            "page_growth",
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Three times the broken body, still far short of the good one.
+        let grew = grow_with(
+            &db,
+            "graph_stream OFF is firm.[1] Hybrid search keeps it off by default.[2] \
+             It ranks with fusion.",
+        )
+        .await;
+
+        assert!(
+            !grew,
+            "a cut-off rewrite must not pass because the last one was worse"
+        );
+        let page = db.get_page(&page_id).await.unwrap().unwrap();
+        assert_eq!(page.content, broken);
     }
 
     /// G2(b): same class of bug as G1's `run_page_growth_slice` seam, but for
