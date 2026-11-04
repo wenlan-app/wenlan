@@ -1850,6 +1850,7 @@ pub fn run() {
             search::get_page_links,
             search::get_session_detail,
             search::list_things,
+            search::list_thing_night_points,
             search::get_thing,
             search::get_thing_map,
             search::search_conversations,

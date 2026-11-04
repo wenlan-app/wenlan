@@ -123,6 +123,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "get_session_detail",
     // Fixtures have no things: the list is empty and no id resolves.
     "list_things",
+    "list_thing_night_points",
     "get_thing",
     "get_thing_map",
     "search_conversations",

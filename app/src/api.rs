@@ -1698,6 +1698,14 @@ impl WenlanClient {
         self.get_json("/api/things").await
     }
 
+    /// `GET /api/things/points`: each thing with the points its nights wrote
+    /// that still stand, for the big map (UX-CHAT-5).
+    pub async fn list_thing_night_points(
+        &self,
+    ) -> Result<wenlan_types::ThingNightPointsResponse, String> {
+        self.get_json("/api/things/points").await
+    }
+
     /// `GET /api/things/{id}`: one thing with its conversations and pages.
     pub async fn get_thing(&self, id: &str) -> Result<wenlan_types::ThingDetailResponse, String> {
         let path = format!("/api/things/{}", percent_encode_path_segment(id));

@@ -108,6 +108,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "list_working_on": return workingOn();
     // The fixture has no things of its own yet, so home shows Brief items.
     case "list_things": return [];
+    case "list_thing_night_points": return [];
     // The fixture has no AI conversations, so search finds none of their words.
     case "search_conversations": return [];
     case "get_briefing": return { content: "", new_today: 0, primary_agent: null, generated_at: 1_783_728_000, is_stale: false };

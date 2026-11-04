@@ -1071,6 +1071,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // Things (一件事). An older daemon without the route has none yet, so home
   // falls back to Brief items.
   list_things: () => get("/api/things").then((r) => r?.things ?? []).catch(() => []),
+  list_thing_night_points: () => get("/api/things/points").then((r) => r?.things ?? []).catch(() => []),
   get_thing: (a) => get(`/api/things/${enc(String(a?.id ?? ""))}`),
   get_thing_map: (a) => get(`/api/things/${enc(String(a?.id ?? ""))}/map`),
   // Conversation words (UX-FIND-1/2). An older daemon has no route: no hits.

@@ -5412,6 +5412,16 @@ pub async fn list_things(
     Ok(client.list_things().await?.things)
 }
 
+/// Each thing with the points its nights wrote that still stand, so the big
+/// map draws them around the thing (UX-CHAT-5).
+#[tauri::command]
+pub async fn list_thing_night_points(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<wenlan_types::ThingNightPoints>, String> {
+    let client = { state.read().await.client.clone() };
+    Ok(client.list_thing_night_points().await?.things)
+}
+
 #[tauri::command]
 pub async fn get_thing(
     state: tauri::State<'_, State>,
