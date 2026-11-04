@@ -650,6 +650,11 @@ export async function setBackgroundAiEnabled(enabled: boolean): Promise<void> {
   return invoke("set_background_ai_enabled", { enabled });
 }
 
+/** The app's language; what Wenlan writes about conversations follows it. */
+export async function setUiLanguage(language: string): Promise<void> {
+  return invoke("set_ui_language", { language });
+}
+
 export interface SystemInfo {
   total_ram_gb: number;
   available_ram_gb: number;
@@ -959,6 +964,9 @@ export interface ThingSummary {
    *  found by search, back on its own with the next conversation (UX-HOME-5).
    *  Absent from an older daemon. */
   quiet?: boolean;
+  /** Unix seconds: the newest night that steeped what it settled into
+   *  long-term memory and was not taken back (UX-CHAT-5). */
+  dreamed_at?: number;
 }
 
 export interface ThingSession {
@@ -990,6 +998,13 @@ export interface ThingDetail extends ThingSummary {
   pages: ThingPage[];
   /** Newest first. Older daemons leave it out. */
   memories?: ThingMemory[];
+  /** Things the AI thinks are the same goal, waiting for the person
+   *  (UX-THING-3). Older daemons leave it out. */
+  merge_proposals?: { id: string; title: string | null }[];
+  /** The newest night that steeped this thing's points, not taken back. */
+  dream?: { at: number; decided: number; open: number; fresh?: string[] };
+  /** Points steeped from it that are still open. */
+  open_points?: string[];
 }
 
 /** Where a point on a thing's map stands; apart from its kind, since an
@@ -1080,6 +1095,16 @@ export async function renameThing(id: string, title: string): Promise<ThingSumma
 /** Take a thing off "what you're working on" until its next conversation (UX-HOME-5). */
 export async function hideThing(id: string): Promise<ThingSummary> {
   return invoke("hide_thing", { id });
+}
+
+/** Answer "these two look like one thing" on a thing's page (UX-THING-3):
+ *  merge `otherId` into `id`, or keep them apart so it is not asked again. */
+export async function undoThingDream(id: string): Promise<ThingSummary> {
+  return invoke("undo_thing_dream", { id });
+}
+
+export async function answerThingMerge(id: string, otherId: string, merge: boolean): Promise<ThingSummary> {
+  return invoke("answer_thing_merge", { id, otherId, merge });
 }
 
 /** Move a conversation out of one thing into another, or into a new thing

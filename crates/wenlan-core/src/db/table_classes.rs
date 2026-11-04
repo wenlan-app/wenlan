@@ -80,6 +80,8 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("thing_map_nodes", File),
         ("thing_map_edges", File),
         ("thing_map_proposals", File),
+        // The person's answers to "these two look like one thing".
+        ("thing_merge_proposals", File),
         // History: versions, approvals, receipts, tombstones, sessions, reads.
         ("page_history", History),
         ("sentence_history", History),
@@ -122,6 +124,8 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("libsql_vector_meta_shadow", Cache),
         ("memories_vec_idx_shadow", Cache),
         ("memory_enrichment_summary", Cache),
+        ("conversation_labels", Cache),
+        ("thing_lines", Cache),
         // Links, entities, relations, claims and checks.
         ("page_links", Cache),
         ("memory_entities", Cache),

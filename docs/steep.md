@@ -153,3 +153,11 @@ Folder-to-home-to-brand-to-plan navigation was exercised and inspected in the
 project's Playwright Chromium headless shell (149.0.7827.55). This verifies the
 requested knowledge-arrangement path, not native Tauri integration or automatic
 background/model-driven rebuild execution. Those were not exercised by this run.
+
+After integrating main at `35efea38`, a third fresh cold session repeated the
+arrangement on a new isolated library (48 MCP calls, 11 original pages retained,
+3 added, 8 moves). Readback and browser navigation passed again. A separate
+isolated probe moved a page, updated its body, and verified the new file and
+readback matched, the old path remained absent, and page ID/Space were unchanged.
+The route-manifest, protected-relation and real-router organization tests also
+passed on the integrated state. The Skill input hashes were unchanged by the merge.

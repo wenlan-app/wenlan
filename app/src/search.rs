@@ -265,6 +265,16 @@ pub async fn set_background_ai_enabled(
     client.set_background_ai_enabled(enabled).await
 }
 
+/// The app's language, so what Wenlan writes about conversations follows it.
+#[tauri::command]
+pub async fn set_ui_language(
+    state: tauri::State<'_, State>,
+    language: String,
+) -> Result<(), String> {
+    let client = { state.read().await.client.clone() };
+    client.set_ui_language(&language).await
+}
+
 #[tauri::command]
 pub async fn set_setup_completed(
     state: tauri::State<'_, State>,
@@ -5463,6 +5473,30 @@ pub async fn hide_thing(
 ) -> Result<wenlan_types::ThingSummary, String> {
     let client = { state.read().await.client.clone() };
     client.hide_thing(&id).await
+}
+
+/// Answer a merge proposal on a thing's page (UX-THING-3): merge `other_id`
+/// into `id`, or keep the two apart.
+#[tauri::command]
+pub async fn answer_thing_merge(
+    state: tauri::State<'_, State>,
+    id: String,
+    other_id: String,
+    merge: bool,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.answer_thing_merge(&id, &other_id, merge).await
+}
+
+/// Take back the newest night that steeped a thing's points into long-term
+/// memory (UX-CHAT-5).
+#[tauri::command]
+pub async fn undo_thing_dream(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.undo_thing_dream(&id).await
 }
 
 /// Move a conversation between things (UX-THING-1): into `to_thing_id`, or

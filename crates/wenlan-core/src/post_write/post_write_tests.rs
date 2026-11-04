@@ -8379,3 +8379,167 @@ async fn changelog_entry_records_agent_and_numeric_delta() {
     assert_eq!(entries[1]["sources_removed"], 1);
     assert!(entries[1]["delta_summary"].is_string());
 }
+
+/// Files first (storage step 2): an update puts the new version in the
+/// page's file before the database commits it, and the page watcher does
+/// not read that file back as the person's edit in between.
+#[tokio::test]
+async fn an_update_writes_its_file_before_the_database() {
+    let (db, _dir) = test_db().await;
+    let knowledge = tempfile::tempdir().unwrap();
+    seed_memory(
+        &db,
+        "mem_file_first",
+        "Files hold the page before the index",
+    )
+    .await;
+    let page_id = seed_page(
+        &db,
+        "mem_file_first",
+        "Files hold the page before the index",
+    )
+    .await;
+    let before = db.get_page(&page_id).await.unwrap().unwrap();
+    let file = crate::export::knowledge::KnowledgeProjectionWrite::new(
+        knowledge.path().to_path_buf(),
+        &db,
+    )
+    .write_page_gated(&db, &before)
+    .await
+    .unwrap()
+    .unwrap();
+    let path = knowledge.path().join(&file);
+
+    let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
+    let (go_tx, go_rx) = tokio::sync::oneshot::channel();
+    PRE_WRITE_GATE
+        .lock()
+        .unwrap()
+        .push((page_id.clone(), parked_tx, go_rx));
+    let new_body = "Files hold the page before the index, and the index follows";
+    let update = page_write(
+        &db,
+        PageWrite::Update {
+            page_id: &page_id,
+            req: UpdatePageRequest {
+                content: new_body.to_string(),
+                source_memory_ids: vec!["mem_file_first".to_string()],
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "fs_edit",
+            require_stale: false,
+            knowledge_path: Some(knowledge.path()),
+            citations: None,
+            expected_source_revision: None,
+        },
+    );
+    let observe = async {
+        parked_rx
+            .await
+            .expect("the update must reach the database write");
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(on_disk.contains(new_body), "{on_disk}");
+        assert!(
+            on_disk.contains(&format!("origin_version: {}", before.version + 1)),
+            "{on_disk}"
+        );
+        assert_eq!(
+            db.get_page(&page_id).await.unwrap().unwrap().version,
+            before.version
+        );
+        assert!(crate::export::knowledge::file_first_in_flight(&page_id));
+        let stats = crate::sources::page_watcher::sync_filesystem_edits(&db, knowledge.path())
+            .await
+            .unwrap();
+        assert_eq!(stats.applied, 0, "{stats:?}");
+        go_tx.send(()).unwrap();
+    };
+    let (result, ()) = tokio::join!(update, observe);
+    result.unwrap();
+    let after = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(after.version, before.version + 1);
+    assert_eq!(after.content, new_body);
+    assert!(!crate::export::knowledge::file_first_in_flight(&page_id));
+    assert!(std::fs::read_to_string(&path).unwrap().contains(new_body));
+}
+
+/// A file written first is put back when its database write does not land,
+/// unless the person changed it since.
+#[tokio::test]
+async fn a_file_written_first_is_put_back_when_its_write_does_not_land() {
+    let (db, _dir) = test_db().await;
+    let knowledge = tempfile::tempdir().unwrap();
+    seed_memory(&db, "mem_put_back", "A page that stays as it was").await;
+    let page_id = seed_page(&db, "mem_put_back", "A page that stays as it was").await;
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    let projection = crate::export::knowledge::KnowledgeProjectionWrite::new(
+        knowledge.path().to_path_buf(),
+        &db,
+    );
+    let path = knowledge.path().join(
+        projection
+            .write_page_gated(&db, &page)
+            .await
+            .unwrap()
+            .unwrap(),
+    );
+    let original = std::fs::read(&path).unwrap();
+    let mut next = page.clone();
+    next.content = "A version the database never took".to_string();
+    next.version += 1;
+
+    let written = projection
+        .write_page_first(&db, &next)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("never took"));
+    drop(written);
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "put back as it was"
+    );
+    assert!(!crate::export::knowledge::file_first_in_flight(&page_id));
+
+    // A write that lands keeps its file.
+    let written = projection
+        .write_page_first(&db, &next)
+        .await
+        .unwrap()
+        .unwrap();
+    written.keep();
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("never took"));
+
+    // The person saved over it before the write gave up: theirs stays.
+    let written = projection
+        .write_page_first(&db, &next)
+        .await
+        .unwrap()
+        .unwrap();
+    std::fs::write(&path, "the person's own text\n").unwrap();
+    drop(written);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "the person's own text\n"
+    );
+
+    // A new title means a new file name: that write keeps the old order.
+    let mut renamed = next.clone();
+    renamed.title = "Another name".to_string();
+    assert!(projection
+        .write_page_first(&db, &renamed)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "the person's own text\n"
+    );
+}

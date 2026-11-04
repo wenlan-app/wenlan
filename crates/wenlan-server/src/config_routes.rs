@@ -53,6 +53,7 @@ fn config_to_response(cfg: &config::Config) -> ConfigResponse {
         everyday_source: cfg.everyday_source.clone(),
         synthesis_source: cfg.synthesis_source.clone(),
         background_ai_enabled: Some(cfg.background_ai_enabled()),
+        ui_language: cfg.ui_language.clone(),
         page_map_auto_suggest: cfg.page_map_auto_suggest,
         chat_check_enabled: cfg.chat_check_enabled,
     }
@@ -161,6 +162,10 @@ pub async fn handle_update_config(
         }
         if let Some(enabled) = req.background_ai_enabled {
             cfg.background_ai_enabled = Some(enabled);
+        }
+        if let Some(language) = req.ui_language.as_deref() {
+            let language: String = language.trim().chars().take(35).collect();
+            cfg.ui_language = (!language.is_empty()).then_some(language);
         }
         Ok(cfg.clone())
     })

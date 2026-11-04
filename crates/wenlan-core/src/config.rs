@@ -93,6 +93,10 @@ pub struct Config {
     /// its previous routing behavior; a new config is initialized to Off.
     #[serde(default)]
     pub background_ai_enabled: Option<bool>,
+    /// The app's language (`en`, `zh-Hans`, `zh-Hant`…), as the app last
+    /// said. Titles Wenlan writes about conversations follow it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_language: Option<String>,
     /// Gates ONLY the proactive Page-Map suggestion phase in the refinery
     /// scheduler (`Phase::PageMaps`). The explicit `POST /api/pages/{id}/map/improve`
     /// route is NEVER gated by this flag.

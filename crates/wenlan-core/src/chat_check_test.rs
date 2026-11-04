@@ -193,8 +193,9 @@ async fn a_conflicting_reply_gets_one_logged_reminder_with_its_source() {
     assert_eq!(other.reminders.len(), 1);
 }
 
+/// UX-CHAT-2: a reply with nothing to do with earlier decisions says nothing.
 #[tokio::test]
-async fn an_unrelated_or_agreeing_reply_is_silent_and_logs_nothing() {
+async fn ux_chat_2_an_unrelated_or_agreeing_reply_is_silent_and_logs_nothing() {
     let (db, _dir) = test_db().await;
     insert_decision(
         &db,
@@ -221,8 +222,10 @@ async fn an_unrelated_or_agreeing_reply_is_silent_and_logs_nothing() {
     assert_eq!(empty.skipped, Some(ChatCheckSkipped::Empty));
 }
 
+/// UX-CHAT-2: at most five reminders a day.
 #[tokio::test]
-async fn the_daily_cap_is_counted_from_the_log() {
+async fn ux_chat_2_at_most_five_reminders_a_day_counted_from_the_log() {
+    assert_eq!(CHAT_REMINDER_DAILY_CAP, 5);
     let (db, _dir) = test_db().await;
     for i in 0..7 {
         insert_decision(

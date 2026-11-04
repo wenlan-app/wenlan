@@ -1080,6 +1080,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_conversation_lines: (a) => get(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/lines`),
   rename_thing: (a) => patch(`/api/things/${enc(String(a?.id ?? ""))}`, { title: a?.title }),
   hide_thing: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/hide`, {}),
+  answer_thing_merge: (a) =>
+    post(`/api/things/${enc(String(a?.id ?? ""))}/${a?.merge ? "merge" : "keep-apart"}`, {
+      other_thing_id: a?.otherId,
+    }),
+  undo_thing_dream: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/dream/undo`, {}),
   move_session_thing: (a) => post(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/things/move`, {
     from_thing_id: a?.fromThingId,
     ...(a?.toThingId == null ? {} : { to_thing_id: a.toThingId }),
@@ -1319,6 +1324,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     if (typeof value !== "boolean") throw new Error("Invalid background AI setting");
     return value;
   },
+  set_ui_language: (a) => put("/api/config", { ui_language: String(a?.language ?? "") }).then(() => undefined),
   set_background_ai_enabled: async (a) => {
     if (typeof a?.enabled !== "boolean") throw new Error("Invalid background AI setting");
     const updated = await put("/api/config", { background_ai_enabled: a.enabled });

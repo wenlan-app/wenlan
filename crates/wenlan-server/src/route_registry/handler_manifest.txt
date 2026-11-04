@@ -188,6 +188,9 @@ main|post|/api/sessions/{id}/things/move|wenlan_server::things_routes::handle_mo
 main|post|/api/sessions/{id}/saved-in|wenlan_server::things_routes::handle_saved_in
 main|post|/api/things/{id}/map/ops|wenlan_server::things_routes::handle_thing_map_ops
 main|post|/api/things/{id}/hide|wenlan_server::things_routes::handle_hide_thing
+main|post|/api/things/{id}/merge|wenlan_server::things_routes::handle_merge_thing
+main|post|/api/things/{id}/keep-apart|wenlan_server::things_routes::handle_keep_thing_apart
+main|post|/api/things/{id}/dream/undo|wenlan_server::things_routes::handle_undo_thing_dream
 main|post|/api/shutdown|wenlan_server::routes::handle_shutdown
 main|post|/api/snapshots/{id}/delete|wenlan_server::snapshot_routes::handle_delete_snapshot
 main|post|/api/sources|wenlan_server::source_routes::handle_add_source

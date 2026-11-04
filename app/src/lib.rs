@@ -21,6 +21,7 @@ pub mod global_shortcuts;
 #[cfg(target_os = "macos")]
 mod handover;
 mod helper_agent;
+mod home_bin;
 mod identity_paths;
 mod indexer;
 mod lifecycle;
@@ -877,8 +878,12 @@ pub fn run() {
             build_main_window(&handle)?;
 
             // Tell the Claude Code and Codex plugins where this app's
-            // wenlan-mcp is, wherever the app was installed or run from.
-            tauri::async_runtime::spawn_blocking(mcp_config::record_app_wenlan_mcp_path);
+            // wenlan-mcp is, and point ~/.wenlan/bin at those same binaries
+            // when an older copy is what PATH and MCP configs still run.
+            tauri::async_runtime::spawn_blocking(|| {
+                mcp_config::record_app_wenlan_mcp_path();
+                home_bin::sync_bundled_home_bin();
+            });
 
             // Keep the app LaunchServices-friendly: the UI process is a normal
             // Dock app from startup, while close/hide only affects the window.
@@ -1779,6 +1784,7 @@ pub fn run() {
             search::set_setup_completed,
             search::get_background_ai_enabled,
             search::set_background_ai_enabled,
+            search::set_ui_language,
             search::should_show_wizard,
             search::local_setup_completed,
             daemon_start::get_startup_preflight_status,
@@ -1850,6 +1856,8 @@ pub fn run() {
             search::get_conversation_lines,
             search::rename_thing,
             search::hide_thing,
+            search::answer_thing_merge,
+            search::undo_thing_dream,
             search::move_session_thing,
             search::get_page_sessions,
             search::set_page_review_required,

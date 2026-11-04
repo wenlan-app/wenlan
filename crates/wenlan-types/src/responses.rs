@@ -858,6 +858,9 @@ pub struct ConfigResponse {
     /// Missing on an older daemon means legacy behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background_ai_enabled: Option<bool>,
+    /// The app's language as the app last told the daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_language: Option<String>,
     /// Whether the proactive Page-Map suggestion phase is enabled. Default true.
     #[serde(default)]
     pub page_map_auto_suggest: bool,

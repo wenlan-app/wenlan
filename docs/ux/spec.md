@@ -77,10 +77,21 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   You can see which, and change it in one step. When a conversation fits no
   thing yet, the AI starts a new thing and names it without asking.
   原文：每段對話都歸到至少一件事，看得到歸到哪，一步就能改。選擇卡「自动开新的」（2026-11-01 00:03）：對話不屬於任何一件事時，AI 直接開一件新事並取名，不問你；名字和歸屬都能一步改。
+  Wenlan reads the conversations itself, from the transcripts Claude Code and
+  Codex keep on this computer, so nobody has to remember to tell it. Quick
+  questions, small chores (confirming a merge, sending a file), tests and runs
+  a program started are left out. Wenlan's everyday model reads each
+  conversation; grouping them into things takes a stronger model, which sees
+  only one-line labels: the cloud model when one is set, otherwise the
+  person's own AI tool. A thing is a goal, not a step: a review or a check
+  goes with the goal it served. The grouping model also writes the card's
+  line on where the whole thing stands. Titles and lines follow the app's
+  language. A space with nothing written to it for a month is not suggested.
+  原文：「正在做的事」直接從你跟 AI 的對話來，不用你記得叫 AI 存（2026-11-02）；選擇卡「用你接的 AI 工具（建議）」（2026-11-03 05:52）；「可以的那做完這個吧」（2026-11-03 05:23）；看了第七版：「有比較像最近在做的事情了」「wenlan-app 老早就沒在用的 space。」（2026-11-03 07:02）
 - **UX-THING-2** `planned` After you correct it once, the same case is not
   sorted wrong again.
   原文：改過一次，同樣的情況下次不再分錯。
-- **UX-THING-3** `planned` Merging two things is only ever a proposal; they
+- **UX-THING-3** `shipped` Merging two things is only ever a proposal; they
   merge when you press it.
   原文：合併只會是提議，你按了才合。
 
@@ -156,7 +167,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   with the date and the source, and it can be opened. Both your words and the
   AI's are checked. It is a Beta setting, off by default.
   原文：AI 說了跟以前定的相反的話，同一輪就出現一句提醒，帶日期和出處，點得開。「這些功能因為還不確定需求，可以用 Beta 啥的字眼」（2026-10-31；檢查改成要你打開才有）；選擇卡「你和 AI 说的都看」（2026-10-31 16:51）
-- **UX-CHAT-2** `planned` Nothing is said when the reply has nothing to do with
+- **UX-CHAT-2** `shipped` Nothing is said when the reply has nothing to do with
   earlier decisions. If Wenlan is closed or does not answer within one second,
   the check is skipped and the chat is not held up. At most five reminders a
   day.
@@ -174,14 +185,17 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   「我是认为是读的是一个工作状态上面的一个心智图，因为这跟这个对话有关嘛」「笔记的那个心智图…除非是有必要想去看」「把不同的就是来源笔记啊啥的，然后把它读到这个就是 working memory 里面的一个心智图」（2026-10-31）
 - **UX-CHAT-5** `planned` On screen a thing stays one thing: half done and
   quiet for days, you can still find it, open it and carry on, with its
-  conversations and map. Behind the scenes it works like working memory: when
-  it goes quiet the AI tidies its points into the big map by itself, and when
-  you come back it brings the updated related points back in. Nobody is asked
+  conversations and map. Behind the scenes it works like working memory: each
+  night the AI steeps what that day's conversations settled, and what is still
+  open, into long-term memory and the big map by itself, and when you come
+  back it brings the updated related points back in. The app shows that it
+  happened, quietly: home names the things steeped overnight beside its
+  heading, and the thing's page says how many points were steeped, with Undo. Nobody is asked
   "Wrap up?" and nothing is marked done. Each move into the big map is
   recorded and can be undone. The AI asks you only when a point conflicts with
   something you wrote or decided.
-  原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。（2026-10-30 17:19 PT 定了：安靜幾天後問一次「收尾？」，算在一天 5 條裡，不猜。）選擇卡「对不上时才问」（2026-10-31 23:50）：AI 自己把整理好的點搬進大圖，可還原；只有跟你寫過、定過的東西對不上時才問你。「我觉得不一定只有我点头」。「如果是 AI 要自己收，我觉得要自己收」（2026-11-01 00:06）「就有点像 working memory 嘛…过一段时间没做，没有动作，它就自己收到图里面去，大图里面去，就更新了。然后呢，下一次你又有什么新的？跟就算跟这件事情是有关的话，它可能就有点像是在一个新的 working memory…然后它过一段时间，它又会回去更，就会自己回去更新的」（2026-11-01 00:08）「做到一半…他想要回去找到他的话，他要重开一个新的，这是不合理的」「他界面上面看到的样子，跟你实际上背后做的样子…不一定要全部都一致的」（2026-11-01 00:10）
-- **UX-CHAT-6** `planned` The check's rules live in Wenlan itself, not in each
+  原文：「收尾？」一件事只問一次，你點頭的點才接進大圖。（2026-10-30 17:19 PT 定了：安靜幾天後問一次「收尾？」，算在一天 5 條裡，不猜。）選擇卡「对不上时才问」（2026-10-31 23:50）：AI 自己把整理好的點搬進大圖，可還原；只有跟你寫過、定過的東西對不上時才問你。「我觉得不一定只有我点头」。「如果是 AI 要自己收，我觉得要自己收」（2026-11-01 00:06）「就有点像 working memory 嘛…过一段时间没做，没有动作，它就自己收到图里面去，大图里面去，就更新了。然后呢，下一次你又有什么新的？跟就算跟这件事情是有关的话，它可能就有点像是在一个新的 working memory…然后它过一段时间，它又会回去更，就会自己回去更新的」（2026-11-01 00:08）「做到一半…他想要回去找到他的话，他要重开一个新的，这是不合理的」「他界面上面看到的样子，跟你实际上背后做的样子…不一定要全部都一致的」（2026-11-01 00:10）選擇卡「可以，讀一次再收」（2026-11-03 17:24）。「在睡觉的时候…会把东西给存进到长期记忆里面去…你视觉上它可以留在那里待一周，但是实际上呢，它背后的东西在晚上就已经处理好了」（2026-11-03 17:25）「能在界面上什么地方可以显示说，哦，他晚上的时候经过整理的，所以让用户感觉到价值，而不是哦默默做完就默默做完」（2026-11-03 17:48）「应该要更优雅的说法…我们之前一直在强调那个 steeping」（2026-11-03 17:59）
+- **UX-CHAT-6** `shipped` The check's rules live in Wenlan itself, not in each
   tool's plugin, so every AI tool gets the same result.
   原文：檢查的規則寫在文瀾本身，不寫在各家外掛裡；換哪個 AI 工具結果都一樣。
 - **UX-CHAT-7** `planned` The AI tool tells you in one quiet line, with a
@@ -230,7 +244,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   the person's words in a light bubble on the right, the AI's replies across
   the width; the short preview stays one column with who spoke.
   原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）「一般这种对话怎么渲染会更适合一些？就像现在这样在左边，还是说要左右左右这样子的？」（2026-11-02 16:03）「2. 同意」（2026-11-02 16:47）
-- **UX-FIND-3** `planned` There is "open in the original AI tool".
+- **UX-FIND-3** `shipped` There is "open in the original AI tool".
   原文：有「在原本的 AI 工具打開」。
 - **UX-FIND-4** `planned` The left side shows Search, Home, Wiki, Spaces, the
   graph and topics, with no More menu: there are few enough to show them all.

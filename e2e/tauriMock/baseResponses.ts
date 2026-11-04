@@ -57,7 +57,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_startup_preflight_status": return "ready";
     case "get_remote_access_profile": return null;
     case "get_remote_access_status": return { status: "off" };
-    case "set_traffic_lights_visible": case "set_editor_composing": case "set_setup_completed": return null;
+    case "set_traffic_lights_visible": case "set_editor_composing": case "set_setup_completed": case "set_ui_language": return null;
     case "list_agent_activity": return context.activityRows;
     case "list_agents": return [{ id: "agent-claude-code", name: "claude-code", display_name: "Claude Code", agent_type: "claude-code", description: null, enabled: true, trust_level: "full", last_seen_at: 1_783_728_000, memory_count: context.memoryCount, created_at: 1_783_728_000, updated_at: 1_783_728_000 }];
     case "search_pages": case "search_entities_cmd": case "list_recent_retrievals": case "list_recent_changes": case "list_recent_memories": case "list_unconfirmed_memories": case "list_recent_pages": case "list_onboarding_milestones": case "list_pending_revisions": case "get_pending_contradictions": return [];
@@ -124,7 +124,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_session_detail": return null;
     case "get_conversation_lines": throw new TauriMockArgumentError(command, "sessionId");
     // The fixture has no things, so no thing id resolves.
-    case "get_thing": case "get_thing_map": case "rename_thing": case "hide_thing": throw new TauriMockArgumentError(command, "id");
+    case "get_thing": case "get_thing_map": case "rename_thing": case "hide_thing": case "answer_thing_merge": case "undo_thing_dream": throw new TauriMockArgumentError(command, "id");
     case "move_session_thing": throw new TauriMockArgumentError(command, "fromThingId");
     case "list_communities": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, communities: [], next_cursor: null };
     case "list_community_members": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, members: [], next_cursor: null };

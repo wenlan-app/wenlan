@@ -1624,6 +1624,23 @@ fn check_command(command: &str, probes: &DetectProbes) -> CommandCheck {
     }
 }
 
+/// True when both paths are the same file. A symlink in `~/.wenlan/bin` that
+/// points at the bundled `wenlan-mcp` is the current install, not a second one.
+/// Paths that are not on disk stay "different": a missing command is not
+/// treated as the preferred binary.
+fn same_executable(command: &Path, preferred: &Path) -> bool {
+    if command == preferred {
+        return true;
+    }
+    match (
+        std::fs::canonicalize(command),
+        std::fs::canonicalize(preferred),
+    ) {
+        (Ok(command), Ok(preferred)) => command == preferred,
+        _ => false,
+    }
+}
+
 fn entry_health_of(spec: EntrySpec, probes: &DetectProbes) -> EntryHealth {
     let needs_repair = |reason, detail: String| EntryHealth::NeedsRepair { reason, detail };
     let Some(command) = spec.command else {
@@ -1658,15 +1675,16 @@ fn entry_health_of(spec: EntrySpec, probes: &DetectProbes) -> EntryHealth {
         );
     }
     // Policy: once the resolver has a preferred local binary, an existing
-    // absolute wenlan-mcp command is current only when its path is exactly the
-    // preferred path. This deliberately repairs parallel stale installs
-    // without adding a second, fallible version-execution probe.
+    // absolute wenlan-mcp command is current only when it is that binary.
+    // A different path still needs repair — that is how a stale install is
+    // noticed — but a link whose target is the preferred binary is current.
+    // `~/.wenlan/bin/wenlan-mcp` is kept as that link across app updates.
     if command_stem(&command) == "wenlan-mcp"
         && Path::new(&command).is_absolute()
         && probes
             .preferred_mcp_command
             .as_deref()
-            .is_some_and(|preferred| preferred != Path::new(&command))
+            .is_some_and(|preferred| !same_executable(Path::new(&command), preferred))
     {
         return needs_repair(
             RepairReason::CommandNotPreferred,
@@ -1970,7 +1988,7 @@ pub(crate) fn wenlan_mcp_candidate_sources_for(
 /// before their fixed install locations, so an app run from anywhere (outside
 /// /Applications on a Mac, a custom install folder on Windows) is found instead
 /// of falling back to an `npx` download that outlasts the MCP handshake.
-const RECORDED_WENLAN_MCP_PATH_FILE: &str = ".wenlan/bin/wenlan-mcp.path";
+const RECORDED_WENLAN_MCP_PATH_FILE: &str = wenlan_core::home_bin::RECORDED_MCP_PATH_REL;
 
 /// The line recorded for `bundled`. Windows paths are written with forward
 /// slashes, which Git Bash (the runners' shell there) accepts as-is.
@@ -6743,6 +6761,34 @@ args = ["-y", "wenlan-mcp"]
         assert_repair(
             entry_health_reading("cursor", &ConfigRead::Contents(body), &probes),
             RepairReason::CommandNotPreferred,
+        );
+    }
+
+    /// The app keeps `~/.cursor/mcp.json` working across updates by linking
+    /// `~/.wenlan/bin/wenlan-mcp` at the bundle. That path is not the bundle
+    /// path, and it is still the binary the resolver prefers.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_to_the_preferred_binary_is_current() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = tmp.path().join("MacOS").join("wenlan-mcp");
+        std::fs::create_dir_all(bundle.parent().unwrap()).unwrap();
+        write_binary_fixture(&bundle);
+        let linked = tmp.path().join("home-bin").join("wenlan-mcp");
+        std::fs::create_dir_all(linked.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&bundle, &linked).unwrap();
+
+        let body = serde_json::json!({
+            "mcpServers": {"wenlan": {"command": &linked, "args": []}}
+        })
+        .to_string();
+        let which = resolves(&[]);
+        let mut probes = health_probes(HostKind::MacOs, &which, &probe_candidate);
+        probes.preferred_mcp_command = Some(bundle);
+
+        assert_eq!(
+            entry_health_reading("cursor", &ConfigRead::Contents(body), &probes),
+            EntryHealth::Healthy
         );
     }
 

@@ -1754,6 +1754,33 @@ impl WenlanClient {
         self.post_empty(&path).await
     }
 
+    /// `POST /api/things/{id}/merge` or `/keep-apart`: the person answers a
+    /// merge proposal (UX-THING-3). Merging folds `other` into `id`.
+    pub async fn answer_thing_merge(
+        &self,
+        id: &str,
+        other: &str,
+        merge: bool,
+    ) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!(
+            "/api/things/{}/{}",
+            percent_encode_path_segment(id),
+            if merge { "merge" } else { "keep-apart" }
+        );
+        let request = wenlan_types::ThingMergeRequest {
+            other_thing_id: other.to_string(),
+        };
+        self.post_json(&path, &request).await
+    }
+
+    /// `POST /api/things/{id}/dream/undo`: the person takes back the newest
+    /// night that steeped this thing's points into long-term memory
+    /// (UX-CHAT-5).
+    pub async fn undo_thing_dream(&self, id: &str) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!("/api/things/{}/dream/undo", percent_encode_path_segment(id));
+        self.post_empty(&path).await
+    }
+
     /// `POST /api/sessions/{id}/things/move`: the person moves a conversation
     /// into another thing, or into a new one they name.
     pub async fn move_session_thing(
@@ -2261,6 +2288,14 @@ impl WenlanClient {
         Ok(())
     }
 
+    /// Tell the daemon the app's language; titles it writes about
+    /// conversations follow it.
+    pub async fn set_ui_language(&self, language: &str) -> Result<(), String> {
+        let mut req = empty_update();
+        req.ui_language = Some(language.to_string());
+        self.update_config(req).await.map(|_| ())
+    }
+
     /// GET /api/setup/status — return daemon-owned setup/model/key state.
     ///
     /// Bounded by [`HEALTH_TIMEOUT`], not the ingest-sized [`REQUEST_TIMEOUT`]:
@@ -2477,6 +2512,7 @@ fn empty_update() -> wenlan_types::requests::UpdateConfigRequest {
         everyday_source: None,
         synthesis_source: None,
         background_ai_enabled: None,
+        ui_language: None,
         page_map_auto_suggest: None,
         chat_check_enabled: None,
         only_if_unset: None,

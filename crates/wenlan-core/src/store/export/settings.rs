@@ -4,7 +4,7 @@
 //! | File              | Tables                                          |
 //! |-------------------|-------------------------------------------------|
 //! | `spaces.json`     | `spaces`                                        |
-//! | `things.json`     | `things`, `thing_sessions`, the `thing_map*` four |
+//! | `things.json`     | `things`, `thing_sessions`, the `thing_map*` four, `thing_merge_proposals` |
 //! | `agents.json`     | `agent_connections`                             |
 //! | `profile.json`    | `profiles`                                      |
 //! | `onboarding.json` | `onboarding_milestones`                         |
@@ -36,6 +36,7 @@ pub const SETTINGS_FILES: &[(&str, &[&str])] = &[
             "thing_map_nodes",
             "thing_map_edges",
             "thing_map_proposals",
+            "thing_merge_proposals",
         ],
     ),
     ("agents", &["agent_connections"]),

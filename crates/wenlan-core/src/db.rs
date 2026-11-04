@@ -88,6 +88,7 @@ pub use activity_counts::{
     StepCount,
 };
 pub mod conversations;
+pub mod intake;
 mod scoped_entities;
 mod scoped_pages;
 pub mod sentence_history;
@@ -98,7 +99,9 @@ mod space_context;
 mod space_rename;
 mod steep;
 pub(crate) mod steep_new;
+pub mod thing_dream;
 pub mod thing_map;
+pub mod thing_merge;
 pub mod things;
 mod truth_exposure;
 
@@ -234,7 +237,11 @@ pub(crate) mod steep_code_test;
 #[path = "db/test_support_test.rs"]
 pub(crate) mod test_support;
 #[cfg(test)]
+mod thing_dream_test;
+#[cfg(test)]
 mod thing_map_test;
+#[cfg(test)]
+mod thing_merge_test;
 #[cfg(test)]
 mod things_test;
 #[cfg(test)]
@@ -1555,7 +1562,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 153;
+pub const SCHEMA_VERSION: u32 = 156;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10795,6 +10802,33 @@ impl MemoryDB {
             }
             if version < 153 {
                 self.migrate_153_thing_hidden_at(version).await?;
+            }
+
+            // Migration 154 remembers what Wenlan read from each conversation.
+            // See db/intake.rs.
+            if ceiling < 154 {
+                return Ok(());
+            }
+            if version < 154 {
+                self.migrate_154_conversation_labels(version).await?;
+            }
+
+            // Migration 155 keeps the person's answers to merge proposals.
+            // See db/thing_merge.rs.
+            if ceiling < 155 {
+                return Ok(());
+            }
+            if version < 155 {
+                self.migrate_155_thing_merge_proposals(version).await?;
+            }
+
+            // Migration 156 keeps what each night put into long-term memory.
+            // See db/thing_dream.rs.
+            if ceiling < 156 {
+                return Ok(());
+            }
+            if version < 156 {
+                self.migrate_156_thing_dreams(version).await?;
             }
         }
 
@@ -55508,21 +55542,51 @@ impl MemoryDB {
     /// `None` when the page was not active and nothing changed. The projection
     /// uses it to tell the archived file from one a later restore wrote.
     pub async fn archive_page_versioned(&self, id: &str) -> Result<Option<i64>, WenlanError> {
+        self.archive_page_if_at(id, None).await
+    }
+
+    /// [`Self::archive_page_versioned`], but only while the page is still at
+    /// `version`: a write since the caller looked at it leaves it active.
+    pub async fn archive_page_at_version(
+        &self,
+        id: &str,
+        version: i64,
+    ) -> Result<Option<i64>, WenlanError> {
+        self.archive_page_if_at(id, Some(version)).await
+    }
+
+    async fn archive_page_if_at(
+        &self,
+        id: &str,
+        expected_version: Option<i64>,
+    ) -> Result<Option<i64>, WenlanError> {
         let now = chrono::Utc::now();
         let now_rfc3339 = now.to_rfc3339();
         let now_ts = now.timestamp();
         let conn = self.conn.lock().await;
         Self::reject_entity_shadow_page_on_conn(&conn, id).await?;
         Self::reject_page_draft_on_conn(&conn, id).await?;
-        let affected = conn
-            .execute(
-                "UPDATE pages
+        let affected = match expected_version {
+            None => {
+                conn.execute(
+                    "UPDATE pages
              SET status = 'archived', version = version + 1, last_modified = ?1
              WHERE id = ?2 AND status = 'active'",
-                libsql::params![now_rfc3339, id],
-            )
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("archive_page: {e}")))?;
+                    libsql::params![now_rfc3339, id],
+                )
+                .await
+            }
+            Some(version) => {
+                conn.execute(
+                    "UPDATE pages
+             SET status = 'archived', version = version + 1, last_modified = ?1
+             WHERE id = ?2 AND status = 'active' AND version = ?3",
+                    libsql::params![now_rfc3339, id, version],
+                )
+                .await
+            }
+        }
+        .map_err(|e| WenlanError::VectorDb(format!("archive_page: {e}")))?;
         if affected != 1 {
             return Ok(None);
         }

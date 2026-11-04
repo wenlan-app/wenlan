@@ -9,7 +9,7 @@ use cap_std::fs::{Dir, OpenOptions};
 use fs2::FileExt as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
@@ -19,9 +19,13 @@ use wenlan_types::CodeBasisLocator;
 #[path = "knowledge_folders.rs"]
 mod folders;
 pub use folders::{
-    create_knowledge_folder, follow_external_moves, knowledge_edit_targets,
-    knowledge_markdown_paths, list_knowledge_folders, move_projected_page, read_knowledge_markdown,
-    validate_knowledge_folder_path, KnowledgeFolderEntry,
+    adoption_frontmatter, create_knowledge_folder, drop_pending_adoption, follow_external_moves,
+    has_origin_version, knowledge_edit_targets, knowledge_markdown_paths, list_knowledge_folders,
+    move_projected_page, note_missing_pages, note_person_file, origin_id_line,
+    page_file_still_gone, pending_adoptions, person_page_files, read_knowledge_markdown,
+    reclaim_returned_page, record_person_note, restamp_person_note, stamp_person_note,
+    unstamp_person_note, validate_knowledge_folder_path, KnowledgeFolderEntry, MissingPages,
+    PersonPageFile, MASS_MISSING_FLOOR, MISSING_SETTLE_SECS,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;
@@ -84,6 +88,19 @@ struct KnowledgeState {
     /// Dropped with `archived_from`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     archived_versions: BTreeMap<String, i64>,
+    /// When the page watcher first found a page's file gone (page id -> unix
+    /// seconds) with no other file carrying its id. The page is archived only
+    /// once the file has stayed gone for a while, so a save that replaces the
+    /// file or a sync tool that briefly removes it does not archive anything.
+    /// Absent from state files written before this field existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    missing_since: BTreeMap<String, i64>,
+    /// Notes the person put in the folder whose id line is written but
+    /// whose page may not exist yet (page id -> file). Recorded before the
+    /// id line, so a stop between the two never leaves a stamped note the
+    /// watcher takes for a deleted page; cleared once the page is recorded.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pending_adoptions: BTreeMap<String, String>,
 }
 
 impl Default for KnowledgeState {
@@ -95,6 +112,8 @@ impl Default for KnowledgeState {
             index_regeneration_pending: false,
             archived_from: BTreeMap::new(),
             archived_versions: BTreeMap::new(),
+            missing_since: BTreeMap::new(),
+            pending_adoptions: BTreeMap::new(),
         }
     }
 }
@@ -122,6 +141,13 @@ struct PageFileState {
     description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     space: Option<String>,
+    /// For a note the person put in the folder (an adopted file): its own
+    /// frontmatter, as they wrote it plus the `origin_id` line Wenlan
+    /// added. Wenlan writes such a page with this frontmatter and the new
+    /// body, never its own, so the person's keys, order and layout stay.
+    /// `None` for pages Wenlan made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    person_frontmatter: Option<String>,
 }
 
 #[cfg(test)]
@@ -162,6 +188,10 @@ pub struct ReconcileStats {
     pub temp_files_removed: usize,
     /// Repairs that failed; the page keeps its stale file until next boot.
     pub errors: usize,
+    /// Pages whose file is gone. Not written back: the folder is the source
+    /// of truth, so a file the person deleted stays deleted, and the page
+    /// watcher archives its page.
+    pub missing: usize,
 }
 
 /// The `origin_version` stamp `render_markdown` writes into every projected
@@ -187,6 +217,15 @@ pub(crate) fn projected_origin_version(fm: &crate::sources::obsidian::NoteFrontm
 /// Page ids carry no dots, so "exactly three components, the last two all
 /// digits" is our writer's shape and nobody else's — an editor swap file or a
 /// user's own `.tmp` scratch in the pages directory does not match.
+/// The page a `write_page` temp file was for.
+fn write_page_temp_owner(name: &str) -> Option<&str> {
+    if !is_write_page_temp_file(name) {
+        return None;
+    }
+    let rest = name.strip_prefix('.')?.strip_suffix(".tmp")?;
+    rest.rsplitn(3, '.').nth(2)
+}
+
 fn is_write_page_temp_file(name: &str) -> bool {
     let Some(rest) = name.strip_prefix('.').and_then(|n| n.strip_suffix(".tmp")) else {
         return false;
@@ -225,6 +264,8 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
             "index_regeneration_pending",
             "archived_from",
             "archived_versions",
+            "missing_since",
+            "pending_adoptions",
         ]
         .contains(&key.as_str())
     }) {
@@ -244,6 +285,7 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
         "title",
         "description",
         "space",
+        "person_frontmatter",
     ];
     for entry in pages.values() {
         let entry = entry
@@ -428,7 +470,7 @@ impl KnowledgeWriter {
     }
 
     #[cfg(test)]
-    fn reconcile_for_test(&self, pages: &[Page]) -> Result<ReconcileStats, WenlanError> {
+    pub(crate) fn reconcile_for_test(&self, pages: &[Page]) -> Result<ReconcileStats, WenlanError> {
         let guard = self.begin_test_write();
         self.reconcile(&guard, pages)
     }
@@ -606,7 +648,16 @@ impl KnowledgeWriter {
         let file_path = self.path.join(&filename);
         let (target_directory, target_name) = folders::page_parent(&capabilities.root, &filename)?;
 
-        let content = render_markdown(page);
+        // A note the person put in the folder keeps its own frontmatter.
+        let person_frontmatter = state
+            .pages
+            .get(&page.id)
+            .and_then(|entry| entry.person_frontmatter.as_deref())
+            .map(|frontmatter| person_frontmatter_titled(frontmatter, &page.title));
+        let content = match &person_frontmatter {
+            Some(frontmatter) => render_person_markdown(page, frontmatter),
+            None => render_markdown(page),
+        };
         // Write to a temp file in the same capability directory, then rename
         // over the target: rename within one directory is atomic, so a reader
         // (Obsidian, the fs watcher) never observes a half-written page file.
@@ -687,6 +738,7 @@ impl KnowledgeWriter {
                 title: Some(page.title.clone()),
                 description: page.summary.clone(),
                 space: page.space.clone(),
+                person_frontmatter,
             },
         );
         // The old copy and the stale index entry are recorded in the save that
@@ -748,8 +800,9 @@ impl KnowledgeWriter {
         pages: &[Page],
     ) -> Result<ReconcileStats, WenlanError> {
         self.validate_guard(guard)?;
+        let (temp_files_removed, interrupted) = self.sweep_temp_leftovers();
         let mut stats = ReconcileStats {
-            temp_files_removed: self.sweep_temp_leftovers(),
+            temp_files_removed,
             ..ReconcileStats::default()
         };
 
@@ -762,7 +815,16 @@ impl KnowledgeWriter {
                 continue;
             };
             stats.checked += 1;
-            if !self.projection_is_behind(&entry.file, page) {
+            if self.projection_file_is_gone(&entry.file) && !interrupted.contains(&page.id) {
+                stats.missing += 1;
+                continue;
+            }
+            let behind = if entry.person_frontmatter.is_some() {
+                self.person_file_is_behind(entry, page)
+            } else {
+                self.projection_is_behind(&entry.file, page)
+            };
+            if !behind {
                 continue;
             }
             match self.write_page_with_regenerate_index(guard, page, false) {
@@ -787,6 +849,43 @@ impl KnowledgeWriter {
             }
         }
         Ok(stats)
+    }
+
+    /// Whether nothing at all is at `filename`, its folder included (the
+    /// person may have deleted the whole folder). Any other failure is not
+    /// "gone": that is left to the repair, which reports it.
+    fn projection_file_is_gone(&self, filename: &str) -> bool {
+        folders::validate_page_path(filename).is_ok()
+            && folders::read_root(&self.path).is_ok_and(|root| {
+                matches!(
+                    root.symlink_metadata(filename),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                )
+            })
+    }
+
+    /// For a note the person put in the folder, which carries no version
+    /// stamp: whether its file is missing (reconcile asks only when
+    /// Wenlan's own write of it stopped halfway; a note the person deleted
+    /// stays deleted), or still holds exactly the bytes Wenlan recorded for
+    /// an older version (Wenlan saved a newer one and stopped before writing
+    /// the file). A file the person changed since
+    /// is theirs, and the watcher reads it.
+    fn person_file_is_behind(&self, entry: &PageFileState, page: &Page) -> bool {
+        let bytes = (|| {
+            let root = folders::read_root(&self.path)?;
+            let (directory, name) = folders::page_parent(&root, &entry.file)?;
+            let mut budget = RepairReadBudget::new();
+            read_regular_nofollow(&directory, OsStr::new(&name), &mut budget)
+        })();
+        match bytes {
+            Ok(bytes) => {
+                entry.version < page.version
+                    && entry.content_sha256.as_deref() == Some(projection_digest(&bytes).as_str())
+            }
+            Err(WenlanError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(_) => false,
+        }
     }
 
     /// Whether `filename` is missing, unreadable, or stamped with a version
@@ -824,14 +923,19 @@ impl KnowledgeWriter {
     /// Remove `write_page` temp files orphaned by a crash between write and
     /// rename. Safe to run unconditionally at startup: the daemon holds the
     /// port by this point, so no live writer owns any of these.
-    fn sweep_temp_leftovers(&self) -> usize {
+    ///
+    /// Also returns the pages those writes were for: a write stopped after
+    /// it moved the old file aside and before the new one went in leaves
+    /// the page without a file, which is a repair, not a deletion.
+    fn sweep_temp_leftovers(&self) -> (usize, HashSet<String>) {
+        let mut owners = HashSet::new();
         let Ok(root) = folders::read_root(&self.path) else {
-            return 0;
+            return (0, owners);
         };
         let Ok((folders, _)) = folders::scan_tree(&root) else {
-            return 0;
+            return (0, owners);
         };
-        std::iter::once(String::new())
+        let removed = std::iter::once(String::new())
             .chain(folders.into_iter().map(|folder| folder.path))
             .filter_map(|path| folders::open_existing_folder(&root, &path).ok())
             .map(|directory| {
@@ -842,15 +946,23 @@ impl KnowledgeWriter {
                     .flatten()
                     .filter(|entry| {
                         let name = entry.file_name();
-                        is_write_page_temp_file(&name.to_string_lossy())
-                            && directory.symlink_metadata(&name).is_ok_and(|metadata| {
+                        let name = name.to_string_lossy();
+                        let removed = is_write_page_temp_file(&name)
+                            && directory.symlink_metadata(&*name).is_ok_and(|metadata| {
                                 metadata.is_file() && !metadata.file_type().is_symlink()
                             })
-                            && directory.remove_file(&name).is_ok()
+                            && directory.remove_file(&*name).is_ok();
+                        if removed {
+                            if let Some(owner) = write_page_temp_owner(&name) {
+                                owners.insert(owner.to_string());
+                            }
+                        }
+                        removed
                     })
                     .count()
             })
-            .sum()
+            .sum();
+        (removed, owners)
     }
 
     fn unique_filename_in_folder(
@@ -1346,7 +1458,11 @@ impl KnowledgeWriter {
             }
             for (page_id, entry) in folders::read_state_strict(&capabilities.wenlan)?.pages {
                 let slot = found.entry(page_id).or_default();
-                let (directory, name) = folders::page_parent(&capabilities.root, &entry.file)?;
+                // A folder deleted with the page in it: nothing there to find.
+                let Ok((directory, name)) = folders::page_parent(&capabilities.root, &entry.file)
+                else {
+                    continue;
+                };
                 if directory.symlink_metadata(&name).is_ok() {
                     slot.push(entry.file);
                 }
@@ -2379,6 +2495,86 @@ pub struct CutoverPlan {
     pub digest: String,
 }
 
+static FILE_FIRST_IN_FLIGHT: std::sync::Mutex<BTreeMap<String, usize>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+/// Whether a write of `page_id` has put its file in place and not yet
+/// committed to the database. The page watcher leaves such a file alone.
+pub fn file_first_in_flight(page_id: &str) -> bool {
+    FILE_FIRST_IN_FLIGHT
+        .lock()
+        .map(|in_flight| in_flight.contains_key(page_id))
+        .unwrap_or(false)
+}
+
+struct FileFirstInFlight(String);
+
+impl FileFirstInFlight {
+    fn mark(page_id: &str) -> Self {
+        if let Ok(mut in_flight) = FILE_FIRST_IN_FLIGHT.lock() {
+            *in_flight.entry(page_id.to_string()).or_default() += 1;
+        }
+        Self(page_id.to_string())
+    }
+}
+
+impl Drop for FileFirstInFlight {
+    fn drop(&mut self) {
+        if let Ok(mut in_flight) = FILE_FIRST_IN_FLIGHT.lock() {
+            if let Some(count) = in_flight.get_mut(&self.0) {
+                *count -= 1;
+                if *count == 0 {
+                    in_flight.remove(&self.0);
+                }
+            }
+        }
+    }
+}
+
+/// A page file written ahead of its database write; see
+/// [`KnowledgeProjectionWrite::write_page_first`].
+pub struct FileFirstWrite {
+    root: PathBuf,
+    page_id: String,
+    file: String,
+    written: Vec<u8>,
+    before: folders::FileBefore,
+    armed: bool,
+    _in_flight: FileFirstInFlight,
+}
+
+impl FileFirstWrite {
+    /// The database write landed: the file stays.
+    pub fn keep(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for FileFirstWrite {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        match folders::undo_file_first(
+            &self.root,
+            &self.page_id,
+            &self.file,
+            &self.written,
+            &self.before,
+        ) {
+            Ok(true) => {}
+            Ok(false) => log::info!(
+                "[knowledge] {} changed after a write that did not land; left as it is",
+                self.file
+            ),
+            Err(error) => log::warn!(
+                "[knowledge] could not put back {} after a write that did not land: {error}",
+                self.file
+            ),
+        }
+    }
+}
+
 pub struct KnowledgeProjectionWrite {
     writer: KnowledgeWriter,
     guard: crate::page_projection_tracker::PageProjectionWriteGuard,
@@ -2656,6 +2852,30 @@ impl LockedProjection<'_> {
         let expected_state = page_file_state_value(page, &path);
         let target_bytes = hex::decode(entries[1].content_hex())
             .map_err(|_| WenlanError::Conflict("repair_target_stale".to_string()))?;
+        // A note the person put in the folder is not Wenlan's render: it is
+        // in sync when its bytes are the ones recorded for it and its text is
+        // the page's.
+        if let Some(stored) =
+            stored_page.filter(|stored| stored.get("person_frontmatter").is_some())
+        {
+            let recorded = stored
+                .get("content_sha256")
+                .and_then(serde_json::Value::as_str);
+            let text_matches = std::str::from_utf8(&target_bytes).is_ok_and(|raw| {
+                crate::export::provenance::same_page_text_ignoring_save_noise(
+                    &crate::export::provenance::page_body_from_projection(raw),
+                    &crate::export::provenance::page_body_from_projection(&render_markdown_for(
+                        page,
+                    )),
+                )
+            });
+            if recorded == Some(projection_digest(&target_bytes).as_str()) && text_matches {
+                return Ok(Some((path, entries)));
+            }
+            return Err(WenlanError::Conflict(
+                "page projection contains unsynced edits".to_string(),
+            ));
+        }
         let expected_markdown = render_markdown_for(page);
         let state_matches = stored_page.is_some_and(|stored| {
             if stored == &expected_state {
@@ -5080,16 +5300,27 @@ fn write_page_preserving_external_edits_with_hook(
                         read_regular_nofollow(&recovery, OsStr::new(&previous), &mut budget)?;
                     Ok::<_, WenlanError>(projection_bytes_replaceable(&displaced, page, baseline))
                 })();
+                // Do not rename-over a new editor file while restoring. If
+                // one appeared, both it and the displaced file survive. A
+                // drive without hard links gets the file renamed back.
+                let put_back = || {
+                    if recovery.hard_link(&previous, root, name).is_err()
+                        && matches!(
+                            root.symlink_metadata(name),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                        )
+                    {
+                        let _ = recovery.rename(&previous, root, name);
+                    }
+                };
                 if !matches!(allowed, Ok(true)) {
-                    // Do not rename-over a new editor file while restoring.
-                    // If one appeared, both it and the displaced file survive.
-                    let _ = recovery.hard_link(&previous, root, name);
+                    put_back();
                     return Err(WenlanError::Conflict(format!(
                         "page_projection_external_edit: preserved {name} and .wenlan/projection-recovery/{previous}"
                     )));
                 }
                 if let Err(error) = root.hard_link(temporary, root, name) {
-                    let _ = recovery.hard_link(&previous, root, name);
+                    put_back();
                     return Err(error.into());
                 }
                 // Retain the displaced inode: an external editor may still
@@ -5500,6 +5731,56 @@ impl KnowledgeProjectionWrite {
             .write_page_in_folder(&self.guard, page, initial_folder)
     }
 
+    /// Writes `page`, the version a database write is about to commit, to
+    /// its file first: the folder is the source of truth, so the file holds a
+    /// write before the database does. Keep the returned write once the
+    /// database write lands; dropping it puts the file back as it was, for a
+    /// write that lost its race or failed. `None` when the page is not
+    /// projected (the truth gate, or archived since).
+    ///
+    /// While it is held the page counts as being written, and the page
+    /// watcher leaves its file alone, so it does not read Wenlan's own write
+    /// back as the person's.
+    pub async fn write_page_first(
+        &self,
+        database: &crate::db::MemoryDB,
+        page: &Page,
+    ) -> Result<Option<FileFirstWrite>, WenlanError> {
+        let in_flight = FileFirstInFlight::mark(&page.id);
+        let before = folders::capture_page_file(&self.writer.path, &page.id)?;
+        // Only a page whose file is in place and keeps its name: those are
+        // the writes that can be put back exactly. A first write, a file the
+        // person deleted, and a new title (a new file name) keep the old
+        // order, database then file.
+        let in_place = match (&before.entry, &before.bytes) {
+            (Some(entry), Some(_)) => entry.title.as_deref() == Some(page.title.as_str()),
+            _ => false,
+        };
+        if !in_place {
+            return Ok(None);
+        }
+        let Some(written_path) = self.write_page_gated(database, page).await? else {
+            return Ok(None);
+        };
+        // The writer answers with the full path; the state names files by
+        // their place under the pages folder.
+        let file = Path::new(&written_path)
+            .strip_prefix(&self.writer.path)
+            .unwrap_or(Path::new(&written_path))
+            .to_string_lossy()
+            .replace('\\', "/");
+        let written = folders::read_page_file(&self.writer.path, &file)?.unwrap_or_default();
+        Ok(Some(FileFirstWrite {
+            root: self.writer.path.clone(),
+            page_id: page.id.clone(),
+            file,
+            written,
+            before,
+            armed: true,
+            _in_flight: in_flight,
+        }))
+    }
+
     /// Project a page only if an automatic reader may see it.
     ///
     /// PR-C's write-time half. The removal pass is still the load-bearing one --
@@ -5710,6 +5991,7 @@ pub(crate) fn page_file_state_value(page: &Page, file: &str) -> serde_json::Valu
         title: Some(page.title.clone()),
         description: page.summary.clone(),
         space: page.space.clone(),
+        person_frontmatter: None,
     })
     .expect("PageFileState serializes")
 }
@@ -5797,6 +6079,62 @@ fn render_markdown(page: &Page) -> String {
     }
 
     out
+}
+
+/// A note the person put in the folder, written with their own
+/// frontmatter (`frontmatter`, the text between the `---` lines) and the
+/// page's body, in the same envelope [`render_markdown`] uses, so the
+/// watcher reads the body back the same way.
+fn render_person_markdown(page: &Page, frontmatter: &str) -> String {
+    use crate::export::provenance::render_sources_block;
+    let mut out = format!("---\n{}\n---\n\n", frontmatter.trim_end_matches('\n'));
+    out.push_str(&convert_links_to_wikilinks(&page.content));
+    let block = render_sources_block(&page.source_memory_ids);
+    if !block.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&block);
+    } else {
+        out.push('\n');
+    }
+    out
+}
+
+/// The person's frontmatter with its `title:` line naming `title`, when it
+/// has one that names something else (the page was renamed in Wenlan).
+/// Everything else is kept as written.
+fn person_frontmatter_titled(frontmatter: &str, title: &str) -> String {
+    let current = serde_yaml::from_str::<HashMap<String, serde_yaml::Value>>(frontmatter)
+        .ok()
+        .and_then(|fields| {
+            fields
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    // Only a one-line `title:`; a block (`title: |`) is left as written.
+    let one_line = |line: &str| {
+        line.strip_prefix("title:")
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty() && !value.starts_with(['|', '>']))
+    };
+    match current {
+        Some(current) if current != title && frontmatter.lines().any(one_line) => {
+            let mut replaced = false;
+            frontmatter
+                .lines()
+                .map(|line| {
+                    if !replaced && one_line(line) {
+                        replaced = true;
+                        format!("title: {}", crate::export::provenance::yaml_quoted(title))
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+        _ => frontmatter.to_string(),
+    }
 }
 
 /// Page-to-page wikilink targets in the body, for the read-only `related:`
@@ -6874,10 +7212,38 @@ mod tests {
         );
     }
 
-    /// A projection file that vanished (rename never landed, user deleted it)
-    /// is rewritten from DB truth.
+    /// A write stopped after it moved the old file aside and before the new
+    /// one went in leaves its temp file behind and no page file: that is
+    /// repaired, not read as the person deleting the page.
     #[test]
-    fn reconcile_rewrites_page_whose_projection_file_vanished() {
+    fn reconcile_repairs_a_page_whose_write_was_interrupted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        let path = writer.write_page_for_test(&page).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(
+            dir.path().join(format!(".{}.4242.7.tmp", page.id)),
+            "half written",
+        )
+        .unwrap();
+
+        let stats = writer
+            .reconcile_for_test(std::slice::from_ref(&page))
+            .unwrap();
+
+        assert_eq!((stats.rewritten, stats.missing), (1, 0));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            render_markdown_for(&page)
+        );
+    }
+
+    /// The folder is the source of truth: a page file the person deleted, or
+    /// whose whole folder they deleted, is not written back at startup. The
+    /// page watcher archives the page instead.
+    #[test]
+    fn reconcile_leaves_a_deleted_page_file_deleted() {
         let dir = tempfile::TempDir::new().unwrap();
         let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
         let page = test_concept();
@@ -6889,12 +7255,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(stats.checked, 1);
-        assert_eq!(stats.rewritten, 1);
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            render_markdown_for(&page),
-            "vanished projection was not restored from the DB"
+        assert_eq!(stats.rewritten, 0);
+        assert_eq!(stats.missing, 1);
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "a deleted page file came back"
         );
+    }
+
+    /// Rename reads `state.json` strictly; a page file waiting to count as
+    /// deleted must not make every rename fail.
+    #[test]
+    fn rename_reads_a_state_with_a_missing_page_file() {
+        let mut state = KnowledgeState::default();
+        state.missing_since.insert("page_gone".into(), 1);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let parsed = parse_rename_projection_state(&bytes).unwrap();
+        assert_eq!(parsed.missing_since.get("page_gone"), Some(&1));
     }
 
     /// The fsync-free write buys atomicity, not durability: after a power loss
