@@ -659,7 +659,7 @@ async fn run_citation_backfill_with_page_limit(
             // chunk), not an annotate failure -- it must never spend an LLM
             // call or count toward the 3-attempt poison-pill. But leaving
             // `citations` NULL is its own bug: `get_pages_missing_citations`
-            // orders NULL pages oldest-`last_modified`-first, and this
+            // orders NULL pages by `last_modified` (newest first), and this
             // give-up touches neither citations nor last_modified, so the
             // exact same page is re-selected on every later tick -- the
             // same starvation class PR #584 fixed, now starving every page
@@ -2312,7 +2312,7 @@ mod tests {
     /// (`citations = '[]'`, exactly like the "no source evidence" and
     /// "3 failed attempts" give-ups right above/below): leaving `citations`
     /// NULL would re-select this exact page on every later slice forever
-    /// (it's always the oldest -- nothing here ever touches
+    /// (its place in the queue never moves -- nothing here ever touches
     /// `last_modified`), starving every page queued behind it. The second
     /// half of this test is the starvation regression: a second, resolvable
     /// page queued behind p_orphan must get its turn on the very next
@@ -2403,26 +2403,17 @@ mod tests {
     async fn backfill_slice_skips_a_page_deleted_after_selection_instead_of_erroring() {
         let (db, _dir) = crate::db::tests::test_db().await;
         // Explicit timestamps: `get_pages_missing_citations` orders
-        // `last_modified ASC`, so p_first is selected/processed before
+        // `last_modified DESC`, so p_first is selected/processed before
         // p_deleted_mid_slice.
-        db.insert_page(
-            "p_first",
-            "T",
-            None,
-            BACKFILL_BODY,
-            None,
-            None,
-            &[],
-            "2020-01-01T00:00:00Z",
-        )
-        .await
-        .unwrap();
+        let later = chrono::Utc::now().to_rfc3339();
+        db.insert_page("p_first", "T", None, BACKFILL_BODY, None, None, &[], &later)
+            .await
+            .unwrap();
         insert_test_memory(&db, "mem_first", BACKFILL_MEM_CONTENT).await;
         db.link_page_evidence("p_first", "memory", Some("mem_first"), None, "test")
             .await
             .unwrap();
 
-        let later = chrono::Utc::now().to_rfc3339();
         db.insert_page(
             "p_deleted_mid_slice",
             "T",
@@ -2431,7 +2422,7 @@ mod tests {
             None,
             None,
             &[],
-            &later,
+            "2020-01-01T00:00:00Z",
         )
         .await
         .unwrap();
