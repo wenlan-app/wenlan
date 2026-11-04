@@ -382,6 +382,16 @@ pub fn m5_judge_qualified(snapshot: &M5ClaimJudgeSnapshot) -> bool {
     )
 }
 
+/// Record `snapshot` as having passed, for tests whose subject is not the
+/// qualification itself.
+#[cfg(test)]
+pub(crate) fn mark_m5_judge_qualified_for_test(snapshot: &M5ClaimJudgeSnapshot) {
+    QUALIFICATIONS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(qualification_key(snapshot), QualificationState::Passed);
+}
+
 /// Qualify `provider` as the M5 judge: the frozen batch must pass in both
 /// item orders. Runs at most once per process once decided; a run the
 /// provider failed to answer, or answered out of format, is retried after a
