@@ -59798,3 +59798,108 @@ async fn growth_takes_the_closest_page_of_the_topic_and_needs_similarity() {
         "dedup keeps entity-first"
     );
 }
+
+/// Links written before the hub rule: a memory with a specific topic loses
+/// its hub link and moves its primary topic off the hub; a hub-only memory
+/// keeps it. Runs once, and records what it changed.
+#[tokio::test]
+async fn old_hub_links_are_unfiled_once() {
+    let (db, _dir) = test_db().await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("PRAGMA foreign_keys = OFF", ()).await.unwrap();
+        for i in 0..HUB_MIN_LINKS {
+            conn.execute(
+                "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'hub')",
+                libsql::params![format!("other_{i}")],
+            )
+            .await
+            .unwrap();
+        }
+        for (source_id, entity) in [("m_specific", "hub"), ("m_hub_only", "hub")] {
+            conn.execute(
+                "INSERT INTO memories
+                     (id,content,source,source_id,title,chunk_index,last_modified,chunk_type,
+                      supersede_mode,memory_type,stability,entity_id)
+                 VALUES (?1,'body','memory',?1,?1,0,1,'text','hide','fact','new',?2)",
+                libsql::params![source_id, entity],
+            )
+            .await
+            .unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES
+                 ('m_specific','hub'), ('m_specific','specific'), ('m_hub_only','hub');",
+        )
+        .await
+        .unwrap();
+        conn.execute("PRAGMA foreign_keys = ON", ()).await.unwrap();
+    }
+
+    assert_eq!(db.unfile_old_hub_links_once().await.unwrap(), 1);
+
+    let links = |memory: &'static str| {
+        let db = &db;
+        async move {
+            let conn = db.conn.lock().await;
+            let mut rows = conn
+                .query(
+                    "SELECT entity_id FROM memory_entities WHERE memory_id = ?1 ORDER BY entity_id",
+                    libsql::params![memory],
+                )
+                .await
+                .unwrap();
+            let mut out = Vec::new();
+            while let Some(row) = rows.next().await.unwrap() {
+                out.push(row.get::<String>(0).unwrap());
+            }
+            out
+        }
+    };
+    assert_eq!(links("m_specific").await, vec!["specific".to_string()]);
+    assert_eq!(links("m_hub_only").await, vec!["hub".to_string()]);
+    assert_eq!(
+        db.get_memory_entity_id("m_specific")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("specific")
+    );
+    assert_eq!(
+        db.get_memory_entity_id("m_hub_only")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("hub")
+    );
+    let record: serde_json::Value = serde_json::from_str(
+        &db.get_app_metadata("kg_unfile_hub_links_v1")
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        record["removed_links"],
+        serde_json::json!([["m_specific", "hub"]])
+    );
+    assert_eq!(
+        record["moved_primary"],
+        serde_json::json!([["m_specific", "hub", "specific"]])
+    );
+
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES ('m_specific','hub')",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        db.unfile_old_hub_links_once().await.unwrap(),
+        0,
+        "the cleanup runs once"
+    );
+}

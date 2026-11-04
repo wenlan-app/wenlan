@@ -40547,6 +40547,166 @@ impl MemoryDB {
         Ok(hubs)
     }
 
+    /// One-time cleanup of links written before the hub rule
+    /// ([`is_hub_entity`]): a memory that also links a more specific topic
+    /// loses its link to a hub topic, and its primary topic moves from the hub
+    /// to its first specific link. A memory whose only topics are hubs keeps
+    /// them, as the write path now does. Gated by an `app_metadata` marker
+    /// whose value records every removed link and moved primary, so the
+    /// cleanup can be undone by hand. Returns the number of links removed (0
+    /// when it already ran or there is no hub).
+    pub async fn unfile_old_hub_links_once(&self) -> Result<u64, WenlanError> {
+        const MARKER: &str = "kg_unfile_hub_links_v1";
+        let conn = self.conn.lock().await;
+        let query_err = |e: libsql::Error| WenlanError::VectorDb(format!("unfile hub links: {e}"));
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM app_metadata WHERE key = ?1",
+                libsql::params![MARKER],
+            )
+            .await
+            .map_err(query_err)?;
+        if rows.next().await.map_err(query_err)?.is_some() {
+            return Ok(0);
+        }
+        drop(rows);
+
+        let mut rows = conn
+            .query("SELECT COUNT(DISTINCT memory_id) FROM memory_entities", ())
+            .await
+            .map_err(query_err)?;
+        let total = match rows.next().await.map_err(query_err)? {
+            Some(row) => row.get::<i64>(0).unwrap_or(0),
+            None => 0,
+        };
+        drop(rows);
+        let mut rows = conn
+            .query(
+                "SELECT entity_id, COUNT(*) FROM memory_entities
+                  GROUP BY entity_id HAVING COUNT(*) >= ?1 ORDER BY entity_id",
+                libsql::params![HUB_MIN_LINKS],
+            )
+            .await
+            .map_err(query_err)?;
+        let mut hubs: Vec<String> = Vec::new();
+        while let Some(row) = rows.next().await.map_err(query_err)? {
+            let links = row.get::<i64>(1).unwrap_or(0);
+            if is_hub_entity(links, total) {
+                hubs.push(row.get::<String>(0).map_err(query_err)?);
+            }
+        }
+        drop(rows);
+
+        conn.execute("BEGIN IMMEDIATE", ())
+            .await
+            .map_err(query_err)?;
+        let result: Result<u64, WenlanError> = async {
+            let mut removed: Vec<(String, String)> = Vec::new();
+            let mut moved: Vec<(String, String, String)> = Vec::new();
+            if !hubs.is_empty() {
+                let marks = (2..hubs.len() + 2)
+                    .map(|i| format!("?{i}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let specific = |memory: &str| {
+                    format!(
+                        "SELECT o.entity_id FROM memory_entities o
+                          WHERE o.memory_id = {memory} AND o.entity_id NOT IN ({marks})
+                          ORDER BY o.rowid LIMIT 1"
+                    )
+                };
+                let with_hubs = |first: libsql::Value| {
+                    let mut params = vec![first];
+                    params.extend(hubs.iter().cloned().map(libsql::Value::Text));
+                    params
+                };
+                for hub in &hubs {
+                    let mut rows = conn
+                        .query(
+                            &format!(
+                                "SELECT me.memory_id FROM memory_entities me
+                                  WHERE me.entity_id = ?1
+                                    AND EXISTS ({})
+                                  ORDER BY me.memory_id",
+                                specific("me.memory_id")
+                            ),
+                            with_hubs(libsql::Value::Text(hub.clone())),
+                        )
+                        .await
+                        .map_err(query_err)?;
+                    while let Some(row) = rows.next().await.map_err(query_err)? {
+                        removed.push((row.get::<String>(0).map_err(query_err)?, hub.clone()));
+                    }
+                }
+                let mut rows = conn
+                    .query(
+                        &format!(
+                            "SELECT DISTINCT m.source_id, m.entity_id, ({}) FROM memories m
+                              WHERE ?1 IS NULL AND m.entity_id IN ({marks}) AND EXISTS ({})
+                              ORDER BY m.source_id",
+                            specific("m.source_id"),
+                            specific("m.source_id")
+                        ),
+                        with_hubs(libsql::Value::Null),
+                    )
+                    .await
+                    .map_err(query_err)?;
+                while let Some(row) = rows.next().await.map_err(query_err)? {
+                    moved.push((
+                        row.get::<String>(0).map_err(query_err)?,
+                        row.get::<String>(1).map_err(query_err)?,
+                        row.get::<String>(2).map_err(query_err)?,
+                    ));
+                }
+                drop(rows);
+                for (source_id, _, to) in &moved {
+                    conn.execute(
+                        "UPDATE memories SET entity_id = ?1 WHERE source_id = ?2",
+                        libsql::params![to.clone(), source_id.clone()],
+                    )
+                    .await
+                    .map_err(query_err)?;
+                }
+                for (memory_id, hub) in &removed {
+                    conn.execute(
+                        "DELETE FROM memory_entities WHERE memory_id = ?1 AND entity_id = ?2",
+                        libsql::params![memory_id.clone(), hub.clone()],
+                    )
+                    .await
+                    .map_err(query_err)?;
+                }
+            }
+            let record = serde_json::json!({
+                "hubs": hubs,
+                "removed_links": removed,
+                "moved_primary": moved
+                    .iter()
+                    .map(|(source_id, from, to)| serde_json::json!([source_id, from, to]))
+                    .collect::<Vec<_>>(),
+            })
+            .to_string();
+            conn.execute(
+                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                libsql::params![MARKER, record],
+            )
+            .await
+            .map_err(query_err)?;
+            Ok(u64::try_from(removed.len()).unwrap_or(u64::MAX))
+        }
+        .await;
+        match result {
+            Ok(removed) => {
+                commit_or_rollback(&conn).await.map_err(query_err)?;
+                Ok(removed)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(e)
+            }
+        }
+    }
+
     /// Update a memory's entity_id (for post-ingest entity linking).
     /// Returns the number of memory rows updated (0 = unknown `source_id`).
     ///
@@ -48847,6 +49007,36 @@ impl MemoryDB {
 
     /// Check if a recap already exists covering a specific burst range.
     /// A recap covers a burst if its last_modified falls within [burst_start, burst_end + 60].
+    /// Every recap, oldest first: `(source_id, memory_type, structured_fields)`.
+    pub(crate) async fn list_recap_sources(
+        &self,
+    ) -> Result<Vec<(String, String, Option<String>)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT source_id, COALESCE(memory_type, ''), structured_fields FROM memories
+                  WHERE source = 'memory' AND is_recap = 1 AND chunk_index = 0
+                  ORDER BY COALESCE(created_at, last_modified) ASC, source_id ASC",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_recap_sources: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_recap_sources row: {e}")))?
+        {
+            out.push((
+                row.get::<String>(0)
+                    .map_err(|e| WenlanError::VectorDb(format!("list_recap_sources id: {e}")))?,
+                row.get::<String>(1).unwrap_or_default(),
+                row.get::<Option<String>>(2).unwrap_or(None),
+            ));
+        }
+        Ok(out)
+    }
+
     pub async fn has_recap_covering_range(
         &self,
         burst_start: i64,

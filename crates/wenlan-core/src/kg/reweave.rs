@@ -11,6 +11,13 @@ pub async fn reweave_entity_links(
     limit: usize,
     entity_link_distance: f64,
 ) -> Result<usize, WenlanError> {
+    match db.unfile_old_hub_links_once().await {
+        Ok(0) => {}
+        Ok(removed) => log::info!(
+            "[refinery] reweave: removed {removed} old link(s) to hub topics from memories with a specific topic"
+        ),
+        Err(e) => log::warn!("[refinery] reweave: old hub-link cleanup skipped: {e}"),
+    }
     let unlinked = db.get_unlinked_memories(limit).await?;
     let mut linked = 0usize;
     for (source_id, content) in &unlinked {
