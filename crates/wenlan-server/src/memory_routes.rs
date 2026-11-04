@@ -1678,9 +1678,18 @@ pub async fn handle_accept_revision(
     };
     let agent = extract_agent_name(&headers, None);
     let knowledge_path = wenlan_core::config::load_config().knowledge_path_or_default();
-    // Empty POSTs (including an empty application/json body) remain valid.
-    // A nonempty payload must deserialize as the complete typed edit request.
-    let result = if body.is_empty() {
+    // Legacy callers send either no body or an empty JSON object. Every other
+    // payload must pass the complete, strict typed edit request parser below.
+    let ordinary_acceptance = if body.is_empty() {
+        true
+    } else {
+        let object: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&body)
+            .map_err(|error| {
+                ServerError::ValidationError(format!("invalid revision edit: {error}"))
+            })?;
+        object.is_empty()
+    };
+    let result = if ordinary_acceptance {
         wenlan_core::post_write::accept_pending_revision_with_knowledge_path(
             &db,
             &id,
@@ -4796,9 +4805,14 @@ mod dismiss_revision_tests {
 
     #[tokio::test]
     async fn edited_acceptance_http_contract_and_empty_post_compatibility() {
-        for body in [
-            "",
-            r#"{"expected_content":"Proposed body.","content":"Human correction."}"#,
+        for (body, expected_content) in [
+            ("", "Proposed body."),
+            ("{}", "Proposed body."),
+            (" \n{ }\t", "Proposed body."),
+            (
+                r#"{"expected_content":"Proposed body.","content":"Human correction."}"#,
+                "Human correction.",
+            ),
         ] {
             let (state, _tmp) = build_state_with_db().await;
             let db = state.read().await.db.clone().unwrap();
@@ -4825,10 +4839,42 @@ mod dismiss_revision_tests {
             .unwrap();
             let app = crate::router::build_router(state);
             // Invalid nonempty JSON cannot silently become ordinary acceptance.
-            for invalid in [
-                r#"{"content":"Human correction."}"#,
-                r#"{"expected_content":"stale","content":"Human correction."}"#,
-                r#"{"expected_content":"Proposed body.","content":" "}"#,
+            for (invalid, expected_status) in [
+                ("{", StatusCode::UNPROCESSABLE_ENTITY),
+                (" ", StatusCode::UNPROCESSABLE_ENTITY),
+                ("null", StatusCode::UNPROCESSABLE_ENTITY),
+                ("[]", StatusCode::UNPROCESSABLE_ENTITY),
+                (
+                    r#"["Proposed body.","Human correction."]"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                ("true", StatusCode::UNPROCESSABLE_ENTITY),
+                (r#""{}""#, StatusCode::UNPROCESSABLE_ENTITY),
+                (
+                    r#"{"content":"Human correction."}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                (
+                    r#"{"expected_content":"Proposed body."}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                (r#"{"unexpected":true}"#, StatusCode::UNPROCESSABLE_ENTITY),
+                (
+                    r#"{"expected_content":"Proposed body.","content":"Human correction.","unexpected":true}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                (
+                    r#"{"expected_content":"Proposed body.","content":"Human correction.","content":"Other correction."}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                (
+                    r#"{"expected_content":"stale","content":"Human correction."}"#,
+                    StatusCode::CONFLICT,
+                ),
+                (
+                    r#"{"expected_content":"Proposed body.","content":" "}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
             ] {
                 let response = app
                     .clone()
@@ -4842,11 +4888,16 @@ mod dismiss_revision_tests {
                     )
                     .await
                     .unwrap();
-                assert!(matches!(
-                    response.status(),
-                    StatusCode::UNPROCESSABLE_ENTITY | StatusCode::CONFLICT
-                ));
+                assert_eq!(response.status(), expected_status, "{invalid}");
                 assert_eq!(db.list_pending_revisions(10).await.unwrap().len(), 1);
+                assert_eq!(
+                    db.get_memory_detail("accept_http_target")
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .content,
+                    "Original body."
+                );
             }
             let response = app
                 .oneshot(
@@ -4865,14 +4916,7 @@ mod dismiss_revision_tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!(
-                detail.content,
-                if body.is_empty() {
-                    "Proposed body."
-                } else {
-                    "Human correction."
-                }
-            );
+            assert_eq!(detail.content, expected_content);
         }
     }
 

@@ -2664,6 +2664,7 @@ mod create_page_endpoint_tests {
                     source_agent: Some("test".to_string()),
                     confidence: Some(0.9),
                     confirmed: Some(true),
+                    space: space.map(str::to_string),
                     ..Default::default()
                 })
                 .collect(),
@@ -3070,7 +3071,7 @@ mod create_page_endpoint_tests {
             "Rust Workspace Operations",
             Some("Rust workspace operations"),
             "Rust workspaces share Cargo lockfiles, inherited metadata, and all-crate checks",
-            Some("recap"),
+            Some("work"),
             &["mem-page-floor-a", "mem-page-floor-b", "mem-page-floor-c"],
         )
         .await;
@@ -3599,9 +3600,9 @@ mod create_page_endpoint_tests {
                 .review_required
         );
 
-        // A rewrite of the page's one sentence: under the lock every sentence
-        // is protected, so it goes to the sentence gate, not a card, and a
-        // rewording with no change in its facts is dropped.
+        // A source-snapshot-bearing rewrite under the review lock waits as a
+        // whole-page card; it cannot mutate the protected page or leak a
+        // separate sentence proposal.
         let (status, body) = send_json(
             &app,
             "PUT",
@@ -3614,18 +3615,29 @@ mod create_page_endpoint_tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_ne!(body["gated"], json!(true), "{body}");
+        assert_eq!(body["gated"], json!(true), "{body}");
         assert!(
             body["sentence_proposals"]
                 .as_array()
                 .is_none_or(Vec::is_empty),
             "{body}"
         );
-        assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+        let pending = db.list_pending_revisions(10).await.unwrap();
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        assert_eq!(pending[0].target_source_id, page_id);
+        assert_eq!(body["revision_card_id"], pending[0].revision_source_id);
         assert_eq!(
-            db.get_page(&page_id).await.unwrap().unwrap().content,
-            REFRESH_BODY
+            pending[0].revision_content,
+            format!("{REFRESH_BODY}, agent rewrite under lock")
         );
+        let protected = db.get_page(&page_id).await.unwrap().unwrap();
+        assert_eq!(protected.content, REFRESH_BODY);
+        assert_eq!(protected.version, version);
+        assert!(wenlan_core::sentences::page_sentences(&db, &page_id)
+            .await
+            .unwrap()
+            .proposals
+            .is_empty());
 
         // A write that adds a sentence still waits as a whole-page card.
         let (status, body) = send_json(
@@ -3648,6 +3660,10 @@ mod create_page_endpoint_tests {
         assert_eq!(
             db.get_page(&page_id).await.unwrap().unwrap().content,
             REFRESH_BODY
+        );
+        assert_eq!(
+            db.get_page(&page_id).await.unwrap().unwrap().version,
+            version
         );
 
         let (status, body) = send_json(

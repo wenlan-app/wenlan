@@ -9,7 +9,7 @@ use std::collections::HashMap;
 // ===== Memory CRUD =====
 
 /// Optional body for accepting an edited pending revision. Both fields are
-/// required; omission of the entire body preserves ordinary acceptance.
+/// required for an edit; omitting the body or sending `{}` preserves ordinary acceptance.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RevisionAcceptEditRequest {
