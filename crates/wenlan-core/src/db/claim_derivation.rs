@@ -1532,19 +1532,35 @@ impl MemoryDB {
             .transpose()
     }
 
-    fn is_approved_m5_claim_judge(snapshot: &crate::claim_judge::M5ClaimJudgeSnapshot) -> bool {
+    /// The judge whose frozen-benchmark receipt was measured before release.
+    /// It needs no runtime check.
+    fn is_measured_m5_claim_judge(snapshot: &crate::claim_judge::M5ClaimJudgeSnapshot) -> bool {
         snapshot.backend == crate::llm_provider::LlmBackend::OnDevice
             && snapshot.model_id == M5_PRODUCTION_JUDGE_MODEL_ID
             && snapshot.model_version == M5_PRODUCTION_JUDGE_MODEL_VERSION
             && snapshot.prompt_version == crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION
     }
 
-    /// Idempotently activate the one benchmark-approved M5 judge.
+    /// A judge may write support when it is the measured release judge, or
+    /// when this exact on-device model passed the same frozen M5 accuracy
+    /// batch in this process ([`crate::claim_judge::qualify_m5_claim_judge`]).
+    /// Being available is never enough: an unmeasured model cannot authorize
+    /// itself without answering the benchmark correctly.
+    fn is_approved_m5_claim_judge(snapshot: &crate::claim_judge::M5ClaimJudgeSnapshot) -> bool {
+        snapshot.backend == crate::llm_provider::LlmBackend::OnDevice
+            && snapshot.prompt_version == crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION
+            && (Self::is_measured_m5_claim_judge(snapshot)
+                || crate::claim_judge::m5_judge_qualified(snapshot))
+    }
+
+    /// Idempotently activate a benchmark-approved M5 judge.
     ///
-    /// `false` is fail-closed: the snapshot is not the compiled approval, or
-    /// the exact row has already entered draining/retired (or was retuned out
-    /// of contract). Those cases perform no writes and cannot auto-reactivate
-    /// or silently repair policy. The first activation advances the global
+    /// `false` is fail-closed: the snapshot is not approved, or the exact row
+    /// was retired (or retuned out of contract). Those cases perform no writes
+    /// and cannot silently repair policy. A `draining` row is a judge that was
+    /// replaced when the person switched models; switching back to it is a
+    /// fresh activation, because otherwise returning to an earlier model
+    /// would stop support checks for good. The first activation advances the global
     /// generation, drains every older active row for this prompt, installs the
     /// exact measured threshold, and opens a fresh support-reconciliation pass
     /// in one transaction.
@@ -1564,8 +1580,8 @@ impl MemoryDB {
                        FROM claim_judge_eligibility
                       WHERE model_id = ?1 AND model_version = ?2 AND prompt_version = ?3",
                     libsql::params![
-                        M5_PRODUCTION_JUDGE_MODEL_ID,
-                        M5_PRODUCTION_JUDGE_MODEL_VERSION,
+                        snapshot.model_id.as_str(),
+                        snapshot.model_version.as_str(),
                         crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION,
                     ],
                 )
@@ -1597,18 +1613,22 @@ impl MemoryDB {
 
         let exact_row_exists = existing.is_some();
         if let Some((state, threshold)) = existing.as_ref() {
-            if state != "active" || *threshold != M5_PRODUCTION_JUDGE_THRESHOLD {
+            if state == "retired" || *threshold != M5_PRODUCTION_JUDGE_THRESHOLD {
                 return Ok(false);
             }
-
+        }
+        if existing
+            .as_ref()
+            .is_some_and(|(state, _)| state == "active")
+        {
             let mut rows = conn
                 .query(
                     "SELECT COUNT(*) FROM claim_judge_eligibility
                       WHERE state = 'active'
                         AND NOT (model_id = ?1 AND model_version = ?2 AND prompt_version = ?3)",
                     libsql::params![
-                        M5_PRODUCTION_JUDGE_MODEL_ID,
-                        M5_PRODUCTION_JUDGE_MODEL_VERSION,
+                        snapshot.model_id.as_str(),
+                        snapshot.model_version.as_str(),
                         crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION,
                     ],
                 )
@@ -1690,8 +1710,8 @@ impl MemoryDB {
                     AND NOT (model_id = ?2 AND model_version = ?3 AND prompt_version = ?4)",
                 libsql::params![
                     generation,
-                    M5_PRODUCTION_JUDGE_MODEL_ID,
-                    M5_PRODUCTION_JUDGE_MODEL_VERSION,
+                    snapshot.model_id.as_str(),
+                    snapshot.model_version.as_str(),
                     crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION,
                 ],
             )
@@ -1702,11 +1722,11 @@ impl MemoryDB {
             if exact_row_exists {
                 tx.execute(
                     "UPDATE claim_judge_eligibility
-                        SET generation = ?4
+                        SET state = 'active', generation = ?4
                       WHERE model_id = ?1 AND model_version = ?2 AND prompt_version = ?3",
                     libsql::params![
-                        M5_PRODUCTION_JUDGE_MODEL_ID,
-                        M5_PRODUCTION_JUDGE_MODEL_VERSION,
+                        snapshot.model_id.as_str(),
+                        snapshot.model_version.as_str(),
                         crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION,
                         generation,
                     ],
@@ -1721,8 +1741,8 @@ impl MemoryDB {
                          (model_id, model_version, prompt_version, state, threshold, generation)
                      VALUES (?1, ?2, ?3, 'active', ?4, ?5)",
                     libsql::params![
-                        M5_PRODUCTION_JUDGE_MODEL_ID,
-                        M5_PRODUCTION_JUDGE_MODEL_VERSION,
+                        snapshot.model_id.as_str(),
+                        snapshot.model_version.as_str(),
                         crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION,
                         M5_PRODUCTION_JUDGE_THRESHOLD,
                         generation,
@@ -2787,6 +2807,12 @@ impl MemoryDB {
         let Some(snapshot) = crate::claim_judge::snapshot_m5_claim_judge(provider) else {
             return Ok(PromotionTurn::RefusedProvider);
         };
+        // Inference runs here, before any database guard is taken.
+        if !Self::is_measured_m5_claim_judge(&snapshot)
+            && !crate::claim_judge::qualify_m5_claim_judge(provider, &snapshot).await
+        {
+            return Ok(PromotionTurn::RefusedProvider);
+        }
         if !self.activate_approved_m5_claim_judge(&snapshot).await? {
             return Ok(PromotionTurn::RefusedProvider);
         }
