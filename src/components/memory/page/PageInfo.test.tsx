@@ -175,6 +175,17 @@ describe("PageInfo", () => {
     expect(onMemoryClick).toHaveBeenCalledWith("mem-a");
   });
 
+  it("counts unchecked citations separately from unsupported ones", async () => {
+    const { user } = renderInfo({
+      sourceCount: 1,
+      sources: [source("mem-a")],
+      citations: [cite(1, 1, "mem-a", { status: "unevaluated" })],
+      citationState: "cited",
+    });
+    await user.click(screen.getByText(/Page info/i));
+    expect(screen.getByText("Citations: 1 (0 unverified, 1 not checked yet)")).toBeInTheDocument();
+  });
+
   it("shows backlinks by label without raw page ids", async () => {
     const { user, onPageClick } = renderInfo({
       inbound: [{ source_page_id: "page-uuid-42", label: "Inbound Mention" }],
@@ -246,7 +257,7 @@ describe("PageInfo", () => {
       citationState: "cited",
     });
     await user.click(screen.getByText(/Page info/i));
-    expect(screen.getByText("Citations: 2 (1 unverified)")).toBeInTheDocument();
+    expect(screen.getByText("Citations: 2 (1 unverified, 0 not checked yet)")).toBeInTheDocument();
   });
 
   it("explains stripped states", async () => {

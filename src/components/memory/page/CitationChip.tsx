@@ -165,13 +165,13 @@ export default function CitationChip({
           lastPointerType.current = e.pointerType;
         }}
         onClick={activate}
-        className="reference-link reference-link--source citation-chip focus-visible:outline-2 focus-visible:outline-[var(--mem-accent-indigo)]"
+        className={`reference-link reference-link--source citation-chip focus-visible:outline-2 focus-visible:outline-[var(--mem-accent-indigo)]${citation.status === "unevaluated" ? " citation-chip--unevaluated" : ""}`}
         style={{
           fontFamily: "var(--mem-font-body)",
           // A footnote step below the reading size: 12px beside 15px body text.
           fontSize: "calc(var(--content-body-size, 15px) * 0.8)",
           lineHeight: 1,
-          border: unverified ? "1px dashed var(--mem-accent-amber)" : "0",
+          border: unverified ? "1px dashed var(--mem-accent-amber)" : undefined,
           borderRadius: "3px",
           padding: "1px 2px",
           margin: "0 2px",

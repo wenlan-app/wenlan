@@ -442,7 +442,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               ".cm-wiki-page-link.cm-citation-link": {
                 color: "var(--mem-text-tertiary)",
               },
-              ".cm-wiki-page-link.cm-citation-link:not(.reference-link--unverified):is(:hover, :focus-visible)": {
+              ".cm-wiki-page-link.cm-citation-link:not(.reference-link--unverified):not(.reference-link--unevaluated):is(:hover, :focus-visible)": {
                 color: "var(--mem-link)",
               },
               ".cm-wiki-page-link:focus-visible": {

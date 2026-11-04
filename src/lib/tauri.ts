@@ -1862,7 +1862,7 @@ export interface PageCitation {
   source_kind: "memory" | "external_url" | "external_file" | "authored";
   locator: string;
   score: number;
-  status: "verified" | "unverified";
+  status: "verified" | "unverified" | "unevaluated";
   scope: "sentence" | "paragraph";
 }
 

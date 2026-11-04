@@ -111,6 +111,16 @@ describe("CitationChip", () => {
     );
   });
 
+  it("keeps unchecked citations clickable and labels them without claiming a verdict", () => {
+    renderChip({ citation: cite({ status: "unevaluated" }) });
+    const chip = screen.getByRole("button", { name: /Memory/ });
+    expect(chip).toHaveAttribute("data-status", "unevaluated");
+    expect(chip).toHaveClass("citation-chip--unevaluated");
+    fireEvent.focus(chip);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("source not checked yet");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("source doesn’t back it");
+  });
+
   it("opens the popover on focus and links it via aria-describedby", () => {
     renderChip();
     const chip = screen.getByRole("button", { name: /Memory/ });

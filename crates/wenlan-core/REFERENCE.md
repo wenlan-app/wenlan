@@ -65,8 +65,9 @@ support or marker positions no longer match. Existing legacy backfill behavior i
 unchanged. Human saves that preserve server-owned sources retain the complete
 citation target map only when the complete raw marker sequence is unchanged
 and every record has an existing version and digest stamp.
-All retained records are downgraded to unverified with score zero and cleared
-`disproven` flags, including when a cited claim changes; historical stamps remain
+All retained records become `unevaluated` (not checked) with score zero and cleared
+`disproven` flags, including when a cited claim changes. This does not label a claim
+as unsupported; actual source changes can still be stale. Historical stamps remain
 intact. Changed markers, ambiguous or incomplete maps, and legacy unstamped maps
 still clear the map for later backfill. Sentence
 rechecks retain scoped page-locator and full folder-memory compatibility and fence both source generations and the target page Space.

@@ -64,8 +64,10 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
 - No model/API key is needed to import, read, edit or classify manually. Automatic
   summaries require an external AI tool configured by the person.
 - Manual edits retain existing, fully mapped citation targets when the numbered
-  marker sequence is unchanged. Retained references become unverified, with old
-  source stamps kept as history; they never inherit support for a rewritten claim.
+  marker sequence is unchanged. Retained references become unevaluated (source
+  not checked yet), with old source stamps kept as history. This neutral state
+  neither inherits support for a rewritten claim nor claims the source failed
+  a check. A subsequent source check can verify or reject the claim.
   An agent refresh that leaves the page unchanged reports that outcome and emits
   no "updated" receipt.
 

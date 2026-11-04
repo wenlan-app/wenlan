@@ -1367,7 +1367,7 @@ async fn update_page_db_impl(
                     crate::citations::retain_unchanged_manual_references(
                         &current.content, &req.content, &current.citations,
                     ).map(|records| {
-                        let summary = format!("0 verified, {} unverified; unchanged references retained after manual edit", records.len());
+                        let summary = format!("0 verified, {} unevaluated; reference targets retained after manual edit", records.len());
                         serde_json::to_string(&records).map(|json| (json, summary))
                     }).transpose()?
                 }

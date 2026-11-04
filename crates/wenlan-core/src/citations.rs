@@ -132,7 +132,7 @@ pub(crate) fn marker_spans(body: &str) -> Vec<(usize, usize)> {
 }
 
 /// Preserve navigable reference targets after a human edit with the same marker sequence.
-/// This is deliberately not verification: every retained record becomes unverified.
+/// This is deliberately not verification: every retained record becomes unevaluated.
 /// Legacy unstamped or incomplete maps fall back to clearing the citation map.
 pub(crate) fn retain_unchanged_manual_references(
     old_body: &str,
@@ -185,7 +185,7 @@ pub(crate) fn retain_unchanged_manual_references(
     }
     let mut retained = old_citations.to_vec();
     for citation in &mut retained {
-        citation.status = "unverified".into();
+        citation.status = "unevaluated".into();
         citation.score = 0.0;
         citation.disproven = false;
     }
@@ -1099,7 +1099,7 @@ mod tests {
                 assert_eq!(new.source_kind, old.source_kind);
                 assert_eq!(new.cited_version, old.cited_version);
                 assert_eq!(new.cited_digest, old.cited_digest);
-                assert_eq!(new.status, "unverified");
+                assert_eq!(new.status, "unevaluated");
                 assert_eq!(new.score, 0.0);
                 assert!(!new.disproven);
             }

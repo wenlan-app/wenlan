@@ -147,8 +147,14 @@ export default function PageInfo({
   const unverifiedLocators = new Set(
     (citations ?? []).filter((c) => c.status === "unverified").map((c) => c.locator),
   );
+  const unevaluatedLocators = new Set(
+    (citations ?? []).filter((c) => c.status === "unevaluated").map((c) => c.locator),
+  );
   const unverifiedCount = (citations ?? []).filter(
     (c) => c.status === "unverified",
+  ).length;
+  const unevaluatedCount = (citations ?? []).filter(
+    (c) => c.status === "unevaluated",
   ).length;
   const sourceKindLabels: Record<string, string> = {
     memory: t("pageInfo.sourceKind.memory"),
@@ -169,6 +175,7 @@ export default function PageInfo({
       ? t("pageInfo.citationsLine", {
           total: (citations ?? []).length,
           unverified: unverifiedCount,
+          unevaluated: unevaluatedCount,
         })
       : citationState === "stripped-empty"
         ? t("pageInfo.citationsStrippedEmpty")
@@ -433,6 +440,11 @@ export default function PageInfo({
                           }}
                         >
                           {t("citation.unverified")}
+                        </span>
+                      )}
+                      {!unverifiedLocators.has(locator) && unevaluatedLocators.has(locator) && (
+                        <span style={{ fontFamily: "var(--mem-font-mono)", fontSize: "10px", color: "var(--mem-text-tertiary)" }}>
+                          {t("thisSentence.evidence.unevaluated")}
                         </span>
                       )}
                     </div>

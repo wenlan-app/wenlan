@@ -225,6 +225,7 @@ export function ReferencePreview({
       </div>
       <strong style={{ fontSize: "var(--mem-text-sm)", overflowWrap: "anywhere" }}>{title}</strong>
       {citation?.status === "unverified" && <span style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>{t("citation.unverified")}</span>}
+      {citation?.status === "unevaluated" && <span style={{ color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{t("thisSentence.evidence.unevaluated")}</span>}
       {citation?.source_kind === "authored" && <p style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{t("citation.authoredDescription")}</p>}
       {(activeOpenFailure || externalOpenFailure) && <div role="alert" style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>
         <p style={{ margin: 0 }}>{t(citation?.source_kind === "external_file" ? "citation.openFileFailed" : "citation.openLinkFailed")}</p>

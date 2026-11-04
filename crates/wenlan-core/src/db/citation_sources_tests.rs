@@ -724,7 +724,7 @@ async fn citation_snapshot_recheck_uses_actual_document_mode_and_page_space_fenc
 }
 
 #[tokio::test]
-async fn manual_reference_retention_page_write_preserves_three_targets_unverified() {
+async fn manual_reference_retention_page_write_preserves_three_targets_unevaluated() {
     for variant in [
         "append", "rewrite", "claim", "marker", "add", "remove", "reorder",
     ] {
@@ -816,10 +816,39 @@ async fn manual_reference_retention_page_write_preserves_three_targets_unverifie
                 assert_eq!(new.source_kind, old.source_kind);
                 assert_eq!(new.cited_version, old.cited_version);
                 assert_eq!(new.cited_digest, old.cited_digest);
-                assert_eq!(new.status, "unverified");
+                assert_eq!(new.status, "unevaluated");
                 assert_eq!(new.score, 0.0);
                 assert!(!new.disproven);
             }
+            let view = crate::sentences::page_sentences(&db, "manual-ref")
+                .await
+                .unwrap();
+            let cited: Vec<_> = view
+                .sentences
+                .iter()
+                .filter(|sentence| !sentence.citations.is_empty())
+                .collect();
+            assert_eq!(cited.len(), 3);
+            for sentence in &cited {
+                assert_eq!(
+                    sentence.evidence,
+                    wenlan_types::authorship::EvidenceState::Unevaluated
+                );
+                assert!(!sentence
+                    .weak
+                    .contains(&wenlan_types::authorship::WeakReason::Unsupported));
+                assert!(!sentence
+                    .weak
+                    .contains(&wenlan_types::authorship::WeakReason::Disproven));
+                assert!(sentence
+                    .citations
+                    .iter()
+                    .all(|citation| citation.status == "unevaluated" && !citation.disproven));
+            }
+            // The source really changed: retaining a target must not suppress true staleness.
+            assert!(cited.iter().any(|sentence| sentence
+                .weak
+                .contains(&wenlan_types::authorship::WeakReason::Stale)));
             assert_eq!(
                 db.scalar_for_test("SELECT citations IS NULL FROM pages WHERE id='manual-ref'")
                     .await,

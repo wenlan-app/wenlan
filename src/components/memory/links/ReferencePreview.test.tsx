@@ -36,6 +36,25 @@ const sourceMemory: MemoryItem = {
 };
 
 describe("ReferencePreview citation targets", () => {
+  it("labels an unevaluated citation as unchecked without hiding its source", () => {
+    const anchor = document.body.appendChild(document.createElement("a"));
+    anchor.textContent = "original.md";
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <ReferencePreview
+        request={{ target: { kind: "citation", citation: { ...citation, status: "unevaluated" }, sourceMemory, sourcesLoading: false }, anchor, keyboard: false }}
+        onDismiss={vi.fn()}
+        onOpenPage={vi.fn()}
+        onOpenMemory={vi.fn()}
+        onPointerEnter={vi.fn()}
+        onPointerLeave={vi.fn()}
+      />
+    </QueryClientProvider>);
+    expect(screen.getByRole("dialog", { name: "Imported meeting notes" })).toHaveTextContent("source not checked yet");
+    expect(screen.getByRole("dialog", { name: "Imported meeting notes" })).not.toHaveTextContent("source doesn’t back it");
+    expect(screen.getByRole("button", { name: /^Open →$/ })).toBeEnabled();
+  });
+
   it("uses supplied source content without lookup and keeps the original action explicit", async () => {
     const anchor = document.body.appendChild(document.createElement("a"));
     anchor.textContent = "original.md";

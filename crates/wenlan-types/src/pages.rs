@@ -209,8 +209,10 @@ pub struct PageCitation {
     /// Claim-vs-this-source-alone content-token overlap (0..=1) at the
     /// recorded `scope` granularity, audit only.
     pub score: f64,
-    /// "verified" | "unverified" — decided claim-level vs the UNION of the
-    /// claim's cited sources (spec §5).
+    /// "verified" | "unverified" for a completed claim-level check against the
+    /// UNION of cited sources (spec §5). "unevaluated" means the reference target
+    /// was retained after a human edit but the current claim has not been checked;
+    /// it must not be presented as unsupported or verified.
     pub status: String,
     /// Granularity that decided the status: "sentence" (the marker's own
     /// sentence cleared the floor) or "paragraph" (sentence failed; the

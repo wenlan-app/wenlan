@@ -653,7 +653,7 @@ export default function PageDetail({
       ? [[source.source.memory_source_id, source.memory] as const] : [])),
     sourcesLoading: pageSourcesLoading,
     labels: { page: t("references.page"), memory: t("citation.kind.memory"), source: t("references.source"),
-      authored: t("citation.kind.authored"), unverified: t("citation.unverified"), missing: t("references.missingPage") },
+      authored: t("citation.kind.authored"), unverified: t("citation.unverified"), unevaluated: t("thisSentence.evidence.unevaluated"), missing: t("references.missingPage") },
     selfTitle: page?.title,
   }), [page?.citations, page?.title, pageSources, pageSourcesLoading, t]);
   useEffect(() => {
