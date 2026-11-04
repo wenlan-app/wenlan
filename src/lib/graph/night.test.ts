@@ -517,6 +517,18 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
     expect(picked[0]!.baseline).toBe(96);
   });
 
+  it("cuts a crowded frame's title shorter rather than leaving it out", () => {
+    const small = { thing: "thing:s", title: "Wenlan PR review and merge queue", left: 100, top: 100, right: 130, bottom: 122, dim: false };
+    // Names to the left and right of the frame leave about 100 px above and below it.
+    const names = [
+      { left: 0, right: 98, top: 60, bottom: 160 },
+      { left: 200, right: 400, top: 60, bottom: 160 },
+    ];
+    const [title] = placeFrameTitles([small], measure, [...names]);
+    expect(title!.text).toBe("Wenlan PR…");
+    expect(title!.box.right).toBeLessThan(200);
+  });
+
   it("picks a thing from a click on its frame or title, the smaller frame where two overlap", () => {
     const hits = [
       { thing: "thing:big", left: 0, top: 0, right: 300, bottom: 300 },

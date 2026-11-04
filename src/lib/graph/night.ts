@@ -121,6 +121,8 @@ const MOON_PX = 7;
 const FRAME_RADIUS = 10;
 const TITLE_FONT = '500 12px "Instrument Sans", -apple-system, sans-serif';
 const TITLE_MAX_PX = 240;
+/** Shorter cuts a crowded frame's title is tried at, CSS px. */
+const TITLE_SHORTER_PX = [140, 80] as const;
 /** A title's line, CSS px: the 12px face's ascent and descent with room. */
 const TITLE_LINE = 17;
 const SENTENCE_FONT = '12px "Instrument Sans", -apple-system, sans-serif';
@@ -312,10 +314,13 @@ export function encloseSentences<F extends ThingFrame>(frames: readonly F[], pla
 
 /** Where each frame's title goes: above the frame, else below it, each
  *  flush with the frame's left edge, else its right; at most TITLE_MAX_PX
- *  (or the frame's width) long and cut at a word. A title is left out where
+ *  (or the frame's width) long and cut at a word. Where none of those spots
+ *  is free the title is tried again cut shorter (TITLE_SHORTER_PX), so a
+ *  crowded small frame still says what it is. A title is left out where
  *  every spot would cover a name, a sentence, another title or another
  *  frame's border, except the picked thing's: it is placed first and always
- *  gets one, so what is picked can be read. `occupied` is read and extended. */
+ *  gets its full title, so what is picked can be read. `occupied` is read
+ *  and extended. */
 export function placeFrameTitles(
   frames: readonly ThingFrame[],
   measure: Measure,
@@ -326,27 +331,40 @@ export function placeFrameTitles(
   const ordered = picked === null ? frames : [...frames.filter((frame) => frame.thing === picked), ...frames.filter((frame) => frame.thing !== picked)];
   for (const frame of ordered) {
     if (!frame.title) continue;
-    const text = cutToFit(measure, frame.title, Math.max(TITLE_MAX_PX, frame.right - frame.left));
-    const width = measure(text);
     // Another frame's border counts as ink; its own does not, nor the
     // inside of a frame this one sits in.
     const borders = frames.filter((other) => other !== frame);
     const crosses = (box: Box, other: Box) =>
       overlapping(box, other) && !(box.left > other.left && box.right < other.right && box.top > other.top && box.bottom < other.bottom);
-    const xs = [frame.left + 2, frame.right - 2 - width];
-    const spots = [frame.top - 4, frame.bottom + TITLE_LINE].flatMap((baseline) =>
-      (xs[1]! > xs[0]! + 0.5 ? xs : [xs[0]!]).map((x) => ({
-        x,
-        baseline,
-        box: { left: x - 3, right: x + width + 3, top: baseline - TITLE_LINE + 2, bottom: baseline + 3 },
-      })),
-    );
-    const spot =
-      spots.find(({ box }) => !occupied.some((other) => overlapping(other, box)) && !borders.some((other) => crosses(box, other))) ??
-      (frame.thing === picked ? spots[0] : undefined);
+    const spotsFor = (text: string) => {
+      const width = measure(text);
+      const xs = [frame.left + 2, frame.right - 2 - width];
+      return [frame.top - 4, frame.bottom + TITLE_LINE].flatMap((baseline) =>
+        (xs[1]! > xs[0]! + 0.5 ? xs : [xs[0]!]).map((x) => ({
+          text,
+          x,
+          baseline,
+          box: { left: x - 3, right: x + width + 3, top: baseline - TITLE_LINE + 2, bottom: baseline + 3 },
+        })),
+      );
+    };
+    const full = cutToFit(measure, frame.title, Math.max(TITLE_MAX_PX, frame.right - frame.left));
+    const texts = [full];
+    for (const limit of TITLE_SHORTER_PX) {
+      if (measure(texts[texts.length - 1]!) <= limit) break;
+      const shorter = cutToFit(measure, frame.title, limit);
+      if (shorter && shorter !== texts[texts.length - 1] && shorter !== "…") texts.push(shorter);
+    }
+    const free = ({ box }: { box: Box }) => !occupied.some((other) => overlapping(other, box)) && !borders.some((other) => crosses(box, other));
+    let spot: ReturnType<typeof spotsFor>[number] | undefined;
+    for (const text of texts) {
+      spot = spotsFor(text).find(free);
+      if (spot) break;
+    }
+    if (!spot && frame.thing === picked) spot = spotsFor(full)[0];
     if (!spot) continue;
     occupied.push(spot.box);
-    out.push({ thing: frame.thing, text, x: spot.x, baseline: spot.baseline, box: spot.box });
+    out.push({ thing: frame.thing, text: spot.text, x: spot.x, baseline: spot.baseline, box: spot.box });
   }
   return out;
 }
