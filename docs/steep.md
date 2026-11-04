@@ -51,7 +51,7 @@ A page combines related sources and memories into cited Markdown that you can re
 | **Apply or review** | Update an AI-maintained page directly, or stage a revision when its ownership or review lock requires it; the exact rules are below. |
 | **Keep history** | Retain a bounded change history for the page, separate from the replacement links between memories. |
 
-**New findings can grow an existing page.** With background processing and its assigned model enabled, Wenlan matches an eligible new memory to a generated page in the same Space, using a shared entity or semantic similarity. It combines the page’s existing support with the new memory to update the content and citations. This automatic growth skips pages you created or edited, and review-locked pages; no suitable match means no page update from this step.
+**New findings can grow an existing page.** With background processing and its assigned model enabled, Wenlan matches an eligible new memory to a generated page in the same Space, by semantic similarity: a shared entity narrows the candidates to that entity's pages, but the closest one must still be similar enough to the memory. It combines the page’s existing support with the new memory to update the content and citations. This automatic growth skips pages you created or edited, and review-locked pages; no suitable match means no page update from this step.
 
 ### How evidence drives a page update
 

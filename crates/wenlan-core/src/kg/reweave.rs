@@ -15,7 +15,14 @@ pub async fn reweave_entity_links(
     let mut linked = 0usize;
     for (source_id, content) in &unlinked {
         let entities = db.search_entities_by_vector(content, 3).await?;
+        let candidates: Vec<&str> = entities.iter().map(|e| e.entity.id.as_str()).collect();
+        let hubs = db.hub_entity_ids(&candidates).await?;
         for entity in &entities {
+            // Same rule as `auto_link_entity`: closeness to a hub topic is
+            // not a reason to file a memory under it.
+            if hubs.contains(&entity.entity.id) {
+                continue;
+            }
             if entity.distance < entity_link_distance as f32 {
                 db.update_memory_entity_id(source_id, &entity.entity.id)
                     .await?;

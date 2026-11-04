@@ -267,16 +267,24 @@ pub async fn commit_kg(
         }
     }
 
-    // A hub topic (linked to a large share of all memories) is not linked:
-    // it tells this memory apart from nothing, and filing memories under it
-    // grew one page from every one of them. Its observations and relations
-    // above are kept.
+    // A hub topic (linked to a large share of all memories) is not linked
+    // when the memory names anything more specific: the hub tells it apart
+    // from nothing, and filing memories under it grew one page from every one
+    // of them. A memory that names only hubs keeps them -- leaving it with no
+    // topic would put it back in the unlinked queue on every steep. The hub's
+    // observations and relations above are kept either way.
     let listed_refs: Vec<&str> = listed.iter().map(String::as_str).collect();
     let hubs = db.hub_entity_ids(&listed_refs).await.unwrap_or_default();
-    let ids: Vec<&str> = listed_refs
-        .into_iter()
+    let specific: Vec<&str> = listed_refs
+        .iter()
+        .copied()
         .filter(|id| !hubs.contains(*id))
         .collect();
+    let ids = if specific.is_empty() {
+        listed_refs
+    } else {
+        specific
+    };
     let first_entity_id = ids.first().map(|id| (*id).to_string());
 
     // Link memory to its first specific entity (1-1 legacy column).
@@ -479,6 +487,33 @@ mod tests {
             linked.push(row.get::<String>(0).unwrap());
         }
         assert_eq!(linked, vec![primary], "the hub is not linked");
+        drop(rows);
+        drop(conn);
+
+        // A memory that names only the hub keeps it, so it does not stay
+        // unlinked and get re-extracted on every steep.
+        db.upsert_documents(vec![RawDocument {
+            source: "memory".to_string(),
+            source_id: "m3".to_string(),
+            title: "Test memory".to_string(),
+            content: "Alice again".to_string(),
+            ..Default::default()
+        }])
+        .await
+        .expect("upsert_documents failed");
+        let hub_only = vec![crate::extract::KgExtractionResult {
+            index: 0,
+            entities: vec![kg[0].entities[0].clone()],
+            observations: Vec::new(),
+            relations: Vec::new(),
+        }];
+        assert_eq!(
+            commit_kg(&db, "m3", &hub_only, "Alice again", None)
+                .await
+                .unwrap(),
+            Some(first.clone())
+        );
+        assert_eq!(db.get_memory_entity_id("m3").await.unwrap(), Some(first));
     }
 
     #[test]
