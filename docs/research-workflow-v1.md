@@ -30,6 +30,8 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
    Markdown, HTML or BibTeX from its action menu. Export captures the displayed
    saved version and rechecks its inputs after the save dialog; changed inputs
    require retry. This is optimistic validation, not a server transaction.
+   If some bibliography entries cannot be read, Markdown and HTML remain
+   available with a warning; BibTeX waits for every entry.
 
 ## Data and failure contracts
 
@@ -61,6 +63,11 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
   pending revisions and source cache survive daemon restarts.
 - No model/API key is needed to import, read, edit or classify manually. Automatic
   summaries require an external AI tool configured by the person.
+- Manual edits retain existing, fully mapped citation targets when the numbered
+  marker sequence is unchanged. Retained references become unverified, with old
+  source stamps kept as history; they never inherit support for a rewritten claim.
+  An agent refresh that leaves the page unchanged reports that outcome and emits
+  no "updated" receipt.
 
 ## Acceptance boundaries
 
@@ -78,6 +85,9 @@ The following remain explicit boundaries for subsequent researcher acceptance:
 - Import selects a collection, not an arbitrary subset before import. The user
   selects papers for subsequent organization in the Space source list.
 - Export selects the current saved version, not historical page versions.
+- Adding, removing or reordering citation markers, or editing a legacy page with
+  an incomplete/unstamped citation map, still clears the map pending a rebuild.
+  This integration does not introduce a general citation-marker editor.
 - No Zotero writes, annotation editing, automatic polling or cloud OAuth are
   introduced. Removing a connection retains already imported content.
 - Research-specific disagreement decisions, retraction workflows and structured

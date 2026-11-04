@@ -1363,6 +1363,14 @@ async fn update_page_db_impl(
                         .unwrap_or_else(|| "citations kept on your sentences".to_string());
                     (json, summary)
                 }),
+                None if preserve_sources && matches!(writer, Writer::Human(_)) && citations.is_none() => {
+                    crate::citations::retain_unchanged_manual_references(
+                        &current.content, &req.content, &current.citations,
+                    ).map(|records| {
+                        let summary = format!("0 verified, {} unverified; unchanged references retained after manual edit", records.len());
+                        serde_json::to_string(&records).map(|json| (json, summary))
+                    }).transpose()?
+                }
                 None => citations.clone(),
             };
 

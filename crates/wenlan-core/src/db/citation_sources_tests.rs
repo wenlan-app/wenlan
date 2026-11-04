@@ -722,3 +722,116 @@ async fn citation_snapshot_recheck_uses_actual_document_mode_and_page_space_fenc
         "unverified"
     );
 }
+
+#[tokio::test]
+async fn manual_reference_retention_page_write_preserves_three_targets_unverified() {
+    for variant in [
+        "append", "rewrite", "claim", "marker", "add", "remove", "reorder",
+    ] {
+        let (db, _dir) = fixture().await;
+        let ids = vec![
+            "zotero::paper".to_string(),
+            "zotero::paper-2".into(),
+            "zotero::paper-3".into(),
+        ];
+        for id in &ids[1..] {
+            db.conn.lock().await.execute(
+                "INSERT INTO memories (id,source,source_id,title,content,chunk_index,last_modified,space,version,content_hash,source_agent,chunk_type)
+                 VALUES (?1,'file',?1,'Paper',?2,0,10,'Research',7,'historical-hash','zotero','text')",
+                libsql::params![id.as_str(), CLAIM.repeat(12)],
+            ).await.unwrap();
+        }
+        let body = format!("{CLAIM} [1].\n\n{CLAIM} [2].\n\n{CLAIM} [3].\n\nMy interview plan.");
+        let WriteCitations::Checked {
+            citations_json,
+            snapshots,
+            ..
+        } = check_write_citations(&db, &body, &ids, &ReadScope::Space("Research".into()))
+            .await
+            .unwrap()
+            .unwrap()
+        else {
+            panic!("checked")
+        };
+        create(&db, "manual-ref", &body, Some(&citations_json), &snapshots)
+            .await
+            .unwrap();
+        db.link_page_sources_with_citation_snapshot("manual-ref", &ids, "test", &snapshots)
+            .await
+            .unwrap();
+        // Attaching sources intentionally invalidates the old map; seed the checked
+        // complete map only after the fixture has its final source set.
+        db.set_page_citations("manual-ref", Some(&citations_json))
+            .await
+            .unwrap();
+        let before = db.get_page("manual-ref").await.unwrap().unwrap();
+        assert_eq!(before.citations.len(), 3);
+        assert!(before
+            .citations
+            .iter()
+            .all(|citation| citation.status == "verified"));
+        let edited = match variant {
+            "append" => format!("{body}\n\nA new interview question."),
+            "rewrite" => body.replace("My interview plan.", "My revised interview plan."),
+            "claim" => body.replacen("improves", "harms", 1),
+            "add" => format!("{body}\n\nNew claim [1]."),
+            "remove" => body.replacen("[1]", "", 1),
+            "reorder" => body
+                .replace("[1]", "[4]")
+                .replace("[2]", "[1]")
+                .replace("[4]", "[2]"),
+            _ => body.replacen("[1]", "[2]", 1),
+        };
+        // Even an in-place source change cannot leave a fresh verified claim behind.
+        mutate(&db).await;
+        let result = crate::post_write::page_write(
+            &db,
+            PageWrite::UpdatePreservingSources {
+                page_id: "manual-ref",
+                req: wenlan_types::requests::UpdatePageRequest {
+                    content: edited.clone(),
+                    source_memory_ids: vec![],
+                    expected_version: Some(before.version),
+                    caller_id: None,
+                    operation_id: None,
+                },
+                edited_by: "manual_edit",
+                knowledge_path: None,
+                basis: super::super::BasisWrite::default(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(result.wrote);
+        let after = db.get_page("manual-ref").await.unwrap().unwrap();
+        assert_eq!(after.content, edited);
+        assert_eq!(after.source_memory_ids, before.source_memory_ids);
+        assert_eq!(db.get_page_sources("manual-ref").await.unwrap().len(), 3);
+        if matches!(variant, "append" | "rewrite" | "claim") {
+            assert_eq!(after.citations.len(), 3);
+            for (old, new) in before.citations.iter().zip(&after.citations) {
+                assert_eq!(new.occurrence, old.occurrence);
+                assert_eq!(new.marker, old.marker);
+                assert_eq!(new.locator, old.locator);
+                assert_eq!(new.source_kind, old.source_kind);
+                assert_eq!(new.cited_version, old.cited_version);
+                assert_eq!(new.cited_digest, old.cited_digest);
+                assert_eq!(new.status, "unverified");
+                assert_eq!(new.score, 0.0);
+                assert!(!new.disproven);
+            }
+            assert_eq!(
+                db.scalar_for_test("SELECT citations IS NULL FROM pages WHERE id='manual-ref'")
+                    .await,
+                0
+            );
+        } else {
+            assert!(after.citations.is_empty());
+            assert_eq!(
+                db.scalar_for_test("SELECT citations IS NULL FROM pages WHERE id='manual-ref'")
+                    .await,
+                1
+            );
+        }
+    }
+}

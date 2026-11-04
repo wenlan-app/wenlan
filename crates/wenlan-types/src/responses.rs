@@ -934,9 +934,25 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// Actual outcome of a page refresh. Separate from the create/source-resolution receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageWriteOutcome {
+    Wrote,
+    Unchanged,
+    Refused,
+    Contended,
+    Gated,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PageWriteResponse {
     pub ok: bool,
+    /// Absent on older daemons; consumers retain their legacy fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_outcome: Option<PageWriteOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision_card_id: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -2617,8 +2633,13 @@ mod page_write_response_warnings_tests {
     fn warnings_are_omitted_when_empty_and_old_bodies_still_parse() {
         let old: PageWriteResponse = serde_json::from_str(r#"{"ok":true}"#).unwrap();
         assert!(old.warnings.is_empty());
+        assert_eq!(old.write_outcome, None);
         let quiet = serde_json::to_value(&old).unwrap();
         assert!(quiet.get("warnings").is_none(), "{quiet}");
+        assert!(quiet.get("write_outcome").is_none());
+        let unchanged: PageWriteResponse =
+            serde_json::from_str(r#"{"ok":true,"write_outcome":"unchanged"}"#).unwrap();
+        assert_eq!(unchanged.write_outcome, Some(PageWriteOutcome::Unchanged));
 
         let warned = PageWriteResponse {
             warnings: vec!["code_basis was not recorded".into()],

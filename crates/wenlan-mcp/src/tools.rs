@@ -4016,11 +4016,7 @@ impl WenlanMcpServer {
                 // Ownership gate (spec §5.2): a human-owned page is never overwritten
                 // in place; the daemon stages a revision card. Surface that so the
                 // caller does not believe the prose was rewritten.
-                let change = if resp.revision_card_id.is_some() {
-                    Some(wenlan_types::SavedPageChange::Proposal)
-                } else {
-                    resp.ok.then_some(wenlan_types::SavedPageChange::Updated)
-                };
+                let change = refresh_saved_page_change(&resp);
                 let msg = format_update_page_response(&page_id, resp);
                 let msg = self.with_steep_line(&client, None, msg).await;
                 let msg = self
@@ -5358,6 +5354,19 @@ impl WenlanMcpServer {
     }
 }
 
+fn refresh_saved_page_change(
+    resp: &wenlan_types::responses::PageWriteResponse,
+) -> Option<wenlan_types::SavedPageChange> {
+    use wenlan_types::responses::PageWriteOutcome;
+    if resp.gated || resp.revision_card_id.is_some() {
+        Some(wenlan_types::SavedPageChange::Proposal)
+    } else if resp.ok && matches!(resp.write_outcome, None | Some(PageWriteOutcome::Wrote)) {
+        Some(wenlan_types::SavedPageChange::Updated)
+    } else {
+        None
+    }
+}
+
 fn format_update_page_response(
     page_id: &str,
     resp: wenlan_types::responses::PageWriteResponse,
@@ -5372,7 +5381,15 @@ fn format_update_page_response(
             ),
         }
     } else {
-        format!("Refreshed page {page_id}")
+        match resp.write_outcome {
+            Some(wenlan_types::responses::PageWriteOutcome::Unchanged) => {
+                format!("Page unchanged: {page_id}")
+            }
+            None | Some(wenlan_types::responses::PageWriteOutcome::Wrote) => {
+                format!("Refreshed page {page_id}")
+            }
+            _ => format!("Page not updated: {page_id}"),
+        }
     };
     for warning in &resp.warnings {
         text.push_str(&format!("\nwarning: {warning}"));
@@ -11672,10 +11689,57 @@ mod tests {
     }
 
     #[test]
+    fn page_refresh_outcome_reports_unchanged_without_an_updated_receipt() {
+        use wenlan_types::{responses::PageWriteResponse, SavedPageChange};
+        for (body, first_line, expected_change) in [
+            (
+                serde_json::json!({"ok":true,"write_outcome":"unchanged","next_step":"The person's text was preserved. Read the page."}),
+                "Page unchanged: page_x",
+                None,
+            ),
+            (
+                serde_json::json!({"ok":true,"write_outcome":"unchanged","next_step":"The page already matches this content; no change was written."}),
+                "Page unchanged: page_x",
+                None,
+            ),
+            (
+                serde_json::json!({"ok":true}),
+                "Refreshed page page_x",
+                Some(SavedPageChange::Updated),
+            ),
+            (
+                serde_json::json!({"ok":true,"write_outcome":"wrote"}),
+                "Refreshed page page_x",
+                Some(SavedPageChange::Updated),
+            ),
+            (
+                serde_json::json!({"ok":true,"gated":true}),
+                "Page page_x needs review",
+                Some(SavedPageChange::Proposal),
+            ),
+            (
+                serde_json::json!({"ok":true,"write_outcome":"gated","gated":true,"revision_card_id":"card_1"}),
+                "Page page_x needs review",
+                Some(SavedPageChange::Proposal),
+            ),
+        ] {
+            let response: PageWriteResponse = serde_json::from_value(body).unwrap();
+            assert_eq!(refresh_saved_page_change(&response), expected_change);
+            let text = format_update_page_response("page_x", response);
+            assert!(text.starts_with(first_line), "{text}");
+            if expected_change.is_none() {
+                assert!(!text.contains("Refreshed"));
+                assert!(!text.contains("Nothing else is needed"));
+            }
+        }
+    }
+
+    #[test]
     fn write_page_refresh_says_when_the_persons_sentences_were_kept() {
         let text = format_update_page_response(
             "page_x",
             wenlan_types::responses::PageWriteResponse {
+                write_outcome: None,
                 basis: Vec::new(),
                 code_basis: Vec::new(),
                 warnings: Vec::new(),
@@ -11696,6 +11760,7 @@ mod tests {
         let text = format_update_page_response(
             "page_x",
             wenlan_types::responses::PageWriteResponse {
+                write_outcome: None,
                 basis: Vec::new(),
                 code_basis: Vec::new(),
                 warnings: Vec::new(),

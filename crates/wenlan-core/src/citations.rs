@@ -131,6 +131,67 @@ pub(crate) fn marker_spans(body: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// Preserve navigable reference targets after a human edit with the same marker sequence.
+/// This is deliberately not verification: every retained record becomes unverified.
+/// Legacy unstamped or incomplete maps fall back to clearing the citation map.
+pub(crate) fn retain_unchanged_manual_references(
+    old_body: &str,
+    new_body: &str,
+    old_citations: &[PageCitation],
+) -> Option<Vec<PageCitation>> {
+    let old_markers: Vec<_> = RE_MARKER.find_iter(old_body).map(|m| m.as_str()).collect();
+    let new_markers: Vec<_> = RE_MARKER.find_iter(new_body).map(|m| m.as_str()).collect();
+    if old_markers.is_empty()
+        || old_markers != new_markers
+        || old_markers.len() != old_citations.len()
+    {
+        return None;
+    }
+    let mut occurrences = std::collections::HashMap::new();
+    let mut targets = std::collections::HashMap::new();
+    for citation in old_citations {
+        if citation.locator.trim().is_empty()
+            || !matches!(
+                citation.source_kind.as_str(),
+                "memory" | "external_file" | "external_url" | "authored"
+            )
+            || citation.cited_version.is_none()
+            || citation
+                .cited_digest
+                .as_ref()
+                .is_none_or(|digest| digest.trim().is_empty())
+            || occurrences.insert(citation.occurrence, citation).is_some()
+        {
+            return None;
+        }
+        let target = (&citation.source_kind, &citation.locator);
+        if targets
+            .insert(citation.marker, target)
+            .is_some_and(|previous| previous != target)
+        {
+            return None;
+        }
+    }
+    for (index, marker) in old_markers.iter().enumerate() {
+        let occurrence = u32::try_from(index + 1).ok()?;
+        let marker = marker
+            .strip_prefix('[')?
+            .strip_suffix(']')?
+            .parse::<u32>()
+            .ok()?;
+        if marker == 0 || occurrences.get(&occurrence)?.marker != marker {
+            return None;
+        }
+    }
+    let mut retained = old_citations.to_vec();
+    for citation in &mut retained {
+        citation.status = "unverified".into();
+        citation.score = 0.0;
+        citation.disproven = false;
+    }
+    Some(retained)
+}
+
 /// Remove every `[N]` marker from body prose, collapsing the resulting
 /// doubled whitespace.
 pub fn strip_markers(body: &str) -> String {
@@ -1001,6 +1062,86 @@ fn check_numbered_citations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn manual_reference_fixture() -> (&'static str, Vec<PageCitation>) {
+        let body = "Reading notes.\n\nRetrieval improves grounding [1]. Evaluation catches errors [2].\n\nMy interview plan.";
+        let citations = (1..=2)
+            .map(|marker| PageCitation {
+                occurrence: marker,
+                marker,
+                source_kind: "memory".into(),
+                locator: format!("zotero::paper-{marker}"),
+                score: 1.0,
+                status: "verified".into(),
+                scope: "sentence".into(),
+                cited_version: Some(7),
+                cited_digest: Some(format!("historical-digest-{marker}")),
+                disproven: false,
+            })
+            .collect();
+        (body, citations)
+    }
+
+    #[test]
+    fn manual_reference_retention_keeps_complete_targets_but_never_verification() {
+        let (body, mut citations) = manual_reference_fixture();
+        citations[0].disproven = true;
+        for edited in [
+            format!("{body}\n\nA new interview question."),
+            body.replace("My interview plan.", "My revised interview plan."),
+            body.replace("improves", "harms"),
+        ] {
+            let retained = retain_unchanged_manual_references(body, &edited, &citations).unwrap();
+            assert_eq!(retained.len(), 2);
+            for (old, new) in citations.iter().zip(retained) {
+                assert_eq!((new.occurrence, new.marker), (old.occurrence, old.marker));
+                assert_eq!(new.locator, old.locator);
+                assert_eq!(new.source_kind, old.source_kind);
+                assert_eq!(new.cited_version, old.cited_version);
+                assert_eq!(new.cited_digest, old.cited_digest);
+                assert_eq!(new.status, "unverified");
+                assert_eq!(new.score, 0.0);
+                assert!(!new.disproven);
+            }
+        }
+    }
+
+    #[test]
+    fn manual_reference_retention_refuses_changed_markers_and_ambiguous_maps() {
+        let (body, citations) = manual_reference_fixture();
+        for edited in [
+            body.replace("[1]", "[2]"),
+            body.replace("[1]", ""),
+            format!("{body}\n\nNew claim [1]."),
+            body.replace("[1]", "[01]"),
+            body.replace("[1]", "[3]")
+                .replace("[2]", "[1]")
+                .replace("[3]", "[2]"),
+        ] {
+            assert!(
+                retain_unchanged_manual_references(body, &edited, &citations).is_none(),
+                "{edited}"
+            );
+        }
+        for variant in 0..5 {
+            let mut invalid = citations.clone();
+            match variant {
+                0 => {
+                    invalid.pop();
+                }
+                1 => invalid[1].occurrence = 1,
+                2 => invalid[1].marker = 1,
+                3 => invalid[0].cited_version = None,
+                _ => invalid[0].cited_digest = None,
+            }
+            assert!(retain_unchanged_manual_references(
+                body,
+                &format!("{body}\n\nNote."),
+                &invalid
+            )
+            .is_none());
+        }
+    }
 
     fn srcs() -> Vec<NumberedSource> {
         vec![

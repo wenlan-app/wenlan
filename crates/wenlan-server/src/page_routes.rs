@@ -2168,6 +2168,7 @@ async fn handle_refresh_page_inner(
         return Ok((
             wenlan_core::post_write::WriteOutcome::Gated,
             wenlan_types::responses::PageWriteResponse {
+                write_outcome: Some(page_refresh_outcome(result.outcome)),
                 code_basis: db.list_page_code_basis(&id).await?,
                 basis: crate::page_basis_routes::written_basis(&db, &scope, &id).await?,
                 ok: true,
@@ -2297,6 +2298,12 @@ async fn handle_refresh_page_inner(
     } else if !result.sentence_proposals.is_empty() {
         "Some sentences are the person's: your changes to them wait as sentence proposals \
          for the person to accept. Do not rewrite them again."
+    } else if result.outcome == WriteOutcome::Unchanged {
+        if req.content != saved.content {
+            "The page was left unchanged because the person's text was preserved. Read the page before proposing another change; no revision card was created."
+        } else {
+            "The page already matches this content; no change was written."
+        }
     } else if link_targets.is_empty() {
         "Nothing else is needed for this page."
     } else {
@@ -2305,6 +2312,7 @@ async fn handle_refresh_page_inner(
     Ok((
         result.outcome,
         wenlan_types::responses::PageWriteResponse {
+            write_outcome: Some(page_refresh_outcome(result.outcome)),
             code_basis: db.list_page_code_basis(&id).await?,
             basis: crate::page_basis_routes::written_basis(&db, &scope, &id).await?,
             ok: true,
@@ -2326,6 +2334,20 @@ async fn handle_refresh_page_inner(
             sentence_proposals: result.sentence_proposals,
         },
     ))
+}
+
+fn page_refresh_outcome(
+    outcome: wenlan_core::post_write::WriteOutcome,
+) -> wenlan_types::responses::PageWriteOutcome {
+    use wenlan_core::post_write::WriteOutcome as Core;
+    use wenlan_types::responses::PageWriteOutcome as Wire;
+    match outcome {
+        Core::Wrote => Wire::Wrote,
+        Core::Unchanged => Wire::Unchanged,
+        Core::Refused => Wire::Refused,
+        Core::Contended => Wire::Contended,
+        Core::Gated => Wire::Gated,
+    }
 }
 
 /// A refresh staged as a revision card records no code bases: the prose the
@@ -3464,6 +3486,15 @@ mod create_page_endpoint_tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_ne!(body["gated"], json!(true), "{body}");
+        assert_eq!(body["write_outcome"], "unchanged");
+        assert!(body["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("person's text was preserved"));
+        assert!(body["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("Read the page"));
         // The page's one sentence is the person's (their fs_edit wrote it):
         // a version-checked agent write lands only on the AI's sentences, and
         // a rewording of the person's sentence, with no change in its facts,
@@ -3481,6 +3512,23 @@ mod create_page_endpoint_tests {
             .await
             .unwrap();
         assert!(view.proposals.is_empty());
+
+        let (status, identical) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{}", page.id),
+            json!({
+                "content": page.content, "source_memory_ids": REFRESH_SOURCES,
+                "expected_version": page.version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(identical["write_outcome"], "unchanged");
+        assert_eq!(
+            identical["next_step"],
+            "The page already matches this content; no change was written."
+        );
 
         // Without expected_version the same page is refused: nothing is
         // written and no card is staged, and the agent is told to re-read.
