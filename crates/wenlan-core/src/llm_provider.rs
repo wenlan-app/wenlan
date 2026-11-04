@@ -55,6 +55,15 @@ pub fn llm_provider_ready() -> bool {
     LLM_READINESS_FIRED.get().is_some()
 }
 
+/// Wall-clock budget for a request whose answer is a whole page (distill,
+/// page refresh, citation annotate). Without an explicit value the on-device
+/// runtime cuts a request at 30 seconds and drops the output; a 9B model
+/// writing out a page of a few thousand characters needs longer, so every
+/// citation annotate on the dev app failed at 30.0 s ("inference returned
+/// no output", 2026-11-04). Matches the M5 judge budget and stays well
+/// under the 600 s job lease.
+pub const PAGE_OUTPUT_TIMEOUT_SECS: u64 = 180;
+
 /// A single inference request.
 #[derive(Debug, Clone)]
 pub struct LlmRequest {

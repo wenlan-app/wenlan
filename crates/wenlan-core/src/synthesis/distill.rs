@@ -842,7 +842,7 @@ async fn distill_one_cluster_with_tuning(
             max_tokens: llm.recommended_max_output(),
             temperature: 0.1,
             label: Some("distill_body".into()),
-            timeout_secs: None,
+            timeout_secs: Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS),
         })
         .await;
 
@@ -1596,7 +1596,7 @@ async fn read_long_sources_in_parts(
                         .min(REFRESH_SOURCE_NOTES_MAX_TOKENS),
                     temperature: 0.1,
                     label: Some("refresh_source_notes".into()),
-                    timeout_secs: None,
+                    timeout_secs: Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS),
                 })
                 .await
             {
@@ -1862,7 +1862,7 @@ pub(crate) async fn synthesize_candidate_body(
             max_tokens: llm.recommended_max_output(),
             temperature: 0.1,
             label: Some("refresh_page".into()),
-            timeout_secs: None,
+            timeout_secs: Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS),
         })
         .await
     {
