@@ -502,6 +502,22 @@ async fn rename_refuses_a_frontmatter_edit_when_the_bytes_were_recorded() {
 }
 
 #[tokio::test]
+async fn rename_refuses_a_field_added_to_a_file_without_a_recorded_hash() {
+    assert_earlier_build_edit_refused(Recorded::NoHash, |older| {
+        older.replacen("---\n", "---\nmy_own_field: keep me\n", 1)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn rename_refuses_changed_tags_in_a_file_without_a_recorded_hash() {
+    assert_earlier_build_edit_refused(Recorded::NoHash, |older| {
+        older.replacen("tags: [\"work\"]", "tags: [\"work\", \"mine\"]", 1)
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn rename_refuses_a_retitled_file_without_a_recorded_hash() {
     assert_earlier_build_edit_refused(Recorded::NoHash, |older| {
         older.replacen("title: \"Old title\"", "title: \"A title I typed\"", 1)

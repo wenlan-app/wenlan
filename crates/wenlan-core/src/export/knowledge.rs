@@ -5197,7 +5197,10 @@ fn projection_digest(bytes: &[u8]) -> String {
 /// The state entry must describe this version of the page and the body must
 /// hold its text. Beyond that the file must be what Wenlan wrote: its bytes are
 /// the ones recorded for it, or, for an entry from before hashes were recorded,
-/// its frontmatter still names this page at this version under this title.
+/// every frontmatter field a person could have typed matches today's render.
+/// `generated` is the build stamp; `sources` and `related` follow other records
+/// without moving this page's version. A build may have added fields since, so
+/// only the file's own fields are compared, and an added one is an edit.
 fn projection_from_earlier_build(
     stored: &serde_json::Value,
     expected_state: &serde_json::Value,
@@ -5226,10 +5229,14 @@ fn projection_from_earlier_build(
     match stored.get("content_sha256") {
         Some(recorded) => recorded.as_str() == Some(projection_digest(target_bytes).as_str()),
         None => {
-            let (frontmatter, _) = crate::sources::obsidian::extract_frontmatter(raw);
-            frontmatter.get_str("origin_id") == Some(page.id.as_str())
-                && projected_origin_version(&frontmatter) == page.version
-                && frontmatter.get_str("title") == Some(page.title.as_str())
+            let (file, _) = crate::sources::obsidian::extract_frontmatter(raw);
+            let rendered = render_markdown(page);
+            let (current, _) = crate::sources::obsidian::extract_frontmatter(&rendered);
+            file.get_str("origin_id") == Some(page.id.as_str())
+                && file.fields.iter().all(|(field, value)| {
+                    matches!(field.as_str(), "generated" | "sources" | "related")
+                        || current.fields.get(field) == Some(value)
+                })
         }
     }
 }
