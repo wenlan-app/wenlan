@@ -661,9 +661,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     hoverStateRef.current = thingFocusState(drawn, thing, stop);
     focusLayoutRef.current = null;
     const { width } = renderer.getDimensions();
-    // The sentences run to the right of their points; the title sits above.
+    // The sentences run beside their points, either side; the title sits
+    // above. Room on both sides keeps the thing centred.
+    const sentenceRoom = Math.min(SENTENCE_MAX_PX * 0.75, width * 0.2);
     const insets = stop === "this"
-      ? { ...ATLAS_CONTROL_INSETS, top: ATLAS_CONTROL_INSETS.top + 24, right: ATLAS_CONTROL_INSETS.right + Math.min(SENTENCE_MAX_PX, width * 0.3) }
+      ? { ...ATLAS_CONTROL_INSETS, top: ATLAS_CONTROL_INSETS.top + 24, left: ATLAS_CONTROL_INSETS.left + sentenceRoom, right: ATLAS_CONTROL_INSETS.right + sentenceRoom }
       : ATLAS_CONTROL_INSETS;
     const duration = prefersReducedMotion() ? 0 : 450;
     if (stop === "all") {

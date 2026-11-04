@@ -132,7 +132,7 @@ export function nightMarks(
 /** The crescent of ThingSteeped's SteepMoon, on its 16-unit box. */
 const MOON_PATH = "M10.5 1.5a6.5 6.5 0 1 0 4 11.6A6 6 0 0 1 10.5 1.5z";
 /** The moon's drawn size, CSS px. */
-const MOON_PX = 7;
+const MOON_PX = 11;
 /** Gap between a title and its moon, CSS px. */
 const MOON_GAP = 4;
 const FRAME_RADIUS = 10;
@@ -444,10 +444,10 @@ export function drawNightMarks(
     ctx.fillText(title.text, title.x, title.baseline);
     if (moon && steepingThings.has(title.thing)) {
       ctx.save();
-      ctx.fillStyle = palette.bridge;
-      ctx.translate(title.x + ctx.measureText(title.text).width + MOON_GAP, title.baseline - MOON_PX);
+      ctx.fillStyle = palette.moon ?? palette.bridge;
+      ctx.translate(title.x + ctx.measureText(title.text).width + MOON_GAP, title.baseline - MOON_PX + 1);
       ctx.scale(MOON_PX / 16, MOON_PX / 16);
-      ctx.globalAlpha = dimOf.get(title.thing) ? 0.2 : 0.85;
+      ctx.globalAlpha = dimOf.get(title.thing) ? 0.3 : 1;
       ctx.fill(moon);
       ctx.restore();
     }
