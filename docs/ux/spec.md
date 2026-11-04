@@ -287,3 +287,35 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   原文：一頁一本歷史，三種變動在同一個列表。選擇卡「你改的、AI 改的、来源变了」（2026-10-31 17:34）
 - **UX-HIST-2** `planned` Every entry opens to show what changed.
   原文：每筆都能打開看改了什麼。
+
+## Working in the background
+
+- **UX-QUIET-1** `shipped` Wenlan does its own work only while you are away
+  and the computer can spare it, so it never makes the computer hot, slow or
+  short of battery while you use it. Work Wenlan starts by itself (linking
+  records to the map, growing pages, checking sources, reading your
+  conversations) waits until all of these hold, and checks them again before
+  every item:
+  1. Background AI is on (Automatic).
+  2. Nobody has touched the keyboard, mouse or trackpad for 60 seconds (our
+     choice; Windows Task Scheduler waits about 4 minutes).
+  3. The computer is plugged in (the Windows Task Scheduler default; macOS
+     Photos analysis does the same). A cloud model may still run on battery.
+  4. The computer is not warm: macOS reports its thermal state as nominal
+     (Apple: "fair" may start reducing work; we stop one step early, our
+     choice).
+  5. The rest of the system is quiet: CPU under 20% on two samples 30 seconds
+     apart, and at least 2 GB or 15% of memory free, plus 2 GB more for a
+     model on this computer (our choice; the 2 GB is the measured memory one
+     local inference adds).
+  6. After an item on a model on this computer, Wenlan rests at least four
+     times as long as the item ran, and at least 2 minutes (our choice; a
+     2-hour idle run on the reference Mac stayed at nominal). After a cloud
+     item, 2 minutes.
+
+  What you just asked for (an import, "steep now", a search, a save from your
+  AI tool) runs at once and skips 2, 3, 5 and 6, but still stops when the
+  computer is warm or short of memory. Where a condition cannot be read
+  (today: 2 and 4 on Windows and Linux) the others still apply, and the gap is
+  named, never treated as fine.
+  原文：「我们当时加是因为了要就是确保说它不是用占用整个电脑的资源，让用户的就是整个电脑很烫，然后导致它的体验很糟」（2026-11-04）；選擇卡「写规格并补上缺口」（2026-11-04 18:02）

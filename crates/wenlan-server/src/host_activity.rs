@@ -22,6 +22,7 @@ pub(crate) enum HostActivitySnapshot {
 unsafe extern "C" {
     fn wenlan_macos_thermal_state() -> i32;
     fn wenlan_macos_seconds_since_last_input() -> f64;
+    fn wenlan_macos_on_battery() -> i32;
 }
 
 #[cfg(target_os = "macos")]
@@ -54,4 +55,19 @@ pub(crate) fn sample_host_activity() -> HostActivitySnapshot {
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn sample_host_activity() -> HostActivitySnapshot {
     HostActivitySnapshot::Unsupported
+}
+
+/// Whether the computer is running on battery right now. An unreadable power
+/// source, a desktop, and every platform without a probe count as plugged in,
+/// so this can only ever hold work back on a laptop that reports battery.
+#[cfg(target_os = "macos")]
+pub(crate) fn sample_on_battery() -> bool {
+    // SAFETY: zero-argument wrapper compiled into this crate; it returns a
+    // scalar and retains nothing.
+    unsafe { wenlan_macos_on_battery() == 1 }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn sample_on_battery() -> bool {
+    false
 }

@@ -4684,3 +4684,88 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
         "maintenance must not invent a reserved Overview"
     );
 }
+
+fn quiet_admitted_status() -> ResourceStatus {
+    ResourceStatus {
+        admitted: true,
+        snapshot: Some(ResourceSnapshot {
+            cpu_usage_percent: 5.0,
+            available_memory_bytes: 16 * GIB,
+            total_memory_bytes: 48 * GIB,
+        }),
+        block_reason: None,
+    }
+}
+
+#[test]
+fn ux_quiet_1_battery_holds_back_work_on_this_computer_but_not_a_cloud_model() {
+    use wenlan_core::refinery::EverydaySource;
+    for local in [
+        Some(EverydaySource::OnDevice),
+        Some(EverydaySource::External),
+        None,
+    ] {
+        let status = apply_power_source(
+            quiet_admitted_status(),
+            true,
+            background_route_runs_here(local),
+        );
+        assert!(!status.admitted, "{local:?} on battery must wait");
+        assert_eq!(status.block_reason, Some(ResourceBlockReason::OnBattery));
+    }
+    let cloud = apply_power_source(
+        quiet_admitted_status(),
+        true,
+        background_route_runs_here(Some(EverydaySource::Anthropic)),
+    );
+    assert!(cloud.admitted, "a cloud model may run on battery");
+    let plugged_in = apply_power_source(quiet_admitted_status(), false, true);
+    assert!(plugged_in.admitted);
+
+    // An earlier, more specific reason is kept, not replaced by OnBattery.
+    let busy = ResourceStatus {
+        admitted: false,
+        block_reason: Some(ResourceBlockReason::CpuBusy),
+        ..quiet_admitted_status()
+    };
+    assert_eq!(
+        apply_power_source(busy, true, true).block_reason,
+        Some(ResourceBlockReason::CpuBusy)
+    );
+}
+
+#[test]
+fn ux_quiet_1_each_item_of_a_lap_rechecks_the_person_heat_and_power() {
+    let away = HostActivitySnapshot::Observed {
+        thermal_state: 0,
+        idle_for: Duration::from_secs(600),
+    };
+    assert!(ambient_item_may_start(away, false, true));
+    // The person came back between two items.
+    assert!(!ambient_item_may_start(
+        HostActivitySnapshot::Observed {
+            thermal_state: 0,
+            idle_for: Duration::from_secs(5),
+        },
+        false,
+        true,
+    ));
+    // The computer warmed up to "fair" mid-lap.
+    assert!(!ambient_item_may_start(
+        HostActivitySnapshot::Observed {
+            thermal_state: 1,
+            idle_for: Duration::from_secs(600),
+        },
+        false,
+        true,
+    ));
+    // Unplugged mid-lap: a local model stops, a cloud model goes on.
+    assert!(!ambient_item_may_start(away, true, true));
+    assert!(ambient_item_may_start(away, true, false));
+    // Telemetry that should exist but failed counts as "not safe".
+    assert!(!ambient_item_may_start(
+        HostActivitySnapshot::Unavailable,
+        false,
+        true
+    ));
+}

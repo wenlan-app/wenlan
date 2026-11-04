@@ -122,6 +122,15 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
             return;
         }
         wait = TICK;
+        // UX-QUIET-1: reading conversations runs models on Wenlan's own
+        // initiative, so it waits for the same gate as the rest of the
+        // background work: nobody at the keyboard, not warm, plugged in,
+        // CPU and memory free.
+        let gate = shared.read().await.ambient_gate.lock().unwrap().clone();
+        if !background_gate_open(gate.as_ref(), chrono::Utc::now().timestamp()) {
+            tracing::debug!("[things] look deferred: background gate closed");
+            continue;
+        }
         match look_once(&shared, &mut backoff).await {
             Ok(Some(report)) if report.labelled > 0 || report.grouped > 0 || report.dreamed > 0 => {
                 tracing::info!("[things] read conversations: {report:?}");
@@ -130,6 +139,25 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
             Err(error) => tracing::warn!("[things] reading conversations failed: {error}"),
         }
     }
+}
+
+/// How old the scheduler's last gate reading may be before it no longer
+/// counts as current. The scheduler publishes one every 30 s poll.
+const GATE_FRESH_SECS: i64 = 120;
+
+/// The background gate as the scheduler last read it is open and current.
+/// No reading yet (startup) or a stale one counts as closed.
+pub fn background_gate_open(
+    gate: Option<&crate::scheduler::AmbientGateSnapshot>,
+    now_epoch: i64,
+) -> bool {
+    gate.is_some_and(|gate| gate.admitted && now_epoch - gate.sampled_at_epoch <= GATE_FRESH_SECS)
+}
+
+/// The computer can still spare background work right now: re-read between
+/// items of one look, so a person who comes back stops the next model call.
+fn still_quiet() -> bool {
+    crate::scheduler::background_item_may_start_now()
 }
 
 /// The models one look uses: the everyday model to label, and the one that
@@ -199,7 +227,10 @@ pub async fn look_once(
         tokio::task::spawn_blocking(move || intake::scan(&roots, now, intake::INTAKE_WINDOW_SECS))
             .await
             .map_err(|e| e.to_string())?;
-    let mut report = look_with(&db, found, &models, language, backoff).await?;
+    let mut report = look_with_until(&db, found, &models, language, backoff, &still_quiet).await?;
+    if !still_quiet() {
+        return Ok(Some(report));
+    }
     let local_hour = chrono::Local::now().hour();
     let (dreamed, points) = dream_once(
         &db,
@@ -424,6 +455,19 @@ pub async fn look_with(
     language: &str,
     backoff: &mut Backoff,
 ) -> Result<LookReport, String> {
+    look_with_until(db, found, models, language, backoff, &|| true).await
+}
+
+/// [`look_with`], stopping before the next model call once `keep_going`
+/// says the computer is no longer free (UX-QUIET-1).
+pub async fn look_with_until(
+    db: &MemoryDB,
+    found: Vec<FoundConversation>,
+    models: &IntakeModels,
+    language: &str,
+    backoff: &mut Backoff,
+    keep_going: &(dyn Fn() -> bool + Sync),
+) -> Result<LookReport, String> {
     let now = chrono::Utc::now().timestamp();
     let mut report = LookReport {
         found: found.len(),
@@ -447,6 +491,9 @@ pub async fn look_with(
         .take(LABEL_BATCH)
         .collect();
     for conv in to_label {
+        if !keep_going() {
+            return Ok(report);
+        }
         let answer = models
             .label
             .generate(LlmRequest {

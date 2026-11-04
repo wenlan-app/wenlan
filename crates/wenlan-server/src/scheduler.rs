@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 
-use crate::host_activity::{sample_host_activity, HostActivitySnapshot};
+use crate::host_activity::{sample_host_activity, sample_on_battery, HostActivitySnapshot};
 use crate::state::SharedState;
 
 mod ambient;
@@ -86,6 +86,9 @@ enum ResourceBlockReason {
     ForegroundActive,
     HostActivityUnavailable,
     ThermalPressure,
+    /// A laptop on battery, with a route that runs its model on this
+    /// computer (UX-QUIET-1).
+    OnBattery,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -233,6 +236,7 @@ impl Rb01ProfileAdmission {
                     Rb01ProfileBlockReason::ThermalUnavailable
                 }
                 ResourceBlockReason::ThermalPressure => Rb01ProfileBlockReason::ThermalPressure,
+                ResourceBlockReason::OnBattery => Rb01ProfileBlockReason::ResourceUnavailable,
             });
         }
 
@@ -336,6 +340,62 @@ fn apply_host_activity(
         block_reason: Some(block_reason),
         ..status
     }
+}
+
+/// Whether background work on this route runs its model on this computer.
+/// Only the Anthropic route is known to infer elsewhere; an External endpoint
+/// (LM Studio, Ollama) is usually local, and with no model at all the
+/// remaining background work (document preparation) is local CPU work.
+fn background_route_runs_here(everyday_pin: Option<wenlan_core::refinery::EverydaySource>) -> bool {
+    !matches!(
+        everyday_pin,
+        Some(wenlan_core::refinery::EverydaySource::Anthropic)
+    )
+}
+
+/// UX-QUIET-1: background work that runs on this computer waits while a
+/// laptop is on battery. Work the person asked for (the import lane) reads
+/// its own admission and is not held back here.
+fn apply_power_source(
+    status: ResourceStatus,
+    on_battery: bool,
+    route_runs_here: bool,
+) -> ResourceStatus {
+    if !(on_battery && route_runs_here && status.admitted) {
+        return status;
+    }
+    ResourceStatus {
+        admitted: false,
+        block_reason: Some(ResourceBlockReason::OnBattery),
+        ..status
+    }
+}
+
+/// UX-QUIET-1: re-checked before every item of an ambient lap, so a person
+/// who comes back mid-lap, a computer that warms up, or a laptop unplugged
+/// mid-lap stops the next item instead of waiting for the lap to end. The
+/// rest window is deliberately not re-checked: the lap's own cooldown is
+/// charged after the lap.
+fn ambient_item_may_start(
+    host_activity: HostActivitySnapshot,
+    on_battery: bool,
+    route_runs_here: bool,
+) -> bool {
+    host_activity_block_reason(host_activity).is_none() && !(on_battery && route_runs_here)
+}
+
+/// [`ambient_item_may_start`] read now, for background work outside the
+/// scheduler loop (conversation intake). The route comes from the saved
+/// everyday-model setting.
+pub(crate) fn background_item_may_start_now() -> bool {
+    let config = wenlan_core::config::load_config();
+    ambient_item_may_start(
+        sample_host_activity(),
+        sample_on_battery(),
+        background_route_runs_here(wenlan_core::refinery::EverydaySource::parse(
+            config.everyday_source.as_deref(),
+        )),
+    )
 }
 
 struct SystemResourceProbe {
@@ -1508,8 +1568,11 @@ pub fn spawn_scheduler(
             // all time comparisons below must use a post-sync clock sample.
             let now = Instant::now();
             let host_activity = sample_host_activity();
-            let resource_status =
-                apply_host_activity(resource_probe.sample(now, resource_policy), host_activity);
+            let resource_status = apply_power_source(
+                apply_host_activity(resource_probe.sample(now, resource_policy), host_activity),
+                sample_on_battery(),
+                background_route_runs_here(everyday_pin),
+            );
             let import_route_uses_on_device = matches!(
                 everyday_pin,
                 Some(wenlan_core::refinery::EverydaySource::OnDevice)
@@ -2232,7 +2295,22 @@ pub fn spawn_scheduler(
                         // the cooldown once after the loop, against the
                         // whole lap's elapsed time.
                         let mut lap_consumed_thermal_turn = false;
+                        let mut first_item = true;
                         for job in ambient_schedule.drain_due(ambient_now, availability) {
+                            // The gate was read on entry; read it again before
+                            // every later item (UX-QUIET-1).
+                            if !std::mem::take(&mut first_item)
+                                && !ambient_item_may_start(
+                                    sample_host_activity(),
+                                    sample_on_battery(),
+                                    background_route_runs_here(everyday_pin),
+                                )
+                            {
+                                tracing::info!(
+                                    "[scheduler] ambient lap stopped before job={job:?}: the computer is in use, warm, or on battery"
+                                );
+                                break;
+                            }
                             // A toggle can land during this lap. Do not start
                             // another inference job after an explicit Off.
                             if !matches!(job, AmbientJob::Document | AmbientJob::EntityIdleArchive)
