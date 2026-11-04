@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=56f9ff9caff436589bb98772e21096c38651133957cda16f6db7f2a2b28bf861 -->
+<!-- README_SYNC: source=README.md sha256=30b6ff5b752a6fd1a08377d57c043c4aef9d98f4e96e976d2ac6abc0d7af3e4b -->
 
 <p align="center">
   <picture>
@@ -134,7 +134,7 @@ Guardar material es solo el comienzo. **Steep lo prepara para reutilizarlo y man
 
 Elige uno de dos modos en Settings:
 
-- **On demand** (las instalaciones nuevas empiezan aquí): tu herramienta de IA se encarga de las tareas de conocimiento que solicites y puede procesar material nuevo y páginas pendientes de actualización. Ejecuta `/wenlan steep` para poner al día el trabajo que cumpla los requisitos.
+- **On demand** (las instalaciones nuevas empiezan aquí): tu herramienta de IA se encarga de las tareas de conocimiento que solicites y puede procesar material nuevo y páginas pendientes de actualización. Guardar material también pone el trabajo que cumple los requisitos a disposición de la herramienta; `/wenlan steep` le pide que lo procese de una vez.
 - **Automatic:** Wenlan procesa en segundo plano el trabajo que cumpla los requisitos con los modelos que asignes. No deduce que quieras reorganizar el conocimiento existente; dile a la IA qué objetivo tienes.
 
 Qué hace Steep:
@@ -153,7 +153,7 @@ En ambos modos, sin modelo, Wenlan:
 
 - **Marca páginas desactualizadas** cuando cambian sus fuentes, memorias o el código citado. Las páginas de la wiki de un repositorio muestran qué cambió en el código.
 - **Sugiere fusionar páginas casi duplicadas** con una tarjeta que tú o tu IA aceptan o descartan.
-- **Ordena los enlaces:** lista los `[[enlaces]]` que aún no llevan a ninguna página y quita las citas a memorias que borraste.
+- **Ordena los enlaces entre páginas:** lista los `[[enlaces]]` que aún no llevan a ninguna página y quita las citas a memorias que borraste.
 
 Reescribir una página marcada requiere un modelo. En **Automatic**, Wenlan lo hace en segundo plano. En **On demand**, tu herramienta de IA sabe qué páginas esperan y puede ponerlas al día mientras trabaja.
 
