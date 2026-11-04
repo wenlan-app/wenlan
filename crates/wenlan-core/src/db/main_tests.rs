@@ -44914,6 +44914,27 @@ async fn migration_68_adds_citations_column_null_for_legacy() {
 }
 
 #[tokio::test]
+async fn citation_backfill_takes_the_most_recently_edited_page_first() {
+    let (db, _dir) = test_db().await;
+    for (id, at) in [
+        ("p_old", "2026-03-01T00:00:00Z"),
+        ("p_new", "2026-11-04T06:40:00Z"),
+        ("p_mid", "2026-07-01T00:00:00Z"),
+    ] {
+        db.insert_page(id, id, None, "body", None, None, &[], at)
+            .await
+            .unwrap();
+    }
+    let ids = db.get_pages_missing_citations(10).await.unwrap();
+    let order: Vec<&str> = ids
+        .iter()
+        .map(String::as_str)
+        .filter(|id| id.starts_with("p_"))
+        .collect();
+    assert_eq!(order, ["p_new", "p_mid", "p_old"]);
+}
+
+#[tokio::test]
 async fn content_update_without_fresh_citations_reopens_backfill() {
     let (db, _dir) = test_db().await;
     db.insert_page(

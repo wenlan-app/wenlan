@@ -58223,8 +58223,10 @@ impl MemoryDB {
         Ok(result)
     }
 
-    /// List active pages never citation-processed (`citations IS NULL`), oldest
-    /// `last_modified` first. Feeds the annotate-only citation-backfill sweep
+    /// List active pages never citation-processed (`citations IS NULL`), most
+    /// recently modified first: a page someone just edited is the one they are
+    /// looking at, and oldest-first left seven freshly repaired pages behind a
+    /// backlog of 100+ (2026-11-04). Feeds the annotate-only citation-backfill sweep
     /// (`citations::run_citation_backfill_tick`). A review-locked page is
     /// skipped: inserting `[N]` markers rewrites the body a person asked to
     /// review first, and skipping here spends no model call on a write the
@@ -58237,7 +58239,7 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT id FROM pages WHERE status = 'active' AND COALESCE(kind, 'concept') != 'entity' AND citations IS NULL AND COALESCE(review_required, 0) = 0 ORDER BY last_modified ASC LIMIT ?1",
+                "SELECT id FROM pages WHERE status = 'active' AND COALESCE(kind, 'concept') != 'entity' AND citations IS NULL AND COALESCE(review_required, 0) = 0 ORDER BY last_modified DESC LIMIT ?1",
                 libsql::params![limit as i64],
             )
             .await
