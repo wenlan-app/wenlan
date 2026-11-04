@@ -21,6 +21,7 @@ import {
   frameAt,
   growthAt,
   haloOutline,
+  haloPad,
   GROWTH_MS,
   layoutNightSentences,
   newNightPoints,
@@ -334,6 +335,10 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     expect(frames).toEqual([{ thing: "thing:t1", title: "Site redesign", left: 29, top: 39, right: 71, bottom: 65, dim: false, steeping: false, spots: [spots["mem:n1"], spots["mem:n2"]] }]);
     // The halo grows round its points, the way a region does, not a box.
     expect(haloOutline(frames[0]!)).toEqual([{ x: 40, y: 50 }, { x: 60, y: 54 }]);
+    // Its sentences sit beside it: a wide frame grown by them leaves the halo round its points.
+    expect(haloOutline({ ...frames[0]!, left: -300, right: 400 })).toEqual([{ x: 40, y: 50 }, { x: 60, y: 54 }]);
+    // The halo reaches past its largest dot.
+    expect(haloPad(frames[0]!)).toBe(13);
     // Its newest point (written at 20) is under a day old: one moon, by the title.
     expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1", 20 + STEEPING_SECS - 1).frames[0]!.steeping).toBe(true);
     // Hovering something else dims it; hovering one of its points does not.

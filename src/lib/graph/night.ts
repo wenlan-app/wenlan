@@ -147,18 +147,20 @@ const FRAME_RADIUS = 10;
 /** Room for a point's own dot inside the halo's padding, CSS px. */
 const HALO_DOT_ROOM = 2;
 
-/** The hull a thing's halo is grown round: its points and the corners of its
- *  sentences, so the halo follows what it holds, the way a region does,
- *  rather than a box. Null when there is nothing to grow round. */
-export function haloOutline(frame: ThingFrame, sentences: readonly PlacedSentence[] = []): { x: number; y: number }[] | null {
-  const around: { x: number; y: number }[] = (frame.spots ?? []).map(({ x, y }) => ({ x, y }));
-  for (const sentence of sentences) {
-    if (sentence.thing !== frame.thing) continue;
-    const { left, right, top, bottom } = sentence.box;
-    around.push({ x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom });
-  }
+/** The hull a thing's halo is grown round: its points only, so the halo keeps
+ *  the round, region-like shape of what it holds at every zoom. Sentences sit
+ *  beside the halo; wrapping them in made a wide, flat band once zoomed in.
+ *  Null when there is nothing to grow round. */
+export function haloOutline(frame: ThingFrame): { x: number; y: number }[] | null {
+  const around = (frame.spots ?? []).map(({ x, y }) => ({ x, y }));
   if (around.length === 0) return null;
   return convexHull(around);
+}
+
+/** How far a halo reaches past its hull: the padding plus its largest dot. */
+export function haloPad(frame: ThingFrame): number {
+  const dot = Math.max(0, ...(frame.spots ?? []).map(({ r }) => r));
+  return FRAME_PAD + dot + HALO_DOT_ROOM;
 }
 const TITLE_FONT = '500 12px "Instrument Sans", -apple-system, sans-serif';
 const TITLE_MAX_PX = 240;
@@ -473,8 +475,8 @@ export function drawNightMarks(
     const frameWidth = frame.right - frame.left;
     const frameHeight = frame.bottom - frame.top;
     ctx.beginPath();
-    const outline = haloOutline(frame, kept);
-    if (outline) traceRoundedArea(ctx, outline, FRAME_PAD + HALO_DOT_ROOM);
+    const outline = haloOutline(frame);
+    if (outline) traceRoundedArea(ctx, outline, haloPad(frame));
     else if (typeof ctx.roundRect === "function") ctx.roundRect(frame.left, frame.top, frameWidth, frameHeight, Math.min(FRAME_RADIUS, frameHeight / 2));
     else ctx.rect(frame.left, frame.top, frameWidth, frameHeight);
     ctx.closePath();
