@@ -2876,25 +2876,7 @@ impl LockedProjection<'_> {
                 "page projection contains unsynced edits".to_string(),
             ));
         }
-        let mut expected_markdown = render_markdown_for(page);
-        let mut expected_state = expected_state;
-        // A file Wenlan wrote under an older build differs from today's render
-        // only in its `generated: {by: "wenlan/<version>"}` stamp. That is the
-        // same page, not an unsynced edit, so it is compared as rendered by the
-        // build that wrote it. Refusing it blocked renaming every page not
-        // rewritten since an upgrade (24 of 26 on 2026-11-04).
-        if let Some(as_written) = std::str::from_utf8(&target_bytes)
-            .ok()
-            .and_then(|raw| render_with_generator_stamp_of(&expected_markdown, raw))
-        {
-            if let Some(state) = expected_state.as_object_mut() {
-                state.insert(
-                    "content_sha256".to_string(),
-                    serde_json::Value::String(projection_digest(as_written.as_bytes())),
-                );
-            }
-            expected_markdown = as_written;
-        }
+        let expected_markdown = render_markdown_for(page);
         let state_matches = stored_page.is_some_and(|stored| {
             if stored == &expected_state {
                 return true;
@@ -6000,27 +5982,6 @@ pub fn render_markdown_for(page: &Page) -> String {
 /// Callers that compare a captured `state.json` against the expected
 /// post-write entry (the rename-repair recovery matcher) go through this so
 /// new `PageFileState` fields stay in sync with the writer.
-/// The current render of a page with its `generated:` stamp replaced by the
-/// one in `written`, the file on disk, when only that stamp's build differs.
-/// `None` when the stamps are equal, missing, or anything else differs.
-fn render_with_generator_stamp_of(render: &str, written: &str) -> Option<String> {
-    fn stamp(markdown: &str) -> Option<&str> {
-        let mut lines = markdown.lines();
-        if lines.next()? != "---" {
-            return None;
-        }
-        lines
-            .take_while(|line| *line != "---")
-            .find(|line| line.starts_with("generated: {by: "))
-    }
-    let (current, old) = (stamp(render)?, stamp(written)?);
-    if current == old {
-        return None;
-    }
-    let candidate = render.replacen(current, old, 1);
-    (candidate == written).then_some(candidate)
-}
-
 pub(crate) fn page_file_state_value(page: &Page, file: &str) -> serde_json::Value {
     serde_json::to_value(PageFileState {
         file: file.to_string(),
