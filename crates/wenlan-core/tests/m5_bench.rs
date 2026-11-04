@@ -15,7 +15,8 @@ use wenlan_core::eval::m5_bench_corpus::{
 #[cfg(feature = "eval-harness")]
 use wenlan_core::{
     claim_judge::{
-        run_m5_judge_qualification, snapshot_m5_claim_judge, M5_CLAIM_JUDGE_MAX_BATCH_ITEMS,
+        run_m5_judge_qualification, snapshot_m5_claim_judge, M5QualificationOrder,
+        M5_CLAIM_JUDGE_MAX_BATCH_ITEMS,
     },
     llm_provider::OnDeviceProvider,
     on_device_models::{get_model, is_cached},
@@ -284,9 +285,12 @@ async fn live_m5_claim_judge_activation_receipt() {
 
     // The exact gate the daemon runs before an unmeasured model may judge.
     let inference_started = std::time::Instant::now();
-    let qualification = run_m5_judge_qualification(&provider)
+    let qualification = run_m5_judge_qualification(&provider, M5QualificationOrder::Forward)
         .await
         .expect("run and strictly parse the production M5 qualification batch");
+    let reversed = run_m5_judge_qualification(&provider, M5QualificationOrder::Reversed)
+        .await
+        .expect("run and strictly parse the reversed M5 qualification batch");
     let inference_ms = inference_started.elapsed().as_millis();
     assert_eq!(qualification.batch_size, M5_CLAIM_JUDGE_MAX_BATCH_ITEMS);
     assert_eq!(qualification.threshold, THRESHOLD);
@@ -326,7 +330,13 @@ async fn live_m5_claim_judge_activation_receipt() {
         "accuracy": (qualification.true_positive + qualification.true_negative) as f64 / total,
         "precision": precision,
         "recall": recall,
-        "qualifies": qualification.qualifies(),
+        "qualifies": qualification.qualifies() && reversed.qualifies(),
+        "reversed_order": {
+            "false_positive": reversed.false_positive,
+            "false_negative": reversed.false_negative,
+            "qualifies": reversed.qualifies(),
+            "cases": reversed.cases,
+        },
         "cases": qualification.cases,
     });
     println!("{}", serde_json::to_string(&receipt).unwrap());

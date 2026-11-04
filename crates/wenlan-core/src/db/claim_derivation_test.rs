@@ -4601,8 +4601,14 @@ async fn production_judge_never_reactivates_retired_exact_row() {
 async fn production_judge_reactivates_its_draining_row_after_a_model_switch() {
     let (db, _temp) = db_with_queue().await;
     authorize_producer_judge_version(&db, M5_PRODUCTION_JUDGE_MODEL_VERSION, "draining").await;
+    authorize_producer_judge_version(&db, "switched-to-weights", "active").await;
     let judge = ProducerJudge::pinned(&db);
     let snapshot = crate::claim_judge::snapshot_m5_claim_judge(&judge).unwrap();
+    let other = ProducerJudge {
+        model_version: "switched-to-weights",
+        ..ProducerJudge::pinned(&db)
+    };
+    let other_snapshot = crate::claim_judge::snapshot_m5_claim_judge(&other).unwrap();
     let before_generation = test_eligibility_generation(&db).await;
 
     assert!(db
@@ -4611,6 +4617,13 @@ async fn production_judge_reactivates_its_draining_row_after_a_model_switch() {
         .unwrap());
     assert!(test_eligibility_generation(&db).await > before_generation);
     assert!(db.active_judge_policy(&snapshot).await.unwrap().is_some());
+    assert!(
+        db.active_judge_policy(&other_snapshot)
+            .await
+            .unwrap()
+            .is_none(),
+        "the judge switched away from is drained, not left active"
+    );
 }
 
 /// An on-device model that is not the measured release judge earns the role

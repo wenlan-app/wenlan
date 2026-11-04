@@ -236,25 +236,39 @@ impl std::fmt::Display for M5QualificationError {
     }
 }
 
+/// Item order of one qualification pass. The daemon requires both orders to
+/// pass, so a judge cannot qualify by an answer pattern tied to position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum M5QualificationOrder {
+    Forward,
+    Reversed,
+}
+
 /// Run the frozen M5 accuracy batch (the production batch size of 25 items,
 /// cycling the fixture cases) through `provider` and score it.
 pub async fn run_m5_judge_qualification(
     provider: &dyn LlmProvider,
+    order: M5QualificationOrder,
 ) -> Result<M5QualificationReceipt, M5QualificationError> {
     let snapshot = snapshot_m5_claim_judge(provider).ok_or(M5QualificationError::Ineligible)?;
     let cases = crate::eval::m5_bench_corpus::parse_accuracy_jsonl(M5_JUDGE_ACCURACY_FIXTURE)
         .expect("the compiled M5 accuracy fixture is valid");
 
-    let item_ids: Vec<String> = (0..M5_CLAIM_JUDGE_MAX_BATCH_ITEMS)
-        .map(|index| {
+    let mut positions: Vec<usize> = (0..M5_CLAIM_JUDGE_MAX_BATCH_ITEMS).collect();
+    if order == M5QualificationOrder::Reversed {
+        positions.reverse();
+    }
+    let item_ids: Vec<String> = positions
+        .iter()
+        .map(|&index| {
             let case = &cases[index % cases.len()];
             format!("{}-copy-{}", case.case_id, index / cases.len())
         })
         .collect();
     let items: Vec<_> = item_ids
         .iter()
-        .enumerate()
-        .map(|(index, item_id)| {
+        .zip(&positions)
+        .map(|(item_id, &index)| {
             let case = &cases[index % cases.len()];
             M5ClaimEntailmentItem {
                 item_id,
@@ -293,7 +307,7 @@ pub async fn run_m5_judge_qualification(
         hard_veto_item_ids: Vec::new(),
         cases: Vec::with_capacity(scores.len()),
     };
-    for (index, scored) in scores.into_iter().enumerate() {
+    for (scored, &index) in scores.into_iter().zip(&positions) {
         let case = &cases[index % cases.len()];
         let predicted_entails = scored.score >= M5_JUDGE_QUALIFICATION_THRESHOLD;
         match (case.entails, predicted_entails) {
@@ -320,8 +334,17 @@ pub async fn run_m5_judge_qualification(
 enum QualificationState {
     Passed,
     Failed,
-    Errored(std::time::Instant),
+    /// Could not decide: the provider errored, or its answer was not the
+    /// score format (`unparseable` such answers so far).
+    Errored {
+        at: std::time::Instant,
+        unparseable: u8,
+    },
 }
+
+/// Unparseable answers tolerated before a judge counts as failed for this
+/// process: one truncated answer should not disqualify a capable model.
+const M5_JUDGE_QUALIFICATION_MAX_UNPARSEABLE: u8 = 3;
 
 type QualificationKey = (String, String, &'static str);
 
@@ -353,8 +376,10 @@ pub fn m5_judge_qualified(snapshot: &M5ClaimJudgeSnapshot) -> bool {
     )
 }
 
-/// Qualify `provider` as the M5 judge, running the frozen batch at most once
-/// per process (a run the provider failed to answer is retried after a pause). Returns whether
+/// Qualify `provider` as the M5 judge: the frozen batch must pass in both
+/// item orders. Runs at most once per process once decided; a run the
+/// provider failed to answer, or answered out of format, is retried after a
+/// pause. Returns whether
 /// the judge passed. Must be called with no database guard held: it runs
 /// inference.
 pub async fn qualify_m5_claim_judge(
@@ -362,70 +387,91 @@ pub async fn qualify_m5_claim_judge(
     snapshot: &M5ClaimJudgeSnapshot,
 ) -> bool {
     let key = qualification_key(snapshot);
-    {
+    let prior_unparseable = {
         let cache = QUALIFICATIONS
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         match cache.get(&key) {
             Some(QualificationState::Passed) => return true,
             Some(QualificationState::Failed) => return false,
-            Some(QualificationState::Errored(at))
+            Some(QualificationState::Errored { at, .. })
                 if at.elapsed() < M5_JUDGE_QUALIFICATION_RETRY =>
             {
                 return false
             }
-            _ => {}
-        }
-    }
-
-    let state = match run_m5_judge_qualification(provider).await {
-        Ok(receipt)
-            if receipt.model_id == snapshot.model_id
-                && receipt.model_version == snapshot.model_version =>
-        {
-            let passed = receipt.qualifies();
-            log::info!(
-                "[truth] judge check for {} {}: accuracy {:.2}, false positives {}, \
-                 false negatives {}, hard veto {}",
-                receipt.model_id,
-                if passed { "passed" } else { "did not pass" },
-                receipt.accuracy(),
-                receipt.false_positive,
-                receipt.false_negative,
-                if receipt.hard_veto_passed() {
-                    "ok"
-                } else {
-                    "failed"
-                },
-            );
-            if passed {
-                QualificationState::Passed
-            } else {
-                QualificationState::Failed
-            }
-        }
-        Ok(_) => {
-            log::warn!("[truth] judge check: the model changed while it ran; retrying later");
-            QualificationState::Errored(std::time::Instant::now())
-        }
-        Err(M5QualificationError::Ineligible) => QualificationState::Failed,
-        // A judge that cannot produce the strict score batch on the fixed
-        // input cannot produce it on real pages either.
-        Err(M5QualificationError::Unparseable) => {
-            log::info!(
-                "[truth] judge check for {} did not pass: its answer was not the score format",
-                snapshot.model_id
-            );
-            QualificationState::Failed
-        }
-        Err(error) => {
-            log::warn!(
-                "[truth] judge check for {} could not run: {error}; retrying later",
-                snapshot.model_id
-            );
-            QualificationState::Errored(std::time::Instant::now())
+            Some(QualificationState::Errored { unparseable, .. }) => *unparseable,
+            None => 0,
         }
     };
+
+    let mut state = QualificationState::Passed;
+    for order in [
+        M5QualificationOrder::Forward,
+        M5QualificationOrder::Reversed,
+    ] {
+        state = match run_m5_judge_qualification(provider, order).await {
+            Ok(receipt)
+                if receipt.model_id == snapshot.model_id
+                    && receipt.model_version == snapshot.model_version =>
+            {
+                let passed = receipt.qualifies();
+                log::info!(
+                    "[truth] judge check ({order:?}) for {} {}: accuracy {:.2}, \
+                     false positives {}, false negatives {}",
+                    receipt.model_id,
+                    if passed { "passed" } else { "did not pass" },
+                    receipt.accuracy(),
+                    receipt.false_positive,
+                    receipt.false_negative,
+                );
+                if passed {
+                    QualificationState::Passed
+                } else {
+                    QualificationState::Failed
+                }
+            }
+            Ok(_) => {
+                log::warn!("[truth] judge check: the model changed while it ran; retrying later");
+                QualificationState::Errored {
+                    at: std::time::Instant::now(),
+                    unparseable: prior_unparseable,
+                }
+            }
+            Err(M5QualificationError::Ineligible) => QualificationState::Failed,
+            // A judge that keeps failing to produce the strict score batch on
+            // the fixed input cannot produce it on real pages either; one
+            // truncated answer is retried.
+            Err(M5QualificationError::Unparseable) => {
+                let unparseable = prior_unparseable.saturating_add(1);
+                log::info!(
+                    "[truth] judge check for {}: answer was not the score format \
+                     ({unparseable} of {M5_JUDGE_QUALIFICATION_MAX_UNPARSEABLE})",
+                    snapshot.model_id
+                );
+                if unparseable >= M5_JUDGE_QUALIFICATION_MAX_UNPARSEABLE {
+                    QualificationState::Failed
+                } else {
+                    QualificationState::Errored {
+                        at: std::time::Instant::now(),
+                        unparseable,
+                    }
+                }
+            }
+            Err(error) => {
+                log::warn!(
+                    "[truth] judge check for {} could not run: {error}; retrying later",
+                    snapshot.model_id
+                );
+                QualificationState::Errored {
+                    at: std::time::Instant::now(),
+                    unparseable: prior_unparseable,
+                }
+            }
+        };
+        if !matches!(state, QualificationState::Passed) {
+            break;
+        }
+    }
     QUALIFICATIONS
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -467,7 +513,9 @@ mod tests {
             "an accepted unsupported claim"
         );
         assert!(!receipt(0, 1, &[]).qualifies(), "a rejected verbatim claim");
-        assert!(!receipt(1, 0, &["N1-copy-0"]).qualifies(), "a hard veto");
+        // A veto is always also a false positive on this fixture (N1/N8 are
+        // negatives); the veto list must still block on its own.
+        assert!(!receipt(0, 0, &["N1-copy-0"]).qualifies(), "a hard veto");
     }
 
     #[test]

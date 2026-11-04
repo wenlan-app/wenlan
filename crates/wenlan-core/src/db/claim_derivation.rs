@@ -78,7 +78,10 @@ const M5_JUDGE_MAX_OUTPUT_TOKENS: usize = 2048;
 pub(super) const M5_PRODUCTION_JUDGE_MODEL_ID: &str = "qwen3-4b";
 pub(super) const M5_PRODUCTION_JUDGE_MODEL_VERSION: &str =
     "hf:unsloth/Qwen3-4B-Instruct-2507-GGUF@a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf";
-pub(super) const M5_PRODUCTION_JUDGE_THRESHOLD: f64 = 0.75;
+/// One threshold for runtime qualification and production scoring, so the
+/// gate a model passes is the bar it is then held to.
+pub(super) const M5_PRODUCTION_JUDGE_THRESHOLD: f64 =
+    crate::claim_judge::M5_JUDGE_QUALIFICATION_THRESHOLD;
 
 /// One bounded, observable promoter turn. A turn leases at most one page.
 #[derive(Debug, Clone, PartialEq, Eq)]
