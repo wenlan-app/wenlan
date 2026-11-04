@@ -153,6 +153,8 @@ pub const FILE_COLUMNS: &[(&str, &[&str])] = &[
             "is_recap",
             "last_modified",
             "retrieval_cue",
+            // What enrichment wrote; a model would have to write it again.
+            "summary",
         ],
     ),
     (
@@ -194,26 +196,44 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
             "incarnation",
             "basis_revision",
             "source_agent",
+            // What the person is shown about a page: "its sources were
+            // updated", "refresh is blocked". Nothing works these out again
+            // after a restore (spec section 3).
+            "sources_updated_count",
+            "stale_reason",
+            "refresh_blocked_reason",
+            // Worked out by jobs that do not run again for an unchanged
+            // page, so a restore keeps them as they were.
+            "community_id",
+            "confidence",
         ],
     ),
     (
         "pages",
         "cache",
-        &[
-            "embedding",
-            "embedding_updated_at",
-            "community_id",
-            "confidence",
-            "last_compiled",
-            "sources_updated_count",
-            "stale_reason",
-            "refresh_blocked_reason",
-        ],
+        &["embedding", "embedding_updated_at", "last_compiled"],
     ),
     (
         "memories",
         "history",
-        &["version", "changelog", "access_count", "last_accessed"],
+        &[
+            "version",
+            "changelog",
+            "access_count",
+            "last_accessed",
+            // What enrichment and the jobs after it worked out, and whether
+            // a memory still waits for enrichment: nothing works these out
+            // again for a memory the steps record says is done.
+            "confidence",
+            "quality",
+            "enrichment_status",
+            "last_distilled_at",
+            // A folder document's file hash: what the folder sync compares,
+            // and what keeps a document from seeding a page.
+            "content_hash",
+            // New, learned or confirmed: the nightly promotion reads it.
+            "stability",
+        ],
     ),
     // A quick capture's `content` (the tidied text) is also cache: its
     // file holds what the person typed. Chunk boundaries are cache too: the
@@ -223,13 +243,7 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
         "cache",
         &[
             "embedding",
-            "summary",
-            "confidence",
-            "quality",
-            "stability",
-            "enrichment_status",
             "needs_reembed",
-            "content_hash",
             "refinement_status",
             "effective_confidence",
             "word_count",
@@ -238,7 +252,6 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
             "byte_start",
             "byte_end",
             "semantic_unit",
-            "last_distilled_at",
         ],
     ),
     ("brief_items", "history", &["updated_at"]),
@@ -445,7 +458,10 @@ fn remove_unlisted(
             removed += remove_unlisted(root, &inner, listed)?;
             // Empty now: the records that were in it are gone.
             let _ = std::fs::remove_dir(entry.path());
-        } else if inner != Path::new(MANIFEST_FILE) && !listed.contains(&inner) {
+        } else if inner != Path::new(MANIFEST_FILE)
+            && inner != Path::new(crate::store::write_log::POSITION_FILE)
+            && !listed.contains(&inner)
+        {
             std::fs::remove_file(entry.path())?;
             removed += 1;
         }

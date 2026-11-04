@@ -9191,6 +9191,7 @@ dependencies = [
  "hmac",
  "leiden-rs",
  "libsql",
+ "libsql-ffi",
  "llama-cpp-2",
  "log",
  "lopdf",

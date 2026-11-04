@@ -72,6 +72,7 @@ mod presence_review;
 mod quick_capture_repair;
 pub(crate) mod relation_write;
 pub mod table_classes;
+pub mod write_log_replay;
 pub(crate) use relation_write::RelationWriteInput;
 pub(crate) mod repair_deterministic;
 mod repair_memory_cas;

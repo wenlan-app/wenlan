@@ -13,15 +13,24 @@
 //!   copy and rebuilds them to compare. (Measured on a 600 MB database:
 //!   about 70 s for the check, so not hourly.)
 //!
+//! - **Write log:** every write to what the files hold is logged before
+//!   the database commits it (`wenlan_core::store::write_log`); each
+//!   refresh records how far into the log its files go and drops the log
+//!   segments they now hold. The files plus the log are the truth: a
+//!   deleted database is built again from them at start, the last writes
+//!   included.
+//!
 //! Nothing runs in the first [`FIRST_RUN_AFTER`], so a short-lived daemon
 //! (a test, a quick restart) never does. `WENLAN_FILES_MIRROR=0` turns it
-//! off. The files are not read back yet: nothing the person sees changes.
+//! all off, the write log included.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use wenlan_core::store::export::run::PagesFolder;
 use wenlan_core::store::mirror;
+use wenlan_core::store::write_log::{self, LogPosition, WriteLog};
 use wenlan_types::responses::{FilesMirrorState, FilesMirrorStatus};
 
 use crate::state::SharedState;
@@ -141,13 +150,14 @@ pub async fn restore_missing_database(data_root: &Path, db_dir: &Path) {
         Ok(Restore::NotNeeded) | Ok(Restore::NoFiles) => {}
         Ok(Restore::Restored {
             rows,
+            logged,
             problems,
             ms,
             set_aside,
         }) => {
             tracing::warn!(
                 "[files_mirror] the database was missing: rebuilt it from the file copy in \
-                 {ms} ms ({rows} rows, {} problems, see {})",
+                 {ms} ms ({rows} rows, {logged} logged writes after them, {} problems, see {})",
                 problems.len(),
                 mirror.join(restore::RESTORE_REPORT).display()
             );
@@ -185,6 +195,94 @@ pub async fn restore_missing_database(data_root: &Path, db_dir: &Path) {
                 format!("the database could not be rebuilt from the file copy: {error}"),
             );
         }
+    }
+}
+
+/// The database's write log, once [`open_write_log`] opened it.
+static WRITE_LOG: OnceLock<Arc<WriteLog>> = OnceLock::new();
+
+/// Before the database opens, after a restore: opens the write log, applies
+/// the last logged write when the database lost it (the process stopped
+/// between the log and the database commit), and has every connection to
+/// the database file logged from now on. When the log cannot be opened the
+/// daemon still starts, the database written first as before, and the
+/// status says so.
+pub async fn open_write_log(data_root: &Path, db_dir: &Path) {
+    use wenlan_core::store::restore::DATABASE_FILE;
+    if turned_off() {
+        return;
+    }
+    let mirror = mirror::mirror_root(data_root);
+    let dir = mirror.join(write_log::LOG_DIR);
+    let db_file = db_dir.join(DATABASE_FILE);
+    let log = match WriteLog::open(&dir) {
+        Ok(log) => log,
+        Err(error) => {
+            tracing::error!("[files_mirror] the write log could not be opened: {error}");
+            note(
+                &mirror,
+                format!("the write log could not be opened: {error}"),
+            );
+            return;
+        }
+    };
+    match wenlan_core::db::write_log_replay::settle(&db_file, &dir).await {
+        Ok(Some(replayed)) => tracing::warn!(
+            "[files_mirror] the database had lost its last write: applied it from the write \
+             log ({} changes, {} problems)",
+            replayed.changes,
+            replayed.problems.len()
+        ),
+        Ok(None) => {}
+        Err(error) => tracing::error!(
+            "[files_mirror] the last write in the log could not be checked against the \
+             database: {error}"
+        ),
+    }
+    if let Err(error) = std::fs::create_dir_all(db_dir)
+        .map_err(wenlan_core::error::WenlanError::from)
+        .and_then(|()| write_log::register(&db_file, log.clone()))
+    {
+        tracing::error!("[files_mirror] the write log could not be attached: {error}");
+        note(
+            &mirror,
+            format!("the write log could not be attached: {error}"),
+        );
+        return;
+    }
+    let _ = WRITE_LOG.set(log);
+}
+
+/// After the database opened and migrated: logging starts.
+pub async fn arm_write_log(db: &wenlan_core::db::MemoryDB) {
+    let Some(log) = WRITE_LOG.get() else {
+        return;
+    };
+    if let Err(error) = db.arm_write_log(log).await {
+        tracing::error!("[files_mirror] the write log could not start: {error}");
+    }
+}
+
+/// Where the log stands with no write running, before a refresh reads the
+/// database: the files it writes hold every line up to there.
+async fn log_position(db: &wenlan_core::db::MemoryDB) -> Option<(Arc<WriteLog>, LogPosition)> {
+    let log = WRITE_LOG.get().filter(|log| log.is_armed())?;
+    Some((log.clone(), db.write_log_position(log).await))
+}
+
+/// After a refresh wrote `files`: records the position and drops the log
+/// segments the files now hold.
+fn files_hold(dir: &Path, logged: Option<(Arc<WriteLog>, LogPosition)>) {
+    let Some((log, position)) = logged else {
+        return;
+    };
+    let files = dir.join(mirror::FILES_DIR);
+    if let Err(error) = write_log::write_position(&files, &position) {
+        tracing::warn!("[files_mirror] log position not recorded: {error}");
+        return;
+    }
+    if let Err(error) = log.prune_through(&position) {
+        tracing::warn!("[files_mirror] old write log segments not removed: {error}");
     }
 }
 
@@ -331,6 +429,7 @@ async fn tick(
     };
     mirror::write_status(&dir, &status)?;
     let db_file = data_root.join("memorydb").join("origin_memory.db");
+    let logged = log_position(&db).await;
     // libsql runs each statement on the calling thread, and a run takes a
     // minute or more: keep it off the async workers that serve requests.
     let handle = tokio::runtime::Handle::current();
@@ -360,6 +459,7 @@ async fn tick(
                     None => String::new(),
                 }
             );
+            files_hold(&dir, logged);
             mirror::after_run(status, &run, now)
         }
         Err(error) => mirror::after_failure(status, &error),
@@ -378,6 +478,7 @@ async fn refresh(
     let folder = pages_folder(db);
     let data_root = wenlan_core::config::data_root();
     let db_file = data_root.join("memorydb").join("origin_memory.db");
+    let logged = log_position(db).await;
     let handle = tokio::runtime::Handle::current();
     let mirror_dir = dir.to_path_buf();
     // Off the async workers, like a check: libsql runs on the calling thread.
@@ -396,6 +497,7 @@ async fn refresh(
                     run.write_ms
                 );
             }
+            files_hold(dir, logged);
             mirror::after_refresh(status, &run, now)
         }
         Err(error) => mirror::after_failure(status, &error),

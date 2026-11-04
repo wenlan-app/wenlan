@@ -132,18 +132,21 @@ pub(super) async fn prepare_startup_state(
         wenlan_core::db::MemoryDB::open_for_repair(&data_dir).await?
     } else {
         files_mirror::restore_missing_database(&wenlan_root, &data_dir).await;
+        files_mirror::open_write_log(&wenlan_root, &data_dir).await;
         let emitter: Arc<dyn wenlan_core::events::EventEmitter> =
             Arc::new(wenlan_core::NoopEmitter);
         tracing::info!("Initializing MemoryDB at {}", data_dir.display());
         // Memory rows with no embedding are recovered in the background after
         // the daemon serves (runtime.rs); a large backlog recovered here held
         // the health check shut for many minutes, past the app's startup wait.
-        wenlan_core::db::MemoryDB::new_with_embedding_recovery(
+        let db = wenlan_core::db::MemoryDB::new_with_embedding_recovery(
             &data_dir,
             emitter,
             wenlan_core::db::MemoryEmbeddingRecovery::Deferred,
         )
-        .await?
+        .await?;
+        files_mirror::arm_write_log(&db).await;
+        db
     };
     let db_arc = Arc::new(db);
     server_state.db = Some(db_arc.clone());
