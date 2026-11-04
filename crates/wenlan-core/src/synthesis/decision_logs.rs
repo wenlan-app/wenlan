@@ -100,7 +100,10 @@ pub(crate) async fn generate_decision_logs(
             (summary, raw_context)
         };
 
-        let recap_id = format!("recap_{}", uuid::Uuid::new_v4());
+        let recap_id = crate::synthesis::recaps::burst_recap_id(
+            "decision",
+            burst.iter().map(|(id, _, _, _)| id.as_str()),
+        );
         let doc = crate::sources::RawDocument {
             source: "memory".to_string(),
             source_id: recap_id,

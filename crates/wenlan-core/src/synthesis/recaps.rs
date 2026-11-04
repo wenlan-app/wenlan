@@ -26,6 +26,28 @@ pub(crate) fn classify_recaps(generated: usize) -> (Nudge, Option<String>) {
     }
 }
 
+/// The id of the recap (or decision log, by `kind`) for one burst. It is
+/// derived from the burst's memories, not drawn at random, so two passes that
+/// both find the burst uncovered -- the coverage check, the model call and the
+/// write are not one transaction -- write the same row instead of two.
+pub(crate) fn burst_recap_id<'a>(
+    kind: &str,
+    source_ids: impl IntoIterator<Item = &'a str>,
+) -> String {
+    use sha2::Digest as _;
+    let mut ids: Vec<&str> = source_ids.into_iter().collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(kind.as_bytes());
+    for id in ids {
+        hasher.update([0u8]);
+        hasher.update(id.as_bytes());
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    format!("recap_{}", &digest[..32])
+}
+
 /// Public wrapper for generate_recaps, callable from post_ingest module.
 pub async fn generate_recaps_public(
     db: &MemoryDB,
@@ -139,9 +161,9 @@ pub(crate) async fn generate_recaps(
         };
 
         // Store the recap — set last_modified = burst_end so it sorts next to its source memories
-        let recap_id = format!("recap_{}", uuid::Uuid::new_v4());
         // Track source memory IDs so the detail view can show exact sources
         let source_ids: Vec<&str> = burst.iter().map(|(id, _, _, _)| id.as_str()).collect();
+        let recap_id = burst_recap_id("recap", source_ids.iter().copied());
         let structured = serde_json::json!({ "source_ids": source_ids }).to_string();
         // Generate a short topic title via LLM; fall back to burst header
         let burst_header: String = recap_content
@@ -294,6 +316,72 @@ mod tests {
             .await
             .unwrap();
         assert!(!results.is_empty(), "recap should be searchable as fact");
+    }
+
+    /// A burst from earlier in the day gets one recap, however many times the
+    /// recap pass runs over it. The recap is stamped at the burst's end, not at
+    /// the time it was written, so the coverage check must look there.
+    #[tokio::test]
+    async fn an_earlier_burst_is_recapped_once() {
+        let (db, _dir) = test_db().await;
+        let burst_end = chrono::Utc::now().timestamp() - 3 * 3600;
+        for i in 0..5 {
+            let mut doc = make_memory(
+                &format!("earlier_{i}"),
+                &format!("Earlier work on feature {i} for the Wenlan project"),
+                "fact",
+                "engineering",
+            );
+            doc.last_modified = burst_end - 60 * i64::from(i);
+            db.upsert_documents(vec![doc]).await.unwrap();
+        }
+        let tuning = crate::tuning::RefineryConfig::default();
+        let prompts = PromptRegistry::default();
+
+        assert_eq!(
+            generate_recaps(&db, None, &prompts, &tuning).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            generate_recaps(&db, None, &prompts, &tuning).await.unwrap(),
+            0,
+            "the second pass must see the first recap"
+        );
+
+        // A racing pass that missed the first recap writes the same id, so
+        // the burst still has one recap.
+        let ids: Vec<String> = (0..5).map(|i| format!("earlier_{i}")).collect();
+        let recap_id = burst_recap_id("recap", ids.iter().map(String::as_str));
+        let racing = crate::sources::RawDocument {
+            source: "memory".to_string(),
+            source_id: recap_id.clone(),
+            title: "racing recap".to_string(),
+            content: "racing recap body".to_string(),
+            last_modified: burst_end,
+            is_recap: true,
+            ..Default::default()
+        };
+        db.upsert_documents(vec![racing]).await.unwrap();
+        let conn = db.test_primary_session().await;
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(DISTINCT source_id), MAX(source_id) FROM memories WHERE is_recap = 1",
+                (),
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        assert_eq!(row.get::<i64>(0).unwrap(), 1);
+        assert_eq!(row.get::<String>(1).unwrap(), recap_id);
+    }
+
+    #[test]
+    fn a_burst_has_one_recap_id_whatever_the_order() {
+        let a = burst_recap_id("recap", ["m2", "m1", "m3"]);
+        assert_eq!(a, burst_recap_id("recap", ["m3", "m1", "m2"]));
+        assert!(a.starts_with("recap_"));
+        assert_ne!(a, burst_recap_id("recap", ["m1", "m2"]));
+        assert_ne!(a, burst_recap_id("decision", ["m1", "m2", "m3"]));
     }
 
     #[tokio::test]
