@@ -68,9 +68,9 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
 
 # Database
-libsql = { version = "0.9", default-features = false, features = ["core"] }
+libsql = { version = "0.10", default-features = false, features = ["core"] }
 # The pre-update hook the write log (wenlan-core store::write_log) is built on.
-libsql-ffi = { version = "0.9.30", features = ["preupdate_hook"] }
+libsql-ffi = { version = "0.10.0", features = ["preupdate_hook"] }
 
 # Embeddings & LLM
 # FastEmbed's shared surface is target-independent. wenlan-core selects the
