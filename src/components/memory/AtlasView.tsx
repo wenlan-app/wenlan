@@ -159,6 +159,7 @@ const LAYERS_STORAGE_KEY = "atlas.layers";
 
 /** Where the small-groups choice is remembered across reloads. */
 export const SMALL_GROUPS_STORAGE_KEY = "atlas.smallGroups";
+export const WORKING_STORAGE_KEY = "atlas.showWorking";
 
 /** Read the persisted small-groups choice. Only a stored `true` turns them
  *  on; anything malformed — bad JSON, a number, a string — leaves them
@@ -585,6 +586,28 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // model) can apply the current choice without re-running on toggle.
   const [showRegions, setShowRegions] = useState(false);
   const showRegionsRef = useRef(false);
+  // "Working on": every active thing with its steeped points, not only the
+  // picked one. Off by default so the map opens clean; the choice is kept.
+  const [showWorking, setShowWorking] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(WORKING_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const showWorkingRef = useRef(showWorking);
+  showWorkingRef.current = showWorking;
+  const toggleWorking = () => {
+    const next = !showWorking;
+    showWorkingRef.current = next;
+    setShowWorking(next);
+    try {
+      window.localStorage.setItem(WORKING_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Private mode / quota: the choice still applies for this session.
+    }
+  };
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const areasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -1177,7 +1200,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         // A thing's night points show only while that thing is picked (from
         // its page, search, or a stop): the open map stays clear of them
         // (UX-CHAT-5; Fable's design: the thing is a camera, not a mark).
-        if (attrs.night === true && typeof attrs.dustOf === "string" && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
+        // The "Working on" switch shows every active thing's points at once.
+        if (attrs.night === true && typeof attrs.dustOf === "string" && !showWorkingRef.current && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
         const display = nodeDisplay(hoverStateRef.current, node, attrs, paletteRef.current, lodRef.current);
         if (
           showOverviewFallbackLabels &&
@@ -1287,7 +1311,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         const at = renderer.framedGraphToViewport(display);
         return { x: at.x, y: at.y, r: renderer.scaleSize(display.size) };
       };
-      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current);
+      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current);
       // Sentences keep off the other bodies on screen, not only the labels.
       const bodies: { left: number; right: number; top: number; bottom: number }[] = [];
       if (marks.sentences.length > 0) {
@@ -1694,6 +1718,14 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     if (showRegions) sigmaRef.current?.refresh();
   }, [showRegions, layers.memory, hasThings]);
 
+  useEffect(() => {
+    // Showing or hiding every active thing's points changes what is drawn,
+    // so the cached scene and the labels laid round it are stale.
+    focusLayoutRef.current = null;
+    sceneDirtyRef.current = true;
+    sigmaRef.current?.refresh();
+  }, [showWorking]);
+
   const statusStyle = {
     height: "100%",
     width: "100%",
@@ -1927,6 +1959,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
               <span>{t("atlas.regionsToggle")}</span>
             </button>
             </AtlasTooltip>
+            {hasThings && (
+              <AtlasTooltip content={t("atlas.workingDescription")}>
+              <button
+                type="button"
+                className="atlas-content-secondary-toggle"
+                aria-pressed={showWorking}
+                aria-label={t("atlas.workingToggle")}
+                onClick={toggleWorking}
+              >
+                <span className="atlas-content-dot" aria-hidden="true" />
+                <span>{t("atlas.workingToggle")}</span>
+              </button>
+              </AtlasTooltip>
+            )}
             {smallGroupCount > 0 && (
               <AtlasTooltip content={t(showSmallGroups ? "atlas.hideSmallGroups" : "atlas.smallGroupsHidden", { count: smallGroupCount })}>
               <button

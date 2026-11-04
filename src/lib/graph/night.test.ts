@@ -338,6 +338,8 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     // Nothing picked, or another thing picked: the map stays clean.
     expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport).frames).toEqual([]);
     expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t2").frames).toEqual([]);
+    // The "Working on" switch draws every active thing, picked or not.
+    expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, null, undefined, true).frames.map((f) => f.thing)).toEqual(["thing:t1"]);
     // Nothing drawn, or all off screen: no frame.
     expect(nightMarks(map, () => null, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1").frames).toEqual([]);
     expect(nightMarks(map, () => ({ x: 900, y: 50, r: 3 }), { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1").frames).toEqual([]);

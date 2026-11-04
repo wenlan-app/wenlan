@@ -149,7 +149,7 @@ import type {
   KnowledgeGraph,
   ThingNightPoints,
 } from "../../lib/tauri";
-import AtlasView from "./AtlasView";
+import AtlasView, { WORKING_STORAGE_KEY } from "./AtlasView";
 import { ATLAS_CONTROL_INSETS } from "../../lib/graph/viewpoint";
 
 const mockGetKnowledgeGraph = vi.mocked(getKnowledgeGraph);
@@ -928,6 +928,30 @@ describe("AtlasView", () => {
     expect(within(stops).getByRole("button", { name: "This" })).toHaveAttribute("aria-pressed", "true");
     const arrived = capturedSigmaInstances[1];
     expect(arrived.settings.nodeReducer!(point, arrived.graph.getNodeAttributes(point)).hidden).not.toBe(true);
+  });
+
+  it("shows every active thing's points with the Working on switch, and keeps the choice (UX-CHAT-5)", async () => {
+    mockConnectedPair();
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [{ memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 }],
+    }]);
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const { settings, graph } = capturedSigmaInstances[0];
+    const point = graph.nodes().find((id: string) => graph.getNodeAttribute(id, "night") === true);
+    expect(settings.nodeReducer!(point, graph.getNodeAttributes(point)).hidden).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Display" }));
+    const working = await screen.findByRole("button", { name: "Working on" });
+    expect(working).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(working);
+    expect(working).toHaveAttribute("aria-pressed", "true");
+    expect(settings.nodeReducer!(point, graph.getNodeAttributes(point)).hidden).not.toBe(true);
+    expect(window.localStorage.getItem(WORKING_STORAGE_KEY)).toBe("true");
+    fireEvent.click(working);
+    expect(settings.nodeReducer!(point, graph.getNodeAttributes(point)).hidden).toBe(true);
   });
 
   it("gives a picked thing's points no forced labels at 全部 (UX-CHAT-5)", async () => {

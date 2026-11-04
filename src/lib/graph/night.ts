@@ -78,13 +78,16 @@ export function nightMarks(
   picked: string | null = null,
   /** Now, Unix seconds (points' createdAt is too). */
   now: number = Date.now() / 1000,
+  /** The map's "Working on" switch: every active thing's frame is drawn,
+   *  not only the picked one's. */
+  showAll = false,
 ): { frames: ThingFrame[]; sentences: NightSentence[] } {
   const frames: ThingFrame[] = [];
   const sentences: NightSentence[] = [];
   const lit = (id: string) => hover.hovered === null || hover.hovered === id || hover.neighbors.has(id);
   graph.forEachNode((thing, attrs) => {
     if (attrs.entityType !== THING_NODE_TYPE) return;
-    if (thing !== picked) return;
+    if (!showAll && thing !== picked) return;
     let left = Infinity;
     let top = Infinity;
     let right = -Infinity;
