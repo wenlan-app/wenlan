@@ -145,6 +145,7 @@ async fn ux_chat_5_each_night_what_a_thing_settled_goes_into_long_term_memory() 
         &site,
         &["mem_tagline".into()],
         &["mem_pricing".into()],
+        &Default::default(),
         &due[0].conversations,
     )
     .await
@@ -213,6 +214,7 @@ async fn ux_chat_5_each_night_what_a_thing_settled_goes_into_long_term_memory() 
         &site,
         &["mem_pricing_2".into()],
         &[],
+        &Default::default(),
         &site_due.conversations,
     )
     .await

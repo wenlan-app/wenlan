@@ -248,3 +248,243 @@ async fn migration_152_adds_the_thing_map_tables() {
         assert!(rows.next().await.unwrap().is_some(), "{table}");
     }
 }
+
+fn night(
+    memory: &str,
+    text: &str,
+    decided: bool,
+    node: Option<&str>,
+    replaces: bool,
+) -> super::thing_map::DreamMapWrite {
+    super::thing_map::DreamMapWrite {
+        memory_id: memory.into(),
+        session_id: "ses_1".into(),
+        text: text.into(),
+        decided,
+        node: node.map(str::to_string),
+        replaces,
+    }
+}
+
+/// UX-CHAT-5: what a night keeps is the same point on the thing's map. A
+/// point already on the map names its memory and takes the night's state;
+/// a new one joins under the top point; a point the person wrote keeps
+/// their words and gets a proposal (UX-WHO-2).
+#[tokio::test]
+async fn ux_chat_5_night_links_points_to_the_map() {
+    let (db, _dir) = test_db().await;
+    let ops = vec![
+        add("root", None, "topic", "Site redesign"),
+        ThingMapOp::Add {
+            id: Some("tag".into()),
+            parent_id: Some("root".into()),
+            rank: None,
+            kind: "question".into(),
+            state: Some(ThingMapState::Open),
+            label: "Which tagline?".into(),
+            sources: vec![ThingMapSource {
+                session_id: "ses_1".into(),
+                from: Some(2),
+                to: Some(3),
+                memory_id: None,
+            }],
+        },
+    ];
+    db.apply_thing_map_ops("thg_a", ThingMapAuthor::Ai, 0, &ops)
+        .await
+        .unwrap();
+    let mine = vec![ThingMapOp::Add {
+        id: Some("price".into()),
+        parent_id: Some("root".into()),
+        rank: None,
+        kind: "point".into(),
+        state: Some(ThingMapState::Open),
+        label: "Pricing page?".into(),
+        sources: Vec::new(),
+    }];
+    db.apply_thing_map_ops("thg_a", ThingMapAuthor::You, 1, &mine)
+        .await
+        .unwrap();
+
+    let view = db.dream_map_view("thg_a").await.unwrap();
+    assert_eq!(
+        view.unkept
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect::<Vec<_>>(),
+        ["tag", "price"],
+        "the top point is not offered"
+    );
+    let changes = db
+        .dream_into_map(
+            "thg_a",
+            "Site redesign",
+            &[
+                night(
+                    "mem_tag",
+                    "The tagline is You do the thinking.",
+                    true,
+                    Some("tag"),
+                    false,
+                ),
+                night(
+                    "mem_price",
+                    "No pricing page for now.",
+                    true,
+                    Some("price"),
+                    false,
+                ),
+                night("mem_docs", "Docs move to the site.", true, None, false),
+            ],
+        )
+        .await
+        .unwrap();
+    let map = db.get_thing_map("thg_a").await.unwrap();
+    let node = |id: &str| map.nodes.iter().find(|n| n.id == id).unwrap().clone();
+
+    let tag = node("tag");
+    assert_eq!(tag.label, "Which tagline?", "a link keeps the map's words");
+    assert_eq!(tag.state, Some(ThingMapState::Decided));
+    assert_eq!(tag.sources[0].memory_id.as_deref(), Some("mem_tag"));
+    assert_eq!(tag.sources[0].from, Some(2), "the lines it cites stay");
+
+    let price = node("price");
+    assert_eq!(price.by, ThingMapAuthor::You);
+    assert_eq!(
+        price.state,
+        Some(ThingMapState::Open),
+        "the person's point waits"
+    );
+    assert_eq!(price.sources[0].memory_id.as_deref(), Some("mem_price"));
+    assert_eq!(map.proposals.len(), 1);
+    assert!(matches!(
+        &map.proposals[0].change,
+        ThingMapOp::Edit { id, state: Some(ThingMapState::Decided), label: None, .. } if id == "price"
+    ));
+
+    let docs = map
+        .nodes
+        .iter()
+        .find(|n| {
+            n.sources
+                .iter()
+                .any(|s| s.memory_id.as_deref() == Some("mem_docs"))
+        })
+        .expect("a new point joins the map");
+    assert_eq!(docs.parent_id.as_deref(), Some("root"));
+    assert_eq!(docs.by, ThingMapAuthor::Local);
+    assert_eq!(docs.label, "Docs move to the site.");
+    assert_eq!(
+        (
+            changes.added.len(),
+            changes.changed.len(),
+            changes.proposals.len()
+        ),
+        (1, 2, 1)
+    );
+
+    // The next night sees these as kept, and a replacement changes the
+    // point's words on the same point.
+    let view = db.dream_map_view("thg_a").await.unwrap();
+    assert!(view.unkept.is_empty());
+    assert_eq!(
+        view.by_memory.get("mem_tag").map(String::as_str),
+        Some("tag")
+    );
+    db.dream_into_map(
+        "thg_a",
+        "Site redesign",
+        &[night(
+            "mem_tag_2",
+            "The tagline is Your AI keeps the notes.",
+            true,
+            Some("tag"),
+            true,
+        )],
+    )
+    .await
+    .unwrap();
+    let map = db.get_thing_map("thg_a").await.unwrap();
+    let tag = map.nodes.iter().find(|n| n.id == "tag").unwrap();
+    assert_eq!(tag.label, "The tagline is Your AI keeps the notes.");
+    assert_eq!(tag.sources[0].memory_id.as_deref(), Some("mem_tag_2"));
+}
+
+/// UX-CHAT-5: on an empty map, a night's points hang under a top point named
+/// after the thing.
+#[tokio::test]
+async fn ux_chat_5_night_starts_an_empty_map() {
+    let (db, _dir) = test_db().await;
+    db.dream_into_map(
+        "thg_b",
+        "Release notes",
+        &[night("mem_a", "Notes ship weekly.", true, None, false)],
+    )
+    .await
+    .unwrap();
+    let map = db.get_thing_map("thg_b").await.unwrap();
+    assert_eq!(map.nodes.len(), 2);
+    let root = map.nodes.iter().find(|n| n.parent_id.is_none()).unwrap();
+    assert_eq!(root.label, "Release notes");
+    assert_eq!(map.revision, 1);
+}
+
+/// UX-CHAT-5: taking a night back puts the map back; what someone changed
+/// since stays.
+#[tokio::test]
+async fn ux_chat_5_undo_puts_the_map_back() {
+    let (db, _dir) = test_db().await;
+    let ops = vec![
+        add("root", None, "topic", "Site redesign"),
+        ThingMapOp::Add {
+            id: Some("tag".into()),
+            parent_id: Some("root".into()),
+            rank: None,
+            kind: "question".into(),
+            state: Some(ThingMapState::Open),
+            label: "Which tagline?".into(),
+            sources: Vec::new(),
+        },
+    ];
+    db.apply_thing_map_ops("thg_a", ThingMapAuthor::Ai, 0, &ops)
+        .await
+        .unwrap();
+    let before = db.get_thing_map("thg_a").await.unwrap();
+    let changes = db
+        .dream_into_map(
+            "thg_a",
+            "Site redesign",
+            &[
+                night("mem_tag", "Tagline settled.", true, Some("tag"), false),
+                night("mem_new", "A new point.", false, None, false),
+                night("mem_kept", "Another new point.", false, None, false),
+            ],
+        )
+        .await
+        .unwrap();
+    // The person writes under one of the night's points: it stays.
+    let kept = changes.added[1].clone();
+    let rev = db.get_thing_map("thg_a").await.unwrap().revision;
+    db.apply_thing_map_ops(
+        "thg_a",
+        ThingMapAuthor::You,
+        rev,
+        &[add("child", Some(&kept), "reason", "Because.")],
+    )
+    .await
+    .unwrap();
+
+    db.undo_dream_map("thg_a", &changes).await.unwrap();
+    let after = db.get_thing_map("thg_a").await.unwrap();
+    let tag = after.nodes.iter().find(|n| n.id == "tag").unwrap();
+    assert_eq!(tag, before.nodes.iter().find(|n| n.id == "tag").unwrap());
+    let ids: Vec<&str> = after.nodes.iter().map(|n| n.id.as_str()).collect();
+    assert!(
+        !ids.contains(&changes.added[0].as_str()),
+        "an untouched new point goes"
+    );
+    assert!(
+        ids.contains(&kept.as_str()) && ids.contains(&"child"),
+        "{ids:?}"
+    );
+}

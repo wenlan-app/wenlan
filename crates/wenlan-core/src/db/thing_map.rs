@@ -693,3 +693,310 @@ async fn write_rows(
     }
     Ok(())
 }
+
+/// Most of a map's points not kept yet that one night's reading sees.
+pub const MAX_DREAM_MAP_POINTS: usize = 60;
+
+/// A point a night kept, for its thing's map (UX-CHAT-5): the map and
+/// long-term memory stay one point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DreamMapWrite {
+    /// The memory the night wrote.
+    pub memory_id: String,
+    /// The conversation it came from.
+    pub session_id: String,
+    pub text: String,
+    pub decided: bool,
+    /// The map point it is, when it was one already.
+    pub node: Option<String>,
+    /// Whether it replaces what that point said: a kept point no longer
+    /// holds.
+    pub replaces: bool,
+}
+
+/// A map point as a night's reading sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DreamMapPoint {
+    pub id: String,
+    pub label: String,
+    pub state: Option<ThingMapState>,
+}
+
+/// What a night's reading needs from a thing's map: the points no night kept
+/// yet, in reading order, and which point each kept memory is.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DreamMapView {
+    pub unkept: Vec<DreamMapPoint>,
+    pub by_memory: std::collections::HashMap<String, String>,
+}
+
+/// What a night changed on a map, kept with the night so taking it back
+/// puts the map back too.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DreamMapChanges {
+    /// Points the night added, in the order it added them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<String>,
+    /// Points it changed, as they were before and after.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed: Vec<DreamNodeChange>,
+    /// Proposals it left on the person's points.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proposals: Vec<String>,
+}
+
+impl DreamMapChanges {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.changed.is_empty() && self.proposals.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DreamNodeChange {
+    pub before: ThingMapNode,
+    pub after: ThingMapNode,
+}
+
+/// The memory a point is, if a night kept it.
+fn memory_of(node: &ThingMapNode) -> Option<&str> {
+    node.sources.iter().find_map(|s| s.memory_id.as_deref())
+}
+
+/// A point's sources with `memory_id` as the one memory it is, cited on the
+/// conversation it came from.
+fn sources_with_memory(
+    sources: &[ThingMapSource],
+    session_id: &str,
+    memory_id: &str,
+) -> Vec<ThingMapSource> {
+    let mut out: Vec<ThingMapSource> = sources
+        .iter()
+        .cloned()
+        .map(|mut s| {
+            s.memory_id = None;
+            s
+        })
+        .collect();
+    match out.iter_mut().find(|s| s.session_id == session_id) {
+        Some(source) => source.memory_id = Some(memory_id.to_string()),
+        None => {
+            if out.len() >= MAX_SOURCES {
+                out.pop();
+            }
+            out.push(ThingMapSource {
+                session_id: session_id.to_string(),
+                from: None,
+                to: None,
+                memory_id: Some(memory_id.to_string()),
+            });
+        }
+    }
+    out
+}
+
+fn cut_label(text: &str) -> String {
+    let text = text.trim();
+    if text.chars().count() <= MAX_LABEL_CHARS {
+        text.to_string()
+    } else {
+        text.chars().take(MAX_LABEL_CHARS - 1).collect::<String>() + "…"
+    }
+}
+
+impl MemoryDB {
+    /// The map as a night's reading of the thing sees it.
+    pub async fn dream_map_view(&self, thing_id: &str) -> Result<DreamMapView, WenlanError> {
+        let conn = self.conn.lock().await;
+        let map = read_map(&conn, thing_id).await?;
+        drop(conn);
+        let mut view = DreamMapView::default();
+        let mut nodes: Vec<&ThingMapNode> = map
+            .nodes
+            .iter()
+            .map(|(n, _, _)| n)
+            .filter(|n| n.parent_id.is_some() && n.state != Some(ThingMapState::Dropped))
+            .collect();
+        nodes.sort_by(|a, b| a.rank.total_cmp(&b.rank).then(a.id.cmp(&b.id)));
+        for node in nodes {
+            match memory_of(node) {
+                Some(memory) => {
+                    view.by_memory.insert(memory.to_string(), node.id.clone());
+                }
+                None if view.unkept.len() < MAX_DREAM_MAP_POINTS => {
+                    view.unkept.push(DreamMapPoint {
+                        id: node.id.clone(),
+                        label: node.label.clone(),
+                        state: node.state,
+                    })
+                }
+                None => {}
+            }
+        }
+        Ok(view)
+    }
+
+    /// Put a night's points on the thing's map (UX-CHAT-5): a point that was
+    /// on it already now names its memory, and takes the night's state and,
+    /// when it replaces what the point said, its words; any other point is
+    /// added under the map's top point, which is made from `title` when the
+    /// map was empty. A change to a point the person wrote waits as a
+    /// proposal instead (UX-WHO-2); naming its memory does not, since it
+    /// leaves the person's words alone. Returns what changed, so taking the
+    /// night back can undo it.
+    pub async fn dream_into_map(
+        &self,
+        thing_id: &str,
+        title: &str,
+        writes: &[DreamMapWrite],
+    ) -> Result<DreamMapChanges, WenlanError> {
+        let mut changes = DreamMapChanges::default();
+        if writes.is_empty() {
+            return Ok(changes);
+        }
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().await;
+        let mut map = read_map(&conn, thing_id).await?;
+        if map.nodes.is_empty() {
+            let root = ThingMapNode {
+                id: new_node_id(),
+                parent_id: None,
+                rank: 0.0,
+                kind: "topic".into(),
+                state: None,
+                label: cut_label(if title.trim().is_empty() {
+                    "…"
+                } else {
+                    title
+                }),
+                by: ThingMapAuthor::Local,
+                sources: Vec::new(),
+            };
+            changes.added.push(root.id.clone());
+            map.nodes.push((root, now, now));
+        }
+        let Some(root) = map
+            .nodes
+            .iter()
+            .find(|(n, _, _)| n.parent_id.is_none())
+            .map(|(n, _, _)| n.id.clone())
+        else {
+            return Ok(changes);
+        };
+        for write in writes {
+            let state = if write.decided {
+                ThingMapState::Decided
+            } else {
+                ThingMapState::Open
+            };
+            let label = cut_label(&write.text);
+            let found = write.node.as_deref().and_then(|id| map.index(id));
+            let Some(i) = found else {
+                if map.nodes.len() >= MAX_MAP_NODES {
+                    continue;
+                }
+                let node = ThingMapNode {
+                    id: new_node_id(),
+                    parent_id: Some(root.clone()),
+                    rank: map.next_rank(Some(&root)),
+                    kind: "point".into(),
+                    state: Some(state),
+                    label,
+                    by: ThingMapAuthor::Local,
+                    sources: sources_with_memory(&[], &write.session_id, &write.memory_id),
+                };
+                changes.added.push(node.id.clone());
+                map.nodes.push((node, now, now));
+                continue;
+            };
+            let before = map.nodes[i].0.clone();
+            let new_label = (write.replaces && label != before.label).then_some(label);
+            let new_state = (before.state != Some(state)).then_some(state);
+            let mut after = before.clone();
+            after.sources =
+                sources_with_memory(&before.sources, &write.session_id, &write.memory_id);
+            if new_label.is_some() || new_state.is_some() {
+                if before.by == ThingMapAuthor::You {
+                    let proposal = ThingMapProposal {
+                        id: new_proposal_id(),
+                        by: ThingMapAuthor::Local,
+                        change: ThingMapOp::Edit {
+                            id: before.id.clone(),
+                            kind: None,
+                            state: new_state,
+                            label: new_label,
+                            sources: None,
+                        },
+                        created_at: now,
+                    };
+                    changes.proposals.push(proposal.id.clone());
+                    map.proposals.push(proposal);
+                } else {
+                    if let Some(label) = new_label {
+                        after.label = label;
+                    }
+                    if let Some(state) = new_state {
+                        after.state = Some(state);
+                    }
+                    after.by = ThingMapAuthor::Local;
+                }
+            }
+            if after != before {
+                map.nodes[i].0 = after.clone();
+                map.nodes[i].2 = now;
+                changes.changed.push(DreamNodeChange { before, after });
+            }
+        }
+        if !changes.is_empty() {
+            map.revision += 1;
+            write_map(&conn, thing_id, &map, now).await?;
+        }
+        Ok(changes)
+    }
+
+    /// Take a night's changes off the thing's map: its proposals still
+    /// waiting go, each point it changed and nobody changed since goes back
+    /// to what it was, and each point it added that nobody touched since and
+    /// that has nothing under it is removed. What someone changed since
+    /// stays as they left it.
+    pub async fn undo_dream_map(
+        &self,
+        thing_id: &str,
+        changes: &DreamMapChanges,
+    ) -> Result<(), WenlanError> {
+        if changes.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().await;
+        let mut map = read_map(&conn, thing_id).await?;
+        let before = (map.nodes.len(), map.proposals.len());
+        let mut touched = false;
+        map.proposals.retain(|p| !changes.proposals.contains(&p.id));
+        for change in changes.changed.iter().rev() {
+            if let Some(i) = map.index(&change.after.id) {
+                if map.nodes[i].0 == change.after {
+                    map.nodes[i].0 = change.before.clone();
+                    map.nodes[i].2 = now;
+                    touched = true;
+                }
+            }
+        }
+        for id in changes.added.iter().rev() {
+            let Some(i) = map.index(id) else { continue };
+            let node = &map.nodes[i].0;
+            let has_children = map
+                .nodes
+                .iter()
+                .any(|(n, _, _)| n.parent_id.as_deref() == Some(id.as_str()));
+            if node.by == ThingMapAuthor::Local && !has_children {
+                map.nodes.remove(i);
+                map.edges.retain(|e| e.from != *id && e.to != *id);
+            }
+        }
+        if touched || before != (map.nodes.len(), map.proposals.len()) {
+            map.revision += 1;
+            write_map(&conn, thing_id, &map, now).await?;
+        }
+        Ok(())
+    }
+}

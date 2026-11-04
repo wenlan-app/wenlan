@@ -1026,12 +1026,22 @@ export interface ThingMapNode {
   sources: { session_id: string; from?: number | null; to?: number | null; memory_id?: string | null }[];
 }
 
+/** A change the AI or Wenlan's model asked for on a point the person wrote
+ *  (UX-WHO-2), waiting for them. */
+export interface ThingMapProposal {
+  id: string;
+  by: "ai" | "local";
+  change: { op: string; id?: string; label?: string | null; state?: ThingMapState | null };
+  created_at: number;
+}
+
 export interface ThingMap {
   thing_id: string;
   /** 0 until something writes the map. */
   revision: number;
   nodes: ThingMapNode[];
   edges: { from: string; to: string; kind: string }[];
+  proposals?: ThingMapProposal[];
 }
 
 /** Things with recent activity first. Empty until things have their own record. */
@@ -1045,6 +1055,16 @@ export async function getThing(id: string): Promise<ThingDetail> {
 
 export async function getThingMap(id: string): Promise<ThingMap> {
   return invoke("get_thing_map", { id });
+}
+
+/** The person answers a proposal on a thing's map (UX-WHO-2). */
+export async function answerThingMapProposal(
+  id: string,
+  revision: number,
+  proposalId: string,
+  accept: boolean,
+): Promise<ThingMap> {
+  return invoke("answer_thing_map_proposal", { id, revision, proposalId, accept });
 }
 
 /** One thing someone said in a conversation (UX-FIND-2). `at` is Unix seconds. */

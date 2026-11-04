@@ -1,8 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { getThingMap, type ThingDetail, type ThingMap, type ThingMapNode, type ThingMemory, type ThingPage } from "../../../lib/tauri";
+import {
+  answerThingMapProposal,
+  getThingMap,
+  type ThingDetail,
+  type ThingMap,
+  type ThingMapNode,
+  type ThingMapProposal,
+  type ThingMemory,
+  type ThingPage,
+} from "../../../lib/tauri";
 
 export type ThingView = "short" | "map";
 
@@ -72,6 +81,16 @@ export function ThingViews({
     retry: false,
   });
   const tree = mapQuery.data ? treeOf(mapQuery.data) : null;
+  const queryClient = useQueryClient();
+  const answer = useMutation({
+    mutationFn: ({ proposal, accept }: { readonly proposal: string; readonly accept: boolean }) =>
+      answerThingMapProposal(thing.id, mapQuery.data?.revision ?? 0, proposal, accept),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["thing-map", thing.id] }),
+  });
+  // Points on the map that a night kept name their memory; any other point
+  // of the thing still shows, in the group its kind puts it in.
+  const onMap = new Set(tree ? [...tree.byId.values()].map(memoryOf).filter((id): id is string => id != null) : []);
+  const loose = points.filter((point) => !onMap.has(point.source_id));
   return (
     <>
       <div className="thing-views-bar">
@@ -90,7 +109,14 @@ export function ThingViews({
         <div className="thing-short" data-testid="thing-short">
           {thing.status_line ? <p className="thing-detail-where">{thing.status_line}</p> : null}
           {mapQuery.isPending ? null : tree ? (
-            <TreeRecap tree={tree} />
+            <TreeRecap
+              tree={tree}
+              fresh={fresh}
+              loose={loose}
+              open={open}
+              proposals={mapQuery.data?.proposals ?? []}
+              onAnswer={(proposal, accept) => answer.mutate({ proposal, accept })}
+            />
           ) : points.length > 0 ? (
             RECAP_GROUPS.map((group) => (
               <RecapGroup key={group.key} group={group} fresh={fresh} points={points.filter((point) => groupOf(point, open) === group.key)} />
@@ -100,7 +126,7 @@ export function ThingViews({
           )}
         </div>
       ) : mapQuery.isPending ? null : tree ? (
-        <TreeMap tree={tree} />
+        <TreeMap tree={tree} fresh={fresh} />
       ) : (
         <ThingMap thing={thing} points={points} onOpenPage={onOpenPage} />
       )}
@@ -157,7 +183,10 @@ function RecapGroup({
       <h3>{t(group.label)}</h3>
       <ul>
         {shown.map((point) => (
-          <li key={point.source_id} data-fresh={fresh.has(point.source_id) ? "true" : undefined}>{withStop(point.title)}</li>
+          <li key={point.source_id} data-fresh={fresh.has(point.source_id) ? "true" : undefined}>
+            {fresh.has(point.source_id) ? <SteepedMark /> : null}
+            {withStop(point.title)}
+          </li>
         ))}
       </ul>
       {hidden > 0 ? (
@@ -408,26 +437,93 @@ function treeGroupOf(tree: Tree, node: ThingMapNode): TreeGroupKey | null {
   return "background";
 }
 
-function TreeRecap({ tree }: { readonly tree: Tree }) {
+/** The memory a night kept for a map point, if any (UX-CHAT-5). */
+function memoryOf(node: ThingMapNode): string | null {
+  return node.sources.find((source) => source.memory_id)?.memory_id ?? null;
+}
+
+/** A moon before a point last night steeped (UX-CHAT-5): the same mark as
+ *  the line that says so. */
+function SteepedMark() {
+  const { t } = useTranslation();
+  return (
+    <span className="thing-steeped-mark" title={t("thing.steepedMark")} role="img" aria-label={t("thing.steepedMark")}>
+      <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+        <path d="M10.5 1.5a6.5 6.5 0 1 0 4 11.6A6 6 0 0 1 10.5 1.5z" fill="currentColor" />
+      </svg>
+    </span>
+  );
+}
+
+/** One line of the recap: a map point, or a point of the thing the map does
+ *  not hold yet. */
+interface RecapItem {
+  readonly key: string;
+  readonly context: string | null;
+  readonly text: string;
+  readonly fresh: boolean;
+  readonly proposal?: ThingMapProposal;
+}
+
+function TreeRecap({
+  tree,
+  fresh,
+  loose,
+  open,
+  proposals,
+  onAnswer,
+}: {
+  readonly tree: Tree;
+  /** Memories last night steeped. */
+  readonly fresh: ReadonlySet<string>;
+  /** The thing's points no map point holds. */
+  readonly loose: readonly ThingMemory[];
+  readonly open: ReadonlySet<string>;
+  /** Changes waiting on the person's points (UX-WHO-2). */
+  readonly proposals: readonly ThingMapProposal[];
+  readonly onAnswer: (proposal: string, accept: boolean) => void;
+}) {
   const points = walk(tree);
+  const proposalFor = new Map<string, ThingMapProposal>();
+  for (const proposal of proposals) {
+    if (proposal.change.op === "edit" && proposal.change.id && !proposalFor.has(proposal.change.id)) {
+      proposalFor.set(proposal.change.id, proposal);
+    }
+  }
   return (
     <>
       {TREE_GROUPS.map((group) => {
-        const items = points.filter((node) => treeGroupOf(tree, node) === group.key);
-        return <TreeRecapGroup key={group.key} tree={tree} group={group} items={items} />;
+        const items: RecapItem[] = points
+          .filter((node) => treeGroupOf(tree, node) === group.key)
+          .map((node) => {
+            const parent = node.parent_id ? tree.byId.get(node.parent_id) : undefined;
+            const memory = memoryOf(node);
+            return {
+              key: node.id,
+              context: parent && parent.id !== tree.root.id ? parent.label : null,
+              text: node.label,
+              fresh: memory != null && fresh.has(memory),
+              proposal: proposalFor.get(node.id),
+            };
+          });
+        for (const point of loose) {
+          if (groupOf(point, open) !== group.key) continue;
+          items.push({ key: point.source_id, context: null, text: point.title, fresh: fresh.has(point.source_id) });
+        }
+        return <TreeRecapGroup key={group.key} group={group} items={items} onAnswer={onAnswer} />;
       })}
     </>
   );
 }
 
 function TreeRecapGroup({
-  tree,
   group,
   items,
+  onAnswer,
 }: {
-  readonly tree: Tree;
   readonly group: { readonly key: TreeGroupKey; readonly label: TreeGroupLabel };
-  readonly items: readonly ThingMapNode[];
+  readonly items: readonly RecapItem[];
+  readonly onAnswer: (proposal: string, accept: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -438,16 +534,14 @@ function TreeRecapGroup({
     <section className="thing-recap-group" aria-label={t(group.label)} data-recap={group.key}>
       <h3>{t(group.label)}</h3>
       <ul>
-        {shown.map((node) => {
-          const parent = node.parent_id ? tree.byId.get(node.parent_id) : undefined;
-          const context = parent && parent.id !== tree.root.id ? parent.label : null;
-          return (
-            <li key={node.id}>
-              {context ? <span className="thing-recap-context">{context} </span> : null}
-              {withStop(node.label, context ?? "")}
-            </li>
-          );
-        })}
+        {shown.map((item) => (
+          <li key={item.key} data-fresh={item.fresh ? "true" : undefined}>
+            {item.fresh ? <SteepedMark /> : null}
+            {item.context ? <span className="thing-recap-context">{item.context} </span> : null}
+            {withStop(item.text, item.context ?? "")}
+            {item.proposal ? <ProposalRow proposal={item.proposal} onAnswer={onAnswer} /> : null}
+          </li>
+        ))}
       </ul>
       {hidden > 0 ? (
         <button type="button" className="thing-recap-more" onClick={() => setOpen(true)}>
@@ -455,6 +549,32 @@ function TreeRecapGroup({
         </button>
       ) : null}
     </section>
+  );
+}
+
+/** What a night read that differs from a point the person wrote, under that
+ *  point, with their two answers (UX-WHO-2). */
+function ProposalRow({
+  proposal,
+  onAnswer,
+}: {
+  readonly proposal: ThingMapProposal;
+  readonly onAnswer: (proposal: string, accept: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const text =
+    proposal.change.label ??
+    (proposal.change.state === "decided" ? t("thing.proposalSettled") : t("thing.proposalOpen"));
+  return (
+    <span className="thing-recap-proposal" data-testid="thing-recap-proposal">
+      <span>{t("thing.proposalRead", { text })}</span>
+      <button type="button" onClick={() => onAnswer(proposal.id, true)}>
+        {t("thing.proposalUse")}
+      </button>
+      <button type="button" onClick={() => onAnswer(proposal.id, false)}>
+        {t("thing.proposalNo")}
+      </button>
+    </span>
   );
 }
 
@@ -474,7 +594,7 @@ interface PlacedNode {
  *  stacked and every parent centred on its children. Its shape is whatever
  *  the AI wrote: questions and options for a decision, a topic tree for
  *  something being learned. */
-function TreeMap({ tree }: { readonly tree: Tree }) {
+function TreeMap({ tree, fresh }: { readonly tree: Tree; readonly fresh: ReadonlySet<string> }) {
   const { t } = useTranslation();
   let maxDepth = 0;
   const depthOf = (node: ThingMapNode, depth: number) => {
@@ -533,13 +653,22 @@ function TreeMap({ tree }: { readonly tree: Tree }) {
           const kind = isRoot ? "root" : KNOWN_KINDS.has(node.kind) ? node.kind : "plain";
           const state = node.state ?? "none";
           const lines = node.state === "decided" && !isRoot ? [...item.lines.slice(0, -1), `${item.lines[item.lines.length - 1]} ✓`] : item.lines;
+          const memory = memoryOf(node);
+          const steeped = memory != null && fresh.has(memory);
           return (
-            <g key={node.id} className="thing-tree-node" data-kind={kind} data-state={state}>
-              <title>{node.label}</title>
+            <g key={node.id} className="thing-tree-node" data-kind={kind} data-state={state} data-fresh={steeped ? "true" : undefined}>
+              <title>{steeped ? `${node.label} · ${t("thing.steepedMark")}` : node.label}</title>
               {kind === "reason" ? null : (
                 <rect x={xOf(item.depth)} y={shift + item.y} width={boxWidth} height={item.height} rx={isRoot ? 14 : 10} />
               )}
               <NodeText x={xOf(item.depth) + (kind === "reason" ? 2 : 12)} y={shift + item.y} lines={lines} />
+              {steeped ? (
+                <path
+                  className="thing-tree-moon"
+                  transform={`translate(${xOf(item.depth) + boxWidth - 18} ${shift + item.y + NODE_PAD_Y + 1}) scale(0.75)`}
+                  d="M10.5 1.5a6.5 6.5 0 1 0 4 11.6A6 6 0 0 1 10.5 1.5z"
+                />
+              ) : null}
             </g>
           );
         })}

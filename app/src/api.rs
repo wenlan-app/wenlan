@@ -1711,6 +1711,18 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
+    /// `POST /api/things/{id}/map/ops`: the person answers a proposal on the
+    /// thing's map (UX-WHO-2). Sent without an agent name, so the daemon
+    /// takes it as the person's.
+    pub async fn answer_thing_map_proposal(
+        &self,
+        id: &str,
+        request: wenlan_types::ThingMapOpsRequest,
+    ) -> Result<wenlan_types::ThingMapOpsResponse, String> {
+        let path = format!("/api/things/{}/map/ops", percent_encode_path_segment(id));
+        self.post_json(&path, &request).await
+    }
+
     /// `GET /api/conversations/search`: sentences from conversations with
     /// every search word (UX-FIND-1).
     pub async fn search_conversations(

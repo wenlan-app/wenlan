@@ -17,6 +17,7 @@
 //! was last read for points, so a conversation is read again only once it
 //! went on.
 
+use super::thing_map::DreamMapChanges;
 use super::things::history;
 use super::MemoryDB;
 use crate::conversation_intake::{PriorPoint, MAX_DREAM_CONVERSATIONS};
@@ -75,6 +76,9 @@ struct DreamEntry {
     decided: Vec<String>,
     #[serde(default)]
     open: Vec<String>,
+    /// What it changed on the thing's map.
+    #[serde(default)]
+    map: DreamMapChanges,
 }
 
 impl MemoryDB {
@@ -288,13 +292,15 @@ impl MemoryDB {
     }
 
     /// Record a night's reading of a thing: the memories it wrote, settled
-    /// and open, and that its conversations were read up to their last line.
-    /// A night that found nothing new records only the reading.
+    /// and open, what that changed on its map, and that its conversations
+    /// were read up to their last line. A night that found nothing new
+    /// records only the reading.
     pub async fn record_dream(
         &self,
         thing_id: &str,
         decided: &[String],
         open: &[String],
+        map: &DreamMapChanges,
         conversations: &[DueConversation],
     ) -> Result<(), WenlanError> {
         let now = chrono::Utc::now().timestamp();
@@ -311,7 +317,7 @@ impl MemoryDB {
                 "thing.dream",
                 thing_id,
                 None,
-                serde_json::json!({ "decided": decided, "open": open }),
+                serde_json::json!({ "decided": decided, "open": open, "map": map }),
             )
             .await?;
         }
@@ -347,9 +353,10 @@ impl MemoryDB {
     }
 
     /// The person takes back the newest night of a thing that was not taken
-    /// back yet. Returns the memories it wrote, for the caller to forget;
-    /// empty when there is nothing to take back. Its conversations are not
-    /// read again for the same lines.
+    /// back yet, and what it changed on the thing's map. Returns the
+    /// memories it wrote, for the caller to forget; empty when there is
+    /// nothing to take back. Its conversations are not read again for the
+    /// same lines.
     pub async fn undo_thing_dream(&self, thing_id: &str) -> Result<Vec<String>, WenlanError> {
         let nights = self.dream_nights(thing_id).await?;
         let Some((seq, _, night)) = nights.into_iter().rev().find(|(_, undone, _)| !undone) else {
@@ -372,6 +379,8 @@ impl MemoryDB {
         )
         .await?;
         tx.commit().await.map_err(db_err("undo dream commit"))?;
+        drop(conn);
+        self.undo_dream_map(thing_id, &night.entry.map).await?;
         let mut ids = night.entry.decided;
         ids.extend(night.entry.open);
         Ok(ids)
