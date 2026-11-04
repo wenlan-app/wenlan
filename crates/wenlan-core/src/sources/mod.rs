@@ -13,6 +13,7 @@ pub mod logseq;
 pub mod obsidian;
 pub mod okf;
 pub mod page_watcher;
+pub mod zotero;
 
 // Re-export canonical type definitions from wenlan-types. This keeps
 // `crate::sources::RawDocument` working for wenlan-core modules while the

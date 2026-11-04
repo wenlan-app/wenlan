@@ -1351,6 +1351,16 @@ pub struct SyncStatsResponse {
     pub ingested: usize,
     pub skipped: usize,
     pub errors: usize,
+    #[serde(default)]
+    pub error_detail: Option<String>,
+    #[serde(default)]
+    pub skipped_files: Vec<SkippedSourceFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkippedSourceFile {
+    pub path: String,
+    pub reason: String,
 }
 
 /// GET /api/notes/proposals

@@ -46,7 +46,9 @@ export default function CitationChip({
     authored: t("citation.kind.authored"),
   };
   const app = citationSourceApp(citation);
-  const displayLabel = app ? sourceAppName(app, i18n.language) : citationDisplayLabel(citation, kindLabels);
+  const zoteroSource = citation.source_kind === "memory" && sourceMemory?.source_id === citation.locator && sourceMemory.source_agent === "zotero";
+  const referenceKind = zoteroSource ? "file" : citationReferenceKind(citation);
+  const displayLabel = zoteroSource ? "Zotero" : app ? sourceAppName(app, i18n.language) : citationDisplayLabel(citation, kindLabels);
 
   const clearCloseTimer = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -157,7 +159,7 @@ export default function CitationChip({
         ref={chipRef}
         type="button"
         data-status={citation.status}
-        data-reference-kind={citationReferenceKind(citation)}
+        data-reference-kind={referenceKind}
         aria-describedby={open ? popoverId : undefined}
         onPointerDown={(e) => {
           lastPointerType.current = e.pointerType;
@@ -186,7 +188,7 @@ export default function CitationChip({
           gap: "2px",
         }}
       >
-        <ReferenceTypeIcon kind={citationReferenceKind(citation)} size={12} locator={citation.locator} />
+        <ReferenceTypeIcon kind={referenceKind} size={12} locator={citation.locator} />
         <span
           style={{
             display: "inline-block",

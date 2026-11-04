@@ -498,6 +498,7 @@ const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
     (RegisteredMethod::Put, "/api/pages/{id}"),
     (RegisteredMethod::Delete, "/api/pages/{id}"),
     (RegisteredMethod::Post, "/api/sources"),
+    (RegisteredMethod::Post, "/api/zotero/sources"),
     (RegisteredMethod::Delete, "/api/pages/{id}/map"),
 ];
 

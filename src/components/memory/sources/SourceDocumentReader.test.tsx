@@ -14,6 +14,7 @@ vi.mock("./SourceAnnotations", () => ({
     {renderRelatedPages?.(<section><h3>Pages</h3><button>Related page</button></section>)}
   </>,
 }));
+vi.mock("./ZoteroDocumentReader", () => ({ default: ({ sourceId }: { sourceId: string }) => <div>Attachment preview for {sourceId}</div> }));
 const file: IndexedFileInfo = { source: "webpage", source_id: "https://example.com/article", title: "Article", chunk_count: 1, last_modified: 1791680000 };
 function wrap(node: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -84,6 +85,17 @@ describe("simple link source", () => {
 });
 
 describe("full local source layout", () => {
+  it("reads Zotero imported chunks through the existing file source and keeps a safe original URL", async () => {
+    const zoteroFile: IndexedFileInfo = { source: "file", source_agent: "zotero", source_id: "zotero::A1::ITEM1::paper.pdf", title: "Paper", url: "https://example.org/paper", chunk_count: 1, last_modified: 0 };
+    vi.mocked(getChunks).mockResolvedValue([{ id: "zotero-chunk", content: "Paper text", chunk_index: 0, chunk_type: null, language: null }]);
+    wrap(<SourceDocumentReader file={zoteroFile} space="Research" />);
+    await screen.findByText("Paper text");
+    expect(getChunks).toHaveBeenCalledExactlyOnceWith("file", zoteroFile.source_id, "Research");
+    expect(screen.getByText(`Attachment preview for ${zoteroFile.source_id}`)).toBeInTheDocument();
+    expect(screen.getByText("Source text and notes")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open original" })).toHaveAttribute("href", "https://example.org/paper");
+  });
+
   it("uses the Space carried by a source destination when fetching the full document", async () => {
     vi.mocked(getChunks).mockResolvedValue([{ id: "scoped", content: "Scoped document text.", chunk_index: 0, chunk_type: null, language: null }]);
     wrap(<SourceDocumentPage file={{ ...file, source: "file", source_id: "shared.md", space: "Reading" }} />);

@@ -163,7 +163,9 @@ impl LintSummaryCode {
     /// free, so these are plain `&'static str`.
     pub const fn meaning(self) -> &'static str {
         match self {
-            Self::CheckPassed => "This check looked at everything it covers and found nothing wrong.",
+            Self::CheckPassed => {
+                "This check looked at everything it covers and found nothing wrong."
+            }
             Self::FindingDetected => {
                 "This check found records that do not match what Wenlan expects."
             }

@@ -32576,6 +32576,65 @@ async fn test_set_document_tags_is_idempotent_replace() {
 }
 
 #[tokio::test]
+async fn patch_document_tag_is_additive_idempotent_and_source_scoped() {
+    let (db, _dir) = test_db().await;
+    let memory = make_memory_doc("same-id", "memory document", "fact", "research", "test");
+    db.upsert_documents_without_embeddings(vec![memory])
+        .await
+        .unwrap();
+    // Import-generated IDs derive from source_id, so seed the legacy kind
+    // collision with its own row ID rather than colliding at fixture insertion.
+    db.conn.lock().await.execute(
+        "INSERT INTO memories (id,content,source,source_id,title,chunk_index,last_modified,chunk_type,space)
+         VALUES ('file-row-same-source','file document','file','same-id','file',0,1,'text','research')",
+        (),
+    ).await.unwrap();
+
+    let global = ReadScope::Global;
+    let (left, right) = tokio::join!(
+        db.patch_document_tag("memory", "same-id", " Alpha ", "add", &global),
+        db.patch_document_tag("memory", "same-id", "beta", "add", &global),
+    );
+    left.unwrap();
+    right.unwrap();
+    db.patch_document_tag("memory", "same-id", "ALPHA", "add", &global)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.get_document_tags("memory", "same-id").await.unwrap(),
+        vec!["alpha", "beta"]
+    );
+    assert!(db
+        .get_document_tags("file", "same-id")
+        .await
+        .unwrap()
+        .is_empty());
+
+    db.patch_document_tag("memory", "same-id", "alpha", "remove", &global)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_document_tags("memory", "same-id").await.unwrap(),
+        vec!["beta"]
+    );
+    assert!(db
+        .patch_document_tag(
+            "memory",
+            "same-id",
+            "beta",
+            "remove",
+            &ReadScope::Space("another-space".to_string()),
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        db.get_document_tags("memory", "same-id").await.unwrap(),
+        vec!["beta"]
+    );
+}
+
+#[tokio::test]
 async fn test_delete_tag() {
     let tmp = tempfile::tempdir().unwrap();
     let db = MemoryDB::new(
@@ -55054,6 +55113,7 @@ async fn combine_version_and_source_revision_cas_rejected_for_non_growth_non_bac
             None,
             None,
             None,
+            None,
             false,
             false,
             &crate::db::BasisWrite::default(),
@@ -59697,5 +59757,76 @@ fn daemon_cache_dir_never_falls_through_to_the_cwd_default() {
     assert_eq!(
         daemon_fastembed_cache_dir_from(Some("".into()), None, None, db_path),
         db_path.join("fastembed_cache")
+    );
+}
+
+#[tokio::test]
+async fn edited_acceptance_memory_rolls_back_edit_when_activation_fails() {
+    let (db, _dir) = test_db().await;
+    db.upsert_documents(vec![
+        RawDocument {
+            source: "memory".into(),
+            source_id: "rollback_edit_target".into(),
+            title: "Original".into(),
+            content: "Original body.".into(),
+            confirmed: Some(true),
+            ..Default::default()
+        },
+        RawDocument {
+            source: "memory".into(),
+            source_id: "rollback_edit_card".into(),
+            title: "Revision".into(),
+            content: "revised content".into(),
+            supersedes: Some("rollback_edit_target".into()),
+            pending_revision: true,
+            ..Default::default()
+        },
+    ])
+    .await
+    .unwrap();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "CREATE TRIGGER fail_edited_activation BEFORE UPDATE OF pending_revision ON memories
+            WHEN OLD.source_id='rollback_edit_card' AND NEW.pending_revision=0
+            BEGIN SELECT RAISE(ABORT, 'activation blocked'); END",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    assert!(
+        crate::post_write::accept_pending_revision_edited_with_knowledge_path(
+            &db,
+            "rollback_edit_card",
+            "human",
+            None,
+            &wenlan_types::requests::RevisionAcceptEditRequest {
+                expected_content: "revised content".into(),
+                content: "Human correction.".into(),
+            },
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        db.pending_memory_revision_payload("rollback_edit_card")
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+        "revised content"
+    );
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT confirmed FROM memories WHERE source_id='rollback_edit_target'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        1
     );
 }

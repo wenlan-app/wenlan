@@ -619,7 +619,7 @@ interface ReviewDialogProps {
   items: ReviewItem[];
   openId: string | null;
   onOpenChange: (id: string | null) => void;
-  onResolve: (args: { item: ReviewItem; approve: boolean }) => Promise<unknown>;
+  onResolve: (args: { item: ReviewItem; approve: boolean; edited_content?: string }) => Promise<unknown>;
   isResolving: boolean;
   onOpenMemory?: (sourceId: string) => void;
   onOpenPage?: (pageId: string) => void;
@@ -638,6 +638,9 @@ export default function ReviewDialog({
   const queryClient = useQueryClient();
   const [showDone, setShowDone] = useState(false);
   const [sideBySide, setSideBySide] = useState(false);
+  // Keep both the draft and the proposal it was based on, by exact card id.
+  // Closing or navigating does not save or discard a human's adjustment.
+  const [revisionDrafts, setRevisionDrafts] = useState<Record<string, { content: string; expectedContent: string }>>({});
   const [flash, setFlash] = useState<string | null>(null);
   // A notice flash explains an outcome the human did not choose (a card the
   // daemon discarded), so it stays up longer and carries no checkmark.
@@ -676,6 +679,12 @@ export default function ReviewDialog({
   const item = repairBusy && retainedRepairItemRef.current
     ? retainedRepairItemRef.current
     : showDone ? null : index >= 0 ? items[index] : null;
+  const revisionDraft = item?.kind === "revision" ? revisionDrafts[item.revisionSourceId] : undefined;
+  const clearRevisionDraft = (id: string) => setRevisionDrafts((drafts) => {
+    const next = { ...drafts };
+    delete next[id];
+    return next;
+  });
   displayedItemRef.current = item;
   const done = open && !repairBusy && (showDone || items.length === 0);
   const resolving = isResolving || resolvingLocally || repairBusy;
@@ -846,7 +855,8 @@ export default function ReviewDialog({
   const missingTarget = decisionQueries.some((query) => query.isSuccess && query.data == null) || vocabularyTargetMismatch;
   const evidenceUnavailable = decisionQueries.some((query) => query.isError || query.data == null) || missingMergeSources || vocabularyTargetMismatch;
   const contractBlocked = item != null && reviewApproveBlocked(item);
-  const canApprove = !contractBlocked && !evidenceLoading && !evidenceUnavailable;
+  const canApprove = !contractBlocked && !evidenceLoading && !evidenceUnavailable &&
+    (revisionDraft === undefined || revisionDraft.content.trim().length > 0);
   const retryEvidence = () => { decisionQueries.forEach((query) => void query.refetch()); };
 
   const copyRepairDetails = async () => {
@@ -884,7 +894,10 @@ export default function ReviewDialog({
     let outdated = false;
     let discardedNotice: "review.revisionOutdated" | "review.revisionBasisRefused" = "review.revisionOutdated";
     try {
-      await onResolve({ item, approve });
+      await onResolve(approve && item.kind === "revision" && revisionDraft
+        ? { item: { ...item, content: revisionDraft.expectedContent }, approve, edited_content: revisionDraft.content }
+        : { item, approve });
+      if (item.kind === "revision") clearRevisionDraft(item.revisionSourceId);
     } catch (error) {
       if (error instanceof SteepNeedsAiToolError && item.kind === "stale_page") {
         const staleId = item.id;
@@ -894,9 +907,9 @@ export default function ReviewDialog({
       // The page moved after this revision was proposed, or a page the change
       // relied on is gone; either way the daemon discarded the card. Say so
       // and move on, the way a resolved card would.
-      const basisRefused = item.kind === "revision" && isPageRevisionBasisRefused(error);
+      const basisRefused = revisionDraft === undefined && item.kind === "revision" && isPageRevisionBasisRefused(error);
       if (basisRefused) discardedNotice = "review.revisionBasisRefused";
-      outdated = basisRefused || (item.kind === "revision" && isPageRevisionOutdated(error));
+      outdated = basisRefused || (revisionDraft === undefined && item.kind === "revision" && isPageRevisionOutdated(error));
       if (
         !outdated &&
         resolveRequestRef.current === requestId &&
@@ -1374,6 +1387,25 @@ export default function ReviewDialog({
 
               {item.kind === "revision" && (
                 <>
+                  {revisionDraft ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <label htmlFor="review-adjust-content" style={paneLabelStyle}>{t("reviewAdjust.label")}</label>
+                      <textarea
+                        id="review-adjust-content"
+                        value={revisionDraft.content}
+                        onChange={(event) => {
+                          const content = event.target.value;
+                          setRevisionDrafts((drafts) => ({ ...drafts, [item.revisionSourceId]: { ...revisionDraft, content } }));
+                        }}
+                        disabled={resolving}
+                        autoFocus
+                        rows={12}
+                        style={{ ...paneStyle, width: "100%", boxSizing: "border-box", resize: "vertical", minHeight: 220,
+                          maxHeight: "48vh", color: "var(--mem-text)", fontFamily: "var(--mem-font-body)", lineHeight: 1.6 }}
+                      />
+                      <p style={{ ...paneLabelStyle, margin: 0, textTransform: "none", letterSpacing: "normal" }}>{t("reviewAdjust.hint")}</p>
+                    </div>
+                  ) : (<>
                   <div
                     role="tablist"
                     style={{
@@ -1482,6 +1514,8 @@ export default function ReviewDialog({
                       <ins style={INS_STYLE}>{t("review.added")}</ins>
                     </p>
                   )}
+
+                  </>)}
 
                   {item.targetKind === "page" ? (
                     <PageRevisionChain pageId={item.targetSourceId} />
@@ -1883,6 +1917,16 @@ export default function ReviewDialog({
                     {t("review.openMemory")}
                   </button>
                 )}
+              {item.kind === "revision" && !isExampleReviewItem(item) && (
+                <button type="button" disabled={resolving} style={actionButtonStyle}
+                  onClick={() => {
+                    setResolveError(null);
+                    if (revisionDraft) clearRevisionDraft(item.revisionSourceId);
+                    else setRevisionDrafts((drafts) => ({ ...drafts, [item.revisionSourceId]: { content: item.content, expectedContent: item.content } }));
+                  }}>
+                  {t(revisionDraft ? "reviewAdjust.cancel" : "reviewAdjust.open")}
+                </button>
+              )}
               <span style={{ flex: 1 }} />
               {items.length > 1 && (
                 <button

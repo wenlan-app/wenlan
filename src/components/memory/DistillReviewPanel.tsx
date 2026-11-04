@@ -603,7 +603,7 @@ export default function DistillReviewPanel({
 
   // Stale-page refreshes resolve against the panel's distill result, not the
   // queue caches — drop them here after the daemon verb succeeds.
-  const resolveItem = async (args: { item: ReviewItem; approve: boolean }) => {
+  const resolveItem = async (args: { item: ReviewItem; approve: boolean; edited_content?: string }) => {
     const { item, approve } = args;
     if (item.kind === "stale_page" && !approve) {
       hide(item);

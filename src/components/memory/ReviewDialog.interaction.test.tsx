@@ -240,3 +240,73 @@ describe("ReviewDialog interaction safety", () => {
     expect(opener).toHaveFocus();
   });
 });
+
+
+const adjustableRevision: ReviewItem = {
+  kind: "revision", id: "target-page", targetSourceId: "target-page", targetKind: "page",
+  revisionSourceId: "exact-card", content: "Proposed body.", agent: "agent", timestampMs: 1,
+};
+
+describe("ReviewDialog local adjustments", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    vi.mocked(getPage).mockResolvedValue({ id: "target-page", title: "Research note", content: "Original body." } as never);
+    vi.mocked(getPageSources).mockResolvedValue([]);
+  });
+
+  it("edits locally, cancels back to the proposal, and adopts through the existing action", async () => {
+    const user = userEvent.setup();
+    const onResolve = vi.fn().mockResolvedValue(undefined);
+    render(<ReviewHarness item={adjustableRevision} onResolve={onResolve} />);
+    await user.click(screen.getByRole("button", { name: "Open review" }));
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Adjust…" }));
+    let editor = screen.getByRole("textbox", { name: "Adjust proposed text" });
+    await user.clear(editor);
+    expect(screen.getByRole("button", { name: i18n.t("review.approve") })).toBeDisabled();
+    await user.type(editor, "Local correction.");
+    expect(onResolve).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel adjustment" }));
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Adjust…" }));
+    editor = screen.getByRole("textbox", { name: "Adjust proposed text" });
+    expect(editor).toHaveValue("Proposed body.");
+    await user.clear(editor);
+    await user.type(editor, "Human final body.");
+    await user.click(screen.getByRole("button", { name: i18n.t("review.approve") }));
+    expect(onResolve).toHaveBeenCalledExactlyOnceWith({ item: adjustableRevision, approve: true, edited_content: "Human final body." });
+  });
+
+  it("keeps the editor baseline when the queue refreshes the same proposal", async () => {
+    const user = userEvent.setup();
+    const onResolve = vi.fn().mockResolvedValue(undefined);
+    const view = render(<ReviewHarness item={adjustableRevision} onResolve={onResolve} />);
+    await user.click(screen.getByRole("button", { name: "Open review" }));
+    await user.click(screen.getByRole("button", { name: "Adjust…" }));
+    await user.clear(screen.getByRole("textbox"));
+    await user.type(screen.getByRole("textbox"), "Human draft from old proposal.");
+    view.rerender(<ReviewHarness item={{ ...adjustableRevision, content: "Concurrent replacement proposal." }} onResolve={onResolve} />);
+    await user.click(screen.getByRole("button", { name: i18n.t("review.approve") }));
+    expect(onResolve).toHaveBeenCalledExactlyOnceWith({
+      item: adjustableRevision, approve: true, edited_content: "Human draft from old proposal.",
+    });
+  });
+
+  it("retains a draft across close and after a conflict instead of discarding the card", async () => {
+    const user = userEvent.setup();
+    const onResolve = vi.fn().mockRejectedValue(new Error("page_revision_outdated: changed elsewhere"));
+    render(<ReviewHarness item={adjustableRevision} onResolve={onResolve} />);
+    await user.click(screen.getByRole("button", { name: "Open review" }));
+    await user.click(screen.getByRole("button", { name: "Adjust…" }));
+    await user.clear(screen.getByRole("textbox"));
+    await user.type(screen.getByRole("textbox"), "Keep this draft.");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open review" }));
+    expect(screen.getByRole("textbox")).toHaveValue("Keep this draft.");
+    await user.click(screen.getByRole("button", { name: i18n.t("review.approve") }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("textbox")).toHaveValue("Keep this draft.");
+    expect(screen.getByRole("button", { name: i18n.t("review.approve") })).toBeEnabled();
+  });
+});

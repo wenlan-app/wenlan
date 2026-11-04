@@ -10,6 +10,7 @@ import {
 } from "../../../lib/tauri";
 import { folderName } from "../../../lib/dateFormat";
 import AddSourceDialog from "./AddSourceDialog";
+import ZoteroSourceDialog from "./ZoteroSourceDialog";
 import { FolderImportOrganize } from "./FolderImportOrganize";
 import { Button } from "../settings/primitives";
 
@@ -26,6 +27,7 @@ export default function SourcesSection() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [zoteroDialogOpen, setZoteroDialogOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<RegisteredSource | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [justSyncedId, setJustSyncedId] = useState<string | null>(null);
@@ -139,7 +141,7 @@ export default function SourcesSection() {
                     >
                       {isSyncing
                         ? "Syncing…"
-                        : `${source.source_type === "obsidian" ? "Obsidian vault" : source.source_type === "logseq" ? "Logseq graph" : "Folder"} · ${source.file_count.toLocaleString()} files · ${source.memory_count.toLocaleString()} memories · ${relativeTime(source.last_sync)}`}
+                        : `${source.source_type === "obsidian" ? "Obsidian vault" : source.source_type === "logseq" ? "Logseq graph" : source.source_type === "zotero" ? "Zotero collection" : "Folder"} · ${source.file_count.toLocaleString()} files · ${source.memory_count.toLocaleString()} memories · ${relativeTime(source.last_sync)}`}
                     </p>
                   </div>
 
@@ -219,13 +221,13 @@ export default function SourcesSection() {
                           role="menu"
                           className="absolute right-0 top-full mt-1 z-10 w-44 rounded-[var(--mem-radius-md)] border border-[var(--mem-popover-border)] bg-[var(--mem-popover)] shadow-[var(--mem-shadow-overlay)] py-1"
                         >
-                          <button
+                          {source.source_type !== "zotero" && <button
                             role="menuitem"
                             onClick={() => handleReveal(source.path)}
                             className="w-full px-3 py-1.5 text-left text-xs text-[var(--mem-text)] hover:bg-[var(--mem-hover)]"
                           >
                             Reveal in Finder
-                          </button>
+                          </button>}
                           <button
                             role="menuitem"
                             onClick={() => {
@@ -249,6 +251,7 @@ export default function SourcesSection() {
                     isSyncing={isSyncing}
                     onRetry={() => syncMutation.mutate(source.id)}
                     onReveal={() => handleReveal(source.path)}
+                    canReveal={source.source_type !== "zotero"}
                   />
                 )}
               </div>
@@ -274,8 +277,13 @@ export default function SourcesSection() {
             </svg>
             {t("settings.sources.addSource")}
           </button>
+          <button type="button" onClick={() => setZoteroDialogOpen(true)} className="inline-flex w-full items-center justify-center rounded-[var(--mem-radius-lg)] py-1.5 text-xs text-[var(--mem-text-tertiary)] hover:text-[var(--mem-accent-indigo)]">
+            {t("zoteroSource.connectAction")}
+          </button>
         </div>
       )}
+
+      {sources.length === 0 && <button type="button" onClick={() => setZoteroDialogOpen(true)} className="block mx-auto -mt-2 text-xs text-[var(--mem-text-tertiary)] hover:text-[var(--mem-accent-indigo)]">{t("zoteroSource.connectAction")}</button>}
 
       {/* Add Source Dialog */}
       {dialogOpen && (
@@ -287,6 +295,7 @@ export default function SourcesSection() {
           }}
         />
       )}
+      {zoteroDialogOpen && <ZoteroSourceDialog onClose={() => setZoteroDialogOpen(false)} />}
 
       {/* Remove Confirmation Dialog */}
       {confirmRemove && (
@@ -335,6 +344,7 @@ interface SourceErrorCalloutProps {
   isSyncing: boolean;
   onRetry: () => void;
   onReveal: () => void;
+  canReveal?: boolean;
 }
 
 function SourceErrorCallout({
@@ -343,6 +353,7 @@ function SourceErrorCallout({
   isSyncing,
   onRetry,
   onReveal,
+  canReveal = true,
 }: SourceErrorCalloutProps) {
   const { t } = useTranslation();
   const isGoogleDrive = source.last_sync_error_detail === "google_drive_offline";
@@ -404,9 +415,9 @@ function SourceErrorCallout({
           >
             {isSyncing ? "Syncing…" : "Retry sync"}
           </Button>
-          <Button variant="ghost" size="sm" onClick={onReveal}>
+          {canReveal && <Button variant="ghost" size="sm" onClick={onReveal}>
             {t("settings.sources.openInFinder")}
-          </Button>
+          </Button>}
         </div>
       </div>
     </div>

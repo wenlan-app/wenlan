@@ -2162,6 +2162,12 @@ fn directory_sync_tick_polls_recoverable_sources_but_not_paused() {
 
     source.source_type = wenlan_types::sources::SourceType::Directory;
     assert!(!should_poll_obsidian_source(&source));
+
+    // Zotero is driven only by an explicit manual sync request.
+    source.source_type = wenlan_types::sources::SourceType::Zotero;
+    source.status = wenlan_types::sources::SyncStatus::Active;
+    assert!(!should_poll_directory_source(&source));
+    assert!(!should_poll_obsidian_source(&source));
 }
 
 async fn new_test_db() -> (Arc<wenlan_core::db::MemoryDB>, tempfile::TempDir) {

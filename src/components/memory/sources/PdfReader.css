@@ -1,0 +1,8 @@
+.source-pdf-reader { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.source-pdf-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.source-pdf-tools input { min-width: 0; width: 9em; padding: 4px 6px; border-radius: 4px; background: var(--mem-bg-secondary); color: var(--mem-text-primary); border: 1px solid var(--mem-border); }
+.source-pdf-tools input[type=number] { width: 3.5em; }
+.source-pdf-reader p { font-size: var(--mem-text-xs); color: var(--mem-text-secondary); }
+.source-pdf-stage { position: relative; height: 65vh; min-height: 320px; }
+.source-pdf-scroll { position: absolute; inset: 0; overflow: auto; background: #aaa; }
+.source-pdf-scroll .pdfViewer { --page-margin: 4px auto; }

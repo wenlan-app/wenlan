@@ -26,12 +26,14 @@ pub use self::entity_graph::{
 pub use self::page_create::resolve_page_creation_kind;
 pub(crate) use self::page_dispatch::update_page_growth_at_versions;
 pub use self::page_dispatch::{
-    create_page, create_page_with_floor, create_page_with_tuning, page_write, steep_update_page,
-    update_page, update_page_at_source_revision, update_page_preserving_sources, PageWrite,
+    create_page, create_page_with_floor, create_page_with_tuning, page_write,
+    page_write_with_citation_snapshot, steep_update_page, update_page,
+    update_page_at_source_revision, update_page_preserving_sources, PageWrite,
 };
 pub use self::page_revision::{
-    accept_pending_revision, accept_pending_revision_with_knowledge_path, dismiss_contradiction,
-    dismiss_pending_revision, PAGE_REVISION_OUTDATED,
+    accept_pending_revision, accept_pending_revision_edited_with_knowledge_path,
+    accept_pending_revision_with_knowledge_path, dismiss_contradiction, dismiss_pending_revision,
+    PAGE_REVISION_OUTDATED,
 };
 pub(crate) use self::page_update::merge_shrink_threshold;
 pub(crate) use self::page_update::stage_basis_preview_card;
@@ -39,7 +41,8 @@ pub(crate) use self::page_update::stage_basis_preview_card;
 pub(crate) use self::page_update::PRE_WRITE_GATE;
 pub use self::page_update::{
     machine_write_requires_review, page_is_human_owned, stage_page_revision_card,
-    stage_page_revision_card_proposed_by, PipelineStage, Writer,
+    stage_page_revision_card_proposed_by, stage_page_revision_card_with_citation_snapshot,
+    PipelineStage, Writer,
 };
 
 /// Rename an active knowledge page using the canonical page-write boundary.

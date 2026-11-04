@@ -156,6 +156,7 @@ async fn made_by(db: &MemoryDB, id: &str, content: &str, actor: &str) {
         &[],
         actor,
         None,
+        &[],
     )
     .await
     .unwrap();

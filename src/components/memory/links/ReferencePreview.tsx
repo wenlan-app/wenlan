@@ -145,7 +145,8 @@ export function ReferencePreview({
   const memory: MemoryItem | null | undefined = target?.kind === "memory" ? memoryQuery.data : citationTarget?.sourceMemory;
   const anchorLabel = request.anchor.dataset.referenceTargetLabel || request.anchor.dataset.wikiTargetLabel || request.anchor.textContent?.trim() || "";
   const citation = citationTarget?.citation ?? null;
-  const kind: ReferenceKind = citation ? citationReferenceKind(citation) : target?.kind === "memory" ? "memory" : "page";
+  const zoteroSource = citation?.source_kind === "memory" && memory?.source_id === citation.locator && memory.source_agent === "zotero";
+  const kind: ReferenceKind = zoteroSource ? "file" : citation ? citationReferenceKind(citation) : target?.kind === "memory" ? "memory" : "page";
   const app = citation ? citationSourceApp(citation) : null;
   const appName = app ? sourceAppName(app, i18n.language) : null;
   const typeLabel = appName ?? t(`reference.type.${kind}`);

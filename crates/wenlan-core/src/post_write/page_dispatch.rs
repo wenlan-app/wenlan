@@ -128,6 +128,14 @@ pub(super) struct PageGrowthCommit<'a> {
 }
 
 pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResult, WenlanError> {
+    page_write_with_citation_snapshot(db, write, &[]).await
+}
+
+pub async fn page_write_with_citation_snapshot(
+    db: &MemoryDB,
+    write: PageWrite<'_>,
+    snapshots: &[crate::db::CitationSourceSnapshot],
+) -> Result<WriteResult, WenlanError> {
     match write {
         PageWrite::Attach {
             page_id,
@@ -157,6 +165,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                     page_min_cluster_size,
                     page_match_threshold,
                     citations_json: citations_json.as_deref(),
+                    citation_snapshots: snapshots,
                     basis_marks: &basis_marks,
                     basis_space_guard: basis_space_guard.as_ref(),
                     skip_protected_title_match,
@@ -197,9 +206,10 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
             agent,
             expected_source_revision,
             knowledge_path,
-            basis,
+            mut basis,
             citations,
         } => {
+            basis.citation_snapshots = snapshots.to_vec();
             update_page_impl(
                 db,
                 page_id,

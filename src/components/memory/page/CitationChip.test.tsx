@@ -211,6 +211,20 @@ describe("CitationChip", () => {
     expect(onOpenMemory).toHaveBeenCalledWith("mem-1");
   });
 
+  it("labels an indexed Zotero source without changing its stored-source navigation", async () => {
+    const user = userEvent.setup();
+    const sourceId = "zotero::server::item::space";
+    const { onOpenMemory } = renderChip({
+      citation: cite({ source_kind: "memory", locator: sourceId }),
+      sourceMemory: memory({ source_id: sourceId, source_agent: "zotero" }),
+    });
+    const chip = screen.getByRole("button", { name: /Zotero/ });
+    expect(chip).toHaveAttribute("data-reference-kind", "file");
+    await user.click(chip);
+    expect(onOpenMemory).toHaveBeenCalledWith(sourceId);
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("open_file", expect.anything());
+  });
+
   it("explains a missing source and does not navigate on click", async () => {
     const user = userEvent.setup();
     const { onOpenMemory } = renderChip({

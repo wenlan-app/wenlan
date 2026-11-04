@@ -7,7 +7,8 @@ use std::path::Path;
 
 /// Error code prefix for a page revision card that can no longer apply because
 /// the page moved past the version (or source revision) it was staged on. The
-/// card is discarded when this is returned.
+/// ordinary acceptance discards the card; edited acceptance preserves it with
+/// the human's draft so the caller can recover from the conflict.
 pub const PAGE_REVISION_OUTDATED: &str = "page_revision_outdated";
 
 pub(super) struct PageRevisionCard {
@@ -24,6 +25,7 @@ pub(super) struct PageRevisionCard {
     /// (a locked note). Recorded when the card is accepted. Empty for every
     /// other card.
     basis_marks: Vec<crate::db::StagedBasisMark>,
+    citation_snapshots: Vec<crate::db::CitationSourceSnapshot>,
 }
 
 pub(super) async fn resolve_page_revision_card(
@@ -80,6 +82,13 @@ pub(super) async fn resolve_page_revision_card(
         .get("basis_marks")
         .and_then(|v| serde_json::from_value::<Vec<crate::db::StagedBasisMark>>(v.clone()).ok())
         .unwrap_or_default();
+    let citation_snapshots = structured
+        .get("citation_source_snapshots")
+        .map(|value| {
+            serde_json::from_value::<Vec<crate::db::CitationSourceSnapshot>>(value.clone())
+        })
+        .transpose()?
+        .unwrap_or_default();
     let page_version = structured.get("page_version").and_then(|v| v.as_i64());
     // `stage_page_revision_card` now requires every caller to pass a real
     // counter, so a fresh card always carries a concrete number here. `None`
@@ -109,6 +118,7 @@ pub(super) async fn resolve_page_revision_card(
         source_memory_ids,
         basis_snapshot,
         basis_marks,
+        citation_snapshots,
     }))
 }
 
@@ -123,6 +133,26 @@ pub(super) async fn accept_page_revision_card(
     knowledge_path: Option<&Path>,
     actor: &str,
 ) -> Result<wenlan_types::RevisionAcceptResponse, WenlanError> {
+    accept_page_revision_card_with_edit(db, card, knowledge_path, actor, None).await
+}
+
+pub(super) async fn accept_page_revision_card_with_edit(
+    db: &MemoryDB,
+    mut card: PageRevisionCard,
+    knowledge_path: Option<&Path>,
+    actor: &str,
+    edit: Option<&wenlan_types::requests::RevisionAcceptEditRequest>,
+) -> Result<wenlan_types::RevisionAcceptResponse, WenlanError> {
+    if let Some(edit) = edit {
+        // Early feedback only. The same baseline is checked again inside the
+        // transaction that writes the page and consumes this exact card.
+        if card.content != edit.expected_content {
+            return Err(WenlanError::Conflict(
+                "pending revision changed before acceptance; re-read the proposal".into(),
+            ));
+        }
+        card.content = edit.content.clone();
+    }
     // A card staged before source-revision fencing (PR #598) records no base
     // to check its evidence against. `version` alone cannot stand in: it does
     // not move when a source is attached to or detached from the page, so a
@@ -137,6 +167,12 @@ pub(super) async fn accept_page_revision_card(
     // re-queued twice, whereas the other order can drop the card while
     // leaving the page unqueued, with nothing left to rebuild it from.
     if card.source_revision.is_none() {
+        if edit.is_some() {
+            return Err(WenlanError::Conflict(
+                "revision card has no source-revision fence; re-read the page and propose again"
+                    .into(),
+            ));
+        }
         db.set_page_stale(&card.page_id, "source_updated").await?;
         db.delete_by_source_id("memory", &card.revision_id).await?;
         return Err(WenlanError::Conflict(format!(
@@ -155,6 +191,47 @@ pub(super) async fn accept_page_revision_card(
         current.source_memory_ids.clone()
     } else {
         card.source_memory_ids.clone()
+    };
+    let citation_scope = current
+        .space
+        .clone()
+        .filter(|space| space != crate::db::UNFILED_SPACE_ID)
+        .map(crate::read_scope::ReadScope::Space)
+        .unwrap_or(crate::read_scope::ReadScope::Uncategorized);
+    let mut citation_snapshots = card.citation_snapshots.clone();
+    let citations_json = if citation_snapshots.is_empty() {
+        None
+    } else {
+        match crate::citations::check_write_citations(
+            db,
+            &card.content,
+            &source_memory_ids,
+            &citation_scope,
+        )
+        .await?
+        {
+            Ok(crate::citations::WriteCitations::Checked {
+                body,
+                citations_json,
+                snapshots,
+                ..
+            }) => {
+                citation_snapshots.extend(snapshots);
+                // Adopt preserves the exact human choice. Marker cleanup must not
+                // attach occurrence indexes computed for a different body.
+                (body == card.content).then_some(citations_json)
+            }
+            Ok(crate::citations::WriteCitations::Uncited { snapshots }) => {
+                citation_snapshots.extend(snapshots);
+                None
+            }
+            Err(_) if edit.is_some() => None, // Human-edited prose never inherits old verified records.
+            Err(_) => {
+                return Err(WenlanError::Conflict(
+                    "revision citation sources no longer support the proposal".into(),
+                ))
+            }
+        }
     };
     let source_refs: Vec<&str> = source_memory_ids.iter().map(String::as_str).collect();
     let old_set: std::collections::HashSet<&str> = current
@@ -209,12 +286,16 @@ pub(super) async fn accept_page_revision_card(
             card.page_version,
             card.source_revision,
             &card.revision_id,
+            edit.map(|edit| edit.expected_content.as_str()),
             &crate::db::BasisWrite {
                 actor: actor.to_string(),
+                citation_snapshots,
+                space_guard: (!card.citation_snapshots.is_empty()).then_some(citation_scope),
                 confirm_snapshot: card.basis_snapshot.clone(),
                 card_marks: card.basis_marks.clone(),
                 ..crate::db::BasisWrite::default()
             },
+            citations_json.as_deref(),
         )
         .await;
     let wrote = match accepted {
@@ -229,7 +310,7 @@ pub(super) async fn accept_page_revision_card(
         // Discard it, the same way an outdated card is, and say so with a
         // code the app and the MCP client both recognise.
         Err(WenlanError::Conflict(reason))
-            if reason.starts_with(wenlan_types::PAGE_REVISION_BASIS_REFUSED) =>
+            if edit.is_none() && reason.starts_with(wenlan_types::PAGE_REVISION_BASIS_REFUSED) =>
         {
             db.delete_by_source_id("memory", &card.revision_id).await?;
             return Err(WenlanError::Conflict(format!(
@@ -256,6 +337,12 @@ pub(super) async fn accept_page_revision_card(
             return Err(WenlanError::NotFound(format!(
                 "revision card {} for page {} was already resolved",
                 card.revision_id, card.page_id
+            )));
+        }
+        if edit.is_some() {
+            return Err(WenlanError::Conflict(format!(
+                "{PAGE_REVISION_OUTDATED}: page {} changed after revision card {} was proposed; re-read the page",
+                card.page_id, card.revision_id
             )));
         }
         let current_version = db
@@ -353,6 +440,40 @@ pub async fn accept_pending_revision_with_knowledge_path(
         revision_source_id,
         wrote: true,
     })
+}
+
+/// Accept human-edited text while fencing the exact proposal the editor read.
+/// The original proposal and live target remain unchanged on any conflict.
+pub async fn accept_pending_revision_edited_with_knowledge_path(
+    db: &MemoryDB,
+    id: &str,
+    agent: &str,
+    knowledge_path: Option<&Path>,
+    edit: &wenlan_types::requests::RevisionAcceptEditRequest,
+) -> Result<wenlan_types::RevisionAcceptResponse, WenlanError> {
+    if edit.content.trim().is_empty() {
+        return Err(WenlanError::Validation(
+            "edited revision content must not be empty".into(),
+        ));
+    }
+    let result = if let Some(card) = resolve_page_revision_card(db, id).await? {
+        if card.revision_id != id {
+            return Err(WenlanError::NotFound(format!(
+                "No exact pending revision: {id}"
+            )));
+        }
+        accept_page_revision_card_with_edit(db, card, knowledge_path, agent, Some(edit)).await?
+    } else {
+        let (target_source_id, revision_source_id) =
+            db.accept_pending_revision_with_edit(id, Some(edit)).await?;
+        wenlan_types::RevisionAcceptResponse {
+            target_source_id,
+            revision_source_id,
+            wrote: true,
+        }
+    };
+    log_activity_best_effort(db, agent, "revision_accept", &result.target_source_id).await;
+    Ok(result)
 }
 
 /// Dismiss a pending memory revision. Canonical entry for both

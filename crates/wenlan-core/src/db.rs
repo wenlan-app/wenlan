@@ -88,11 +88,13 @@ pub use activity_counts::{
     ActivityCounts, AssetBacklog, DetectTally, EmbeddingBacklog, RefinementOpenCount, StepBacklog,
     StepCount,
 };
+mod citation_sources;
 pub mod conversations;
 pub mod intake;
 mod scoped_entities;
 mod scoped_pages;
 pub mod sentence_history;
+pub use citation_sources::{CitationSource, CitationSourceSnapshot};
 pub mod sessions;
 pub mod source_annotations;
 mod source_sync;
@@ -26498,6 +26500,118 @@ impl MemoryDB {
         Ok(normalized.into_iter().collect())
     }
 
+    /// Add or remove one normalized tag without replacing a document's other
+    /// tags. The document lookup and the single-row mutation share the
+    /// connection lock so a strict Space scope cannot be bypassed between the
+    /// check and write.
+    pub async fn patch_document_tag(
+        &self,
+        source: &str,
+        source_id: &str,
+        tag: &str,
+        action: &str,
+        scope: &ReadScope,
+    ) -> Result<(), WenlanError> {
+        let source = source.trim();
+        let tag = tag.trim().to_lowercase();
+        if !matches!(source, "memory" | "page" | "file" | "webpage") {
+            return Err(WenlanError::Validation(format!(
+                "unsupported document tag source: {source}"
+            )));
+        }
+        if source_id.trim().is_empty() {
+            return Err(WenlanError::Validation(
+                "document source id must not be blank".to_string(),
+            ));
+        }
+        if tag.is_empty() {
+            return Err(WenlanError::Validation(
+                "document tag must not be blank".to_string(),
+            ));
+        }
+        if !matches!(action, "add" | "remove") {
+            return Err(WenlanError::Validation(format!(
+                "unsupported document tag action: {action}"
+            )));
+        }
+
+        let conn = self.conn.lock().await;
+        let exists = if source == "page" {
+            let mut conditions = vec!["p.id = ?".to_string()];
+            let mut values = vec![libsql::Value::Text(source_id.to_string())];
+            push_read_scope_filter_folded(scope, "p.workspace", &mut conditions, &mut values);
+            let sql = format!(
+                "SELECT 1 FROM pages p WHERE {} LIMIT 1",
+                conditions.join(" AND ")
+            );
+            let mut rows = conn
+                .query(&sql, libsql::params_from_iter(values))
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("patch_document_tag scope: {e}")))?;
+            rows.next()
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("patch_document_tag scope row: {e}")))?
+                .is_some()
+        } else {
+            let mut conditions = vec!["m.source = ?".to_string(), "m.source_id = ?".to_string()];
+            let mut values = vec![
+                libsql::Value::Text(source.to_string()),
+                libsql::Value::Text(source_id.to_string()),
+            ];
+            push_read_scope_filter_folded(scope, "m.space", &mut conditions, &mut values);
+            match scope {
+                ReadScope::Global => {}
+                ReadScope::Space(space) => {
+                    conditions.push(
+                        "NOT EXISTS (SELECT 1 FROM memories other WHERE other.source = m.source \
+                         AND other.source_id = m.source_id \
+                         AND (other.space IS NULL OR other.space <> ?))"
+                            .to_string(),
+                    );
+                    values.push(libsql::Value::Text(space.clone()));
+                }
+                ReadScope::Uncategorized => conditions.push(format!(
+                    "NOT EXISTS (SELECT 1 FROM memories other WHERE other.source = m.source \
+                     AND other.source_id = m.source_id AND other.space IS NOT NULL \
+                     AND other.space <> '{UNFILED_SPACE_ID}')"
+                )),
+            }
+            let sql = format!(
+                "SELECT 1 FROM memories m WHERE {} LIMIT 1",
+                conditions.join(" AND ")
+            );
+            let mut rows = conn
+                .query(&sql, libsql::params_from_iter(values))
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("patch_document_tag scope: {e}")))?;
+            rows.next()
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("patch_document_tag scope row: {e}")))?
+                .is_some()
+        };
+        if !exists {
+            return Err(WenlanError::NotFound(
+                "document not found in the selected Space".to_string(),
+            ));
+        }
+
+        let result = if action == "add" {
+            conn.execute(
+                "INSERT OR IGNORE INTO document_tags (source, source_id, tag) VALUES (?1, ?2, ?3)",
+                libsql::params![source.to_string(), source_id.to_string(), tag],
+            )
+            .await
+        } else {
+            conn.execute(
+                "DELETE FROM document_tags WHERE source = ?1 AND source_id = ?2 AND tag = ?3",
+                libsql::params![source.to_string(), source_id.to_string(), tag],
+            )
+            .await
+        };
+        result.map_err(|e| WenlanError::VectorDb(format!("patch_document_tag {action}: {e}")))?;
+        Ok(())
+    }
+
     /// Get all tags assigned to (source, source_id).
     pub async fn get_document_tags(
         &self,
@@ -27370,6 +27484,7 @@ impl MemoryDB {
         operation_receipt: Option<OperationReceipt<'_>>,
         page_id: &str,
         scope: &crate::read_scope::ReadScope,
+        citation_snapshots: &[CitationSourceSnapshot],
     ) -> Result<bool, WenlanError> {
         self.upsert_documents_at_optional_page_fence(
             docs,
@@ -27379,7 +27494,7 @@ impl MemoryDB {
             operation_receipt,
             None,
             None,
-            Some((page_id, scope)),
+            Some((page_id, scope, citation_snapshots)),
             false,
             false,
         )
@@ -27400,7 +27515,11 @@ impl MemoryDB {
         operation_receipt: Option<OperationReceipt<'_>>,
         write_spaces: Option<HashMap<String, crate::space_context::ResolvedWriteSpace>>,
         page_fence: Option<(&str, i64, &PageFence)>,
-        page_space: Option<(&str, &crate::read_scope::ReadScope)>,
+        page_space: Option<(
+            &str,
+            &crate::read_scope::ReadScope,
+            &[CitationSourceSnapshot],
+        )>,
         create_only: bool,
         defer_embeddings: bool,
     ) -> Result<Option<usize>, WenlanError> {
@@ -27814,7 +27933,8 @@ impl MemoryDB {
                     return Ok(false);
                 }
             }
-            if let Some((page_id, scope)) = page_space {
+            if let Some((page_id, scope, citation_snapshots)) = page_space {
+                citation_sources::guard_on(&conn, citation_snapshots).await?;
                 let mut rows = conn
                     .query(
                         "SELECT space FROM pages WHERE id = ?1 AND status = 'active'",
@@ -34293,6 +34413,47 @@ impl MemoryDB {
         }
 
         Ok((!chunks.is_empty()).then_some(chunks))
+    }
+
+    /// Authorize a connector sidecar only for its exact live canonical source.
+    /// A row-id alias, other source kind/agent, or same-ID collision cannot grant access.
+    pub async fn has_exact_source_identity_scoped(
+        &self,
+        source_id: &str,
+        source: &str,
+        source_agent: &str,
+        scope: &ReadScope,
+    ) -> Result<bool, WenlanError> {
+        let mut conditions = vec![
+            "(source_id = ? OR id = ?)".to_string(),
+            "source != 'episode'".to_string(),
+        ];
+        let mut values = vec![
+            libsql::Value::Text(source_id.into()),
+            libsql::Value::Text(source.into()),
+            libsql::Value::Text(source_agent.into()),
+            libsql::Value::Text(source_id.into()),
+            libsql::Value::Text(source_id.into()),
+        ];
+        push_read_scope_filter_folded(scope, "space", &mut conditions, &mut values);
+        let sql = format!(
+            "SELECT COUNT(*), COALESCE(MIN(CASE WHEN source_id = ? AND source = ?
+                AND source_agent = ? AND COALESCE(pending_revision, 0) = 0
+                THEN 1 ELSE 0 END), 0) FROM memories WHERE {}",
+            conditions.join(" AND ")
+        );
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, libsql::params_from_iter(values))
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("source identity: {error}")))?;
+        let row = rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("source identity row: {error}")))?;
+        Ok(row.is_some_and(|row| {
+            row.get::<i64>(0).unwrap_or(0) > 0 && row.get::<i64>(1).unwrap_or(0) == 1
+        }))
     }
 
     pub async fn get_chunks_scoped(
@@ -45827,11 +45988,76 @@ impl MemoryDB {
         Ok(None)
     }
 
+    /// Compare the exact pending card's full displayed body in the caller's
+    /// write transaction. A pre-transaction read alone cannot fence an edit.
+    async fn guard_pending_revision_body(
+        conn: &libsql::Connection,
+        revision_id: &str,
+        target_id: &str,
+        expected: &str,
+    ) -> Result<(), WenlanError> {
+        let mut rows = conn
+            .query(
+                "SELECT content, source_text, COALESCE(created_at, last_modified),
+                    EXISTS (SELECT 1 FROM memories sibling
+                            WHERE sibling.source_id=memories.source_id
+                              AND sibling.source='memory' AND sibling.chunk_index>0)
+             FROM memories WHERE source='memory' AND source_id=?1
+               AND supersedes=?2 AND chunk_index=0 AND pending_revision=1",
+                libsql::params![revision_id, target_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("revision body guard: {e}")))?;
+        let row = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("revision body guard row: {e}")))?
+            .ok_or_else(|| {
+                WenlanError::NotFound(format!(
+                    "pending revision {revision_id} was already resolved"
+                ))
+            })?;
+        let content = row
+            .get::<String>(0)
+            .map_err(|e| WenlanError::VectorDb(format!("revision body guard content: {e}")))?;
+        let full_body = (row.get::<i64>(3).unwrap_or(0) != 0)
+            .then(|| row.get::<Option<String>>(1).unwrap_or(None))
+            .flatten()
+            .map(|raw| {
+                memory_point_reads::rehydrate_staged_body(&raw, row.get::<i64>(2).unwrap_or(0))
+            });
+        if full_body.as_deref().unwrap_or(&content) != expected {
+            return Err(WenlanError::Conflict(format!(
+                "pending revision {revision_id} changed before acceptance; re-read the proposal"
+            )));
+        }
+        Ok(())
+    }
+
     /// Accept a pending revision identified by `id` (the revision's own
     /// `source_id`, or legacy target source_id). Activates exactly that revision
     /// (all its chunk rows) and suppresses its target. Sibling revisions are left
     /// pending. Returns `(target_source_id, revision_source_id)`.
     pub async fn accept_pending_revision(&self, id: &str) -> Result<(String, String), WenlanError> {
+        self.accept_pending_revision_with_edit(id, None).await
+    }
+
+    pub(crate) async fn accept_pending_revision_with_edit(
+        &self,
+        id: &str,
+        edit: Option<&wenlan_types::requests::RevisionAcceptEditRequest>,
+    ) -> Result<(String, String), WenlanError> {
+        if edit.is_some_and(|edit| edit.content.trim().is_empty()) {
+            return Err(WenlanError::Validation(
+                "edited revision content must not be empty".into(),
+            ));
+        }
+        let embedding = edit
+            .map(|edit| {
+                self.get_or_compute_embedding(&edit.content)
+                    .map(|v| Self::vec_to_sql(&v))
+            })
+            .transpose()?;
         let conn = self.conn.lock().await;
         let (revision_source_id, target_source_id) = Self::resolve_pending_revision(&conn, id)
             .await?
@@ -45845,6 +46071,33 @@ impl MemoryDB {
 
         let now = chrono::Utc::now().timestamp();
         let result: Result<(), WenlanError> = async {
+            if let Some(edit) = edit {
+                if revision_source_id != id {
+                    return Err(WenlanError::NotFound(format!("No exact pending revision: {id}")));
+                }
+                Self::guard_pending_revision_body(&conn, id, &target_source_id, &edit.expected_content).await?;
+                conn.execute(
+                    "UPDATE memories SET content=?1, embedding=vector32(?2), word_count=?3,
+                        authored_content=CASE WHEN authored_content IS NOT NULL
+                            OR substr(source_id,1,7)='manual_' THEN ?1 ELSE authored_content END
+                     WHERE source='memory' AND source_id=?4 AND chunk_index=0 AND pending_revision=1",
+                    libsql::params![edit.content.as_str(), embedding.as_deref().unwrap(),
+                        edit.content.split_whitespace().count() as i64, id],
+                ).await.map_err(|e| WenlanError::VectorDb(format!("accept edited revision: {e}")))?;
+                conn.execute(
+                    "DELETE FROM memories WHERE source='memory' AND source_id=?1 AND chunk_index>0",
+                    libsql::params![id],
+                ).await.map_err(|e| WenlanError::VectorDb(format!("accept edited revision chunks: {e}")))?;
+                conn.execute(
+                    "DELETE FROM child_vectors WHERE parent_kind='memory' AND parent_id=?1",
+                    libsql::params![id],
+                ).await.map_err(|e| WenlanError::VectorDb(format!("accept edited revision children: {e}")))?;
+                conn.execute(
+                    "DELETE FROM memories WHERE source='episode' AND (source_id=?1 OR episode_of=?1)",
+                    libsql::params![id],
+                ).await.map_err(|e| WenlanError::VectorDb(format!("accept edited revision episodes: {e}")))?;
+                Self::mark_pages_depending_on_memory_source(&conn, "memory", id).await?;
+            }
             Self::replace_memory_page_dependency_in_transaction(
                 &conn,
                 &target_source_id,
@@ -52496,6 +52749,7 @@ impl MemoryDB {
             &[],
             "",
             None,
+            &[],
         )
         .await
     }
@@ -52523,6 +52777,7 @@ impl MemoryDB {
         basis_marks: &[(String, i64)],
         basis_actor: &str,
         basis_space_guard: Option<&crate::read_scope::ReadScope>,
+        citation_snapshots: &[CitationSourceSnapshot],
     ) -> Result<(), WenlanError> {
         let inserted = self
             .insert_page_with_kind_inner(
@@ -52542,6 +52797,7 @@ impl MemoryDB {
                 basis_marks,
                 basis_actor,
                 basis_space_guard,
+                citation_snapshots,
             )
             .await?;
         debug_assert!(inserted, "unguarded Page insert cannot miss its guard");
@@ -52582,6 +52838,7 @@ impl MemoryDB {
             &[],
             "",
             None,
+            &[],
         )
         .await
     }
@@ -52605,6 +52862,7 @@ impl MemoryDB {
         basis_marks: &[(String, i64)],
         basis_actor: &str,
         basis_space_guard: Option<&crate::read_scope::ReadScope>,
+        citation_snapshots: &[CitationSourceSnapshot],
     ) -> Result<bool, WenlanError> {
         // M1 honest columns: this is the single storage-layer wrapper every
         // page-insert path funnels through, so both scope columns leave here
@@ -52664,6 +52922,11 @@ impl MemoryDB {
         conn.execute("BEGIN", ())
             .await
             .map_err(|e| WenlanError::VectorDb(format!("insert_page begin: {e}")))?;
+
+        if let Err(error) = citation_sources::guard_on(&conn, citation_snapshots).await {
+            let _ = conn.execute("ROLLBACK", ()).await;
+            return Err(error);
+        }
 
         if let Some((queue_source_id, file_path, expected_hash)) = document_guard {
             let mut rows = conn
@@ -53602,6 +53865,7 @@ impl MemoryDB {
             None,
             None,
             None,
+            None,
             false,
             false,
             &BasisWrite::default(),
@@ -53630,6 +53894,7 @@ impl MemoryDB {
             source_memory_ids,
             link_reason,
             true,
+            None,
             None,
             None,
             None,
@@ -53712,6 +53977,7 @@ impl MemoryDB {
             Some(expected_source_revision),
             None,
             None,
+            None,
             receipt,
             None,
             false,
@@ -53751,6 +54017,7 @@ impl MemoryDB {
             None,
             Some(expected_source_revision),
             Some(expected_incarnation),
+            None,
             None,
             receipt,
             None,
@@ -53798,6 +54065,7 @@ impl MemoryDB {
             Some(changelog),
             citations_json,
             expected_version,
+            None,
             None,
             None,
             None,
@@ -53869,6 +54137,7 @@ impl MemoryDB {
             None,
             None,
             None,
+            None,
             receipt,
             None,
             false,
@@ -53918,6 +54187,7 @@ impl MemoryDB {
             Some(expected_source_revision),
             Some(expected_incarnation),
             None,
+            None,
             receipt,
             None,
             false,
@@ -53964,6 +54234,7 @@ impl MemoryDB {
             None,
             None,
             None,
+            None,
             Some((source_id, expected_memory_version)),
             true,
             false,
@@ -53986,7 +54257,9 @@ impl MemoryDB {
         expected_version: Option<i64>,
         expected_source_revision: Option<i64>,
         revision_source_id: &str,
+        expected_revision_content: Option<&str>,
         basis: &BasisWrite,
+        citations_json: Option<&str>,
     ) -> Result<bool, WenlanError> {
         self.try_update_page_content(
             id,
@@ -53995,11 +54268,12 @@ impl MemoryDB {
             "revision_accept",
             false,
             Some(changelog),
-            None,
+            citations_json,
             expected_version,
             expected_source_revision,
             None,
             Some(revision_source_id),
+            expected_revision_content,
             None,
             None,
             false,
@@ -54032,6 +54306,7 @@ impl MemoryDB {
         expected_source_revision: Option<i64>,
         expected_incarnation: Option<&str>,
         consume_revision_id: Option<&str>,
+        expected_revision_content: Option<&str>,
         receipt: Option<OperationReceipt<'_>>,
         page_growth_guard: Option<(&str, i64)>,
         machine_owned_only: bool,
@@ -54143,6 +54418,21 @@ impl MemoryDB {
         conn.execute("BEGIN", ())
             .await
             .map_err(|e| WenlanError::VectorDb(format!("update_page_content begin: {e}")))?;
+
+        if let Some(expected) = expected_revision_content {
+            let guard = match consume_revision_id {
+                Some(revision_id) => {
+                    Self::guard_pending_revision_body(&conn, revision_id, id, expected).await
+                }
+                None => Err(WenlanError::Validation(
+                    "an edited acceptance requires a revision id".to_string(),
+                )),
+            };
+            if let Err(error) = guard {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(error);
+            }
+        }
 
         // A Space-locked write checked the note's Space before it got here,
         // but moving a note to another Space does not bump its version, so
@@ -54276,6 +54566,11 @@ impl MemoryDB {
                 let _ = conn.execute("ROLLBACK", ()).await;
                 return Ok(None);
             }
+        }
+
+        if let Err(error) = citation_sources::guard_on(&conn, &basis.citation_snapshots).await {
+            let _ = conn.execute("ROLLBACK", ()).await;
+            return Err(error);
         }
 
         // Single atomic UPDATE: content + version + timestamps + user_edited
@@ -57767,6 +58062,22 @@ impl MemoryDB {
         memory_source_id: &str,
         link_reason: &str,
     ) -> Result<(), WenlanError> {
+        self.link_page_sources_with_citation_snapshot(
+            page_id,
+            &[memory_source_id.to_string()],
+            link_reason,
+            &[],
+        )
+        .await
+    }
+
+    pub(crate) async fn link_page_sources_with_citation_snapshot(
+        &self,
+        page_id: &str,
+        source_ids: &[String],
+        link_reason: &str,
+        snapshots: &[CitationSourceSnapshot],
+    ) -> Result<(), WenlanError> {
         let now = chrono::Utc::now().timestamp();
         let conn = self.conn.lock().await;
         Self::reject_page_draft_on_conn(&conn, page_id).await?;
@@ -57775,10 +58086,11 @@ impl MemoryDB {
             .map_err(|e| WenlanError::VectorDb(format!("link_page_source begin: {e}")))?;
 
         let result: Result<(), WenlanError> = async {
+            citation_sources::guard_on(&conn, snapshots).await?;
             let legacy_source_ids = {
                 let mut rows = conn
                     .query(
-                        "SELECT source_memory_ids FROM pages WHERE id = ?1",
+                        "SELECT source_memory_ids,space FROM pages WHERE id = ?1",
                         libsql::params![page_id],
                     )
                     .await
@@ -57792,6 +58104,16 @@ impl MemoryDB {
                     let _ = conn.execute("ROLLBACK", ()).await;
                     return Err(WenlanError::NotFound(format!("page {page_id} not found")));
                 };
+                if let Some(snapshot) = snapshots.first() {
+                    let scope = snapshot
+                        .space
+                        .clone()
+                        .map(ReadScope::Space)
+                        .unwrap_or(ReadScope::Uncategorized);
+                    if !scope.matches(row.get::<Option<String>>(1).unwrap_or(None).as_deref()) {
+                        return Err(WenlanError::NotFound(format!("page {page_id} not found")));
+                    }
+                }
                 serde_json::from_str::<Vec<String>>(&row.get::<String>(0).unwrap_or_default())
                     .unwrap_or_default()
             };
@@ -57806,7 +58128,7 @@ impl MemoryDB {
             if let Err(e) = Self::insert_resolved_page_evidence(
                 &conn,
                 page_id,
-                &[memory_source_id],
+                &source_ids.iter().map(String::as_str).collect::<Vec<_>>(),
                 now,
                 link_reason,
                 None,

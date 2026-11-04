@@ -218,7 +218,7 @@ export async function listSources(): Promise<SourceStatus[]> {
 
 // ===== Registered Sources =====
 
-export type SourceTypeStr = "obsidian" | "logseq" | "directory" | "okf";
+export type SourceTypeStr = "obsidian" | "logseq" | "directory" | "okf" | "zotero";
 export type SyncStatusStr =
   | "Active"
   | "Paused"
@@ -260,6 +260,7 @@ export interface SyncStats {
   skipped: number;
   errors: number;
   error_detail?: SyncErrorDetail | null;
+  skipped_files?: Array<{ path: string; reason: string }>;
   /** okf sources only: queued files not yet prepared after this sync. */
   queued_files?: number;
   /** okf sources only: files not yet handed to the queue after this sync. */
@@ -296,6 +297,29 @@ export async function removeSource(id: string): Promise<void> {
 
 export async function syncRegisteredSource(id: string): Promise<SyncStats> {
   return invoke("sync_registered_source", { id });
+}
+
+export interface ZoteroCollection {
+  key: string;
+  name: string;
+  item_count: number;
+}
+
+export interface ZoteroCollectionsResult {
+  server_id: string | null;
+  collections: ZoteroCollection[];
+}
+
+export async function listZoteroCollections(): Promise<ZoteroCollectionsResult> {
+  return invoke("list_zotero_collections");
+}
+
+export async function addZoteroSource(
+  collectionKey: string,
+  expectedServerId: string | null,
+  space: string,
+): Promise<RegisteredSource> {
+  return invoke("add_zotero_source", { collectionKey, expectedServerId, space });
 }
 
 /** Read the running daemon's version string from GET /api/health. */
@@ -914,6 +938,16 @@ export async function setDocumentTags(
   tags: string[],
 ): Promise<string[]> {
   return invoke("set_document_tags", { source, sourceId, tags });
+}
+
+/** Atomically add or remove one tag without replacing concurrently edited tags. */
+export async function patchDocumentTag(
+  source: string,
+  sourceId: string,
+  tag: string,
+  action: "add" | "remove",
+): Promise<void> {
+  return invoke("patch_document_tag", { source, sourceId, tag, action });
 }
 
 export async function deleteTag(name: string): Promise<void> {
@@ -3167,8 +3201,13 @@ export async function listPendingRevisions(limit?: number): Promise<PendingRevis
   return invoke("list_pending_revisions", { limit: limit ?? null });
 }
 
-export async function acceptPendingRevision(sourceId: string): Promise<RevisionAcceptResponse> {
-  return invoke("accept_pending_revision", { sourceId });
+export interface RevisionAcceptEdit {
+  expected_content: string;
+  content: string;
+}
+
+export async function acceptPendingRevision(sourceId: string, edit?: RevisionAcceptEdit): Promise<RevisionAcceptResponse> {
+  return invoke("accept_pending_revision", { sourceId, ...(edit ? { edit } : {}) });
 }
 
 export async function dismissPendingRevision(sourceId: string): Promise<RevisionDismissResponse> {
@@ -4962,4 +5001,22 @@ export async function listCommunityMembers(
   limit?: number,
 ): Promise<CommunityMembersResponse> {
   return invoke("list_community_members", { space, cursor: cursor ?? null, limit: limit ?? null });
+}
+
+// Original Zotero attachments are read through the daemon's scoped cache.
+export interface ZoteroDocument {
+  source_id: string;
+  title: string;
+  attachments: { key: string; title: string; available: boolean }[];
+  bibtex: string;
+  warnings: string[];
+}
+
+export function getZoteroDocument(sourceId: string, space?: string): Promise<ZoteroDocument> {
+  return invoke("get_zotero_document", { sourceId, space });
+}
+
+export async function readZoteroPdf(sourceId: string, attachmentKey: string, space?: string): Promise<Uint8Array> {
+  const bytes = await invoke<ArrayBuffer | number[]>("read_zotero_pdf", { sourceId, attachmentKey, space });
+  return new Uint8Array(bytes);
 }

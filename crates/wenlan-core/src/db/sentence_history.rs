@@ -241,21 +241,34 @@ impl MemoryDB {
         page_id: &str,
         citations_json: &str,
         expected_version: i64,
+        snapshots: &[super::CitationSourceSnapshot],
     ) -> Result<bool, WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute("BEGIN", ())
             .await
             .map_err(db_error("set_page_citations_at_page_version begin"))?;
+        if let Err(error) = super::citation_sources::guard_on(&conn, snapshots).await {
+            let _ = conn.execute("ROLLBACK", ()).await;
+            return Err(error);
+        }
         let exec = async {
-            let current = {
-                let mut rows = conn
+            let current =
+                {
+                    let mut rows = conn
                     .query(
-                        "SELECT 1 FROM pages WHERE id = ?1 AND version = ?2 AND status = 'active'",
-                        libsql::params![page_id, expected_version],
+                        "SELECT 1 FROM pages WHERE id = ?1 AND version = ?2 AND status = 'active'
+                         AND (?3=0 OR NULLIF(space,?4) IS ?5)",
+                        libsql::params![
+                            page_id,
+                            expected_version,
+                            i64::from(!snapshots.is_empty()),
+                            super::UNFILED_SPACE_ID,
+                            snapshots.first().and_then(|snapshot| snapshot.space.as_deref())
+                        ],
                     )
                     .await?;
-                rows.next().await?.is_some()
-            };
+                    rows.next().await?.is_some()
+                };
             if !current {
                 return Ok::<bool, libsql::Error>(false);
             }

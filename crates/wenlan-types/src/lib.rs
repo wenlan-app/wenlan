@@ -49,6 +49,7 @@ pub mod steep;
 pub mod steep_new;
 pub mod system_info;
 pub mod things;
+pub mod zotero;
 
 // Re-export commonly used types at crate root for convenience.
 pub use brief::*;

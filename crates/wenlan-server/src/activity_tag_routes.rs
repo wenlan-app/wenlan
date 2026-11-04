@@ -19,7 +19,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/suggest-tags", get(handle_suggest_tags))
         .route(
             "/api/documents/{source_id}/tags",
-            put(handle_set_document_tags),
+            put(handle_set_document_tags).post(handle_patch_document_tag),
         )
 }
 
@@ -116,6 +116,27 @@ pub async fn handle_set_document_tags(
     }))
 }
 
+/// POST /api/documents/{source_id}/tags
+pub async fn handle_patch_document_tag(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(source_id): Path<String>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Json(req): Json<wenlan_types::requests::PatchDocumentTagRequest>,
+) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
+    let db = {
+        let s = state.read().await;
+        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let action = match req.action {
+        wenlan_types::requests::DocumentTagAction::Add => "add",
+        wenlan_types::requests::DocumentTagAction::Remove => "remove",
+    };
+    db.patch_document_tag(&req.source, &source_id, &req.tag, action, &scope)
+        .await?;
+    Ok(Json(wenlan_types::responses::SuccessResponse { ok: true }))
+}
+
 fn document_tag_source(req: &wenlan_types::requests::SetDocumentTagsRequest) -> &str {
     req.source
         .as_deref()
@@ -184,6 +205,130 @@ pub async fn handle_suggest_tags(
 #[cfg(test)]
 mod tag_route_tests {
     use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    async fn patch_fixture() -> (
+        tempfile::TempDir,
+        Arc<wenlan_core::db::MemoryDB>,
+        crate::router::AppRouter,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            wenlan_core::db::MemoryDB::new(dir.path(), Arc::new(wenlan_core::events::NoopEmitter))
+                .await
+                .unwrap(),
+        );
+        for space in ["Research", "Other"] {
+            db.create_space(space, None, false).await.unwrap();
+        }
+        let fixture = libsql::Builder::new_local(dir.path().join("origin_memory.db"))
+            .build()
+            .await
+            .unwrap();
+        let conn = fixture.connect().unwrap();
+        for source in ["file", "memory"] {
+            conn.execute(
+                "INSERT INTO memories (id,content,source,source_id,title,chunk_index,last_modified,chunk_type,space)
+                 VALUES (?1,'Indexed source',?2,'shared','Document',0,1,'text','Research')",
+                libsql::params![format!("{source}-row"), source],
+            ).await.unwrap();
+        }
+        drop(conn);
+        db.set_document_tags("file", "shared", vec!["keep".into()])
+            .await
+            .unwrap();
+        let app = crate::router::build_router(Arc::new(RwLock::new(ServerState {
+            db: Some(db.clone()),
+            ..Default::default()
+        })));
+        (dir, db, app)
+    }
+
+    async fn patch_http(
+        app: crate::router::AppRouter,
+        space: &str,
+        tag: &str,
+        action: &str,
+    ) -> StatusCode {
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/documents/shared/tags")
+                .header("content-type", "application/json")
+                .header("X-Origin-Space", space)
+                .body(Body::from(
+                    serde_json::json!({
+                        "source":"file", "tag":tag, "action":action
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+    }
+
+    #[tokio::test]
+    async fn patch_document_tag_http_add_remove_preserves_concurrent_tags_and_source_kind() {
+        let (_dir, db, app) = patch_fixture().await;
+        let (left, right) = tokio::join!(
+            patch_http(app.clone(), "Research", " Alpha ", "add"),
+            patch_http(app.clone(), "Research", "beta", "add"),
+        );
+        assert_eq!((left, right), (StatusCode::OK, StatusCode::OK));
+        assert_eq!(
+            patch_http(app.clone(), "Research", "ALPHA", "add").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            db.get_document_tags("file", "shared").await.unwrap(),
+            vec!["alpha", "beta", "keep"]
+        );
+        assert_eq!(
+            patch_http(app, "Research", "alpha", "remove").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            db.get_document_tags("file", "shared").await.unwrap(),
+            vec!["beta", "keep"]
+        );
+        assert!(db
+            .get_document_tags("memory", "shared")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn patch_document_tag_http_refuses_wrong_space_without_mutation() {
+        let (_dir, db, app) = patch_fixture().await;
+        assert_eq!(
+            patch_http(app, "Other", "keep", "remove").await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            db.get_document_tags("file", "shared").await.unwrap(),
+            vec!["keep"]
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_document_tag_http_rejects_unknown_action_without_mutation() {
+        let (_dir, db, app) = patch_fixture().await;
+        assert_eq!(
+            patch_http(app, "Research", "keep", "replace").await,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(
+            db.get_document_tags("file", "shared").await.unwrap(),
+            vec!["keep"]
+        );
+    }
 
     #[test]
     fn document_tag_source_prefers_request_source() {

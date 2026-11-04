@@ -1517,6 +1517,71 @@ impl WenlanClient {
 
     // ── Source registry ──────────────────────────────────────────────
 
+    pub async fn list_zotero_collections(
+        &self,
+    ) -> Result<wenlan_types::zotero::ZoteroCollectionsResponse, String> {
+        self.get_json("/api/zotero/collections").await
+    }
+
+    pub async fn zotero_document(
+        &self,
+        source_id: &str,
+        space: Option<&str>,
+    ) -> Result<wenlan_types::zotero::ZoteroDocumentResponse, String> {
+        self.get_json_scoped_with_query("/api/zotero/documents", &[("source_id", source_id)], space)
+            .await
+    }
+
+    pub async fn zotero_pdf(
+        &self,
+        source_id: &str,
+        attachment_key: &str,
+        space: Option<&str>,
+    ) -> Result<Vec<u8>, String> {
+        let mut request = self
+            .client
+            .get(self.url("/api/zotero/pdf"))
+            .query(&[("source_id", source_id), ("attachment_key", attachment_key)]);
+        if let Some(space) = space {
+            if space.trim().is_empty() {
+                return Err("Space must not be empty".into());
+            }
+            request = request.query(&[("space", space)]);
+        }
+        let mut response = request.send().await.map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Could not read saved Zotero PDF: {}",
+                response.status()
+            ));
+        }
+        const MAX_PDF_BYTES: usize = 64 * 1024 * 1024;
+        if response
+            .content_length()
+            .is_some_and(|size| size > MAX_PDF_BYTES as u64)
+        {
+            return Err("Saved PDF exceeds the reading limit".into());
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            if bytes.len().saturating_add(chunk.len()) > MAX_PDF_BYTES {
+                return Err("Saved PDF exceeds the reading limit".into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if !bytes.starts_with(b"%PDF-") {
+            return Err("Saved attachment is not a PDF".into());
+        }
+        Ok(bytes)
+    }
+
+    pub async fn add_zotero_source(
+        &self,
+        request: &wenlan_types::zotero::AddZoteroSourceRequest,
+    ) -> Result<wenlan_types::sources::Source, String> {
+        self.post_json("/api/zotero/sources", request).await
+    }
+
     pub async fn list_sources(&self) -> Result<Vec<wenlan_types::sources::Source>, String> {
         self.get_json("/api/sources").await
     }

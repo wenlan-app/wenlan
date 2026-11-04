@@ -252,6 +252,36 @@ pub async fn stage_page_revision_card_proposed_by(
     basis_marks: &[crate::db::StagedBasisMark],
     space_guard: Option<&ReadScope>,
 ) -> Result<WriteResult, WenlanError> {
+    stage_page_revision_card_with_citation_snapshot(
+        db,
+        page,
+        content,
+        source_memory_ids,
+        source_revision,
+        edited_by,
+        proposer,
+        retry,
+        basis_marks,
+        space_guard,
+        &[],
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn stage_page_revision_card_with_citation_snapshot(
+    db: &MemoryDB,
+    page: &crate::pages::Page,
+    content: &str,
+    source_memory_ids: &[String],
+    source_revision: i64,
+    edited_by: &str,
+    proposer: Option<&str>,
+    retry: Option<&RetryIdentity>,
+    basis_marks: &[crate::db::StagedBasisMark],
+    space_guard: Option<&ReadScope>,
+    citation_snapshots: &[crate::db::CitationSourceSnapshot],
+) -> Result<WriteResult, WenlanError> {
     stage_page_revision_card_inner(
         db,
         page,
@@ -265,6 +295,7 @@ pub async fn stage_page_revision_card_proposed_by(
         retry,
         None,
         basis_marks,
+        citation_snapshots,
     )
     .await?
     .ok_or_else(|| match space_guard {
@@ -317,6 +348,7 @@ pub(crate) async fn stage_page_revision_card_at_fence(
         retry,
         None,
         basis_marks,
+        &[],
     )
     .await
 }
@@ -347,6 +379,7 @@ pub(crate) async fn stage_basis_preview_card(
         None,
         Some(basis_snapshot),
         &[],
+        &[],
     )
     .await
 }
@@ -365,7 +398,19 @@ async fn stage_page_revision_card_inner(
     retry: Option<&RetryIdentity>,
     basis_snapshot: Option<&[crate::db::BasisSnapshotEntry]>,
     basis_marks: &[crate::db::StagedBasisMark],
+    citation_snapshots: &[crate::db::CitationSourceSnapshot],
 ) -> Result<Option<WriteResult>, WenlanError> {
+    let checked_scope = page
+        .space
+        .clone()
+        .filter(|space| space != crate::db::UNFILED_SPACE_ID)
+        .map(ReadScope::Space)
+        .unwrap_or(ReadScope::Uncategorized);
+    let space_guard = if citation_snapshots.is_empty() {
+        space_guard
+    } else {
+        Some(&checked_scope)
+    };
     crate::export::provenance::validate_canonical_page_content(content)?;
     // Who the human sees on the card. Never the internal `page_write` kind:
     // the named agent when the caller knows it, Wenlan for its own pipeline
@@ -423,6 +468,9 @@ async fn stage_page_revision_card_inner(
     // The notes an agent's gated write relied on, recorded when it is accepted.
     if !basis_marks.is_empty() {
         structured["basis_marks"] = serde_json::to_value(basis_marks)?;
+    }
+    if !citation_snapshots.is_empty() {
+        structured["citation_source_snapshots"] = serde_json::to_value(citation_snapshots)?;
     }
     let structured = structured.to_string();
     let title: String = format!("Revision: {}", page.title)
@@ -487,8 +535,14 @@ async fn stage_page_revision_card_inner(
                 .await
         }
         (None, Some(scope), receipt) => {
-            db.upsert_documents_in_page_space(vec![row], receipt, &page.id, scope)
-                .await
+            db.upsert_documents_in_page_space(
+                vec![row],
+                receipt,
+                &page.id,
+                scope,
+                citation_snapshots,
+            )
+            .await
         }
         (None, None, Some(receipt)) => db
             .upsert_documents_with_operation_receipt(vec![row], receipt)
@@ -1125,7 +1179,8 @@ async fn update_page_db_impl(
             // whole-page card: every sentence is protected, so each change is
             // a sentence proposal (when its facts changed) and nothing lands.
             // A forced rebuild and a rename's link rewrite keep the card.
-            let lock_proposes = writer.is_machine()
+            let lock_proposes = basis.citation_snapshots.is_empty()
+                && writer.is_machine()
                 && current.review_required
                 && !user_forced
                 && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
@@ -1163,15 +1218,16 @@ async fn update_page_db_impl(
                 // the card keeps those lines: accepting it must not delete
                 // their writing. An agent's own edit is left as written; the
                 // person may have asked it to remove a line.
-                let (card_content, restored) =
-                    if matches!(writer, Writer::Pipeline(PipelineStage::ReDistill)) {
-                        let history = db.list_page_history(page_id, USER_LINE_HISTORY).await?;
-                        let user_lines =
-                            crate::pages::user_written_lines(&history, &current.content);
-                        crate::pages::keep_user_lines(&req.content, &current.content, &user_lines)
-                    } else {
-                        (req.content.clone(), 0)
-                    };
+                let (card_content, restored) = if matches!(
+                    writer,
+                    Writer::Pipeline(PipelineStage::Distill | PipelineStage::ReDistill)
+                ) {
+                    let history = db.list_page_history(page_id, USER_LINE_HISTORY).await?;
+                    let user_lines = crate::pages::user_written_lines(&history, &current.content);
+                    crate::pages::keep_user_lines(&req.content, &current.content, &user_lines)
+                } else {
+                    (req.content.clone(), 0)
+                };
                 if restored > 0 {
                     log::info!(
                         "[update_page] {page_id}: kept {restored} line(s) the user wrote in the revision card"
@@ -1204,7 +1260,7 @@ async fn update_page_db_impl(
                         }
                     },
                     None => {
-                        stage_page_revision_card_proposed_by(
+                        stage_page_revision_card_with_citation_snapshot(
                             db,
                             &current,
                             &card_content,
@@ -1215,6 +1271,7 @@ async fn update_page_db_impl(
                             retry.as_ref(),
                             &staged_marks,
                             basis.space_guard.as_ref(),
+                            &basis.citation_snapshots,
                         )
                         .await?
                     }
@@ -1261,6 +1318,32 @@ async fn update_page_db_impl(
             } else {
                 (None, false)
             };
+            // Checked source generations ride a whole proposal when a person's
+            // sentences need approval. Per-sentence proposals do not carry this
+            // source fence; keep the page untouched until atomic Adopt/Adjust.
+            if !basis.citation_snapshots.is_empty()
+                && gate.as_ref().is_some_and(|plan| !plan.proposals.is_empty())
+            {
+                let revision = match expected_source_revision {
+                    Some(revision) => revision,
+                    None => db.get_page_source_revision(page_id).await?,
+                };
+                let marks = db.prepare_staged_basis_marks(page_id, &basis.marks).await?;
+                return stage_page_revision_card_with_citation_snapshot(
+                    db,
+                    &current,
+                    &req.content,
+                    effective_sources,
+                    revision,
+                    edited_by,
+                    agent,
+                    retry.as_ref(),
+                    &marks,
+                    basis.space_guard.as_ref(),
+                    &basis.citation_snapshots,
+                )
+                .await;
+            }
             let landing_content: &str = gate
                 .as_ref()
                 .map_or(req.content.as_str(), |plan| plan.content.as_str());

@@ -27,7 +27,7 @@ export default function SourceDocumentPreview({ file, onClose, space, onOpenSour
     if (flushRef.current && !await flushRef.current()) return;
     onOpenSource?.();
   };
-  return <PageInfoDrawer open docked inspector title={file.title} closeLabel={t("sourceAccess.close")} onClose={() => { void handleClose(); }}
+  return <PageInfoDrawer open docked inspector defaultWidth={file.source_agent === "zotero" || file.source_id.startsWith("zotero::") ? 560 : undefined} title={file.title} closeLabel={t("sourceAccess.close")} onClose={() => { void handleClose(); }}
     headerActions={onOpenSource && <button type="button" className="page-editor-action source-preview-open" onClick={() => { void handleOpenSource(); }}>
       {t("sourceAccess.goToSource")}
     </button>}>

@@ -1,3 +1,4 @@
+import { pdfAssets } from "./vite.pdf";
 // SPDX-License-Identifier: AGPL-3.0-only
 // Browser rendering of the app with Tauri APIs shimmed.
 // Run: pnpm exec vite --config vite.preview.config.ts
@@ -17,15 +18,25 @@ const stubs = mock("./preview/mocks/tauri-stubs.ts");
 const daemonTarget =
   process.env.WENLAN_PREVIEW_DAEMON ?? "http://127.0.0.1:7878";
 
+// Real source mutations are only allowed against an explicitly isolated daemon.
+const sourcePreview = process.env.WENLAN_PREVIEW_SOURCE_WRITES === "1";
+if (sourcePreview) {
+  const target = new URL(daemonTarget);
+  if (target.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(target.hostname) || !target.port || target.port === "7878") {
+    throw new Error("Source preview writes require an isolated loopback daemon port");
+  }
+}
+
 export default defineConfig({
   ...(process.env.WENLAN_VITE_CACHE_DIR ? { cacheDir: process.env.WENLAN_VITE_CACHE_DIR } : {}),
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), pdfAssets()],
   clearScreen: false,
   // `RuntimeOverlays` reads this at module scope, so without it the whole app
   // throws on first render and the preview shows a blank page. Matches
   // `vite.config.ts`; the review harness is the only config that sets it true.
   define: {
     __WENLAN_REVIEW__: "false",
+    __WENLAN_SOURCE_PREVIEW__: JSON.stringify(sourcePreview),
   },
   resolve: {
     alias: {
@@ -52,6 +63,6 @@ export default defineConfig({
       },
     },
     // Polling: edits from the sandboxed agent don't emit fsevents.
-    watch: { ignored: ["**/app/**", "**/target/**"], usePolling: true, interval: 400 },
+    watch: { ignored: ["**/app/**", "**/target/**", "**/crates/**", "**/scripts/**", "**/*.test.ts", "**/*.test.tsx"], usePolling: true, interval: 400 },
   },
 });

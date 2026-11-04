@@ -1346,7 +1346,6 @@ const UNSTUBBED_DEBT = new Set([
   "connect_source",
   "correct_memory_cmd",
   "create_entity_cmd",
-  "create_space",
   "delete_agent",
   "delete_bulk",
   "delete_by_time_range",
@@ -1366,7 +1365,6 @@ const UNSTUBBED_DEBT = new Set([
   "get_pending_revision",
   "get_snapshot_captures",
   "get_snapshot_captures_with_content",
-  "get_space",
   "import_chat_export",
   "install_client_plugin",
   "install_client_skills",
@@ -1388,7 +1386,6 @@ const UNSTUBBED_DEBT = new Set([
   "remove_avatar",
   "remove_legacy_mcp_entry",
   "remove_raw_mcp_entry",
-  "remove_source",
   "remove_watch_path",
   "reorder_space",
   "reset_onboarding_milestones",
@@ -1457,5 +1454,95 @@ describe("tauri.ts -> live-invoke.ts command coverage (parity)", () => {
       expect(covered.has(cmd)).toBe(true);
       expect(UNSTUBBED_DEBT.has(cmd)).toBe(false);
     }
+  });
+});
+
+
+describe("isolated Zotero preview bridge", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("refuses real Zotero operations when the isolated-write flag is absent", async () => {
+    const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+    await expect(liveInvoke("add_zotero_source", { collectionKey: "ABC12345", space: "Study" })).rejects.toThrow("isolated");
+    await expect(liveInvoke("list_zotero_collections")).rejects.toThrow("isolated");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("preserves chosen scope and identities in an explicitly isolated preview", async () => {
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__", true);
+    const fetch = vi.fn(async () => new Response("{}")); vi.stubGlobal("fetch", fetch);
+    await liveInvoke("add_zotero_source", { collectionKey: "ABC12345", expectedServerId: "demo", space: "研究 & notes" });
+    expect(fetch).toHaveBeenCalledWith("/daemon/api/zotero/sources", expect.objectContaining({body: JSON.stringify({ collection_key: "ABC12345", expected_server_id: "demo", space: "研究 & notes" })}));
+    await liveInvoke("get_zotero_document", {sourceId: "zotero::item?", space: "研究 & notes"});
+    expect(fetch).toHaveBeenLastCalledWith("/daemon/api/zotero/documents?source_id=zotero%3A%3Aitem%3F&space=%E7%A0%94%E7%A9%B6%20%26%20notes", expect.anything());
+  });
+});
+
+describe("isolated authored Page preview bridge", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("writes a manually created Page through the isolated daemon contract", async () => {
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__", true);
+    const response = { id: "manual-page", attached_to: null, warnings: [] };
+    const fetch = vi.fn(async () => new Response(JSON.stringify(response), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(liveInvoke("create_page", {
+      title: "  Interview notes  ", content: "  Researcher feedback.  ", space: "  Study  ",
+    })).resolves.toEqual(response);
+    expect(fetch).toHaveBeenCalledWith("/daemon/api/pages", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        title: "Interview notes", content: "Researcher feedback.", summary: null,
+        entity_id: null, space: "Study", source_memory_ids: [], creation_kind: "authored", workspace: null,
+      }),
+    }));
+  });
+
+  it("uses the daemon draft endpoints and unwraps their Page response envelopes", async () => {
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__", true);
+    const page = { id: "page_00000000-0000-4000-8000-000000000017", title: "Working title", content: "draft", version: 1, status: "draft", space: "Research" };
+    const responses = [
+      { page, folder_path: "", projection_status: null },
+      { page: { ...page, title: "Revised title", version: 2 }, folder_path: "", projection_status: null },
+      { page: { ...page, title: "Revised title", content: "published body", version: 3, status: "active" }, folder_path: "", projection_status: "not_configured" },
+      { status: "deleted" },
+    ];
+    const fetch = vi.fn(async () => new Response(JSON.stringify(responses.shift()), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const draftId = page.id;
+    await expect(liveInvoke("create_page_draft", {
+      clientDraftId: draftId, title: "Working title", content: "draft", space: "Research", folderPath: "Notes",
+    })).resolves.toMatchObject({ ...page, folder_path: "", status: "draft" });
+    await expect(liveInvoke("update_page_draft", {
+      id: draftId, expectedVersion: 1, title: "Revised title", content: "draft", space: "Research",
+    })).resolves.toMatchObject({ id: draftId, version: 2, folder_path: "" });
+    await expect(liveInvoke("publish_page_draft", { id: draftId, expectedVersion: 2 }))
+      .resolves.toMatchObject({ id: draftId, version: 3, status: "active", projection_status: "not_configured" });
+    await expect(liveInvoke("discard_page_draft", { id: draftId, expectedVersion: 3 })).resolves.toBeNull();
+
+    expect(fetch.mock.calls.map(([input, init]) => [String(input), init?.method, init?.body])).toEqual([
+      ["/daemon/api/pages/drafts", "POST", JSON.stringify({ draft_id: draftId, title: "Working title", content: "draft", space: "Research", folder_path: "Notes" })],
+      [`/daemon/api/pages/drafts/${draftId}`, "PUT", JSON.stringify({ expected_version: 1, title: "Revised title", content: "draft", space: "Research" })],
+      [`/daemon/api/pages/drafts/${draftId}/publish`, "POST", JSON.stringify({ expected_version: 2 })],
+      [`/daemon/api/pages/drafts/${draftId}`, "DELETE", JSON.stringify({ expected_version: 3 })],
+    ]);
+  });
+
+  it("sends manual editor saves for server Pages through the existing guarded write route", async () => {
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__", true);
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/daemon/api/health") return new Response(JSON.stringify({ version: "0.20.7" }));
+      return new Response(JSON.stringify({ ok: true, projection_status: "not_configured" }));
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(liveInvoke("update_page", {
+      id: "page/17", content: "Updated body", expectedVersion: 3,
+      callerId: "wenlan-app", operationId: "op_live_preview_17",
+    })).resolves.toEqual({ outcome: "saved" });
+    expect(fetch).toHaveBeenLastCalledWith("/daemon/api/memory/page%2F17/update-page", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ content: "Updated body", source_memory_ids: [], expected_version: 3, caller_id: "wenlan-app", operation_id: "op_live_preview_17" }),
+    }));
   });
 });

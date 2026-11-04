@@ -29,6 +29,7 @@ rmcp-macros = "~2.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = { workspace = true }
 schemars = "1"
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }

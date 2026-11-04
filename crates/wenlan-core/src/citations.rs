@@ -184,23 +184,87 @@ fn bidirectional_support(span: &str, source: &str) -> f64 {
 pub(crate) fn claim_support(
     sentence: &str,
     paragraph: &str,
-    sources: &[&str],
+    sources: &[NumberedSource],
 ) -> (bool, &'static str, Vec<f64>) {
-    let union = sources.join("\n");
-    let (verified, scope, claim) = if bidirectional_support(sentence, &union) >= 0.5 {
+    let refs = sources.iter().collect::<Vec<_>>();
+    let (verified, scope, claim) = if bounded_support(sentence, &refs) >= 0.5 {
         (true, "sentence", sentence)
     } else {
         (
-            bidirectional_support(paragraph, &union) >= 0.5,
+            bounded_support(paragraph, &refs) >= 0.5,
             "paragraph",
             paragraph,
         )
     };
     let scores = sources
         .iter()
-        .map(|source| bidirectional_support(claim, source))
+        .map(|source| bounded_support(claim, &[source]))
         .collect();
     (verified, scope, scores)
+}
+
+/// Select one contiguous, overlapping evidence window. The final window is
+/// filled backwards to avoid a tiny tail inflating reverse lexical overlap.
+fn evidence_window(claim: &str, source: &NumberedSource) -> String {
+    let chars: Vec<char> = source.text.chars().collect();
+    if !matches!(
+        source.source_kind.as_str(),
+        "external_file" | "external_url"
+    ) || chars.len() <= SOURCE_TEXT_CAP
+    {
+        return source.text.clone();
+    }
+    let last = chars.len() - SOURCE_TEXT_CAP;
+    // Same whole-word regex semantics as overlap_fraction, compiled once per
+    // claim instead of once per token per candidate window.
+    let matchers = crate::faithfulness::content_tokens(claim)
+        .into_iter()
+        .map(|token| Regex::new(&format!(r"\b{}\b", regex::escape(&token))).expect("escaped token"))
+        .collect::<Vec<_>>();
+    let mut best = String::new();
+    let mut best_score = -1.0;
+    for start in (0..last)
+        .step_by(SOURCE_TEXT_CAP / 2)
+        .chain(std::iter::once(last))
+    {
+        let window: String = chars[start..start + SOURCE_TEXT_CAP].iter().collect();
+        let lowered = window.to_ascii_lowercase();
+        let score = if matchers.is_empty() {
+            1.0
+        } else {
+            matchers
+                .iter()
+                .filter(|matcher| matcher.is_match(&lowered))
+                .count() as f64
+                / matchers.len() as f64
+        };
+        if score > best_score {
+            best = window;
+            best_score = score;
+        }
+    }
+    best
+}
+
+fn bounded_support(claim: &str, sources: &[&NumberedSource]) -> f64 {
+    let windows = sources
+        .iter()
+        .map(|source| evidence_window(claim, source))
+        .collect::<Vec<_>>();
+    let union = windows.join("\n");
+    if sources.iter().any(|source| {
+        matches!(
+            source.source_kind.as_str(),
+            "external_file" | "external_url"
+        ) && source.text.chars().count() > SOURCE_TEXT_CAP
+    }) {
+        if !claim.chars().any(char::is_alphanumeric) {
+            return 0.0;
+        }
+        crate::faithfulness::overlap_fraction(claim, &union)
+    } else {
+        bidirectional_support(claim, &union)
+    }
 }
 
 /// Normalize raw LLM marker output: `[ 1 ]` -> `[1]`, `[1,3]` -> `[1][3]`.
@@ -316,16 +380,14 @@ pub fn process_citation_output(
 
         let (span_start, span_end) = spans[span_idx];
         let sentence = bare_body[span_start..span_end].trim();
-        let union: String = group
+        let claim_sources = group
             .iter()
             .filter_map(|&(n, _)| sources.get((n - 1) as usize))
-            .map(|s| s.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
+            .collect::<Vec<_>>();
         // Tier 1: the marker's own sentence. Tier 2 (fallback): the
         // enclosing paragraph — see the para_spans comment above.
         let marker_pos = group[0].1;
-        let sentence_verified = bidirectional_support(sentence, &union) >= 0.5;
+        let sentence_verified = bounded_support(sentence, &claim_sources) >= 0.5;
         let (claim_verified, scope, claim_text) = if sentence_verified {
             (true, "sentence", sentence)
         } else {
@@ -336,7 +398,7 @@ pub fn process_citation_output(
                 .copied()
                 .unwrap_or((0, bare_body.len()));
             let paragraph = bare_body[p_start..p_end].trim();
-            let para_verified = bidirectional_support(paragraph, &union) >= 0.5;
+            let para_verified = bounded_support(paragraph, &claim_sources) >= 0.5;
             (para_verified, "paragraph", paragraph)
         };
         if claim_verified {
@@ -349,7 +411,7 @@ pub fn process_citation_output(
             occurrence += 1;
             if let Some(src) = sources.get((n - 1) as usize) {
                 // Audit score at the scope that decided the status.
-                let score = bidirectional_support(claim_text, &src.text);
+                let score = bounded_support(claim_text, &[src]);
                 citations.push(PageCitation {
                     occurrence,
                     marker: n,
@@ -823,7 +885,9 @@ async fn run_citation_backfill_with_page_limit(
 /// What the daemon made of the `[n]` markers in a page an AI tool wrote.
 pub enum WriteCitations {
     /// The page cites nothing, so there is nothing to check.
-    Uncited,
+    Uncited {
+        snapshots: Vec<crate::db::CitationSourceSnapshot>,
+    },
     /// Each cited sentence was checked against its source. `body` is the
     /// page with markers that point nowhere removed; `summary` is the count
     /// line recorded on the page's history.
@@ -831,6 +895,7 @@ pub enum WriteCitations {
         body: String,
         citations_json: String,
         summary: String,
+        snapshots: Vec<crate::db::CitationSourceSnapshot>,
     },
 }
 
@@ -849,47 +914,70 @@ pub async fn check_write_citations(
     scope: &crate::read_scope::ReadScope,
 ) -> Result<Result<WriteCitations, String>, WenlanError> {
     // Without sources a bracketed number is just text the writer typed.
-    if source_ids.is_empty() || !RE_MARKERS.is_match(&normalize_markers(content)) {
-        return Ok(Ok(WriteCitations::Uncited));
+    if source_ids.is_empty() {
+        return Ok(Ok(WriteCitations::Uncited {
+            snapshots: Vec::new(),
+        }));
     }
-    let mut texts: std::collections::HashMap<String, String> = db
-        .get_memory_contents_by_ids(source_ids)
-        .await?
-        .into_iter()
-        .collect();
-    if *scope != crate::read_scope::ReadScope::Global {
-        let visible: std::collections::HashSet<String> = db
-            .get_memories_by_source_ids_scoped(source_ids, scope)
-            .await?
-            .into_iter()
-            .map(|memory| memory.source_id)
-            .collect();
-        texts.retain(|id, _| visible.contains(id));
+    let resolved = db.citation_sources(source_ids, scope).await?;
+    if resolved.iter().any(Option::is_none) {
+        return Err(WenlanError::Validation("source_read_refused: source unavailable, ambiguous, or incomplete in the target Space; reread exact sources and check scope".into()));
     }
-    let kinds = db
-        .resolve_source_kinds(source_ids)
-        .await
-        .unwrap_or_default();
-    // Numbered in the caller's order, so `[n]` means what the caller meant.
-    // A source that is gone keeps its number with no text, so a sentence
-    // citing it cannot be verified.
+    if !RE_MARKERS.is_match(&normalize_markers(content)) {
+        return Ok(Ok(WriteCitations::Uncited {
+            snapshots: resolved
+                .into_iter()
+                .flatten()
+                .map(|source| source.snapshot)
+                .collect(),
+        }));
+    }
     let numbered: Vec<NumberedSource> = source_ids
         .iter()
+        .zip(&resolved)
         .enumerate()
-        .map(|(i, id)| NumberedSource {
+        .map(|(i, (id, source))| NumberedSource {
             index: u32::try_from(i + 1).unwrap_or(u32::MAX),
-            source_kind: kinds
-                .get(id)
-                .cloned()
-                .unwrap_or_else(|| "memory".to_string()),
             locator: id.clone(),
-            text: texts
-                .get(id)
-                .map(|text| text.chars().take(SOURCE_TEXT_CAP).collect())
-                .unwrap_or_default(),
+            // Scoring mode is internal. Restore the stored evidence kind below;
+            // a file indexed in Wenlan remains a memory edge under its opaque ID.
+            source_kind: source
+                .as_ref()
+                .map(|s| match s.snapshot.source.as_str() {
+                    "file" => "external_file".into(),
+                    "webpage" => "external_url".into(),
+                    _ => s.source_kind.clone(),
+                })
+                .unwrap_or_else(|| "memory".into()),
+            text: source.as_ref().map(|s| s.text.clone()).unwrap_or_default(),
         })
         .collect();
-    check_numbered_citations(content, &numbered)
+    let mut checked = check_numbered_citations(content, &numbered)?;
+    if let Ok(WriteCitations::Checked {
+        citations_json,
+        snapshots,
+        ..
+    }) = &mut checked
+    {
+        let mut citations: Vec<PageCitation> = serde_json::from_str(citations_json)?;
+        for citation in &mut citations {
+            if let Some(source) = resolved
+                .get(citation.marker.saturating_sub(1) as usize)
+                .and_then(Option::as_ref)
+            {
+                citation.source_kind = source.source_kind.clone();
+                citation.cited_version = Some(source.snapshot.version);
+                citation.cited_digest = Some(source.snapshot.text_digest.clone());
+            }
+        }
+        *citations_json = serde_json::to_string(&citations)?;
+        *snapshots = resolved
+            .into_iter()
+            .flatten()
+            .map(|source| source.snapshot)
+            .collect();
+    }
+    Ok(checked)
 }
 
 /// The gate itself, on sources already numbered: refused when no cited
@@ -906,6 +994,7 @@ fn check_numbered_citations(
         body,
         citations_json: serde_json::to_string(&cites)?,
         summary: stats.summary(),
+        snapshots: Vec::new(),
     }))
 }
 
@@ -2773,6 +2862,7 @@ mod tests {
             body,
             citations_json,
             summary,
+            ..
         }) = checked
         else {
             panic!("a supported citation is checked, not refused");
@@ -2809,12 +2899,12 @@ mod tests {
         let no_markers = check_write_citations(&db, BACKFILL_BODY, &ids, &global)
             .await
             .unwrap();
-        assert!(matches!(no_markers, Ok(WriteCitations::Uncited)));
+        assert!(matches!(no_markers, Ok(WriteCitations::Uncited { .. })));
         // Without sources a bracketed number is the writer's own text.
         let no_sources = check_write_citations(&db, "Step [1] comes first.", &[], &global)
             .await
             .unwrap();
-        assert!(matches!(no_sources, Ok(WriteCitations::Uncited)));
+        assert!(matches!(no_sources, Ok(WriteCitations::Uncited { .. })));
         let checked = check_write_citations(
             &db,
             "The daemon binds to port 7878 by default [2].",
@@ -2846,8 +2936,7 @@ mod tests {
             &ids,
             &crate::read_scope::ReadScope::Space("elsewhere".into()),
         )
-        .await
-        .unwrap();
+        .await;
         assert!(
             elsewhere.is_err(),
             "a memory outside the Space reads as gone"

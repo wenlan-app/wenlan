@@ -83,6 +83,10 @@ main|get|/api/snapshots|wenlan_server::snapshot_routes::handle_list_snapshots
 main|get|/api/snapshots/{id}/captures|wenlan_server::snapshot_routes::handle_get_snapshot_captures
 main|get|/api/snapshots/{id}/captures-with-content|wenlan_server::snapshot_routes::handle_get_snapshot_captures_with_content
 main|get|/api/sources|wenlan_server::source_routes::handle_list_sources
+main|get|/api/zotero/collections|wenlan_server::source_routes::zotero_sync::handle_list_collections
+main|post|/api/zotero/sources|wenlan_server::source_routes::zotero_sync::handle_add_source
+main|get|/api/zotero/documents|wenlan_server::source_routes::zotero_sync::handle_get_document
+main|get|/api/zotero/pdf|wenlan_server::source_routes::zotero_sync::handle_get_pdf
 main|get|/api/spaces|wenlan_server::spaces_routes::handle_list_spaces
 main|get|/api/spaces/default|wenlan_server::spaces_routes::handle_get_default_space
 main|get|/api/spaces/{name}/wiki/github|wenlan_server::repo_wiki_routes::handle_github_status
@@ -101,6 +105,7 @@ main|post|/api/context|wenlan_server::routes::handle_context
 main|post|/api/distill|wenlan_server::routes::handle_distill
 main|post|/api/distill/{page_id}|wenlan_server::routes::handle_redistill
 main|post|/api/documents/{source_id}/space|wenlan_server::spaces_routes::handle_set_document_space
+main|post|/api/documents/{source_id}/tags|wenlan_server::activity_tag_routes::handle_patch_document_tag
 main|post|/api/import/chat-export|wenlan_server::import_routes::handle_chat_export_import
 main|post|/api/import/memories|wenlan_server::import_routes::handle_import_memories
 main|post|/api/ingest/memory|wenlan_server::ingest_routes::handle_ingest_memory

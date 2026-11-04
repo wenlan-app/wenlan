@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import SourcesSection from "../SourcesSection";
 import * as tauri from "../../../../lib/tauri";
@@ -98,5 +98,18 @@ describe("SourcesSection", () => {
     expect(screen.queryByText("Knowledge Directory")).not.toBeInTheDocument();
     expect(screen.queryByText(/Wenlan\/knowledge/)).not.toBeInTheDocument();
     expect(tauri.getKnowledgePath).not.toHaveBeenCalled();
+  });
+
+  it("offers Zotero from settings and keeps its virtual path away from Finder actions", async () => {
+    vi.mocked(tauri.listRegisteredSources).mockResolvedValue([{
+      id: "zotero-source", source_type: "zotero", path: "zotero-local/instance/users/0/collections/ABCD", status: "Active", last_sync: null, file_count: 2, memory_count: 2,
+    }]);
+    render(<SourcesSection />, { wrapper });
+    expect(await screen.findByText("ABCD")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect Zotero" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.queryByRole("menuitem", { name: "Reveal in Finder" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Remove source" })).toBeInTheDocument();
   });
 });

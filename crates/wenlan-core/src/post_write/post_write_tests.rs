@@ -7736,6 +7736,68 @@ async fn user_forced_rebuild_is_still_staged_under_review_lock() {
 }
 
 #[tokio::test]
+async fn forced_distill_review_card_preserves_manual_edit_lines_without_basis() {
+    let (db, _dir) = test_db().await;
+    let page_id = "page_forced_distill_human";
+    let source_id = "mem_forced_distill_human";
+    ownership_page(&db, page_id, source_id).await;
+    let human_line = "My field observations require an independent longitudinal follow-up.";
+    let human_body = format!("{OWNERSHIP_SOURCE}\n\n{human_line}");
+    ownership_write(&db, page_id, &human_body, &[source_id], "manual_edit", None)
+        .await
+        .unwrap();
+    db.set_page_review_required(page_id, true).await.unwrap();
+    let before = db.get_page(page_id).await.unwrap().unwrap();
+    assert!(before.user_edited && before.review_required);
+    let history = db.list_page_history(page_id, 20).await.unwrap();
+    assert!(history.iter().any(|entry| entry.edited_by == "manual_edit"));
+    assert!(crate::pages::user_written_lines(&history, &before.content)
+        .contains(&human_line.to_string()));
+    let fence = db.try_get_page_fence(page_id).await.unwrap().unwrap();
+    let result = page_write(
+        &db,
+        PageWrite::UserForcedUpdate {
+            page_id,
+            req: UpdatePageRequest {
+                content: format!("{OWNERSHIP_SOURCE}, refreshed from sources"),
+                source_memory_ids: vec![source_id.into()],
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "distill",
+            expected_fence: &fence,
+            knowledge_path: None,
+            citations: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(result.gated && !result.wrote);
+    assert_eq!(
+        db.get_page(page_id).await.unwrap().unwrap().content,
+        before.content
+    );
+    let card_id = result.revision_card_id.unwrap();
+    let payload = db
+        .pending_memory_revision_payload(&card_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let proposed = payload.full_body.as_deref().unwrap_or(&payload.content);
+    assert!(
+        proposed.contains(human_line),
+        "staged proposal lost the human line: {proposed}"
+    );
+    accept_pending_revision_with_knowledge_path(&db, &card_id, "human", None)
+        .await
+        .unwrap();
+    let adopted = db.get_page(page_id).await.unwrap().unwrap();
+    assert!(adopted.content.contains(human_line));
+    assert!(adopted.review_required);
+}
+
+#[tokio::test]
 async fn machine_refresh_with_empty_sources_is_allowed_only_for_a_sourceless_page() {
     let (db, _dir) = test_db().await;
     // Sourceless machine-owned page.
@@ -8616,5 +8678,272 @@ async fn a_file_written_first_is_put_back_when_its_write_does_not_land() {
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         "the person's own text\n"
+    );
+}
+
+async fn stage_edited_acceptance_page(db: &MemoryDB, proposed: &str) -> (String, String) {
+    seed_memory(db, "edited_accept_source", "Original human body.").await;
+    let page_id = seed_page(db, "edited_accept_source", "Original human body.").await;
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    let revision = db.get_page_source_revision(&page_id).await.unwrap();
+    let staged = stage_page_revision_card(
+        db,
+        &page,
+        proposed,
+        &["edited_accept_source".to_string()],
+        revision,
+        "page_growth",
+        None,
+    )
+    .await
+    .unwrap();
+    (page_id, staged.revision_card_id.unwrap())
+}
+
+fn revision_edit(
+    expected: &str,
+    content: &str,
+) -> wenlan_types::requests::RevisionAcceptEditRequest {
+    wenlan_types::requests::RevisionAcceptEditRequest {
+        expected_content: expected.into(),
+        content: content.into(),
+    }
+}
+
+#[tokio::test]
+async fn edited_acceptance_page_writes_edited_body_and_consumes_exact_card() {
+    let (db, _dir) = test_db().await;
+    let (page, card) = stage_edited_acceptance_page(&db, "Proposed body.").await;
+    let before = db.get_page(&page).await.unwrap().unwrap();
+    let result = accept_pending_revision_edited_with_knowledge_path(
+        &db,
+        &card,
+        "human",
+        None,
+        &revision_edit("Proposed body.", "Human corrected body."),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.revision_source_id, card);
+    let after = db.get_page(&page).await.unwrap().unwrap();
+    assert_eq!(after.content, "Human corrected body.");
+    assert_eq!(after.version, before.version + 1);
+    assert!(db
+        .pending_memory_revision_payload(&card)
+        .await
+        .unwrap()
+        .is_none());
+    let changelog: serde_json::Value =
+        serde_json::from_str(&db.get_page_changelog(&page).await.unwrap()).unwrap();
+    assert_eq!(
+        changelog.as_array().unwrap().last().unwrap()["edited_by"],
+        "revision_accept"
+    );
+    assert!(matches!(
+        accept_pending_revision_edited_with_knowledge_path(
+            &db,
+            &card,
+            "human",
+            None,
+            &revision_edit("Proposed body.", "Retry body.")
+        )
+        .await,
+        Err(WenlanError::NotFound(_))
+    ));
+    assert_eq!(
+        db.get_page(&page).await.unwrap().unwrap().version,
+        after.version
+    );
+}
+
+#[tokio::test]
+async fn edited_acceptance_page_fences_proposal_changed_after_card_read() {
+    let (db, _dir) = test_db().await;
+    let (page, card) = stage_edited_acceptance_page(&db, "Proposed body.").await;
+    let loaded = super::page_revision::resolve_page_revision_card(&db, &card)
+        .await
+        .unwrap()
+        .unwrap();
+    let before = db.get_page(&page).await.unwrap().unwrap();
+    let history_before = db.get_page_changelog(&page).await.unwrap();
+    // Deterministic race: the acceptance has already read the card, then a
+    // second writer changes the proposal before the acceptance transaction.
+    db.update_memory(&card, "Concurrent replacement proposal.")
+        .await
+        .unwrap();
+    let err = super::page_revision::accept_page_revision_card_with_edit(
+        &db,
+        loaded,
+        None,
+        "human",
+        Some(&revision_edit("Proposed body.", "Human edit.")),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, WenlanError::Conflict(_)), "{err:?}");
+    let after = db.get_page(&page).await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.version, before.version);
+    assert_eq!(db.get_page_changelog(&page).await.unwrap(), history_before);
+    assert_eq!(
+        db.pending_memory_revision_payload(&card)
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+        "Concurrent replacement proposal."
+    );
+}
+
+#[tokio::test]
+async fn edited_acceptance_page_keeps_target_and_source_version_fences() {
+    for move_source in [false, true] {
+        let (db, _dir) = test_db().await;
+        let (page, card) = stage_edited_acceptance_page(&db, "Proposed body.").await;
+        if move_source {
+            seed_memory(&db, "new_evidence", "New evidence.").await;
+            db.link_page_source(&page, "new_evidence", "manual")
+                .await
+                .unwrap();
+        } else {
+            db.update_page_content(
+                &page,
+                "New human body.",
+                &["edited_accept_source"],
+                "manual_edit",
+            )
+            .await
+            .unwrap();
+        }
+        let before = db.get_page(&page).await.unwrap().unwrap();
+        let error = accept_pending_revision_edited_with_knowledge_path(
+            &db,
+            &card,
+            "human",
+            None,
+            &revision_edit("Proposed body.", "Human edit."),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, WenlanError::Conflict(_)), "{error:?}");
+        let after = db.get_page(&page).await.unwrap().unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert!(db
+            .pending_memory_revision_payload(&card)
+            .await
+            .unwrap()
+            .is_some());
+    }
+}
+
+#[tokio::test]
+async fn edited_acceptance_page_compares_full_chunked_proposal() {
+    let (db, _dir) = test_db().await;
+    let proposed = (0..8)
+        .map(|i| {
+            format!(
+                "## Section {i}\n\n{}\n",
+                "A substantive paragraph with evidence for a long proposal. ".repeat(30)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (page, card) = stage_edited_acceptance_page(&db, &proposed).await;
+    let payload = db
+        .pending_memory_revision_payload(&card)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        payload.content.len() < proposed.len(),
+        "fixture must actually chunk"
+    );
+    assert_eq!(payload.full_body.as_deref(), Some(proposed.as_str()));
+    assert!(matches!(
+        accept_pending_revision_edited_with_knowledge_path(
+            &db,
+            &card,
+            "human",
+            None,
+            &revision_edit(&payload.content, "Human edit.")
+        )
+        .await,
+        Err(WenlanError::Conflict(_))
+    ));
+    accept_pending_revision_edited_with_knowledge_path(
+        &db,
+        &card,
+        "human",
+        None,
+        &revision_edit(&proposed, "Human edit of the complete proposal."),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db.get_page(&page).await.unwrap().unwrap().content,
+        "Human edit of the complete proposal."
+    );
+}
+
+#[tokio::test]
+async fn edited_acceptance_memory_rejects_stale_or_target_id_and_applies_once() {
+    let (db, _dir) = test_db().await;
+    seed_pending_revision(&db, "edit_target", "edit_card").await;
+    for (id, expected) in [
+        ("edit_target", "revised content"),
+        ("edit_card", "stale body"),
+    ] {
+        assert!(accept_pending_revision_edited_with_knowledge_path(
+            &db,
+            id,
+            "human",
+            None,
+            &revision_edit(expected, "Human correction.")
+        )
+        .await
+        .is_err());
+        assert_eq!(
+            db.pending_memory_revision_payload("edit_card")
+                .await
+                .unwrap()
+                .unwrap()
+                .content,
+            "revised content"
+        );
+    }
+    assert!(matches!(
+        accept_pending_revision_edited_with_knowledge_path(
+            &db,
+            "edit_card",
+            "human",
+            None,
+            &revision_edit("revised content", " \n ")
+        )
+        .await,
+        Err(WenlanError::Validation(_))
+    ));
+    let result = accept_pending_revision_edited_with_knowledge_path(
+        &db,
+        "edit_card",
+        "human",
+        None,
+        &revision_edit("revised content", "Human correction."),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.target_source_id, "edit_target");
+    assert!(db
+        .pending_memory_revision_payload("edit_card")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        db.get_memory_detail("edit_card")
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+        "Human correction."
     );
 }

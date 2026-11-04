@@ -24,6 +24,7 @@ pub(crate) mod obsidian_sync;
 #[path = "source_routes/okf_registration_tests.rs"]
 mod okf_registration_tests;
 mod okf_sync;
+pub(crate) mod zotero_sync;
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
@@ -36,6 +37,16 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             delete(handle_remove_source).patch(handle_update_source),
         )
         .route("/api/sources/{id}/sync", post(handle_sync_source))
+        .route(
+            "/api/zotero/collections",
+            get(zotero_sync::handle_list_collections),
+        )
+        .route("/api/zotero/sources", post(zotero_sync::handle_add_source))
+        .route(
+            "/api/zotero/documents",
+            get(zotero_sync::handle_get_document),
+        )
+        .route("/api/zotero/pdf", get(zotero_sync::handle_get_pdf))
 }
 
 // ===== Request/Response Types =====
@@ -348,6 +359,16 @@ pub async fn handle_update_source(
     Path(id): Path<String>,
     Json(body): Json<UpdateSourceRequest>,
 ) -> Result<Json<Source>, ServerError> {
+    if body.follow_changes
+        && wenlan_core::config::load_config()
+            .sources
+            .iter()
+            .any(|src| src.id == id && src.source_type == SourceType::Zotero)
+    {
+        return Err(ServerError::ValidationError(
+            "Zotero sources support manual sync only".to_string(),
+        ));
+    }
     let updated = wenlan_core::config::update_config(|config| {
         require_unambiguous_source(config, &id)?;
         let Some(src) = config.sources.iter_mut().find(|s| s.id == id) else {
@@ -986,6 +1007,10 @@ pub async fn handle_sync_source(
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
+
+    if source.source_type == SourceType::Zotero {
+        return zotero_sync::sync_source(db, &source).await.map(Json);
+    }
 
     if matches!(source.source_type, SourceType::Directory | SourceType::Okf) {
         let outcome = sync_directory_source(db.clone(), &source, &config).await?;

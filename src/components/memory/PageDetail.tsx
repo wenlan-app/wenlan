@@ -121,6 +121,7 @@ import { NoteReviewNotice } from "./page/NoteReviewNotice";
 import { useBasisActions } from "./page/useBasisActions";
 import { useCodeBasisActions } from "./page/useCodeBasisActions";
 import { basisCountLabel } from "./page/format";
+import PageExportDialog from "./page/PageExportDialog";
 
 interface PageDetailProps {
   pageId: string;
@@ -410,6 +411,7 @@ export default function PageDetail({
     setDeleteGuardEntityId(entityId);
   };
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [pageExportOpen, setPageExportOpen] = useState(false);
   const [actionMenuPlacement, setActionMenuPlacement] = useState<{ top: number; right: number } | null>(null);
   const [redistillNotice, setRedistillNotice] = useState<{
     kind: "success" | "warning" | "error";
@@ -629,11 +631,12 @@ export default function PageDetail({
   // memories retain their existing detail navigation and editing behavior.
   const openSourceMemory = (sourceId: string) => {
     const memory = pageSources?.find((row) => row.source.memory_source_id === sourceId)?.memory;
-    if (memory && ["folder", "obsidian", "logseq"].includes(memory.source_agent ?? "")) {
+    if (memory && ["folder", "obsidian", "logseq", "zotero"].includes(memory.source_agent ?? "")) {
       if (showCanvas) void requestToggleCanvas();
       changeCanvasWorkspaceExpanded(false);
       setSourcePreview({
-        source: "memory",
+        source: memory.source_agent === "zotero" ? "file" : "memory",
+        source_agent: memory.source_agent,
         source_id: memory.source_id,
         title: memory.title,
         chunk_count: memory.chunk_count,
@@ -2466,6 +2469,7 @@ export default function PageDetail({
                   </svg>
                 </button>
                 {moveOpen && <MovePageDialog page={page} onClose={() => setMoveOpen(false)} />}
+                {pageExportOpen && <PageExportDialog pageId={page.id} onClose={() => setPageExportOpen(false)} />}
                 {actionMenuOpen ? (
                   <div
                     aria-label={t("pageDetail.actions")}
@@ -2515,6 +2519,7 @@ export default function PageDetail({
                         <span aria-hidden="true" className="page-detail-menu-check">{pageLength === "short" ? "✓" : ""}</span>
                       </button>
                     ) : null}
+                    <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>
                     {/* Re-distill rebuilds a page from its sources; a page
                         with none has nothing to rebuild from. */}
                     {page.status === "active" && canUpdateFromSources ? <button
@@ -3055,9 +3060,9 @@ export default function PageDetail({
                   referenceContext={editorReferenceContext}
                   onReferenceActivate={(target, anchor) => {
                     if (target.kind === "page") { dismissWikiLinkPreview(); onPageClick?.(target.id); }
-                    else if (target.kind === "memory") { dismissWikiLinkPreview(); onMemoryClick(target.id); }
+                    else if (target.kind === "memory") { dismissWikiLinkPreview(); openSourceMemory(target.id); }
                     else if (target.citation.source_kind === "memory" && target.sourceMemory) {
-                      dismissWikiLinkPreview(); onMemoryClick(target.citation.locator);
+                      dismissWikiLinkPreview(); openSourceMemory(target.citation.locator);
                     } else showReferencePreview(target, anchor, false);
                   }}
                   onReferencePreview={showReferencePreview}

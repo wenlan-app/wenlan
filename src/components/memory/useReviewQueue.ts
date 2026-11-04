@@ -222,13 +222,17 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
     mutationFn: async ({
       item,
       approve,
+      edited_content,
     }: {
       item: ReviewItem;
       approve: boolean;
+      edited_content?: string;
     }) => {
       if (item.kind === "revision") {
         return approve
-          ? acceptPendingRevision(item.targetSourceId)
+          ? edited_content === undefined
+            ? acceptPendingRevision(item.targetSourceId)
+            : acceptPendingRevision(item.revisionSourceId, { expected_content: item.content, content: edited_content })
           : dismissPendingRevision(item.targetSourceId);
       }
       if (item.kind === "capture") {
@@ -250,11 +254,11 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
       }
       return approve ? acceptRefinement(item.id) : rejectRefinement(item.id);
     },
-    onError: (error, { item }) => {
+    onError: (error, { item, edited_content }) => {
       // The daemon discards a page revision card that can no longer apply.
       // Drop it here too, so neither the queue nor the page banner keeps
       // offering a card that is already gone.
-      if (item.kind !== "revision" || !(isPageRevisionOutdated(error) || isPageRevisionBasisRefused(error))) return;
+      if (edited_content !== undefined || item.kind !== "revision" || !(isPageRevisionOutdated(error) || isPageRevisionBasisRefused(error))) return;
       queryClient.setQueriesData<PendingRevisionItem[]>(
         { queryKey: REVISIONS_KEY },
         (old) =>
@@ -265,7 +269,7 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
       }
       queryClient.invalidateQueries({ queryKey: REVISIONS_KEY });
     },
-    onSuccess: (_result, { item, approve }) => {
+    onSuccess: (_result, { item, approve, edited_content }) => {
       if (approve && item.kind === "refinement" && item.action === "vocab_promote") {
         // Promoting an entity type also retypes its active concept pages.
         for (const key of ["entity-detail", "entityDetail", "entities", "space-entities",
@@ -289,7 +293,9 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
           { queryKey: REVISIONS_KEY },
           (old) =>
             old?.filter(
-              (entry) => entry.target_source_id !== item.targetSourceId,
+              (entry) => edited_content === undefined
+                ? entry.target_source_id !== item.targetSourceId
+                : entry.revision_source_id !== item.revisionSourceId,
             ) ?? [],
         );
       } else if (item.kind === "capture") {

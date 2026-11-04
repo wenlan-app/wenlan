@@ -254,6 +254,8 @@ pub enum SourceType {
     /// An Open Knowledge Format (OKF) bundle, such as an OpenWiki wiki: one
     /// source page per concept, provenance kept for display, one Space.
     Okf,
+    /// A manually synchronized collection from Zotero's local library.
+    Zotero,
 }
 
 impl SourceType {
@@ -263,6 +265,7 @@ impl SourceType {
             Self::Directory => "directory",
             Self::Logseq => "logseq",
             Self::Okf => "okf",
+            Self::Zotero => "zotero",
         }
     }
 }

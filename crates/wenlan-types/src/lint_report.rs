@@ -345,7 +345,11 @@ impl LintReport {
             totals.passed(),
             totals.actionable_findings(),
             totals.advisory_findings(),
-            if totals.advisory_findings() == 1 { "y" } else { "ies" },
+            if totals.advisory_findings() == 1 {
+                "y"
+            } else {
+                "ies"
+            },
             totals.incomplete()
         );
         for group in LintCheckGroup::ALL {

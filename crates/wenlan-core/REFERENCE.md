@@ -44,6 +44,27 @@ One libSQL database at the platform data directory (`dirs::data_local_dir()/orig
 
 **Sharing pattern**: `MemoryDB` is wrapped in `Arc<MemoryDB>` at the state layer (`ServerState.db: Option<Arc<MemoryDB>>`). This lets handlers clone the `Arc` out of the `RwLock<ServerState>` guard and drop the guard before performing long-running operations.
 
+## Checked source generations for agent page writes
+
+`db/citation_sources.rs` resolves declared sources in the target page's Space.
+Canonical indexed file/webpage IDs use complete, consistent chunks (at most 2 MiB
+and 10,000 chunks); exact chunk-row IDs use only that chunk as evidence while
+fencing the whole source generation. Missing, ambiguous, incomplete, or oversized
+sources fail with `source_read_refused`; they are never silently truncated.
+File/webpage claim checks select one contiguous 800-character window per cited
+source, independently for sentence and paragraph fallback. Internal storage kind
+selects this scoring mode; persisted evidence kinds and edge semantics stay unchanged.
+
+Create, update, checked same-title attachment, revision staging, and acceptance
+recheck source fingerprints inside their write transactions. If a checked agent
+update needs approval for protected human sentences, it stages a whole revision
+card; legacy updates without source snapshots retain their sentence-proposal path.
+AI-only changes remain eligible for direct updates. Adopt rechecks the actual
+adopted body; Adjust preserves exact human text and clears citation records when
+support or marker positions no longer match. Existing legacy backfill behavior is
+unchanged. Sentence rechecks retain scoped page-locator and full folder-memory
+compatibility and fence both source generations and the target page Space.
+
 ## Events (`EventEmitter`, `events.rs`)
 
 Instead of passing `tauri::AppHandle` into business logic, `wenlan-core` defines an `EventEmitter` trait — this keeps the crate framework-agnostic and testable with `NoopEmitter` in unit tests:

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "../PageDetail";
@@ -66,6 +66,18 @@ describe("PageDetail export", () => {
     await renderMenu();
     expect(screen.queryByRole("menuitem", { name: /^Export to/ })).toBeNull();
     expect(tauri.exportPageToObsidian).not.toHaveBeenCalled();
+  });
+
+  it("offers a current saved-version snapshot and reloads the page when opened", async () => {
+    vi.mocked(tauri.listRegisteredSources).mockResolvedValue(sources("vault-one"));
+    const { user } = await renderMenu();
+    const action = screen.getByRole("menuitem", { name: "Export snapshot…" });
+    expect(action).toBeEnabled();
+    await user.click(action);
+    expect(await screen.findByRole("dialog", { name: "Export page snapshot" })).toBeInTheDocument();
+    await waitFor(() => expect(tauri.getPage).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/Saved version 1 ·/)).toBeInTheDocument();
+    await waitFor(() => expect(tauri.getPageSources).toHaveBeenCalledTimes(2));
   });
 
 
