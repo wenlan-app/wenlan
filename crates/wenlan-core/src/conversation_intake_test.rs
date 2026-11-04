@@ -350,6 +350,9 @@ fn ux_thing_1_titles_follow_the_app_language() {
     );
     assert!(prompt.contains("in Traditional Chinese"));
     assert!(prompt.contains("folder \"wenlan\""));
+    // Real use (2026-11-04): a design discussion with no code came out as
+    // not work.
+    assert!(prompt.contains("even when nothing was built"));
 }
 
 #[test]

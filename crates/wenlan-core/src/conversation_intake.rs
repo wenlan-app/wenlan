@@ -656,7 +656,9 @@ pub fn label_prompt(conv: &FoundConversation, spaces: &[String], language: &str)
 Latest message: {latest}\nAssistant's last reply (end): {reply}\n\n\
 Spaces the person uses: {spaces}\n\n\
 Is this part of a piece of work the person would want to see later? Say false for a quick \
-question, a greeting, a test of the tool, a one-off lookup, or a one-off setup or cleanup.\n\
+question, a greeting, a test of the tool, a one-off lookup, or a one-off setup or cleanup. A \
+discussion, plan or decision about one of the person's projects is work, even when nothing was \
+built in it.\n\
 Give, in {language}: \"title\" (at most 12 words or 12 Chinese characters; name the larger goal \
 this serves, not this step), \"space\" (exactly one of the spaces above, or \"\" if none fits), \
 \"about\" (one sentence), \"status\" (one short sentence: where it stands now). {KEEP_NAMES}\n\
@@ -989,8 +991,10 @@ pub const MAX_DREAM_POINTS: usize = 8;
 pub const MAX_POINT_CHARS: usize = 200;
 /// Most conversations of one thing read in one night, newest first.
 pub const MAX_DREAM_CONVERSATIONS: usize = 6;
-/// Characters of each thing the person typed that the model reads.
-const DREAM_SAID_CHARS: usize = 400;
+/// Characters of each thing the person typed that the model reads. Work
+/// handed to an assistant comes as long instructions, so this is more than
+/// a label reads.
+const DREAM_SAID_CHARS: usize = 600;
 /// Most of the person's messages read from one conversation, newest kept.
 const DREAM_SAID: usize = 20;
 
@@ -1046,7 +1050,7 @@ pub fn dream_prompt(
         let reply = if conv.last_reply.is_empty() {
             "(none)".to_string()
         } else {
-            cut_end(&conv.last_reply, REPLY_CHARS)
+            cut_end(&conv.last_reply, MAX_REPLY_CHARS)
         };
         chats.push_str(&format!(
             "C{i}: what the person typed, oldest first:\n{said}\nAssistant's last reply (end): {reply}\n\n"
