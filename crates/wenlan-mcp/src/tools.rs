@@ -155,9 +155,10 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// the length of `steep`'s, then by the length of `doc_fix`'s, then by the
 /// length of `attach_file`'s, then by the length of `propose_note_change`'s,
 /// then by the length of `check_reply`'s, then by the length of
-/// `thing_map`'s.
+/// `thing_map`'s, then by the four folder and link tool descriptions, then by
+/// `list_entities` and `read_entity`.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 18_307;
+const DESCRIPTION_BUDGET_CHARS: usize = 19_314;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -679,6 +680,71 @@ pub enum PrepareLintRepairChoiceParam {
         memory_id: String,
         entity_ids: Vec<String>,
     },
+    EntityRelation {
+        selection: EntityRelationRepairSelectionParam,
+        #[schemars(with = "std::collections::BTreeMap<String, serde_json::Value>")]
+        selected_finding: wenlan_types::lint::LintSemanticFinding,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EntityRelationRepairChoiceParam {
+    Add {
+        from_entity: String,
+        to_entity: String,
+        relation_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_memory_id: Option<String>,
+    },
+    Retire {
+        relation_id: String,
+    },
+}
+
+impl From<EntityRelationRepairChoiceParam>
+    for wenlan_types::repair_relation::EntityRelationRepairChoice
+{
+    fn from(value: EntityRelationRepairChoiceParam) -> Self {
+        match value {
+            EntityRelationRepairChoiceParam::Add {
+                from_entity,
+                to_entity,
+                relation_type,
+                source_memory_id,
+            } => Self::Add {
+                from_entity,
+                to_entity,
+                relation_type,
+                source_memory_id,
+            },
+            EntityRelationRepairChoiceParam::Retire { relation_id } => Self::Retire { relation_id },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntityRelationRepairSelectionParam {
+    pub review_id: String,
+    pub choice: EntityRelationRepairChoiceParam,
+}
+
+impl TryFrom<EntityRelationRepairSelectionParam>
+    for wenlan_types::repair_relation::EntityRelationRepairSelection
+{
+    type Error = wenlan_types::repair::RepairContractError;
+
+    fn try_from(value: EntityRelationRepairSelectionParam) -> Result<Self, Self::Error> {
+        let selection = Self {
+            review_id: value.review_id,
+            choice: value.choice.into(),
+        };
+        selection
+            .validate()
+            .map_err(|_| wenlan_types::repair::RepairContractError::InvalidPrepareRequest)?;
+        Ok(selection)
+    }
 }
 
 impl TryFrom<PrepareLintRepairChoiceParam> for wenlan_types::repair::RepairChoice {
@@ -708,6 +774,13 @@ impl TryFrom<PrepareLintRepairChoiceParam> for wenlan_types::repair::RepairChoic
                 memory_id,
                 entity_ids,
             } => Self::complete_entity_extraction(review_id, memory_id, entity_ids),
+            PrepareLintRepairChoiceParam::EntityRelation {
+                selection,
+                selected_finding,
+            } => {
+                let selection = selection.try_into()?;
+                Self::entity_relation(selection, selected_finding)
+            }
         }
     }
 }
@@ -902,7 +975,7 @@ pub struct DistillParams {
     pub target: Option<String>,
 
     #[schemars(
-        description = "When true, clears the user_edited flag on the target page before recompile. Use for /distill rebuild <page> to explicitly wipe user prose and regenerate from sources. Only valid when target is a single page id; the daemon ignores it otherwise. Requires daemon LLM."
+        description = "Internal single-page rebuild used by steep after explicit target-specific authorization. Regenerates AI-written prose from current sources; authored text and review locks retain their proposal protections. The old page and protection remain intact if generation fails or is discarded. Only valid for a single page id; other targets return a hint without rebuilding. Requires an available daemon model."
     )]
     #[serde(default)]
     pub force: Option<bool>,
@@ -1402,6 +1475,93 @@ pub struct ListPagesParams {
     #[schemars(description = "Skip this many pages first, default 0.")]
     #[serde(default)]
     pub offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListFoldersParams {
+    #[schemars(
+        description = "Only folders visible in this Space (project). Omit to list the shared Wiki folders; a locked WENLAN_SPACE always wins."
+    )]
+    #[serde(default, alias = "domain")]
+    pub space: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CreateFolderParams {
+    #[schemars(description = "Parent folder path; omit or use an empty string for the Wiki root.")]
+    #[serde(default)]
+    pub parent_path: String,
+    #[schemars(description = "Name of the new child folder.")]
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MovePageParams {
+    #[schemars(description = "Opaque page id from list_pages or read_page.")]
+    pub page_id: String,
+    #[schemars(
+        description = "The page's current storage_path from list_pages; the move fails if it changed."
+    )]
+    pub expected_storage_path: String,
+    #[schemars(
+        description = "Destination folder path; empty string moves the page to the Wiki root."
+    )]
+    pub folder_path: String,
+    #[schemars(
+        description = "Move journal identifier, not a server-side deduplication key. Use a unique value per intended move; reuse only for an identical retry. Read back the current path after an uncertain result."
+    )]
+    pub operation_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetPageLinksParams {
+    #[schemars(description = "Opaque page id from list_pages, recall, or read_page.")]
+    pub page_id: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityStatusParam {
+    Detected,
+    Established,
+    Archived,
+}
+
+impl From<EntityStatusParam> for wenlan_types::entities::EntityStatus {
+    fn from(value: EntityStatusParam) -> Self {
+        match value {
+            EntityStatusParam::Detected => Self::Detected,
+            EntityStatusParam::Established => Self::Established,
+            EntityStatusParam::Archived => Self::Archived,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListEntitiesParams {
+    #[schemars(description = "Name or alias substring to search for.")]
+    #[serde(default)]
+    pub query: Option<String>,
+    #[schemars(
+        description = "Only entities in this Space (project). Omit to list every Space the caller may read; a locked WENLAN_SPACE always wins."
+    )]
+    #[serde(default, alias = "domain")]
+    pub space: Option<String>,
+    #[schemars(description = "Optional lifecycle filter: detected, established, or archived.")]
+    #[serde(default)]
+    pub status: Option<EntityStatusParam>,
+    #[schemars(description = "Maximum entities to return, 1 to 200, default 50.")]
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[schemars(description = "Skip this many entities first, default 0.")]
+    #[serde(default)]
+    pub offset: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReadEntityParams {
+    #[schemars(description = "Opaque entity id from list_entities or another Wenlan tool.")]
+    pub entity_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
@@ -2448,6 +2608,13 @@ fn render_brief_items(output: &mut String, label: &str, items: &[wenlan_types::B
 fn is_opaque_page_id(page_id: &str) -> bool {
     !page_id.is_empty()
         && page_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn is_opaque_entity_id(entity_id: &str) -> bool {
+    !entity_id.is_empty()
+        && entity_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
@@ -3702,7 +3869,11 @@ impl WenlanMcpServer {
             self.client.get(&detail_path),
             "create_relation source preflight"
         );
-        if source.memory.is_none() {
+        if source
+            .memory
+            .as_ref()
+            .is_none_or(|memory| memory.is_archived)
+        {
             return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
                 "Source memory {} is missing or not visible; relation was not created.",
                 params.source_memory_id
@@ -3720,11 +3891,21 @@ impl WenlanMcpServer {
             span: None,
             model_version: None,
             prompt_version: None,
+            preserve_existing: true,
         };
-        let resp: CreateRelationResponse = try_call!(
-            self.client.post("/api/memory/relations", &req),
-            "create_relation"
-        );
+        let resp: CreateRelationResponse = match self
+            .client
+            .post("/api/memory/relations/preserve", &req)
+            .await
+        {
+            Ok(resp) => resp,
+            Err(WenlanError::Api { status: 404, .. }) => {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(
+                    "This Wenlan daemon does not support safe relation creation yet. Upgrade the daemon, then retry; no relation was created, and this call did not fall back to the legacy relation endpoint.",
+                )]));
+            }
+            Err(error) => return Ok(tool_error(error, "create_relation")),
+        };
         Ok(CallToolResult::success(vec![ContentBlock::text(
             format_relation_ready_response(resp),
         )]))
@@ -4815,6 +4996,172 @@ impl WenlanMcpServer {
         })))
     }
 
+    pub async fn list_folders_impl(
+        &self,
+        params: ListFoldersParams,
+    ) -> Result<CallToolResult, McpError> {
+        let space = crate::lock_state::locked_space().or_else(|| {
+            params
+                .space
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        });
+        let query = space
+            .as_ref()
+            .map(|space| vec![("space", space.as_str())])
+            .unwrap_or_default();
+        let response: wenlan_types::responses::KnowledgeFoldersResponse = try_call!(
+            self.client.get_with_query("/api/knowledge/folders", &query),
+            "list_folders"
+        );
+        let value = serde_json::to_value(response)
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    pub async fn create_folder_impl(
+        &self,
+        params: CreateFolderParams,
+    ) -> Result<CallToolResult, McpError> {
+        if self.transport == TransportMode::Http {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "This tool is not available over remote connections. Use local stdio MCP on the machine running Wenlan.",
+            )]));
+        }
+        let request = wenlan_types::requests::CreateKnowledgeFolderRequest {
+            parent_path: params.parent_path,
+            name: params.name,
+        };
+        let response: wenlan_types::responses::CreateKnowledgeFolderResponse = try_call!(
+            self.client.post("/api/knowledge/folders", &request),
+            "create_folder"
+        );
+        let value = serde_json::to_value(response)
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    pub async fn move_page_impl(&self, params: MovePageParams) -> Result<CallToolResult, McpError> {
+        if self.transport == TransportMode::Http {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "This tool is not available over remote connections. Use local stdio MCP on the machine running Wenlan.",
+            )]));
+        }
+        if !is_opaque_page_id(&params.page_id) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Invalid page id. Use the page's opaque identifier, not a URL or file path.",
+            )]));
+        }
+        if params.expected_storage_path.trim().is_empty() {
+            return Err(McpError::invalid_params(
+                "expected_storage_path must be the current storage_path from list_pages",
+                None,
+            ));
+        }
+        if params.operation_id.trim().is_empty() {
+            return Err(McpError::invalid_params(
+                "operation_id must be non-empty and reused only for retries of the identical move",
+                None,
+            ));
+        }
+        let request = wenlan_types::requests::MovePageRequest {
+            expected_storage_path: params.expected_storage_path,
+            folder_path: params.folder_path,
+            operation_id: params.operation_id,
+        };
+        let path = format!("/api/pages/{}/move", params.page_id);
+        let response: wenlan_types::responses::MovePageResponse = match self
+            .client
+            .post(&path, &request)
+            .await
+        {
+            Ok(response) => response,
+            Err(WenlanError::Api {
+                status: 409,
+                reason,
+            }) => {
+                let detail = reason.unwrap_or_else(|| "page location changed".into());
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Move conflicted ({detail}). Re-read the page with list_pages or read_page and use its current storage_path; use a fresh operation_id for the changed move. Reuse an operation_id only to retry the identical request."
+                ))]));
+            }
+            Err(error) => return Ok(tool_error(error, "move_page")),
+        };
+        let value = serde_json::to_value(response)
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    pub async fn get_page_links_impl(&self, page_id: &str) -> Result<CallToolResult, McpError> {
+        if !is_opaque_page_id(page_id) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Invalid page id. Use the page's opaque identifier, not a URL or file path.",
+            )]));
+        }
+        let path = format!("/api/pages/{page_id}/links");
+        let response: wenlan_types::responses::PageLinksResponse =
+            try_call!(self.client.get(&path), "get_page_links");
+        let value = serde_json::to_value(response)
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    pub async fn list_entities_impl(
+        &self,
+        params: ListEntitiesParams,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = params.limit.unwrap_or(50);
+        if !(1..=200).contains(&limit) {
+            return Err(McpError::invalid_params(
+                "limit must be between 1 and 200",
+                None,
+            ));
+        }
+        let offset = params.offset.unwrap_or(0);
+        let limit = u32::try_from(limit)
+            .map_err(|_| McpError::invalid_params("limit is too large", None))?;
+        let offset = u32::try_from(offset)
+            .map_err(|_| McpError::invalid_params("offset is too large", None))?;
+        let request = wenlan_types::requests::ListEntitiesRequest {
+            query: params.query,
+            space: crate::lock_state::locked_space().or_else(|| {
+                params
+                    .space
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|space| !space.is_empty())
+                    .map(str::to_string)
+            }),
+            status: params.status.map(Into::into),
+            limit: Some(limit),
+            offset: Some(offset),
+            ..Default::default()
+        };
+        let response: wenlan_types::responses::ListEntitiesResponse = try_call!(
+            self.client.post("/api/memory/entities/query", &request),
+            "list_entities"
+        );
+        let value = serde_json::to_value(response)
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    pub async fn read_entity_impl(&self, entity_id: &str) -> Result<CallToolResult, McpError> {
+        if !is_opaque_entity_id(entity_id) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Invalid entity id. Use the entity's opaque identifier, not a URL or file path.",
+            )]));
+        }
+        let path = format!("/api/memory/entities/{entity_id}");
+        let response: wenlan_types::entities::EntityDetail =
+            try_call!(self.client.get(&path), "read_entity");
+        let value = serde_json::to_value(response)
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        Ok(CallToolResult::structured(value))
+    }
+
     pub async fn update_brief_impl(
         &self,
         params: UpdateBriefParams,
@@ -5152,6 +5499,13 @@ fn append_write_receipt(
 
 fn format_relation_ready_response(resp: CreateRelationResponse) -> String {
     let mut text = format!("Relation {} ready", resp.id);
+    if let Some(wrote) = resp.wrote {
+        text.push_str(if wrote {
+            "\nwrite_outcome: created"
+        } else {
+            "\nwrite_outcome: unchanged"
+        });
+    }
     for warning in resp.warnings {
         text.push_str(&format!("\nwarning: {warning}"));
     }
@@ -5730,6 +6084,108 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "List folders in the Wiki, optionally filtered by Space. Folder organization does not change Spaces, entities, or page content.",
+        annotations(
+            title = "List folders",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn list_folders(
+        &self,
+        Parameters(params): Parameters<ListFoldersParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.list_folders_impl(params).await
+    }
+
+    #[tool(
+        description = "Create a Wiki folder. Organization does not change Spaces, entities, or page content. Local stdio only.",
+        annotations(
+            title = "Create folder",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn create_folder(
+        &self,
+        Parameters(params): Parameters<CreateFolderParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.create_folder_impl(params).await
+    }
+
+    #[tool(
+        description = "Move one active file page into a Wiki folder. Only active file pages can move; page content, Space, and entities do not change. Pass the current storage_path and a stable operation_id; after a conflict re-read the page. Local stdio only.",
+        annotations(
+            title = "Move page",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn move_page(
+        &self,
+        Parameters(params): Parameters<MovePageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.move_page_impl(params).await
+    }
+
+    #[tool(
+        description = "Get the pages linked from this page and the pages linking to it. Page links are read only; folder organization does not change Spaces, entities, or page content.",
+        annotations(
+            title = "Get page links",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn get_page_links(
+        &self,
+        Parameters(params): Parameters<GetPageLinksParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.get_page_links_impl(&params.page_id).await
+    }
+
+    #[tool(
+        description = "List knowledge graph entities with their ids, names, types, Spaces, lifecycle status, and linked-memory counts. Filter by name or alias substring and status; page with limit and offset.",
+        annotations(
+            title = "List entities",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn list_entities(
+        &self,
+        Parameters(params): Parameters<ListEntitiesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.list_entities_impl(params).await
+    }
+
+    #[tool(
+        description = "Read one entity's current identity, observations, and incoming or outgoing relations. Use it to disambiguate an entity or inspect its current edges before changing the graph.",
+        annotations(
+            title = "Read entity",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn read_entity(
+        &self,
+        Parameters(params): Parameters<ReadEntityParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.read_entity_impl(&params.entity_id).await
+    }
+
+    #[tool(
         description = "Hand off to the next session by updating the Space Brief: replace the summary (guarded by expected_version) and add, edit, move, gate, or complete items. Read brief first and reuse its brief_version and item versions; conflicts are reported, never silently overwritten. The first update creates the Brief. Local stdio only.",
         annotations(
             title = "Update brief",
@@ -5967,6 +6423,8 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "accept_revision",
     "dismiss_revision",
     "propose_note_change",
+    "create_folder",
+    "move_page",
 ];
 
 impl WenlanMcpServer {
@@ -6877,7 +7335,17 @@ mod tests {
     fn query_only_refuses_denied_hidden_and_unknown_names_before_dispatch() {
         let server =
             make_server_with_profile(TransportMode::Stdio, "agent", None, ToolProfile::QueryOnly);
-        for name in ["capture", "write_page", "future_tool"] {
+        for name in [
+            "capture",
+            "write_page",
+            "list_folders",
+            "create_folder",
+            "move_page",
+            "get_page_links",
+            "list_entities",
+            "read_entity",
+            "future_tool",
+        ] {
             let refusal = server
                 .query_only_refusal(name)
                 .unwrap_or_else(|| panic!("query-only must refuse {name}"));
@@ -7077,7 +7545,14 @@ mod tests {
         for name in ["forget", "rename_page", "delete_page"] {
             assert!(!names.iter().any(|n| n == name), "{name} must stay hidden");
         }
-        for name in ["capture", "write_page", "read_page", "list_pages"] {
+        for name in [
+            "capture",
+            "write_page",
+            "read_page",
+            "list_pages",
+            "list_folders",
+            "get_page_links",
+        ] {
             assert!(names.iter().any(|n| n == name), "{name} must stay listed");
         }
         assert_eq!(
@@ -8066,6 +8541,61 @@ mod tests {
                 "before_title": "Before",
                 "after_title": "After"
             })
+        );
+
+        let selected_finding = wenlan_types::lint::LintSemanticFinding::try_new(
+            wenlan_types::lint::LintOpaqueId::from_sorted_position(1).unwrap(),
+            wenlan_types::lint::LintSemanticAction::AddEntityRelation,
+            wenlan_types::lint::LintSemanticReasonCode::SharedContextWithoutRelation,
+            9_000,
+            wenlan_types::lint::LintSemanticProviderRoute::ConfiguredExternal,
+            vec![wenlan_types::lint::LintDigest::from_u64(1)],
+            Vec::new(),
+        )
+        .unwrap();
+        let relation: PrepareLintRepairChoiceParam = serde_json::from_value(serde_json::json!({
+            "kind": "entity_relation",
+            "selection": {
+                "review_id": "review_1",
+                "choice": {
+                    "kind": "add",
+                    "from_entity": "ent_acme",
+                    "to_entity": "ent_beta",
+                    "relation_type": "partner_of",
+                    "source_memory_id": "mem_evidence"
+                }
+            },
+            "selected_finding": selected_finding
+        }))
+        .unwrap();
+        let choice = wenlan_types::repair::RepairChoice::try_from(relation.clone()).unwrap();
+        let relation_json = serde_json::to_value(choice).unwrap();
+        assert_eq!(relation_json["kind"], "entity_relation");
+        assert_eq!(relation_json["selection"]["review_id"], "review_1");
+        assert_eq!(relation_json["selection"]["choice"]["kind"], "add");
+        assert_eq!(
+            serde_json::to_value(relation).unwrap()["kind"],
+            "entity_relation"
+        );
+
+        let invalid_relation: PrepareLintRepairChoiceParam =
+            serde_json::from_value(serde_json::json!({
+                "kind": "entity_relation",
+                "selection": {
+                    "review_id": "review_1",
+                    "choice": {
+                        "kind": "add",
+                        "from_entity": "ent_same",
+                        "to_entity": "ent_same",
+                        "relation_type": "partner_of"
+                    }
+                },
+                "selected_finding": selected_finding
+            }))
+            .unwrap();
+        assert!(
+            wenlan_types::repair::RepairChoice::try_from(invalid_relation).is_err(),
+            "invalid/self-loop relation choices must be rejected before plan preparation"
         );
 
         for rejected in [
@@ -9591,6 +10121,378 @@ mod tests {
         assert_eq!(pages[1]["review_required"], false);
     }
 
+    #[tokio::test]
+    async fn organization_tools_forward_typed_requests_and_responses() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/knowledge/folders"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "folders": [{"path":"notes/work", "parent_path":"notes", "name":"work"}],
+                "truncated": false
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/knowledge/folders"))
+            .and(body_json(
+                serde_json::json!({"parent_path":"notes", "name":"work"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "path": "notes/work"
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages/page_1/move"))
+            .and(body_json(serde_json::json!({
+                "expected_storage_path":"notes/page.md",
+                "folder_path":"notes/work",
+                "operation_id":"move_abc"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "storage_path": "notes/work/page.md"
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_1/links"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "outbound": [{"label":"Target", "target_page_id":"page_2", "target_title":"Target"}],
+                "inbound": [{"source_page_id":"page_3", "label":"Page one"}]
+            })))
+            .mount(&mock)
+            .await;
+
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        let folders = server
+            .list_folders_impl(ListFoldersParams { space: None })
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(folders["folders"][0]["path"], "notes/work");
+        assert_eq!(folders["truncated"], false);
+
+        let created = server
+            .create_folder_impl(CreateFolderParams {
+                parent_path: "notes".into(),
+                name: "work".into(),
+            })
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(created["path"], "notes/work");
+
+        let moved = server
+            .move_page_impl(MovePageParams {
+                page_id: "page_1".into(),
+                expected_storage_path: "notes/page.md".into(),
+                folder_path: "notes/work".into(),
+                operation_id: "move_abc".into(),
+            })
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(moved["storage_path"], "notes/work/page.md");
+
+        let links = server
+            .get_page_links_impl("page_1")
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(links["outbound"][0]["target_page_id"], "page_2");
+        assert_eq!(links["inbound"][0]["source_page_id"], "page_3");
+    }
+
+    #[tokio::test]
+    async fn list_folders_keeps_explicit_and_strict_space_scope() {
+        use wiremock::matchers::{header, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _pin = pin_space(Some("work")).await;
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/knowledge/folders"))
+            .and(query_param("space", "work"))
+            .and(header("x-wenlan-space", "work"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "folders": [], "truncated": false
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        let result = server
+            .list_folders_impl(ListFoldersParams {
+                space: Some("other".into()),
+            })
+            .await
+            .unwrap();
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["folders"],
+            serde_json::json!([])
+        );
+        mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn page_link_and_move_tools_reject_non_opaque_ids_without_requests() {
+        use wiremock::MockServer;
+
+        let mock = MockServer::start().await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        for result in [
+            server
+                .get_page_links_impl("https://example.test/page")
+                .await
+                .unwrap(),
+            server
+                .move_page_impl(MovePageParams {
+                    page_id: "../page_1".into(),
+                    expected_storage_path: "notes/page.md".into(),
+                    folder_path: "notes/work".into(),
+                    operation_id: "move_abc".into(),
+                })
+                .await
+                .unwrap(),
+        ] {
+            assert_eq!(result.is_error, Some(true));
+            assert!(text_of(&result).contains("Invalid page id"));
+        }
+        assert!(received(&mock).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn move_page_conflict_prompts_reread_and_preserves_retry_guidance() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages/page_1/move"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "error": "storage_path_changed"
+            })))
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        let result = server
+            .move_page_impl(MovePageParams {
+                page_id: "page_1".into(),
+                expected_storage_path: "notes/page.md".into(),
+                folder_path: "notes/work".into(),
+                operation_id: "move_abc".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let text = text_of(&result);
+        assert!(text.contains("Re-read the page"), "{text}");
+        assert!(text.contains("current storage_path"), "{text}");
+        assert!(text.contains("identical request"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn entity_tools_forward_typed_queries_and_detail_responses_with_scope() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _pin = pin_space(Some("work")).await;
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/memory/entities/query"))
+            .and(header("x-wenlan-space", "work"))
+            .and(body_json(serde_json::json!({
+                "entity_type": null,
+                "space": "work",
+                "status": "established",
+                "min_memories": null,
+                "max_memories": null,
+                "query": "acme",
+                "limit": 12,
+                "offset": 6
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "entities": [{
+                    "id":"entity_acme", "name":"Acme", "entity_type":"company",
+                    "space":"work", "source_agent":"codex", "confidence":0.9,
+                    "confirmed":true, "created_at":1, "updated_at":2,
+                    "aliases":["ACME"], "memory_count":4, "status":"established",
+                    "established_by":"manual"
+                }],
+                "total": 13
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/memory/entities/entity_acme"))
+            .and(header("x-wenlan-space", "work"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "entity": {
+                    "id":"entity_acme", "name":"Acme", "entity_type":"company",
+                    "space":"work", "source_agent":"codex", "confidence":0.9,
+                    "confirmed":true, "created_at":1, "updated_at":2,
+                    "aliases":["ACME"], "memory_count":4, "status":"established",
+                    "established_by":"manual"
+                },
+                "observations": [{
+                    "id":"obs_1", "entity_id":"entity_acme", "content":"Builds widgets",
+                    "source_agent":"codex", "confidence":0.8, "confirmed":true, "created_at":3
+                }],
+                "relations": [{
+                    "id":"rel_1", "relation_type":"partner_of", "direction":"outgoing",
+                    "entity_id":"entity_beta", "entity_name":"Beta", "entity_type":"company",
+                    "source_agent":"codex", "created_at":4, "confidence":0.7
+                }]
+            })))
+            .mount(&mock)
+            .await;
+
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        let entities = server
+            .list_entities_impl(ListEntitiesParams {
+                query: Some("acme".into()),
+                space: Some("other".into()),
+                status: Some(EntityStatusParam::Established),
+                limit: Some(12),
+                offset: Some(6),
+            })
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(entities["total"], 13);
+        assert_eq!(entities["entities"][0]["status"], "established");
+
+        let detail = server
+            .read_entity_impl("entity_acme")
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(detail["observations"][0]["content"], "Builds widgets");
+        assert_eq!(detail["relations"][0]["entity_id"], "entity_beta");
+        mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn entity_inventory_rejects_out_of_range_paging_and_detail_rejects_bad_ids() {
+        use wiremock::MockServer;
+
+        let mock = MockServer::start().await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        let bad_limit = server
+            .list_entities_impl(ListEntitiesParams {
+                query: None,
+                space: None,
+                status: None,
+                limit: Some(0),
+                offset: None,
+            })
+            .await;
+        assert!(bad_limit.is_err());
+
+        let bad_id = server.read_entity_impl("../entity_1").await.unwrap();
+        assert_eq!(bad_id.is_error, Some(true));
+        assert!(text_of(&bad_id).contains("Invalid entity id"));
+        assert!(received(&mock).await.is_empty());
+    }
+
+    #[test]
+    fn organization_tool_profiles_keep_reads_standard_only_and_writes_local_only() {
+        for transport in [TransportMode::Stdio, TransportMode::Http] {
+            let standard: Vec<String> = make_server(transport.clone(), "agent", None)
+                .visible_tools()
+                .into_iter()
+                .map(|tool| tool.name.to_string())
+                .collect();
+            for name in [
+                "list_folders",
+                "get_page_links",
+                "list_entities",
+                "read_entity",
+            ] {
+                assert!(standard.iter().any(|visible| visible == name), "{name}");
+            }
+            for profile in [ToolProfile::QueryOnly, ToolProfile::WebWrite] {
+                let visible = make_server_with_profile(transport.clone(), "agent", None, profile)
+                    .visible_tools();
+                for name in [
+                    "list_folders",
+                    "create_folder",
+                    "move_page",
+                    "get_page_links",
+                    "list_entities",
+                    "read_entity",
+                ] {
+                    assert!(
+                        visible.iter().all(|tool| tool.name != name),
+                        "{name} leaked into {profile:?}"
+                    );
+                }
+            }
+        }
+
+        for name in ["create_folder", "move_page"] {
+            assert!(LOCAL_ONLY_TOOL_NAMES.contains(&name));
+            let server = make_server(TransportMode::Http, "agent", None);
+            let refusal = server.local_only_refusal(name).expect("HTTP write refused");
+            assert_eq!(refusal.is_error, Some(true));
+        }
+    }
+
+    #[test]
+    fn entity_tool_schemas_expose_supported_lifecycle_filters_and_opaque_ids() {
+        let list_schema = serde_json::to_string(&schemars::schema_for!(ListEntitiesParams))
+            .expect("ListEntitiesParams schema serializes");
+        for status in ["detected", "established", "archived"] {
+            assert!(
+                list_schema.contains(status),
+                "missing {status}: {list_schema}"
+            );
+        }
+        let detail_schema = serde_json::to_string(&schemars::schema_for!(ReadEntityParams))
+            .expect("ReadEntityParams schema serializes");
+        assert!(detail_schema.contains("Opaque entity id"));
+    }
+
     /// read_page always states the review lock and the source count, even
     /// though the Page wire omits an unset lock.
     #[tokio::test]
@@ -9787,6 +10689,13 @@ mod tests {
         use wiremock::matchers::{body_json, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
+        // The create body inherits WENLAN_SPACE or WENLAN_DEFAULT_SPACE.
+        // Serialize this test with the other process-global Space fixtures and
+        // explicitly exercise the unscoped default case.
+        let _guard = crate::lock_state::ENV_LOCK.lock().await;
+        std::env::remove_var("WENLAN_SPACE");
+        std::env::remove_var("WENLAN_DEFAULT_SPACE");
+        crate::lock_state::init_from_env();
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/pages"))
@@ -11921,6 +12830,7 @@ mod tests {
             span: None,
             model_version: None,
             prompt_version: None,
+            preserve_existing: true,
         };
         let json = serde_json::to_value(req).unwrap();
         assert_eq!(json["from_entity"], "ent_alice");
@@ -11928,6 +12838,63 @@ mod tests {
         assert_eq!(json["relation_type"], "works_on");
         assert_eq!(json["source_memory_id"], "mem_user_statement");
         assert_eq!(json["source_agent"], "claude");
+        assert_eq!(json["preserve_existing"], true);
+    }
+
+    #[tokio::test]
+    async fn create_relation_reports_upgrade_when_safe_endpoint_is_missing_without_fallback() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/memory/mem_evidence/detail"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(memory_detail_json("mem_evidence", "work")),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/memory/relations/preserve"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                "error": "not found"
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        let result = server
+            .create_relation_impl(CreateRelationParams {
+                from_entity_id: "ent_alice".into(),
+                to_entity_id: "ent_wenlan".into(),
+                relation_type: "works_on".into(),
+                source_memory_id: "mem_evidence".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let message = text_of(&result);
+        assert!(message.contains("Upgrade the daemon"), "{message}");
+        assert!(message.contains("no relation was created"), "{message}");
+        assert!(
+            message.contains("did not fall back to the legacy relation endpoint"),
+            "{message}"
+        );
+        assert_eq!(
+            received(&mock).await,
+            vec![
+                ("GET".into(), "/api/memory/mem_evidence/detail".into()),
+                ("POST".into(), "/api/memory/relations/preserve".into()),
+            ]
+        );
     }
 
     #[test]
@@ -11948,6 +12915,7 @@ mod tests {
         let relation = format_relation_ready_response(CreateRelationResponse {
             id: "rel_alice_wenlan".into(),
             warnings: Vec::new(),
+            wrote: None,
         });
         assert_eq!(relation, "Relation rel_alice_wenlan ready");
         assert!(!relation.contains("Created"));
@@ -12459,6 +13427,7 @@ mod tests {
             ("attach_file", (false, false, false)),
             ("brief", (true, false, false)),
             ("capture", (false, true, false)),
+            ("create_folder", (false, false, false)),
             ("confirm_memory", (false, false, false)),
             ("create_entity", (false, false, false)),
             ("create_relation", (false, true, false)),
@@ -12470,11 +13439,16 @@ mod tests {
             ("get_memory_revisions", (true, false, false)),
             ("get_page_revisions", (true, false, false)),
             ("get_page_sources", (true, false, false)),
+            ("get_page_links", (true, false, false)),
+            ("list_entities", (true, false, false)),
             ("lint", (true, false, false)),
             ("lint_repair_apply", (false, true, false)),
             ("lint_repair_prepare", (false, false, false)),
             ("lint_repair_verify", (false, false, false)),
             ("list_pages", (true, false, false)),
+            ("list_folders", (true, false, false)),
+            ("read_entity", (true, false, false)),
+            ("move_page", (false, false, false)),
             ("list_pending", (true, false, false)),
             ("list_pending_imports", (true, false, false)),
             ("list_pending_revisions", (true, false, false)),
@@ -12864,6 +13838,7 @@ mod tests {
             "confirm_memory",
             "brief",
             "create_entity",
+            "create_folder",
             "create_relation",
             "delete_page",
             "dismiss_revision",
@@ -12873,19 +13848,24 @@ mod tests {
             "get_memory_revisions",
             "get_page_revisions",
             "get_page_sources",
+            "get_page_links",
+            "list_entities",
             "lint",
             "lint_repair_apply",
             "lint_repair_prepare",
             "lint_repair_verify",
             "list_pages",
+            "list_folders",
             "list_pending",
             "list_pending_imports",
             "list_pending_revisions",
+            "move_page",
             "list_refinements",
             "list_rejections",
             "page_basis",
             "page_code_basis",
             "propose_note_change",
+            "read_entity",
             "read_page",
             "recall",
             "rename_page",

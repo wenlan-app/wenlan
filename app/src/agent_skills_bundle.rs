@@ -12,7 +12,7 @@
 
 /// First 16 hex digits of the SHA-256 over every file's path and contents in
 /// `FILES`, sorted by path. Changes whenever any installed skill changes.
-pub const BUNDLE_VERSION: &str = "633908d29c0aea07";
+pub const BUNDLE_VERSION: &str = "bb5d5bd27c9c82b6";
 
 /// Every file of the bundle as (path relative to the skills folder, contents),
 /// sorted by path.
@@ -42,10 +42,6 @@ pub const FILES: &[(&str, &str)] = &[
         include_str!("../../plugin-agents/skills/wenlan/references/curate.md"),
     ),
     (
-        "wenlan/references/distill.md",
-        include_str!("../../plugin-agents/skills/wenlan/references/distill.md"),
-    ),
-    (
         "wenlan/references/forget.md",
         include_str!("../../plugin-agents/skills/wenlan/references/forget.md"),
     ),
@@ -62,8 +58,28 @@ pub const FILES: &[(&str, &str)] = &[
         include_str!("../../plugin-agents/skills/wenlan/references/setup.md"),
     ),
     (
+        "wenlan/references/status.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/status.md"),
+    ),
+    (
         "wenlan/references/steep.md",
         include_str!("../../plugin-agents/skills/wenlan/references/steep.md"),
+    ),
+    (
+        "wenlan/references/steep/new-material.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/steep/new-material.md"),
+    ),
+    (
+        "wenlan/references/steep/rebuild-pages.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/steep/rebuild-pages.md"),
+    ),
+    (
+        "wenlan/references/steep/refresh-pages.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/steep/refresh-pages.md"),
+    ),
+    (
+        "wenlan/references/steep/reshape-knowledge.md",
+        include_str!("../../plugin-agents/skills/wenlan/references/steep/reshape-knowledge.md"),
     ),
     (
         "wenlan/references/wiki.md",

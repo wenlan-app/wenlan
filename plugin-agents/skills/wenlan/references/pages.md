@@ -28,7 +28,7 @@ Act on its output — do NOT re-fetch, list again, or read bodies:
 
 - **`Opened <path>`** → one page matched and is now open. Print that line. Done.
 - **A bare path** → print it and say the OS launcher did not open it automatically.
-- **`no page matches: …`** → print it; suggest `/wenlan distill <query>`.
+- **`no page matches: …`** → print it; suggest `/wenlan steep <query>`.
 - **`N matches for … `** followed by `title · filename` lines → several matched.
   If several pages match, print the CLI output verbatim and ask the user to rerun
   `/wenlan pages` with one of the filenames or a narrower query (titles can repeat, so
@@ -78,5 +78,7 @@ Do not fetch changelogs during ordinary `/wenlan pages` list/open flows.
 
 ## When NOT to use
 
+- Organizing existing pages, folders, or navigation → use `/wenlan steep`
+  with the complete goal and constraints.
 - Raw memory lookups → `/wenlan-recall`.
-- Synthesize a new page → `/wenlan distill`.
+- Synthesize a new page → `/wenlan steep`.

@@ -50,7 +50,11 @@ fn plugin_distribution_contains_required_files() {
         "plugin/skills/capture/SKILL.md",
         "plugin/skills/handoff/SKILL.md",
         "plugin/skills/setup/SKILL.md",
-        "plugin/skills/distill/SKILL.md",
+        "plugin/skills/steep/SKILL.md",
+        "plugin/skills/steep/references/new-material.md",
+        "plugin/skills/steep/references/refresh-pages.md",
+        "plugin/skills/steep/references/reshape-knowledge.md",
+        "plugin/skills/steep/references/rebuild-pages.md",
     ] {
         assert_file(path);
     }

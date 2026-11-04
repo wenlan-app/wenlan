@@ -25,7 +25,6 @@ CODEX_SKILLS_WITHOUT_MCP_REFERENCE = {"handoff", "pages"}
 CODEX_SKILLS_USING_RESOLVER = {
     "brief",
     "capture",
-    "distill",
     "handoff",
     "lint",
     "wiki",
@@ -43,10 +42,10 @@ CODEX_REQUIRED_GUARDRAILS = {
         "delete <id>",
         "Always confirm with the user before calling forget",
     ],
-    "distill": [
-        "rebuild <page-id>",
+    "steep": [
         "force=true",
-        "changes to your sentences come back as proposals",
+        "User-authored lines remain protected",
+        "obtain the user's explicit confirmation",
     ],
     "curate": [
         "revision_source_id",
@@ -111,7 +110,7 @@ LINT_SHARED_GUARDRAILS = [
 ]
 # A skill that refreshes pages reads a page's `basis` first and settles a
 # pending one through `page_basis`; the note-id/memory-id split must stay stated.
-PAGE_BASIS_SKILLS = {"handoff", "distill"}
+PAGE_BASIS_SKILLS = {"handoff"}
 PAGE_BASIS_GUARDRAILS = [
     "`pending`",
     '"diff"',
@@ -329,6 +328,7 @@ def load_contract(root: Path) -> dict[str, Any]:
 
 
 def contract_skill_sets(
+    root: Path,
     contract: dict[str, Any],
 ) -> tuple[set[str], set[str], dict[str, str]]:
     names: set[str] = set()
@@ -345,6 +345,35 @@ def contract_skill_sets(
         if name in names:
             fail(f"duplicate plugin-contract skill entry {name!r}")
         names.add(name)
+        supporting = item.get("supporting_references", [])
+        if not isinstance(supporting, list) or any(
+            not isinstance(ref, str) or not re.fullmatch(r"[a-z][a-z0-9-]*\.md", ref)
+            for ref in supporting
+        ):
+            fail(f"skill {name} supporting_references must be safe Markdown filenames")
+        if len(set(supporting)) != len(supporting):
+            fail(f"skill {name} supporting_references must not contain duplicates")
+        supporting_texts: dict[str, str] = {}
+        for ref in supporting:
+            path = root / "plugin" / "skills" / name / "references" / ref
+            if not path.is_file():
+                fail(f"skill {name} supporting reference is missing: {path}")
+            supporting_texts[ref] = path.read_text(encoding="utf-8")
+            if supporting_texts[ref].startswith("---\n"):
+                fail(f"skill {name} supporting reference {ref} must not have frontmatter")
+        if name == "steep":
+            expected = {"new-material.md", "refresh-pages.md", "reshape-knowledge.md", "rebuild-pages.md"}
+            if set(supporting) != expected:
+                fail("steep supporting_references must declare its four conditional operations")
+            reshape = supporting_texts["reshape-knowledge.md"]
+            for needle in ("stable page ID", "expected_version", "source_memory_id"):
+                if needle not in reshape:
+                    fail(f"plugin/skills/steep/references/reshape-knowledge.md must preserve {needle!r}")
+            rebuild = supporting_texts["rebuild-pages.md"]
+            normalized_rebuild = " ".join(rebuild.split())
+            for needle in ("force=true", "User-authored lines remain protected", "obtain the user's explicit confirmation"):
+                if needle not in normalized_rebuild:
+                    fail(f"plugin/skills/steep/references/rebuild-pages.md must preserve {needle!r}")
         if status not in ALLOWED_SKILL_STATUSES:
             fail(f"skill {name} has unsupported status {status!r}")
         if status == "shared_now":
@@ -364,6 +393,8 @@ def contract_skill_sets(
             if ref != f"wenlan/references/{name}.md":
                 fail(f"hidden skill {name} must set codex_reference 'wenlan/references/{name}.md'")
             hidden[name] = ref
+    if {"organize", "distill"} & names:
+        fail("organize and distill must be internal steep capabilities, not standalone skills")
     if hidden and "wenlan" not in shared_now:
         fail("hidden_routed skills need the shared wenlan entry skill")
     return shared_now, claude_only, hidden
@@ -734,10 +765,16 @@ def validate_skill_text(
             if needle not in normalized_text:
                 fail(f"{rel(root, skill_path)} must contain guardrail {needle!r}")
     if name == "wenlan":
-        normalized_text = " ".join(text.split())
+        status_path = (
+            root / "plugin" / "skills" / "wenlan" / "references" / "status.md"
+            if surface == "claude"
+            else root / "plugin-codex" / "skills" / "wenlan" / "references" / "status.md"
+        )
+        status_text = read_text(root, status_path)
+        normalized_text = " ".join((text + "\n" + status_text).split())
         for needle in WENLAN_ENTRY_GUARDRAILS:
             if needle not in normalized_text:
-                fail(f"{rel(root, skill_path)} must contain entry guardrail {needle!r}")
+                fail(f"{rel(root, skill_path)} and status reference must contain guardrail {needle!r}")
     if name in {"wenlan", "setup"}:
         normalized_text = " ".join(text.split())
         for needle in ENRICHMENT_CONSENT_GUARDRAILS:
@@ -814,6 +851,15 @@ def validate_skill_surface(
             for needle in CODEX_REQUIRED_GUARDRAILS.get(name, []):
                 if needle not in text:
                     fail(f"{rel(root, skill_path)} must contain guardrail {needle!r}")
+            supporting = next((s.get("supporting_references", []) for s in contract["skills"] if s.get("name") == name), [])
+            for filename in supporting:
+                ref_path = plugin_root / "skills" / name / "references" / filename
+                require_file(root, ref_path)
+                ref_text = read_text(root, ref_path)
+                if ref_text.startswith("---"):
+                    fail(f"{rel(root, ref_path)} must be plain Markdown without frontmatter")
+                if other_prefix in ref_text:
+                    fail(f"{rel(root, ref_path)} contains wrong MCP tool prefix {other_prefix!r}")
             metadata_path = plugin_root / "skills" / name / "agents" / "openai.yaml"
             require_file(root, metadata_path)
             metadata = read_text(root, metadata_path)
@@ -836,9 +882,28 @@ def validate_skill_surface(
         if name in CODEX_SKILLS_USING_RESOLVER:
             if "plugin-codex/bin/resolve-space.sh" not in text or CODEX_RESOLVER_LOCATOR not in text:
                 fail(f"{rel(root, ref_path)} must locate the installed resolver with {CODEX_RESOLVER_LOCATOR}")
+        supporting = next((s.get("supporting_references", []) for s in contract["skills"] if s.get("name") == name), [])
+        support_texts: list[str] = []
+        for filename in supporting:
+            supporting_path = ref_path.parent / name / filename
+            require_file(root, supporting_path)
+            supporting_text = read_text(root, supporting_path)
+            if supporting_text.startswith("---"):
+                fail(f"{rel(root, supporting_path)} must be plain Markdown without frontmatter")
+            if other_prefix in supporting_text:
+                fail(f"{rel(root, supporting_path)} contains wrong MCP tool prefix {other_prefix!r}")
+            support_texts.append(supporting_text)
+        combined_text = "\n".join([text, *support_texts])
+        combined_normalized = " ".join(combined_text.split())
         for needle in CODEX_REQUIRED_GUARDRAILS.get(name, []):
-            if needle not in text:
+            if needle not in combined_normalized:
                 fail(f"{rel(root, ref_path)} must contain guardrail {needle!r}")
+        if name == "steep":
+            reshape_path = ref_path.parent / "steep" / "reshape-knowledge.md"
+            reshape = read_text(root, reshape_path)
+            for needle in ("stable page ID", "expected_version", "source_memory_id"):
+                if needle not in reshape:
+                    fail(f"{rel(root, reshape_path)} must preserve safeguard {needle!r}")
 
 
 GENERATOR = Path(__file__).resolve().parent / "gen-codex-plugin.mjs"
@@ -865,7 +930,7 @@ def validate_codex_generated(root: Path) -> None:
 
 def validate_contract(root: Path) -> None:
     contract = load_contract(root)
-    shared_now, claude_only, hidden = contract_skill_sets(contract)
+    shared_now, claude_only, hidden = contract_skill_sets(root, contract)
     surfaces = contract["surfaces"]
 
     for surface, config in surfaces.items():

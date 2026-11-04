@@ -35,6 +35,10 @@ pub(crate) fn register_writes(router: TrackedRouter<SharedState>) -> TrackedRout
     router
         .route("/api/memory/entities", post(handle_create_entity))
         .route("/api/memory/relations", post(handle_create_relation))
+        .route(
+            "/api/memory/relations/preserve",
+            post(handle_create_relation_preserving),
+        )
         .route("/api/memory/observations", post(handle_add_observation))
         .route("/api/memory/link-entity", post(handle_link_entity))
 }
@@ -158,6 +162,52 @@ pub async fn handle_create_relation(
     req.prompt_version = None;
     let result = wenlan_core::post_write::create_relation(&db, req, &agent).await?;
     Ok(Json(CreateRelationResponse {
+        wrote: Some(result.wrote),
+        id: result.id,
+        warnings: result.warnings,
+    }))
+}
+
+/// Agent organization uses a distinct route so an older daemon fails closed
+/// instead of ignoring the new preserve flag and auto-superseding a relation.
+pub async fn handle_create_relation_preserving(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Json(mut req): Json<CreateRelationRequest>,
+) -> Result<Json<CreateRelationResponse>, ServerError> {
+    let agent = extract_agent_name(&headers, req.source_agent.as_deref());
+    let db = state
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or(ServerError::DbNotInitialized)?;
+    let _scope_guard = db.lock_space_writes().await;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    db.get_entity_detail_scoped(&req.from_entity, &scope)
+        .await?;
+    db.get_entity_detail_scoped(&req.to_entity, &scope).await?;
+    let source_id = req
+        .source_memory_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| ServerError::ValidationError("source_memory_id is required".into()))?;
+    if db
+        .get_memory_detail_scoped(source_id, &scope)
+        .await?
+        .as_ref()
+        .is_none_or(|memory| memory.is_archived)
+    {
+        return Err(ServerError::NotFound("source memory not found".into()));
+    }
+    req.preserve_existing = true;
+    req.span = None;
+    req.model_version = None;
+    req.prompt_version = None;
+    let result = wenlan_core::post_write::create_relation(&db, req, &agent).await?;
+    Ok(Json(CreateRelationResponse {
+        wrote: Some(result.wrote),
         id: result.id,
         warnings: result.warnings,
     }))

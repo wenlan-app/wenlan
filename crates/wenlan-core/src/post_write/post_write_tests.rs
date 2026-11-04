@@ -114,6 +114,7 @@ async fn create_entity_resolves_to_existing_by_name() {
 async fn create_relation_rejects_missing_from_entity() {
     let (db, _dir) = test_db().await;
     let req = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: "missing-1".to_string(),
         to_entity: "missing-2".to_string(),
         relation_type: "knows".to_string(),
@@ -143,6 +144,7 @@ async fn create_relation_rejects_bad_relation_type() {
         .await
         .unwrap();
     let req = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice,
         to_entity: bob,
         relation_type: "Knows!".to_string(),
@@ -172,6 +174,7 @@ async fn create_relation_happy_path() {
         .await
         .unwrap();
     let req = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice,
         to_entity: bob,
         relation_type: "knows".to_string(),
@@ -199,6 +202,7 @@ async fn create_relation_idempotent_no_double_log() {
         .await
         .unwrap();
     let req1 = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice.clone(),
         to_entity: bob.clone(),
         relation_type: "knows".to_string(),
@@ -212,6 +216,7 @@ async fn create_relation_idempotent_no_double_log() {
     };
     let first = create_relation(&db, req1, "agent-x").await.unwrap();
     let req2 = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice,
         to_entity: bob,
         relation_type: "knows".to_string(),
@@ -251,6 +256,7 @@ async fn identical_unbacked_relation_becomes_source_backed() {
     let first = create_relation(
         &db,
         CreateRelationRequest {
+            preserve_existing: false,
             from_entity: alice.clone(),
             to_entity: wenlan.clone(),
             relation_type: "works_on".to_string(),
@@ -281,6 +287,7 @@ async fn identical_unbacked_relation_becomes_source_backed() {
     let second = create_relation(
         &db,
         CreateRelationRequest {
+            preserve_existing: false,
             from_entity: alice.clone(),
             to_entity: wenlan.clone(),
             relation_type: "works_on".to_string(),
@@ -352,6 +359,7 @@ async fn create_relation_conflict_auto_supersedes_existing() {
 
     // Create existing relation: A-knows-B
     let req_knows = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice.clone(),
         to_entity: bob.clone(),
         relation_type: "knows".to_string(),
@@ -368,6 +376,7 @@ async fn create_relation_conflict_auto_supersedes_existing() {
 
     // Create conflicting relation: A-likes-B (different type, same pair)
     let req_likes = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice.clone(),
         to_entity: bob.clone(),
         relation_type: "likes".to_string(),
@@ -434,6 +443,7 @@ async fn create_relation_conflict_payload_contains_archived_snapshot() {
 
     // Existing relation carries full metadata that hard-delete would lose.
     let req_knows = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice.clone(),
         to_entity: bob.clone(),
         relation_type: "knows".to_string(),
@@ -452,6 +462,7 @@ async fn create_relation_conflict_payload_contains_archived_snapshot() {
 
     // Conflicting different-type relation triggers auto-supersede.
     let req_likes = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice.clone(),
         to_entity: bob.clone(),
         relation_type: "likes".to_string(),
@@ -500,6 +511,7 @@ async fn create_relation_conflict_no_op_when_existing_same_type() {
 
     // Create A-knows-B
     let req1 = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice.clone(),
         to_entity: bob.clone(),
         relation_type: "knows".to_string(),
@@ -515,6 +527,7 @@ async fn create_relation_conflict_no_op_when_existing_same_type() {
 
     // Create A-knows-B again (same type → idempotent early return)
     let req2 = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice.clone(),
         to_entity: bob.clone(),
         relation_type: "knows".to_string(),
@@ -562,6 +575,7 @@ async fn create_relation_no_conflict_when_no_existing_relation() {
 
     // First relation — no prior relation exists
     let req = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alice.clone(),
         to_entity: bob.clone(),
         relation_type: "likes".to_string(),

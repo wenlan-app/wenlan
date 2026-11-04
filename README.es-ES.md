@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=56f9ff9caff436589bb98772e21096c38651133957cda16f6db7f2a2b28bf861 -->
+<!-- README_SYNC: source=README.md sha256=30b6ff5b752a6fd1a08377d57c043c4aef9d98f4e96e976d2ac6abc0d7af3e4b -->
 
 <p align="center">
   <picture>
@@ -134,14 +134,15 @@ Guardar material es solo el comienzo. **Steep lo prepara para reutilizarlo y man
 
 Elige uno de dos modos en Settings:
 
-- **On demand** (las instalaciones nuevas empiezan aquí): cuando tu herramienta de IA guarda o escribe en Wenlan, hace Steep sobre la marcha y, mientras trabaja, sabe qué páginas están desactualizadas y qué material aún no está en ninguna página. No hace falta ningún comando; `/wenlan steep` está ahí si quieres ponerlo todo al día de una vez.
-- **Automatic:** Wenlan hace Steep en segundo plano con el modelo que asignes.
+- **On demand** (las instalaciones nuevas empiezan aquí): tu herramienta de IA se encarga de las tareas de conocimiento que solicites y puede procesar material nuevo y páginas pendientes de actualización. Guardar material también pone el trabajo que cumple los requisitos a disposición de la herramienta; `/wenlan steep` le pide que lo procese de una vez.
+- **Automatic:** Wenlan procesa en segundo plano el trabajo que cumpla los requisitos con los modelos que asignes. No deduce que quieras reorganizar el conocimiento existente; dile a la IA qué objetivo tienes.
 
 Qué hace Steep:
 
 - **Enriquece las memorias:** Añade tipos, detalles estructurados, pistas de búsqueda y enlaces al grafo para facilitar la recuperación contextual de cada hallazgo.
 - **Sigue la evidencia:** Los cambios en fuentes, memorias o código citado marcan las páginas dependientes para actualizarlas; las memorias nuevas también pueden enriquecer páginas compatibles. Si un borrador no supera las comprobaciones de citas, se conserva la página guardada. Superarlas no demuestra que los datos sean correctos.
 - **Conserva el control y el historial:** La actualización en segundo plano modifica las páginas compatibles mantenidas por IA; las páginas que hayas escrito o editado reciben propuestas de revisión. Las sustituciones explícitas ocultan o archivan las memorias anteriores y conservan sus enlaces. Las revisiones de páginas se pueden inspeccionar.
+- **Organiza según tu objetivo:** Pide a Steep que reorganice las memorias, páginas, carpetas, temas o relaciones pertinentes. Solo modifica lo que haga falta; la organización habitual no requiere una confirmación previa del plan.
 - **Ask me first:** Con **Ask me first on pages I wrote** activado, como en las instalaciones nuevas, los cambios de la IA en páginas que escribiste o editaste esperan tu visto bueno. El ajuste **AI changes** de cada página muestra **Allowed** o **Ask me first**. Las páginas que escribió la IA siguen actualizándose.
 
 <a id="what-it-does-on-its-own"></a>
@@ -152,7 +153,7 @@ En ambos modos, sin modelo, Wenlan:
 
 - **Marca páginas desactualizadas** cuando cambian sus fuentes, memorias o el código citado. Las páginas de la wiki de un repositorio muestran qué cambió en el código.
 - **Sugiere fusionar páginas casi duplicadas** con una tarjeta que tú o tu IA aceptan o descartan.
-- **Ordena los enlaces:** lista los `[[enlaces]]` que aún no llevan a ninguna página y quita las citas a memorias que borraste.
+- **Ordena los enlaces entre páginas:** lista los `[[enlaces]]` que aún no llevan a ninguna página y quita las citas a memorias que borraste.
 
 Reescribir una página marcada requiere un modelo. En **Automatic**, Wenlan lo hace en segundo plano. En **On demand**, tu herramienta de IA sabe qué páginas esperan y puede ponerlas al día mientras trabaja.
 
@@ -218,7 +219,7 @@ Flujo simplificado. Los comandos del plugin y la organización de páginas son o
 - **Conserva lo que aprendes.** Guarda una decisión o lección, junto con sus motivos y fuentes, en la aplicación o a través de tu IA (`/capture`).
 - **Pausa y retoma.** Guarda hallazgos y un registro de la sesión, actualiza las páginas afectadas y anota el progreso y los siguientes pasos en el Brief del proyecto (`/handoff`). La próxima vez, recupera ese contexto para continuar (`/brief`).
 
-**Organiza las memorias acumuladas cuando lo necesites:** Sintetiza o actualiza páginas con citas a partir de memorias relacionadas (`/wenlan distill`); no es necesario para escribir una página nueva. [Comandos del plugin](plugin/skills/README.md).
+**Organiza el conocimiento según tu objetivo:** Pide a Steep (`/wenlan steep`) que actualice las memorias, páginas, carpetas, temas o relaciones pertinentes. [Guía de Steep](docs/steep.md) y [comandos del plugin](plugin/skills/README.md).
 
 <a id="how-wenlan-works"></a>
 <a id="how-does-it-work"></a>

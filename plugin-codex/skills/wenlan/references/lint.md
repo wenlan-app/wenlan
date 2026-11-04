@@ -189,6 +189,15 @@ and the exact `choice`; the cached fresh reports supply the evidence.
 This turns exactly one Review Item into a separately approved manifest; it does
 not mutate the Review Item or canonical data. If the choice is ambiguous, keep
 the Review Item and stop.
+For an entity-relation Review Item, use only a matching Review Item and
+`selected_finding` from the fresh Agent-assisted Deep run. The exact choice is
+`{kind: "entity_relation", selection: {review_id, choice}, selected_finding}`;
+`choice` is either `{kind: "add", from_entity, to_entity, relation_type,
+source_memory_id?}` or `{kind: "retire", relation_id}`. Resolve entity ids and
+source memory ids from the inspected current records; do not infer them from
+names or invent a finding. If a matching current Review Item does not support
+the requested action, keep it as review and stop. The later exact approval and
+verify sequence above remains required.
 `lint_repair_review` generic accept remains rejected and non-mutating; never use
 generic refinement acceptance as a repair shortcut. A title choice contains
 only the Review Item id, Page id, before title, and after title. The fully

@@ -396,8 +396,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // kept original's provenance (`/api/pages/{id}/original`) one more.
     // The thing list and thing detail add two scoped readers, and a
     // thing's map one more. Conversation search and a conversation's
-    // lines add two more.
-    assert_eq!(rows.len(), 103);
+    // lines add two more. Protected relation creation adds one EntitySpace-scoped
+    // route; the organization MCP integration covers its endpoint and source gates.
+    assert_eq!(rows.len(), 104);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -408,7 +409,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        79
+        80
     );
     assert_eq!(
         rows.iter()

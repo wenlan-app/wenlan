@@ -44,4 +44,4 @@ so each item has its own decision.
   `supersedes` arg instead. If your agent's trust level is below full, that
   write may stage for human review instead of taking effect immediately.
 - Bulk deletions: use `$wenlan curate captures` so each item has its own decision.
-- Page rebuilds: use `$wenlan distill rebuild <page-id>`.
+- Page rebuilds: use `$wenlan steep rebuild <page-id>`.

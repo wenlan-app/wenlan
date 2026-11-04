@@ -178,6 +178,7 @@ async fn moved_entity_graph_handlers_preserve_typed_contracts() {
     assert_eq!(status, StatusCode::OK);
 
     let relation_request = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: alpha.id.clone(),
         to_entity: beta.id.clone(),
         relation_type: "depends_on".to_string(),
@@ -998,6 +999,7 @@ async fn merge_entity_apply_counts_match_what_moved() {
         .unwrap();
 
     let relation_request = CreateRelationRequest {
+        preserve_existing: false,
         from_entity: loser.id.clone(),
         to_entity: other.id.clone(),
         relation_type: "depends_on".to_string(),

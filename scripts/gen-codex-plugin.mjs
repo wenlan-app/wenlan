@@ -306,12 +306,29 @@ function finish(skill, text, contract) {
   return out;
 }
 
+function supportingReferenceNames(name, item) {
+  const refs = item.supporting_references ?? [];
+  if (!Array.isArray(refs)) throw new GenError(`${CONTRACT_PATH}: ${name} supporting_references must be an array`);
+  for (const ref of refs) {
+    if (typeof ref !== "string" || !/^[a-z][a-z0-9-]*\.md$/.test(ref)) {
+      throw new GenError(`${CONTRACT_PATH}: ${name} has unsafe supporting reference ${JSON.stringify(ref)}`);
+    }
+  }
+  if (new Set(refs).size !== refs.length) throw new GenError(`${CONTRACT_PATH}: ${name} has duplicate supporting references`);
+  return refs;
+}
+
 export function generateSkill(skill, claudeText, overlay, contract) {
   const { frontmatter, body } = splitFrontmatter(skill, claudeText);
   const lines = transformBody(skill, body, overlay, contract);
   const fm = transformFrontmatter(skill, frontmatter, overlay);
   const text = finish(skill, ["---", ...fm, "---", ...lines].join("\n"), contract);
   return { skill: text, openai: renderOpenai(skill, overlay.openai) };
+}
+
+function rebaseSupportingLinks(skill, text) {
+  if (skill !== "steep") return text;
+  return text.replace(/\]\(references\/([a-z][a-z0-9-]*\.md)(#[^)]+)?\)/g, "](steep/$1$2)");
 }
 
 // A hidden_routed skill becomes a plain reference file: the Claude body with
@@ -324,7 +341,7 @@ export function generateReference(skill, claudeText, overlay, contract) {
   checkHiddenFrontmatter(skill, frontmatter);
   let lines = transformBody(skill, body, overlay, contract);
   while (lines.length && lines[0] === "") lines = lines.slice(1);
-  return finish(skill, lines.join("\n"), contract);
+  return rebaseSupportingLinks(skill, finish(skill, lines.join("\n"), contract));
 }
 
 export function generateAll(root) {
@@ -347,8 +364,18 @@ export function generateAll(root) {
     const gen = generateSkill(skill, source(skill), overlayAll.skills[skill], contract);
     outputs.push({ path: `${codexRoot}/skills/${skill}/SKILL.md`, text: gen.skill });
     outputs.push({ path: `${codexRoot}/skills/${skill}/agents/openai.yaml`, text: gen.openai });
+    for (const file of supportingReferenceNames(skill, contract.skills.find((s) => s.name === skill))) {
+      const sourcePath = resolve(root, claudeRoot, "skills", skill, "references", file);
+      if (!existsSync(sourcePath)) throw new GenError(`${CONTRACT_PATH}: ${skill} supporting reference is missing: plugin/skills/${skill}/references/${file}`);
+      let supporting = readFileSync(sourcePath, "utf8");
+      if (supporting.startsWith("---\n")) throw new GenError(`${skill}/${file}: supporting references must be plain Markdown without frontmatter`);
+      supporting = swapResolver(skill, supporting.split("\n"), codexRoot).join("\n");
+      supporting = finish(skill, supporting, contract);
+      outputs.push({ path: `${codexRoot}/skills/${skill}/references/${file}`, text: supporting });
+    }
   }
-  for (const { name, codex_reference: ref } of hidden) {
+  for (const item of hidden) {
+    const { name, codex_reference: ref } = item;
     if (typeof ref !== "string" || !/^[a-z-]+\/references\/[a-z-]+\.md$/.test(ref)) {
       throw new GenError(`${CONTRACT_PATH}: ${name} needs codex_reference "<skill>/references/<name>.md"`);
     }
@@ -357,6 +384,15 @@ export function generateAll(root) {
     }
     const text = generateReference(name, source(name), overlayAll.skills[name] ?? {}, contract);
     outputs.push({ path: `${codexRoot}/skills/${ref}`, text });
+    for (const file of supportingReferenceNames(name, item)) {
+      const sourcePath = resolve(root, claudeRoot, "skills", name, "references", file);
+      if (!existsSync(sourcePath)) throw new GenError(`${CONTRACT_PATH}: ${name} supporting reference is missing: plugin/skills/${name}/references/${file}`);
+      let supporting = readFileSync(sourcePath, "utf8");
+      if (supporting.startsWith("---\n")) throw new GenError(`${name}/${file}: supporting references must be plain Markdown without frontmatter`);
+      supporting = swapResolver(name, supporting.split("\n"), codexRoot).join("\n");
+      supporting = finish(name, supporting, contract);
+      outputs.push({ path: `${codexRoot}/skills/${ref.replace(/\.md$/, "")}/${file}`, text: supporting });
+    }
   }
   return outputs;
 }

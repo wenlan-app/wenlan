@@ -84,6 +84,7 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/palace/layout"),
     ];
     const SCOPED: &[(Method, &str)] = &[
+        (Method::Post, "/api/memory/relations/preserve"),
         (Method::Get, "/api/knowledge/folders"),
         (Method::Post, "/api/pages/{id}/move"),
         (Method::Post, "/api/search"),

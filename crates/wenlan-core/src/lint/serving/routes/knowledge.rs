@@ -12,6 +12,7 @@ use super::{
 
 #[rustfmt::skip]
 pub(super) const ROUTES: &[SensitiveReadRoute] = &[
+    row!(Post,"/api/memory/relations/preserve","relation_create",HeaderOnly,UnauthenticatedLocal,EntitySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/profile","profile",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/agents","agent_list",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/agents/{name}","agent_detail",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),

@@ -192,7 +192,7 @@ pub async fn create_relation_with_span(
     // Source-less retries can return immediately. A source-backed retry must
     // reach the DB upsert so an existing unbacked triple gains provenance and
     // the canonical edge dual-write runs.
-    if req.source_memory_id.is_none() {
+    if !req.preserve_existing && req.source_memory_id.is_none() {
         if let Ok(existing) = db
             .list_relations_between(&req.from_entity, &req.to_entity)
             .await
@@ -214,8 +214,8 @@ pub async fn create_relation_with_span(
         }
     }
 
-    let id = db
-        .create_relation_with_span(
+    let (id, wrote) = if req.preserve_existing {
+        db.create_relation_with_span_preserving(
             &req.from_entity,
             &req.to_entity,
             rt,
@@ -228,7 +228,26 @@ pub async fn create_relation_with_span(
             req.model_version.as_deref(),
             req.prompt_version.as_deref(),
         )
-        .await?;
+        .await?
+    } else {
+        (
+            db.create_relation_with_span(
+                &req.from_entity,
+                &req.to_entity,
+                rt,
+                req.source_agent.as_deref(),
+                req.confidence,
+                req.explanation.as_deref(),
+                req.source_memory_id.as_deref(),
+                req.span.as_deref(),
+                source_content,
+                req.model_version.as_deref(),
+                req.prompt_version.as_deref(),
+            )
+            .await?,
+            true,
+        )
+    };
 
     // Post-write enrichment
     let mut warnings: Vec<String> = Vec::new();
@@ -240,51 +259,55 @@ pub async fn create_relation_with_span(
     // hand-applied via `accept_refinement(relation_conflict)` runs immediately
     // here. Activity log records the daemon's decision for power-user audit
     // (queryable via list_agent_activity).
-    if let Ok(existing) = db
-        .list_relations_between(&req.from_entity, &req.to_entity)
-        .await
-    {
-        for (existing_id, existing_type) in &existing {
-            if existing_id != &id && existing_type != rt {
-                match db.supersede_relation(existing_id, &id).await {
-                    Ok(archived) => {
-                        warnings.push(format!(
-                            "auto-superseded existing relation ({}-{}-{}); newer relation now active",
-                            req.from_entity, existing_type, req.to_entity
-                        ));
-                        let payload = serde_json::json!({
-                            "existing_id": existing_id,
-                            "new_id": id,
-                            "from": req.from_entity,
-                            "to": req.to_entity,
-                            "old_type": existing_type,
-                            "new_type": rt,
-                            "archived": archived,
-                        })
-                        .to_string();
-                        if let Err(e) = db
-                            .log_agent_activity(
-                                agent,
-                                "relation_supersede_auto",
-                                &[id.clone(), existing_id.clone()],
-                                None,
-                                &payload,
-                            )
-                            .await
-                        {
-                            log::warn!("[create_relation] auto-supersede activity log failed: {e}");
+    if !req.preserve_existing {
+        if let Ok(existing) = db
+            .list_relations_between(&req.from_entity, &req.to_entity)
+            .await
+        {
+            for (existing_id, existing_type) in &existing {
+                if existing_id != &id && existing_type != rt {
+                    match db.supersede_relation(existing_id, &id).await {
+                        Ok(archived) => {
+                            warnings.push(format!(
+                                "auto-superseded existing relation ({}-{}-{}); newer relation now active",
+                                req.from_entity, existing_type, req.to_entity
+                            ));
+                            let payload = serde_json::json!({
+                                "existing_id": existing_id,
+                                "new_id": id,
+                                "from": req.from_entity,
+                                "to": req.to_entity,
+                                "old_type": existing_type,
+                                "new_type": rt,
+                                "archived": archived,
+                            })
+                            .to_string();
+                            if let Err(e) = db
+                                .log_agent_activity(
+                                    agent,
+                                    "relation_supersede_auto",
+                                    &[id.clone(), existing_id.clone()],
+                                    None,
+                                    &payload,
+                                )
+                                .await
+                            {
+                                log::warn!(
+                                    "[create_relation] auto-supersede activity log failed: {e}"
+                                );
+                            }
                         }
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "[create_relation] auto-supersede of {} → {} failed: {e}",
-                            existing_id,
-                            id
-                        );
-                        warnings.push(format!(
-                            "conflicting relation exists ({}-{}-{}); auto-supersede failed",
-                            req.from_entity, existing_type, req.to_entity
-                        ));
+                        Err(e) => {
+                            log::warn!(
+                                "[create_relation] auto-supersede of {} → {} failed: {e}",
+                                existing_id,
+                                id
+                            );
+                            warnings.push(format!(
+                                "conflicting relation exists ({}-{}-{}); auto-supersede failed",
+                                req.from_entity, existing_type, req.to_entity
+                            ));
+                        }
                     }
                 }
             }
@@ -296,17 +319,19 @@ pub async fn create_relation_with_span(
         "from={}, to={}, type={}",
         req.from_entity, req.to_entity, rt
     );
-    if let Err(e) = db
-        .log_agent_activity(
-            agent,
-            "relation_create",
-            std::slice::from_ref(&id),
-            None,
-            &detail,
-        )
-        .await
-    {
-        log::warn!("[create_relation] activity log failed: {e}");
+    if wrote {
+        if let Err(e) = db
+            .log_agent_activity(
+                agent,
+                "relation_create",
+                std::slice::from_ref(&id),
+                None,
+                &detail,
+            )
+            .await
+        {
+            log::warn!("[create_relation] activity log failed: {e}");
+        }
     }
 
     Ok(WriteResult {
@@ -314,10 +339,14 @@ pub async fn create_relation_with_span(
         id,
         attached_to: None,
         warnings,
-        wrote: true,
+        wrote,
         revision_card_id: None,
         gated: false,
-        outcome: WriteOutcome::Wrote,
+        outcome: if wrote {
+            WriteOutcome::Wrote
+        } else {
+            WriteOutcome::Unchanged
+        },
         acknowledged: false,
         sentence_proposals: Vec::new(),
     })

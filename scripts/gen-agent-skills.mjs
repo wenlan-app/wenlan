@@ -203,6 +203,23 @@ function finish(skill, text, contract, prefixed, isSkill) {
   return out;
 }
 
+function supportingReferenceNames(name, item) {
+  const refs = item.supporting_references ?? [];
+  if (!Array.isArray(refs)) throw new GenError(`${CONTRACT_PATH}: ${name} supporting_references must be an array`);
+  for (const ref of refs) {
+    if (typeof ref !== "string" || !/^[a-z][a-z0-9-]*\.md$/.test(ref)) {
+      throw new GenError(`${CONTRACT_PATH}: ${name} has unsafe supporting reference ${JSON.stringify(ref)}`);
+    }
+  }
+  if (new Set(refs).size !== refs.length) throw new GenError(`${CONTRACT_PATH}: ${name} has duplicate supporting references`);
+  return refs;
+}
+
+function rebaseSupportingLinks(skill, text) {
+  if (skill !== "steep") return text;
+  return text.replace(/\]\(references\/([a-z][a-z0-9-]*\.md)(#[^)]+)?\)/g, "](steep/$1$2)");
+}
+
 const prefixedSkills = (contract) =>
   contract.skills
     .filter((s) => s.status === "shared_now" && s.name !== FRONT_DOOR)
@@ -226,7 +243,7 @@ export function generateReference(skill, claudeText, overlay, contract) {
   checkHiddenFrontmatter(skill, frontmatter);
   let lines = transformBody(skill, body, overlay);
   while (lines.length && lines[0] === "") lines = lines.slice(1);
-  return finish(skill, lines.join("\n"), contract, prefixedSkills(contract), false);
+  return rebaseSupportingLinks(skill, finish(skill, lines.join("\n"), contract, prefixedSkills(contract), false));
 }
 
 // --- Rust bundle -----------------------------------------------------------
@@ -310,12 +327,30 @@ export function generateAll(root) {
       path: `${agentName(skill)}/SKILL.md`,
       text: generateSkill(skill, source(skill), overlayAll.skills?.[skill] ?? {}, contract),
     });
+    const item = contract.skills.find((s) => s.name === skill);
+    for (const file of supportingReferenceNames(skill, item)) {
+      const sourcePath = resolve(root, claudeRoot, "skills", skill, "references", file);
+      if (!existsSync(sourcePath)) throw new GenError(`${CONTRACT_PATH}: ${skill} supporting reference is missing: plugin/skills/${skill}/references/${file}`);
+      let supporting = readFileSync(sourcePath, "utf8");
+      if (supporting.startsWith("---\n")) throw new GenError(`${skill}/${file}: supporting references must be plain Markdown without frontmatter`);
+      supporting = finish(skill, supporting, contract, prefixedSkills(contract), false);
+      files.push({ path: `${agentName(skill)}/references/${file}`, text: supporting });
+    }
   }
   for (const skill of hidden) {
     files.push({
       path: `${FRONT_DOOR}/references/${skill}.md`,
       text: generateReference(skill, source(skill), overlayAll.skills?.[skill] ?? {}, contract),
     });
+    const item = contract.skills.find((s) => s.name === skill);
+    for (const file of supportingReferenceNames(skill, item)) {
+      const sourcePath = resolve(root, claudeRoot, "skills", skill, "references", file);
+      if (!existsSync(sourcePath)) throw new GenError(`${CONTRACT_PATH}: ${skill} supporting reference is missing: plugin/skills/${skill}/references/${file}`);
+      let supporting = readFileSync(sourcePath, "utf8");
+      if (supporting.startsWith("---\n")) throw new GenError(`${skill}/${file}: supporting references must be plain Markdown without frontmatter`);
+      supporting = finish(skill, supporting, contract, prefixedSkills(contract), false);
+      files.push({ path: `${FRONT_DOOR}/references/${skill}/${file}`, text: supporting });
+    }
   }
   files.push({
     path: RESOLVER_OUT,

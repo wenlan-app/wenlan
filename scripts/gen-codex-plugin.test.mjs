@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { generateReference, generateSkill } from "./gen-codex-plugin.mjs";
+import { generateAll, generateReference, generateSkill } from "./gen-codex-plugin.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(repo, "scripts/gen-codex-plugin.mjs");
@@ -199,6 +199,32 @@ test("a hidden workflow with a bad codex_reference fails generation", () => {
   });
 });
 
+test("supporting references are generated at declared nested paths and links are rebased", () => {
+  withTree((root) => {
+    const status = join(root, "plugin/skills/wenlan/references/status.md");
+    mkdirSync(dirname(status), { recursive: true });
+    writeFileSync(status, "Call `mcp__plugin_wenlan_wenlan__brief` in Claude Code.\n");
+    const outputs = generateAll(root);
+    const byPath = new Map(outputs.map((item) => [item.path, item.text]));
+    assert.match(byPath.get("plugin-codex/skills/wenlan/references/status.md"), /mcp__wenlan__brief/);
+    assert.match(byPath.get("plugin-codex/skills/wenlan/references/status.md"), /Codex/);
+    assert.ok(byPath.has("plugin-codex/skills/wenlan/references/steep/new-material.md"));
+    const entry = byPath.get("plugin-codex/skills/wenlan/references/steep.md");
+    assert.match(entry, /\]\(steep\/new-material\.md\)/);
+    assert.doesNotMatch(entry, /\]\(references\/new-material\.md\)/);
+  });
+});
+
+test("supporting reference filenames reject path traversal", () => {
+  withTree((root) => {
+    const file = join(root, "plugin-contract.json");
+    const c = JSON.parse(readFileSync(file, "utf8"));
+    c.skills.find((s) => s.name === "steep").supporting_references[0] = "../escape.md";
+    writeFileSync(file, JSON.stringify(c, null, 2));
+    assert.throws(() => generateAll(root), /unsafe supporting reference/);
+  });
+});
+
 test("a bare --root is a usage error, not a crash", () => {
   const res = spawnSync(process.execPath, [script, "--root"], { encoding: "utf8" });
   assert.equal(res.status, 64);
@@ -347,7 +373,7 @@ test("openai.yaml is rendered from the overlay and the real files match the slic
 
 test("real tree: generated skills carry the pins the validators and Rust tests read", () => {
   const codexPath = (name) =>
-    ["setup", "pages", "lint", "curate", "forget", "distill", "wiki", "steep"].includes(name)
+    ["setup", "pages", "lint", "curate", "forget", "wiki", "steep"].includes(name)
       ? `plugin-codex/skills/wenlan/references/${name}.md`
       : `plugin-codex/skills/${name}/SKILL.md`;
   const codex = (name) => readFileSync(join(repo, codexPath(name)), "utf8");
@@ -367,48 +393,22 @@ test("real tree: generated skills carry the pins the validators and Rust tests r
   assert.match(JSON.stringify(overlay), new RegExp(`npx -y wenlan@${pin.replaceAll(".", "\\.")} setup`));
 });
 
-test("real tree: Codex steep sends grouping and organizing to a gpt-6-luna helper first", () => {
-  const steep = readFileSync(join(repo, "plugin-codex/skills/wenlan/references/steep.md"), "utf8");
-  const newPages = steep.slice(steep.indexOf("## 2. New pages"), steep.indexOf("## 3."));
-  for (const needle of [
-    "Spawn a subagent on\n`gpt-6-luna`",
-    "`codex exec -m gpt-6-luna \"<the task>\"`",
-    "Only when no helper on a cheaper model can start at all, do the grouping and\norganizing yourself, for this run only and at most 8 pages",
-    "Never copy\nitems, sources or tasks to a helper",
-    "`action: \"organize_tasks\"` and the token",
-    "then to\n   call `steep` itself with",
-    "Never pass the answers on yourself",
-    "`page_titles` (the pages that already exist)",
-    "Material\n   on one subject from different years or versions is one group",
-    "If the\n   material belongs under an existing page",
-    "page's title, exactly as given",
-    "its topic as `title`",
-    "send\n   every `claim_new` call in one message",
-    "Never claim one group after another",
-    "without waiting for the other helpers",
-    "all their `links` calls in\n      one message",
-    "a claim holds its items for 45 minutes",
-    "Write each page as soon as its helper reports, in the order they finish",
-    "Right before you write, call `steep` with `action: \"links\"`",
-    "Call `steep` with `action: \"attach\"` and the\n      token",
-    "`action: \"new\"`,\n   `limit: 110`",
-    "Prefer groups of 4 or more items",
-    "in English, in title case, every main word\n      capitalized (\"Household Finances\", not \"Household finances\"), with\n      proper names kept as written",
-    "`title` (English in\n      title case: \"Kitchen Renovation\")",
-    "on its own (`n` over 1500",
-    "Do not fetch more with\n   `next_cursor`",
-    "title `t`, snippet `s`",
-    "Link\n      every page in `link_targets` that the text talks about, each as\n      `[[Title]]` at its first mention",
-    "spawn one subagent per claim, all in\n   parallel",
-  ]) {
-    assert.ok(newPages.includes(needle), needle);
+test("real tree: Codex steep routes only the operation-specific references", () => {
+  const base = "plugin-codex/skills/wenlan/references";
+  const steep = readFileSync(join(repo, base, "steep.md"), "utf8");
+  const newMaterial = readFileSync(join(repo, base, "steep/new-material.md"), "utf8");
+  const refresh = readFileSync(join(repo, base, "steep/refresh-pages.md"), "utf8");
+  const reshape = readFileSync(join(repo, base, "steep/reshape-knowledge.md"), "utf8");
+  const rebuild = readFileSync(join(repo, base, "steep/rebuild-pages.md"), "utf8");
+  for (const link of ["steep/new-material.md", "steep/refresh-pages.md", "steep/reshape-knowledge.md", "steep/rebuild-pages.md"]) {
+    assert.ok(steep.includes(link), link);
   }
-  assert.ok(steep.includes('attach "added N sources to <title>"'), "the report names attaches");
-  assert.ok(steep.includes('"9,850 more waiting"'), "the report says how much new material waits");
-  assert.ok(!/haiku|Agent`/.test(newPages), "no Claude Code helper wording in Codex");
-  assert.ok(claudeSkill("steep").includes("`Agent` with `model: \"haiku\"`"), "Claude keeps Haiku");
-  assert.ok(
-    claudeSkill("steep").includes("one `Agent` call per\n   claim, each with `model: \"haiku\"` and `run_in_background: true`"),
-    "Claude starts every organize helper at once in the background",
-  );
+  assert.match(newMaterial, /claim_new/);
+  assert.match(refresh, /action=\"claim\"/);
+  assert.match(reshape, /source_memory_id/);
+  assert.match(rebuild, /force=true/);
+  assert.match(rebuild, /User-authored\s+lines remain protected/);
+  for (const text of [steep, newMaterial, refresh, reshape, rebuild]) {
+    assert.ok(!/Claude Code|model: \"haiku\"|mcp__plugin_wenlan_wenlan__/.test(text), "Codex references are host-neutral");
+  }
 });
