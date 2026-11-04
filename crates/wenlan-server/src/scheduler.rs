@@ -59,9 +59,8 @@ const CODE_BASIS_RECHECK_ROWS_PER_SLICE: usize = 3;
 const ENTITY_IDLE_ARCHIVE_SWEEP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Rows one idle-archive sweep may archive before yielding the turn.
 const ENTITY_IDLE_ARCHIVE_SWEEP_LIMIT: usize = 500;
-/// Target-Mac evidence keeps short ambient turns below a 5% duty cycle while
-/// avoiding the fivefold convergence penalty of the provisional ten-minute
-/// hotfix. Automatic recap batching still uses its separate ten-minute window.
+/// Rest floor after any background lap. Automatic recap batching still uses
+/// its separate ten-minute window.
 const AMBIENT_MIN_RECOVERY: Duration = Duration::from_secs(120);
 const GIB: u64 = 1024 * 1024 * 1024;
 /// Target-Mac calibration observed up to 1.59 GiB of additional process RSS
@@ -277,11 +276,38 @@ struct ThermalPolicy {
 }
 
 impl ThermalPolicy {
+    /// Work on this Mac: rest four times as long as the lap ran, so work /
+    /// (work + recovery) <= 20% once the multiplier dominates the floor.
+    ///
+    /// The earlier 5% budget (multiplier 19) was a chosen number, not a
+    /// measured heat limit: its July calibration assumed single-job turns of
+    /// at most 5.5 s, where the 120 s floor dominates. Multi-job laps on a 9B
+    /// model run 40-90 s, and ×19 turned them into 13-28 minute rests, so an
+    /// entity backlog of ~1300 items would take weeks of idle time. The
+    /// thermal-state, input-idle, CPU and memory gates still veto every lap.
     const fn conservative() -> Self {
         Self {
             minimum_cooldown: AMBIENT_MIN_RECOVERY,
-            // Work / (work + recovery) <= 5% when this multiplier dominates.
-            recovery_multiplier: 19,
+            recovery_multiplier: 4,
+        }
+    }
+
+    /// A cloud model does its inference off this Mac, so waiting for the
+    /// answer is not heat to recover from: keep only the rest floor.
+    const fn remote_inference() -> Self {
+        Self {
+            minimum_cooldown: AMBIENT_MIN_RECOVERY,
+            recovery_multiplier: 0,
+        }
+    }
+
+    /// The policy for an ambient lap on this inference route. Only the
+    /// Anthropic route is known to run off this Mac; an External endpoint
+    /// (LM Studio, Ollama) is usually local, so it keeps the local policy.
+    fn for_ambient_route(everyday_pin: Option<wenlan_core::refinery::EverydaySource>) -> Self {
+        match everyday_pin {
+            Some(wenlan_core::refinery::EverydaySource::Anthropic) => Self::remote_inference(),
+            _ => Self::conservative(),
         }
     }
 
@@ -529,7 +555,7 @@ fn automatic_work_consumes_thermal_turn(selected: bool, llm_calls: usize, panick
 /// A lap can now run several due jobs back to back (see `drain_due`).
 /// Charging only the last thermal-consuming job's elapsed time — the
 /// previous, single-job-per-tick behavior — would silently discard every
-/// earlier job's wall time and undershoot the 5%-duty-cycle budget more and
+/// earlier job's wall time and undershoot the duty-cycle budget more and
 /// more as laps grow longer. Charging the lap's total elapsed time once,
 /// after every due job has run, preserves the invariant regardless of how
 /// many jobs a lap drains.
@@ -2201,7 +2227,7 @@ pub fn spawn_scheduler(
                         // only the LAST thermal-consuming job's (typically
                         // much smaller) elapsed time would size the cooldown,
                         // silently discarding every earlier job's wall time
-                        // and undershooting the 5%-duty-cycle budget.
+                        // and undershooting the duty-cycle budget.
                         // Accumulate a lap-consumed flag instead and charge
                         // the cooldown once after the loop, against the
                         // whole lap's elapsed time.
@@ -2283,7 +2309,7 @@ pub fn spawn_scheduler(
                             ambient_now,
                             lap_completed,
                             lap_consumed_thermal_turn,
-                            thermal_policy,
+                            ThermalPolicy::for_ambient_route(everyday_pin),
                         );
                         tracing::info!(
                             "[scheduler] ambient lap complete next_eligible_ms={}",
