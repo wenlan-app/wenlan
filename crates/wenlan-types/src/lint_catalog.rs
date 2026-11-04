@@ -51,6 +51,7 @@ pub enum LintMetricCode {
     KgRelations,
     KgObservations,
     KgMemoryEntityLinks,
+    KgArchivedEntityLinks,
     KgDuplicateEntityNames,
     KgHubEntities,
     KgSemanticSuspicions,
