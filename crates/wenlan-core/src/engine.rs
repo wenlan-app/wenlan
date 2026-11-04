@@ -864,8 +864,12 @@ impl LlmEngine {
 
         while n_cur < max_pos {
             if start.elapsed() > std::time::Duration::from_secs(30) {
-                log::warn!("[llm_engine] inference timeout");
-                break;
+                // A timed-out answer stops wherever the clock ran out, often
+                // mid-sentence; returning it let page growth save a cut-off
+                // rewrite (2026-11-04, v752 of a page). The continuous-batch
+                // path already treats a timeout as a failure.
+                log::warn!("[llm_engine] inference timeout; discarding partial output");
+                return None;
             }
 
             // sample() also accepts the token; accepting twice corrupts grammar state.
@@ -1039,10 +1043,11 @@ impl LlmEngine {
         while n_cur < max_pos {
             if start.elapsed() > std::time::Duration::from_secs(timeout_secs) {
                 log::warn!(
-                    "[llm_engine] persistent inference timeout at {}s",
-                    timeout_secs
+                    "[llm_engine] persistent inference timeout at {}s; discarding {} partial chars",
+                    timeout_secs,
+                    output.len()
                 );
-                break;
+                return None;
             }
 
             // sample() also accepts the token; accepting twice corrupts grammar state.
@@ -1788,8 +1793,11 @@ impl LlmEngine {
 
         while n_cur < max_pos {
             if start.elapsed() > std::time::Duration::from_secs(timeout_secs) {
-                log::warn!("[llm_engine] raw inference timeout at {}s", timeout_secs);
-                break;
+                log::warn!(
+                    "[llm_engine] raw inference timeout at {}s; discarding partial output",
+                    timeout_secs
+                );
+                return None;
             }
 
             // sample() also accepts the token; accepting twice corrupts grammar state.
@@ -1907,8 +1915,8 @@ impl LlmEngine {
 
         while n_cur < MAX_OUTPUT_TOKENS {
             if start.elapsed() > INFERENCE_TIMEOUT {
-                log::warn!("[llm_engine] session inference timeout");
-                break;
+                log::warn!("[llm_engine] session inference timeout; discarding partial output");
+                return None;
             }
 
             // sample() already advances stateful samplers exactly once.
