@@ -68,7 +68,14 @@ static LAST_HELD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsiz
 async fn archive_deleted_pages(db: &MemoryDB, knowledge_path: &Path, stats: &mut WatcherStats) {
     use std::sync::atomic::Ordering;
     let now = chrono::Utc::now().timestamp();
-    let found = match crate::export::knowledge::note_missing_pages(knowledge_path, now) {
+    let known = match db.all_page_ids().await {
+        Ok(known) => known,
+        Err(error) => {
+            log::warn!("[page-watcher] could not check for deleted pages: {error}");
+            return;
+        }
+    };
+    let found = match crate::export::knowledge::note_missing_pages(knowledge_path, now, &known) {
         Ok(found) => found,
         Err(error) => {
             log::warn!("[page-watcher] could not check for deleted pages: {error}");
@@ -2096,6 +2103,51 @@ mod tests {
         let again = sync_filesystem_edits(&db, dir.path()).await.unwrap();
         assert_eq!((again.applied, again.errors), (0, 0), "{again:?}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+    }
+
+    /// Records left from pages the database no longer has are not counted:
+    /// hundreds of them must not hold a page the person really deleted.
+    #[tokio::test]
+    async fn records_of_pages_the_database_lost_do_not_hold_a_real_deletion() {
+        let (db, _ddir) = fresh_db().await;
+        let dir = TempDir::new().unwrap();
+        let (page, _writer, source) = projected_external_page(&db, &dir).await;
+        let writer = tracked_writer(&db, dir.path());
+        for n in 0..crate::export::knowledge::MASS_MISSING_FLOOR * 3 {
+            let stale = sample_page(&format!("page_stale_{n}"), &format!("Stale {n}"), "body");
+            db.insert_page(
+                &stale.id,
+                &stale.title,
+                None,
+                &stale.content,
+                None,
+                None,
+                &["mem_seed"],
+                &stale.created_at,
+            )
+            .await
+            .unwrap();
+            project_page(&db, &writer, &stale);
+            let path = dir.path().join(writer.page_filename(&stale.id).unwrap());
+            std::fs::remove_file(&path).unwrap();
+            db.export_fixture_sql("DELETE FROM pages WHERE id = ?1", &stale.id)
+                .await;
+        }
+        std::fs::remove_file(dir.path().join(&source)).unwrap();
+
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(stats.held_missing, None, "{stats:?}");
+        backdate_missing(dir.path());
+        let stats = sync_filesystem_edits(&db, dir.path()).await.unwrap();
+        assert_eq!(
+            (stats.held_missing, stats.archived_deleted),
+            (None, 1),
+            "{stats:?}"
+        );
+        assert_eq!(
+            db.get_page(&page.id).await.unwrap().unwrap().status,
+            "archived"
+        );
     }
 
     #[tokio::test]

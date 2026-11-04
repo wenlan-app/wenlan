@@ -1619,6 +1619,18 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// The id of every page row, in any status.
+    pub async fn all_page_ids(&self) -> Result<std::collections::HashSet<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let fail = |e: libsql::Error| WenlanError::VectorDb(format!("all_page_ids: {e}"));
+        let mut rows = conn.query("SELECT id FROM pages", ()).await.map_err(fail)?;
+        let mut ids = std::collections::HashSet::new();
+        while let Some(row) = rows.next().await.map_err(fail)? {
+            ids.insert(row.get::<String>(0).map_err(fail)?);
+        }
+        Ok(ids)
+    }
+
     /// Which of `ids` are the id of a note (in any status). A source list is
     /// for memories; this is how a note id slipped into one is caught.
     pub async fn page_ids_present(&self, ids: &[String]) -> Result<Vec<String>, WenlanError> {
