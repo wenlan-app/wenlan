@@ -4823,3 +4823,15 @@ fn ux_quiet_1_reading_conversations_runs_while_the_person_works_but_not_when_war
         "a model on this computer needs its extra 2 GB"
     );
 }
+
+#[test]
+fn ux_quiet_1_battery_counts_as_low_below_20_and_okay_again_at_25() {
+    use crate::host_activity::battery_is_low;
+    assert!(!battery_is_low(None, false), "AC power is never low");
+    assert!(!battery_is_low(None, true));
+    assert!(!battery_is_low(Some(20), false));
+    assert!(battery_is_low(Some(19), false));
+    // Once low, it stays low until 25%, so work does not flap at 20%.
+    assert!(battery_is_low(Some(22), true));
+    assert!(!battery_is_low(Some(25), true));
+}
