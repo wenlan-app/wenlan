@@ -1119,6 +1119,71 @@ async fn renamed_target_identity_survives_source_reindex_and_old_title_reuse() {
     assert_eq!(source_history[0].content, "Read [[Old title]]");
 }
 
+/// A file Wenlan wrote under an older build differs from today's render only
+/// in its `generated: {by: "wenlan/<version>"}` stamp. It is the same page, so
+/// the rename goes ahead (24 of 26 real pages were refused, 2026-11-04).
+#[tokio::test]
+async fn rename_accepts_a_projection_written_by_an_older_build() {
+    use sha2::Digest;
+    let fixture = fixture().await;
+    let filename = projected_filename(fixture.page_root.path(), "page-rename");
+    let target = fixture.page_root.path().join(&filename);
+    let state_path = fixture.page_root.path().join(".wenlan/state.json");
+    let current = std::fs::read_to_string(&target).unwrap();
+    let stamp = format!("generated: {{by: \"wenlan/{}\"", crate::version());
+    assert!(
+        current.contains(&stamp),
+        "fixture renders a generator stamp"
+    );
+    let older = current.replacen(&stamp, "generated: {by: \"wenlan/0.18.9\"", 1);
+    std::fs::write(&target, older.as_bytes()).unwrap();
+    let mut state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+    state["pages"]["page-rename"]["content_sha256"] =
+        format!("{:x}", sha2::Sha256::digest(older.as_bytes())).into();
+    std::fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+    rename_page(
+        &fixture.db,
+        "page-rename",
+        "Renamed after upgrade",
+        7,
+        &ReadScope::Global,
+        Some(fixture.page_root.path()),
+    )
+    .await
+    .unwrap();
+
+    let after = fixture.db.get_page("page-rename").await.unwrap().unwrap();
+    assert_eq!(after.title, "Renamed after upgrade");
+}
+
+/// The older-build allowance covers the stamp only: an older stamp plus a
+/// changed line is still an unsynced edit.
+#[tokio::test]
+async fn rename_refuses_an_older_build_projection_with_other_edits() {
+    let fixture = fixture().await;
+    let filename = projected_filename(fixture.page_root.path(), "page-rename");
+    let target = fixture.page_root.path().join(&filename);
+    let current = std::fs::read_to_string(&target).unwrap();
+    let stamp = format!("generated: {{by: \"wenlan/{}\"", crate::version());
+    let edited =
+        current.replacen(&stamp, "generated: {by: \"wenlan/0.18.9\"", 1) + "\nunsynced user edit\n";
+    std::fs::write(&target, edited.as_bytes()).unwrap();
+
+    assert!(rename_page(
+        &fixture.db,
+        "page-rename",
+        "New title",
+        7,
+        &ReadScope::Global,
+        Some(fixture.page_root.path()),
+    )
+    .await
+    .is_err());
+    assert_eq!(std::fs::read(&target).unwrap(), edited.as_bytes());
+}
+
 #[tokio::test]
 async fn rename_refuses_to_overwrite_unsynced_projection_edits() {
     let fixture = fixture().await;
