@@ -3207,7 +3207,9 @@ fn repository_module_graph_matches_r4_25_group_6_census() {
             .get(&RawShape::StandaloneLibsqlOrigin)
             .copied()
             .unwrap_or(0),
-        7
+        // The native lifecycle regression owns an isolated in-memory libsql
+        // database so it can exercise final-handle teardown itself.
+        8
     );
     assert!(
         analysis.raw_uses.iter().all(|raw_use| raw_use.test_only),
