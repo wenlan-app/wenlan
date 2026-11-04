@@ -3721,13 +3721,13 @@ fn ci_planner_routing_rejects_optional_and_fail_open_mutations() {
             1,
         )
         .replacen(
-            "            macos:\n              # macOS owns launchd/host-activity behavior and native code.",
-            "            macos:\n              - 'crates/wenlan-core/src/drift_guard.rs'\n              # macOS owns launchd/host-activity behavior and native code.",
+            "            macos:\n",
+            "            macos:\n              - 'crates/wenlan-core/src/drift_guard.rs'\n",
             1,
         )
         .replacen(
-            "            windows:\n              # Windows owns cfg-bearing CLI/server paths, native ORT/Vulkan,",
-            "            windows:\n              - 'crates/wenlan-core/src/drift_guard.rs'\n              # Windows owns cfg-bearing CLI/server paths, native ORT/Vulkan,",
+            "            windows:\n",
+            "            windows:\n              - 'crates/wenlan-core/src/drift_guard.rs'\n",
             1,
         )
         .replacen(
@@ -3783,7 +3783,8 @@ fn ci_planner_routing_rejects_optional_and_fail_open_mutations() {
         "unknown paths",
         "platform test planner lost required contract",
         "exact generic macOS plus Windows filter inventories",
-        "routes test-only drift_guard.rs into a native runner",
+        "macos routes test-only drift_guard.rs into a native runner",
+        "windows routes test-only drift_guard.rs into a native runner",
         "release-preflight is not isolated to release-sensitive changes",
         "reserve direct macOS PR runners for M5/nextest owners",
         "macos-m4 focused-owner allowlist has unreviewed path",
