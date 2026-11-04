@@ -40497,6 +40497,56 @@ impl MemoryDB {
         Ok(None)
     }
 
+    /// The candidates that are hub topics: linked to so many memories that a
+    /// new link says nothing about the memory. A hub is never chosen as the
+    /// topic a new memory is filed under. On real data one topic ("wenlan")
+    /// collected 877 links, about a quarter of all memories, because every
+    /// note about the project resolved to it (2026-11-04).
+    pub async fn hub_entity_ids(
+        &self,
+        candidates: &[&str],
+    ) -> Result<std::collections::HashSet<String>, WenlanError> {
+        let mut hubs = std::collections::HashSet::new();
+        if candidates.is_empty() {
+            return Ok(hubs);
+        }
+        let conn = self.conn.lock().await;
+        let count = |sql: &'static str, params: Vec<libsql::Value>| {
+            let conn = &conn;
+            async move {
+                let mut rows = conn
+                    .query(sql, params)
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("hub_entity_ids: {e}")))?;
+                let n = match rows
+                    .next()
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("hub_entity_ids: {e}")))?
+                {
+                    Some(row) => row.get::<i64>(0).unwrap_or(0),
+                    None => 0,
+                };
+                Ok::<i64, WenlanError>(n)
+            }
+        };
+        let total = count(
+            "SELECT COUNT(DISTINCT memory_id) FROM memory_entities",
+            Vec::new(),
+        )
+        .await?;
+        for id in candidates {
+            let links = count(
+                "SELECT COUNT(*) FROM memory_entities WHERE entity_id = ?1",
+                vec![libsql::Value::Text((*id).to_string())],
+            )
+            .await?;
+            if is_hub_entity(links, total) {
+                hubs.insert((*id).to_string());
+            }
+        }
+        Ok(hubs)
+    }
+
     /// Update a memory's entity_id (for post-ingest entity linking).
     /// Returns the number of memory rows updated (0 = unknown `source_id`).
     ///
@@ -62569,3 +62619,14 @@ mod entity_lifecycle_test;
 #[cfg(test)]
 #[path = "db/relation_preserve_tests.rs"]
 mod relation_preserve_tests;
+
+/// Fewest links a topic needs before it can count as a hub.
+pub(crate) const HUB_MIN_LINKS: i64 = 200;
+/// Share of all linked memories (percent) a hub topic is linked to.
+pub(crate) const HUB_MIN_SHARE_PERCENT: i64 = 10;
+
+/// True when a topic with `links` linked memories, out of `total` memories
+/// that have any topic, is a hub: too common to tell memories apart.
+pub(crate) fn is_hub_entity(links: i64, total: i64) -> bool {
+    links >= HUB_MIN_LINKS && links * 100 >= total * HUB_MIN_SHARE_PERCENT
+}

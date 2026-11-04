@@ -866,7 +866,13 @@ pub(crate) async fn auto_link_entity(
     tuning: &crate::tuning::RefineryConfig,
 ) -> Result<bool, WenlanError> {
     let entities = db.search_entities_by_vector(content, 3).await?;
+    let candidates: Vec<&str> = entities.iter().map(|e| e.entity.id.as_str()).collect();
+    let hubs = db.hub_entity_ids(&candidates).await?;
     for entity in &entities {
+        // A hub topic is too common to file a memory under.
+        if hubs.contains(&entity.entity.id) {
+            continue;
+        }
         // distance is cosine distance — lower = more similar
         if entity.distance < tuning.entity_link_distance as f32 {
             db.update_memory_entity_id(source_id, &entity.entity.id)
