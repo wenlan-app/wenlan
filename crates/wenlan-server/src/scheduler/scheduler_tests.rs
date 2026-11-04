@@ -1390,6 +1390,45 @@ fn measured_recovery_floor_is_two_minutes_and_long_turns_extend_it() {
 }
 
 #[test]
+fn local_ambient_work_stays_within_a_twenty_percent_duty_cycle() {
+    let policy = ThermalPolicy::conservative();
+    for lap_secs in [1_u64, 5, 30, 60, 90, 300] {
+        let lap = Duration::from_secs(lap_secs);
+        let rest = policy.cooldown_after(lap);
+        assert!(
+            lap.as_secs_f64() / (lap + rest).as_secs_f64() <= 0.2 + f64::EPSILON,
+            "a {lap_secs}s lap rested only {rest:?}"
+        );
+    }
+    // A 90s lap on a 9B model rests six minutes, not the old 28.5.
+    assert_eq!(
+        policy.cooldown_after(Duration::from_secs(90)),
+        Duration::from_secs(360)
+    );
+}
+
+#[test]
+fn cloud_inference_keeps_only_the_rest_floor_and_local_routes_keep_the_duty_cap() {
+    use wenlan_core::refinery::EverydaySource;
+    let long_lap = Duration::from_secs(90);
+    assert_eq!(
+        ThermalPolicy::for_ambient_route(Some(EverydaySource::Anthropic)).cooldown_after(long_lap),
+        AMBIENT_MIN_RECOVERY
+    );
+    for local in [
+        Some(EverydaySource::OnDevice),
+        Some(EverydaySource::External),
+        None,
+    ] {
+        assert_eq!(
+            ThermalPolicy::for_ambient_route(local).cooldown_after(long_lap),
+            Duration::from_secs(360),
+            "{local:?} may run on this Mac and must keep the duty cap"
+        );
+    }
+}
+
+#[test]
 fn unsupported_burst_end_does_not_preempt_bounded_idle_work() {
     let now = Instant::now() + DAILY_INTERVAL + Duration::from_secs(1);
     let mut snapshot = HashMap::new();
@@ -1570,14 +1609,14 @@ fn ambient_thermal_work_completion_starts_conservative_cooldown() {
 
 #[test]
 fn charge_lap_thermal_cooldown_uses_the_full_lap_elapsed_time_not_a_single_jobs_slice() {
-    // Simulate a two-job lap: Document ran for 8s, then Citation (the last
-    // thermal-consuming job) ran for only 2s — 10s of real lap time in
+    // Simulate a two-job lap: Document ran for 58s, then Citation (the last
+    // thermal-consuming job) ran for only 2s — 60s of real lap time in
     // total. Charging the cooldown against the *lap's* elapsed time (what
     // `charge_lap_thermal_cooldown` does) must produce a materially
     // different, larger cooldown than charging it against only the last
     // job's own 2s slice (what the pre-fix per-job call site did).
     let lap_started = Instant::now();
-    let lap_completed = lap_started + Duration::from_secs(10);
+    let lap_completed = lap_started + Duration::from_secs(60);
     let mut schedule = AmbientSchedule::new(lap_started);
 
     charge_lap_thermal_cooldown(
@@ -1588,15 +1627,15 @@ fn charge_lap_thermal_cooldown_uses_the_full_lap_elapsed_time_not_a_single_jobs_
         ThermalPolicy::conservative(),
     );
 
-    // cooldown_after(10s) = max(120s, 10 * 19) = 190s.
+    // cooldown_after(60s) = max(120s, 60 * 4) = 240s.
     assert_eq!(
         schedule.next_allowed_at,
-        lap_completed + Duration::from_secs(190),
-        "cooldown must be sized from the full 10s lap, not the last job's 2s slice"
+        lap_completed + Duration::from_secs(240),
+        "cooldown must be sized from the full 60s lap, not the last job's 2s slice"
     );
     // The bug this guards against: charging only the last job's 2s slice
-    // gives cooldown_after(2s) = max(120s, 2 * 19) = 120s — the floor, and
-    // 70s short of the correct 190s. Pin that the fixed behavior is not
+    // gives cooldown_after(2s) = max(120s, 2 * 4) = 120s — the floor, and
+    // 120s short of the correct 240s. Pin that the fixed behavior is not
     // merely "at least the floor" but the specific, larger lap-sized value.
     assert_ne!(
         schedule.next_allowed_at,
