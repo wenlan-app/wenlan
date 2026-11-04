@@ -4142,6 +4142,8 @@ struct ProducerJudge {
     model_id: &'static str,
     model_version: &'static str,
     malformed: bool,
+    /// Answers the frozen qualification batch correctly (negatives low).
+    qualifying: bool,
     calls: AtomicUsize,
     saw_unlocked_db: AtomicBool,
     conn: Arc<tokio::sync::Mutex<libsql::Connection>>,
@@ -4154,6 +4156,7 @@ impl ProducerJudge {
             model_id: M5_PRODUCTION_JUDGE_MODEL_ID,
             model_version: M5_PRODUCTION_JUDGE_MODEL_VERSION,
             malformed: false,
+            qualifying: false,
             calls: AtomicUsize::new(0),
             saw_unlocked_db: AtomicBool::new(true),
             conn: Arc::clone(&db.conn),
@@ -4188,10 +4191,15 @@ impl LlmProvider for ProducerJudge {
             .unwrap()
             .iter()
             .map(|item| {
-                serde_json::json!({
-                    "item_id": item["item_id"].as_str().unwrap(),
-                    "score": 0.95,
-                })
+                let item_id = item["item_id"].as_str().unwrap();
+                let negative_qualification_case =
+                    item_id.starts_with('N') && item_id.contains("-copy-");
+                let score = if self.qualifying && negative_qualification_case {
+                    0.05
+                } else {
+                    0.95
+                };
+                serde_json::json!({ "item_id": item_id, "score": score })
             })
             .collect();
         Ok(serde_json::json!({ "scores": scores }).to_string())
@@ -4295,7 +4303,17 @@ async fn production_judge_rejects_unapproved_snapshot_without_writes_or_lease() 
             .unwrap(),
         PromotionTurn::RefusedProvider
     );
-    assert_eq!(judge.calls.load(Ordering::SeqCst), 0);
+    // One call: the frozen qualification batch, which a judge that scores
+    // every negation as entailed fails. The failure is remembered, so the
+    // next turn spends no inference at all.
+    assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        db.run_page_linked_truth_promotion_turn(&judge, "producer-worker")
+            .await
+            .unwrap(),
+        PromotionTurn::RefusedProvider
+    );
+    assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
     assert_eq!(test_eligibility_generation(&db).await, before_generation);
     let conn = db.conn.lock().await;
     assert_eq!(conn.total_changes(), before_changes);
@@ -4533,8 +4551,8 @@ async fn repeated_exact_production_judge_activation_is_a_write_free_noop() {
 }
 
 #[tokio::test]
-async fn production_judge_never_reactivates_draining_or_retired_exact_row() {
-    for state in ["draining", "retired"] {
+async fn production_judge_never_reactivates_retired_exact_row() {
+    for state in ["retired"] {
         let (db, _temp) = db_with_queue().await;
         authorize_producer_judge_version(&db, M5_PRODUCTION_JUDGE_MODEL_VERSION, state).await;
         let judge = ProducerJudge::pinned(&db);
@@ -4574,6 +4592,99 @@ async fn production_judge_never_reactivates_draining_or_retired_exact_row() {
             state
         );
     }
+}
+
+/// Switching from the measured judge to another approved model drains the
+/// measured row. Switching back must make it the judge again, or returning to
+/// an earlier model would stop support checks for good.
+#[tokio::test]
+async fn production_judge_reactivates_its_draining_row_after_a_model_switch() {
+    let (db, _temp) = db_with_queue().await;
+    authorize_producer_judge_version(&db, M5_PRODUCTION_JUDGE_MODEL_VERSION, "draining").await;
+    authorize_producer_judge_version(&db, "switched-to-weights", "active").await;
+    let judge = ProducerJudge::pinned(&db);
+    let snapshot = crate::claim_judge::snapshot_m5_claim_judge(&judge).unwrap();
+    let other = ProducerJudge {
+        model_version: "switched-to-weights",
+        ..ProducerJudge::pinned(&db)
+    };
+    let other_snapshot = crate::claim_judge::snapshot_m5_claim_judge(&other).unwrap();
+    let before_generation = test_eligibility_generation(&db).await;
+
+    assert!(db
+        .activate_approved_m5_claim_judge(&snapshot)
+        .await
+        .unwrap());
+    assert!(test_eligibility_generation(&db).await > before_generation);
+    assert!(db.active_judge_policy(&snapshot).await.unwrap().is_some());
+    assert!(
+        db.active_judge_policy(&other_snapshot)
+            .await
+            .unwrap()
+            .is_none(),
+        "the judge switched away from is drained, not left active"
+    );
+}
+
+/// An on-device model that is not the measured release judge earns the role
+/// by answering the same frozen M5 accuracy batch correctly, then judges real
+/// pages exactly like the measured one.
+#[tokio::test]
+async fn unmeasured_on_device_judge_that_passes_the_frozen_batch_promotes_pages() {
+    let (db, _temp) = db_with_queue().await;
+    let evidence = "Alpha launched successfully.";
+    add_producer_memory(&db, "qualified-source", evidence, "space-a", "folder").await;
+    add_producer_page(&db, "qualified-page", evidence, "space-a").await;
+    link_page_evidence(&db, "qualified-page", "qualified-source").await;
+    let judge = ProducerJudge {
+        model_id: "qwen3.5-9b",
+        model_version: "hf:test/qualifying-judge@1/judge.gguf",
+        qualifying: true,
+        ..ProducerJudge::pinned(&db)
+    };
+
+    assert!(matches!(
+        db.run_page_linked_truth_promotion_turn(&judge, "producer-worker")
+            .await
+            .unwrap(),
+        PromotionTurn::Completed { .. }
+    ));
+    assert_eq!(
+        truth_row(&db, "qualified-page").await.unwrap().0,
+        "supported"
+    );
+    assert!(judge.saw_unlocked_db.load(Ordering::SeqCst));
+    let calls_after_first_turn = judge.calls.load(Ordering::SeqCst);
+    assert!(
+        calls_after_first_turn >= 2,
+        "qualification plus page judging"
+    );
+
+    // Passing is remembered: later turns never re-run the batch.
+    assert_eq!(
+        db.run_page_linked_truth_promotion_turn(&judge, "producer-worker")
+            .await
+            .unwrap(),
+        PromotionTurn::Idle
+    );
+    assert_eq!(judge.calls.load(Ordering::SeqCst), calls_after_first_turn);
+}
+
+/// Without having passed in this process, an unmeasured model's existing
+/// active row authorizes nothing at the activation boundary.
+#[tokio::test]
+async fn unqualified_model_cannot_activate_through_a_stored_row() {
+    let (db, _temp) = db_with_queue().await;
+    let judge = ProducerJudge {
+        model_version: "hf:test/never-qualified@1/judge.gguf",
+        ..ProducerJudge::pinned(&db)
+    };
+    authorize_producer_judge_version(&db, judge.model_version, "active").await;
+    let snapshot = crate::claim_judge::snapshot_m5_claim_judge(&judge).unwrap();
+    assert!(!db
+        .activate_approved_m5_claim_judge(&snapshot)
+        .await
+        .unwrap());
 }
 
 #[tokio::test]

@@ -15,11 +15,10 @@ use wenlan_core::eval::m5_bench_corpus::{
 #[cfg(feature = "eval-harness")]
 use wenlan_core::{
     claim_judge::{
-        build_m5_claim_entailment_batch_user_prompt, parse_m5_claim_entailment_batch_scores,
-        snapshot_m5_claim_judge, M5ClaimEntailmentItem, M5_CLAIM_ENTAILMENT_SYSTEM_PROMPT,
+        run_m5_judge_qualification, snapshot_m5_claim_judge, M5QualificationOrder,
         M5_CLAIM_JUDGE_MAX_BATCH_ITEMS,
     },
-    llm_provider::{LlmProvider, LlmRequest, OnDeviceProvider},
+    llm_provider::OnDeviceProvider,
     on_device_models::{get_model, is_cached},
 };
 
@@ -259,7 +258,7 @@ async fn live_m5_claim_judge_activation_receipt() {
         ACCURACY_BYTES,
     )
     .unwrap();
-    let cases = parse_accuracy_jsonl(ACCURACY_BYTES).unwrap();
+    assert!(!parse_accuracy_jsonl(ACCURACY_BYTES).unwrap().is_empty());
     assert_eq!(M5_CLAIM_JUDGE_MAX_BATCH_ITEMS, 25);
 
     let requested_model = std::env::var(MODEL_ENV).unwrap_or_else(|_| "qwen3-4b".to_string());
@@ -284,86 +283,31 @@ async fn live_m5_claim_judge_activation_receipt() {
         "{MODEL_ENV} must name the exact resolved model rather than a fallback"
     );
 
-    let item_ids: Vec<String> = (0..M5_CLAIM_JUDGE_MAX_BATCH_ITEMS)
-        .map(|index| {
-            let case = &cases[index % cases.len()];
-            format!("{}-copy-{}", case.case_id, index / cases.len())
-        })
-        .collect();
-    let items: Vec<_> = item_ids
-        .iter()
-        .enumerate()
-        .map(|(index, item_id)| {
-            let case = &cases[index % cases.len()];
-            M5ClaimEntailmentItem {
-                item_id,
-                claim: &case.claim,
-                evidence: &case.span,
-            }
-        })
-        .collect();
-    let user_prompt = build_m5_claim_entailment_batch_user_prompt(&items)
-        .expect("build the exact production-size M5 judge batch");
-
+    // The exact gate the daemon runs before an unmeasured model may judge.
     let inference_started = std::time::Instant::now();
-    let raw = provider
-        .generate(LlmRequest {
-            system_prompt: Some(M5_CLAIM_ENTAILMENT_SYSTEM_PROMPT.to_string()),
-            user_prompt,
-            max_tokens: 2048,
-            temperature: 0.0,
-            label: Some("m5_claim_entailment_activation_gate".to_string()),
-            timeout_secs: None,
-        })
+    let qualification = run_m5_judge_qualification(&provider, M5QualificationOrder::Forward)
         .await
-        .expect("run on-device M5 claim-entailment batch");
+        .expect("run and strictly parse the production M5 qualification batch");
+    let reversed = run_m5_judge_qualification(&provider, M5QualificationOrder::Reversed)
+        .await
+        .expect("run and strictly parse the reversed M5 qualification batch");
     let inference_ms = inference_started.elapsed().as_millis();
-    let scores = parse_m5_claim_entailment_batch_scores(&raw, &item_ids)
-        .expect("strictly parse the complete production M5 judge response");
-
-    let mut true_positive = 0_u64;
-    let mut true_negative = 0_u64;
-    let mut false_positive = 0_u64;
-    let mut false_negative = 0_u64;
-    let mut hard_vetoes = Vec::new();
-    let per_case: Vec<_> = scores
-        .iter()
-        .enumerate()
-        .map(|(index, scored)| {
-            let case = &cases[index % cases.len()];
-            let predicted_entails = scored.score >= THRESHOLD;
-            match (case.entails, predicted_entails) {
-                (true, true) => true_positive += 1,
-                (false, false) => true_negative += 1,
-                (false, true) => false_positive += 1,
-                (true, false) => false_negative += 1,
-            }
-            if matches!(case.case_id.as_str(), "N1" | "N8") && predicted_entails {
-                hard_vetoes.push(scored.item_id.clone());
-            }
-            serde_json::json!({
-                "item_id": scored.item_id,
-                "case_id": case.case_id,
-                "category": case.category,
-                "expected_entails": case.entails,
-                "score": scored.score,
-                "predicted_entails": predicted_entails,
-            })
-        })
-        .collect();
-
-    let total = scores.len() as f64;
-    let accuracy = (true_positive + true_negative) as f64 / total;
-    let precision = if true_positive + false_positive == 0 {
+    assert_eq!(qualification.batch_size, M5_CLAIM_JUDGE_MAX_BATCH_ITEMS);
+    assert_eq!(qualification.threshold, THRESHOLD);
+    let total = qualification.batch_size as f64;
+    let precision = if qualification.true_positive + qualification.false_positive == 0 {
         0.0
     } else {
-        true_positive as f64 / (true_positive + false_positive) as f64
+        qualification.true_positive as f64
+            / (qualification.true_positive + qualification.false_positive) as f64
     };
-    let recall = if true_positive + false_negative == 0 {
+    let recall = if qualification.true_positive + qualification.false_negative == 0 {
         0.0
     } else {
-        true_positive as f64 / (true_positive + false_negative) as f64
+        qualification.true_positive as f64
+            / (qualification.true_positive + qualification.false_negative) as f64
     };
+    let hard_vetoes = qualification.hard_veto_item_ids.clone();
     let receipt = serde_json::json!({
         "schema": "wenlan-m5-judge-activation-receipt-v1",
         "internal_activation_receipt": true,
@@ -373,20 +317,27 @@ async fn live_m5_claim_judge_activation_receipt() {
         "model_version": snapshot.model_version,
         "prompt_version": snapshot.prompt_version,
         "threshold": THRESHOLD,
-        "batch_size": scores.len(),
+        "batch_size": qualification.batch_size,
         "provider_init_ms": provider_init_ms,
         "inference_ms": inference_ms,
         "elapsed_ms": started.elapsed().as_millis(),
-        "true_positive": true_positive,
-        "true_negative": true_negative,
-        "false_positive": false_positive,
-        "false_negative": false_negative,
-        "hard_veto_passed": hard_vetoes.is_empty(),
+        "true_positive": qualification.true_positive,
+        "true_negative": qualification.true_negative,
+        "false_positive": qualification.false_positive,
+        "false_negative": qualification.false_negative,
+        "hard_veto_passed": qualification.hard_veto_passed(),
         "hard_veto_item_ids": hard_vetoes,
-        "accuracy": accuracy,
+        "accuracy": (qualification.true_positive + qualification.true_negative) as f64 / total,
         "precision": precision,
         "recall": recall,
-        "cases": per_case,
+        "qualifies": qualification.qualifies() && reversed.qualifies(),
+        "reversed_order": {
+            "false_positive": reversed.false_positive,
+            "false_negative": reversed.false_negative,
+            "qualifies": reversed.qualifies(),
+            "cases": reversed.cases,
+        },
+        "cases": qualification.cases,
     });
     println!("{}", serde_json::to_string(&receipt).unwrap());
 
