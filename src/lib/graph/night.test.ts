@@ -13,7 +13,7 @@ import {
   satelliteAnchor,
   satellitePlan,
 } from "./atlas";
-import { attachThingPoints, buildKnowledgeGraphModel, DEFAULT_LAYERS, drawableModel, MEMORY_NODE_TYPE } from "./model";
+import { attachThingPoints, buildKnowledgeGraphModel, DEFAULT_LAYERS, drawableModel, MEMORY_NODE_TYPE, thingTitle } from "./model";
 import {
   applyNightOffsets,
   cutToFit,
@@ -28,6 +28,7 @@ import {
   nightPointIds,
   placeFrameTitles,
   SENTENCE_LINE,
+  STEEPING_SECS,
   SENTENCE_MAX_PX,
   thingFocusState,
   thingStopNodeIds,
@@ -310,7 +311,7 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     const map = mapWith(things());
     annotateDust(map, satellitePlan(map));
     const drawnAt = (id: string) => (id === "mem:n1" ? { x: 100, y: 100, r: 1 } : null);
-    const [frame] = nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, { width: 400, height: 400 }).frames;
+    const [frame] = nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, { width: 400, height: 400 }, undefined, "thing:t1").frames;
     expect(frame!.right - frame!.left).toBeGreaterThanOrEqual(30);
     expect(frame!.bottom - frame!.top).toBeGreaterThanOrEqual(22);
     // Grown evenly: still centred on the point.
@@ -318,7 +319,7 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     expect((frame!.top + frame!.bottom) / 2).toBe(100);
   });
 
-  it("frames each thing's drawn points with its title above, and puts a moon by each point", () => {
+  it("frames only the picked thing's drawn points with its title, and gives the thing one moon while a night steeped it in the last day", () => {
     const map = mapWith(things());
     annotateDust(map, satellitePlan(map));
     const spots: Record<string, { x: number; y: number; r: number }> = {
@@ -327,15 +328,27 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     };
     const drawnAt = (id: string) => spots[id] ?? null;
     const viewport = { width: 200, height: 200 };
-    const { frames, moons } = nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport);
-    expect(frames).toEqual([{ thing: "thing:t1", title: "Site redesign", left: 29, top: 39, right: 71, bottom: 65, dim: false }]);
-    expect(moons.map((moon) => [moon.x, moon.y])).toEqual([[40, 50], [60, 54]]);
+    const { frames } = nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1", 20 + STEEPING_SECS + 1);
+    expect(frames).toEqual([{ thing: "thing:t1", title: "Site redesign", left: 29, top: 39, right: 71, bottom: 65, dim: false, steeping: false }]);
+    // Its newest point (written at 20) is under a day old: one moon, by the title.
+    expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1", 20 + STEEPING_SECS - 1).frames[0]!.steeping).toBe(true);
     // Hovering something else dims it; hovering one of its points does not.
-    expect(nightMarks(map, drawnAt, { hovered: "hub", neighbors: new Set(["a"]) }, viewport).frames[0]!.dim).toBe(true);
-    expect(nightMarks(map, drawnAt, { hovered: "hub", neighbors: new Set(["mem:n2"]) }, viewport).frames[0]!.dim).toBe(false);
+    expect(nightMarks(map, drawnAt, { hovered: "hub", neighbors: new Set(["a"]) }, viewport, undefined, "thing:t1").frames[0]!.dim).toBe(true);
+    expect(nightMarks(map, drawnAt, { hovered: "hub", neighbors: new Set(["mem:n2"]) }, viewport, undefined, "thing:t1").frames[0]!.dim).toBe(false);
+    // Nothing picked, or another thing picked: the map stays clean.
+    expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport).frames).toEqual([]);
+    expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t2").frames).toEqual([]);
     // Nothing drawn, or all off screen: no frame.
-    expect(nightMarks(map, () => null, { hovered: null, neighbors: new Set() }, viewport).frames).toEqual([]);
-    expect(nightMarks(map, () => ({ x: 900, y: 50, r: 3 }), { hovered: null, neighbors: new Set() }, viewport).frames).toEqual([]);
+    expect(nightMarks(map, () => null, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1").frames).toEqual([]);
+    expect(nightMarks(map, () => ({ x: 900, y: 50, r: 3 }), { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1").frames).toEqual([]);
+  });
+
+  it("ends a thing's name cut short when it was stored at the length cap, at a word, with an ellipsis", () => {
+    expect(thingTitle("Site redesign")).toBe("Site redesign");
+    // Stored names are cut at 40 characters, often mid-word.
+    expect(thingTitle("Wenlan PR review and merge queue managem")).toBe("Wenlan PR review and merge queue…");
+    expect(thingTitle("Wenlan PR review, merge queue, and fixes")).toBe("Wenlan PR review, merge queue, and…");
+    expect(thingTitle("整理文澜大图上每一件事的位置和夜里沉淀下来的那些点让它们不再挤在一起而且看得清楚")).toMatch(/…$/u);
   });
 
   it("hands the shown sentences over only for a thing that shows them, open or settled", () => {
@@ -344,8 +357,8 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     const drawnAt = (id: string) => (id === "mem:n1" ? { x: 40, y: 50, r: 3 } : id === "mem:n2" ? { x: 60, y: 90, r: 3 } : null);
     const rest = { hovered: null, neighbors: new Set<string>() };
     const viewport = { width: 400, height: 200 };
-    expect(nightMarks(map, drawnAt, rest, viewport).sentences).toEqual([]);
-    const shown = nightMarks(map, drawnAt, rest, viewport, (thing) => thing === "thing:t1").sentences;
+    expect(nightMarks(map, drawnAt, rest, viewport, undefined, "thing:t1").sentences).toEqual([]);
+    const shown = nightMarks(map, drawnAt, rest, viewport, (thing) => thing === "thing:t1", "thing:t1").sentences;
     expect(shown.map(({ id, text, open }) => [id, text, open])).toEqual([
       ["mem:n1", "Tagline settled", false],
       ["mem:n2", "Pricing page open", true],
@@ -476,6 +489,14 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
     expect(grown!.left).toBe(85);
     expect(other!.right).toBeGreaterThan(415);
     expect(other!.left).toBe(385);
+  });
+
+  it("keeps room after a steeping thing's title for its one moon", () => {
+    const base = { thing: "thing:t1", title: "Site", left: 0, top: 100, right: 200, bottom: 140, dim: false };
+    const [plain] = placeFrameTitles([base], measure);
+    const [steeping] = placeFrameTitles([{ ...base, steeping: true }], measure);
+    expect(steeping!.text).toBe("Site");
+    expect(steeping!.box.right - steeping!.box.left).toBeGreaterThan(plain!.box.right - plain!.box.left);
   });
 
   it("puts each frame's title clear of other titles, names and frames' borders, cut at a word", () => {

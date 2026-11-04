@@ -708,6 +708,18 @@ export const THING_NODE_TYPE = "thing";
 export const NIGHT_EDGE_TYPE = "night";
 
 /** Graph-node id for a thing, prefixed like memories and pages. */
+/** Stored thing names are capped at 40 characters, cut wherever the cap
+ *  fell. One that reaches the cap is shown cut at its last whole word, with
+ *  an ellipsis, so it never ends in half a word. */
+export const STORED_THING_TITLE_CAP = 40;
+export function thingTitle(title: string): string {
+  const text = title.trim();
+  if ([...text].length < STORED_THING_TITLE_CAP) return text;
+  const space = text.lastIndexOf(" ");
+  const cut = space >= 12 ? text.slice(0, space) : text;
+  return `${cut.replace(/[\s,;:–—\-，、；：]+$/u, "")}…`;
+}
+
 export function thingNodeId(thingId: string): string {
   return `thing:${thingId}`;
 }
@@ -773,7 +785,7 @@ export function attachThingPoints(
     nodes.set(id, {
       id,
       kind: "thing",
-      name: thing.title ?? "",
+      name: thingTitle(thing.title ?? ""),
       entityType: THING_NODE_TYPE,
       confirmed: null,
       degree: 0,

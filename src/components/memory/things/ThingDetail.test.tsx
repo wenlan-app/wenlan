@@ -34,11 +34,11 @@ const tagline: ThingRecord = {
   ],
 };
 
-function renderThing(onOpenPage = vi.fn(), onOpenThing = vi.fn()) {
+function renderThing(onOpenPage = vi.fn(), onOpenThing = vi.fn(), onOpenGraph?: (thingId: string) => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <ThingDetail thingId="thg_1" onBack={vi.fn()} onOpenPage={onOpenPage} onOpenThing={onOpenThing} />
+      <ThingDetail thingId="thg_1" onBack={vi.fn()} onOpenPage={onOpenPage} onOpenThing={onOpenThing} onOpenGraph={onOpenGraph} />
     </QueryClientProvider>,
   );
   return { onOpenPage, onOpenThing };
@@ -253,6 +253,15 @@ describe("ThingDetail", () => {
     fireEvent.click(within(line).getByRole("button", { name: "Undo" }));
     await waitFor(() => expect(undoThingDream).toHaveBeenCalledWith("thg_1"));
     await waitFor(() => expect(screen.queryByRole("group", { name: /overnight/ })).toBeNull());
+  });
+
+  it("UX-CHAT-5: a steeped thing opens on the big map from its night's line", async () => {
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, dream: { at: now - 60, decided: 1, open: 0, fresh: ["mem_1"] } });
+    const onOpenGraph = vi.fn();
+    renderThing(vi.fn(), vi.fn(), onOpenGraph);
+    const line = await screen.findByRole("group", { name: /overnight/ });
+    fireEvent.click(within(line).getByRole("button", { name: "On the big map" }));
+    expect(onOpenGraph).toHaveBeenCalledWith("thg_1");
   });
 
   it("UX-CHAT-5: an older night is dated, and nothing is marked new", async () => {

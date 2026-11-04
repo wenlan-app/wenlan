@@ -6,12 +6,13 @@ import type { GraphPalette } from "./palette";
 
 /**
  * What sigma's round discs cannot draw, painted on AtlasView's overlay canvas
- * above the map like the dust counts (UX-CHAT-5): each thing as a frame, a
- * rounded dashed outline round the cluster of points its nights wrote with
- * the thing's title above it, a small moon beside each of those points, the
- * same crescent the thing's page marks them with, and, close in, each
- * point's sentence beside it. The thing itself is no node on the map; its
- * hidden centre only holds the cluster in place.
+ * above the map like the dust counts (UX-CHAT-5): the picked thing as a
+ * faint halo round the cluster of points its nights wrote, with the thing's
+ * title beside it, one small moon after the title while a night has steeped
+ * it in the last day (the same crescent the thing's page uses; one per
+ * thing, never one per point), and, close in, each point's sentence beside
+ * it. The thing itself is no node on the map; its hidden centre only holds
+ * the cluster in place.
  */
 export interface ThingFrame {
   /** The thing's node id (`thing:<id>`). */
@@ -24,9 +25,12 @@ export interface ThingFrame {
   bottom: number;
   /** Another node is hovered and nothing in this thing is in its reach. */
   dim: boolean;
+  /** A night wrote one of its points in the last day: a moon after the title. */
+  steeping?: boolean;
 }
 
-export interface NightMoon {
+/** Where a point is drawn this frame. */
+export interface NightSpot {
   /** The point's centre and radius, viewport CSS px. */
   x: number;
   y: number;
@@ -35,7 +39,7 @@ export interface NightMoon {
 }
 
 /** A point whose sentence is shown beside it. */
-export interface NightSentence extends NightMoon {
+export interface NightSentence extends NightSpot {
   id: string;
   text: string;
   /** Still open (not decided): written in the muted ink. */
@@ -57,7 +61,10 @@ const MIN_FRAME_HEIGHT = 22;
 /** Extra viewport margin inside which a mark is still drawn. */
 const CULL_PAD = 24;
 
-/** The frames and moons to paint this frame. */
+/** How recent a night's point keeps its thing's moon up, seconds. */
+export const STEEPING_SECS = 24 * 60 * 60;
+
+/** The frames and sentences to paint this frame. */
 export function nightMarks(
   graph: Graph,
   drawnAt: DrawnAt,
@@ -66,18 +73,24 @@ export function nightMarks(
   /** Whether this thing's points show their sentences (see AtlasView: the
    *  thing's own zoom stop, or zoomed in past the overview). */
   sentencesFor: (thing: string) => boolean = () => false,
-): { frames: ThingFrame[]; moons: NightMoon[]; sentences: NightSentence[] } {
+  /** The picked thing. Only its frame and points are drawn; with nothing
+   *  picked the map shows none (its points are hidden too, AtlasView). */
+  picked: string | null = null,
+  /** Now, Unix seconds (points' createdAt is too). */
+  now: number = Date.now() / 1000,
+): { frames: ThingFrame[]; sentences: NightSentence[] } {
   const frames: ThingFrame[] = [];
-  const moons: NightMoon[] = [];
   const sentences: NightSentence[] = [];
   const lit = (id: string) => hover.hovered === null || hover.hovered === id || hover.neighbors.has(id);
   graph.forEachNode((thing, attrs) => {
     if (attrs.entityType !== THING_NODE_TYPE) return;
+    if (thing !== picked) return;
     let left = Infinity;
     let top = Infinity;
     let right = -Infinity;
     let bottom = -Infinity;
     let anyLit = lit(thing);
+    let steeping = false;
     const points: NightSentence[] = [];
     graph.forEachNeighbor(thing, (point, pointAttrs) => {
       if (pointAttrs.night !== true || pointAttrs.dustOf !== thing) return;
@@ -88,6 +101,8 @@ export function nightMarks(
       top = Math.min(top, at.y - at.r);
       bottom = Math.max(bottom, at.y + at.r);
       if (lit(point)) anyLit = true;
+      const made = pointAttrs.createdAt;
+      if (typeof made === "number" && now - made < STEEPING_SECS) steeping = true;
       points.push({ ...at, dim: !lit(point), id: point, text: String(pointAttrs.label ?? ""), open: pointAttrs.open === true, thing });
     });
     if (points.length === 0) return;
@@ -105,19 +120,21 @@ export function nightMarks(
       right: frameRight,
       bottom: frameBottom,
       dim: !anyLit,
+      steeping,
     };
     if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) return;
     frames.push(frame);
-    moons.push(...points.map(({ x, y, r, dim }) => ({ x, y, r, dim })));
     if (sentencesFor(thing)) sentences.push(...points.filter((point) => point.text));
   });
-  return { frames, moons, sentences };
+  return { frames, sentences };
 }
 
 /** The crescent of ThingSteeped's SteepMoon, on its 16-unit box. */
 const MOON_PATH = "M10.5 1.5a6.5 6.5 0 1 0 4 11.6A6 6 0 0 1 10.5 1.5z";
 /** The moon's drawn size, CSS px. */
 const MOON_PX = 7;
+/** Gap between a title and its moon, CSS px. */
+const MOON_GAP = 4;
 const FRAME_RADIUS = 10;
 const TITLE_FONT = '500 12px "Instrument Sans", -apple-system, sans-serif';
 const TITLE_MAX_PX = 240;
@@ -320,7 +337,7 @@ export function encloseSentences<F extends ThingFrame>(frames: readonly F[], pla
  *  every spot would cover a name, a sentence, another title or another
  *  frame's border, except the picked thing's: it is placed first and always
  *  gets its full title, so what is picked can be read. `occupied` is read
- *  and extended. */
+ *  and extended. A steeping thing's title keeps room after it for its moon. */
 export function placeFrameTitles(
   frames: readonly ThingFrame[],
   measure: Measure,
@@ -337,7 +354,8 @@ export function placeFrameTitles(
     const crosses = (box: Box, other: Box) =>
       overlapping(box, other) && !(box.left > other.left && box.right < other.right && box.top > other.top && box.bottom < other.bottom);
     const spotsFor = (text: string) => {
-      const width = measure(text);
+      // A steeping thing's moon sits after its title, so it takes room too.
+      const width = measure(text) + (frame.steeping ? MOON_GAP + MOON_PX : 0);
       const xs = [frame.left + 2, frame.right - 2 - width];
       return [frame.top - 4, frame.bottom + TITLE_LINE].flatMap((baseline) =>
         (xs[1]! > xs[0]! + 0.5 ? xs : [xs[0]!]).map((x) => ({
@@ -370,7 +388,8 @@ export function placeFrameTitles(
 }
 
 /**
- * Paint the frames, their titles, the moons and the shown sentences.
+ * Paint the halos, their titles (a moon after a steeping thing's) and the
+ * shown sentences.
  * Sentences are laid out first (layoutNightSentences) and each frame grows
  * round its own, then titles take a free spot (placeFrameTitles); a settled
  * point's sentence is in the label ink, an open one's in the muted ink.
@@ -379,7 +398,7 @@ export function placeFrameTitles(
  */
 export function drawNightMarks(
   ctx: CanvasRenderingContext2D,
-  marks: { frames: readonly ThingFrame[]; moons: readonly NightMoon[]; sentences?: readonly NightSentence[] },
+  marks: { frames: readonly ThingFrame[]; sentences?: readonly NightSentence[] },
   palette: GraphPalette,
   occupied: Box[] = [],
   bodies: readonly Box[] = [],
@@ -395,20 +414,19 @@ export function drawNightMarks(
     ? layoutNightSentences(marks.sentences, (text) => ctx.measureText(text).width, occupied, { width }, bodies)
     : [];
   const frames = encloseSentences(marks.frames, placed);
-  ctx.lineWidth = 1.25;
-  ctx.setLineDash([5, 4]);
-  ctx.strokeStyle = palette.bridge;
+  // A soft ground under the thing's points, in the region names' manner
+  // (Fable's design: a faint halo and its name, no drawn border).
+  ctx.fillStyle = palette.bridge;
   for (const frame of frames) {
-    ctx.globalAlpha = frame.dim ? 0.25 : 0.85;
+    ctx.globalAlpha = frame.dim ? 0.04 : 0.1;
     const frameWidth = frame.right - frame.left;
     const frameHeight = frame.bottom - frame.top;
     ctx.beginPath();
     if (typeof ctx.roundRect === "function") ctx.roundRect(frame.left, frame.top, frameWidth, frameHeight, Math.min(FRAME_RADIUS, frameHeight / 2));
     else ctx.rect(frame.left, frame.top, frameWidth, frameHeight);
-    ctx.stroke();
+    ctx.fill();
     hits.push({ thing: frame.thing, left: frame.left, top: frame.top, right: frame.right, bottom: frame.bottom });
   }
-  ctx.setLineDash([]);
   ctx.font = TITLE_FONT;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
@@ -417,11 +435,22 @@ export function drawNightMarks(
   ctx.strokeStyle = palette.surface;
   ctx.fillStyle = palette.label;
   const dimOf = new Map(frames.map((frame) => [frame.thing, frame.dim]));
+  const steepingThings = new Set(frames.filter((frame) => frame.steeping).map((frame) => frame.thing));
+  const moon = typeof Path2D === "function" ? new Path2D(MOON_PATH) : null;
   for (const title of placeFrameTitles(frames, (text) => ctx.measureText(text).width, occupied, picked)) {
     ctx.globalAlpha = dimOf.get(title.thing) ? 0.3 : 1;
     hits.push({ thing: title.thing, ...title.box });
     ctx.strokeText(title.text, title.x, title.baseline);
     ctx.fillText(title.text, title.x, title.baseline);
+    if (moon && steepingThings.has(title.thing)) {
+      ctx.save();
+      ctx.fillStyle = palette.bridge;
+      ctx.translate(title.x + ctx.measureText(title.text).width + MOON_GAP, title.baseline - MOON_PX);
+      ctx.scale(MOON_PX / 16, MOON_PX / 16);
+      ctx.globalAlpha = dimOf.get(title.thing) ? 0.2 : 0.85;
+      ctx.fill(moon);
+      ctx.restore();
+    }
   }
   if (placed.length > 0) {
     ctx.font = SENTENCE_FONT;
@@ -437,19 +466,6 @@ export function drawNightMarks(
       });
     }
     ctx.textAlign = "left";
-  }
-  const moon = typeof Path2D === "function" ? new Path2D(MOON_PATH) : null;
-  if (moon) {
-    ctx.fillStyle = palette.bridge;
-    for (const point of marks.moons) {
-      ctx.save();
-      // Up and to the right of the dot, clear of it.
-      ctx.translate(point.x + point.r * 0.7 + 1, point.y - point.r * 0.7 - MOON_PX - 1);
-      ctx.scale(MOON_PX / 16, MOON_PX / 16);
-      ctx.globalAlpha = point.dim ? 0.2 : 0.85;
-      ctx.fill(moon);
-      ctx.restore();
-    }
   }
   ctx.restore();
   return hits;

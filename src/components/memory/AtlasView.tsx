@@ -52,6 +52,7 @@ import {
   attachMemories,
   attachThingPoints,
   thingIdOf,
+  thingNodeId,
   smallGroupNodeCount,
   DEFAULT_LAYERS,
   MEMORY_NODE_TYPE,
@@ -226,6 +227,8 @@ interface AtlasViewProps {
   focusEntityId?: string;
   /** Initial camera target in the whole graph; never restricts its membership. */
   focusPageId?: string;
+  /** Open at this thing's 這件事 stop (from its page's 「在大图上看」). */
+  focusThingId?: string;
   // Main.tsx's Graph view passes navigateBack; renders a back button as the
   // first toolbar item (a floating one would sit on the search box).
   onBack?: () => void;
@@ -244,7 +247,7 @@ function prefersReducedMotion(): boolean {
  * entity overlay's "Atlas" mode. Replaced the canvas ConstellationMap; the
  * query keys keep the "constellation-" prefix so nothing else invalidates.
  */
-export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onBack }: AtlasViewProps) {
+export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, onBack }: AtlasViewProps) {
   const { t } = useTranslation();
   const effectiveFocusId = focusPageId ? pageNodeId(focusPageId) : focusEntityId;
   const palette = useGraphPalette();
@@ -287,6 +290,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   const displayOpenRef = useRef(false);
   displayOpenRef.current = displayOpen;
   const selectedRef = useRef<string | null>(null);
+  const thingArrivalDoneRef = useRef(false);
   const overviewRef = useRef<AtlasViewpoint | null>(null);
   const pendingFocusRef = useRef<string | null>(null);
   const openingRatioRef = useRef(1);
@@ -1168,6 +1172,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       defaultDrawNodeLabel: drawLabel,
       nodeReducer: (node, attrs) => {
         if (entityTypeHidden(attrs.entityType, excludedTypesRef.current)) return { ...attrs, hidden: true };
+        // A thing's night points show only while that thing is picked (from
+        // its page, search, or a stop): the open map stays clear of them
+        // (UX-CHAT-5; Fable's design: the thing is a camera, not a mark).
+        if (attrs.night === true && typeof attrs.dustOf === "string" && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
         const display = nodeDisplay(hoverStateRef.current, node, attrs, paletteRef.current, lodRef.current);
         if (
           showOverviewFallbackLabels &&
@@ -1277,7 +1285,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
         const at = renderer.framedGraphToViewport(display);
         return { x: at.x, y: at.y, r: renderer.scaleSize(display.size) };
       };
-      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor);
+      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current);
       // Sentences keep off the other bodies on screen, not only the labels.
       const bodies: { left: number; right: number; top: number; bottom: number }[] = [];
       if (marks.sentences.length > 0) {
@@ -1392,6 +1400,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     if (pendingFocus && graph.hasNode(pendingFocus)) {
       pendingFocusRef.current = null;
       focusNodeRef.current(pendingFocus);
+    }
+    // Arriving from a thing's page: go straight to its 這件事 stop, once.
+    if (focusThingId && !thingArrivalDoneRef.current && graph.hasNode(thingNodeId(focusThingId))) {
+      thingArrivalDoneRef.current = true;
+      selectThingRef.current(thingNodeId(focusThingId), "this");
     }
     if (selectedRef.current && graph.hasNode(selectedRef.current)) {
       // A picked thing keeps its lit set across a rebuild (a new night's

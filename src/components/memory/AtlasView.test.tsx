@@ -906,6 +906,30 @@ describe("AtlasView", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: "Zoom to" })).not.toBeInTheDocument());
   });
 
+  it("keeps a thing's points off the map until it is picked, and arrives at it from its page (UX-CHAT-5)", async () => {
+    mockConnectedPair();
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [{ memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 }],
+    }]);
+    const { unmount } = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const rest = capturedSigmaInstances[0];
+    const point = rest.graph.nodes().find((id: string) => rest.graph.getNodeAttribute(id, "night") === true);
+    expect(point).toBeDefined();
+    expect(rest.settings.nodeReducer!(point, rest.graph.getNodeAttributes(point)).hidden).toBe(true);
+    unmount();
+    // From the thing's page: the map opens on it, at 這件事, its points lit.
+    renderWithQuery(<AtlasView focusThingId="t1" />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    const stops = await screen.findByRole("group", { name: "Zoom to" });
+    expect(within(stops).getByRole("button", { name: "This" })).toHaveAttribute("aria-pressed", "true");
+    const arrived = capturedSigmaInstances[1];
+    expect(arrived.settings.nodeReducer!(point, arrived.graph.getNodeAttributes(point)).hidden).not.toBe(true);
+  });
+
   it("gives a picked thing's points no forced labels at 全部 (UX-CHAT-5)", async () => {
     mockConnectedPair();
     mockMemories([], [{ memory_id: "n2", entity_id: "e1" }]);

@@ -8,7 +8,7 @@ export type View =
   | { readonly kind: "distill-review"; readonly reviewItemId?: string }
   | { readonly kind: "entities" }
   | { readonly kind: "entity"; readonly entityId: string }
-  | { readonly kind: "graph"; readonly focusPageId?: string }
+  | { readonly kind: "graph"; readonly focusPageId?: string; readonly focusThingId?: string }
   | { readonly kind: "home" }
   | { readonly kind: "first-use"; readonly showKnowledge?: boolean; readonly batchId?: string }
   | { readonly kind: "import"; readonly fromFirstUse?: boolean; readonly fromHome?: boolean }
