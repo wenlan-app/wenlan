@@ -62,9 +62,6 @@ const CODE_BASIS_RECHECK_ROWS_PER_SLICE: usize = 3;
 const ENTITY_IDLE_ARCHIVE_SWEEP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Rows one idle-archive sweep may archive before yielding the turn.
 const ENTITY_IDLE_ARCHIVE_SWEEP_LIMIT: usize = 500;
-/// Rest floor after any background lap. Automatic recap batching still uses
-/// its separate ten-minute window.
-const AMBIENT_MIN_RECOVERY: Duration = Duration::from_secs(120);
 const GIB: u64 = 1024 * 1024 * 1024;
 /// Target-Mac calibration observed up to 1.59 GiB of additional process RSS
 /// during one on-device ambient inference. Round up so background work never
@@ -283,38 +280,19 @@ struct ThermalPolicy {
 }
 
 impl ThermalPolicy {
-    /// Work on this Mac: rest four times as long as the lap ran, so work /
-    /// (work + recovery) <= 20% once the multiplier dominates the floor.
+    /// No rest between background laps (UX-QUIET-1, 2026-11-04).
     ///
-    /// The earlier 5% budget (multiplier 19) was a chosen number, not a
-    /// measured heat limit: its July calibration assumed single-job turns of
-    /// at most 5.5 s, where the 120 s floor dominates. Multi-job laps on a 9B
-    /// model run 40-90 s, and ×19 turned them into 13-28 minute rests, so an
-    /// entity backlog of ~1300 items would take weeks of idle time. The
-    /// thermal-state, input-idle, CPU and memory gates still veto every lap.
-    const fn conservative() -> Self {
+    /// The earlier rest (19x, then 4x the lap, at least 120 s) was a chosen
+    /// budget, not a measured heat limit, and no open-source background
+    /// worker we checked (BOINC, KDE Baloo, Folding@home, GNOME localsearch)
+    /// rests after each piece of work. Work instead stops at once when the
+    /// person returns, the Mac warms, the battery runs low, or CPU/memory
+    /// get tight; every item of a lap rechecks those. The mechanism stays so
+    /// a measured heat limit can restore a rest here in one place.
+    const fn between_laps() -> Self {
         Self {
-            minimum_cooldown: AMBIENT_MIN_RECOVERY,
-            recovery_multiplier: 4,
-        }
-    }
-
-    /// A cloud model does its inference off this Mac, so waiting for the
-    /// answer is not heat to recover from: keep only the rest floor.
-    const fn remote_inference() -> Self {
-        Self {
-            minimum_cooldown: AMBIENT_MIN_RECOVERY,
+            minimum_cooldown: Duration::ZERO,
             recovery_multiplier: 0,
-        }
-    }
-
-    /// The policy for an ambient lap on this inference route. Only the
-    /// Anthropic route is known to run off this Mac; an External endpoint
-    /// (LM Studio, Ollama) is usually local, so it keeps the local policy.
-    fn for_ambient_route(everyday_pin: Option<wenlan_core::refinery::EverydaySource>) -> Self {
-        match everyday_pin {
-            Some(wenlan_core::refinery::EverydaySource::Anthropic) => Self::remote_inference(),
-            _ => Self::conservative(),
         }
     }
 
@@ -1380,7 +1358,7 @@ pub fn spawn_scheduler(
     tokio::spawn(async move {
         let import_wake = write_signal.import_wake();
         let resource_policy = ResourcePolicy::conservative();
-        let thermal_policy = ThermalPolicy::conservative();
+        let thermal_policy = ThermalPolicy::between_laps();
         // Initialize before the built-in startup delay so the first explicit
         // CPU refresh has a valid comparison window without sleeping inside a
         // scheduler poll.
@@ -2441,7 +2419,7 @@ pub fn spawn_scheduler(
                             ambient_now,
                             lap_completed,
                             lap_consumed_thermal_turn,
-                            ThermalPolicy::for_ambient_route(everyday_pin),
+                            ThermalPolicy::between_laps(),
                         );
                         tracing::info!(
                             "[scheduler] ambient lap complete next_eligible_ms={}",

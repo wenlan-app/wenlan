@@ -315,18 +315,18 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
      free, plus 2 GB more for a model on this
      computer (no published benchmark; the 2 GB is the memory one local
      inference was measured to add on the reference Mac).
-  6. After an item on a model on this computer, Wenlan rests at least four
-     times as long as the item ran, and at least 2 minutes (no published
-     benchmark, and BOINC, KDE and Folding@home have no rest rule; kept as
-     extra care, measured: a 2-hour idle run on the reference Mac stayed at
-     nominal throughout). After a cloud item, 2 minutes.
+
+  There is no rest between items: while the computer stays free, Wenlan keeps
+  going, and it stops as soon as one of these no longer holds. BOINC, KDE's
+  indexer and Folding@home work the same way; the earlier "rest four times as
+  long as the item ran" was our own guess, not a benchmark.
 
   Light work runs while you work: reading your AI conversations keeps
-  "Working on" current, so it skips 2, 5's CPU limit and 6, and only stops
+  "Working on" current, so it skips 2 and 5's CPU limit, and only stops
   when the computer is warm, short of memory, or low on battery. What you just
   asked for (an import, "steep now", a search, a save from your AI tool) runs
-  at once and skips 2, 3, 5 and 6, but still stops when the computer is warm or
+  at once and skips 2, 3 and 5, but still stops when the computer is warm or
   short of memory. Where a condition cannot be read (today: 2 and 4 on Windows
   and Linux, 3 on Windows and Linux) the others still apply, and the gap is
   named, never treated as fine.
-  原文：「我们当时加是因为了要就是确保说它不是用占用整个电脑的资源，让用户的就是整个电脑很烫，然后导致它的体验很糟」（2026-11-04）；選擇卡「写规格并补上缺口」（2026-11-04 18:02）；「如果它的电够的话，跑本地模型也没有问题啊」「读 AI 对话的那部分工作，你打字它也会跑，这很正常啊」（2026-11-04 19:50）；「能不能一些數字不要自己猜，看別人有沒有實測過的基準」（21:02）「那不能看其他開源項目怎麼決定？」（21:34）
+  原文：「我们当时加是因为了要就是确保说它不是用占用整个电脑的资源，让用户的就是整个电脑很烫，然后导致它的体验很糟」（2026-11-04）；選擇卡「写规格并补上缺口」（2026-11-04 18:02）；「如果它的电够的话，跑本地模型也没有问题啊」「读 AI 对话的那部分工作，你打字它也会跑，这很正常啊」（2026-11-04 19:50）；「能不能一些數字不要自己猜，看別人有沒有實測過的基準」（21:02）「那不能看其他開源項目怎麼決定？」（21:34）；選擇卡「拿掉,跟开源项目一样」（22:15）；「memory 要是太多会抢到其他原本正在做的事情…就会变得很卡」（22:16）
