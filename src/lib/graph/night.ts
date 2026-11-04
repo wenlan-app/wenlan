@@ -74,9 +74,9 @@ export function nightMarks(
   drawnAt: DrawnAt,
   hover: HoverState,
   viewport: { width: number; height: number },
-  /** Whether this thing's points show their sentences (see AtlasView: the
-   *  thing's own zoom stop, or zoomed in past the overview). */
-  sentencesFor: (thing: string) => boolean = () => false,
+  /** Whether a thing's point shows its whole sentence (see AtlasView: under
+   *  the pointer, pinned by a click, or at its thing's own zoom stop). */
+  sentencesFor: (thing: string, point: string) => boolean = () => false,
   /** The picked thing. Only its frame and points are drawn; with nothing
    *  picked the map shows none (its points are hidden too, AtlasView). */
   picked: string | null = null,
@@ -132,7 +132,7 @@ export function nightMarks(
     };
     if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) return;
     frames.push(frame);
-    if (sentencesFor(thing)) sentences.push(...points.filter((point) => point.text));
+    sentences.push(...points.filter((point) => point.text && sentencesFor(thing, point.id)));
   });
   return { frames, sentences };
 }

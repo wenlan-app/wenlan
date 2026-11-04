@@ -621,8 +621,8 @@ export function componentSizeByNode(model: GraphModel): Map<string, number> {
  * has at least MIN_COMPONENT_SIZE members, plus the edges between them. Edges
  * are filtered too — a dropped node's edges would otherwise point at nothing.
  *
- * `showSmallGroups` is the reader's own call, made through the toolbar chip:
- * with it on, nothing is dropped and the small components join the shelf.
+ * `showSmallGroups` keeps everything. The big map draws every node and keeps
+ * the small groups out of sight until zoomed in (see smallGroupIds).
  */
 export function drawableModel(
   model: GraphModel,
@@ -632,8 +632,25 @@ export function drawableModel(
   anchors: ReadonlySet<string> = new Set(),
 ): GraphModel {
   if (showSmallGroups) return model;
+  const small = smallGroupIds(model, anchors);
+  if (small.size === 0) return model;
+  return {
+    ...model,
+    nodes: model.nodes.filter((node) => !small.has(node.id)),
+    edges: model.edges.filter((edge) => !small.has(edge.source) && !small.has(edge.target)),
+  };
+}
+
+/**
+ * The nodes in small groups: components of fewer than MIN_COMPONENT_SIZE
+ * nodes, off the core. The map lays them out with everything else but keeps
+ * them out of sight until the reader zooms in (AtlasView). A group holding an
+ * anchor (what an active thing's steeped points link to) is never small, so
+ * the thing always reaches it.
+ */
+export function smallGroupIds(model: GraphModel, anchors: ReadonlySet<string> = new Set()): Set<string> {
   const kept = drawableByComponentSize(model);
-  if (kept === null || kept.size === model.nodes.length) return model;
+  if (kept === null || kept.size === model.nodes.length) return new Set();
   const missing = [...anchors].filter((id) => !kept.has(id));
   if (missing.length > 0) {
     const nodeIds = new Set(model.nodes.map((node) => node.id));
@@ -652,13 +669,28 @@ export function drawableModel(
         }
       }
     }
-    if (kept.size === model.nodes.length) return model;
   }
-  return {
-    ...model,
-    nodes: model.nodes.filter((node) => kept.has(node.id)),
-    edges: model.edges.filter((edge) => kept.has(edge.source) && kept.has(edge.target)),
-  };
+  return new Set(model.nodes.filter((node) => !kept.has(node.id)).map((node) => node.id));
+}
+
+/**
+ * What the map keeps out of sight until the reader zooms in: the small groups,
+ * and every memory hung only on them (a memory that also touches the core
+ * stays, it is not part of a small group).
+ */
+export function tuckedNodeIds(model: GraphModel, small: ReadonlySet<string>): Set<string> {
+  const tucked = new Set(small);
+  if (small.size === 0) return tucked;
+  const kind = new Map(model.nodes.map((node) => [node.id, node.kind]));
+  const reachesCore = new Map<string, boolean>();
+  for (const edge of model.edges) {
+    for (const [memory, other] of [[edge.source, edge.target], [edge.target, edge.source]] as const) {
+      if (kind.get(memory) !== "memory" || kind.get(other) === "memory") continue;
+      reachesCore.set(memory, (reachesCore.get(memory) ?? false) || !small.has(other));
+    }
+  }
+  for (const [memory, core] of reachesCore) if (!core) tucked.add(memory);
+  return tucked;
 }
 
 /**
@@ -675,18 +707,6 @@ function drawableByComponentSize(model: GraphModel): Set<string> | null {
     if ((sizes.get(node.id) ?? 0) >= MIN_COMPONENT_SIZE) kept.add(node.id);
   }
   return kept.size === 0 ? null : kept;
-}
-
-/**
- * How many nodes sit in components too small to draw by default — the number
- * on the "small groups hidden" chip. Computed from the FULL model, so it does
- * not change when the reader turns the small groups on; the chip has to keep
- * saying how many there are in order to offer them back.
- */
-export function smallGroupNodeCount(model: GraphModel): number {
-  const kept = drawableByComponentSize(model);
-  if (kept === null) return 0;
-  return model.nodes.length - kept.size;
 }
 
 /**

@@ -151,6 +151,7 @@
 .atlas-display-options .atlas-content-toggle:hover, .atlas-display-options .atlas-content-secondary-toggle:hover { background: var(--mem-hover); }
 .atlas-display-options { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .atlas-display-options .atlas-content-row { display: flex; flex-direction: column; gap: 8px; }
+.atlas-display-group { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; min-width: 0; }
 .atlas-display-options .atlas-content-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; margin-left: 0; }
 .atlas-display-options .atlas-content-toolgroup { display: flex; flex-direction: column; align-items: stretch; gap: 0; width: 100%; padding: 0; border: 0; border-radius: 0; }
 .atlas-display-options .atlas-content-toolgroup .atlas-type-filter { width: 100%; padding: 0; }

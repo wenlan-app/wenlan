@@ -437,7 +437,6 @@ describe("AtlasView", () => {
     memorySource = { memories: [], memory_links: [] };
     pageSource = { pages: [], page_links: [] };
     window.localStorage.removeItem("atlas.layers");
-    window.localStorage.removeItem("atlas.smallGroups");
     for (const key of Object.keys(window.localStorage)) {
       if (key.startsWith("atlas.positions.")) window.localStorage.removeItem(key);
     }
@@ -946,6 +945,55 @@ describe("AtlasView", () => {
     expect(ctx.fillText).not.toHaveBeenCalled();
   });
 
+  it("gives a point a short title zoomed in and none zoomed out; hover or a click shows its sentence instead (UX-CHAT-5)", async () => {
+    mockConnectedPair();
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [{ memory_id: "n1", title: "Tagline settled after the long review with the whole team", decided: true, created_at: 10 }],
+    }]);
+    window.localStorage.setItem(WORKING_STORAGE_KEY, "true");
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const instance = capturedSigmaInstances[0];
+    const { settings, graph } = instance;
+    const point = graph.nodes().find((id: string) => graph.getNodeAttribute(id, "night") === true);
+    expect(point).toBeDefined();
+    const ctx = {
+      font: "", fillStyle: "", strokeStyle: "", lineWidth: 0, lineJoin: "", globalAlpha: 1, textAlign: "", textBaseline: "",
+      measureText: (text: string) => ({ width: text.length * 7 }),
+      fillText: vi.fn(), strokeText: vi.fn(), save: vi.fn(), restore: vi.fn(),
+    };
+    const drawLabel = () => {
+      // A fresh frame: last frame's label boxes are let go.
+      instance.handlers.get("beforeRender")?.({});
+      ctx.fillText.mockClear();
+      const shown = settings.nodeReducer!(point, graph.getNodeAttributes(point));
+      settings.defaultDrawNodeLabel(ctx, { key: point, label: shown.label, x: 10, y: 10, size: 4 }, { labelSize: 12, labelFont: "sans", labelWeight: "normal", labelColor: { color: "#000" } });
+      return ctx.fillText.mock.calls.map((call: unknown[]) => String(call[0]));
+    };
+    // Zoomed out: the point carries no words.
+    expect(drawLabel()).toEqual([]);
+    // Zoomed in: a short title, offered to every point.
+    zoomTo(0.2);
+    expect(settings.nodeReducer!(point, graph.getNodeAttributes(point)).forceLabel).toBe(true);
+    const [title] = drawLabel();
+    expect(title).toMatch(/^Tagline .*…$/u);
+    expect(title!.length).toBeLessThan(25);
+    // Under the pointer the whole sentence comes up (the overlay paints it).
+    instance.handlers.get("enterNode")!({ node: point });
+    expect(drawLabel()).toEqual([]);
+    instance.handlers.get("leaveNode")!({ node: point });
+    expect(drawLabel()).toEqual([title]);
+    // A click pins it open, without opening the inspector; again unpins it.
+    instance.handlers.get("clickNode")!({ node: point });
+    expect(drawLabel()).toEqual([]);
+    expect(screen.queryByRole("heading", { name: /Tagline/ })).not.toBeInTheDocument();
+    instance.handlers.get("clickNode")!({ node: point });
+    expect(drawLabel()).toEqual([title]);
+  });
+
   it("offers no 附近 for a thing whose points link to nothing (UX-CHAT-5)", async () => {
     mockConnectedPair();
     vi.mocked(listThingNightPoints).mockResolvedValue([{
@@ -1194,86 +1242,53 @@ describe("AtlasView", () => {
     }
   });
 
-  it("keeps degree-0 entities out of the drawn graph and reports them in the chip", async () => {
-    // The isolate ring is gone: an unconnected entity is not drawn at all,
-    // it is counted.
+  /** The node reducer's verdict on one node of the latest renderer. */
+  const hiddenNow = (id: string) => {
+    const instance = capturedSigmaInstances[capturedSigmaInstances.length - 1];
+    return instance.settings.nodeReducer!(id, instance.graph.getNodeAttributes(id)).hidden === true;
+  };
+  /** Zoom the latest renderer in to `ratio` of the opening view. */
+  const zoomTo = (ratio: number) => {
+    const instance = capturedSigmaInstances[capturedSigmaInstances.length - 1];
+    const onCamera = instance.camera.on.mock.calls.find((call: unknown[]) => call[0] === "updated")?.[1] as (state: { ratio: number }) => void;
+    onCamera({ ratio });
+  };
+
+  it("lays a degree-0 entity out with the map but keeps it out of sight until zoomed in", async () => {
     mockConnectedPairWithIsolate();
 
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
     const graph = capturedSigmaInstances[0].graph;
 
-    expect(graph.hasNode("e1")).toBe(true);
-    expect(graph.hasNode("e2")).toBe(true);
-    expect(graph.hasNode("e3")).toBe(true);
-    expect(graph.hasNode("e4")).toBe(false);
-    expect(graph.order).toBe(5);
-    fireEvent.focus(displayControl("Show small groups"));
-    expect(screen.getByRole("tooltip")).toHaveTextContent("1 node in small groups hidden");
-    fireEvent.blur(displayControl("Show small groups"));
-    // The count line describes what is drawn; the sixth entity is
-    // unconnected, so it is reported by the chip beside it rather than
-    // counted here.
-    expect(screen.getByText("5 topics · 1 region")).toBeInTheDocument();
+    expect(graph.hasNode("e4")).toBe(true);
+    expect(hiddenNow("e4")).toBe(true);
+    expect(hiddenNow("e1")).toBe(false);
+    // No switch: zooming in is how the small groups come up.
+    openDisplayControls();
+    expect(screen.queryByRole("button", { name: /small groups/i })).not.toBeInTheDocument();
+    zoomTo(0.5);
+    expect(hiddenNow("e4")).toBe(false);
   });
 
-  it("hides a component below MIN_COMPONENT_SIZE and folds it into the small-groups chip", async () => {
+  it("keeps a component below MIN_COMPONENT_SIZE out of sight at the opening view", async () => {
     // Round 3, section C, retuned in round 5: a bare pair off on its own is a
     // crumb — it carries no shape a reader can navigate by, and dozens of them
-    // are what made the map read as confetti. It goes behind the chip with the
-    // isolates.
-    const entities = [
-      makeEntity({ id: "e1", name: "Alice" }),
-      makeEntity({ id: "e2", name: "Bob" }),
-      makeEntity({ id: "e3", name: "Carol" }),
-      makeEntity({ id: "e4", name: "Dan" }),
-      makeEntity({ id: "e5", name: "Elle" }),
-      makeEntity({ id: "p1", name: "Pat" }),
-      makeEntity({ id: "p2", name: "Quinn" }),
-    ];
-    const relation = (id: string, target: string, name: string) => ({
-      id,
-      relation_type: "knows",
-      direction: "outgoing" as const,
-      entity_id: target,
-      entity_name: name,
-      entity_type: "person",
-      source_agent: null,
-      created_at: Math.floor(Date.now() / 1000),
-    });
-    mockListEntities.mockResolvedValue(entities);
-    mockGetEntityDetail.mockImplementation(async (id: string) => ({
-      entity: entities.find((e) => e.id === id)!,
-      observations: [],
-      relations:
-        id === "e1"
-          ? [
-              relation("rel-1", "e2", "Bob"),
-              relation("rel-2", "e3", "Carol"),
-              relation("rel-3", "e4", "Dan"),
-              relation("rel-4", "e5", "Elle"),
-            ]
-          : id === "p1"
-            ? [relation("rel-5", "p2", "Quinn")]
-            : [],
-    }));
+    // are what made the map read as confetti. It waits for the reader to
+    // zoom in.
+    mockStarWithSmallPair();
 
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
-    openDisplayControls();
     const graph = capturedSigmaInstances[0].graph;
 
-    // The star is drawn; the pair is not, even though both its nodes have a
-    // connection and neither is an isolate.
-    expect(graph.order).toBe(5);
-    expect(graph.hasNode("e1")).toBe(true);
-    expect(graph.hasNode("p1")).toBe(false);
-    expect(graph.hasNode("p2")).toBe(false);
-    expect(graph.hasEdge("p1", "p2")).toBe(false);
-    fireEvent.focus(displayControl("Show small groups"));
-    expect(screen.getByRole("tooltip")).toHaveTextContent("2 nodes in small groups hidden");
-    fireEvent.blur(displayControl("Show small groups"));
-    expect(screen.getByText("5 topics · 1 region")).toBeInTheDocument();
+    expect(graph.hasEdge("p1", "p2")).toBe(true);
+    expect(hiddenNow("p1")).toBe(true);
+    expect(hiddenNow("p2")).toBe(true);
+    expect(hiddenNow("e1")).toBe(false);
+    zoomTo(0.5);
+    expect(hiddenNow("p1")).toBe(false);
+    expect(hiddenNow("p2")).toBe(false);
   });
 
   /** A five-node star (the core) plus a two-node group that MIN_COMPONENT_SIZE
@@ -1319,39 +1334,7 @@ describe("AtlasView", () => {
 
   const latestGraph = () => capturedSigmaInstances[capturedSigmaInstances.length - 1].graph;
 
-  it("draws the small groups when the chip is clicked, and remembers the choice", async () => {
-    mockStarWithSmallPair();
-
-    renderWithQuery(<AtlasView />);
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
-    openDisplayControls();
-    expect(latestGraph().hasNode("p1")).toBe(false);
-
-    const chip = displayControl("Show small groups");
-    expect(chip).toHaveAttribute("aria-pressed", "false");
-    fireEvent.focus(chip);
-    expect(screen.getByRole("tooltip")).toHaveTextContent("2 nodes in small groups hidden");
-    fireEvent.blur(chip);
-
-    fireEvent.click(chip);
-
-    await waitFor(() => expect(latestGraph().hasNode("p1")).toBe(true));
-    const graph = latestGraph();
-    expect(graph.hasNode("p2")).toBe(true);
-    expect(graph.hasEdge("p1", "p2")).toBe(true);
-    // The chip keeps its place and now offers the way back.
-    const shown = displayControl("Hide small groups");
-    expect(shown).toHaveAttribute("aria-pressed", "true");
-    expect(shown).toHaveTextContent("Small groups");
-    expect(window.localStorage.getItem("atlas.smallGroups")).toBe("true");
-
-    fireEvent.click(shown);
-    await waitFor(() => expect(latestGraph().hasNode("p1")).toBe(false));
-    expect(window.localStorage.getItem("atlas.smallGroups")).toBe("false");
-  });
-
   it("keeps revealed small-group discs clear of the core without imposing a rectangular boundary", async () => {
-    window.localStorage.setItem("atlas.smallGroups", "true");
     mockStarWithSmallPair();
 
     renderWithQuery(<AtlasView />);
@@ -1421,37 +1404,6 @@ describe("AtlasView", () => {
     return entities;
   }
 
-  it("paints the rebuilt renderer's overlay when the small-groups chip flips", async () => {
-    mockStarWithSmallStar();
-
-    renderWithQuery(<AtlasView />);
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
-    fireEvent.click(displayControl("Regions"));
-
-    // Stub the prototype, not one canvas: the chip rebuilds the renderer, and
-    // the overlay this has to watch does not exist until that happens.
-    const painter = recordingOverlayCtx();
-    const originalGetContext = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = vi.fn(function (this: HTMLCanvasElement) {
-      // This recorder observes name paints only; area geometry has its own tests.
-      return this.dataset.testid === "atlas-region-names" ? painter.ctx : null;
-    }) as any;
-    try {
-      fireEvent.click(displayControl("Show small groups"));
-      await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
-
-      // Nothing fires afterRender by hand here, and nothing else can: the chip
-      // changes only the DRAWN model, while `communities` and the palette are
-      // derived from the full model and the theme, so neither of the two
-      // repaint effects re-runs. The rebuilt renderer has to paint its own
-      // first frame or the map loses every place name.
-      expect(painter.state.paints).toBeGreaterThan(0);
-      expect(painter.state.regionNames.length).toBeGreaterThan(0);
-    } finally {
-      HTMLCanvasElement.prototype.getContext = originalGetContext;
-    }
-  });
-
   it("names an island small group only once the view is zoomed in enough for the islands to come up solid", async () => {
     mockStarWithSmallStar();
     mockDimensions = { width: 2000, height: 1200 }; // the island sits out on the rim; keep it in view
@@ -1467,8 +1419,8 @@ describe("AtlasView", () => {
       return this.dataset.testid === "atlas-region-names" ? painter.ctx : null;
     }) as any;
     try {
-      fireEvent.click(displayControl("Show small groups"));
-      await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+      // Paint a first frame through the recorder.
+      capturedSigmaInstances[0].refresh();
 
       // At the opening view the island is dim and nameless: only the core's
       // own name is on the map.
@@ -1477,12 +1429,7 @@ describe("AtlasView", () => {
 
       // Zoom in twice (camera ratio halves): the islands come up solid and
       // the small star earns its name. Its leader is its degree-3 hub.
-      const instance = capturedSigmaInstances[1]!;
-      const onCamera = instance.camera.on.mock.calls.find((call: unknown[]) => call[0] === "updated")?.[1] as
-        | ((state: { ratio: number }) => void)
-        | undefined;
-      expect(onCamera).toBeDefined();
-      onCamera!({ ratio: 0.5 });
+      zoomTo(0.5);
       expect(painter.state.regionNames).toContain("Shelf Hub");
       expect(painter.state.regionNames).toContain("Alice");
     } finally {
@@ -1490,43 +1437,13 @@ describe("AtlasView", () => {
     }
   });
 
-  it("counts only regions that are drawn: a hidden small group adds none until it is shown", async () => {
+  it("counts the small groups' topics and regions with the rest of the map", async () => {
     mockStarWithSmallStar();
 
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
 
-    // The small star is its own community in the full model, but while its
-    // nodes are hidden nothing draws or names it — so it must not be counted.
-    expect(screen.getByText("5 topics · 1 region")).toBeInTheDocument();
-
-    fireEvent.click(displayControl("Show small groups"));
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
     expect(screen.getByText("9 topics · 2 regions")).toBeInTheDocument();
-  });
-
-  it("starts hidden when the stored small-groups choice is malformed", async () => {
-    window.localStorage.setItem("atlas.smallGroups", "{oops");
-    mockStarWithSmallPair();
-
-    renderWithQuery(<AtlasView />);
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
-
-    expect(latestGraph().hasNode("p1")).toBe(false);
-    expect(displayControl("Show small groups")).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-  });
-
-  it("offers no small-groups chip when nothing is hidden", async () => {
-    mockConnectedPair();
-
-    renderWithQuery(<AtlasView />);
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
-
-    expect(screen.queryByRole("button", { name: "Show small groups" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Hide small groups" })).not.toBeInTheDocument();
   });
 
   it("mounts community areas below sigma and names above it, and removes both on unmount", async () => {
@@ -1702,22 +1619,20 @@ describe("AtlasView", () => {
     expect(screen.getByText("6 topics · 2 regions")).toBeInTheDocument();
   });
 
-  it("reveals a hidden isolate from search before flying the camera to it", async () => {
+  it("shows an isolate found by search, at any zoom", async () => {
     mockConnectedPairWithIsolate();
 
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    expect(hiddenNow("e4")).toBe(true);
 
-    // The isolate starts outside the map (degree 0, see visibleModel), but
-    // search reveals small groups and selects it in the rebuilt renderer.
     const input = screen.getByPlaceholderText("Filter nodes");
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "isol" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
-    expect(capturedSigmaInstances[1].graph.hasNode("e4")).toBe(true);
     expect(await screen.findByRole("heading", { name: "Isolate" })).toBeInTheDocument();
+    expect(hiddenNow("e4")).toBe(false);
   });
 
   it("leaves Cmd/Ctrl+K to the application search instead of stealing focus", async () => {
@@ -1857,22 +1772,17 @@ describe("AtlasView", () => {
     expect(
       screen.getAllByRole("option").map((o) => o.textContent),
     ).toEqual(["All spaces", "personal", "wenlan-dev"]);
-    // Only the wenlan-dev star is connected, so the count line reads 5 either
-    // way; the scoping is visible in the graph itself and in the hidden chip.
-    expect(screen.getByText("5 topics · 1 region")).toBeInTheDocument();
-    fireEvent.focus(displayControl("Show small groups"));
-    expect(screen.getByRole("tooltip")).toHaveTextContent("1 node in small groups hidden");
-    fireEvent.blur(displayControl("Show small groups"));
+    // The isolate is in "personal": scoping to wenlan-dev takes it off the map.
+    expect(screen.getByText("6 topics · 1 region")).toBeInTheDocument();
+    expect(latestGraph().hasNode("e4")).toBe(true);
 
     fireEvent.click(screen.getByRole("option", { name: "wenlan-dev" }));
     expect(await screen.findByText("5 topics · 1 region")).toBeInTheDocument();
-    expect(screen.queryByText("1 node in small groups hidden")).not.toBeInTheDocument();
+    expect(latestGraph().hasNode("e4")).toBe(false);
 
     fireEvent.click(select);
     fireEvent.click(screen.getByRole("option", { name: "All spaces" }));
-    fireEvent.focus(displayControl("Show small groups"));
-    expect(screen.getByRole("tooltip")).toHaveTextContent("1 node in small groups hidden");
-    fireEvent.blur(displayControl("Show small groups"));
+    expect(await screen.findByText("6 topics · 1 region")).toBeInTheDocument();
   });
 
   it("hides the Space selector when no entity carries a space", async () => {
@@ -2391,21 +2301,13 @@ describe("AtlasView", () => {
     expect(instance.settings.nodeReducer("e3", attrs)).not.toEqual(plain);
   });
 
-  it("draws the small groups when focusEntityId sits in one, so the focus lands instead of silently vanishing", async () => {
+  it("shows a focusEntityId that sits in a small group, so the focus lands instead of silently vanishing", async () => {
     mockStarWithSmallPair();
-
-    // A core entity as focus: the small pair stays hidden as usual.
-    const { unmount } = renderWithQuery(<AtlasView focusEntityId="e1" />);
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
-    expect(latestGraph().hasNode("p1")).toBe(false);
-    unmount();
-    capturedSigmaInstances.length = 0;
 
     renderWithQuery(<AtlasView focusEntityId="p1" />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
     const instance = capturedSigmaInstances[0];
-    expect(instance.graph.hasNode("p1")).toBe(true);
-    expect(instance.graph.hasNode("p2")).toBe(true);
+    expect(hiddenNow("p1")).toBe(false);
     expect(instance.camera.setState).toHaveBeenCalledWith({ x: 0.42, y: 0.24, ratio: 1 });
   });
 

@@ -374,6 +374,9 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
       ["mem:n1", "Tagline settled", false],
       ["mem:n2", "Pricing page open", true],
     ]);
+    // Hovered or pinned: only that one point's sentence.
+    const one = nightMarks(map, drawnAt, rest, viewport, (_thing, point) => point === "mem:n2", "thing:t1").sentences;
+    expect(one.map(({ id }) => id)).toEqual(["mem:n2"]);
   });
 });
 

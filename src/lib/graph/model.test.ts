@@ -28,7 +28,8 @@ import {
   thingNodeId,
   NIGHT_EDGE_TYPE,
   THING_NODE_TYPE,
-  smallGroupNodeCount,
+  smallGroupIds,
+  tuckedNodeIds,
   DEFAULT_LAYERS,
   MIN_COMPONENT_SIZE,
   SHARED_SOURCE_MAX_FANOUT,
@@ -703,28 +704,32 @@ describe("componentSizeByNode / drawableModel", () => {
     expect(drawable.edges.map((e) => e.id)).toContain("e4");
   });
 
-  it("counts the nodes in the small groups for the chip", () => {
+  it("names the small groups, never one an active thing's point links to", () => {
     const full = model(
       ["a", "b", "c", "d", "e", "f", "g", "h"],
       [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"], ["f", "g"]],
     );
-    // Four nodes are small: the f-g pair and the lone "h".
-    expect(smallGroupNodeCount(full)).toBe(3);
-    // The count is about the FULL model, so turning the groups on does not
-    // change what the chip has to offer back.
-    expect(smallGroupNodeCount(drawableModel(full, true))).toBe(3);
+    // The f-g pair and the lone "h".
+    expect([...smallGroupIds(full)].sort()).toEqual(["f", "g", "h"]);
+    expect([...smallGroupIds(full, new Set(["g"]))]).toEqual(["h"]);
+  });
+
+  it("tucks away a memory hung only on a small group, but not one that also touches the core", () => {
+    const full = model(["a", "b", "c", "d", "e", "f", "m1", "m2"], [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"], ["m1", "f"], ["m2", "f"], ["m2", "a"]]);
+    const withMemories = { ...full, nodes: full.nodes.map((node) => (node.id.startsWith("m") ? { ...node, kind: "memory" as const } : node)) };
+    expect([...tuckedNodeIds(withMemories, new Set(["f"]))].sort()).toEqual(["f", "m1"]);
   });
 
   it("hides nothing when no component clears the bar — there is no core to be small beside", () => {
     const tiny = model(["a", "b", "c", "d"], [["a", "b"], ["c", "d"]]);
     expect(drawableModel(tiny)).toBe(tiny);
-    expect(smallGroupNodeCount(tiny)).toBe(0);
+    expect(smallGroupIds(tiny).size).toBe(0);
   });
 
   it("returns the model untouched when every component is big enough", () => {
     const full = model(["a", "b", "c", "d", "e"], [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"]]);
     expect(drawableModel(full)).toBe(full);
-    expect(smallGroupNodeCount(full)).toBe(0);
+    expect(smallGroupIds(full).size).toBe(0);
   });
 });
 

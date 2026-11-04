@@ -47,12 +47,12 @@ import {
   memorySourceId,
   pageIdOf,
   pageNodeId,
-  drawableModel,
   attachMemories,
   attachThingPoints,
   thingIdOf,
   thingNodeId,
-  smallGroupNodeCount,
+  smallGroupIds,
+  tuckedNodeIds,
   DEFAULT_LAYERS,
   MEMORY_NODE_TYPE,
   PAGE_NODE_TYPE,
@@ -139,6 +139,9 @@ const EMPTY_CARTOGRAPHY: Map<string, SpaceCartography> = new Map();
 /** The closest a thing's own stop (這件事) zooms, CSS px per graph unit:
  *  its points a sentence's line apart or more, not a screen apart. */
 const THING_STOP_DENSITY = 12;
+/** A point's short title when zoomed in, CSS px: a few words, about ten
+ *  Chinese characters. Its whole sentence comes up on hover. */
+const POINT_TITLE_PX = 120;
 
 // Same reason as EMPTY_CARTOGRAPHY: a stable identity for the unresolved
 // graph query, so the model memo below doesn't rebuild on every render.
@@ -156,21 +159,8 @@ const EMPTY_THING_POINTS: ThingNightPoints[] = [];
 /** Where the layer choice survives a reload. */
 const LAYERS_STORAGE_KEY = "atlas.layers";
 
-/** Where the small-groups choice is remembered across reloads. */
-export const SMALL_GROUPS_STORAGE_KEY = "atlas.smallGroups";
+/** Where the "Working on" choice is remembered across reloads. */
 export const WORKING_STORAGE_KEY = "atlas.showWorking";
-
-/** Read the persisted small-groups choice. Only a stored `true` turns them
- *  on; anything malformed — bad JSON, a number, a string — leaves them
- *  hidden, which is the default the map is designed around. */
-export function readStoredSmallGroups(raw: string | null): boolean {
-  if (raw === null) return false;
-  try {
-    return JSON.parse(raw) === true;
-  } catch {
-    return false;
-  }
-}
 
 /** Read the persisted layer choice. Anything malformed — bad JSON, a
  *  non-object, a non-boolean field, or all three off — falls back to the
@@ -290,9 +280,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const displayOpenRef = useRef(false);
   displayOpenRef.current = displayOpen;
   const selectedRef = useRef<string | null>(null);
+  /** The point whose sentence a click pinned open. */
+  const pinnedPointRef = useRef<string | null>(null);
   const thingArrivalDoneRef = useRef(false);
   const overviewRef = useRef<AtlasViewpoint | null>(null);
-  const pendingFocusRef = useRef<string | null>(null);
   const openingRatioRef = useRef(1);
   const focusNodeRef = useRef<(id: string) => void>(() => {});
   const returnToMapRef = useRef<() => void>(() => {});
@@ -390,37 +381,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       // Private mode / quota: the choice still applies for this session.
     }
   };
-  // Components of fewer than MIN_COMPONENT_SIZE nodes are off the map until
-  // the reader asks for them; the chip below is the ask. Persisted like the
-  // layer choice, and a malformed stored value falls back to hidden.
-  const [showSmallGroups, setShowSmallGroups] = useState<boolean>(() => {
-    if (focusPageId) return true;
-    if (typeof window === "undefined") return false;
-    try {
-      return readStoredSmallGroups(window.localStorage.getItem(SMALL_GROUPS_STORAGE_KEY));
-    } catch {
-      return false;
-    }
-  });
-  const toggleSmallGroups = () => {
-    const next = !showSmallGroups;
-    setShowSmallGroups(next);
-    try {
-      window.localStorage.setItem(SMALL_GROUPS_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // Private mode / quota: the choice still applies for this session.
-    }
-  };
-  const revealSmallGroupsForFocus = () => {
-    if (showSmallGroups) return;
-    setShowSmallGroups(true);
-    try {
-      window.localStorage.setItem(SMALL_GROUPS_STORAGE_KEY, JSON.stringify(true));
-    } catch {
-      // Private mode / quota: the choice still applies for this session.
-    }
-  };
-
   const onlyLayerOn = (key: keyof GraphLayers) =>
     layers[key] && Object.values(layers).filter(Boolean).length === 1;
 
@@ -460,46 +420,36 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     [scopedGraph, layers, model],
   );
 
-  // What sigma actually draws. Nodes in a connected component smaller than
-  // MIN_COMPONENT_SIZE are left out (model.ts) unless the reader turns them
-  // on: on real data ~960 of 1,600 entities have no relation at all, and
-  // another ~196 sit in small groups of four or fewer. Both buried the map.
-  // The count is shown on the toolbar chip that turns them back on.
-  // Overlay entry point: a focused entity that sits in a small group would
-  // otherwise vanish with it and the mount focus below would silently not
-  // fire, so the small groups are drawn for that mount whatever the chip says.
-  // What active things' steeped points link to: drawn even in a small group,
-  // or a linked thing would have no 附近 to go to.
+  // What sigma draws: every node. Small groups (components of fewer than
+  // MIN_COMPONENT_SIZE, model.ts) are laid out with the rest but kept out of
+  // sight until the reader zooms in (see `tucked` and the node reducer): on
+  // real data ~960 of 1,600 entities have no relation at all, and another ~196
+  // sit in small groups of four or fewer, which buried the opening map.
+  // What active things' steeped points link to is never tucked away, or a
+  // linked thing would have no 附近 to go to.
   const thingAnchors = useMemo(() => {
     const points = new Set(thingPoints.filter((thing) => !thing.quiet).flatMap((thing) => thing.points.map((point) => point.memory_id)));
     return new Set(scopedGraph.memory_links.filter((link) => points.has(link.memory_id)).map((link) => link.entity_id));
   }, [thingPoints, scopedGraph]);
   const visibleModel = useMemo<GraphModel>(() => {
-    let drawable = drawableModel(baseModel, showSmallGroups, thingAnchors);
-    if (
-      effectiveFocusId &&
-      !drawable.nodes.some((n) => n.id === effectiveFocusId) &&
-      baseModel.nodes.some((n) => n.id === effectiveFocusId)
-    ) {
-      drawable = drawableModel(baseModel, true);
-    }
-    let withMemories = drawable;
+    let withMemories = baseModel;
     if (layers.memory) {
       // Nothing to hang the memories on (entity and page layers both off):
       // fall back to drawing the memory model as it is.
-      withMemories = baseModel.nodes.length === 0 ? drawableModel(model, showSmallGroups) : attachMemories(drawable, model);
+      withMemories = baseModel.nodes.length === 0 ? model : attachMemories(baseModel, model);
     }
     // Things and their night's points are drawn whatever the memory layer
     // says: they are the work, not a layer of evidence.
     return attachThingPoints(withMemories, thingPoints, scopedGraph.memory_links, spaceFilter);
-  }, [baseModel, model, layers.memory, showSmallGroups, effectiveFocusId, thingPoints, scopedGraph, spaceFilter, thingAnchors]);
+  }, [baseModel, model, layers.memory, thingPoints, scopedGraph, spaceFilter]);
+  // The small groups, and the memories hung only on them: hidden until the
+  // view is zoomed in far enough for the islands to come up solid.
+  const tucked = useMemo(() => tuckedNodeIds(visibleModel, smallGroupIds(baseModel, thingAnchors)), [visibleModel, baseModel, thingAnchors]);
+  const tuckedRef = useRef(tucked);
+  tuckedRef.current = tucked;
   const hasThings = visibleModel.nodes.some((node) => node.kind === "thing");
   const hasThingsRef = useRef(hasThings);
   hasThingsRef.current = hasThings;
-  // Counted off the FULL base model, so the chip keeps its number when the
-  // groups are showing and can offer to hide them again — and keeps it when
-  // the memory chip flips, since memories never make or break a group.
-  const smallGroupCount = useMemo(() => smallGroupNodeCount(baseModel), [baseModel]);
 
   // Anything in cartography.ts's unscoped bucket is drawn on the fallback
   // climb, so the badge must never read all-durable while such a node is on
@@ -621,17 +571,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     searchInputRef.current?.blur();
     const renderer = sigmaRef.current;
     const drawn = graphRef.current;
-    // A degree-0 node is not on the map at all (see visibleModel), but search
-    // can still name it. Reveal hidden small groups first so the same search
-    // action can select the node in the map, including in the browser preview
-    // where no details callback is present.
-    if (!drawn || !drawn.hasNode(nodeId)) {
-      if (model.nodes.some((node) => node.id === nodeId)) {
-        pendingFocusRef.current = nodeId;
-        revealSmallGroupsForFocus();
-      }
-      return;
-    }
+    if (!drawn || !drawn.hasNode(nodeId)) return;
     const graph = drawn;
     if (!renderer) return;
     // A thing (found by search) is picked like a click on its frame.
@@ -705,6 +645,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   selectThingRef.current = selectThing;
   const returnToMap = () => {
     selectedRef.current = null;
+    pinnedPointRef.current = null;
     setSelectedId(null);
     setSelectedThing(null);
     restoreSearchFocusOnCloseRef.current = true;
@@ -1010,7 +951,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const hasMeaningfulComponent = [...components.values()].some((members) =>
       members.some((id) => graph.getNodeAttribute(id, "landmark") === true),
     );
-    const showOverviewFallbackLabels = showSmallGroups || !hasMeaningfulComponent;
+    const showOverviewFallbackLabels = !hasMeaningfulComponent;
     simRef.current = sim;
     if (import.meta.env.DEV) {
       // Preview/debug handle only — stripped from prod builds.
@@ -1086,20 +1027,30 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       labelBoxes.push(box);
       return true;
     };
-    // A thing's points show their sentences at its own zoom stop, or anywhere
-    // closer in than the overview; the overlay paints them (night.ts).
     // The node under the pointer, whatever the hover state shows.
     let pointerNode: string | null = null;
-    const sentencesFor = (thing: string) =>
-      (selectedRef.current === thing && thingStopRef.current === "this") || lodRef.current.phase !== "overview";
+    // A point shows its whole sentence only when asked: under the pointer,
+    // pinned by a click, or at its picked thing's own stop (one thing, and
+    // the reader went there to read it). The overlay paints it (night.ts).
+    // Zoomed in, every other point carries a short title; zoomed out, none.
+    const sentencesFor = (thing: string, point: string) =>
+      point === pointerNode || point === pinnedPointRef.current || (selectedRef.current === thing && thingStopRef.current === "this");
     const drawLabel = (ctx: CanvasRenderingContext2D, data: Record<string, any>, s: Record<string, any>) => {
       const nodeAttrs = graph.hasNode(data.key) ? graph.getNodeAttributes(data.key) : null;
       if (nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string") {
-        // Its sentence is painted by the overlay, wrapped and inside the
-        // frame; and a picked thing's points are not given forced labels at
-        // 全部 (they would run across other frames), only the one hovered.
-        if (sentencesFor(nodeAttrs.dustOf)) return;
-        if (pointerNode !== data.key && selectedRef.current === nodeAttrs.dustOf) return;
+        // Its sentence is painted by the overlay, wrapped beside its point;
+        // zoomed out, a point carries no words at all.
+        if (sentencesFor(nodeAttrs.dustOf, data.key)) return;
+        if (lodRef.current.phase === "overview") return;
+        ctx.font = NODE_LABEL_FONT;
+        const title = truncateOverviewLabel(ctx, String(data.label ?? ""), POINT_TITLE_PX);
+        if (!title) return;
+        const angle = Math.atan2(-(graph.getNodeAttribute(data.key, "y") as number), graph.getNodeAttribute(data.key, "x") as number);
+        const sector = Math.round((angle + Math.PI) / (Math.PI / 2)) % 4;
+        const at = labelAnchor(data.x, data.y, data.size, sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above");
+        // Where titles would overlap, the later one is left off.
+        if (reserveLabel(ctx, title, at, false)) drawNodeLabelAt(ctx, { ...data, label: title }, s, at, paletteRef.current.surface);
+        return;
       }
       // Truncation, collision reservation, and drawNodeLabelAt must all use
       // the same body face or a measured width is not a screen-space bound.
@@ -1197,6 +1148,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         // (UX-CHAT-5; Fable's design: the thing is a camera, not a mark).
         // The "Working on" switch shows every active thing's points at once.
         if (attrs.night === true && typeof attrs.dustOf === "string" && !showWorkingRef.current && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
+        // A small group stays out of sight until the islands come up solid,
+        // unless it is what the reader is looking at.
+        const hover = hoverStateRef.current;
+        if (tuckedRef.current.has(node) && !lodRef.current.islandsSolid && hover.hovered !== node && !hover.neighbors.has(node) && node !== effectiveFocusId) return { ...attrs, hidden: true };
         const display = nodeDisplay(hoverStateRef.current, node, attrs, paletteRef.current, lodRef.current);
         if (
           showOverviewFallbackLabels &&
@@ -1218,6 +1173,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           display.forceLabel = true;
           display.highlighted = true;
         }
+        // Zoomed in, each shown point is offered its short title; drawLabel
+        // leaves off the ones that would overlap.
+        if (attrs.night === true && lodRef.current.phase !== "overview" && !display.hidden) display.forceLabel = true;
         const floor = lodRef.current.phase === "overview" && attrs.landmark ? minimumGraphRadius * 2 : minimumGraphRadius;
         const cap = nodeSizeCapPx(attrs, node === hoverStateRef.current.hovered);
         const size = Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel);
@@ -1417,11 +1375,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         camera.setState({ x: display.x, y: display.y, ratio: Math.min(camera.ratio, 1, focusPageId ? openingRatioRef.current / 2.5 : 1) });
       }
     }
-    const pendingFocus = pendingFocusRef.current;
-    if (pendingFocus && graph.hasNode(pendingFocus)) {
-      pendingFocusRef.current = null;
-      focusNodeRef.current(pendingFocus);
-    }
     // Arriving from a thing's page: go straight to its 這件事 stop, once.
     if (focusThingId && !thingArrivalDoneRef.current && graph.hasNode(thingNodeId(focusThingId))) {
       thingArrivalDoneRef.current = true;
@@ -1469,9 +1422,21 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     renderer.on("clickNode", ({ node }) => {
       // A moved drag must not also navigate on release.
       if (movedDuringPressRef.current) return;
+      // A click on a point pins its sentence open (again unpins it), to read
+      // it through or copy it.
+      if (graph.getNodeAttribute(node, "night") === true) {
+        pinnedPointRef.current = pinnedPointRef.current === node ? null : node;
+        renderer.refresh();
+        return;
+      }
       focusNodeRef.current(node);
     });
     renderer.on("clickStage", ({ event }) => {
+      if (pinnedPointRef.current) {
+        pinnedPointRef.current = null;
+        renderer.refresh();
+        return;
+      }
       // A click on a frame or its title picks its thing, at its own stop.
       const thing = frameAt(frameHitsRef.current, event.x, event.y);
       if (thing) {
@@ -1490,15 +1455,23 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     renderer.on("enterNode", ({ node }) => {
       overNode = true;
       pointerNode = node;
-      if (draggedNodeRef.current || selectedRef.current) return;
+      if (draggedNodeRef.current || selectedRef.current) {
+        // A point's sentence still comes up under the pointer.
+        if (graph.getNodeAttribute(node, "night") === true) renderer.refresh();
+        return;
+      }
       hoverStateRef.current = hoverStateFor(graph, node);
       container.style.cursor = "pointer";
       renderer.refresh();
     });
     renderer.on("leaveNode", () => {
       overNode = false;
+      const left = pointerNode;
       pointerNode = null;
-      if (draggedNodeRef.current || selectedRef.current) return;
+      if (draggedNodeRef.current || selectedRef.current) {
+        if (left !== null && graph.hasNode(left) && graph.getNodeAttribute(left, "night") === true) renderer.refresh();
+        return;
+      }
       hoverStateRef.current = hoverStateFor(graph, null);
       container.style.cursor = "default";
       renderer.refresh();
@@ -1932,12 +1905,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
               </AtlasTooltip>
             );
           })}
-          <div className="atlas-content-actions">
-            <div className="atlas-content-toolgroup">
+          {/* What is laid over the map, in the same rows as what is drawn on it. */}
+          <div className="atlas-display-group">
             <AtlasTooltip content={t("atlas.regionsDescription")}>
             <button
               type="button"
-              className="atlas-content-secondary-toggle"
+              className="atlas-content-toggle"
               aria-pressed={showRegions}
               aria-label={t("atlas.regionsToggle")}
               onClick={() => {
@@ -1953,7 +1926,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
               <AtlasTooltip content={t("atlas.workingDescription")}>
               <button
                 type="button"
-                className="atlas-content-secondary-toggle"
+                className="atlas-content-toggle"
                 aria-pressed={showWorking}
                 aria-label={t("atlas.workingToggle")}
                 onClick={toggleWorking}
@@ -1963,21 +1936,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
               </button>
               </AtlasTooltip>
             )}
-            {smallGroupCount > 0 && (
-              <AtlasTooltip content={t(showSmallGroups ? "atlas.hideSmallGroups" : "atlas.smallGroupsHidden", { count: smallGroupCount })}>
-              <button
-                type="button"
-                onClick={toggleSmallGroups}
-                aria-pressed={showSmallGroups}
-                aria-label={t(showSmallGroups ? "atlas.hideSmallGroups" : "atlas.showSmallGroups")}
-                className="atlas-content-secondary-toggle"
-              >
-                <span className="atlas-content-dot" aria-hidden="true" />
-                <span>{t("atlas.smallGroupsLabel")}</span>
-              </button>
-              </AtlasTooltip>
-            )}
-            </div>
             {cartographyStatus === "partial-error" && (
               <span role="alert" className="atlas-cartography-alert">
                 {t("atlas.cartographyPartialError")}
