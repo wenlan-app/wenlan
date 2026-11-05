@@ -7,7 +7,6 @@ import {
   createAtlasSimulation,
   edgeDisplay,
   NEIGHBOR_LABEL_MAX,
-  THING_LINK_LINE_SIZE,
   lodFor,
   nodeDisplay,
   OPENING_LOD,
@@ -40,6 +39,11 @@ import {
   SENTENCE_MAX_PX,
   thingFocusState,
   thingPointIds,
+  arrowToward,
+  EDGE_SIGN_INSETS,
+  edgeSignAt,
+  nearLinkedBodies,
+  placeEdgeSigns,
   thingStopNodeIds,
   thingStopsFor,
   uncrowdedSentences,
@@ -729,13 +733,68 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
   it("frames its points and what they link to, then those bodies' neighbours, then the whole map", () => {
     const map = mapWith(things());
     annotateDust(map, satellitePlan(map));
-    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["hub", "mem:n1", "mem:n2"]);
+    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["hub", "mem:n1", "mem:n2", "thing:t1"]);
     // n2 links to hub; hub's neighbours are a, b and c. d and e are further.
     expect(thingStopNodeIds(map, "thing:t1", "nearby")).toEqual(["a", "b", "c", "hub", "mem:n1", "mem:n2"]);
     expect(thingStopNodeIds(map, "thing:t1", "all")).toEqual(map.nodes());
   });
 
-  it("lights its points and what they link to, draws those lines, and never its tie to its centre", () => {
+  it("holds a far-flown point's sentence at the screen's edge under its topic, and leads back once the thing is off screen", () => {
+    const map = mapWith(things());
+    annotateDust(map, satellitePlan(map));
+    const hover = { hovered: null, neighbors: new Set<string>() };
+    const viewport = { width: 400, height: 400 };
+    map.mergeNodeAttributes("mem:n2", { fly: 1, flyTo: { anchor: "hub", dx: 1, dy: 0 } });
+    // n2 is out by the hub, past the right edge; n1 is home in view.
+    const out = (id: string) => (id === "mem:n1" ? { x: 100, y: 200, r: 3 } : id === "mem:n2" ? { x: 900, y: 210, r: 3 } : id === "hub" ? { x: 910, y: 200, r: 8 } : null);
+    const marks = nightMarks(map, out, hover, viewport, () => true, "thing:t1");
+    expect(marks.edges).toEqual([expect.objectContaining({ kind: "topic", goTo: "hub", count: 1, text: "Pricing page open", toward: { x: 910, y: 200, r: 8 } })]);
+    expect(marks.sentences.map((sentence) => sentence.id)).toEqual(["mem:n1"]);
+    // Only for the picked thing.
+    expect(nightMarks(map, out, hover, viewport, () => true, null, undefined, true).edges).toEqual([]);
+    // The camera went to the hub: n2 is in view with its sentence, and a
+    // sign points back to the thing.
+    const there = (id: string) => (id === "mem:n1" ? { x: -500, y: 200, r: 3 } : id === "mem:n2" ? { x: 190, y: 210, r: 3 } : id === "hub" ? { x: 200, y: 200, r: 8 } : null);
+    const back = nightMarks(map, there, hover, viewport, () => true, "thing:t1");
+    expect(back.frames).toEqual([]);
+    expect(back.edges).toEqual([expect.objectContaining({ kind: "back", goTo: "thing:t1", title: "Site redesign" })]);
+    expect(back.sentences).toEqual([expect.objectContaining({ id: "mem:n2", away: true })]);
+  });
+
+  it("puts an edge sign on the edge facing what it points at, its arrow the true way, and slides signs apart", () => {
+    const measure = (text: string) => text.length * 6;
+    const sign = (goTo: string, toward: { x: number; y: number }, count = 1) => ({ kind: "topic" as const, thing: "thing:t1", goTo, title: goTo, count, text: "A sentence", open: false, toward });
+    const viewport = { width: 800, height: 600 };
+    const [left, right] = placeEdgeSigns([sign("memory UX", { x: -900, y: -300 }, 2), sign("spotlight", { x: 2000, y: 1000 })], measure, viewport);
+    expect(left!.header).toBe("↖ memory UX · 2");
+    expect(right!.header).toBe("spotlight ↘");
+    expect(left!.box.left).toBe(EDGE_SIGN_INSETS.left);
+    expect(right!.box.right).toBe(800 - EDGE_SIGN_INSETS.right);
+    expect(right!.line).toBe("A sentence");
+    // Two signs the same way do not overlap.
+    const [a, b] = placeEdgeSigns([sign("a", { x: -900, y: 300 }), sign("b", { x: -900, y: 301 })], measure, viewport);
+    expect(a!.box.bottom <= b!.box.top || b!.box.bottom <= a!.box.top).toBe(true);
+    expect(arrowToward({ x: 0, y: 0 }, { x: 0, y: -5 })).toBe("↑");
+    // A tap on a sign answers with where it goes; frames ignore it.
+    const hits = [{ thing: "thing:t1", goTo: "hub", ...a!.box }];
+    expect(edgeSignAt(hits, a!.box.left + 1, a!.box.top + 1)).toBe("hub");
+    expect(frameAt(hits, a!.box.left + 1, a!.box.top + 1)).toBeNull();
+  });
+
+  it("leaves a far topic, and the point flying to it, out of the 這件事 frame", () => {
+    const map = mapWith(things());
+    annotateDust(map, satellitePlan(map));
+    const centre = xy(map, "thing:t1");
+    map.setNodeAttribute("hub", "x", centre.x + 5000);
+    map.setNodeAttribute("hub", "y", centre.y);
+    expect(nearLinkedBodies(map, "thing:t1")).toEqual([]);
+    setThingFlight(map, "thing:t1", 1, thingFlightTargets(map, "thing:t1"));
+    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["mem:n1", "thing:t1"]);
+    // 附近 still reaches it.
+    expect(thingStopNodeIds(map, "thing:t1", "nearby")).toContain("hub");
+  });
+
+  it("lights its points and what they link to, and never draws a line from a point to its topic or its centre", () => {
     const map = mapWith(things());
     annotateDust(map, satellitePlan(map));
     const state = thingFocusState(map, "thing:t1", "this");
@@ -744,13 +803,11 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     const point = { entityType: "memory", night: true, dustRank: 1 };
     const hub = { entityType: "concept" };
     const thing = { entityType: "thing" };
-    const line = edgeDisplay(state, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub });
-    expect(line.hidden).toBeUndefined();
-    expect(line.color).toBe(PALETTE.bridge);
-    expect(line.size).toBe(THING_LINK_LINE_SIZE);
-    // The same line whichever way round the edge runs, and still at 附近.
-    expect(edgeDisplay(state, "e", "hub", "mem:n2", attrs, PALETTE, lodFor(1), { source: hub, target: point }).size).toBe(THING_LINK_LINE_SIZE);
-    expect(edgeDisplay(thingFocusState(map, "thing:t1", "nearby"), "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).size).toBe(THING_LINK_LINE_SIZE);
+    // No line to its topic at any stop, whichever way round the edge runs.
+    expect(edgeDisplay(state, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).hidden).toBe(true);
+    expect(edgeDisplay(state, "e", "hub", "mem:n2", attrs, PALETTE, lodFor(1), { source: hub, target: point }).hidden).toBe(true);
+    expect(edgeDisplay(thingFocusState(map, "thing:t1", "nearby"), "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).hidden).toBe(true);
+    expect(edgeDisplay(thingFocusState(map, "thing:t1", "all"), "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).hidden).toBe(true);
     // Nothing picked: the line stays hidden, the map at rest is unchanged.
     expect(edgeDisplay({ hovered: null, neighbors: new Set() }, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).hidden).toBe(true);
     // Lines among topics are not point links, even at 附近.

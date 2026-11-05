@@ -861,9 +861,11 @@ describe("AtlasView", () => {
     expect(within(stops).getByRole("button", { name: "Nearby" })).toHaveAttribute("aria-pressed", "true");
     expect(within(stops).getByRole("button", { name: "This" })).toHaveAttribute("aria-pressed", "false");
     expect(instance.camera.setState.mock.calls.length + instance.camera.animate.mock.calls.length).toBeGreaterThan(moves);
-    // Back to the map: the stops go with the selection.
+    // Back to the map: the stops go with the selection, and the camera is
+    // seen going back while the points fly home (Fable's design).
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("group", { name: "Zoom to" })).not.toBeInTheDocument());
+    expect(instance.camera.animate).toHaveBeenLastCalledWith(expect.any(Object), { duration: 450, easing: "quadraticInOut" });
   });
 
   it("keeps a thing's points off the map until it is picked, and arrives at it from its page (UX-CHAT-5)", async () => {

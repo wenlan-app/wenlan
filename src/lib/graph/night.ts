@@ -55,6 +55,30 @@ export interface NightSentence extends NightSpot {
   away?: boolean;
 }
 
+/**
+ * A sign held at the screen's edge for what the picked thing reaches that is
+ * off screen (Fable's design, Qi-Xuan 11-05): its points that flew out to a
+ * far topic, one sign per topic ("↖ memory UX · 2" over the first point's
+ * sentence), or, once the camera has gone to such a topic, the thing itself
+ * ("back"). A tap moves the camera to `goTo`.
+ */
+export interface EdgeSign {
+  kind: "topic" | "back";
+  /** The picked thing's node id. */
+  thing: string;
+  /** Where a tap takes the camera: the topic, or the thing. */
+  goTo: string;
+  /** The topic's name, or the thing's title. */
+  title: string;
+  /** Points of the thing out by that topic (0 for "back"). */
+  count: number;
+  /** The first of those points' sentences ("" for "back"). */
+  text: string;
+  open: boolean;
+  /** Where `goTo` is drawn, viewport CSS px: the sign points that way. */
+  toward: { x: number; y: number };
+}
+
 /** Where a node is drawn this frame, in viewport CSS px, or null when sigma
  *  does not draw it (hidden by a reducer, such as a filtered type). */
 export type DrawnAt = (id: string) => { x: number; y: number; r: number } | null;
@@ -91,9 +115,11 @@ export function nightMarks(
   /** Where a thing's centre is drawn, viewport CSS px: the frame's spot
    *  when every one of its points is out beside its topic. */
   centreAt: (thing: string) => { x: number; y: number } | null = () => null,
-): { frames: ThingFrame[]; sentences: NightSentence[] } {
+): { frames: ThingFrame[]; sentences: NightSentence[]; edges: EdgeSign[] } {
   const frames: ThingFrame[] = [];
   const sentences: NightSentence[] = [];
+  const edges: EdgeSign[] = [];
+  const onScreen = (at: { x: number; y: number }) => at.x >= 0 && at.y >= 0 && at.x <= viewport.width && at.y <= viewport.height;
   const lit = (id: string) => hover.hovered === null || hover.hovered === id || hover.neighbors.has(id);
   graph.forEachNode((thing, attrs) => {
     if (attrs.entityType !== THING_NODE_TYPE) return;
@@ -116,6 +142,14 @@ export function nightMarks(
       const sentence = { ...at, dim: !lit(point), id: point, text: String(pointAttrs.label ?? ""), open: pointAttrs.open === true, thing };
       // Out beside its topic: on the map there, not in the frame.
       if (typeof pointAttrs.fly === "number" && pointAttrs.fly > 0) {
+        // Flown off screen: its sentence waits at the edge, under its topic.
+        const anchor = (pointAttrs.flyTo as { anchor?: string } | undefined)?.anchor;
+        if (thing === picked && anchor && graph.hasNode(anchor) && !onScreen(at)) {
+          const sign = edges.find((edge) => edge.kind === "topic" && edge.goTo === anchor);
+          if (sign) sign.count += 1;
+          else edges.push({ kind: "topic", thing, goTo: anchor, title: String(graph.getNodeAttribute(anchor, "label") ?? ""), count: 1, text: sentence.text, open: sentence.open, toward: drawnAt(anchor) ?? at });
+          return;
+        }
         awayPoints.push({ ...sentence, away: true });
         return;
       }
@@ -128,7 +162,7 @@ export function nightMarks(
     if (points.length === 0) {
       // Every point is out by its topic: the frame stays, small, on the
       // thing's centre, so its name still says where the thing is.
-      const centre = awayPoints.length > 0 ? centreAt(thing) : null;
+      const centre = awayPoints.length > 0 || edges.some((edge) => edge.thing === thing) ? centreAt(thing) : null;
       if (!centre) return;
       left = right = centre.x;
       top = bottom = centre.y;
@@ -150,11 +184,18 @@ export function nightMarks(
       steeping,
       spots: points.map(({ x, y, r }) => ({ x, y, r })),
     };
-    if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) return;
+    if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) {
+      // The camera went to a far topic: a sign leads back to the thing.
+      if (thing === picked) {
+        edges.push({ kind: "back", thing, goTo: thing, title: frame.title, count: 0, text: "", open: false, toward: { x: (frame.left + frame.right) / 2, y: (frame.top + frame.bottom) / 2 } });
+        sentences.push(...awayPoints.filter((point) => point.text && sentencesFor(thing, point.id)));
+      }
+      return;
+    }
     frames.push(frame);
     sentences.push(...[...points, ...awayPoints].filter((point) => point.text && sentencesFor(thing, point.id)));
   });
-  return { frames, sentences };
+  return { frames, sentences, edges };
 }
 
 /** The crescent of ThingSteeped's SteepMoon, on its 16-unit box. */
@@ -348,6 +389,93 @@ export function layoutNightSentences(
  *  and its title. */
 export interface FrameHit extends Box {
   thing: string;
+  /** An edge sign: where a tap on it takes the camera (EdgeSign.goTo). */
+  goTo?: string;
+}
+
+/** Where a tap on an edge sign takes the camera, or null off every sign. */
+export function edgeSignAt(hits: readonly FrameHit[], x: number, y: number): string | null {
+  for (const hit of hits) {
+    if (hit.goTo && x >= hit.left && x <= hit.right && y >= hit.top && y <= hit.bottom) return hit.goTo;
+  }
+  return null;
+}
+
+/** Room kept clear at the screen's edges for the map's own controls, CSS px. */
+export const EDGE_SIGN_INSETS = { top: 84, right: 16, bottom: 60, left: 16 } as const;
+const EDGE_SIGN_MAX_PX = 220;
+const EDGE_SIGN_PAD = 8;
+const EDGE_SIGN_GAP = 6;
+const EDGE_HEADER_LINE = 16;
+const ARROWS = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"] as const;
+
+/** The arrow pointing from (x, y) toward `to`, screen y running down. */
+export function arrowToward(from: { x: number; y: number }, to: { x: number; y: number }): string {
+  const sector = Math.round(Math.atan2(to.y - from.y, to.x - from.x) / (Math.PI / 4));
+  return ARROWS[((sector % 8) + 8) % 8]!;
+}
+
+/** An edge sign as it will be painted. */
+export interface PlacedEdgeSign {
+  sign: EdgeSign;
+  header: string;
+  /** The sentence line, cut to fit ("" for a back sign). */
+  line: string;
+  box: Box;
+}
+
+/**
+ * Where each edge sign goes: on the line from the screen's centre toward
+ * what it points at, pushed out to the edge (inside EDGE_SIGN_INSETS), so its
+ * arrow tells the true way. Signs that would overlap slide along the edge;
+ * one with no room left is left out.
+ */
+export function placeEdgeSigns(
+  signs: readonly EdgeSign[],
+  measure: Measure,
+  viewport: { width: number; height: number },
+  insets: { top: number; right: number; bottom: number; left: number } = EDGE_SIGN_INSETS,
+): PlacedEdgeSign[] {
+  const centre = { x: viewport.width / 2, y: viewport.height / 2 };
+  const placed: PlacedEdgeSign[] = [];
+  for (const sign of signs) {
+    const dx = sign.toward.x - centre.x;
+    const dy = sign.toward.y - centre.y;
+    if (Math.hypot(dx, dy) < 1) continue;
+    const arrow = arrowToward(centre, sign.toward);
+    const room = EDGE_SIGN_MAX_PX - measure(`${arrow} · ${sign.count}  `);
+    const name = cutToFit(measure, sign.title, Math.max(40, room));
+    const count = sign.count > 1 ? ` · ${sign.count}` : "";
+    const header = dx < 0 ? `${arrow} ${name}${count}` : `${name}${count} ${arrow}`;
+    const line = sign.text ? cutToFit(measure, sign.text, EDGE_SIGN_MAX_PX) : "";
+    const width = Math.min(EDGE_SIGN_MAX_PX, Math.max(measure(header), line ? measure(line) : 0)) + 2 * EDGE_SIGN_PAD;
+    const height = EDGE_HEADER_LINE + (line ? SENTENCE_LINE : 0) + EDGE_SIGN_PAD;
+    const lowX = insets.left + width / 2;
+    const highX = viewport.width - insets.right - width / 2;
+    const lowY = insets.top + height / 2;
+    const highY = viewport.height - insets.bottom - height / 2;
+    if (lowX > highX || lowY > highY) continue;
+    // Out from the centre to the first edge the line meets.
+    const reach = Math.min(
+      dx > 0 ? (highX - centre.x) / dx : dx < 0 ? (lowX - centre.x) / dx : Infinity,
+      dy > 0 ? (highY - centre.y) / dy : dy < 0 ? (lowY - centre.y) / dy : Infinity,
+    );
+    const at = { x: centre.x + dx * reach, y: centre.y + dy * reach };
+    const onSide = Math.abs(at.x - lowX) < 0.5 || Math.abs(at.x - highX) < 0.5;
+    const boxAt = (x: number, y: number) => ({ left: x - width / 2, right: x + width / 2, top: y - height / 2, bottom: y + height / 2 });
+    let box: Box | null = null;
+    for (const step of [0, 1, -1, 2, -2, 3, -3]) {
+      const x = onSide ? at.x : Math.min(highX, Math.max(lowX, at.x + step * (width + EDGE_SIGN_GAP)));
+      const y = onSide ? Math.min(highY, Math.max(lowY, at.y + step * (height + EDGE_SIGN_GAP))) : at.y;
+      const tried = boxAt(x, y);
+      if (placed.some((other) => overlapping(other.box, tried))) continue;
+      box = tried;
+      break;
+    }
+    if (!box) continue;
+    placed.push({ sign, header, line, box });
+  }
+  return placed;
 }
 
 /** The thing whose frame or title is under (x, y), the smallest when frames
@@ -355,6 +483,7 @@ export interface FrameHit extends Box {
 export function frameAt(hits: readonly FrameHit[], x: number, y: number): string | null {
   let best: FrameHit | null = null;
   for (const hit of hits) {
+    if (hit.goTo) continue;
     if (x < hit.left || x > hit.right || y < hit.top || y > hit.bottom) continue;
     const area = (hit.right - hit.left) * (hit.bottom - hit.top);
     if (!best || area < (best.right - best.left) * (best.bottom - best.top)) best = hit;
@@ -490,7 +619,7 @@ export function labelYieldsToFrames(isNight: boolean, isLinked: boolean): boolea
  */
 export function drawNightMarks(
   ctx: CanvasRenderingContext2D,
-  marks: { frames: readonly ThingFrame[]; sentences?: readonly NightSentence[] },
+  marks: { frames: readonly ThingFrame[]; sentences?: readonly NightSentence[]; edges?: readonly EdgeSign[] },
   palette: GraphPalette,
   occupied: Box[] = [],
   bodies: readonly Box[] = [],
@@ -498,7 +627,7 @@ export function drawNightMarks(
   picked: string | null = null,
 ): FrameHit[] {
   const hits: FrameHit[] = [];
-  if (marks.frames.length === 0) return hits;
+  if (marks.frames.length === 0 && !marks.edges?.length && !marks.sentences?.length) return hits;
   ctx.save();
   ctx.font = SENTENCE_FONT;
   const width = ctx.canvas.width / (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
@@ -563,6 +692,36 @@ export function drawNightMarks(
     }
     ctx.textAlign = "left";
   }
+  if (marks.edges && marks.edges.length > 0) {
+    const height = ctx.canvas.height / (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    for (const { sign, header, line, box } of placeEdgeSigns(marks.edges, (text) => {
+      ctx.font = TITLE_FONT;
+      return ctx.measureText(text).width;
+    }, { width, height })) {
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = palette.surface;
+      ctx.beginPath();
+      if (typeof ctx.roundRect === "function") ctx.roundRect(box.left, box.top, box.right - box.left, box.bottom - box.top, 8);
+      else ctx.rect(box.left, box.top, box.right - box.left, box.bottom - box.top);
+      ctx.fill();
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = palette.bridge;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.font = TITLE_FONT;
+      ctx.fillStyle = palette.label;
+      ctx.fillText(header, box.left + EDGE_SIGN_PAD, box.top + EDGE_SIGN_PAD / 2 + EDGE_HEADER_LINE / 2);
+      if (line) {
+        ctx.font = SENTENCE_FONT;
+        ctx.fillStyle = sign.open ? palette.labelMuted : palette.label;
+        ctx.fillText(line, box.left + EDGE_SIGN_PAD, box.top + EDGE_SIGN_PAD / 2 + EDGE_HEADER_LINE + SENTENCE_LINE / 2);
+      }
+      hits.push({ thing: sign.thing, goTo: sign.goTo, ...box });
+    }
+  }
   ctx.restore();
   return hits;
 }
@@ -601,7 +760,19 @@ export function thingStopNodeIds(graph: Graph, thing: string, stop: ThingStop): 
   if (stop === "all") return graph.nodes();
   const points = thingPointIds(graph, thing);
   const linked = linkedBodies(graph, points);
-  if (stop === "this") return [...points, ...linked].sort();
+  if (stop === "this") {
+    // An active thing frames itself and the topics near it only: a far one
+    // would pull the camera back until the thing is a speck (Fable's design,
+    // Qi-Xuan 11-05). Its points that fly off to a far topic are shown at the
+    // screen's edge instead (nightMarks' `edges`).
+    if (graph.getNodeAttribute(thing, "quiet") === true) return [...points, ...linked].sort();
+    const near = new Set(nearLinkedBodies(graph, thing));
+    const stays = points.filter((point) => {
+      const flown = graph.getNodeAttribute(point, "flyTo") as { anchor: string } | undefined;
+      return !flown || near.has(flown.anchor);
+    });
+    return [...new Set([thing, ...stays, ...near])].sort();
+  }
   const near = new Set([...points, ...linked]);
   for (const body of linked) {
     graph.forEachNeighbor(body, (other, attrs) => {
@@ -609,6 +780,27 @@ export function thingStopNodeIds(graph: Graph, thing: string, stop: ThingStop): 
     });
   }
   return [...near].sort();
+}
+
+/** Room round a thing's cluster for its points' sentences, graph units: about
+ *  three quarters of a sentence's width at the 這件事 zoom. */
+export const NEAR_ROOM = 20;
+
+/**
+ * The topics a thing's points link to that are near enough to frame with it at
+ * 這件事: within twice the reach of its cluster and the room its sentences take,
+ * from its centre. The rest are far; a point flying to one leaves the screen.
+ */
+export function nearLinkedBodies(graph: Graph, thing: string): string[] {
+  if (!graph.hasNode(thing)) return [];
+  const cx = graph.getNodeAttribute(thing, "x") as number;
+  const cy = graph.getNodeAttribute(thing, "y") as number;
+  const reach = 2 * (((graph.getNodeAttribute(thing, "clusterRadius") as number | undefined) ?? 0) + NEAR_ROOM);
+  return linkedBodies(graph, thingPointIds(graph, thing)).filter((id) => {
+    const x = graph.getNodeAttribute(id, "x") as number;
+    const y = graph.getNodeAttribute(id, "y") as number;
+    return Math.hypot(x - cx, y - cy) <= reach;
+  });
 }
 
 /** The stops a thing offers: 附近 only when its points link to something

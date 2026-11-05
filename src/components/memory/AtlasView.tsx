@@ -84,6 +84,7 @@ import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
 import {
   applyNightOffsets,
   drawNightMarks,
+  edgeSignAt,
   frameAt,
   growthAt,
   GROWTH_MS,
@@ -145,9 +146,12 @@ const EMPTY_CARTOGRAPHY: Map<string, SpaceCartography> = new Map();
 /** The closest a thing's own stop (這件事) zooms, CSS px per graph unit:
  *  its points a sentence's line apart or more, not a screen apart. */
 const THING_STOP_DENSITY = 12;
-/** How long a picked thing's points take to fly out to their topics, or
- *  home again, ms: long enough to follow where each one goes. */
-const FLIGHT_MS = 1200;
+/** How long a picked thing's points take to fly out to their topics, ms:
+ *  long enough to follow where each one goes (Fable's design, 800-1200). */
+const FLIGHT_MS = 900;
+/** How long they take to fly home when it is let go, ms, while the camera
+ *  goes back to the map in the same time. */
+const HOME_MS = 450;
 /** How long the camera takes to reach a picked thing's stop, ms. */
 const THING_CAMERA_MS = 450;
 /** A point's short title when zoomed in, CSS px: a few words, about ten
@@ -305,6 +309,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const [thingStops, setThingStops] = useState<readonly ThingStop[]>(THING_STOPS);
   const thingStopRef = useRef<ThingStop>("this");
   const selectThingRef = useRef<(thing: string, stop: ThingStop) => void>(() => {});
+  const goToSignRef = useRef<(id: string) => void>(() => {});
   const frameHitsRef = useRef<FrameHit[]>([]);
   // Night points that are new to this viewer and have not finished growing
   // in yet. They are marked seen as soon as they are found, so this is what
@@ -669,7 +674,27 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     renderer.refresh();
   };
   selectThingRef.current = selectThing;
+  /** A tap on an edge sign (nightMarks' edges): the camera goes to the far
+   *  topic at the same zoom, where the thing's points sit with their
+   *  sentences; the back sign returns to the thing's own stop. */
+  const goToSign = (id: string) => {
+    const renderer = sigmaRef.current;
+    const drawn = graphRef.current;
+    if (!renderer || !drawn || !drawn.hasNode(id)) return;
+    if (id === selectedRef.current) {
+      selectThing(id, "this");
+      return;
+    }
+    const display = renderer.getNodeDisplayData(id);
+    if (!display) return;
+    const camera = renderer.getCamera();
+    const state = { x: display.x, y: display.y, ratio: camera.ratio, angle: camera.angle };
+    if (prefersReducedMotion()) camera.setState(state);
+    else void camera.animate(state, { duration: THING_CAMERA_MS, easing: "quadraticInOut" });
+  };
+  goToSignRef.current = goToSign;
   const returnToMap = () => {
+    const wasThing = selectedRef.current !== null && graphRef.current?.getNodeAttribute(selectedRef.current, "entityType") === THING_NODE_TYPE;
     selectedRef.current = null;
     pinnedPointRef.current = null;
     setSelectedId(null);
@@ -679,8 +704,21 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const drawn = graphRef.current;
     if (renderer && drawn) {
       hoverStateRef.current = hoverStateFor(drawn, null);
-      if (overviewRef.current) restoreAtlasViewpoint(renderer, drawn, overviewRef.current);
       const camera = renderer.getCamera();
+      if (wasThing && overviewRef.current && !prefersReducedMotion()) {
+        // Letting a thing go: the camera goes back to the map while its
+        // points fly home, in the same time, so both are seen going back.
+        const from = { x: camera.x, y: camera.y, ratio: camera.ratio, angle: camera.angle };
+        if (restoreAtlasViewpoint(renderer, drawn, overviewRef.current)) {
+          const to = { x: camera.x, y: camera.y, ratio: camera.ratio, angle: camera.angle };
+          camera.setState(from);
+          void camera.animate(to, { duration: HOME_MS, easing: "quadraticInOut" });
+        }
+        renderer.refresh();
+        overviewRef.current = null;
+        return;
+      }
+      if (overviewRef.current) restoreAtlasViewpoint(renderer, drawn, overviewRef.current);
       // setState does not cancel Sigma's pending fly-to frame. Replace that
       // animation with the restored state so an immediate Escape stays put.
       if (camera.isAnimated()) void camera.animate({ x: camera.x, y: camera.y, ratio: camera.ratio, angle: camera.angle }, { duration: 1 });
@@ -1001,20 +1039,22 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         }
         showFlight();
       };
-      if (startAt === null || prefersReducedMotion() || performance.now() >= startAt + FLIGHT_MS) {
+      // Out: eased in and out over FLIGHT_MS, so the whole way is seen, not
+      // a jump and a settle. Home: quicker, easing out, beside the camera.
+      const duration = to === 1 ? FLIGHT_MS : HOME_MS;
+      if (startAt === null || prefersReducedMotion() || performance.now() >= startAt + duration) {
         land();
         return;
       }
       const step = () => {
         const elapsed = performance.now() - startAt;
-        if (elapsed >= FLIGHT_MS) {
+        if (elapsed >= duration) {
           land();
           return;
         }
         if (elapsed > 0) {
-          // Eased in and out, so the whole way is seen, not a jump and a settle.
-          const t = elapsed / FLIGHT_MS;
-          const eased = t < 0.5 ? 4 * t ** 3 : 1 - (2 - 2 * t) ** 3 / 2;
+          const t = elapsed / duration;
+          const eased = to === 1 ? (t < 0.5 ? 4 * t ** 3 : 1 - (2 - 2 * t) ** 3 / 2) : growthAt(elapsed, duration);
           flightAt = from + (to - from) * eased;
           setThingFlight(graph, thing, flightAt, flightTargets);
           showFlight();
@@ -1562,6 +1602,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         renderer.refresh();
         return;
       }
+      // A sign at the screen's edge takes the camera to the far topic it
+      // names, or back to the thing.
+      const goTo = edgeSignAt(frameHitsRef.current, event.x, event.y);
+      if (goTo) {
+        goToSignRef.current(goTo);
+        return;
+      }
       // A click on a frame or its title picks its thing, at its own stop.
       const thing = frameAt(frameHitsRef.current, event.x, event.y);
       if (thing) {
@@ -1644,7 +1691,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       const draggedNode = draggedNodeRef.current;
       if (!draggedNode) {
         // A frame and its title answer a click, so they show the hand.
-        if (!overNode) container.style.cursor = frameAt(frameHitsRef.current, e.x, e.y) ? "pointer" : "default";
+        if (!overNode) container.style.cursor = frameAt(frameHitsRef.current, e.x, e.y) || edgeSignAt(frameHitsRef.current, e.x, e.y) ? "pointer" : "default";
         return;
       }
       movedDuringPressRef.current = true;
