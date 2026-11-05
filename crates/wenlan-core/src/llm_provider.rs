@@ -160,6 +160,13 @@ pub trait LlmProvider: Send + Sync {
     fn model_version(&self) -> Option<String> {
         None
     }
+    /// Whether inference runs on this computer: Wenlan's own on-device
+    /// runtime, or a local server such as LM Studio or Ollama on a loopback
+    /// address. Work that must not leave the machine checks this, not the
+    /// backend.
+    fn runs_on_this_computer(&self) -> bool {
+        self.backend() == LlmBackend::OnDevice
+    }
     /// Runtime backend selected for an on-device provider. Non-local
     /// providers return `None`; callers can expose this as optional status
     /// without downcasting the trait object.
@@ -1398,6 +1405,22 @@ impl OpenAICompatibleProvider {
         &self.endpoint
     }
 
+    /// True when the endpoint is a loopback address (`localhost`,
+    /// `127.0.0.0/8`, `::1`), so requests never leave this computer.
+    pub fn is_loopback_endpoint(&self) -> bool {
+        let Ok(url) = reqwest::Url::parse(&self.endpoint) else {
+            return false;
+        };
+        let Some(host) = url.host_str() else {
+            return false;
+        };
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    }
+
     pub fn model(&self) -> &str {
         &self.model
     }
@@ -1420,11 +1443,17 @@ impl LlmProvider for OpenAICompatibleProvider {
         });
 
         let url = format!("{}/chat/completions", self.endpoint);
+        let timeout_secs = request.timeout_secs;
         let mut request = self
             .client
             .post(&url)
             .header("content-type", "application/json")
             .json(&body);
+        if let Some(secs) = timeout_secs {
+            // A caller that sets its own budget (the support-check batches
+            // allow 180 s) overrides the client's 60 s default.
+            request = request.timeout(std::time::Duration::from_secs(secs));
+        }
         if let Some(key) = self
             .api_key
             .as_deref()
@@ -1490,6 +1519,19 @@ impl LlmProvider for OpenAICompatibleProvider {
 
     fn model_id(&self) -> String {
         self.model.clone()
+    }
+
+    /// A local server can only name the model it serves, so the version is
+    /// that name at that address. The support check re-qualifies it in every
+    /// process, which bounds how long a model swapped under the same name
+    /// goes unnoticed. Remote endpoints prove nothing and get no version.
+    fn model_version(&self) -> Option<String> {
+        self.runs_on_this_computer()
+            .then(|| format!("local-endpoint:{}#{}", self.endpoint, self.model))
+    }
+
+    fn runs_on_this_computer(&self) -> bool {
+        self.is_loopback_endpoint()
     }
 }
 

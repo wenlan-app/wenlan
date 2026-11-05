@@ -136,7 +136,11 @@ pub fn parse_m5_claim_entailment_score(raw: &str) -> Option<f64> {
 }
 
 pub fn snapshot_m5_claim_judge(provider: &dyn LlmProvider) -> Option<M5ClaimJudgeSnapshot> {
-    if !provider.is_available() || provider.backend() != LlmBackend::OnDevice {
+    // Any model on this computer may judge once it passes the frozen batch,
+    // whether Wenlan runs it or a local server (LM Studio, Ollama) does.
+    // Remote providers are refused: the check sends every sentence and its
+    // source, and that stays on the machine.
+    if !provider.is_available() || !provider.runs_on_this_computer() {
         return None;
     }
 
@@ -150,7 +154,7 @@ pub fn snapshot_m5_claim_judge(provider: &dyn LlmProvider) -> Option<M5ClaimJudg
         model_id,
         model_version,
         prompt_version: M5_CLAIM_ENTAILMENT_PROMPT_VERSION,
-        backend: LlmBackend::OnDevice,
+        backend: provider.backend(),
     })
 }
 
@@ -636,6 +640,45 @@ mod tests {
         };
         assert!(snapshot_m5_claim_judge(&api).is_none());
         assert!(snapshot_m5_claim_judge(&UnversionedProvider(LlmBackend::OnDevice)).is_none());
+    }
+
+    #[test]
+    fn local_server_models_may_judge_but_remote_endpoints_may_not() {
+        use crate::llm_provider::OpenAICompatibleProvider;
+        for endpoint in [
+            "http://localhost:1234/v1",
+            "http://127.0.0.1:11434/v1/",
+            "http://[::1]:1234/v1",
+        ] {
+            let local = OpenAICompatibleProvider::new_with_key(
+                endpoint.to_string(),
+                "gemma-4-e4b-mlx".to_string(),
+                None,
+            );
+            let snapshot = snapshot_m5_claim_judge(&local).expect(endpoint);
+            assert_eq!(snapshot.model_id, "gemma-4-e4b-mlx");
+            assert_eq!(
+                snapshot.model_version,
+                format!(
+                    "local-endpoint:{}#gemma-4-e4b-mlx",
+                    endpoint.trim_end_matches('/')
+                )
+            );
+            assert_eq!(snapshot.backend, LlmBackend::Api);
+        }
+        for endpoint in [
+            "https://api.openai.com/v1",
+            "http://192.168.1.20:11434/v1",
+            "http://localhost.example.com/v1",
+            "not a url",
+        ] {
+            let remote = OpenAICompatibleProvider::new_with_key(
+                endpoint.to_string(),
+                "some-model".to_string(),
+                None,
+            );
+            assert!(snapshot_m5_claim_judge(&remote).is_none(), "{endpoint}");
+        }
     }
 
     #[test]
