@@ -122,6 +122,14 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
             return;
         }
         wait = TICK;
+        // UX-QUIET-1: reading conversations is light work that keeps
+        // "Working on" current while the person works, so it runs while they
+        // type, but not when the computer is warm, short of memory, or low on
+        // battery.
+        if !still_quiet() {
+            tracing::debug!("[things] look deferred: warm, short of memory or low battery");
+            continue;
+        }
         match look_once(&shared, &mut backoff).await {
             Ok(Some(report)) if report.labelled > 0 || report.grouped > 0 || report.dreamed > 0 => {
                 tracing::info!("[things] read conversations: {report:?}");
@@ -130,6 +138,12 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
             Err(error) => tracing::warn!("[things] reading conversations failed: {error}"),
         }
     }
+}
+
+/// The computer can still spare light background work right now: read
+/// before a look and again between its model calls.
+fn still_quiet() -> bool {
+    crate::scheduler::light_background_may_run_now()
 }
 
 /// The models one look uses: the everyday model to label, and the one that
@@ -199,7 +213,10 @@ pub async fn look_once(
         tokio::task::spawn_blocking(move || intake::scan(&roots, now, intake::INTAKE_WINDOW_SECS))
             .await
             .map_err(|e| e.to_string())?;
-    let mut report = look_with(&db, found, &models, language, backoff).await?;
+    let mut report = look_with_until(&db, found, &models, language, backoff, &still_quiet).await?;
+    if !still_quiet() {
+        return Ok(Some(report));
+    }
     let local_hour = chrono::Local::now().hour();
     let (dreamed, points) = dream_once(
         &db,
@@ -424,6 +441,20 @@ pub async fn look_with(
     language: &str,
     backoff: &mut Backoff,
 ) -> Result<LookReport, String> {
+    look_with_until(db, found, models, language, backoff, &|| true).await
+}
+
+/// [`look_with`], stopping before the next model call once `keep_going`
+/// says the computer is warm, short of memory or low on battery
+/// (UX-QUIET-1).
+pub async fn look_with_until(
+    db: &MemoryDB,
+    found: Vec<FoundConversation>,
+    models: &IntakeModels,
+    language: &str,
+    backoff: &mut Backoff,
+    keep_going: &(dyn Fn() -> bool + Sync),
+) -> Result<LookReport, String> {
     let now = chrono::Utc::now().timestamp();
     let mut report = LookReport {
         found: found.len(),
@@ -447,6 +478,9 @@ pub async fn look_with(
         .take(LABEL_BATCH)
         .collect();
     for conv in to_label {
+        if !keep_going() {
+            return Ok(report);
+        }
         let answer = models
             .label
             .generate(LlmRequest {
