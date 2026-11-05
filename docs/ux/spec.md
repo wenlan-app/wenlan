@@ -60,6 +60,9 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   inside pages. "What you're working on" shows only when there is something.
   The recent list holds pages you edited and pages the AI newly wrote (quietly
   marked as the AI's); the AI's small edits to old pages don't put them there.
+  An unnamed thing is still being organized and is not a Home card. Keep its
+  record, but show it only once it has a name a person can recognize; do not
+  replace it with an older Brief or ask the person to dismiss a placeholder.
   原文（2026-10-31 選擇卡）：正在做的事 + 最近編輯，不放小圖。選擇卡「你改的 + AI 新写的」（2026-10-31 17:16）
 - **UX-HOME-4** `planned` Check results and source updates are not on home.
   原文：檢查結果和來源更新不放首頁。

@@ -89,11 +89,28 @@ describe("WorkingOn", () => {
     const { onOpenThing } = renderWorkingOn();
     const section = await screen.findByTestId("wiki-working-on");
     const titles = [...section.querySelectorAll(".wiki-working-on-title")].map((el) => el.textContent);
-    expect(titles).toEqual(["New tagline", "Not named yet"]);
+    expect(titles).toEqual(["New tagline"]);
+    expect(section).not.toHaveTextContent("Not named yet");
     expect(section.textContent).toContain("Picked the X wording");
     expect(section.textContent).not.toMatch(/\b\d+ (pages|conversations|sources)\b/);
     fireEvent.click(screen.getByRole("button", { name: /^New tagline/ }));
     expect(onOpenThing).toHaveBeenCalledWith("thg_1");
+    expect(listWorkingOn).not.toHaveBeenCalled();
+  });
+
+  it("does not present unnamed work as a home card or fall back to an old Brief", async () => {
+    vi.mocked(listThings).mockResolvedValue([
+      thing({ id: "thg_unnamed", title: null, status_line: null, spaces: [] }),
+    ]);
+    vi.mocked(listWorkingOn).mockResolvedValue([
+      { space: "wenlan", id: "old-brief", text: "An older Brief", added_at: now - 60 * 86400 },
+    ]);
+    renderWorkingOn();
+    await waitFor(() => expect(listThings).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByTestId("wiki-working-on")).toBeNull();
+    expect(screen.queryByText("Not named yet")).toBeNull();
+    expect(screen.queryByText("An older Brief")).toBeNull();
     expect(listWorkingOn).not.toHaveBeenCalled();
   });
 
