@@ -103,12 +103,14 @@ pub async fn run_housekeeping(db: &MemoryDB, now_epoch: i64) -> HousekeepingRepo
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OneTimeCleanupReport {
     pub hub_links_removed: u64,
+    pub primaries_moved_off_archived: u64,
     pub duplicate_recaps_removed: usize,
     pub errors: Vec<String>,
 }
 
 /// Clean, once per database, what older rules wrote: links from a memory to
-/// a hub topic when the memory also has a more specific one, and recaps that
+/// a hub topic when the memory also has a more specific one (its main topic
+/// moving to a shown topic before an archived one), and recaps that
 /// cover the same memories as an older recap. Each cleanup records itself in
 /// app metadata (which also makes it undoable) and returns zero afterwards.
 ///
@@ -120,6 +122,10 @@ pub async fn run_one_time_cleanups(db: &MemoryDB) -> OneTimeCleanupReport {
     match db.unfile_old_hub_links_once().await {
         Ok(count) => report.hub_links_removed = count,
         Err(error) => report.errors.push(format!("hub links: {error}")),
+    }
+    match db.move_unfiled_primaries_off_archived_topics_once().await {
+        Ok(count) => report.primaries_moved_off_archived = count,
+        Err(error) => report.errors.push(format!("archived main topics: {error}")),
     }
     match crate::synthesis::recaps::dedupe_old_recaps_once(db).await {
         Ok(count) => report.duplicate_recaps_removed = count,

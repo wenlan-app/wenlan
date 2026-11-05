@@ -59947,3 +59947,92 @@ async fn old_hub_links_are_unfiled_once() {
         "the cleanup runs once"
     );
 }
+
+/// The hub cleanup moves a memory's main topic to a topic that is still
+/// shown, and the repair moves memories the first run left on an archived
+/// topic, once.
+#[tokio::test]
+async fn unfiled_memories_get_a_shown_main_topic() {
+    let (db, _dir) = test_db().await;
+    for id in ["archived_topic", "shown_topic"] {
+        db.test_seed_entity_shadow_page(TestEntity::new(id, id, "project"))
+            .await
+            .unwrap();
+    }
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("PRAGMA foreign_keys = OFF", ()).await.unwrap();
+        for i in 0..HUB_MIN_LINKS {
+            conn.execute(
+                "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'hub')",
+                libsql::params![format!("other_{i}")],
+            )
+            .await
+            .unwrap();
+        }
+        for (source_id, entity) in [("m_new", "hub"), ("m_old", "archived_topic")] {
+            conn.execute(
+                "INSERT INTO memories
+                     (id,content,source,source_id,title,chunk_index,last_modified,chunk_type,
+                      supersede_mode,memory_type,stability,entity_id)
+                 VALUES (?1,'body','memory',?1,?1,0,1,'text','hide','fact','new',?2)",
+                libsql::params![source_id, entity],
+            )
+            .await
+            .unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES
+                 ('m_new','hub'), ('m_new','archived_topic'), ('m_new','shown_topic'),
+                 ('m_old','archived_topic'), ('m_old','shown_topic');
+             UPDATE pages SET status = 'archived'
+              WHERE id = (SELECT page_id FROM entity_page_map WHERE entity_id = 'archived_topic');",
+        )
+        .await
+        .unwrap();
+        conn.execute("PRAGMA foreign_keys = ON", ()).await.unwrap();
+    }
+
+    assert_eq!(db.unfile_old_hub_links_once().await.unwrap(), 1);
+    assert_eq!(
+        db.get_memory_entity_id("m_new").await.unwrap().as_deref(),
+        Some("shown_topic"),
+        "a shown topic wins over an archived one linked earlier"
+    );
+
+    // What the first build's run left behind: a moved memory on an
+    // archived topic.
+    let record: serde_json::Value = serde_json::from_str(
+        &db.get_app_metadata("kg_unfile_hub_links_v1")
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let mut earlier = record.clone();
+    earlier["moved_primary"] = serde_json::json!([
+        ["m_new", "hub", "shown_topic"],
+        ["m_old", "hub", "archived_topic"]
+    ]);
+    db.set_app_metadata("kg_unfile_hub_links_v1", &earlier.to_string())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.move_unfiled_primaries_off_archived_topics_once()
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.get_memory_entity_id("m_old").await.unwrap().as_deref(),
+        Some("shown_topic")
+    );
+    assert_eq!(
+        db.move_unfiled_primaries_off_archived_topics_once()
+            .await
+            .unwrap(),
+        0,
+        "the repair runs once"
+    );
+}
