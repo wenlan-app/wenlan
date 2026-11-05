@@ -75,6 +75,7 @@ import {
   NEIGHBOR_LABEL_MAX,
   NODE_LABEL_FONT,
   nodeSizeCapPx,
+  thingLinkedBodies,
 } from "../../lib/graph/atlas";
 import type { HoverState, AtlasSimulation, LodState, LabelPlacement } from "../../lib/graph/atlas";
 import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
@@ -101,10 +102,12 @@ import {
   readNightOffsets,
   readSeenNightPoints,
   readStoredPositions,
+  readThingsApart,
   startRearrange,
   storeNightOffsets,
   storePositions,
   storeSeenNightPoints,
+  storeThingsApart,
   undoRearrange,
 } from "../../lib/graph/positions";
 import type { CartographyScene } from "../../lib/graph/cartography";
@@ -862,12 +865,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     if (layoutChange === "fresh") startRearrange(spaceFilter);
     else if (layoutChange === "undo") undoRearrange(spaceFilter);
     const kept = previous?.scope === spaceFilter && !layoutChange ? previous.body : readStoredPositions(spaceFilter);
+    const apart = readThingsApart();
     if (bodyIds.length > 0 && kept.size > 0) {
       // Layer/small-group changes and new pages may add or remove nodes.
       // Restore every survivor rather than requiring an identical set, so the
       // learned map stays put while what is new settles around it.
+      // A thing kept apart from the map (placed before its points linked to
+      // anything) is placed afresh, next to its links, once they appear.
       const survivorPositions = new Map(
         bodyIds
+          .filter((id) => !((apart ? apart.has(id) : thingIdOf(id) !== null) && thingLinkedBodies(graph, id).length > 0))
           .map((id) => [id, kept.get(id)] as const)
           .filter((entry): entry is readonly [string, { x: number; y: number }] => entry[1] !== undefined),
       );
@@ -888,6 +895,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // unmounting the map, and again when the window goes away.
     storePositions(spaceFilter, bodyPositions());
     storeNightOffsets(nightOffsetsOf(graph));
+    // Which things on the map now sit apart from it: kept for the next open.
+    const thingsHere = bodyIds.filter((id) => thingIdOf(id) !== null);
+    const here = new Set(thingsHere);
+    storeThingsApart([
+      ...[...(apart ?? [])].filter((id) => !here.has(id)),
+      ...thingsHere.filter((id) => thingLinkedBodies(graph, id).length === 0),
+    ]);
     // A point new since the map was last opened grows out of its thing's
     // centre, once (UX-CHAT-5); it is seen from now on, so it never does again.
     const nightNow = nightPointIds(graph);

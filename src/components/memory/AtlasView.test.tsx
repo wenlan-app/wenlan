@@ -150,6 +150,7 @@ import type {
   ThingNightPoints,
 } from "../../lib/tauri";
 import AtlasView, { WORKING_STORAGE_KEY } from "./AtlasView";
+import { THINGS_APART_STORAGE_KEY } from "../../lib/graph/positions";
 import { ATLAS_CONTROL_INSETS } from "../../lib/graph/viewpoint";
 
 const mockGetKnowledgeGraph = vi.mocked(getKnowledgeGraph);
@@ -440,6 +441,7 @@ describe("AtlasView", () => {
     for (const key of Object.keys(window.localStorage)) {
       if (key.startsWith("atlas.positions.")) window.localStorage.removeItem(key);
     }
+    window.localStorage.removeItem(THINGS_APART_STORAGE_KEY);
     mockGetKnowledgeGraph.mockImplementation(async () => {
       const entities = await entitiesSource();
       const details = await Promise.all(entities.map((entity) => detailSource(entity.id)));
@@ -944,6 +946,51 @@ describe("AtlasView", () => {
     await screen.findByRole("group", { name: "Zoom to" });
     const arrived = capturedSigmaInstances[2];
     expect(arrived.settings.nodeReducer!(point, arrived.graph.getNodeAttributes(point)).hidden).not.toBe(true);
+  });
+
+  it.each([
+    ["with", true],
+    ["from a map kept before the record, without", false],
+  ])("moves a thing kept apart next to its topic once, when its points first link, %s a record of things apart (UX-CHAT-5)", async (_name, keepRecord) => {
+    mockConnectedPair();
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [{ memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 }],
+    }]);
+    const at = (id: string) => [latestGraph().getNodeAttribute(id, "x") as number, latestGraph().getNodeAttribute(id, "y") as number];
+    const apart = () => JSON.parse(window.localStorage.getItem(THINGS_APART_STORAGE_KEY) ?? "[]") as string[];
+    const fromAlice = () => {
+      const [tx, ty] = at("thing:t1");
+      const [ax, ay] = at("e1");
+      return Math.hypot(tx - ax, ty - ay);
+    };
+
+    // Nothing to link to yet: the thing sits apart from the map.
+    const first = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const before = fromAlice();
+    expect(apart()).toEqual(["thing:t1"]);
+    first.unmount();
+    cleanup();
+    if (!keepRecord) window.localStorage.removeItem(THINGS_APART_STORAGE_KEY);
+
+    // Its point now links to Alice: the thing moves next to her, once.
+    mockMemories([], [{ memory_id: "n1", entity_id: "e1" }]);
+    const second = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    const moved = at("thing:t1");
+    expect(fromAlice()).toBeLessThan(before / 2);
+    expect(apart()).toEqual([]);
+    second.unmount();
+    cleanup();
+
+    // From then on it keeps that spot.
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    expect(at("thing:t1")[0]).toBeCloseTo(moved[0], 1);
+    expect(at("thing:t1")[1]).toBeCloseTo(moved[1], 1);
   });
 
   it("gives a picked thing's points no forced labels at 全部 (UX-CHAT-5)", async () => {
