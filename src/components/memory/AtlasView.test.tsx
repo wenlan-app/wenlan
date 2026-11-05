@@ -993,6 +993,36 @@ describe("AtlasView", () => {
     expect(at("thing:t1")[1]).toBeCloseTo(moved[1], 1);
   });
 
+  it("flies a picked thing's linked points out beside their topics, and keeps the rest in its frame (UX-CHAT-5)", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true } as MediaQueryList));
+    mockConnectedPair();
+    mockMemories([], [{ memory_id: "n1", entity_id: "e1" }]);
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [
+        { memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 },
+        { memory_id: "n2", title: "Pick a launch week", decided: false, created_at: 11 },
+      ],
+    }]);
+    renderWithQuery(<AtlasView focusThingId="t1" />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    await screen.findByRole("group", { name: "Zoom to" });
+    const graph = latestGraph();
+    const at = (id: string) => [graph.getNodeAttribute(id, "x") as number, graph.getNodeAttribute(id, "y") as number];
+    const apart = (a: string, b: string) => Math.hypot(at(a)[0] - at(b)[0], at(a)[1] - at(b)[1]);
+    const linked = graph.nodes().find((id: string) => graph.getNodeAttribute(id, "night") === true && graph.hasEdge(id, "e1"))!;
+    const loose = graph.nodes().find((id: string) => graph.getNodeAttribute(id, "night") === true && id !== linked)!;
+    // The linked point sits right by Alice, nearer her than its thing.
+    await waitFor(() => expect(graph.getNodeAttribute(linked, "fly")).toBe(1));
+    expect(apart(linked, "e1")).toBeLessThan(apart("thing:t1", "e1") / 2);
+    expect(apart(linked, "e1")).toBeLessThan(20);
+    // The point with no topic stays in the thing's frame.
+    expect(graph.getNodeAttribute(loose, "fly")).toBeUndefined();
+    expect(apart(loose, "thing:t1")).toBeLessThan(apart(loose, "e1"));
+  });
+
   it("gives a picked thing's points no forced labels at 全部 (UX-CHAT-5)", async () => {
     mockConnectedPair();
     mockMemories([], [{ memory_id: "n2", entity_id: "e1" }]);

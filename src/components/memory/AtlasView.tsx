@@ -75,6 +75,7 @@ import {
   NEIGHBOR_LABEL_MAX,
   NODE_LABEL_FONT,
   nodeSizeCapPx,
+  setThingFlight,
   thingLinkedBodies,
 } from "../../lib/graph/atlas";
 import type { HoverState, AtlasSimulation, LodState, LabelPlacement } from "../../lib/graph/atlas";
@@ -143,6 +144,9 @@ const EMPTY_CARTOGRAPHY: Map<string, SpaceCartography> = new Map();
 /** The closest a thing's own stop (這件事) zooms, CSS px per graph unit:
  *  its points a sentence's line apart or more, not a screen apart. */
 const THING_STOP_DENSITY = 12;
+/** How long a picked thing's points take to fly out to their topics, or
+ *  home again, ms: long enough to follow where each one goes. */
+const FLIGHT_MS = 600;
 /** A point's short title when zoomed in, CSS px: a few words, about ten
  *  Chinese characters. Its whole sentence comes up on hover. */
 const POINT_TITLE_PX = 120;
@@ -303,6 +307,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // in yet. They are marked seen as soon as they are found, so this is what
   // carries them over a rebuild that cuts their growth short.
   const growQueueRef = useRef<Set<string>>(new Set());
+  // Sends the picked thing's points out to their topics (see the build).
+  const flyRef = useRef<(thing: string | null, animate: boolean) => void>(() => {});
   const sceneRef = useRef<CartographyScene | null>(null);
   const sceneDirtyRef = useRef(true);
 
@@ -772,6 +778,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     setSelectedThing(null);
     overviewRef.current = null;
   }, [spaceFilter]);
+  // Picking a thing flies its linked points out to their topics; letting it
+  // go flies them home.
+  useEffect(() => {
+    flyRef.current(selectedThing, true);
+  }, [selectedThing]);
   const selectedNode = filteredModel.nodes.find((node) => node.id === selectedId);
   const selectedNeighbors = useMemo(() => {
     if (!selectedId) return [];
@@ -936,6 +947,61 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     };
     placeGrowth(0);
     let growthFrame = 0;
+    // A picked thing's points that link to a topic fly out of its frame to
+    // sit beside that topic, and home again when it is let go (UX-CHAT-5,
+    // Qi-Xuan 11-05): no line runs across the map, and the flight shows the
+    // thing reaching into it. A quiet thing's are by their topics already.
+    let flightThing: string | null = null;
+    let flightAt = 0;
+    let flightFrame = 0;
+    const showFlight = () => {
+      sim.placeSatellitesNow();
+      sceneDirtyRef.current = true;
+      sigmaRef.current?.refresh();
+    };
+    const fly = (wanted: string | null, animate: boolean) => {
+      if (wanted !== null && !graph.hasNode(wanted)) wanted = null;
+      if (wanted === flightThing && (wanted === null || flightAt === 1)) return;
+      cancelAnimationFrame(flightFrame);
+      // Another thing picked: the last one's points are home at once.
+      if (flightThing !== null && wanted !== null && wanted !== flightThing) {
+        setThingFlight(graph, null, 0);
+        flightAt = 0;
+      }
+      const thing = wanted ?? flightThing;
+      if (thing === null) return;
+      flightThing = thing;
+      const from = flightAt;
+      const to = wanted === null ? 0 : 1;
+      const land = () => {
+        flightAt = to;
+        if (to === 0) {
+          setThingFlight(graph, null, 0);
+          flightThing = null;
+        } else {
+          setThingFlight(graph, thing, 1);
+        }
+        showFlight();
+      };
+      if (!animate || prefersReducedMotion()) {
+        land();
+        return;
+      }
+      const start = performance.now();
+      const step = () => {
+        const elapsed = performance.now() - start;
+        if (elapsed >= FLIGHT_MS) {
+          land();
+          return;
+        }
+        flightAt = from + (to - from) * growthAt(elapsed, FLIGHT_MS);
+        setThingFlight(graph, thing, flightAt);
+        showFlight();
+        flightFrame = requestAnimationFrame(step);
+      };
+      flightFrame = requestAnimationFrame(step);
+    };
+    flyRef.current = fly;
     const keepOnHide = () => storePositions(spaceFilter, bodyPositions());
     window.addEventListener("pagehide", keepOnHide);
     applyAtlasHierarchy(graph);
@@ -1291,7 +1357,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         const at = renderer.framedGraphToViewport(display);
         return { x: at.x, y: at.y, r: renderer.scaleSize(display.size) };
       };
-      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current);
+      const centreAt = (thing: string) => renderer.framedGraphToViewport({
+        x: graph.getNodeAttribute(thing, "x") as number,
+        y: graph.getNodeAttribute(thing, "y") as number,
+      });
+      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current, centreAt);
       // Sentences keep off the other bodies on screen, not only the labels.
       const bodies: { left: number; right: number; top: number; bottom: number }[] = [];
       if (marks.sentences.length > 0) {
@@ -1403,8 +1473,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       }
     }
     // Arriving from a thing's page: go straight to its 這件事 stop, once.
+    let arriving = false;
     if (focusThingId && !thingArrivalDoneRef.current && graph.hasNode(thingNodeId(focusThingId))) {
       thingArrivalDoneRef.current = true;
+      arriving = true;
       selectThingRef.current(thingNodeId(focusThingId), "this");
     }
     if (selectedRef.current && graph.hasNode(selectedRef.current)) {
@@ -1416,6 +1488,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         : hoverStateFor(graph, selectedRef.current);
       // A new link can bring 附近 in.
       if (isThing) setThingStops(thingStopsFor(graph, selectedRef.current));
+      // Its points are out by their topics already on a rebuild; an arrival
+      // flies them out once the map is up (the selectedThing effect).
+      if (isThing && !arriving) fly(selectedRef.current, false);
     }
     // First paint of THIS renderer, and the only thing that draws the
     // overlay canvas above at all. Sigma's constructor render already happened
@@ -1628,6 +1703,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       cancelAnimationFrame(growthFrame);
       placeGrowth(1);
       growth = null;
+      cancelAnimationFrame(flightFrame);
+      flyRef.current = () => {};
       // Sigma only detaches its own camera listener; release our listener too.
       camera.off("updated", onCameraUpdated);
       window.removeEventListener("pagehide", keepOnHide);

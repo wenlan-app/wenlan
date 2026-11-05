@@ -50,6 +50,9 @@ export interface NightSentence extends NightSpot {
   open: boolean;
   /** Its thing's node id: the frame it belongs inside. */
   thing: string;
+  /** Out beside its topic while its thing is picked (atlas.ts's
+   *  setThingFlight): its sentence is not wrapped into the thing's frame. */
+  away?: boolean;
 }
 
 /** Where a node is drawn this frame, in viewport CSS px, or null when sigma
@@ -85,6 +88,9 @@ export function nightMarks(
   /** The map's "Working on" switch: every active thing's frame is drawn,
    *  not only the picked one's. */
   showAll = false,
+  /** Where a thing's centre is drawn, viewport CSS px: the frame's spot
+   *  when every one of its points is out beside its topic. */
+  centreAt: (thing: string) => { x: number; y: number } | null = () => null,
 ): { frames: ThingFrame[]; sentences: NightSentence[] } {
   const frames: ThingFrame[] = [];
   const sentences: NightSentence[] = [];
@@ -99,20 +105,34 @@ export function nightMarks(
     let anyLit = lit(thing);
     let steeping = false;
     const points: NightSentence[] = [];
+    const awayPoints: NightSentence[] = [];
     graph.forEachNeighbor(thing, (point, pointAttrs) => {
       if (pointAttrs.night !== true || pointAttrs.dustOf !== thing) return;
       const at = drawnAt(point);
       if (!at) return;
+      const made = pointAttrs.createdAt;
+      if (typeof made === "number" && now - made < STEEPING_SECS) steeping = true;
+      if (lit(point)) anyLit = true;
+      const sentence = { ...at, dim: !lit(point), id: point, text: String(pointAttrs.label ?? ""), open: pointAttrs.open === true, thing };
+      // Out beside its topic: on the map there, not in the frame.
+      if (typeof pointAttrs.fly === "number" && pointAttrs.fly > 0) {
+        awayPoints.push({ ...sentence, away: true });
+        return;
+      }
       left = Math.min(left, at.x - at.r);
       right = Math.max(right, at.x + at.r);
       top = Math.min(top, at.y - at.r);
       bottom = Math.max(bottom, at.y + at.r);
-      if (lit(point)) anyLit = true;
-      const made = pointAttrs.createdAt;
-      if (typeof made === "number" && now - made < STEEPING_SECS) steeping = true;
-      points.push({ ...at, dim: !lit(point), id: point, text: String(pointAttrs.label ?? ""), open: pointAttrs.open === true, thing });
+      points.push(sentence);
     });
-    if (points.length === 0) return;
+    if (points.length === 0) {
+      // Every point is out by its topic: the frame stays, small, on the
+      // thing's centre, so its name still says where the thing is.
+      const centre = awayPoints.length > 0 ? centreAt(thing) : null;
+      if (!centre) return;
+      left = right = centre.x;
+      top = bottom = centre.y;
+    }
     const grow = (low: number, high: number, least: number) => {
       const short = Math.max(0, least - (high - low)) / 2;
       return [low - short, high + short] as const;
@@ -132,7 +152,7 @@ export function nightMarks(
     };
     if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) return;
     frames.push(frame);
-    sentences.push(...points.filter((point) => point.text && sentencesFor(thing, point.id)));
+    sentences.push(...[...points, ...awayPoints].filter((point) => point.text && sentencesFor(thing, point.id)));
   });
   return { frames, sentences };
 }
@@ -265,6 +285,7 @@ export interface PlacedSentence {
   open: boolean;
   dim: boolean;
   box: Box;
+  away?: boolean;
 }
 
 const shown = (lines: readonly string[]) => lines.join(" ").replace(/…$/u, "").length;
@@ -308,7 +329,7 @@ export function layoutNightSentences(
           ? { left: start - 2, right: start + inked + 2, top, bottom: top + lines.length * SENTENCE_LINE }
           : { left: start - inked - 2, right: start + 2, top, bottom: top + lines.length * SENTENCE_LINE };
         if (blockers.some((other) => overlapping(other, box))) continue;
-        return { id: point.id, thing: point.thing, lines, x: start, y: point.y, align, open: point.open, dim: point.dim, box };
+        return { id: point.id, thing: point.thing, lines, x: start, y: point.y, align, open: point.open, dim: point.dim, box, ...(point.away ? { away: true } : {}) };
       }
       return null;
     };
@@ -347,7 +368,7 @@ export function encloseSentences<F extends ThingFrame>(frames: readonly F[], pla
   return frames.map((frame) => {
     let { left, top, right, bottom } = frame;
     for (const sentence of placed) {
-      if (sentence.thing !== frame.thing) continue;
+      if (sentence.thing !== frame.thing || sentence.away) continue;
       left = Math.min(left, sentence.box.left - FRAME_PAD);
       right = Math.max(right, sentence.box.right + FRAME_PAD);
       top = Math.min(top, sentence.box.top - FRAME_PAD);

@@ -15,6 +15,7 @@ import {
   runAtlasLayout,
   satelliteAnchor,
   satellitePlan,
+  setThingFlight,
 } from "./atlas";
 import { attachThingPoints, buildKnowledgeGraphModel, DEFAULT_LAYERS, drawableModel, MEMORY_NODE_TYPE, thingTitle } from "./model";
 import {
@@ -313,6 +314,49 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     const picked = { hovered: "thing:t1", neighbors: new Set(["mem:n2", "hub"]), thing: "thing:t1" };
     expect(edgeDisplay(picked, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), ends).hidden).toBeUndefined();
     expect(edgeDisplay(rest, "e", "thing:t1", "mem:n2", attrs, PALETTE, lodFor(1), { source: thing, target: point }).hidden).toBe(true);
+  });
+
+  it("flies a picked thing's linked point out beside its topic and home again, and frames only the points left (Qi-Xuan 11-05)", () => {
+    const map = mapWith(things());
+    runAtlasLayout(map);
+    const sim = createAtlasSimulation(map);
+    const home = { n1: xy(map, "mem:n1"), n2: xy(map, "mem:n2") };
+    const fromHub = (id: string) => Math.hypot(xy(map, id).x - xy(map, "hub").x, xy(map, id).y - xy(map, "hub").y);
+    const before = fromHub("mem:n2");
+    // Only the point that links to a topic flies.
+    expect(setThingFlight(map, "thing:t1", 0.5)).toEqual(["mem:n2"]);
+    sim.placeSatellitesNow();
+    const half = fromHub("mem:n2");
+    expect(half).toBeLessThan(before);
+    setThingFlight(map, "thing:t1", 1);
+    sim.placeSatellitesNow();
+    expect(fromHub("mem:n2")).toBeLessThan(half);
+    // Right beside the hub, on the side facing its thing.
+    const hubR = map.getNodeAttribute("hub", "size") as number;
+    expect(fromHub("mem:n2")).toBeLessThan(hubR + 2 * (map.getNodeAttribute("mem:n2", "size") as number) + 4);
+    const towardThing = (xy(map, "thing:t1").x - xy(map, "hub").x) * (xy(map, "mem:n2").x - xy(map, "hub").x)
+      + (xy(map, "thing:t1").y - xy(map, "hub").y) * (xy(map, "mem:n2").y - xy(map, "hub").y);
+    expect(towardThing).toBeGreaterThan(0);
+    expect(xy(map, "mem:n1")).toEqual(home.n1);
+    // The frame is round the point left with the thing; the one out by its
+    // topic keeps its sentence there, outside the frame.
+    annotateDust(map, satellitePlan(map));
+    const drawnAt = (id: string) => (id === "mem:n1" ? { x: 100, y: 100, r: 3 } : id === "mem:n2" ? { x: 300, y: 300, r: 3 } : null);
+    const marks = nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, { width: 400, height: 400 }, () => true, "thing:t1");
+    expect(marks.frames[0]!.right).toBeLessThan(200);
+    expect(marks.sentences.find((sentence) => sentence.id === "mem:n2")).toMatchObject({ away: true });
+    // With every point away, a small frame stays on the thing's centre.
+    map.mergeNodeAttributes("mem:n1", { fly: 1, flyTo: { anchor: "hub", dx: 1, dy: 0 } });
+    const centred = nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, { width: 400, height: 400 }, undefined, "thing:t1", undefined, false, () => ({ x: 50, y: 60 }));
+    expect((centred.frames[0]!.left + centred.frames[0]!.right) / 2).toBe(50);
+    expect((centred.frames[0]!.top + centred.frames[0]!.bottom) / 2).toBe(60);
+    // Let go: home exactly where it was.
+    expect(setThingFlight(map, null, 0)).toEqual([]);
+    expect(map.getNodeAttribute("mem:n1", "fly")).toBeUndefined();
+    sim.placeSatellitesNow();
+    expect(map.getNodeAttribute("mem:n2", "fly")).toBeUndefined();
+    expect(xy(map, "mem:n2").x).toBeCloseTo(home.n2.x, 9);
+    expect(xy(map, "mem:n2").y).toBeCloseTo(home.n2.y, 9);
   });
 
   it("keeps a frame visibly a frame when its points are drawn tiny", () => {

@@ -511,9 +511,96 @@ export function placeSatellites(graph: Graph, plan: Satellite[], skipId?: string
     if (satellite.id === skipId) continue;
     const ax = graph.getNodeAttribute(satellite.anchor, "x") as number;
     const ay = graph.getNodeAttribute(satellite.anchor, "y") as number;
-    graph.setNodeAttribute(satellite.id, "x", ax + satellite.radius * Math.cos(satellite.angle));
-    graph.setNodeAttribute(satellite.id, "y", ay + satellite.radius * Math.sin(satellite.angle));
+    let x = ax + satellite.radius * Math.cos(satellite.angle);
+    let y = ay + satellite.radius * Math.sin(satellite.angle);
+    // A picked thing's point out by its topic (setThingFlight): that far
+    // along the way from its own spot to its spot there.
+    const fly = graph.getNodeAttribute(satellite.id, "fly") as number | undefined;
+    const to = graph.getNodeAttribute(satellite.id, "flyTo") as FlyTo | undefined;
+    if (fly !== undefined && fly > 0 && to && graph.hasNode(to.anchor)) {
+      const tx = (graph.getNodeAttribute(to.anchor, "x") as number) + to.dx;
+      const ty = (graph.getNodeAttribute(to.anchor, "y") as number) + to.dy;
+      x += (tx - x) * fly;
+      y += (ty - y) * fly;
+    }
+    graph.setNodeAttribute(satellite.id, "x", x);
+    graph.setNodeAttribute(satellite.id, "y", y);
   }
+}
+
+/** Where a picked thing's point goes beside its topic: that body, and the
+ *  point's offset from it in graph units. */
+export interface FlyTo {
+  anchor: string;
+  dx: number;
+  dy: number;
+}
+
+/** Room between a topic's disc and the points that come to sit by it, graph
+ *  units. */
+const FLY_GAP = 3;
+
+/**
+ * Where each of a picked thing's points goes (UX-CHAT-5, Qi-Xuan 11-05): a
+ * point that links to a topic on the map sits beside that topic, the nearest
+ * one to the thing when it links to several, so no line runs across the map.
+ * The points that come to one topic sit side by side on the side facing the
+ * thing, where they came from. A point with no link stays with its thing.
+ * Deterministic: same graph, same spots.
+ */
+export function thingFlightTargets(graph: Graph, thing: string): Map<string, FlyTo> {
+  const targets = new Map<string, FlyTo>();
+  if (!graph.hasNode(thing)) return targets;
+  const tx = graph.getNodeAttribute(thing, "x") as number;
+  const ty = graph.getNodeAttribute(thing, "y") as number;
+  const at = (id: string) => ({ x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number });
+  const byTopic = new Map<string, string[]>();
+  for (const point of graph.neighbors(thing).sort()) {
+    const attrs = graph.getNodeAttributes(point);
+    if (attrs.night !== true || attrs.dustOf !== thing) continue;
+    let nearest: string | undefined;
+    let nearestDistance = Infinity;
+    for (const other of graph.neighbors(point).sort()) {
+      const type = graph.getNodeAttribute(other, "entityType");
+      if (type === MEMORY_NODE_TYPE || type === THING_NODE_TYPE) continue;
+      const { x, y } = at(other);
+      const distance = Math.hypot(x - tx, y - ty);
+      if (distance < nearestDistance) {
+        nearest = other;
+        nearestDistance = distance;
+      }
+    }
+    if (nearest === undefined) continue;
+    const list = byTopic.get(nearest);
+    if (list) list.push(point);
+    else byTopic.set(nearest, [point]);
+  }
+  for (const [topic, points] of byTopic) {
+    const { x, y } = at(topic);
+    const facing = Math.atan2(ty - y, tx - x);
+    const dot = Math.max(...points.map((point) => (graph.getNodeAttribute(point, "size") as number | undefined) ?? 0), 1);
+    const radius = bodyRadius(graph.getNodeAttributes(topic)) + FLY_GAP + dot;
+    const step = (2 * dot + FLY_GAP) / radius;
+    points.forEach((point, index) => {
+      const angle = facing + (index - (points.length - 1) / 2) * step;
+      targets.set(point, { anchor: topic, dx: radius * Math.cos(angle), dy: radius * Math.sin(angle) });
+    });
+  }
+  return targets;
+}
+
+/** Send a thing's linked points `at` of the way to their topics (0 home, 1
+ *  there; thingFlightTargets), or, with `thing` null, clear every flight.
+ *  Returns the points that fly. The next placeSatellites puts them there. */
+export function setThingFlight(graph: Graph, thing: string | null, at: number): string[] {
+  const targets = thing === null ? new Map<string, FlyTo>() : thingFlightTargets(graph, thing);
+  graph.forEachNode((id, attrs) => {
+    if (attrs.fly === undefined || targets.has(id)) return;
+    graph.removeNodeAttribute(id, "fly");
+    graph.removeNodeAttribute(id, "flyTo");
+  });
+  for (const [id, to] of targets) graph.mergeNodeAttributes(id, { fly: at, flyTo: to });
+  return [...targets.keys()];
 }
 
 /** Write the halo bookkeeping the reducers read onto the graph: each memory's
@@ -1572,6 +1659,9 @@ export interface AtlasSimulation extends Simulation<AtlasSimNode, undefined> {
    *  over the cooling tail. The release path uses it when there will be no
    *  cooling tail (see shelfAnchorForce's `settle`). */
   settleShelf(): void;
+  /** Re-place every satellite on its anchor now, so a change to a point's
+   *  flight (setThingFlight) shows without a tick. */
+  placeSatellitesNow(): void;
 }
 
 export interface AtlasSimNode extends SimulationNodeDatum {
@@ -2252,6 +2342,7 @@ export function createAtlasSimulation(
     shelfAnchor.settle();
     writeBack();
   };
+  atlasSim.placeSatellitesNow = () => placeSatellites(graph, satellites, draggingId);
   return atlasSim;
 }
 
