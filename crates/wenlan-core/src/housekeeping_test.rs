@@ -43,3 +43,22 @@ async fn a_run_needs_no_model_and_records_itself() {
         1_800_000_000 + 60
     ));
 }
+
+/// The scheduler's one-time cleanups record themselves, so a later pass
+/// changes nothing, even with no full steep ever running reweave or recaps.
+#[tokio::test]
+async fn one_time_cleanups_run_once_without_a_steep() {
+    let (db, _dir) = test_db().await;
+
+    let first = run_one_time_cleanups(&db).await;
+    assert!(first.errors.is_empty(), "{:?}", first.errors);
+    for marker in ["kg_unfile_hub_links_v1", "recap_dedupe_by_sources_v1"] {
+        assert!(
+            db.get_app_metadata(marker).await.unwrap().is_some(),
+            "{marker} must be recorded"
+        );
+    }
+
+    let again = run_one_time_cleanups(&db).await;
+    assert_eq!(again, OneTimeCleanupReport::default());
+}
