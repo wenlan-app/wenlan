@@ -432,6 +432,50 @@ fn parse_attempts(value: &str, generation: &str) -> i64 {
 /// Collapse all whitespace runs to a single space and trim. Used by the
 /// annotate-only guard to compare the model output against the input body
 /// independent of incidental whitespace reflow.
+/// The page's own text with the model's `[n]` markers placed where the
+/// model put them: after the same visible character, with a space before the
+/// marker when the model wrote one. Every space, line break and paragraph
+/// break comes from `original`; markers already in `original` are dropped.
+/// `None` when the visible characters (everything but whitespace and
+/// markers) of the two texts differ.
+fn transplant_markers(original: &str, annotated: &str) -> Option<String> {
+    let base = RE_MARKERS.replace_all(original, "");
+    let annotated = normalize_markers(annotated);
+    let mut out = String::with_capacity(base.len() + annotated.len() / 8);
+    let mut rest = base.as_ref();
+    let mut last = 0;
+    let mut pieces: Vec<(&str, Option<&str>)> = Vec::new();
+    for marker in RE_MARKERS.find_iter(&annotated) {
+        pieces.push((&annotated[last..marker.start()], Some(marker.as_str())));
+        last = marker.end();
+    }
+    pieces.push((&annotated[last..], None));
+    for (text, marker) in pieces {
+        for c in text.chars().filter(|c| !c.is_whitespace()) {
+            let skipped = rest.len() - rest.trim_start().len();
+            out.push_str(&rest[..skipped]);
+            rest = &rest[skipped..];
+            let next = rest.chars().next()?;
+            if next != c {
+                return None;
+            }
+            out.push(next);
+            rest = &rest[next.len_utf8()..];
+        }
+        if let Some(marker) = marker {
+            if text.ends_with(char::is_whitespace) && !out.ends_with(char::is_whitespace) {
+                out.push(' ');
+            }
+            out.push_str(marker);
+        }
+    }
+    if !rest.trim().is_empty() {
+        return None;
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
 fn normalize_ws(s: &str) -> String {
     RE_WHITESPACE.replace_all(s.trim(), " ").to_string()
 }
@@ -917,7 +961,16 @@ async fn run_citation_backfill_with_page_limit(
         // by this sweep.
         let same =
             normalize_ws(&strip_markers(&out)) == normalize_ws(&strip_markers(&page.content));
-        if same {
+        // The guard compares text with whitespace collapsed, so the model's
+        // copy may have lost line and paragraph breaks ("signal.\n\nDefault"
+        // came back as "signal. [6] Default"). Keep the page's own text and
+        // carry only the markers over.
+        let out = if same {
+            transplant_markers(&page.content, &out)
+        } else {
+            None
+        };
+        if let Some(out) = out {
             let (body, cites, stats) = process_citation_output(&out, &numbered);
             if cites.is_empty() {
                 // Zero markers is a failed attempt per spec §6 ("guard
@@ -1688,6 +1741,57 @@ mod tests {
             .unwrap()
             .contains(&"p_long".to_string()));
         assert_eq!(count_attempt_rows(&db, "p_long").await, 0);
+    }
+
+    #[test]
+    fn transplanted_markers_keep_the_page_line_and_paragraph_breaks() {
+        let original = "First claim signal.\n\nDefault is off.\n- item one\n- item two";
+        let annotated = "First claim signal. [6] Default is off.[2] - item one - item two [1]";
+        assert_eq!(
+            transplant_markers(original, annotated).unwrap(),
+            "First claim signal. [6]\n\nDefault is off.[2]\n- item one\n- item two [1]"
+        );
+        // Chinese text without spaces, and a marker the model spaced out.
+        assert_eq!(
+            transplant_markers("第一句。\n\n第二句。", "第一句。[ 1 ]第二句。[2]").unwrap(),
+            "第一句。[1]\n\n第二句。[2]"
+        );
+        // Old markers in the page are replaced, not doubled.
+        assert_eq!(
+            transplant_markers("Claim one.[3]\nClaim two.", "Claim one.[1] Claim two.[2]").unwrap(),
+            "Claim one.[1]\nClaim two.[2]"
+        );
+        // A changed word is refused.
+        assert!(transplant_markers("Default is off.", "Default is on.[1]").is_none());
+        assert!(transplant_markers("Default is off.", "Default is[1]").is_none());
+    }
+
+    /// Cleanup thread 2026-11-05: annotating "Threads Idea Scoring Rubric"
+    /// merged two paragraphs because the model's copy, not the page, was
+    /// saved.
+    #[tokio::test]
+    async fn backfill_keeps_paragraph_breaks_the_model_dropped() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        let body = format!("{BACKFILL_BODY}\n\nIt stays local.");
+        db.insert_page("p_paragraphs", "T", None, &body, None, None, &[], &now)
+            .await
+            .unwrap();
+        insert_test_memory(&db, "mem_a", BACKFILL_MEM_CONTENT).await;
+        db.link_page_evidence("p_paragraphs", "memory", Some("mem_a"), None, "test")
+            .await
+            .unwrap();
+        let reply = format!("{BACKFILL_BODY} [1] It stays local.");
+        let llm: Arc<dyn LlmProvider> = Arc::new(MockProvider::new(&reply));
+        run_citation_backfill_tick(&db, &llm, &PromptRegistry::default())
+            .await
+            .unwrap();
+        let page = db.get_page("p_paragraphs").await.unwrap().unwrap();
+        assert_eq!(
+            page.content,
+            format!("{BACKFILL_BODY} [1]\n\nIt stays local.")
+        );
+        assert_eq!(page.citations.len(), 1);
     }
 
     #[test]
