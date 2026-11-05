@@ -40676,20 +40676,34 @@ impl MemoryDB {
     /// cleanup can be undone by hand. Returns the number of links removed (0
     /// when it already ran or there is no hub).
     pub async fn unfile_old_hub_links_once(&self) -> Result<u64, WenlanError> {
-        const MARKER: &str = "kg_unfile_hub_links_v1";
+        self.unfile_hub_links("kg_unfile_hub_links_v1", true).await
+    }
+
+    /// The daily pass of the same rule: a hub link that some write path
+    /// added after the memory already had a specific topic (an entity merge
+    /// into the hub, a batch link) is taken off again. A run that changed
+    /// something records what it changed under `kg_unfile_hub_links_last`,
+    /// replacing the previous run's record. Returns the links removed.
+    pub async fn unfile_hub_links_daily(&self) -> Result<u64, WenlanError> {
+        self.unfile_hub_links("kg_unfile_hub_links_last", false)
+            .await
+    }
+
+    async fn unfile_hub_links(&self, record_key: &str, once: bool) -> Result<u64, WenlanError> {
         let conn = self.conn.lock().await;
         let query_err = |e: libsql::Error| WenlanError::VectorDb(format!("unfile hub links: {e}"));
-        let mut rows = conn
-            .query(
-                "SELECT 1 FROM app_metadata WHERE key = ?1",
-                libsql::params![MARKER],
-            )
-            .await
-            .map_err(query_err)?;
-        if rows.next().await.map_err(query_err)?.is_some() {
-            return Ok(0);
+        if once {
+            let mut rows = conn
+                .query(
+                    "SELECT 1 FROM app_metadata WHERE key = ?1",
+                    libsql::params![record_key],
+                )
+                .await
+                .map_err(query_err)?;
+            if rows.next().await.map_err(query_err)?.is_some() {
+                return Ok(0);
+            }
         }
-        drop(rows);
 
         let mut rows = conn
             .query("SELECT COUNT(DISTINCT memory_id) FROM memory_entities", ())
@@ -40806,13 +40820,15 @@ impl MemoryDB {
                     .collect::<Vec<_>>(),
             })
             .to_string();
-            conn.execute(
-                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                libsql::params![MARKER, record],
-            )
-            .await
-            .map_err(query_err)?;
+            if once || !removed.is_empty() || !moved.is_empty() {
+                conn.execute(
+                    "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    libsql::params![record_key, record],
+                )
+                .await
+                .map_err(query_err)?;
+            }
             Ok(u64::try_from(removed.len()).unwrap_or(u64::MAX))
         }
         .await;

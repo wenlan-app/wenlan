@@ -2227,11 +2227,12 @@ pub fn spawn_scheduler(
                 ) {
                     let report = wenlan_core::housekeeping::run_housekeeping(&db, now_epoch).await;
                     tracing::info!(
-                        "[scheduler] housekeeping: decayed={} promoted={} rejections_pruned={} orphaned_page_sources={} evicted={} errors={:?}",
+                        "[scheduler] housekeeping: decayed={} promoted={} rejections_pruned={} orphaned_page_sources={} hub_links_removed={} evicted={} errors={:?}",
                         report.memories_decayed,
                         report.memories_promoted,
                         report.rejections_pruned,
                         report.orphaned_page_sources,
+                        report.hub_links_removed,
                         report.memories_evicted,
                         report.errors,
                     );

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Daily housekeeping that needs no model: confidence decay, promotion of
-//! settled memories, old rejection pruning, orphaned page-source cleanup and,
+//! settled memories, old rejection pruning, orphaned page-source cleanup, hub
+//! links on memories that have a specific topic and,
 //! when enabled, soft eviction.
 //!
 //! Steep runs in two modes, Automatic and On demand, and both must keep the
@@ -32,6 +33,7 @@ pub struct HousekeepingReport {
     pub memories_promoted: usize,
     pub rejections_pruned: usize,
     pub orphaned_page_sources: usize,
+    pub hub_links_removed: u64,
     pub memories_evicted: usize,
     pub errors: Vec<String>,
 }
@@ -77,6 +79,10 @@ pub async fn run_housekeeping(db: &MemoryDB, now_epoch: i64) -> HousekeepingRepo
         Err(error) => report
             .errors
             .push(format!("orphaned page sources: {error}")),
+    }
+    match db.unfile_hub_links_daily().await {
+        Ok(count) => report.hub_links_removed = count,
+        Err(error) => report.errors.push(format!("hub links: {error}")),
     }
     if crate::db::eviction_enabled() {
         match db
