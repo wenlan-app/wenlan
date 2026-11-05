@@ -1915,8 +1915,8 @@ const en = {
   thisSentence: {
     title: "This sentence",
     who: { you: "Yours", accepted: "Yours, you accepted it", ai: "Written by AI", original: "Original text", unknown: "Not sure who wrote it" },
-    evidence: { verified: "source checked", unverified: "source doesn’t back it", unevaluated: "source not checked yet", none: "no source" },
-    weak: "Can’t be backed up: {{reason}}",
+    evidence: { verified: "source checked", unverified: "not confirmed by text matching", unevaluated: "source not checked yet", none: "no source" },
+    weak: "Source check: {{reason}}",
     recheck: "Ask AI to recheck",
     rechecking: "Rechecking…",
     recheckedOk: "Rechecked. Its source backs it.",
@@ -1934,7 +1934,7 @@ const en = {
   },
   weakReason: {
     no_citation: "no source",
-    unsupported: "its source doesn’t say this",
+    unsupported: "text matching did not confirm support",
     stale: "its source changed since",
     disproven: "its source no longer backs it",
   },
@@ -5098,8 +5098,8 @@ const zhHans = {
   thisSentence: {
     title: "这一句",
     who: { you: "你写的", accepted: "你收下的", ai: "AI 写的", original: "原文", unknown: "不确定是谁写的" },
-    evidence: { verified: "出处核对过", unverified: "出处对不上", unevaluated: "出处还没核对", none: "没有出处" },
-    weak: "靠不住：{{reason}}",
+    evidence: { verified: "出处核对过", unverified: "文字比对尚未确认支持", unevaluated: "出处还没核对", none: "没有出处" },
+    weak: "来源核对：{{reason}}",
     recheck: "让 AI 重查这句",
     rechecking: "正在重查…",
     recheckedOk: "重查过了，出处撑得住。",
@@ -5117,7 +5117,7 @@ const zhHans = {
   },
   weakReason: {
     no_citation: "没有出处",
-    unsupported: "出处没这样说",
+    unsupported: "文字比对尚未确认支持",
     stale: "出处后来改了",
     disproven: "出处现在撑不住了",
   },
@@ -8256,8 +8256,8 @@ const zhHant = {
   thisSentence: {
     title: "這一句",
     who: { you: "你寫的", accepted: "你收下的", ai: "AI 寫的", original: "原文", unknown: "不確定是誰寫的" },
-    evidence: { verified: "出處核對過", unverified: "出處對不上", unevaluated: "出處還沒核對", none: "沒有出處" },
-    weak: "靠不住：{{reason}}",
+    evidence: { verified: "出處核對過", unverified: "文字比對尚未確認支持", unevaluated: "出處還沒核對", none: "沒有出處" },
+    weak: "來源核對：{{reason}}",
     recheck: "讓 AI 重查這句",
     rechecking: "正在重查…",
     recheckedOk: "重查過了，出處撐得住。",
@@ -8275,7 +8275,7 @@ const zhHant = {
   },
   weakReason: {
     no_citation: "沒有出處",
-    unsupported: "出處沒這樣說",
+    unsupported: "文字比對尚未確認支持",
     stale: "出處後來改了",
     disproven: "出處現在撐不住了",
   },
