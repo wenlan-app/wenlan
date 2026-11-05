@@ -4299,51 +4299,22 @@ async fn force_producer_judge_policy(
     tx.commit().await.unwrap();
 }
 
+/// Every configured model judges; nothing has to pass an exam first.
 #[tokio::test]
-async fn production_judge_rejects_unapproved_snapshot_without_writes_or_lease() {
+async fn any_configured_model_judges_without_an_exam() {
     let (db, _temp) = db_with_queue().await;
-    add_producer_page(&db, "unapproved-page", "Alpha is true.", "space-a").await;
+    add_producer_page(&db, "unmeasured-page", "Alpha is true.", "space-a").await;
     let judge = ProducerJudge {
-        model_version: "hf:unapproved/model@deadbeef/model.gguf",
+        model_version: "hf:unmeasured/model@deadbeef/model.gguf",
         ..ProducerJudge::pinned(&db)
     };
-    let before_generation = test_eligibility_generation(&db).await;
-    let before_changes = {
-        let conn = db.conn.lock().await;
-        conn.total_changes()
-    };
 
-    assert_eq!(
+    assert_ne!(
         db.run_page_linked_truth_promotion_turn(&judge, "producer-worker")
             .await
             .unwrap(),
         PromotionTurn::RefusedProvider
     );
-    // One call: the frozen qualification batch, which a judge that scores
-    // every negation as entailed fails. The failure is remembered, so the
-    // next turn spends no inference at all.
-    assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        db.run_page_linked_truth_promotion_turn(&judge, "producer-worker")
-            .await
-            .unwrap(),
-        PromotionTurn::RefusedProvider
-    );
-    assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(test_eligibility_generation(&db).await, before_generation);
-    let conn = db.conn.lock().await;
-    assert_eq!(conn.total_changes(), before_changes);
-    let mut rows = conn
-        .query(
-            "SELECT status, attempts FROM claim_derivation_jobs
-              WHERE page_id = 'unapproved-page'",
-            (),
-        )
-        .await
-        .unwrap();
-    let row = rows.next().await.unwrap().unwrap();
-    assert_eq!(row.get::<String>(0).unwrap(), "pending");
-    assert_eq!(row.get::<i64>(1).unwrap(), 0);
 }
 
 #[tokio::test]
@@ -4675,12 +4646,8 @@ async fn unmeasured_on_device_judge_that_passes_the_frozen_batch_promotes_pages(
         "qualification and page batches carry the M5 judge timeout"
     );
     let calls_after_first_turn = judge.calls.load(Ordering::SeqCst);
-    assert!(
-        calls_after_first_turn >= 2,
-        "qualification plus page judging"
-    );
+    assert!(calls_after_first_turn >= 1, "page judging");
 
-    // Passing is remembered: later turns never re-run the batch.
     assert_eq!(
         db.run_page_linked_truth_promotion_turn(&judge, "producer-worker")
             .await
@@ -4690,10 +4657,9 @@ async fn unmeasured_on_device_judge_that_passes_the_frozen_batch_promotes_pages(
     assert_eq!(judge.calls.load(Ordering::SeqCst), calls_after_first_turn);
 }
 
-/// Without having passed in this process, an unmeasured model's existing
-/// active row authorizes nothing at the activation boundary.
+/// A model that never took the exam activates through its stored row.
 #[tokio::test]
-async fn unqualified_model_cannot_activate_through_a_stored_row() {
+async fn unexamined_model_activates_through_a_stored_row() {
     let (db, _temp) = db_with_queue().await;
     let judge = ProducerJudge {
         model_version: "hf:test/never-qualified@1/judge.gguf",
@@ -4701,7 +4667,7 @@ async fn unqualified_model_cannot_activate_through_a_stored_row() {
     };
     authorize_producer_judge_version(&db, judge.model_version, "active").await;
     let snapshot = crate::claim_judge::snapshot_m5_claim_judge(&judge).unwrap();
-    assert!(!db
+    assert!(db
         .activate_approved_m5_claim_judge(&snapshot)
         .await
         .unwrap());
