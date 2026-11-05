@@ -444,7 +444,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   }, [baseModel, model, layers.memory, thingPoints, scopedGraph, spaceFilter]);
   // The small groups, and the memories hung only on them: hidden until the
   // view is zoomed in far enough for the islands to come up solid.
-  const tucked = useMemo(() => tuckedNodeIds(visibleModel, smallGroupIds(baseModel, thingAnchors)), [visibleModel, baseModel, thingAnchors]);
+  // The group the map was opened on (a page or topic handed off to it) is
+  // never tucked either: the reader came to see it.
+  const tucked = useMemo(() => {
+    const anchors = effectiveFocusId ? new Set([...thingAnchors, effectiveFocusId]) : thingAnchors;
+    return tuckedNodeIds(visibleModel, smallGroupIds(baseModel, anchors));
+  }, [visibleModel, baseModel, thingAnchors, effectiveFocusId]);
   const tuckedRef = useRef(tucked);
   tuckedRef.current = tucked;
   const hasThings = visibleModel.nodes.some((node) => node.kind === "thing");

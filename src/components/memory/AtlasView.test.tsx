@@ -2309,7 +2309,10 @@ describe("AtlasView", () => {
     renderWithQuery(<AtlasView focusEntityId="p1" />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
     const instance = capturedSigmaInstances[0];
+    // Its whole group comes up with it, and counts on the map.
     expect(hiddenNow("p1")).toBe(false);
+    expect(hiddenNow("p2")).toBe(false);
+    expect(screen.getByText("7 topics · 1 region")).toBeInTheDocument();
     expect(instance.camera.setState).toHaveBeenCalledWith({ x: 0.42, y: 0.24, ratio: 1 });
   });
 
