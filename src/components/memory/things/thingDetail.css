@@ -102,6 +102,12 @@
 .thing-steeped-undo:hover { color:var(--mem-text); }
 .thing-steeped-undo:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
 .thing-steeped-undo:disabled { opacity:.6;cursor:default; }
-/* A point last night steeped: a small dot in the indent before it. */
+/* A point last night steeped: the night's moon in the indent before it. */
 .thing-recap-group li[data-fresh] { position:relative; }
-.thing-recap-group li[data-fresh]::before { content:"";position:absolute;left:-.8em;top:.72em;width:6px;height:6px;border-radius:50%;background:var(--mem-accent-page); }
+/* A night read something different from a point the person wrote (UX-WHO-2):
+   one quiet line under it, with their two answers. */
+.thing-recap-proposal { display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px;margin-top:4px;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body);overflow-wrap:anywhere; }
+.thing-recap-proposal span { min-width:0; }
+.thing-recap-proposal button { padding:0;border:0;background:none;color:var(--mem-text-secondary);font:inherit;cursor:pointer;text-decoration:underline;text-decoration-color:var(--mem-border);text-underline-offset:3px;white-space:nowrap; }
+.thing-recap-proposal button:hover { color:var(--mem-text); }
+.thing-recap-proposal button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }

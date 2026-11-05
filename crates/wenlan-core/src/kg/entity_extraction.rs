@@ -180,15 +180,17 @@ pub async fn commit_kg(
     };
     let mut entity_cache: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
-    let mut first_entity_id: Option<String> = None;
+    // Entity ids in the order the model listed them, so the first specific
+    // one becomes the memory's topic.
+    let mut listed: Vec<String> = Vec::new();
 
     for kg_item in kg {
         for entity in &kg_item.entities {
             let name_lower = entity.name.to_lowercase();
             // In-batch cache (per-extraction-pass dedup; capability fn doesn't take a cache)
             if let Some(id) = entity_cache.get(&name_lower) {
-                if first_entity_id.is_none() {
-                    first_entity_id = Some(id.clone());
+                if !listed.contains(id) {
+                    listed.push(id.clone());
                 }
                 continue;
             }
@@ -202,8 +204,8 @@ pub async fn commit_kg(
             match crate::post_write::create_entity(db, req, "post_ingest").await {
                 Ok(result) => {
                     entity_cache.insert(name_lower, result.id.clone());
-                    if first_entity_id.is_none() {
-                        first_entity_id = Some(result.id);
+                    if !listed.contains(&result.id) {
+                        listed.push(result.id);
                     }
                 }
                 // A name the admission gate refused is expected traffic, not a
@@ -265,14 +267,33 @@ pub async fn commit_kg(
         }
     }
 
-    // Link memory to first entity (1-1 legacy column).
+    // A hub topic (linked to a large share of all memories) is not linked
+    // when the memory names anything more specific: the hub tells it apart
+    // from nothing, and filing memories under it grew one page from every one
+    // of them. A memory that names only hubs keeps them -- leaving it with no
+    // topic would put it back in the unlinked queue on every steep. The hub's
+    // observations and relations above are kept either way.
+    let listed_refs: Vec<&str> = listed.iter().map(String::as_str).collect();
+    let hubs = db.hub_entity_ids(&listed_refs).await.unwrap_or_default();
+    let specific: Vec<&str> = listed_refs
+        .iter()
+        .copied()
+        .filter(|id| !hubs.contains(*id))
+        .collect();
+    let ids = if specific.is_empty() {
+        listed_refs
+    } else {
+        specific
+    };
+    let first_entity_id = ids.first().map(|id| (*id).to_string());
+
+    // Link memory to its first specific entity (1-1 legacy column).
     if let Some(ref eid) = first_entity_id {
         let _ = db.update_memory_entity_id(source_id, eid).await;
     }
 
-    // Write all extracted entities into the many-to-many junction table.
-    if !entity_cache.is_empty() {
-        let ids: Vec<&str> = entity_cache.values().map(|s| s.as_str()).collect();
+    // Write the extracted entities into the many-to-many junction table.
+    if !ids.is_empty() {
         if let Err(e) = db.link_memory_entities(source_id, &ids).await {
             log::warn!("[post_ingest] link_memory_entities failed: {e}");
         }
@@ -389,6 +410,118 @@ mod tests {
             stored_eid, eid,
             "stored entity_id should match the one returned by commit_kg"
         );
+    }
+
+    /// A topic linked to a large share of all memories is a hub: a new memory
+    /// is filed under the first specific topic instead, and is not linked to
+    /// the hub at all.
+    #[tokio::test]
+    async fn commit_kg_does_not_file_a_memory_under_a_hub_topic() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = crate::db::MemoryDB::new(dir.path(), Arc::new(crate::events::NoopEmitter))
+            .await
+            .expect("MemoryDB::new failed");
+        for id in ["m1", "m2"] {
+            db.upsert_documents(vec![RawDocument {
+                source: "memory".to_string(),
+                source_id: id.to_string(),
+                title: "Test memory".to_string(),
+                content: "Alice joined Acme".to_string(),
+                ..Default::default()
+            }])
+            .await
+            .expect("upsert_documents failed");
+        }
+        let prompts = test_prompts();
+        let key_fragment = prompts
+            .extract_knowledge_graph
+            .chars()
+            .take(30)
+            .collect::<String>();
+        let kg_json = r#"[{"entities":[{"name":"Alice","type":"person"},{"name":"Acme","type":"organization"}],"observations":[],"relations":[]}]"#;
+        let canned = Arc::new(CannedLlmProvider::new("DEFAULT").with(key_fragment, kg_json));
+        let kg = extract_kg(
+            &(canned as Arc<dyn LlmProvider>),
+            &prompts,
+            "Alice joined Acme",
+        )
+        .await
+        .expect("extract_kg failed");
+        let first = commit_kg(&db, "m1", &kg, "Alice joined Acme", None)
+            .await
+            .unwrap()
+            .expect("m1 gets a topic");
+
+        // Make the first-listed topic a hub.
+        {
+            let conn = db.test_primary_session().await;
+            for i in 0..crate::db::HUB_MIN_LINKS {
+                conn.execute(
+                    "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, ?2)",
+                    libsql::params![format!("other_{i}"), first.clone()],
+                )
+                .await
+                .unwrap();
+            }
+        }
+
+        let primary = commit_kg(&db, "m2", &kg, "Alice joined Acme", None)
+            .await
+            .unwrap()
+            .expect("m2 gets a specific topic");
+        assert_ne!(primary, first, "the hub is not the memory's topic");
+        assert_eq!(
+            db.get_memory_entity_id("m2").await.unwrap(),
+            Some(primary.clone())
+        );
+        let conn = db.test_primary_session().await;
+        let mut rows = conn
+            .query(
+                "SELECT entity_id FROM memory_entities WHERE memory_id = 'm2'",
+                (),
+            )
+            .await
+            .unwrap();
+        let mut linked = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            linked.push(row.get::<String>(0).unwrap());
+        }
+        assert_eq!(linked, vec![primary], "the hub is not linked");
+        drop(rows);
+        drop(conn);
+
+        // A memory that names only the hub keeps it, so it does not stay
+        // unlinked and get re-extracted on every steep.
+        db.upsert_documents(vec![RawDocument {
+            source: "memory".to_string(),
+            source_id: "m3".to_string(),
+            title: "Test memory".to_string(),
+            content: "Alice again".to_string(),
+            ..Default::default()
+        }])
+        .await
+        .expect("upsert_documents failed");
+        let hub_only = vec![crate::extract::KgExtractionResult {
+            index: 0,
+            entities: vec![kg[0].entities[0].clone()],
+            observations: Vec::new(),
+            relations: Vec::new(),
+        }];
+        assert_eq!(
+            commit_kg(&db, "m3", &hub_only, "Alice again", None)
+                .await
+                .unwrap(),
+            Some(first.clone())
+        );
+        assert_eq!(db.get_memory_entity_id("m3").await.unwrap(), Some(first));
+    }
+
+    #[test]
+    fn a_hub_needs_many_links_and_a_large_share() {
+        use crate::db::is_hub_entity;
+        assert!(is_hub_entity(877, 3700));
+        assert!(!is_hub_entity(150, 200), "too few links to be a hub");
+        assert!(!is_hub_entity(250, 5000), "a small share is a normal topic");
     }
 
     #[tokio::test]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Daily housekeeping that needs no model: confidence decay, promotion of
-//! settled memories, old rejection pruning, orphaned page-source cleanup and,
+//! settled memories, old rejection pruning, orphaned page-source cleanup, hub
+//! links on memories that have a specific topic and,
 //! when enabled, soft eviction.
 //!
 //! Steep runs in two modes, Automatic and On demand, and both must keep the
@@ -32,6 +33,7 @@ pub struct HousekeepingReport {
     pub memories_promoted: usize,
     pub rejections_pruned: usize,
     pub orphaned_page_sources: usize,
+    pub hub_links_removed: u64,
     pub memories_evicted: usize,
     pub errors: Vec<String>,
 }
@@ -78,6 +80,10 @@ pub async fn run_housekeeping(db: &MemoryDB, now_epoch: i64) -> HousekeepingRepo
             .errors
             .push(format!("orphaned page sources: {error}")),
     }
+    match db.unfile_hub_links_daily().await {
+        Ok(count) => report.hub_links_removed = count,
+        Err(error) => report.errors.push(format!("hub links: {error}")),
+    }
     if crate::db::eviction_enabled() {
         match db
             .evict_stale(&crate::tuning::EvictionConfig::default())
@@ -95,6 +101,41 @@ pub async fn run_housekeeping(db: &MemoryDB, now_epoch: i64) -> HousekeepingRepo
         .await
     {
         report.errors.push(format!("record run: {error}"));
+    }
+    report
+}
+
+/// What the one-time cleanups of data written under older rules changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OneTimeCleanupReport {
+    pub hub_links_removed: u64,
+    pub primaries_moved_off_archived: u64,
+    pub duplicate_recaps_removed: usize,
+    pub errors: Vec<String>,
+}
+
+/// Clean, once per database, what older rules wrote: links from a memory to
+/// a hub topic when the memory also has a more specific one (its main topic
+/// moving to a shown topic before an archived one), and recaps that
+/// cover the same memories as an older recap. Each cleanup records itself in
+/// app metadata (which also makes it undoable) and returns zero afterwards.
+///
+/// Reweave and the recap pass also call these, but only a full foreground
+/// steep runs those phases, so the scheduler calls this directly: otherwise
+/// an upgraded library would keep the old links and duplicates. Model-free.
+pub async fn run_one_time_cleanups(db: &MemoryDB) -> OneTimeCleanupReport {
+    let mut report = OneTimeCleanupReport::default();
+    match db.unfile_old_hub_links_once().await {
+        Ok(count) => report.hub_links_removed = count,
+        Err(error) => report.errors.push(format!("hub links: {error}")),
+    }
+    match db.move_unfiled_primaries_off_archived_topics_once().await {
+        Ok(count) => report.primaries_moved_off_archived = count,
+        Err(error) => report.errors.push(format!("archived main topics: {error}")),
+    }
+    match crate::synthesis::recaps::dedupe_old_recaps_once(db).await {
+        Ok(count) => report.duplicate_recaps_removed = count,
+        Err(error) => report.errors.push(format!("duplicate recaps: {error}")),
     }
     report
 }

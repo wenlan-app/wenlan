@@ -572,3 +572,212 @@ fn things_of_list<'a>(
 ) -> &'a wenlan_types::ThingSummary {
     things.iter().find(|t| t.id == id).unwrap()
 }
+
+fn point(id: &str, parent: &str, label: &str, from: &[&str]) -> wenlan_types::ThingMapOp {
+    wenlan_types::ThingMapOp::Add {
+        id: Some(id.into()),
+        parent_id: Some(parent.into()),
+        rank: None,
+        kind: "point".into(),
+        state: Some(wenlan_types::ThingMapState::Open),
+        label: label.into(),
+        sources: from
+            .iter()
+            .map(|s| wenlan_types::ThingMapSource {
+                session_id: s.to_string(),
+                from: None,
+                to: None,
+                memory_id: Some(format!("mem_{label}")),
+            })
+            .collect(),
+    }
+}
+
+fn link(from: &str, to: &str) -> wenlan_types::ThingMapOp {
+    wenlan_types::ThingMapOp::Link {
+        from: from.into(),
+        to: to.into(),
+        kind: "answers".into(),
+    }
+}
+
+/// `(id, parent, label)` of every point, sorted by id.
+async fn shape(db: &MemoryDB, thing_id: &str) -> Vec<(String, Option<String>, String)> {
+    let mut out: Vec<_> = db
+        .get_thing_map(thing_id)
+        .await
+        .unwrap()
+        .nodes
+        .into_iter()
+        .map(|n| (n.id, n.parent_id, n.label))
+        .collect();
+    out.sort();
+    out
+}
+
+/// UX-THING-1: moving a conversation to another thing takes the points that
+/// came only from it, with their memories and links among them; a point
+/// that also came from elsewhere stays, and so does one from elsewhere that
+/// sat under a point that left.
+#[tokio::test]
+async fn ux_thing_1_moving_a_conversation_moves_its_points() {
+    let (db, _temp) = test_db().await;
+    let a = conversation(&db, "codex:a", Some("Tagline copy"), None, Some("site"), 10).await;
+    let b = conversation(&db, "codex:b", Some("Pricing page"), None, Some("site"), 20).await;
+    let c = conversation(&db, "codex:c", Some("Hero image"), None, Some("site"), 30).await;
+    db.sort_sessions_into_things().await.unwrap();
+    let from = things_of(&db, &a).await.remove(0);
+    let to = things_of(&db, &b).await.remove(0);
+    let c_thing = things_of(&db, &c).await.remove(0);
+    db.move_session_thing(&c, &c_thing, &MoveTarget::Thing(from.clone()))
+        .await
+        .unwrap();
+    let ops = vec![
+        wenlan_types::ThingMapOp::Add {
+            id: Some("root".into()),
+            parent_id: None,
+            rank: None,
+            kind: "topic".into(),
+            state: None,
+            label: "Tagline copy".into(),
+            sources: Vec::new(),
+        },
+        point("p1", "root", "short", &[&a]),
+        point("q", "p1", "hero", &[&c]),
+        point("p2", "root", "photo", &[&c]),
+        point("p2a", "p2", "crop", &[&c]),
+        point("r", "p2", "tone", &[&a]),
+        point("p3", "root", "both", &[&a, &c]),
+        link("p2", "p2a"),
+        link("p1", "p2"),
+    ];
+    db.apply_thing_map_ops(&from, wenlan_types::ThingMapAuthor::Ai, 0, &ops)
+        .await
+        .unwrap();
+
+    db.move_session_thing(&c, &from, &MoveTarget::Thing(to.clone()))
+        .await
+        .unwrap();
+
+    let s = |v: &str| v.to_string();
+    let left = shape(&db, &from).await;
+    assert_eq!(
+        left,
+        vec![
+            (s("p1"), Some(s("root")), s("short")),
+            (s("p3"), Some(s("root")), s("both")),
+            (s("r"), Some(s("root")), s("tone")),
+            (s("root"), None, s("Tagline copy")),
+        ],
+        "what came from elsewhere stays; tone moves up to the top point"
+    );
+    let source = db.get_thing_map(&from).await.unwrap();
+    assert!(source.edges.is_empty(), "a link to a point that left goes");
+    assert_eq!(source.revision, 2);
+
+    let target = db.get_thing_map(&to).await.unwrap();
+    let root = target.nodes.iter().find(|n| n.parent_id.is_none()).unwrap();
+    assert_eq!(
+        root.label, "Pricing page",
+        "an empty map starts from its thing"
+    );
+    let moved = shape(&db, &to).await;
+    let under = |id: &str| {
+        moved
+            .iter()
+            .find(|(n, _, _)| n == id)
+            .and_then(|(_, p, _)| p.clone())
+    };
+    assert_eq!(moved.len(), 4);
+    assert_eq!(under("q"), Some(root.id.clone()));
+    assert_eq!(under("p2"), Some(root.id.clone()));
+    assert_eq!(under("p2a"), Some(s("p2")), "what sits under it goes along");
+    let crop = target.nodes.iter().find(|n| n.id == "p2a").unwrap();
+    assert_eq!(crop.sources[0].memory_id.as_deref(), Some("mem_crop"));
+    assert_eq!(target.edges.len(), 1);
+    assert_eq!(
+        (target.edges[0].from.as_str(), target.edges[0].to.as_str()),
+        ("p2", "p2a")
+    );
+
+    // Moving it back brings its points back.
+    db.move_session_thing(&c, &to, &MoveTarget::Thing(from.clone()))
+        .await
+        .unwrap();
+    let back = shape(&db, &from).await;
+    assert!(back
+        .iter()
+        .any(|(n, p, _)| n == "p2" && p.as_deref() == Some("root")));
+    assert_eq!(shape(&db, &to).await.len(), 1, "only its top point is left");
+}
+
+/// UX-THING-3: when the person merges a thing in, its map hangs under the
+/// kept thing's top point, and its nights come along, so the last one can
+/// be taken back from the kept thing.
+#[tokio::test]
+async fn ux_thing_3_merging_carries_the_map_and_nights() {
+    let (db, _temp) = test_db().await;
+    let a = conversation(&db, "codex:a", Some("Tagline copy"), None, Some("site"), 10).await;
+    let b = conversation(&db, "codex:b", Some("Pricing page"), None, Some("site"), 20).await;
+    db.sort_sessions_into_things().await.unwrap();
+    let kept = things_of(&db, &a).await.remove(0);
+    let other = things_of(&db, &b).await.remove(0);
+    let changes = db
+        .dream_into_map(
+            &other,
+            "Pricing page",
+            &[super::thing_map::DreamMapWrite {
+                memory_id: "mem_1".into(),
+                session_id: b.clone(),
+                text: "Two plans, not three".into(),
+                decided: true,
+                node: None,
+                replaces: false,
+            }],
+        )
+        .await
+        .unwrap();
+    db.record_dream(&other, &["mem_1".into()], &[], &changes, &[])
+        .await
+        .unwrap();
+
+    db.merge_things(&kept, &other).await.unwrap();
+
+    let map = db.get_thing_map(&kept).await.unwrap();
+    let root = map.nodes.iter().find(|n| n.parent_id.is_none()).unwrap();
+    assert_eq!(root.label, "Tagline copy");
+    let theirs = map
+        .nodes
+        .iter()
+        .find(|n| n.label == "Pricing page")
+        .unwrap();
+    assert_eq!(theirs.parent_id.as_deref(), Some(root.id.as_str()));
+    let plans = map
+        .nodes
+        .iter()
+        .find(|n| n.label == "Two plans, not three")
+        .unwrap();
+    assert_eq!(plans.parent_id.as_deref(), Some(theirs.id.as_str()));
+    assert!(db.get_thing_map(&other).await.unwrap().nodes.is_empty());
+
+    let night = db.thing_dream(&kept).await.unwrap().unwrap();
+    assert_eq!(night.fresh, vec!["mem_1".to_string()]);
+    assert!(db.thing_dream(&other).await.unwrap().is_none());
+    assert_eq!(
+        db.undo_thing_dream(&kept).await.unwrap(),
+        vec!["mem_1".to_string()]
+    );
+    let after: Vec<String> = db
+        .get_thing_map(&kept)
+        .await
+        .unwrap()
+        .nodes
+        .into_iter()
+        .map(|n| n.label)
+        .collect();
+    assert_eq!(
+        after,
+        vec!["Tagline copy".to_string()],
+        "taking the night back takes its points"
+    );
+}

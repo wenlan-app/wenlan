@@ -1377,55 +1377,25 @@ fn rb01_profile_lane_includes_page_growth_no_match() {
 }
 
 #[test]
-fn measured_recovery_floor_is_two_minutes_and_long_turns_extend_it() {
-    let policy = ThermalPolicy::conservative();
-    assert_eq!(
-        policy.cooldown_after(Duration::from_secs(1)),
-        Duration::from_secs(120)
-    );
-    assert!(
-        policy.cooldown_after(Duration::from_secs(60)) > Duration::from_secs(120),
-        "a long request must earn a longer recovery window than the measured floor"
-    );
-}
-
-#[test]
-fn local_ambient_work_stays_within_a_twenty_percent_duty_cycle() {
-    let policy = ThermalPolicy::conservative();
-    for lap_secs in [1_u64, 5, 30, 60, 90, 300] {
-        let lap = Duration::from_secs(lap_secs);
-        let rest = policy.cooldown_after(lap);
-        assert!(
-            lap.as_secs_f64() / (lap + rest).as_secs_f64() <= 0.2 + f64::EPSILON,
-            "a {lap_secs}s lap rested only {rest:?}"
-        );
-    }
-    // A 90s lap on a 9B model rests six minutes, not the old 28.5.
-    assert_eq!(
-        policy.cooldown_after(Duration::from_secs(90)),
-        Duration::from_secs(360)
-    );
-}
-
-#[test]
-fn cloud_inference_keeps_only_the_rest_floor_and_local_routes_keep_the_duty_cap() {
-    use wenlan_core::refinery::EverydaySource;
-    let long_lap = Duration::from_secs(90);
-    assert_eq!(
-        ThermalPolicy::for_ambient_route(Some(EverydaySource::Anthropic)).cooldown_after(long_lap),
-        AMBIENT_MIN_RECOVERY
-    );
-    for local in [
-        Some(EverydaySource::OnDevice),
-        Some(EverydaySource::External),
-        None,
-    ] {
+fn ux_quiet_1_background_work_does_not_rest_between_laps() {
+    // No open-source background worker we checked rests after each piece of
+    // work; the in-use, heat, battery, CPU and memory gates stop it instead.
+    let policy = ThermalPolicy::between_laps();
+    for lap_secs in [1_u64, 60, 90, 300] {
         assert_eq!(
-            ThermalPolicy::for_ambient_route(local).cooldown_after(long_lap),
-            Duration::from_secs(360),
-            "{local:?} may run on this Mac and must keep the duty cap"
+            policy.cooldown_after(Duration::from_secs(lap_secs)),
+            Duration::ZERO,
+            "a {lap_secs}s lap must not earn a rest"
         );
     }
+    let lap_started = Instant::now();
+    let lap_completed = lap_started + Duration::from_secs(90);
+    let mut schedule = AmbientSchedule::new(lap_started);
+    charge_lap_thermal_cooldown(&mut schedule, lap_started, lap_completed, true, policy);
+    assert!(
+        ambient_turn_allowed(true, lap_completed, schedule.next_allowed_at),
+        "the next lap may start as soon as the gates admit it"
+    );
 }
 
 #[test]
@@ -1596,55 +1566,6 @@ async fn scheduler_shutdown_interrupts_initial_delay() {
 }
 
 #[test]
-fn ambient_thermal_work_completion_starts_conservative_cooldown() {
-    let now = Instant::now();
-    let mut schedule = AmbientSchedule::new(now);
-    schedule.note_thermal_work_completion(
-        now,
-        Duration::from_secs(1),
-        ThermalPolicy::conservative(),
-    );
-    assert_eq!(schedule.next_allowed_at, now + Duration::from_secs(120));
-}
-
-#[test]
-fn charge_lap_thermal_cooldown_uses_the_full_lap_elapsed_time_not_a_single_jobs_slice() {
-    // Simulate a two-job lap: Document ran for 58s, then Citation (the last
-    // thermal-consuming job) ran for only 2s — 60s of real lap time in
-    // total. Charging the cooldown against the *lap's* elapsed time (what
-    // `charge_lap_thermal_cooldown` does) must produce a materially
-    // different, larger cooldown than charging it against only the last
-    // job's own 2s slice (what the pre-fix per-job call site did).
-    let lap_started = Instant::now();
-    let lap_completed = lap_started + Duration::from_secs(60);
-    let mut schedule = AmbientSchedule::new(lap_started);
-
-    charge_lap_thermal_cooldown(
-        &mut schedule,
-        lap_started,
-        lap_completed,
-        true, // some job in the lap consumed a thermal turn
-        ThermalPolicy::conservative(),
-    );
-
-    // cooldown_after(60s) = max(120s, 60 * 4) = 240s.
-    assert_eq!(
-        schedule.next_allowed_at,
-        lap_completed + Duration::from_secs(240),
-        "cooldown must be sized from the full 60s lap, not the last job's 2s slice"
-    );
-    // The bug this guards against: charging only the last job's 2s slice
-    // gives cooldown_after(2s) = max(120s, 2 * 4) = 120s — the floor, and
-    // 120s short of the correct 240s. Pin that the fixed behavior is not
-    // merely "at least the floor" but the specific, larger lap-sized value.
-    assert_ne!(
-        schedule.next_allowed_at,
-        lap_completed + Duration::from_secs(120),
-        "must not fall back to the floor value a single 2s job's slice would produce"
-    );
-}
-
-#[test]
 fn charge_lap_thermal_cooldown_leaves_the_cooldown_untouched_when_no_job_in_the_lap_did_billable_work(
 ) {
     let lap_started = Instant::now();
@@ -1657,7 +1578,7 @@ fn charge_lap_thermal_cooldown_leaves_the_cooldown_untouched_when_no_job_in_the_
         lap_started,
         lap_completed,
         false, // every job in the lap was a no-op skip, nothing panicked
-        ThermalPolicy::conservative(),
+        ThermalPolicy::between_laps(),
     );
 
     assert_eq!(
@@ -4317,7 +4238,7 @@ async fn ambient_reconcile_backpressure_uses_lane_rescan_backoff() {
 }
 
 #[tokio::test]
-async fn ambient_reconcile_zero_candidate_progress_stays_due_but_is_thermally_paced() {
+async fn ambient_reconcile_zero_candidate_progress_stays_due_and_counts_as_work() {
     let (db, _db_dir) = new_test_db().await;
     db.upsert_documents(vec![wenlan_types::RawDocument {
         source: "memory".to_string(),
@@ -4385,9 +4306,9 @@ async fn ambient_reconcile_zero_candidate_progress_stays_due_but_is_thermally_pa
     schedule.note_thermal_work_completion(
         now,
         Duration::from_secs(1),
-        ThermalPolicy::conservative(),
+        ThermalPolicy::between_laps(),
     );
-    assert_eq!(schedule.next_allowed_at, now + Duration::from_secs(120));
+    assert_eq!(schedule.next_allowed_at, now);
 }
 
 async fn insert_test_page(
@@ -4689,4 +4610,155 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
             .is_none(),
         "maintenance must not invent a reserved Overview"
     );
+}
+
+fn quiet_admitted_status() -> ResourceStatus {
+    ResourceStatus {
+        admitted: true,
+        snapshot: Some(ResourceSnapshot {
+            cpu_usage_percent: 5.0,
+            available_memory_bytes: 16 * GIB,
+            total_memory_bytes: 48 * GIB,
+        }),
+        block_reason: None,
+    }
+}
+
+#[test]
+fn ux_quiet_1_low_battery_holds_back_work_on_this_computer_but_not_a_cloud_model() {
+    use wenlan_core::refinery::EverydaySource;
+    for local in [
+        Some(EverydaySource::OnDevice),
+        Some(EverydaySource::External),
+        None,
+    ] {
+        let status = apply_power_source(
+            quiet_admitted_status(),
+            true,
+            background_route_runs_here(local),
+        );
+        assert!(!status.admitted, "{local:?} on a low battery must wait");
+        assert_eq!(status.block_reason, Some(ResourceBlockReason::LowBattery));
+    }
+    let cloud = apply_power_source(
+        quiet_admitted_status(),
+        true,
+        background_route_runs_here(Some(EverydaySource::Anthropic)),
+    );
+    assert!(cloud.admitted, "a cloud model may run on a low battery");
+    let charged = apply_power_source(quiet_admitted_status(), false, true);
+    assert!(
+        charged.admitted,
+        "plugged in, or on battery above the floor"
+    );
+
+    // An earlier, more specific reason is kept, not replaced by LowBattery.
+    let busy = ResourceStatus {
+        admitted: false,
+        block_reason: Some(ResourceBlockReason::CpuBusy),
+        ..quiet_admitted_status()
+    };
+    assert_eq!(
+        apply_power_source(busy, true, true).block_reason,
+        Some(ResourceBlockReason::CpuBusy)
+    );
+}
+
+#[test]
+fn ux_quiet_1_each_item_of_a_lap_rechecks_the_person_heat_and_power() {
+    let away = HostActivitySnapshot::Observed {
+        thermal_state: 0,
+        idle_for: Duration::from_secs(600),
+    };
+    assert!(ambient_item_may_start(away, false, true));
+    // The person came back between two items.
+    assert!(!ambient_item_may_start(
+        HostActivitySnapshot::Observed {
+            thermal_state: 0,
+            idle_for: Duration::from_secs(5),
+        },
+        false,
+        true,
+    ));
+    // The computer warmed up to "fair" mid-lap.
+    assert!(!ambient_item_may_start(
+        HostActivitySnapshot::Observed {
+            thermal_state: 1,
+            idle_for: Duration::from_secs(600),
+        },
+        false,
+        true,
+    ));
+    // The battery ran low mid-lap: a local model stops, a cloud model goes on.
+    assert!(!ambient_item_may_start(away, true, true));
+    assert!(ambient_item_may_start(away, true, false));
+    // Telemetry that should exist but failed counts as "not safe".
+    assert!(!ambient_item_may_start(
+        HostActivitySnapshot::Unavailable,
+        false,
+        true
+    ));
+}
+
+#[test]
+fn ux_quiet_1_reading_conversations_runs_while_the_person_works_but_not_when_warm_short_or_low() {
+    use wenlan_core::refinery::EverydaySource;
+    let typing = HostActivitySnapshot::Observed {
+        thermal_state: 0,
+        idle_for: Duration::from_secs(2),
+    };
+    let roomy = Some(ResourceSnapshot {
+        cpu_usage_percent: 90.0,
+        available_memory_bytes: 20 * GIB,
+        total_memory_bytes: 48 * GIB,
+    });
+    let local = Some(EverydaySource::OnDevice);
+    assert_eq!(
+        light_background_block_reason(typing, false, local, roomy),
+        None,
+        "typing and a busy CPU do not hold back light work"
+    );
+    assert_eq!(
+        light_background_block_reason(
+            HostActivitySnapshot::Observed {
+                thermal_state: 1,
+                idle_for: Duration::from_secs(2),
+            },
+            false,
+            local,
+            roomy,
+        ),
+        Some(ResourceBlockReason::ThermalPressure)
+    );
+    assert_eq!(
+        light_background_block_reason(typing, true, local, roomy),
+        Some(ResourceBlockReason::LowBattery)
+    );
+    assert_eq!(
+        light_background_block_reason(typing, true, Some(EverydaySource::Anthropic), roomy),
+        None,
+        "a cloud model may read on a low battery"
+    );
+    let tight = Some(ResourceSnapshot {
+        cpu_usage_percent: 0.0,
+        available_memory_bytes: 3 * GIB,
+        total_memory_bytes: 16 * GIB,
+    });
+    assert_eq!(
+        light_background_block_reason(typing, false, local, tight),
+        Some(ResourceBlockReason::MemoryPressure),
+        "a model on this computer needs its extra 2 GB"
+    );
+}
+
+#[test]
+fn ux_quiet_1_battery_counts_as_low_below_20_and_okay_again_at_25() {
+    use crate::host_activity::battery_is_low;
+    assert!(!battery_is_low(None, false), "AC power is never low");
+    assert!(!battery_is_low(None, true));
+    assert!(!battery_is_low(Some(20), false));
+    assert!(battery_is_low(Some(19), false));
+    // Once low, it stays low until 25%, so work does not flap at 20%.
+    assert!(battery_is_low(Some(22), true));
+    assert!(!battery_is_low(Some(25), true));
 }

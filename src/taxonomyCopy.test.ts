@@ -92,8 +92,8 @@ describe("taxonomy and product copy", () => {
     expect(atlas).not.toContain(
       `{ label: "${legacyLabel}", key: "${legacyWireKey}" }`,
     );
-    // The former inline legend now lives in the localized entity filter.
-    expect(atlas).toContain("<AtlasTypeFilters");
+    // The former inline legend lived in the localized entity filter, which is
+    // no longer in the Display menu; its labels stay localized.
     expect(read("src/components/memory/AtlasTypeFilters.tsx")).toContain("atlas.entityType.${type}");
     expect(resources.en.translation.atlas.entityType.concept).toBe("Concept");
     expect(resources["zh-Hant"].translation.atlas.entityType.concept).toBe("概念");

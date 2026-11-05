@@ -470,6 +470,25 @@ impl KnowledgeWriter {
     }
 
     #[cfg(test)]
+    fn adopt_hashes_of_earlier_renders_for_test(
+        &self,
+        pages: &[Page],
+        history: &[crate::db::PageHistoryEntry],
+    ) -> Result<usize, WenlanError> {
+        let guard = self.begin_test_write();
+        let candidates = self.unhashed_files_behind(&guard, pages)?;
+        let earlier: Vec<_> = candidates
+            .into_iter()
+            .filter_map(|(id, version)| {
+                let page = pages.iter().find(|page| page.id == id)?;
+                let entry = history.iter().find(|entry| entry.version == version)?;
+                Some((page.clone(), entry.clone()))
+            })
+            .collect();
+        self.adopt_hashes_of_earlier_renders(&guard, &earlier)
+    }
+
+    #[cfg(test)]
     pub(crate) fn reconcile_for_test(&self, pages: &[Page]) -> Result<ReconcileStats, WenlanError> {
         let guard = self.begin_test_write();
         self.reconcile(&guard, pages)
@@ -849,6 +868,78 @@ impl KnowledgeWriter {
             }
         }
         Ok(stats)
+    }
+
+    /// Pages whose `state.json` entry predates recorded file hashes and whose
+    /// file is stamped with an older version than the page: `(page id, the
+    /// file's version)`. Without a hash the writer can only accept such a
+    /// file when it holds today's text, so a page Wenlan changed while its
+    /// file stayed behind (a citation backfill, say) reads as edited
+    /// outside Wenlan and refuses every write. See
+    /// [`Self::adopt_hashes_of_earlier_renders`].
+    fn unhashed_files_behind(
+        &self,
+        guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
+        pages: &[Page],
+    ) -> Result<Vec<(String, i64)>, WenlanError> {
+        self.validate_guard(guard)?;
+        KnowledgeProjectionWrite::with_projection_capabilities(&self.path, |capabilities| {
+            let state = folders::read_state_strict(&capabilities.wenlan)?;
+            Ok(pages
+                .iter()
+                .filter_map(|page| {
+                    let entry = state.pages.get(&page.id)?;
+                    if entry.content_sha256.is_some() || entry.person_frontmatter.is_some() {
+                        return None;
+                    }
+                    let bytes = read_projected_file(&capabilities.root, &entry.file).ok()?;
+                    let raw = std::str::from_utf8(&bytes).ok()?;
+                    let (fm, _) = crate::sources::obsidian::extract_frontmatter(raw);
+                    let version = projected_origin_version(&fm);
+                    (fm.get_str("origin_id") == Some(page.id.as_str())
+                        && version >= 1
+                        && version < page.version)
+                        .then(|| (page.id.clone(), version))
+                })
+                .collect())
+        })
+    }
+
+    /// Record the hash of each file that is exactly what Wenlan rendered for
+    /// the page's version `earlier.version` (see [`file_is_earlier_render`]),
+    /// for entries that have no hash yet. The writer then treats the file as
+    /// its own and brings it up to date; a file that differs in any way a
+    /// person could have typed keeps no hash and stays protected. Returns
+    /// how many entries gained a hash.
+    fn adopt_hashes_of_earlier_renders(
+        &self,
+        guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
+        earlier: &[(Page, crate::db::PageHistoryEntry)],
+    ) -> Result<usize, WenlanError> {
+        self.validate_guard(guard)?;
+        KnowledgeProjectionWrite::with_projection_capabilities(&self.path, |capabilities| {
+            let mut state = folders::read_state_strict(&capabilities.wenlan)?;
+            let mut adopted = 0;
+            for (page, history) in earlier {
+                let Some(entry) = state.pages.get_mut(&page.id) else {
+                    continue;
+                };
+                if entry.content_sha256.is_some() || entry.person_frontmatter.is_some() {
+                    continue;
+                }
+                let Ok(bytes) = read_projected_file(&capabilities.root, &entry.file) else {
+                    continue;
+                };
+                if file_is_earlier_render(&bytes, page, history) {
+                    entry.content_sha256 = Some(projection_digest(&bytes));
+                    adopted += 1;
+                }
+            }
+            if adopted > 0 {
+                self.save_state_cap(&capabilities.wenlan, &state)?;
+            }
+            Ok(adopted)
+        })
     }
 
     /// Whether nothing at all is at `filename`, its folder included (the
@@ -2892,7 +2983,12 @@ impl LockedProjection<'_> {
                 .remove("content_sha256");
             stored.get("content_sha256").is_none() && stored == &expected_without_hash
         });
-        if !state_matches || target_bytes.as_slice() != expected_markdown.as_bytes() {
+        let current_render =
+            state_matches && target_bytes.as_slice() == expected_markdown.as_bytes();
+        let earlier_build = stored_page.is_some_and(|stored| {
+            projection_from_earlier_build(stored, &expected_state, &target_bytes, page)
+        });
+        if !current_render && !earlier_build {
             return Err(WenlanError::Conflict(
                 "page projection contains unsynced edits".to_string(),
             ));
@@ -5184,6 +5280,116 @@ fn projection_digest(bytes: &[u8]) -> String {
     format!("{:x}", sha2::Sha256::digest(bytes))
 }
 
+/// Whether a file that differs from today's render is only the render of an
+/// earlier build. `render_markdown` stamps the build into the frontmatter, so
+/// every upgrade changes the render of every untouched page; reconcile rewrites
+/// only files behind the page's version, and the rest keep the old bytes.
+///
+/// The state entry must describe this version of the page and the body must
+/// hold its text. Beyond that the file must be what Wenlan wrote: its bytes are
+/// the ones recorded for it, or, for an entry from before hashes were recorded,
+/// every frontmatter field a person could have typed matches today's render.
+/// `generated` is the build stamp; `sources` and `related` follow other records
+/// without moving this page's version. A build may have added fields since, so
+/// only the file's own fields are compared, and an added one is an edit.
+fn projection_from_earlier_build(
+    stored: &serde_json::Value,
+    expected_state: &serde_json::Value,
+    target_bytes: &[u8],
+    page: &Page,
+) -> bool {
+    let without_hash = |state: &serde_json::Value| {
+        let mut state = state.clone();
+        if let Some(fields) = state.as_object_mut() {
+            fields.remove("content_sha256");
+        }
+        state
+    };
+    if without_hash(stored) != without_hash(expected_state) {
+        return false;
+    }
+    let Ok(raw) = std::str::from_utf8(target_bytes) else {
+        return false;
+    };
+    if !crate::export::provenance::same_page_text_ignoring_save_noise(
+        &crate::export::provenance::page_body_from_projection(raw),
+        &crate::export::provenance::page_body_from_projection(&render_markdown(page)),
+    ) {
+        return false;
+    }
+    match stored.get("content_sha256") {
+        Some(recorded) => recorded.as_str() == Some(projection_digest(target_bytes).as_str()),
+        None => {
+            let (file, _) = crate::sources::obsidian::extract_frontmatter(raw);
+            let rendered = render_markdown(page);
+            let (current, _) = crate::sources::obsidian::extract_frontmatter(&rendered);
+            file.get_str("origin_id") == Some(page.id.as_str())
+                && file.fields.iter().all(|(field, value)| {
+                    matches!(field.as_str(), "generated" | "sources" | "related")
+                        || current.fields.get(field) == Some(value)
+                })
+        }
+    }
+}
+
+fn read_projected_file(root: &Dir, file: &str) -> Result<Vec<u8>, WenlanError> {
+    let (directory, name) = folders::page_parent(root, file)?;
+    let mut budget = RepairReadBudget::new();
+    read_regular_nofollow(&directory, OsStr::new(&name), &mut budget)
+}
+
+/// Whether `bytes` are what Wenlan rendered for `page` at the earlier
+/// version `earlier`, from that version's `page_history` snapshot: the file
+/// names the page and is stamped with that version, its body holds that
+/// version's text, and every frontmatter field a person could have typed
+/// matches. `generated`, `modified` and `status` follow the build and the
+/// page's later state; `sources` and `related` follow other records.
+/// `description` is the page summary, which `page_history` does not keep, so
+/// an earlier render holds an earlier summary that cannot be checked; the
+/// page watcher never reads it back either, and a file holding today's body
+/// is already replaced whatever its description says. Only the file's own
+/// fields are compared, as in [`projection_from_earlier_build`].
+fn file_is_earlier_render(
+    bytes: &[u8],
+    page: &Page,
+    earlier: &crate::db::PageHistoryEntry,
+) -> bool {
+    use crate::export::provenance::{
+        page_body_from_projection, same_page_text_ignoring_save_noise,
+    };
+    let Ok(raw) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let (file, _) = crate::sources::obsidian::extract_frontmatter(raw);
+    if file.get_str("origin_id") != Some(page.id.as_str())
+        || projected_origin_version(&file) != earlier.version
+        || earlier.version >= page.version
+    {
+        return false;
+    }
+    let mut then = page.clone();
+    then.version = earlier.version;
+    then.content = earlier.content.clone();
+    then.source_memory_ids = earlier.source_memory_ids.clone();
+    if let Some(title) = &earlier.title {
+        then.title = title.clone();
+    }
+    let rendered = render_markdown(&then);
+    if !same_page_text_ignoring_save_noise(
+        &page_body_from_projection(raw),
+        &page_body_from_projection(&rendered),
+    ) {
+        return false;
+    }
+    let (expected, _) = crate::sources::obsidian::extract_frontmatter(&rendered);
+    file.fields.iter().all(|(field, value)| {
+        matches!(
+            field.as_str(),
+            "generated" | "modified" | "status" | "sources" | "related" | "description"
+        ) || expected.fields.get(field) == Some(value)
+    })
+}
+
 fn projection_bytes_replaceable(
     bytes: &[u8],
     page: &Page,
@@ -5874,6 +6080,39 @@ impl KnowledgeProjectionWrite {
             }
             _ => Ok(0),
         }
+    }
+
+    /// Give a hash to each page file from before Wenlan recorded hashes
+    /// that is exactly Wenlan's render of an earlier version of its page,
+    /// checked against that version in `page_history`. Run before
+    /// [`Self::reconcile`], which can then bring those files up to date
+    /// instead of reading them as edited outside Wenlan. Returns how many
+    /// files were adopted.
+    pub async fn adopt_hashes_from_history(
+        &self,
+        database: &crate::db::MemoryDB,
+        pages: &[Page],
+    ) -> Result<usize, WenlanError> {
+        let candidates = self.writer.unhashed_files_behind(&self.guard, pages)?;
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+        let by_id: HashMap<&str, &Page> =
+            pages.iter().map(|page| (page.id.as_str(), page)).collect();
+        let mut earlier = Vec::new();
+        for (page_id, version) in candidates {
+            let Some(page) = by_id.get(page_id.as_str()) else {
+                continue;
+            };
+            if let Some(history) = database.get_page_history_at(&page_id, version).await? {
+                earlier.push(((*page).clone(), history));
+            }
+        }
+        if earlier.is_empty() {
+            return Ok(0);
+        }
+        self.writer
+            .adopt_hashes_of_earlier_renders(&self.guard, &earlier)
     }
 
     /// Repair the projection from the DB.
@@ -7432,6 +7671,151 @@ mod tests {
             "reconcile must not clobber an offline edit made under legacy frontmatter"
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), legacy);
+    }
+
+    /// Write `page`, then make its state entry look like one from before
+    /// hashes were recorded. Returns the file path.
+    fn write_page_with_unhashed_entry(writer: &KnowledgeWriter, page: &Page) -> String {
+        let path = writer.write_page_for_test(page).unwrap();
+        let state_path = writer.path.join(".wenlan/state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+        state["pages"][&page.id]
+            .as_object_mut()
+            .unwrap()
+            .remove("content_sha256");
+        std::fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+        path
+    }
+
+    fn history_of(page: &Page) -> crate::db::PageHistoryEntry {
+        crate::db::PageHistoryEntry {
+            version: page.version,
+            title: Some(page.title.clone()),
+            content: page.content.clone(),
+            source_memory_ids: page.source_memory_ids.clone(),
+            edited_by: "wenlan".to_string(),
+            created_at: 0,
+        }
+    }
+
+    /// A page Wenlan changed (a citation backfill) while its file, written
+    /// before hashes were recorded, stayed at the earlier version. The file
+    /// is exactly that version's render, so it is Wenlan's, not an edit.
+    fn backfilled(page: &Page) -> Page {
+        let mut next = page.clone();
+        next.version += 1;
+        next.content = next
+            .content
+            .replace("for memory safety.", "for memory safety. [^1]");
+        next.source_memory_ids.push("m2".to_string());
+        next.last_modified = "2026-04-10T00:00:00+00:00".to_string();
+        next
+    }
+
+    #[test]
+    fn unhashed_file_at_an_earlier_version_is_adopted_and_brought_up_to_date() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let earlier = test_concept();
+        let path = write_page_with_unhashed_entry(&writer, &earlier);
+        let now = backfilled(&earlier);
+
+        // Without the earlier version the file reads as edited outside Wenlan.
+        let stats = writer
+            .reconcile_for_test(std::slice::from_ref(&now))
+            .unwrap();
+        assert_eq!((stats.rewritten, stats.errors), (0, 1));
+
+        let adopted = writer
+            .adopt_hashes_of_earlier_renders_for_test(
+                std::slice::from_ref(&now),
+                &[history_of(&earlier)],
+            )
+            .unwrap();
+        assert_eq!(adopted, 1);
+
+        let stats = writer
+            .reconcile_for_test(std::slice::from_ref(&now))
+            .unwrap();
+        assert_eq!((stats.rewritten, stats.errors), (1, 0));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            render_markdown(&now)
+        );
+    }
+
+    /// The summary is not in `page_history`, so a file from an earlier
+    /// version carries that version's summary, which no record can confirm.
+    #[test]
+    fn unhashed_file_with_an_earlier_summary_is_adopted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let earlier = test_concept();
+        let path = write_page_with_unhashed_entry(&writer, &earlier);
+        let mut now = backfilled(&earlier);
+        now.summary = Some("Memory safety without GC, checked at compile time".to_string());
+
+        let adopted = writer
+            .adopt_hashes_of_earlier_renders_for_test(
+                std::slice::from_ref(&now),
+                &[history_of(&earlier)],
+            )
+            .unwrap();
+        assert_eq!(adopted, 1);
+        let stats = writer
+            .reconcile_for_test(std::slice::from_ref(&now))
+            .unwrap();
+        assert_eq!((stats.rewritten, stats.errors), (1, 0));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            render_markdown(&now)
+        );
+    }
+
+    #[test]
+    fn unhashed_file_edited_outside_wenlan_keeps_no_hash() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let earlier = test_concept();
+        let path = write_page_with_unhashed_entry(&writer, &earlier);
+        let now = backfilled(&earlier);
+        let original = std::fs::read_to_string(&path).unwrap();
+
+        for edited in [
+            original.replace("Rust uses ownership", "Hand-written prose the user typed"),
+            original.replace("title: \"Rust Ownership\"", "title: \"My own title\""),
+            original.replace("type: page\n", "type: page\naliases: [mine]\n"),
+        ] {
+            assert_ne!(edited, original);
+            std::fs::write(&path, &edited).unwrap();
+            let adopted = writer
+                .adopt_hashes_of_earlier_renders_for_test(
+                    std::slice::from_ref(&now),
+                    &[history_of(&earlier)],
+                )
+                .unwrap();
+            assert_eq!(adopted, 0, "adopted an edited file:\n{edited}");
+            writer
+                .reconcile_for_test(std::slice::from_ref(&now))
+                .unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+        }
+    }
+
+    #[test]
+    fn unhashed_file_whose_history_differs_keeps_no_hash() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let earlier = test_concept();
+        write_page_with_unhashed_entry(&writer, &earlier);
+        let now = backfilled(&earlier);
+        let mut other = history_of(&earlier);
+        other.content = "Something else entirely.".to_string();
+        let adopted = writer
+            .adopt_hashes_of_earlier_renders_for_test(std::slice::from_ref(&now), &[other])
+            .unwrap();
+        assert_eq!(adopted, 0);
     }
 
     /// Without a `state.json` entry we cannot tell which file on disk is a

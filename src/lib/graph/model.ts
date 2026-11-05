@@ -2,9 +2,11 @@
 import type {
   Entity,
   EntityDetail,
+  GraphMemoryLink,
   GraphRef,
   KnowledgeGraph,
   RelationWithEntity,
+  ThingNightPoints,
 } from "../tauri";
 
 // The renderer-neutral graph every view consumes. Daemon response shapes are
@@ -18,7 +20,7 @@ import type {
 // instead (FocusGraph's deriveNeighbors) — renderers make different calls on
 // purpose, this file doesn't referee it.
 
-export type GraphNodeKind = "entity" | "memory" | "page";
+export type GraphNodeKind = "entity" | "memory" | "page" | "thing";
 
 export interface GraphNode {
   id: string;
@@ -38,6 +40,11 @@ export interface GraphNode {
   space: string | null;
   createdAt: number;
   updatedAt: number;
+  /** A memory a night wrote for a thing (UX-CHAT-5): drawn with the moon. */
+  night?: boolean;
+  /** A night's point that is still open, not yet decided (UX-CHAT-5): its
+   *  sentence is written in the muted ink. */
+  open?: boolean;
 }
 
 export interface GraphEdge {
@@ -614,18 +621,76 @@ export function componentSizeByNode(model: GraphModel): Map<string, number> {
  * has at least MIN_COMPONENT_SIZE members, plus the edges between them. Edges
  * are filtered too — a dropped node's edges would otherwise point at nothing.
  *
- * `showSmallGroups` is the reader's own call, made through the toolbar chip:
- * with it on, nothing is dropped and the small components join the shelf.
+ * `showSmallGroups` keeps everything. The big map draws every node and keeps
+ * the small groups out of sight until zoomed in (see smallGroupIds).
  */
-export function drawableModel(model: GraphModel, showSmallGroups = false): GraphModel {
+export function drawableModel(
+  model: GraphModel,
+  showSmallGroups = false,
+  /** Nodes whose small group is drawn anyway: what an active thing's
+   *  steeped points link to, so the thing reaches them (its 附近 stop). */
+  anchors: ReadonlySet<string> = new Set(),
+): GraphModel {
   if (showSmallGroups) return model;
-  const kept = drawableByComponentSize(model);
-  if (kept === null || kept.size === model.nodes.length) return model;
+  const small = smallGroupIds(model, anchors);
+  if (small.size === 0) return model;
   return {
     ...model,
-    nodes: model.nodes.filter((node) => kept.has(node.id)),
-    edges: model.edges.filter((edge) => kept.has(edge.source) && kept.has(edge.target)),
+    nodes: model.nodes.filter((node) => !small.has(node.id)),
+    edges: model.edges.filter((edge) => !small.has(edge.source) && !small.has(edge.target)),
   };
+}
+
+/**
+ * The nodes in small groups: components of fewer than MIN_COMPONENT_SIZE
+ * nodes, off the core. The map lays them out with everything else but keeps
+ * them out of sight until the reader zooms in (AtlasView). A group holding an
+ * anchor (what an active thing's steeped points link to) is never small, so
+ * the thing always reaches it.
+ */
+export function smallGroupIds(model: GraphModel, anchors: ReadonlySet<string> = new Set()): Set<string> {
+  const kept = drawableByComponentSize(model);
+  if (kept === null || kept.size === model.nodes.length) return new Set();
+  const missing = [...anchors].filter((id) => !kept.has(id));
+  if (missing.length > 0) {
+    const nodeIds = new Set(model.nodes.map((node) => node.id));
+    const around = new Map<string, string[]>();
+    for (const edge of model.edges) {
+      around.set(edge.source, [...(around.get(edge.source) ?? []), edge.target]);
+      around.set(edge.target, [...(around.get(edge.target) ?? []), edge.source]);
+    }
+    const queue = missing.filter((id) => nodeIds.has(id));
+    for (const id of queue) kept.add(id);
+    while (queue.length > 0) {
+      for (const next of around.get(queue.pop()!) ?? []) {
+        if (nodeIds.has(next) && !kept.has(next)) {
+          kept.add(next);
+          queue.push(next);
+        }
+      }
+    }
+  }
+  return new Set(model.nodes.filter((node) => !kept.has(node.id)).map((node) => node.id));
+}
+
+/**
+ * What the map keeps out of sight until the reader zooms in: the small groups,
+ * and every memory hung only on them (a memory that also touches the core
+ * stays, it is not part of a small group).
+ */
+export function tuckedNodeIds(model: GraphModel, small: ReadonlySet<string>): Set<string> {
+  const tucked = new Set(small);
+  if (small.size === 0) return tucked;
+  const kind = new Map(model.nodes.map((node) => [node.id, node.kind]));
+  const reachesCore = new Map<string, boolean>();
+  for (const edge of model.edges) {
+    for (const [memory, other] of [[edge.source, edge.target], [edge.target, edge.source]] as const) {
+      if (kind.get(memory) !== "memory" || kind.get(other) === "memory") continue;
+      reachesCore.set(memory, (reachesCore.get(memory) ?? false) || !small.has(other));
+    }
+  }
+  for (const [memory, core] of reachesCore) if (!core) tucked.add(memory);
+  return tucked;
 }
 
 /**
@@ -642,18 +707,6 @@ function drawableByComponentSize(model: GraphModel): Set<string> | null {
     if ((sizes.get(node.id) ?? 0) >= MIN_COMPONENT_SIZE) kept.add(node.id);
   }
   return kept.size === 0 ? null : kept;
-}
-
-/**
- * How many nodes sit in components too small to draw by default — the number
- * on the "small groups hidden" chip. Computed from the FULL model, so it does
- * not change when the reader turns the small groups on; the chip has to keep
- * saying how many there are in order to offer them back.
- */
-export function smallGroupNodeCount(model: GraphModel): number {
-  const kept = drawableByComponentSize(model);
-  if (kept === null) return 0;
-  return model.nodes.length - kept.size;
 }
 
 /**
@@ -689,6 +742,175 @@ export function attachMemories(base: GraphModel, withMemories: GraphModel): Grap
     .filter((node) => memoryIds.has(node.id))
     .map((node) => ({ ...node, degree: degree.get(node.id) ?? 0 }));
   return { ...base, nodes: [...base.nodes, ...memoryNodes], edges: [...base.edges, ...memoryEdges] };
+}
+
+/**
+ * The `entityType` every thing node carries: a piece of work grouped from the
+ * person's AI conversations (UX-THING-1). Not a daemon vocabulary word.
+ */
+export const THING_NODE_TYPE = "thing";
+
+/** Edge verb for a thing -> the point one of its nights wrote. */
+export const NIGHT_EDGE_TYPE = "night";
+
+/** Graph-node id for a thing, prefixed like memories and pages. */
+/** Stored thing names are capped at 40 characters, cut wherever the cap
+ *  fell. One that reaches the cap is shown cut at its last whole word, with
+ *  an ellipsis, so it never ends in half a word. */
+export const STORED_THING_TITLE_CAP = 40;
+export function thingTitle(title: string): string {
+  const text = title.trim();
+  if ([...text].length < STORED_THING_TITLE_CAP) return text;
+  const space = text.lastIndexOf(" ");
+  const cut = space >= 12 ? text.slice(0, space) : text;
+  return `${cut.replace(/[\s,;:–—\-，、；：]+$/u, "")}…`;
+}
+
+export function thingNodeId(thingId: string): string {
+  return `thing:${thingId}`;
+}
+
+/** The thing id behind a thing node id, or null for anything else. */
+export function thingIdOf(nodeId: string): string | null {
+  return nodeId.startsWith("thing:") ? nodeId.slice(6) : null;
+}
+
+/**
+ * The points things' nights wrote (UX-CHAT-5), whatever the memory layer
+ * says: a night's points have no entity or page link of their own, so their
+ * thing is the one place they are certain to belong.
+ *
+ * A thing home lists under "what you're working on" (not `quiet`) gets a node
+ * of its own that the map never draws: the centre its points cluster round,
+ * which AtlasView frames with the thing's title (night.ts). A point already on
+ * the map (the memory layer drew it off an entity) is the same node, now
+ * marked as a night's and tied to its thing. A point that also links to an
+ * entity `base` draws gains a line to it; it stays in its thing's cluster
+ * (atlas.ts's satelliteAnchor prefers a thing), so a link arriving later
+ * never moves it.
+ *
+ * A quiet thing has no frame and no centre. Its points that link to a drawn
+ * entity stay on the map as ordinary memory dots by that entity; the rest are
+ * not drawn. Its centre's kept position is what brings its frame back to the
+ * same spot when it is active again (see AtlasView).
+ *
+ * Like attachMemories, nothing already in `base` changes position, degree or
+ * edges. `space` narrows to the things whose conversations ran there, as the
+ * space filter does for everything else.
+ */
+export function attachThingPoints(
+  base: GraphModel,
+  things: readonly ThingNightPoints[],
+  memoryLinks: readonly GraphMemoryLink[],
+  space: string | null = null,
+): GraphModel {
+  const shown = things.filter((thing) => thing.points.length > 0 && (!space || thing.spaces.includes(space)));
+  if (shown.length === 0) return base;
+  const nodes = new Map(base.nodes.map((node) => [node.id, node]));
+  const baseIds = new Set(nodes.keys());
+  const edges = new Map(base.edges.map((edge) => [edge.id, edge]));
+  const added = new Set<string>();
+  const addEdge = (edge: GraphEdge) => {
+    if (edges.has(edge.id)) return;
+    edges.set(edge.id, edge);
+    for (const end of [edge.source, edge.target]) if (!baseIds.has(end)) added.add(end);
+  };
+  const pointIds = new Set<string>();
+  // Quiet things' points: drawn only through an entity link, as plain memories.
+  const quietPoints = new Map<string, { title: string; createdAt: number; space: string | null }>();
+  for (const thing of shown) {
+    if (thing.quiet) {
+      for (const point of thing.points) {
+        quietPoints.set(point.memory_id, { title: point.title, createdAt: point.created_at, space: space ?? thing.spaces[0] ?? null });
+      }
+      continue;
+    }
+    const id = thingNodeId(thing.thing_id);
+    if (nodes.has(id)) continue;
+    const newest = Math.max(...thing.points.map((point) => point.created_at));
+    nodes.set(id, {
+      id,
+      kind: "thing",
+      name: thingTitle(thing.title ?? ""),
+      entityType: THING_NODE_TYPE,
+      confirmed: null,
+      degree: 0,
+      space: space ?? thing.spaces[0] ?? null,
+      createdAt: Math.min(...thing.points.map((point) => point.created_at)),
+      updatedAt: newest,
+    });
+    added.add(id);
+    for (const point of thing.points) {
+      const memoryId = memoryNodeId(point.memory_id);
+      const existing = nodes.get(memoryId);
+      nodes.set(memoryId, existing
+        ? { ...existing, night: true, open: !point.decided }
+        : {
+          id: memoryId,
+          kind: "memory",
+          name: point.title,
+          entityType: MEMORY_NODE_TYPE,
+          confirmed: null,
+          degree: 0,
+          space: space ?? thing.spaces[0] ?? null,
+          createdAt: point.created_at,
+          updatedAt: point.created_at,
+          night: true,
+          open: !point.decided,
+        });
+      pointIds.add(point.memory_id);
+      addEdge({
+        id: `night:${thing.thing_id}:${point.memory_id}`,
+        source: id,
+        target: memoryId,
+        type: NIGHT_EDGE_TYPE,
+        confidence: null,
+        createdAt: point.created_at,
+      });
+    }
+  }
+  // A point an entity link reaches: one more line, to an entity on the map.
+  for (const link of memoryLinks) {
+    const quiet = pointIds.has(link.memory_id) ? undefined : quietPoints.get(link.memory_id);
+    if (!pointIds.has(link.memory_id) && !quiet) continue;
+    const entity = nodes.get(link.entity_id);
+    if (!entity || entity.kind !== "entity") continue;
+    const memoryId = memoryNodeId(link.memory_id);
+    if (quiet && !nodes.has(memoryId)) {
+      nodes.set(memoryId, {
+        id: memoryId,
+        kind: "memory",
+        name: quiet.title,
+        entityType: MEMORY_NODE_TYPE,
+        confirmed: null,
+        degree: 0,
+        space: quiet.space,
+        createdAt: quiet.createdAt,
+        updatedAt: quiet.createdAt,
+      });
+    }
+    addEdge({
+      id: `mem:${link.memory_id}:${link.entity_id}`,
+      source: memoryId,
+      target: link.entity_id,
+      type: MEMORY_EDGE_TYPE,
+      confidence: null,
+      createdAt: nodes.get(memoryId)!.createdAt,
+    });
+  }
+  if (added.size === 0 && edges.size === base.edges.length) return base;
+  // Degrees of what this added only; `base` keeps its own.
+  const degree = new Map<string, number>();
+  for (const edge of edges.values()) {
+    for (const end of new Set([edge.source, edge.target])) {
+      if (added.has(end)) degree.set(end, (degree.get(end) ?? 0) + 1);
+    }
+  }
+  return {
+    ...base,
+    nodes: [...nodes.values()].map((node) => (added.has(node.id) ? { ...node, degree: degree.get(node.id) ?? 0 } : node)),
+    edges: [...edges.values()],
+  };
 }
 
 /** 1-hop ego graph: the center entity plus its direct neighbors. */

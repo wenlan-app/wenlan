@@ -19,7 +19,16 @@ export function SteepMoon() {
  * (docs/ux/spec.md, UX-CHAT-5): one quiet line under the views bar, so the
  * work done overnight is seen, and "Undo" takes that night's points back.
  */
-export function ThingSteeped({ thing, queryKey }: { readonly thing: ThingDetail; readonly queryKey: readonly unknown[] }) {
+export function ThingSteeped({
+  thing,
+  queryKey,
+  onOpenGraph,
+}: {
+  readonly thing: ThingDetail;
+  readonly queryKey: readonly unknown[];
+  /** The way to the big map: it opens at this thing's points. */
+  readonly onOpenGraph?: () => void;
+}) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const undo = useMutation({
@@ -44,6 +53,11 @@ export function ThingSteeped({ thing, queryKey }: { readonly thing: ThingDetail;
         <SteepMoon />
         {text}
       </p>
+      {onOpenGraph ? (
+        <button type="button" className="thing-steeped-undo" onClick={onOpenGraph}>
+          {t("thing.openOnBigMap")}
+        </button>
+      ) : null}
       <button type="button" className="thing-steeped-undo" disabled={undo.isPending} onClick={() => undo.mutate()}>
         {t("thing.steepUndo")}
       </button>

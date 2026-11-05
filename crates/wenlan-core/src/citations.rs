@@ -555,6 +555,50 @@ fn parse_attempts(value: &str, generation: &str) -> i64 {
 /// Collapse all whitespace runs to a single space and trim. Used by the
 /// annotate-only guard to compare the model output against the input body
 /// independent of incidental whitespace reflow.
+/// The page's own text with the model's `[n]` markers placed where the
+/// model put them: after the same visible character, with a space before the
+/// marker when the model wrote one. Every space, line break and paragraph
+/// break comes from `original`; markers already in `original` are dropped.
+/// `None` when the visible characters (everything but whitespace and
+/// markers) of the two texts differ.
+fn transplant_markers(original: &str, annotated: &str) -> Option<String> {
+    let base = RE_MARKERS.replace_all(original, "");
+    let annotated = normalize_markers(annotated);
+    let mut out = String::with_capacity(base.len() + annotated.len() / 8);
+    let mut rest = base.as_ref();
+    let mut last = 0;
+    let mut pieces: Vec<(&str, Option<&str>)> = Vec::new();
+    for marker in RE_MARKERS.find_iter(&annotated) {
+        pieces.push((&annotated[last..marker.start()], Some(marker.as_str())));
+        last = marker.end();
+    }
+    pieces.push((&annotated[last..], None));
+    for (text, marker) in pieces {
+        for c in text.chars().filter(|c| !c.is_whitespace()) {
+            let skipped = rest.len() - rest.trim_start().len();
+            out.push_str(&rest[..skipped]);
+            rest = &rest[skipped..];
+            let next = rest.chars().next()?;
+            if next != c {
+                return None;
+            }
+            out.push(next);
+            rest = &rest[next.len_utf8()..];
+        }
+        if let Some(marker) = marker {
+            if text.ends_with(char::is_whitespace) && !out.ends_with(char::is_whitespace) {
+                out.push(' ');
+            }
+            out.push_str(marker);
+        }
+    }
+    if !rest.trim().is_empty() {
+        return None;
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
 fn normalize_ws(s: &str) -> String {
     RE_WHITESPACE.replace_all(s.trim(), " ").to_string()
 }
@@ -645,12 +689,115 @@ async fn record_annotate_failure(
 /// rewrites text; 3 consecutive rejections poison-pill the page to
 /// `citations = '[]'` so the sweep doesn't retry it forever (it regains
 /// citations naturally at its next growth re-distill).
+/// Token estimate for budgeting an annotate request: one token per three
+/// UTF-8 bytes, the same rule page refresh uses. It over-counts English and
+/// Chinese text for the Qwen and Gemma tokenizers, so a request it accepts
+/// fits.
+fn estimate_annotate_tokens(text: &str) -> usize {
+    text.len().div_ceil(3)
+}
+
+/// Bytes each numbered source adds besides its text (`[n] ` and the blank
+/// line between sources).
+const ANNOTATE_SOURCE_OVERHEAD_BYTES: usize = 8;
+
+/// The token budget of one annotate request, or `None` when the page cannot
+/// be annotated by this model at all.
+///
+/// The answer is the whole page again with `[n]` markers added, so the reply
+/// needs about as many tokens as the page plus room for the markers. On a
+/// local model the instructions, the page, the sources and that reply share
+/// one fixed context window. Before this check, a page with hundreds of
+/// sources sent a 37k-token prompt into a 6k window: the engine dropped the
+/// middle and the model returned nothing (16 empty replies in one heat test,
+/// 2026-11-04), each one spending a full model turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AnnotateBudget {
+    /// Output tokens to ask for.
+    max_output_tokens: u32,
+    /// Bytes of numbered-source block that still fit.
+    source_bytes: usize,
+}
+
+fn annotate_budget(
+    llm: &dyn LlmProvider,
+    system_prompt: &str,
+    body: &str,
+) -> Option<AnnotateBudget> {
+    let body_tokens = estimate_annotate_tokens(body);
+    let output_tokens = body_tokens + body_tokens / 4 + 128;
+    let fixed_input = estimate_annotate_tokens(system_prompt) + body_tokens + 64;
+    let source_tokens = if llm.backend() == crate::llm_provider::LlmBackend::OnDevice {
+        let window = llm.context_size() as usize;
+        window
+            .checked_sub(output_tokens)?
+            .min(llm.synthesis_token_limit())
+            .checked_sub(fixed_input)?
+    } else {
+        if output_tokens > llm.recommended_max_output() as usize {
+            return None;
+        }
+        llm.synthesis_token_limit().checked_sub(fixed_input)?
+    };
+    Some(AnnotateBudget {
+        max_output_tokens: u32::try_from(output_tokens).ok()?,
+        source_bytes: source_tokens.saturating_mul(3),
+    })
+}
+
+/// Choose the sources that fit `byte_budget`: those sharing the most words
+/// with the page (Chinese, Japanese and Korean compared by character pairs),
+/// kept in their original order and numbered from 1. Empty when not even
+/// one fits.
+fn pick_annotate_sources(
+    numbered: Vec<NumberedSource>,
+    body: &str,
+    byte_budget: usize,
+) -> Vec<NumberedSource> {
+    let cost = |s: &NumberedSource| s.text.len() + ANNOTATE_SOURCE_OVERHEAD_BYTES;
+    if numbered.iter().map(cost).sum::<usize>() <= byte_budget {
+        return numbered;
+    }
+    let target = crate::post_ingest::overlap_terms(body);
+    let mut ranked: Vec<(usize, f64)> = numbered
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let terms = crate::post_ingest::overlap_terms(&s.text);
+            let shared = terms.intersection(&target).count() as f64;
+            let norm = ((terms.len().max(1) * target.len().max(1)) as f64).sqrt();
+            (i, shared / norm)
+        })
+        .collect();
+    // Higher score first; among equals the newer (later linked) source wins.
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.0.cmp(&a.0)));
+    let mut budget = byte_budget;
+    let mut keep = vec![false; numbered.len()];
+    for (i, _) in ranked {
+        let need = cost(&numbered[i]);
+        if need <= budget {
+            budget -= need;
+            keep[i] = true;
+        }
+    }
+    numbered
+        .into_iter()
+        .zip(keep)
+        .filter(|(_, kept)| *kept)
+        .enumerate()
+        .map(|(i, (mut source, _))| {
+            source.index = (i + 1) as u32;
+            source
+        })
+        .collect()
+}
+
 pub async fn run_citation_backfill_tick(
     db: &MemoryDB,
     llm: &Arc<dyn LlmProvider>,
     prompts: &PromptRegistry,
 ) -> Result<(), WenlanError> {
-    run_citation_backfill_with_page_limit(db, llm, prompts, BACKFILL_BATCH_SIZE)
+    run_citation_backfill_with_page_limit(db, llm, prompts, BACKFILL_BATCH_SIZE, None)
         .await
         .map(|_| ())
 }
@@ -663,7 +810,21 @@ pub async fn run_citation_backfill_slice(
     llm: &Arc<dyn LlmProvider>,
     prompts: &PromptRegistry,
 ) -> Result<usize, WenlanError> {
-    run_citation_backfill_with_page_limit(db, llm, prompts, 1).await
+    run_citation_backfill_with_page_limit(db, llm, prompts, 1, None).await
+}
+
+/// [`run_citation_backfill_slice`], also writing an annotated page's file in
+/// `knowledge_path`. The daemon passes its pages folder: without it the
+/// database moves a version ahead of the file, and the page then refuses
+/// renames and later edits as holding unsynced changes until a restart's
+/// reconcile catches the file up.
+pub async fn run_citation_backfill_slice_projected(
+    db: &MemoryDB,
+    llm: &Arc<dyn LlmProvider>,
+    prompts: &PromptRegistry,
+    knowledge_path: Option<&std::path::Path>,
+) -> Result<usize, WenlanError> {
+    run_citation_backfill_with_page_limit(db, llm, prompts, 1, knowledge_path).await
 }
 
 async fn run_citation_backfill_with_page_limit(
@@ -671,7 +832,15 @@ async fn run_citation_backfill_with_page_limit(
     llm: &Arc<dyn LlmProvider>,
     prompts: &PromptRegistry,
     page_limit: usize,
+    knowledge_path: Option<&std::path::Path>,
 ) -> Result<usize, WenlanError> {
+    match db.rearm_citation_timeouts_once().await {
+        Ok(0) => {}
+        Ok(rearmed) => log::info!(
+            "[citation_backfill] re-armed {rearmed} page(s) that gave up on model timeouts"
+        ),
+        Err(e) => log::warn!("[citation_backfill] timeout re-arm skipped: {e}"),
+    }
     let page_ids = db.get_pages_missing_citations(page_limit).await?;
     let selected = page_ids.len();
     for page_id in page_ids {
@@ -830,6 +999,51 @@ async fn run_citation_backfill_with_page_limit(
             continue;
         }
 
+        let budget = annotate_budget(llm.as_ref(), &prompts.annotate_citations, &page.content);
+        let numbered = match budget {
+            Some(budget) => pick_annotate_sources(numbered, &page.content, budget.source_bytes),
+            None => Vec::new(),
+        };
+        let Some(budget) = budget.filter(|_| !numbered.is_empty()) else {
+            // The page is too long for this model to write back with
+            // markers, or not one source fits beside it. Asking anyway only
+            // spends a model turn on a cut prompt or a cut answer, so give
+            // up like the other no-model-call give-ups above, without an
+            // attempt. Any page edit or source change re-arms it.
+            log::info!(
+                "[citation_backfill] page {page_id} ({} bytes) does not fit {}'s window \
+                 with a source; giving up without a model call",
+                page.content.len(),
+                llm.name()
+            );
+            let changelog = build_backfill_changelog(
+                db,
+                &page_id,
+                page.version,
+                "citation backfill gave up: page too long for the model",
+            )
+            .await;
+            let landed = db
+                .set_page_citations_with_changelog_at_version(
+                    &page_id,
+                    Some("[]"),
+                    &changelog,
+                    page.version,
+                    source_revision,
+                    &fence.incarnation,
+                )
+                .await?;
+            if landed {
+                let _ = db
+                    .delete_app_metadata_if_value_starts_with(
+                        &attempt_key(&page_id),
+                        &attempt_generation(&fence.incarnation, page.version, source_revision),
+                    )
+                    .await;
+            }
+            continue;
+        };
+
         let user_prompt = format!(
             "## Page Body\n{}\n\n## Numbered Sources\n{}",
             page.content,
@@ -839,10 +1053,10 @@ async fn run_citation_backfill_with_page_limit(
             .generate(LlmRequest {
                 system_prompt: Some(prompts.annotate_citations.clone()),
                 user_prompt,
-                max_tokens: llm.recommended_max_output(),
+                max_tokens: budget.max_output_tokens,
                 temperature: 0.0,
                 label: Some("citation_annotate".to_string()),
-                timeout_secs: None,
+                timeout_secs: Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS),
             })
             .await
         {
@@ -870,7 +1084,16 @@ async fn run_citation_backfill_with_page_limit(
         // by this sweep.
         let same =
             normalize_ws(&strip_markers(&out)) == normalize_ws(&strip_markers(&page.content));
-        if same {
+        // The guard compares text with whitespace collapsed, so the model's
+        // copy may have lost line and paragraph breaks ("signal.\n\nDefault"
+        // came back as "signal. [6] Default"). Keep the page's own text and
+        // carry only the markers over.
+        let out = if same {
+            transplant_markers(&page.content, &out)
+        } else {
+            None
+        };
+        if let Some(out) = out {
             let (body, cites, stats) = process_citation_output(&out, &numbered);
             if cites.is_empty() {
                 // Zero markers is a failed attempt per spec §6 ("guard
@@ -915,6 +1138,9 @@ async fn run_citation_backfill_with_page_limit(
                     )
                     .await?;
                 if committed {
+                    if let Some(path) = knowledge_path {
+                        project_annotated_page(db, path, &page_id).await;
+                    }
                     // Terminal write (citations now populated): delete
                     // rather than reset the counter so app_metadata doesn't
                     // keep a dead row per generation forever. Only because
@@ -941,6 +1167,27 @@ async fn run_citation_backfill_with_page_limit(
         }
     }
     Ok(selected)
+}
+
+/// Write the page's file after an annotate commit, the way page growth does.
+/// A refused or failed write is logged; the next restart's reconcile repairs
+/// a file left behind.
+async fn project_annotated_page(db: &MemoryDB, knowledge_path: &std::path::Path, page_id: &str) {
+    let page = match db.get_page(page_id).await {
+        Ok(Some(page)) => page,
+        Ok(None) => return,
+        Err(error) => {
+            log::warn!("[citation_backfill] page {page_id} re-read for its file failed: {error}");
+            return;
+        }
+    };
+    let projection =
+        crate::export::knowledge::KnowledgeProjectionWrite::new(knowledge_path.to_path_buf(), db);
+    match projection.write_page_gated(db, &page).await {
+        Ok(Some(path)) => log::info!("[citation_backfill] wrote page to {path}"),
+        Ok(None) => log::debug!("[citation_backfill] not projecting page {page_id}"),
+        Err(error) => log::warn!("[citation_backfill] page {page_id} file write failed: {error}"),
+    }
 }
 
 /// What the daemon made of the `[n]` markers in a page an AI tool wrote.
@@ -1457,6 +1704,345 @@ mod tests {
                 .contains(&"p_happy".to_string()),
             "page should no longer be citations-missing"
         );
+    }
+
+    /// An annotated page's file follows the database, so the page is not
+    /// left a version behind its file (it would then refuse a rename as
+    /// holding unsynced edits).
+    #[tokio::test]
+    async fn backfill_writes_the_annotated_page_file() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let knowledge = tempfile::TempDir::new().unwrap();
+        seed_backfill_page(&db, "p_file", true).await;
+        let projection = crate::export::knowledge::KnowledgeProjectionWrite::new(
+            knowledge.path().to_path_buf(),
+            &db,
+        );
+        let before = db.get_page("p_file").await.unwrap().unwrap();
+        let filename = projection
+            .write_page_gated(&db, &before)
+            .await
+            .unwrap()
+            .expect("a fresh page is projected");
+        drop(projection);
+
+        let annotated = format!("{BACKFILL_BODY}[1]");
+        let llm: Arc<dyn LlmProvider> = Arc::new(MockProvider::new(&annotated));
+        run_citation_backfill_slice_projected(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            Some(knowledge.path()),
+        )
+        .await
+        .unwrap();
+
+        let after = db.get_page("p_file").await.unwrap().unwrap();
+        assert_eq!(after.version, before.version + 1);
+        let file = std::fs::read_to_string(knowledge.path().join(&filename)).unwrap();
+        assert_eq!(
+            file,
+            crate::export::knowledge::render_markdown_for(&after),
+            "the file must hold the annotated version"
+        );
+    }
+
+    struct TimeoutCapturingProvider {
+        response: String,
+        timeouts: std::sync::Mutex<Vec<Option<u64>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for TimeoutCapturingProvider {
+        async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+            self.timeouts.lock().unwrap().push(request.timeout_secs);
+            Ok(self.response.clone())
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn name(&self) -> &str {
+            "timeout-capturing"
+        }
+
+        fn backend(&self) -> LlmBackend {
+            LlmBackend::OnDevice
+        }
+
+        fn kind(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    /// The annotate answer is the whole page, which a 9B model cannot write
+    /// within the runtime's 30 s default, so the request carries its own
+    /// budget.
+    #[tokio::test]
+    async fn backfill_annotate_carries_the_page_output_timeout() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        seed_backfill_page(&db, "p_timeout", true).await;
+        let provider = Arc::new(TimeoutCapturingProvider {
+            response: format!("{BACKFILL_BODY}[1]"),
+            timeouts: std::sync::Mutex::new(Vec::new()),
+        });
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        run_citation_backfill_tick(&db, &llm, &PromptRegistry::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            *provider.timeouts.lock().unwrap(),
+            vec![Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS)]
+        );
+    }
+
+    /// Pages that gave up only on model timeouts get one more round, once;
+    /// a give-up for another reason, or one a later write superseded, stays.
+    #[tokio::test]
+    async fn timeout_give_ups_are_re_armed_once() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        seed_backfill_page(&db, "p_timeout", true).await;
+        for id in ["p_zero_markers", "p_timeout_then_edited"] {
+            seed_backfill_page(&db, id, false).await;
+            db.link_page_evidence(id, "memory", Some("mem_a"), None, "test")
+                .await
+                .unwrap();
+        }
+        let gave_up = |reason: &str| {
+            serde_json::json!([{
+                "version": 1, "at": 1, "edited_by": "citation_backfill",
+                "citations_summary": format!("citation backfill gave up: {reason}"),
+            }])
+            .to_string()
+        };
+        let edited_after = serde_json::json!([
+            {"version": 1, "at": 1, "edited_by": "citation_backfill",
+             "citations_summary": "citation backfill gave up: provider error after 3 attempts"},
+            {"version": 2, "at": 2, "edited_by": "fs_edit"},
+        ])
+        .to_string();
+        let conn = db.test_primary_session().await;
+        for (id, changelog) in [
+            ("p_timeout", gave_up("provider error after 3 attempts")),
+            ("p_zero_markers", gave_up("zero markers after 3 attempts")),
+            ("p_timeout_then_edited", edited_after),
+        ] {
+            conn.execute(
+                "UPDATE pages SET citations = '[]', changelog = ?2 WHERE id = ?1",
+                libsql::params![id, changelog],
+            )
+            .await
+            .unwrap();
+        }
+        drop(conn);
+
+        assert_eq!(db.rearm_citation_timeouts_once().await.unwrap(), 1);
+        let missing = db.get_pages_missing_citations(10).await.unwrap();
+        assert!(missing.contains(&"p_timeout".to_string()));
+        assert!(!missing.contains(&"p_zero_markers".to_string()));
+        assert!(!missing.contains(&"p_timeout_then_edited".to_string()));
+
+        let conn = db.test_primary_session().await;
+        conn.execute(
+            "UPDATE pages SET citations = '[]' WHERE id = 'p_timeout'",
+            (),
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        assert_eq!(
+            db.rearm_citation_timeouts_once().await.unwrap(),
+            0,
+            "the re-arm runs once per database"
+        );
+    }
+
+    struct RequestCapturingProvider {
+        requests: std::sync::Mutex<Vec<LlmRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for RequestCapturingProvider {
+        async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+            self.requests.lock().unwrap().push(request);
+            Ok(String::new())
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn name(&self) -> &str {
+            "request-capturing"
+        }
+
+        fn backend(&self) -> LlmBackend {
+            LlmBackend::OnDevice
+        }
+
+        fn kind(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    fn capturing() -> Arc<RequestCapturingProvider> {
+        Arc::new(RequestCapturingProvider {
+            requests: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    /// A page with far more sources than fit beside it gets the sources
+    /// closest to its text, within the model's window, instead of a prompt
+    /// the engine has to cut (heat test 2026-11-04: 37k tokens into 6k).
+    #[tokio::test]
+    async fn backfill_sends_only_the_sources_that_fit_the_window() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page("p_many", "T", None, BACKFILL_BODY, None, None, &[], &now)
+            .await
+            .unwrap();
+        let filler = "Gardening notes about tomatoes and watering schedules. ".repeat(14);
+        for i in 0..40 {
+            let id = format!("mem_filler_{i:02}");
+            insert_test_memory(&db, &id, &filler).await;
+            db.link_page_evidence("p_many", "memory", Some(&id), None, "test")
+                .await
+                .unwrap();
+        }
+        insert_test_memory(&db, "mem_port", BACKFILL_MEM_CONTENT).await;
+        db.link_page_evidence("p_many", "memory", Some("mem_port"), None, "test")
+            .await
+            .unwrap();
+
+        let provider = capturing();
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let prompts = PromptRegistry::default();
+        run_citation_backfill_tick(&db, &llm, &prompts)
+            .await
+            .unwrap();
+
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        let prompt_tokens = estimate_annotate_tokens(&prompts.annotate_citations)
+            + estimate_annotate_tokens(&request.user_prompt);
+        assert!(
+            prompt_tokens + request.max_tokens as usize <= llm.context_size() as usize,
+            "prompt {prompt_tokens} + output {} must fit the window",
+            request.max_tokens
+        );
+        assert!(
+            request.user_prompt.contains(BACKFILL_MEM_CONTENT),
+            "the source that matches the page is kept"
+        );
+        let sent = request.user_prompt.matches("] Gardening notes").count();
+        assert!(sent > 0 && sent < 40, "{sent} filler sources sent");
+    }
+
+    /// A page the model cannot write back inside its window is given up
+    /// without spending a model turn or an attempt.
+    #[tokio::test]
+    async fn backfill_gives_up_on_a_page_too_long_for_the_model_without_a_call() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        let body = "The daemon binds to port 7878 by default. ".repeat(800);
+        db.insert_page("p_long", "T", None, &body, None, None, &[], &now)
+            .await
+            .unwrap();
+        insert_test_memory(&db, "mem_a", BACKFILL_MEM_CONTENT).await;
+        db.link_page_evidence("p_long", "memory", Some("mem_a"), None, "test")
+            .await
+            .unwrap();
+
+        let provider = capturing();
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        run_citation_backfill_tick(&db, &llm, &PromptRegistry::default())
+            .await
+            .unwrap();
+
+        assert!(provider.requests.lock().unwrap().is_empty());
+        let page = db.get_page("p_long").await.unwrap().unwrap();
+        assert_eq!(page.content, body, "body untouched");
+        assert!(page.citations.is_empty());
+        assert!(!db
+            .get_pages_missing_citations(10)
+            .await
+            .unwrap()
+            .contains(&"p_long".to_string()));
+        assert_eq!(count_attempt_rows(&db, "p_long").await, 0);
+    }
+
+    #[test]
+    fn transplanted_markers_keep_the_page_line_and_paragraph_breaks() {
+        let original = "First claim signal.\n\nDefault is off.\n- item one\n- item two";
+        let annotated = "First claim signal. [6] Default is off.[2] - item one - item two [1]";
+        assert_eq!(
+            transplant_markers(original, annotated).unwrap(),
+            "First claim signal. [6]\n\nDefault is off.[2]\n- item one\n- item two [1]"
+        );
+        // Chinese text without spaces, and a marker the model spaced out.
+        assert_eq!(
+            transplant_markers("第一句。\n\n第二句。", "第一句。[ 1 ]第二句。[2]").unwrap(),
+            "第一句。[1]\n\n第二句。[2]"
+        );
+        // Old markers in the page are replaced, not doubled.
+        assert_eq!(
+            transplant_markers("Claim one.[3]\nClaim two.", "Claim one.[1] Claim two.[2]").unwrap(),
+            "Claim one.[1]\nClaim two.[2]"
+        );
+        // A changed word is refused.
+        assert!(transplant_markers("Default is off.", "Default is on.[1]").is_none());
+        assert!(transplant_markers("Default is off.", "Default is[1]").is_none());
+    }
+
+    /// Cleanup thread 2026-11-05: annotating "Threads Idea Scoring Rubric"
+    /// merged two paragraphs because the model's copy, not the page, was
+    /// saved.
+    #[tokio::test]
+    async fn backfill_keeps_paragraph_breaks_the_model_dropped() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        let body = format!("{BACKFILL_BODY}\n\nIt stays local.");
+        db.insert_page("p_paragraphs", "T", None, &body, None, None, &[], &now)
+            .await
+            .unwrap();
+        insert_test_memory(&db, "mem_a", BACKFILL_MEM_CONTENT).await;
+        db.link_page_evidence("p_paragraphs", "memory", Some("mem_a"), None, "test")
+            .await
+            .unwrap();
+        let reply = format!("{BACKFILL_BODY} [1] It stays local.");
+        let llm: Arc<dyn LlmProvider> = Arc::new(MockProvider::new(&reply));
+        run_citation_backfill_tick(&db, &llm, &PromptRegistry::default())
+            .await
+            .unwrap();
+        let page = db.get_page("p_paragraphs").await.unwrap().unwrap();
+        assert_eq!(
+            page.content,
+            format!("{BACKFILL_BODY} [1]\n\nIt stays local.")
+        );
+        assert_eq!(page.citations.len(), 1);
+    }
+
+    #[test]
+    fn picked_annotate_sources_prefer_the_page_words_and_renumber() {
+        let source = |index: u32, text: &str| NumberedSource {
+            index,
+            source_kind: "memory".into(),
+            locator: format!("m{index}"),
+            text: text.into(),
+        };
+        let numbered = vec![
+            source(1, "Tomatoes need water twice a week in summer."),
+            source(2, "The daemon listens on port 7878."),
+            source(3, "Basil grows well next to tomatoes."),
+        ];
+        let picked = pick_annotate_sources(numbered.clone(), "Daemon port 7878 settings.", 45);
+        assert_eq!(picked.len(), 1);
+        assert_eq!(picked[0].locator, "m2");
+        assert_eq!(picked[0].index, 1);
+        let all = pick_annotate_sources(numbered, "anything", 10_000);
+        assert_eq!(all.len(), 3);
     }
 
     /// PR A: inserting `[N]` markers rewrites the body bytes, so a
@@ -2679,8 +3265,14 @@ mod tests {
             let db = db.clone();
             let llm = llm.clone();
             tokio::spawn(async move {
-                run_citation_backfill_with_page_limit(&db, &llm, &PromptRegistry::default(), 2)
-                    .await
+                run_citation_backfill_with_page_limit(
+                    &db,
+                    &llm,
+                    &PromptRegistry::default(),
+                    2,
+                    None,
+                )
+                .await
             })
         };
 

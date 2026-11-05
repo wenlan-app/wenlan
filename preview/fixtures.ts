@@ -21,6 +21,8 @@ import type {
   RegisteredSource,
   SessionDetail,
   PageSessionEntry,
+  KnowledgeGraph,
+  ThingNightPoints,
 } from "../src/lib/tauri";
 
 const cite = (
@@ -1446,5 +1448,89 @@ export const SOURCE_LIBRARY_FILES = [
     url: null,
     chunk_count: 4,
     last_modified: 1_783_500_000,
+  },
+];
+
+// ── The big map with things being worked on (UX-CHAT-5) ────────────────────
+// `/preview/?mode=atlas&things=1`: a small fixed map of twenty topics and
+// three pages, and three things whose nights wrote points onto it. Two of
+// "Big map growth loop"'s points and one of "Release notes"' link to topics,
+// so those frames sit beside what they are about; "Reading list" links to
+// nothing and sits beside the map. Fictional throughout.
+const THING_MAP_AT = 1_783_700_000;
+const THING_MAP_TOPICS = ["Wenlan", "SQLite", "Tauri", "React", "Rust", "Sigma", "Graph", "Search", "Embeddings", "Daemon", "MCP", "CLI", "Pages", "Spaces", "Brief", "Atlas", "Release", "Vite", "Playwright", "Docs"];
+export const THING_MAP_GRAPH: KnowledgeGraph = {
+  entities: THING_MAP_TOPICS.map((name, i) => ({
+    id: `tm-e${i}`,
+    name,
+    entity_type: ["project", "technology", "concept", "organization"][i % 4]!,
+    domain: null,
+    space: "wenlan",
+    source_agent: null,
+    confidence: null,
+    confirmed: true,
+    created_at: THING_MAP_AT,
+    updated_at: THING_MAP_AT,
+    memory_count: 0,
+    status: "detected",
+    established_by: null,
+  })) as unknown as KnowledgeGraph["entities"],
+  relations: [
+    ...THING_MAP_TOPICS.slice(1).map((_, k) => {
+      const i = k + 1;
+      return { id: `tm-r${i}`, from_entity: `tm-e${i % 5 === 0 ? 0 : i - 1}`, to_entity: `tm-e${i}`, relation_type: "uses", source_agent: null, created_at: THING_MAP_AT };
+    }),
+    { id: "tm-rx1", from_entity: "tm-e0", to_entity: "tm-e7", relation_type: "uses", source_agent: null, created_at: THING_MAP_AT },
+    { id: "tm-rx2", from_entity: "tm-e3", to_entity: "tm-e12", relation_type: "uses", source_agent: null, created_at: THING_MAP_AT },
+  ] as unknown as KnowledgeGraph["relations"],
+  memories: [],
+  memory_links: [
+    { memory_id: "tm-n-site-2", entity_id: "tm-e15" },
+    { memory_id: "tm-n-site-4", entity_id: "tm-e15" },
+    { memory_id: "tm-n-rel-2", entity_id: "tm-e16" },
+  ],
+  pages: ["Release checklist", "Map design", "Search tuning"].map((title, i) => ({
+    id: `tm-p${i}`, title, space: "wenlan", creation_kind: "distilled", entity_id: null, last_modified: "2026-07-01T12:00:00Z",
+  })) as unknown as KnowledgeGraph["pages"],
+  page_links: [
+    { from: { kind: "page", id: "tm-p0" }, to: { kind: "entity", id: "tm-e16" }, link_type: "about" },
+    { from: { kind: "page", id: "tm-p1" }, to: { kind: "entity", id: "tm-e15" }, link_type: "about" },
+    { from: { kind: "page", id: "tm-p2" }, to: { kind: "entity", id: "tm-e7" }, link_type: "about" },
+  ] as unknown as KnowledgeGraph["page_links"],
+};
+const nightPoint = (memory_id: string, title: string, hoursAgo: number, decided = true) => ({
+  memory_id, title, decided, created_at: THING_MAP_AT - hoursAgo * 3600,
+});
+export const THING_MAP_POINTS: ThingNightPoints[] = [
+  {
+    thing_id: "tm-site",
+    title: "Big map growth loop",
+    spaces: ["wenlan"],
+    points: [
+      nightPoint("tm-n-site-1", "Things are drawn as dashed frames round their points, never as one more node competing with the entities", 48),
+      nightPoint("tm-n-site-2", "夜裡寫下的點按 id 雜湊排在事情的中心附近，所以每次打開地圖位置都一樣，不會跳動；拖動過的點記在本機，下次打開還在同一個地方", 48, false),
+      nightPoint("tm-n-site-3", "A small moon marks each point a night wrote, so the owner can tell it from what they saved themselves", 24),
+      nightPoint("tm-n-site-4", "Positions are kept per space and per viewer; a point dragged once stays where it was put across restarts", 24),
+      nightPoint("tm-n-site-5", "新的一晚加了點，框只會往外長一點，原本的點不會移動，標題也留在原來的位置", 1, false),
+    ],
+  },
+  {
+    thing_id: "tm-rel",
+    title: "Release notes for 0.21",
+    spaces: ["wenlan"],
+    points: [
+      nightPoint("tm-n-rel-1", "The changelog groups entries by feature rather than by pull request, so the release reads like a story", 2),
+      nightPoint("tm-n-rel-2", "Ship only after the merge queue has drained and the release PR is the last thing queued, alone", 1, false),
+      nightPoint("tm-n-rel-3", "發布說明要附上新地圖的截圖，淺色和深色各一張，寬度 1280，放在每一段功能說明的下面，並且在說明裡寫清楚這張圖是在哪個縮放層級拍的", 0.2),
+    ],
+  },
+  {
+    thing_id: "tm-read",
+    title: "Reading list",
+    spaces: ["wenlan"],
+    points: [
+      nightPoint("tm-n-read-1", "Read one book a month, and write a short note on each chapter the same evening while it is still fresh", 2),
+      nightPoint("tm-n-read-2", "先讀哪一層書架還沒決定：工作相關的放前面，還是先把去年買了沒讀的那幾本讀完", 1, false),
+    ],
   },
 ];

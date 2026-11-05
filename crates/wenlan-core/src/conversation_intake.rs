@@ -656,7 +656,9 @@ pub fn label_prompt(conv: &FoundConversation, spaces: &[String], language: &str)
 Latest message: {latest}\nAssistant's last reply (end): {reply}\n\n\
 Spaces the person uses: {spaces}\n\n\
 Is this part of a piece of work the person would want to see later? Say false for a quick \
-question, a greeting, a test of the tool, a one-off lookup, or a one-off setup or cleanup.\n\
+question, a greeting, a test of the tool, a one-off lookup, or a one-off setup or cleanup. A \
+discussion, plan or decision about one of the person's projects is work, even when nothing was \
+built in it.\n\
 Give, in {language}: \"title\" (at most 12 words or 12 Chinese characters; name the larger goal \
 this serves, not this step), \"space\" (exactly one of the spaces above, or \"\" if none fits), \
 \"about\" (one sentence), \"status\" (one short sentence: where it stands now). {KEEP_NAMES}\n\
@@ -989,8 +991,10 @@ pub const MAX_DREAM_POINTS: usize = 8;
 pub const MAX_POINT_CHARS: usize = 200;
 /// Most conversations of one thing read in one night, newest first.
 pub const MAX_DREAM_CONVERSATIONS: usize = 6;
-/// Characters of each thing the person typed that the model reads.
-const DREAM_SAID_CHARS: usize = 400;
+/// Characters of each thing the person typed that the model reads. Work
+/// handed to an assistant comes as long instructions, so this is more than
+/// a label reads.
+const DREAM_SAID_CHARS: usize = 600;
 /// Most of the person's messages read from one conversation, newest kept.
 const DREAM_SAID: usize = 20;
 
@@ -1013,6 +1017,18 @@ pub struct DreamPoint {
     pub from: usize,
     /// Index of the earlier point it replaces, when that one no longer holds.
     pub replaces: Option<usize>,
+    /// Index of the point on the thing's map it is, when it is one that was
+    /// not kept yet.
+    pub map: Option<usize>,
+}
+
+/// A point on a thing's map that no night kept yet: the model can say a point
+/// it writes is this one, so the map and long-term memory stay one point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapPoint {
+    pub text: String,
+    /// Settled, open, or neither (a topic, a reason).
+    pub decided: Option<bool>,
 }
 
 /// The prompt that reads a thing's conversations for what they settled.
@@ -1020,6 +1036,7 @@ pub fn dream_prompt(
     title: &str,
     conversations: &[FoundConversation],
     prior: &[PriorPoint],
+    map: &[MapPoint],
     language: &str,
 ) -> String {
     let mut chats = String::new();
@@ -1033,7 +1050,7 @@ pub fn dream_prompt(
         let reply = if conv.last_reply.is_empty() {
             "(none)".to_string()
         } else {
-            cut_end(&conv.last_reply, REPLY_CHARS)
+            cut_end(&conv.last_reply, MAX_REPLY_CHARS)
         };
         chats.push_str(&format!(
             "C{i}: what the person typed, oldest first:\n{said}\nAssistant's last reply (end): {reply}\n\n"
@@ -1052,26 +1069,56 @@ pub fn dream_prompt(
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let map_text = if map.is_empty() {
+        "(none)".to_string()
+    } else {
+        map.iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let state = match p.decided {
+                    Some(true) => " (settled)",
+                    Some(false) => " (open)",
+                    None => "",
+                };
+                format!("N{i}{state}: {}", p.text)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     format!(
         "A piece of work the person is doing with AI tools: \"{title}\".\n\n\
 Its conversations since the last time they were read:\n{chats}\
 Points already kept from it:\n{prior_text}\n\n\
-Write down what these conversations settled and what the person left open, so they can be \
-remembered after the work goes quiet. Only things the person decided, chose or asked to keep \
-open; not steps the assistant took, not chores, not greetings. One sentence each, standing on \
-its own (name what it is about), in {language}. {KEEP_NAMES} Leave out anything already kept \
-above. When a kept point no longer holds (it was decided differently, or what was open is now \
-settled), give the new point and name the old one in \"replaces\". At most {MAX_DREAM_POINTS} \
-points; none is a fine answer.\n\
+Points on its map, not kept yet:\n{map_text}\n\n\
+Write down what these conversations settled and what the person left open about the work \
+itself, so they can be remembered after it goes quiet. Only what the person themself decided \
+or chose about the work (settled), and questions about the work they left unanswered (open). \
+What was built, what a review found and where a pull request stands are not decisions. Leave \
+out: steps the assistant took, chores, greetings; approving a merge, a review, a handoff or a run; \
+how the person wants the assistant to work; where files are or problems with tools; and \
+details nobody could follow without the conversation. Agreeing to go on is not an open \
+question. A question answered or done later in the same conversations is settled, not open. \
+One short sentence each, at most 15 words, that someone who did not read the conversation \
+understands (name what it is about), in {language}. {KEEP_NAMES} Leave out anything already \
+kept above. When a kept point no longer holds (it was decided differently, or what was open is now \
+settled), give the new point and name the old one in \"replaces\". When a point you write is \
+one of the map points above (the same point, perhaps now settled), name it in \"map\". At most \
+{MAX_DREAM_POINTS} points; none is a fine answer.\n\
 Answer with JSON only: {{\"points\": [{{\"text\": string, \"settled\": true|false, \
-\"from\": \"C0\", \"replaces\": \"P0\" or null}}]}}"
+\"from\": \"C0\", \"replaces\": \"P0\" or null, \"map\": \"N0\" or null}}]}}"
     )
 }
 
 /// The points in a model's answer. A point without text, or from a
 /// conversation that does not exist, is dropped; a `replaces` that names no
-/// kept point, or one already replaced, is ignored.
-pub fn parse_dream(text: &str, conversations: usize, prior: usize) -> Option<Vec<DreamPoint>> {
+/// kept point, or one already replaced, is ignored, and so is a `map` that
+/// names no map point or one another point already is.
+pub fn parse_dream(
+    text: &str,
+    conversations: usize,
+    prior: usize,
+    map: usize,
+) -> Option<Vec<DreamPoint>> {
     #[derive(Deserialize)]
     struct Point {
         #[serde(default)]
@@ -1082,6 +1129,8 @@ pub fn parse_dream(text: &str, conversations: usize, prior: usize) -> Option<Vec
         from: String,
         #[serde(default)]
         replaces: Option<String>,
+        #[serde(default)]
+        map: Option<String>,
     }
     #[derive(Deserialize)]
     struct Answer {
@@ -1096,6 +1145,7 @@ pub fn parse_dream(text: &str, conversations: usize, prior: usize) -> Option<Vec
             .filter(|n| *n < len)
     };
     let mut replaced = HashSet::new();
+    let mut mapped = HashSet::new();
     let mut seen = HashSet::new();
     let mut points = Vec::new();
     for point in answer.points {
@@ -1111,11 +1161,17 @@ pub fn parse_dream(text: &str, conversations: usize, prior: usize) -> Option<Vec
             .as_deref()
             .and_then(|id| index(id, 'P', prior))
             .filter(|p| replaced.insert(*p));
+        let on_map = point
+            .map
+            .as_deref()
+            .and_then(|id| index(id, 'N', map))
+            .filter(|n| mapped.insert(*n));
         points.push(DreamPoint {
             text,
             decided: point.settled,
             from,
             replaces,
+            map: on_map,
         });
         if points.len() == MAX_DREAM_POINTS {
             break;

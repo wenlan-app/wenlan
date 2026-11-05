@@ -705,6 +705,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/sessions/{id}/things/move` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/sessions/{id}/saved-in` | main | no | not_applicable | `none` | — | SavedInResponse: thing id, thing title and an app link, no page prose |
 | `GET` | `/api/things` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `GET` | `/api/things/points` | main | no | not_applicable | `none` | — | ThingNightPointsResponse: thing titles and Space names, memory ids and titles, no page prose |
 | `GET` | `/api/things/{id}` | main | yes | automatic | `none` | `handle_get_thing` | ThingPageEntry.title |
 | `GET` | `/api/things/{id}/map` | main | no | not_applicable | `none` | — | ThingMapResponse: point labels written for the map and conversation ids, no page prose |
 | `GET` | `/api/conversations/search` | main | no | not_applicable | `none` | — | ConversationSearchResponse: sentences from AI tool transcripts with conversation and thing titles, no page prose |
@@ -1176,6 +1177,7 @@ carrying the authority of agreement.
 | `core/db.rs::find_distillation_clusters_scoped` | `pub` | no | no | — | `core/db.rs::query_distillation_staging_pool` |
 | `core/db.rs::find_growable_page_scoped` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::find_matching_page_scoped` | `pub` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
+| `core/db.rs::find_page_to_grow_scoped` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::folded_title_owners_by_scope` | `pub(crate)` | no | no | — | `core/db.rs::folded_title_owners_by_scope_on_conn` |
 | `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/steep_new_routes.rs::handle_steep_new_commit`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
 | `core/db.rs::get_page_browse` | `pub` | no | no | — | `core/db.rs::get_page_inner` |
@@ -1296,6 +1298,7 @@ carrying the authority of agreement.
 | `core/chat_check.rs::check_against_decisions` | `pub` | no | **yes** | `server/check_routes.rs::handle_check` | `core/chat_check.rs::decision_source` |
 | `core/chat_check.rs::decision_context` | `pub` | no | **yes** | `server/check_routes.rs::handle_check_context` | `core/chat_check.rs::decision_source` |
 | `core/chat_import/originals.rs::unused_title` | `private` | no | no | — | `core/page_titles.rs::strict_same_title_note` |
+| `core/citations.rs::project_annotated_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/citations.rs::run_citation_backfill_with_page_limit` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/code_basis_recheck.rs::note_unchanged` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/code_basis_recheck.rs::prepare_recheck_input` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1413,7 +1416,7 @@ carrying the authority of agreement.
 | `core/page_map_improve.rs::improve_page_map` | `pub` | no | **yes** | `server/page_map_routes.rs::handle_improve_page_map` | `core/db.rs::get_page`, `core/page_map_improve.rs::source_suggestions` |
 | `core/page_map_improve.rs::run_proactive_page_maps` | `pub` | no | no | — | `core/db.rs::list_pages` |
 | `core/post_ingest.rs::auto_link_entity` | `pub(crate)` | no | no | — | `core/db.rs::search_entities_by_vector` |
-| `core/post_ingest.rs::grow_page` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::get_page` |
+| `core/post_ingest.rs::grow_page` | `pub(crate)` | no | no | — | `core/db.rs::find_page_to_grow_scoped`, `core/db.rs::get_page` |
 | `core/post_ingest.rs::run_page_growth_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/db.rs::find_growable_page_scoped`, `core/db.rs::get_page` |
 | `core/post_write.rs::restore_page` | `pub` | yes | no | — | `core/db/page_restore.rs::commit_page_restore` |
 | `core/post_write/entity_graph.rs::create_entity` | `pub` | yes | no | — | `core/db.rs::resolve_or_create_entity` |
@@ -1504,7 +1507,8 @@ carrying the authority of agreement.
 |---|---|---|---|---|---|
 | `core/chat_import/originals.rs::keep_conversation_originals` | `pub` | no | no | — | `core/chat_import/originals.rs::unused_title` |
 | `core/citations.rs::record_annotate_failure` | `private` | no | no | — | `core/db.rs::set_page_citations_with_changelog_at_version` |
-| `core/citations.rs::run_citation_backfill_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/citations.rs::run_citation_backfill_with_page_limit` |
+| `core/citations.rs::run_citation_backfill_slice` | `pub` | no | no | — | `core/citations.rs::run_citation_backfill_with_page_limit` |
+| `core/citations.rs::run_citation_backfill_slice_projected` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/citations.rs::run_citation_backfill_with_page_limit` |
 | `core/citations.rs::run_citation_backfill_tick` | `pub` | no | no | — | `core/citations.rs::run_citation_backfill_with_page_limit` |
 | `core/code_basis_recheck.rs::apply` | `private` | yes | no | — | `core/code_basis_recheck.rs::note_unchanged` |
 | `core/code_basis_recheck.rs::prepare_code_basis_ask` | `pub` | no | no | — | `core/code_basis_recheck.rs::prepare_recheck_input` |

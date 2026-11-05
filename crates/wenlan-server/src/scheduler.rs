@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 
-use crate::host_activity::{sample_host_activity, HostActivitySnapshot};
+use crate::host_activity::{sample_host_activity, sample_low_battery, HostActivitySnapshot};
 use crate::state::SharedState;
 
 mod ambient;
@@ -39,9 +39,12 @@ const BACKSTOP_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const DAILY_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Poll interval — how often the scheduler checks trigger conditions.
 const POLL_INTERVAL: Duration = Duration::from_secs(30);
-/// A full two-sample scheduler window without keyboard, mouse, or tablet input.
-/// Unlike Wenlan write recency, this is a real OS foreground-activity signal.
-const FOREGROUND_INPUT_IDLE_THRESHOLD: Duration = Duration::from_secs(60);
+/// Time without keyboard, mouse, or tablet input before heavy background work
+/// may start (UX-QUIET-1). Unlike Wenlan write recency, this is a real OS
+/// foreground-activity signal. Three minutes is BOINC's default
+/// (`idle_time_to_run = 3` in lib/prefs.cpp), whose GPU work, like a local
+/// model here, waits while the computer is in use.
+const FOREGROUND_INPUT_IDLE_THRESHOLD: Duration = Duration::from_secs(180);
 /// Initial delay — lets on-device model warm up before first backstop.
 const INITIAL_DELAY: Duration = Duration::from_secs(60);
 const DERIVED_RECEIPT_SWEEP_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -59,9 +62,6 @@ const CODE_BASIS_RECHECK_ROWS_PER_SLICE: usize = 3;
 const ENTITY_IDLE_ARCHIVE_SWEEP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Rows one idle-archive sweep may archive before yielding the turn.
 const ENTITY_IDLE_ARCHIVE_SWEEP_LIMIT: usize = 500;
-/// Rest floor after any background lap. Automatic recap batching still uses
-/// its separate ten-minute window.
-const AMBIENT_MIN_RECOVERY: Duration = Duration::from_secs(120);
 const GIB: u64 = 1024 * 1024 * 1024;
 /// Target-Mac calibration observed up to 1.59 GiB of additional process RSS
 /// during one on-device ambient inference. Round up so background work never
@@ -86,6 +86,9 @@ enum ResourceBlockReason {
     ForegroundActive,
     HostActivityUnavailable,
     ThermalPressure,
+    /// A laptop on battery below `LOW_BATTERY_PERCENT`, with a route that
+    /// runs its model on this computer (UX-QUIET-1).
+    LowBattery,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -233,6 +236,7 @@ impl Rb01ProfileAdmission {
                     Rb01ProfileBlockReason::ThermalUnavailable
                 }
                 ResourceBlockReason::ThermalPressure => Rb01ProfileBlockReason::ThermalPressure,
+                ResourceBlockReason::LowBattery => Rb01ProfileBlockReason::ResourceUnavailable,
             });
         }
 
@@ -276,38 +280,19 @@ struct ThermalPolicy {
 }
 
 impl ThermalPolicy {
-    /// Work on this Mac: rest four times as long as the lap ran, so work /
-    /// (work + recovery) <= 20% once the multiplier dominates the floor.
+    /// No rest between background laps (UX-QUIET-1, 2026-11-04).
     ///
-    /// The earlier 5% budget (multiplier 19) was a chosen number, not a
-    /// measured heat limit: its July calibration assumed single-job turns of
-    /// at most 5.5 s, where the 120 s floor dominates. Multi-job laps on a 9B
-    /// model run 40-90 s, and ×19 turned them into 13-28 minute rests, so an
-    /// entity backlog of ~1300 items would take weeks of idle time. The
-    /// thermal-state, input-idle, CPU and memory gates still veto every lap.
-    const fn conservative() -> Self {
+    /// The earlier rest (19x, then 4x the lap, at least 120 s) was a chosen
+    /// budget, not a measured heat limit, and no open-source background
+    /// worker we checked (BOINC, KDE Baloo, Folding@home, GNOME localsearch)
+    /// rests after each piece of work. Work instead stops at once when the
+    /// person returns, the Mac warms, the battery runs low, or CPU/memory
+    /// get tight; every item of a lap rechecks those. The mechanism stays so
+    /// a measured heat limit can restore a rest here in one place.
+    const fn between_laps() -> Self {
         Self {
-            minimum_cooldown: AMBIENT_MIN_RECOVERY,
-            recovery_multiplier: 4,
-        }
-    }
-
-    /// A cloud model does its inference off this Mac, so waiting for the
-    /// answer is not heat to recover from: keep only the rest floor.
-    const fn remote_inference() -> Self {
-        Self {
-            minimum_cooldown: AMBIENT_MIN_RECOVERY,
+            minimum_cooldown: Duration::ZERO,
             recovery_multiplier: 0,
-        }
-    }
-
-    /// The policy for an ambient lap on this inference route. Only the
-    /// Anthropic route is known to run off this Mac; an External endpoint
-    /// (LM Studio, Ollama) is usually local, so it keeps the local policy.
-    fn for_ambient_route(everyday_pin: Option<wenlan_core::refinery::EverydaySource>) -> Self {
-        match everyday_pin {
-            Some(wenlan_core::refinery::EverydaySource::Anthropic) => Self::remote_inference(),
-            _ => Self::conservative(),
         }
     }
 
@@ -336,6 +321,113 @@ fn apply_host_activity(
         block_reason: Some(block_reason),
         ..status
     }
+}
+
+/// Whether background work on this route runs its model on this computer.
+/// Only the Anthropic route is known to infer elsewhere; an External endpoint
+/// (LM Studio, Ollama) is usually local, and with no model at all the
+/// remaining background work (document preparation) is local CPU work.
+fn background_route_runs_here(everyday_pin: Option<wenlan_core::refinery::EverydaySource>) -> bool {
+    !matches!(
+        everyday_pin,
+        Some(wenlan_core::refinery::EverydaySource::Anthropic)
+    )
+}
+
+/// UX-QUIET-1: background work that runs on this computer waits while a
+/// laptop's battery is low. Work the person asked for (the import lane)
+/// reads its own admission and is not held back here.
+fn apply_power_source(
+    status: ResourceStatus,
+    low_battery: bool,
+    route_runs_here: bool,
+) -> ResourceStatus {
+    if !(low_battery && route_runs_here && status.admitted) {
+        return status;
+    }
+    ResourceStatus {
+        admitted: false,
+        block_reason: Some(ResourceBlockReason::LowBattery),
+        ..status
+    }
+}
+
+/// UX-QUIET-1: re-checked before every item of an ambient lap, so a person
+/// who comes back mid-lap, a computer that warms up, or a battery that runs
+/// low mid-lap stops the next item instead of waiting for the lap to end. The
+/// rest window is deliberately not re-checked: the lap's own cooldown is
+/// charged after the lap.
+fn ambient_item_may_start(
+    host_activity: HostActivitySnapshot,
+    low_battery: bool,
+    route_runs_here: bool,
+) -> bool {
+    host_activity_block_reason(host_activity).is_none() && !(low_battery && route_runs_here)
+}
+
+/// UX-QUIET-1, light work: reading conversations keeps "Working on" current
+/// while the person works, so it does not wait for input idle or a quiet
+/// CPU, and charges no rest. It still stops when the computer is warm,
+/// short of memory, or low on battery with a model on this computer.
+fn light_background_block_reason(
+    host_activity: HostActivitySnapshot,
+    low_battery: bool,
+    everyday_pin: Option<wenlan_core::refinery::EverydaySource>,
+    memory: Option<ResourceSnapshot>,
+) -> Option<ResourceBlockReason> {
+    match host_activity {
+        HostActivitySnapshot::Unavailable => {
+            return Some(ResourceBlockReason::HostActivityUnavailable)
+        }
+        HostActivitySnapshot::Observed { thermal_state, .. } if thermal_state != 0 => {
+            return Some(ResourceBlockReason::ThermalPressure)
+        }
+        _ => {}
+    }
+    let runs_here = background_route_runs_here(everyday_pin);
+    if low_battery && runs_here {
+        return Some(ResourceBlockReason::LowBattery);
+    }
+    let Some(memory) = memory else {
+        return Some(ResourceBlockReason::Unavailable);
+    };
+    let on_device = matches!(
+        everyday_pin,
+        Some(wenlan_core::refinery::EverydaySource::OnDevice)
+    );
+    let policy = ResourcePolicy::conservative().with_additional_memory_headroom(if on_device {
+        ON_DEVICE_INFERENCE_HEADROOM_BYTES
+    } else {
+        0
+    });
+    // The CPU limit is for heavy work; light work only needs the memory.
+    policy.block_reason(ResourceSnapshot {
+        cpu_usage_percent: 0.0,
+        ..memory
+    })
+}
+
+/// [`light_background_block_reason`] read now, for conversation intake. The
+/// route comes from the saved everyday-model setting.
+pub(crate) fn light_background_may_run_now() -> bool {
+    let config = wenlan_core::config::load_config();
+    let mut system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing()
+            .with_memory(sysinfo::MemoryRefreshKind::nothing().with_ram()),
+    );
+    system.refresh_memory();
+    let memory = ResourceSnapshot {
+        cpu_usage_percent: 0.0,
+        available_memory_bytes: system.available_memory(),
+        total_memory_bytes: system.total_memory(),
+    };
+    light_background_block_reason(
+        sample_host_activity(),
+        sample_low_battery(),
+        wenlan_core::refinery::EverydaySource::parse(config.everyday_source.as_deref()),
+        Some(memory),
+    )
+    .is_none()
 }
 
 struct SystemResourceProbe {
@@ -1266,7 +1358,7 @@ pub fn spawn_scheduler(
     tokio::spawn(async move {
         let import_wake = write_signal.import_wake();
         let resource_policy = ResourcePolicy::conservative();
-        let thermal_policy = ThermalPolicy::conservative();
+        let thermal_policy = ThermalPolicy::between_laps();
         // Initialize before the built-in startup delay so the first explicit
         // CPU refresh has a valid comparison window without sleeping inside a
         // scheduler poll.
@@ -1294,6 +1386,9 @@ pub fn spawn_scheduler(
         let mut steep_batch: Option<AutomaticSteepBatch> = None;
         let mut maintenance_round: Option<AutomaticMaintenanceRound> = None;
         let mut on_demand_maintenance_round: Option<AutomaticMaintenanceRound> = None;
+        // One-time cleanups of data written under older rules; a failed pass
+        // is retried on the next polls, at most three times per daemon run.
+        let mut one_time_cleanup_tries_left = 3u8;
         let mut ambient_turn_owed = false;
         let mut last_deferred_resource_reason = None;
         let mut document_prep_claim_log = DocumentPrepClaimLog::default();
@@ -1508,8 +1603,11 @@ pub fn spawn_scheduler(
             // all time comparisons below must use a post-sync clock sample.
             let now = Instant::now();
             let host_activity = sample_host_activity();
-            let resource_status =
-                apply_host_activity(resource_probe.sample(now, resource_policy), host_activity);
+            let resource_status = apply_power_source(
+                apply_host_activity(resource_probe.sample(now, resource_policy), host_activity),
+                sample_low_battery(),
+                background_route_runs_here(everyday_pin),
+            );
             let import_route_uses_on_device = matches!(
                 everyday_pin,
                 Some(wenlan_core::refinery::EverydaySource::OnDevice)
@@ -2106,6 +2204,22 @@ pub fn spawn_scheduler(
             // review cards and orphan labels still appear for the user's AI
             // to act on. Import priority defers both.
             if !import_work_ran && !write_signal.import_priority_active() {
+                if one_time_cleanup_tries_left > 0 {
+                    one_time_cleanup_tries_left -= 1;
+                    let report = wenlan_core::housekeeping::run_one_time_cleanups(&db).await;
+                    if report.hub_links_removed > 0 || report.duplicate_recaps_removed > 0 {
+                        tracing::info!(
+                            "[scheduler] one-time cleanup: hub_links_removed={} duplicate_recaps_removed={}",
+                            report.hub_links_removed,
+                            report.duplicate_recaps_removed,
+                        );
+                    }
+                    if report.errors.is_empty() {
+                        one_time_cleanup_tries_left = 0;
+                    } else {
+                        tracing::warn!("[scheduler] one-time cleanup: errors={:?}", report.errors);
+                    }
+                }
                 let now_epoch = chrono::Utc::now().timestamp();
                 if wenlan_core::housekeeping::housekeeping_due(
                     wenlan_core::housekeeping::last_housekeeping_run(&db).await,
@@ -2113,11 +2227,12 @@ pub fn spawn_scheduler(
                 ) {
                     let report = wenlan_core::housekeeping::run_housekeeping(&db, now_epoch).await;
                     tracing::info!(
-                        "[scheduler] housekeeping: decayed={} promoted={} rejections_pruned={} orphaned_page_sources={} evicted={} errors={:?}",
+                        "[scheduler] housekeeping: decayed={} promoted={} rejections_pruned={} orphaned_page_sources={} hub_links_removed={} evicted={} errors={:?}",
                         report.memories_decayed,
                         report.memories_promoted,
                         report.rejections_pruned,
                         report.orphaned_page_sources,
+                        report.hub_links_removed,
                         report.memories_evicted,
                         report.errors,
                     );
@@ -2232,7 +2347,22 @@ pub fn spawn_scheduler(
                         // the cooldown once after the loop, against the
                         // whole lap's elapsed time.
                         let mut lap_consumed_thermal_turn = false;
+                        let mut first_item = true;
                         for job in ambient_schedule.drain_due(ambient_now, availability) {
+                            // The gate was read on entry; read it again before
+                            // every later item (UX-QUIET-1).
+                            if !std::mem::take(&mut first_item)
+                                && !ambient_item_may_start(
+                                    sample_host_activity(),
+                                    sample_low_battery(),
+                                    background_route_runs_here(everyday_pin),
+                                )
+                            {
+                                tracing::info!(
+                                    "[scheduler] ambient lap stopped before job={job:?}: the computer is in use, warm, or low on battery"
+                                );
+                                break;
+                            }
                             // A toggle can land during this lap. Do not start
                             // another inference job after an explicit Off.
                             if !matches!(job, AmbientJob::Document | AmbientJob::EntityIdleArchive)
@@ -2309,7 +2439,7 @@ pub fn spawn_scheduler(
                             ambient_now,
                             lap_completed,
                             lap_consumed_thermal_turn,
-                            ThermalPolicy::for_ambient_route(everyday_pin),
+                            ThermalPolicy::between_laps(),
                         );
                         tracing::info!(
                             "[scheduler] ambient lap complete next_eligible_ms={}",

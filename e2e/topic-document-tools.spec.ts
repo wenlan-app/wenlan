@@ -90,7 +90,7 @@ for (const copy of copies) for (const width of [1280, 375]) {
   });
 }
 
-for (const width of [1280, 375]) test(`nested Atlas filters remain visible and keep keyboard ownership at ${width}`, async ({ page }) => {
+for (const width of [1280, 375]) test(`Atlas Display menu stays visible and Escape closes the full-screen graph at ${width}`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   const errors = collectBrowserErrors(page);
   await installTauriMock(page, { fixture: createSpacesNavigationFixture(), locale: "en", rawActions: [] });
@@ -104,30 +104,12 @@ for (const width of [1280, 375]) test(`nested Atlas filters remain visible and k
   const displayTrigger = graph.getByRole("button", { name: "Display", exact: true });
   await displayTrigger.click();
   const display = graph.getByRole("group", { name: "Show in graph", exact: true });
-  const filter = display.getByRole("button", { name: "Filter topic types", exact: true });
-  await filter.click();
-  const types = graph.getByRole("dialog", { name: "Topic types", exact: true });
-  await expect(types).toBeVisible();
-  await expect(types).toBeFocused();
-  const person = types.getByRole("button", { name: "Person", exact: true });
-  // Real hit testing verifies the portal is on top, not merely in the DOM.
-  expect(await person.evaluate((node) => {
-    const box = node.getBoundingClientRect();
-    return node.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
-  })).toBe(true);
-  await page.keyboard.press("Tab");
-  await expect(types.getByRole("button", { name: "Close type filters", exact: true })).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(person).toBeFocused();
-  await page.keyboard.press("Space");
-  await expect(person).toHaveAttribute("aria-pressed", "false");
-  await page.keyboard.press("Escape");
-  await expect(types).toHaveCount(0);
-  await expect(filter).toBeFocused();
   await expect(display).toBeVisible();
+  // The topic-type filter is no longer offered in Display.
+  await expect(display.getByRole("button", { name: "Filter topic types", exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
-  // The enclosing full-screen dialog owns Escape once the nested filter has
-  // closed, even while Display is still expanded.
+  // The enclosing full-screen dialog owns Escape, even while Display is
+  // still expanded.
   await expect(graph).toHaveCount(0);
   await expect(context.getByRole("button", { name: "Full screen", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");

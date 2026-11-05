@@ -86,6 +86,11 @@ jobs:
       # Linux runs from one compile-once archive below. This dynamic matrix is
       # only for platform-owned macOS and Windows behavior.
       test-matrix: ${{ steps.matrix.outputs.json }}
+      # Hosted macOS runs at most five jobs at once. Ordinary PR pushes skip
+      # macOS work; the merge queue runs it in full on the commit main will
+      # become, and `conclusion` there still requires it before anything lands.
+      # Release-please and manual runs keep macOS on the PR.
+      macos-allowed: ${{ steps.macos-lane.outputs.allowed }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       # This is a semantic proof, not a branch-name shortcut. The shared
@@ -312,7 +317,6 @@ jobs:
               - 'Cargo.lock'
               - 'crates/wenlan-types/**'
             rust:
-              - 'vendor/libsql/**'
               # Positive-only globs. With dorny/paths-filter's default
               # `some` quantifier, a negative glob like `!crates/*/npm/**`
               # makes README-only PRs match this filter.
@@ -573,7 +577,6 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
             windows:
-              - 'vendor/libsql/**'
               # Windows owns cfg-bearing CLI/server paths, native ORT/Vulkan,
               # and packaging. Shared Rust stays on Ubuntu; MCP's Unix/non-Unix
               # branches compile in the focused mcp-platform job.
@@ -712,7 +715,6 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
             windows-lint:
-              - 'vendor/libsql/**'
               # The Windows functional lint-scale proof is useful only when
               # its implementation, database dependency, or harness changes.
               - 'crates/wenlan-core/src/lint/**'
@@ -835,7 +837,8 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
             workspace-platform:
-              - 'vendor/libsql/**'
+              # The lifecycle regression includes a macOS-only Guard Malloc child.
+              - 'crates/wenlan-core/src/lint/snapshot_tests.rs'
               # Dependency graph inputs can introduce target-specific compile
               # failures without requiring four release-profile builds.
               - 'Cargo.toml'
@@ -901,6 +904,16 @@ jobs:
           retention-days: 30
           if-no-files-found: error
           overwrite: false
+      - id: macos-lane
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ] && [[ "$HEAD_REF" != release-please--branches--* ]]; then
+            echo "allowed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "allowed=true" >> "$GITHUB_OUTPUT"
+          fi
       - id: matrix
         run: |
           macos='{"os":"macos-15","label":"macos-15"}'
@@ -933,6 +946,11 @@ jobs:
             include="$windows"
           else
             include=""
+          fi
+          if [ "${{ steps.macos-lane.outputs.allowed }}" != "true" ]; then
+            # Ordinary PRs: the merge queue owns macOS (see macos-allowed).
+            include="${include//${macos},/}"
+            include="${include//${macos}/}"
           fi
           echo "json={\"include\":[${include}]}" >> "$GITHUB_OUTPUT"
       - name: Verify CI observer and ORT contracts
@@ -1270,7 +1288,7 @@ jobs:
   macos-nextest-build:
     name: macos-nextest archive
     needs: [detect-changes]
-    if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--'))"
+    if: "needs.detect-changes.outputs.macos-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--'))"
     runs-on: macos-15
     timeout-minutes: ${{ github.event_name == 'pull_request' && 25 || 60 }}
     env:
@@ -1326,7 +1344,7 @@ jobs:
   macos-nextest:
     name: macos-nextest (${{ matrix.partition }})
     needs: [detect-changes, macos-nextest-build]
-    if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--'))"
+    if: "needs.detect-changes.outputs.macos-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--'))"
     runs-on: macos-15
     # A slice that draws the slow server and legacy-copy tests runs about 21
     # minutes of tests after a download that can take 4; 25 cut it off with
@@ -1381,7 +1399,7 @@ jobs:
   test:
     name: test (${{ matrix.label }})
     needs: [detect-changes]
-    if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch')"
+    if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && (needs.detect-changes.outputs.macos-allowed == 'true' || needs.detect-changes.outputs.windows == 'true') && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch')"
     runs-on: ${{ matrix.os }}
     # Pull requests keep a hard wall-clock budget. Windows needs the full
     # backstop because its Vulkan/native bootstrap plus integration suite can
@@ -1744,7 +1762,8 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [macos-15, windows-2022]
+        # Ordinary PRs leave macOS to the merge queue (see macos-allowed).
+        os: ${{ fromJSON(needs.detect-changes.outputs.macos-allowed == 'true' && '["macos-15","windows-2022"]' || '["windows-2022"]') }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
@@ -2705,7 +2724,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2022]
+        # Ordinary PRs leave macOS to the merge queue (see macos-allowed).
+        os: ${{ fromJSON(needs.detect-changes.outputs.macos-allowed == 'true' && '["ubuntu-24.04","macos-15","windows-2022"]' || '["ubuntu-24.04","windows-2022"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -2759,8 +2779,8 @@ jobs:
 
           run_fmt='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.fmt-required == 'true' }}'
           run_clippy='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.clippy-required == 'true' }}'
-          run_macos_archive='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--')) }}'
-          run_platform='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch') }}'
+          run_macos_archive='${{ needs.detect-changes.outputs.macos-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--')) }}'
+          run_platform='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.rust-ci-required == 'true' && (needs.detect-changes.outputs.macos-allowed == 'true' || needs.detect-changes.outputs.windows == 'true') && (needs.detect-changes.outputs.windows == 'true' || (github.event_name != 'pull_request' && needs.detect-changes.outputs.macos == 'true') || needs.detect-changes.outputs.m5-platform == 'true' || needs.detect-changes.outputs.nextest-config == 'true' || startsWith(github.head_ref, 'release-please--branches--') || github.event_name == 'workflow_dispatch') }}'
           run_workspace_lib='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.workspace-lib-required == 'true' }}'
           run_canonical='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.canonical-acceptance-required == 'true' }}'
           run_contract='${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.contract-integration-required == 'true' }}'
@@ -2783,7 +2803,7 @@ jobs:
           expect_job npm '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.npm == 'true' }}' '${{ needs.npm.result }}'
           expect_job relay-check '${{ needs.detect-changes.outputs.relay == 'true' || github.event_name == 'workflow_dispatch' }}' '${{ needs.relay-check.result }}'
           expect_job runtime-image '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.runtime-image == 'true' }}' '${{ needs.runtime-image.result }}'
-          expect_job app-check '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true' }}' '${{ needs.app-check.result }}'
+          expect_job app-check '${{ needs.detect-changes.outputs.macos-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true' }}' '${{ needs.app-check.result }}'
           expect_job app-frontend '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true' }}' '${{ needs.app-frontend.result }}'
           expect_job app-e2e '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true' }}' '${{ needs.app-e2e.result }}'
           expect_job native-platform-contracts '${{ needs.detect-changes.outputs.native-contracts == 'true' || github.event_name == 'workflow_dispatch' }}' '${{ needs.native-platform-contracts.result }}'
@@ -2896,7 +2916,7 @@ jobs:
   app-check:
     name: app-check
     needs: detect-changes
-    if: needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true'
+    if: needs.detect-changes.outputs.macos-allowed == 'true' && needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

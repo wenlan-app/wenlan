@@ -21,6 +21,8 @@ interface ThingDetailProps {
   readonly onBack: () => void;
   readonly onOpenPage: (pageId: string) => void;
   readonly onOpenThing: (thingId: string) => void;
+  /** Open the big map at this thing (UX-CHAT-5 「在大图上看」). */
+  readonly onOpenGraph?: (thingId: string) => void;
 }
 
 /**
@@ -29,7 +31,7 @@ interface ThingDetailProps {
  * each conversation's thing change in one step; nothing here asks the person
  * to wrap it up or mark it done.
  */
-export function ThingDetail({ thingId, onBack, onOpenPage, onOpenThing }: ThingDetailProps) {
+export function ThingDetail({ thingId, onBack, onOpenPage, onOpenThing, onOpenGraph }: ThingDetailProps) {
   const { t, i18n } = useTranslation();
   const [moved, setMoved] = useState<ThingSummary | null>(null);
   const { data: thing, isError, refetch } = useQuery({
@@ -74,7 +76,7 @@ export function ThingDetail({ thingId, onBack, onOpenPage, onOpenThing }: ThingD
           meta={[...thing.spaces, when].join(" · ")}
           notice={
             <>
-              <ThingSteeped thing={thing} queryKey={thingQueryKey(thing.id)} />
+              <ThingSteeped thing={thing} queryKey={thingQueryKey(thing.id)} onOpenGraph={onOpenGraph ? () => onOpenGraph(thing.id) : undefined} />
               <ThingMergeProposal thing={thing} queryKey={thingQueryKey(thing.id)} />
             </>
           }

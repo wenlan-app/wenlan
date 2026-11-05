@@ -26,6 +26,72 @@ pub(crate) fn classify_recaps(generated: usize) -> (Nudge, Option<String>) {
     }
 }
 
+/// The id of the recap (or decision log, by `kind`) for one burst. It is
+/// derived from the burst's memories, not drawn at random, so two passes that
+/// both find the burst uncovered -- the coverage check, the model call and the
+/// write are not one transaction -- write the same row instead of two.
+pub(crate) fn burst_recap_id<'a>(
+    kind: &str,
+    source_ids: impl IntoIterator<Item = &'a str>,
+) -> String {
+    use sha2::Digest as _;
+    let mut ids: Vec<&str> = source_ids.into_iter().collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(kind.as_bytes());
+    for id in ids {
+        hasher.update([0u8]);
+        hasher.update(id.as_bytes());
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    format!("recap_{}", &digest[..32])
+}
+
+/// One-time cleanup of duplicate recaps written before recap ids were
+/// derived from their burst: recaps that list exactly the same source
+/// memories are one recap, so only the oldest is kept. Recaps are derived
+/// text and can be regenerated; the removed ids are recorded under an
+/// `app_metadata` marker, which also keeps this from running twice. Returns
+/// how many duplicates were removed.
+pub(crate) async fn dedupe_old_recaps_once(db: &MemoryDB) -> Result<usize, WenlanError> {
+    const MARKER: &str = "recap_dedupe_by_sources_v1";
+    if db.get_app_metadata(MARKER).await?.is_some() {
+        return Ok(0);
+    }
+    let recaps = db.list_recap_sources().await?;
+    let mut seen = std::collections::HashSet::new();
+    let mut removed = Vec::new();
+    for (source_id, memory_type, structured) in recaps {
+        let Some(mut ids) = structured
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+            .and_then(|value| {
+                value["source_ids"].as_array().map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| id.as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .filter(|ids| !ids.is_empty())
+        else {
+            continue;
+        };
+        ids.sort_unstable();
+        ids.dedup();
+        if !seen.insert((memory_type, ids)) {
+            db.delete_by_source_id("memory", &source_id).await?;
+            removed.push(source_id);
+        }
+    }
+    db.set_app_metadata(
+        MARKER,
+        &serde_json::json!({ "removed": removed }).to_string(),
+    )
+    .await?;
+    Ok(removed.len())
+}
+
 /// Public wrapper for generate_recaps, callable from post_ingest module.
 pub async fn generate_recaps_public(
     db: &MemoryDB,
@@ -45,6 +111,11 @@ pub(crate) async fn generate_recaps(
     prompts: &PromptRegistry,
     tuning: &crate::tuning::RefineryConfig,
 ) -> Result<u32, WenlanError> {
+    match dedupe_old_recaps_once(db).await {
+        Ok(0) => {}
+        Ok(removed) => log::info!("[refinery] removed {removed} duplicate recap(s)"),
+        Err(e) => log::warn!("[refinery] duplicate recap cleanup skipped: {e}"),
+    }
     let now = chrono::Utc::now().timestamp();
     let lookback_start = now - tuning.recap_lookback_secs;
 
@@ -139,9 +210,9 @@ pub(crate) async fn generate_recaps(
         };
 
         // Store the recap — set last_modified = burst_end so it sorts next to its source memories
-        let recap_id = format!("recap_{}", uuid::Uuid::new_v4());
         // Track source memory IDs so the detail view can show exact sources
         let source_ids: Vec<&str> = burst.iter().map(|(id, _, _, _)| id.as_str()).collect();
+        let recap_id = burst_recap_id("recap", source_ids.iter().copied());
         let structured = serde_json::json!({ "source_ids": source_ids }).to_string();
         // Generate a short topic title via LLM; fall back to burst header
         let burst_header: String = recap_content
@@ -294,6 +365,115 @@ mod tests {
             .await
             .unwrap();
         assert!(!results.is_empty(), "recap should be searchable as fact");
+    }
+
+    /// A burst from earlier in the day gets one recap, however many times the
+    /// recap pass runs over it. The recap is stamped at the burst's end, not at
+    /// the time it was written, so the coverage check must look there.
+    #[tokio::test]
+    async fn an_earlier_burst_is_recapped_once() {
+        let (db, _dir) = test_db().await;
+        let burst_end = chrono::Utc::now().timestamp() - 3 * 3600;
+        for i in 0..5 {
+            let mut doc = make_memory(
+                &format!("earlier_{i}"),
+                &format!("Earlier work on feature {i} for the Wenlan project"),
+                "fact",
+                "engineering",
+            );
+            doc.last_modified = burst_end - 60 * i64::from(i);
+            db.upsert_documents(vec![doc]).await.unwrap();
+        }
+        let tuning = crate::tuning::RefineryConfig::default();
+        let prompts = PromptRegistry::default();
+
+        assert_eq!(
+            generate_recaps(&db, None, &prompts, &tuning).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            generate_recaps(&db, None, &prompts, &tuning).await.unwrap(),
+            0,
+            "the second pass must see the first recap"
+        );
+
+        // A racing pass that missed the first recap writes the same id, so
+        // the burst still has one recap.
+        let ids: Vec<String> = (0..5).map(|i| format!("earlier_{i}")).collect();
+        let recap_id = burst_recap_id("recap", ids.iter().map(String::as_str));
+        let racing = crate::sources::RawDocument {
+            source: "memory".to_string(),
+            source_id: recap_id.clone(),
+            title: "racing recap".to_string(),
+            content: "racing recap body".to_string(),
+            last_modified: burst_end,
+            is_recap: true,
+            ..Default::default()
+        };
+        db.upsert_documents(vec![racing]).await.unwrap();
+        let conn = db.test_primary_session().await;
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(DISTINCT source_id), MAX(source_id) FROM memories WHERE is_recap = 1",
+                (),
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        assert_eq!(row.get::<i64>(0).unwrap(), 1);
+        assert_eq!(row.get::<String>(1).unwrap(), recap_id);
+    }
+
+    #[test]
+    fn a_burst_has_one_recap_id_whatever_the_order() {
+        let a = burst_recap_id("recap", ["m2", "m1", "m3"]);
+        assert_eq!(a, burst_recap_id("recap", ["m3", "m1", "m2"]));
+        assert!(a.starts_with("recap_"));
+        assert_ne!(a, burst_recap_id("recap", ["m1", "m2"]));
+        assert_ne!(a, burst_recap_id("decision", ["m1", "m2", "m3"]));
+    }
+
+    /// Old duplicates (same source memories, random ids) collapse to the
+    /// oldest, once.
+    #[tokio::test]
+    async fn old_duplicate_recaps_keep_the_oldest_once() {
+        let (db, _dir) = test_db().await;
+        let recap = |id: &str, at: i64, sources: &[&str]| crate::sources::RawDocument {
+            source: "memory".to_string(),
+            source_id: id.to_string(),
+            title: id.to_string(),
+            content: format!("recap body {id}"),
+            last_modified: at,
+            is_recap: true,
+            memory_type: Some("fact".to_string()),
+            structured_fields: Some(serde_json::json!({ "source_ids": sources }).to_string()),
+            ..Default::default()
+        };
+        db.upsert_documents(vec![
+            recap("recap_old", 100, &["a", "b"]),
+            recap("recap_dup", 200, &["b", "a"]),
+            recap("recap_other", 300, &["a", "c"]),
+        ])
+        .await
+        .unwrap();
+
+        assert_eq!(dedupe_old_recaps_once(&db).await.unwrap(), 1);
+        let left: Vec<String> = db
+            .list_recap_sources()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        assert_eq!(
+            left,
+            vec!["recap_old".to_string(), "recap_other".to_string()]
+        );
+
+        db.upsert_documents(vec![recap("recap_dup2", 400, &["a", "b"])])
+            .await
+            .unwrap();
+        assert_eq!(dedupe_old_recaps_once(&db).await.unwrap(), 0, "runs once");
     }
 
     #[tokio::test]

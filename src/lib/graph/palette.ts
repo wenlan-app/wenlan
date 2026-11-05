@@ -58,6 +58,9 @@ export interface GraphPalette {
    *  `memory`, but at full presence: pages are subjects on this map, not
    *  context. */
   page: string;
+  /** The steeped moon's ink (--mem-accent-page), the same crescent the
+   *  thing's page shows. Falls back to `bridge`. */
+  moon?: string;
 }
 
 // Read the resolved --kg-* custom properties off <html>. getComputedStyle
@@ -82,6 +85,7 @@ function readPalette(): GraphPalette {
     graticule: read("--kg-graticule"),
     memory: read("--kg-memory"),
     page: read("--kg-page"),
+    moon: read("--mem-accent-page") || undefined,
   };
 }
 

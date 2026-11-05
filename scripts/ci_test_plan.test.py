@@ -464,6 +464,11 @@ class AppFrontendJobTests(unittest.TestCase):
             "needs.detect-changes.outputs.trusted-release-candidate != 'true' && "
             "needs.detect-changes.outputs.app == 'true'"
         )
+        # Ordinary PRs leave the macOS app-check to the merge queue.
+        cls.macos_prefix = "needs.detect-changes.outputs.macos-allowed == 'true' && "
+
+    def guard(self, name):
+        return (self.macos_prefix if name == "app-check" else "") + self.predicate
 
     def job(self, name):
         match = re.search(r"(?ms)^  " + re.escape(name) + r":\n(.*?)(?=^  [a-z][\w-]*:|\Z)", self.workflow)
@@ -474,7 +479,7 @@ class AppFrontendJobTests(unittest.TestCase):
         for name in ("app-check", "app-frontend", "app-e2e"):
             body = self.job(name)
             self.assertRegex(body, r"(?m)^    needs: detect-changes$")
-            self.assertIn("    if: " + self.predicate + "\n", body)
+            self.assertIn("    if: " + self.guard(name) + "\n", body)
         self.assertIn("    runs-on: ubuntu-24.04\n", self.job("app-frontend"))
 
     def test_frontend_keeps_full_suite_dist_guard_and_linux_browser_dependencies(self):
@@ -510,7 +515,7 @@ class AppFrontendJobTests(unittest.TestCase):
         needs = {name.strip() for name in body.split("needs: [", 1)[1].split("]", 1)[0].split(",")}
         for name in ("app-check", "app-frontend", "app-e2e"):
             self.assertIn(name, needs)
-            self.assertIn("expect_job " + name + " '${{ " + self.predicate + " }}' '${{ needs." + name + ".result }}'", body)
+            self.assertIn("expect_job " + name + " '${{ " + self.guard(name) + " }}' '${{ needs." + name + ".result }}'", body)
 
 
 class PackageClosureTests(unittest.TestCase):
@@ -632,9 +637,11 @@ class PlatformPlanTests(unittest.TestCase):
             patterns,
         )
 
-    def test_libsql_backport_keeps_native_lifecycle_and_windows_scale_gates(self) -> None:
-        path = "vendor/libsql/src/local/connection.rs"
-        self.assertEqual(plan_for(path)["mode"], "full")
+    def test_lifecycle_regression_keeps_native_and_windows_scale_gates(self) -> None:
+        path = "crates/wenlan-core/src/lint/snapshot_tests.rs"
+        suite = plan_for(path)["workspace_lib"]
+        self.assertEqual(suite["mode"], "packages")
+        self.assertIn("wenlan-core", suite["packages"])
         workflow_path = Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml"
         workflow = workflow_path.read_text(encoding="utf-8")
         for name in ("rust", "windows", "windows-lint", "workspace-platform"):
@@ -646,7 +653,7 @@ class PlatformPlanTests(unittest.TestCase):
                 patterns = re.findall(r"^\s+- '([^']+)'\s*$", block, re.MULTILINE)
                 self.assertTrue(
                     any(fnmatchcase(path, pattern) for pattern in patterns),
-                    f"{name} filter does not route the libsql backport",
+                    f"{name} filter does not route the lifecycle regression",
                 )
 
     def test_app_filter_covers_every_app_only_planner_input(self) -> None:

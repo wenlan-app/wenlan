@@ -398,9 +398,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // thing's map one more. Conversation search and a conversation's
     // lines add two more. Protected relation creation adds one EntitySpace-scoped
     // route; the organization MCP integration covers its endpoint and source gates.
-    // Zotero collection discovery adds one Global reader; document metadata,
-    // PDF attachments and atomic document tagging add three MemorySpace routes.
-    assert_eq!(rows.len(), 108);
+    // Zotero discovery adds one Global reader; document metadata, PDF and
+    // atomic tagging add three MemorySpace readers. Night points adds one more.
+    assert_eq!(rows.len(), 109);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -411,7 +411,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        83
+        84
     );
     assert_eq!(
         rows.iter()

@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { answerThingMerge, getThing, undoThingDream, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
+import { answerThingMapProposal, answerThingMerge, getThing, undoThingDream, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
 import { ThingDetail } from "./ThingDetail";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
@@ -14,6 +14,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   moveSessionThing: vi.fn(),
   answerThingMerge: vi.fn(),
   undoThingDream: vi.fn(),
+  answerThingMapProposal: vi.fn(),
 }));
 
 const now = Math.floor(Date.now() / 1000);
@@ -33,11 +34,11 @@ const tagline: ThingRecord = {
   ],
 };
 
-function renderThing(onOpenPage = vi.fn(), onOpenThing = vi.fn()) {
+function renderThing(onOpenPage = vi.fn(), onOpenThing = vi.fn(), onOpenGraph?: (thingId: string) => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <ThingDetail thingId="thg_1" onBack={vi.fn()} onOpenPage={onOpenPage} onOpenThing={onOpenThing} />
+      <ThingDetail thingId="thg_1" onBack={vi.fn()} onOpenPage={onOpenPage} onOpenThing={onOpenThing} onOpenGraph={onOpenGraph} />
     </QueryClientProvider>,
   );
   return { onOpenPage, onOpenThing };
@@ -254,11 +255,79 @@ describe("ThingDetail", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: /overnight/ })).toBeNull());
   });
 
+  it("UX-CHAT-5: a steeped thing opens on the big map from its night's line", async () => {
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, dream: { at: now - 60, decided: 1, open: 0, fresh: ["mem_1"] } });
+    const onOpenGraph = vi.fn();
+    renderThing(vi.fn(), vi.fn(), onOpenGraph);
+    const line = await screen.findByRole("group", { name: /overnight/ });
+    fireEvent.click(within(line).getByRole("button", { name: "On the big map" }));
+    expect(onOpenGraph).toHaveBeenCalledWith("thg_1");
+  });
+
   it("UX-CHAT-5: an older night is dated, and nothing is marked new", async () => {
     const at = now - 86_400 * 3;
     vi.mocked(getThing).mockResolvedValue({ ...tagline, dream: { at, decided: 1, open: 0, fresh: ["mem_1"] } });
     renderThing();
     await screen.findByRole("group", { name: /^Steeped 1 point on / });
     expect(document.querySelector("li[data-fresh]")).toBeNull();
+  });
+
+  it("UX-CHAT-5: on a map the AI drew, the points last night steeped are marked, and the thing's other points still show", async () => {
+    const steeped: ThingRecord = {
+      ...tagline,
+      memories: [
+        ...(tagline.memories ?? []),
+        { source_id: "mem_3", title: "No pricing page for now", memory_type: "decision", created_at: now - 60 },
+      ],
+      dream: { at: now - 60, decided: 1, open: 0, fresh: ["mem_3"] },
+    };
+    vi.mocked(getThing).mockResolvedValue(steeped);
+    vi.mocked(getThingMap).mockResolvedValue({
+      thing_id: "thg_1",
+      revision: 3,
+      edges: [],
+      nodes: [
+        { id: "root", parent_id: null, rank: 0, kind: "topic", label: "New tagline", by: "ai", sources: [] },
+        {
+          id: "p1", parent_id: "root", rank: 1, kind: "question", state: "decided", label: "Pricing page?", by: "ai",
+          sources: [{ session_id: "ses_a", memory_id: "mem_3" }],
+        },
+      ],
+    });
+    renderThing();
+    const decided = await screen.findByRole("region", { name: "Decided" });
+    const point = within(decided).getByText(/Pricing page\?/).closest("li");
+    expect(point).toHaveAttribute("data-fresh", "true");
+    // One moon per thing, on the line above; none on each point.
+    expect(within(point as HTMLElement).queryByRole("img", { name: "Steeped overnight" })).toBeNull();
+    // The memory the map holds shows once, as the map's point.
+    expect(screen.getByTestId("thing-short")).not.toHaveTextContent("No pricing page for now");
+    // Points of the thing that no map point holds join their group.
+    expect(decided).toHaveTextContent("Lead with the X wording.");
+    expect(screen.getByRole("region", { name: "Background" })).toHaveTextContent("The hero line stays under eight words.");
+    fireEvent.click(screen.getByRole("button", { name: "Mind map" }));
+    expect(screen.getByTestId("thing-map").querySelector('[data-fresh="true"]')).toHaveTextContent("Pricing page?");
+  });
+
+  it("UX-WHO-2: what a night read on a point you wrote waits under it, and you answer it there", async () => {
+    vi.mocked(getThingMap).mockResolvedValue({
+      thing_id: "thg_1",
+      revision: 5,
+      edges: [],
+      nodes: [
+        { id: "root", parent_id: null, rank: 0, kind: "topic", label: "New tagline", by: "ai", sources: [] },
+        { id: "p1", parent_id: "root", rank: 1, kind: "point", state: "open", label: "Pricing page?", by: "you", sources: [] },
+      ],
+      proposals: [
+        { id: "tmp_1", by: "local", change: { op: "edit", id: "p1", label: "No pricing page for now.", state: "decided" }, created_at: now - 60 },
+      ],
+    });
+    vi.mocked(answerThingMapProposal).mockResolvedValue({ thing_id: "thg_1", revision: 6, nodes: [], edges: [] });
+    renderThing();
+    const row = await screen.findByTestId("thing-recap-proposal");
+    expect(row).toHaveTextContent("Read overnight: No pricing page for now.");
+    expect(row.closest("li")).toHaveTextContent("Pricing page?");
+    fireEvent.click(within(row).getByRole("button", { name: "Use this" }));
+    await waitFor(() => expect(answerThingMapProposal).toHaveBeenCalledWith("thg_1", 5, "tmp_1", true));
   });
 });

@@ -5490,6 +5490,16 @@ pub async fn list_things(
     Ok(client.list_things().await?.things)
 }
 
+/// Each thing with the points its nights wrote that still stand, so the big
+/// map draws them around the thing (UX-CHAT-5).
+#[tauri::command]
+pub async fn list_thing_night_points(
+    state: tauri::State<'_, State>,
+) -> Result<Vec<wenlan_types::ThingNightPoints>, String> {
+    let client = { state.read().await.client.clone() };
+    Ok(client.list_thing_night_points().await?.things)
+}
+
 #[tauri::command]
 pub async fn get_thing(
     state: tauri::State<'_, State>,
@@ -5564,6 +5574,33 @@ pub async fn answer_thing_merge(
 ) -> Result<wenlan_types::ThingSummary, String> {
     let client = { state.read().await.client.clone() };
     client.answer_thing_merge(&id, &other_id, merge).await
+}
+
+/// The person answers a proposal on a thing's map (UX-WHO-2): `accept`
+/// lands the change, otherwise it is dropped.
+#[tauri::command]
+pub async fn answer_thing_map_proposal(
+    state: tauri::State<'_, State>,
+    id: String,
+    revision: i64,
+    proposal_id: String,
+    accept: bool,
+) -> Result<wenlan_types::ThingMapOpsResponse, String> {
+    let client = { state.read().await.client.clone() };
+    let op = if accept {
+        wenlan_types::ThingMapOp::Accept { proposal_id }
+    } else {
+        wenlan_types::ThingMapOp::Reject { proposal_id }
+    };
+    client
+        .answer_thing_map_proposal(
+            &id,
+            wenlan_types::ThingMapOpsRequest {
+                expected_revision: revision,
+                ops: vec![op],
+            },
+        )
+        .await
 }
 
 /// Take back the newest night that steeped a thing's points into long-term

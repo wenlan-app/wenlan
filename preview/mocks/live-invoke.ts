@@ -1155,6 +1155,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // Things (一件事). An older daemon without the route has none yet, so home
   // falls back to Brief items.
   list_things: () => get("/api/things").then((r) => r?.things ?? []).catch(() => []),
+  list_thing_night_points: () => get("/api/things/points").then((r) => r?.things ?? []).catch(() => []),
   get_thing: (a) => get(`/api/things/${enc(String(a?.id ?? ""))}`),
   get_thing_map: (a) => get(`/api/things/${enc(String(a?.id ?? ""))}/map`),
   // Conversation words (UX-FIND-1/2). An older daemon has no route: no hits.
@@ -1169,6 +1170,10 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       other_thing_id: a?.otherId,
     }),
   undo_thing_dream: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/dream/undo`, {}),
+  answer_thing_map_proposal: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/map/ops`, {
+    expected_revision: Number(a?.revision ?? 0),
+    ops: [{ op: a?.accept ? "accept" : "reject", proposal_id: String(a?.proposalId ?? "") }],
+  }),
   move_session_thing: (a) => post(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/things/move`, {
     from_thing_id: a?.fromThingId,
     ...(a?.toThingId == null ? {} : { to_thing_id: a.toThingId }),

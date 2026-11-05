@@ -437,7 +437,7 @@ function pointBounds(points: Point[]): { minX: number; maxX: number; minY: numbe
 
 /** Andrew's monotone chain, kept local to the area underlay so the scene's
  * membership and label geometry remain untouched. */
-function convexHull(points: Point[]): Point[] {
+export function convexHull(points: Point[]): Point[] {
   const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
   if (sorted.length <= 2) return sorted;
   const cross = (o: Point, a: Point, b: Point) =>
@@ -513,7 +513,7 @@ function moveToward(from: Point, to: Point, amount: number): Point {
 
 /** Draw a rounded contour around a compact hull. The quadratic corners keep
  * the underlay organic without introducing a second layout or physics pass. */
-function traceRoundedArea(ctx: CanvasRenderingContext2D, hull: Point[], pad: number): void {
+export function traceRoundedArea(ctx: CanvasRenderingContext2D, hull: Point[], pad: number): void {
   if (hull.length === 0) return;
   if (hull.length === 1) {
     ctx.moveTo(hull[0].x + pad, hull[0].y);

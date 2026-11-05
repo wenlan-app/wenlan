@@ -55,6 +55,15 @@ pub fn llm_provider_ready() -> bool {
     LLM_READINESS_FIRED.get().is_some()
 }
 
+/// Wall-clock budget for a request whose answer is a whole page (distill,
+/// page refresh, citation annotate). Without an explicit value the on-device
+/// runtime cuts a request at 30 seconds and drops the output; a 9B model
+/// writing out a page of a few thousand characters needs longer, so every
+/// citation annotate on the dev app failed at 30.0 s ("inference returned
+/// no output", 2026-11-04). Matches the M5 judge budget and stays well
+/// under the 600 s job lease.
+pub const PAGE_OUTPUT_TIMEOUT_SECS: u64 = 180;
+
 /// A single inference request.
 #[derive(Debug, Clone)]
 pub struct LlmRequest {
@@ -1265,13 +1274,17 @@ impl LlmProvider for ApiProvider {
             body["system"] = serde_json::json!(sys);
         }
 
-        let resp = self
+        let mut http = self
             .client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(secs) = request.timeout_secs {
+            http = http.timeout(std::time::Duration::from_secs(secs));
+        }
+        let resp = http
             .send()
             .await
             .map_err(|e| LlmError::InferenceFailed(format!("API request failed: {}", e)))?;
@@ -1357,6 +1370,12 @@ impl LlmProvider for ApiProvider {
     fn model_id(&self) -> String {
         self.model.clone()
     }
+
+    /// The cloud API names its model; see
+    /// [`OpenAICompatibleProvider::model_version`] for why a name is enough.
+    fn model_version(&self) -> Option<String> {
+        Some(format!("anthropic:{}", self.model))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1411,11 +1430,17 @@ impl LlmProvider for OpenAICompatibleProvider {
         });
 
         let url = format!("{}/chat/completions", self.endpoint);
+        let timeout_secs = request.timeout_secs;
         let mut request = self
             .client
             .post(&url)
             .header("content-type", "application/json")
             .json(&body);
+        if let Some(secs) = timeout_secs {
+            // A caller that sets its own budget (the support-check batches
+            // allow 180 s) overrides the client's 60 s default.
+            request = request.timeout(std::time::Duration::from_secs(secs));
+        }
         if let Some(key) = self
             .api_key
             .as_deref()
@@ -1481,6 +1506,14 @@ impl LlmProvider for OpenAICompatibleProvider {
 
     fn model_id(&self) -> String {
         self.model.clone()
+    }
+
+    /// A server (LM Studio, Ollama, a cloud API) can only name the model it
+    /// serves, so the version is that name at that address. The support check
+    /// re-qualifies it in every process, which bounds how long a model swapped
+    /// under the same name goes unnoticed.
+    fn model_version(&self) -> Option<String> {
+        Some(format!("endpoint:{}#{}", self.endpoint, self.model))
     }
 }
 

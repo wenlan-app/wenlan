@@ -374,6 +374,157 @@ async fn rename_accepts_legacy_projection_state_without_content_hash() {
     assert!(state["pages"]["page-rename"]["content_sha256"].is_string());
 }
 
+/// Rewrites the file as an earlier build left it: another build in the
+/// `generated` stamp, with the state entry either recording those bytes or,
+/// from before hashes were recorded, recording none.
+fn age_projection(fixture: &Fixture, recorded: Recorded) -> String {
+    let root = fixture.page_root.path();
+    let target = root.join(projected_filename(root, "page-rename"));
+    let current = std::fs::read_to_string(&target).unwrap();
+    let older = current
+        .lines()
+        .map(|line| {
+            if line.starts_with("generated: ") {
+                "generated: {by: \"wenlan/0.18.9\", at: \"2026-01-03T00:00:00Z\"}".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    assert_ne!(older, current, "the fixture must change the build stamp");
+    std::fs::write(&target, &older).unwrap();
+    let state_path = root.join(".wenlan/state.json");
+    let mut state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+    let entry = state["pages"]["page-rename"].as_object_mut().unwrap();
+    match recorded {
+        Recorded::Hash => {
+            entry.insert(
+                "content_sha256".to_string(),
+                serde_json::json!(format!(
+                    "{:x}",
+                    <sha2::Sha256 as sha2::Digest>::digest(older.as_bytes())
+                )),
+            );
+        }
+        Recorded::NoHash => {
+            entry.remove("content_sha256");
+        }
+    }
+    std::fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    older
+}
+
+#[derive(Clone, Copy)]
+enum Recorded {
+    Hash,
+    NoHash,
+}
+
+#[tokio::test]
+async fn rename_accepts_a_file_an_earlier_build_wrote() {
+    for recorded in [Recorded::Hash, Recorded::NoHash] {
+        let fixture = fixture().await;
+        age_projection(&fixture, recorded);
+
+        rename_page(
+            &fixture.db,
+            "page-rename",
+            "Title after the upgrade",
+            7,
+            &ReadScope::Global,
+            Some(fixture.page_root.path()),
+        )
+        .await
+        .unwrap();
+
+        let page = fixture.db.get_page("page-rename").await.unwrap().unwrap();
+        assert_eq!(page.title, "Title after the upgrade");
+        let root = fixture.page_root.path();
+        let markdown =
+            std::fs::read_to_string(root.join(projected_filename(root, "page-rename"))).unwrap();
+        assert!(markdown.contains("title: \"Title after the upgrade\""));
+        assert!(!markdown.contains("wenlan/0.18.9"));
+    }
+}
+
+/// `edit` is applied to the aged file; the rename must leave it, the state and
+/// the page alone.
+async fn assert_earlier_build_edit_refused(recorded: Recorded, edit: impl Fn(&str) -> String) {
+    let fixture = fixture().await;
+    let older = age_projection(&fixture, recorded);
+    let root = fixture.page_root.path();
+    let target = root.join(projected_filename(root, "page-rename"));
+    let edited = edit(&older);
+    assert_ne!(edited, older, "the fixture must change the file");
+    std::fs::write(&target, &edited).unwrap();
+    let before_state = std::fs::read(root.join(".wenlan/state.json")).unwrap();
+
+    assert!(rename_page(
+        &fixture.db,
+        "page-rename",
+        "New title",
+        7,
+        &ReadScope::Global,
+        Some(root),
+    )
+    .await
+    .is_err());
+
+    let after = fixture.db.get_page("page-rename").await.unwrap().unwrap();
+    assert_eq!(after.title, "Old title");
+    assert_eq!(after.version, 7);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), edited);
+    assert_eq!(
+        std::fs::read(root.join(".wenlan/state.json")).unwrap(),
+        before_state
+    );
+}
+
+#[tokio::test]
+async fn rename_refuses_a_body_edit_in_a_file_an_earlier_build_wrote() {
+    for recorded in [Recorded::Hash, Recorded::NoHash] {
+        assert_earlier_build_edit_refused(recorded, |older| {
+            format!("{older}\nunsynced user edit\n")
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn rename_refuses_a_frontmatter_edit_when_the_bytes_were_recorded() {
+    assert_earlier_build_edit_refused(Recorded::Hash, |older| {
+        older.replacen("---\n", "---\nmy_own_field: keep me\n", 1)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn rename_refuses_a_field_added_to_a_file_without_a_recorded_hash() {
+    assert_earlier_build_edit_refused(Recorded::NoHash, |older| {
+        older.replacen("---\n", "---\nmy_own_field: keep me\n", 1)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn rename_refuses_changed_tags_in_a_file_without_a_recorded_hash() {
+    assert_earlier_build_edit_refused(Recorded::NoHash, |older| {
+        older.replacen("tags: [\"work\"]", "tags: [\"work\", \"mine\"]", 1)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn rename_refuses_a_retitled_file_without_a_recorded_hash() {
+    assert_earlier_build_edit_refused(Recorded::NoHash, |older| {
+        older.replacen("title: \"Old title\"", "title: \"A title I typed\"", 1)
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn rename_refuses_unknown_projection_state_fields_without_changing_bytes() {
     for location in [

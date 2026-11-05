@@ -27,7 +27,7 @@ pub enum ModelCommand {
     Status,
     /// Download and select a local model.
     Install {
-        /// Model id, for example qwen3-4b.
+        /// Model id, for example qwen3.5-4b.
         model_id: Option<String>,
         /// Skip confirmation before downloading.
         #[arg(short = 'y', long)]

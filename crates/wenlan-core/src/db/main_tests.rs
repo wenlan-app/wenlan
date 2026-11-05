@@ -42305,6 +42305,50 @@ async fn enrichment_service_class_promotes_user_mutations_without_guessing_prove
 }
 
 #[tokio::test]
+async fn entity_enrichment_takes_steeped_points_before_the_backlog() {
+    let (db, _dir) = test_db().await;
+    for (id, at) in [("old-backlog", 1), ("night-point", 100)] {
+        db.upsert_documents(vec![RawDocument {
+            source: "memory".to_string(),
+            source_id: id.to_string(),
+            title: id.to_string(),
+            content: format!("{id} is waiting for its topics."),
+            last_modified: at,
+            memory_type: Some("fact".to_string()),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+    }
+    async fn next(db: &MemoryDB) -> Option<String> {
+        db.select_entity_enrichment_candidate(None)
+            .await
+            .unwrap()
+            .map(|c| c.source_id)
+    }
+    assert_eq!(
+        next(&db).await.as_deref(),
+        Some("old-backlog"),
+        "oldest first otherwise"
+    );
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO thing_history (ts, actor, op, thing_id, data)
+             VALUES (200, 'ai', 'thing.dream', 'thg_1', '{\"decided\":[],\"open\":[\"night-point\"]}')",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        next(&db).await.as_deref(),
+        Some("night-point"),
+        "a night's point goes before the older backlog so it reaches the map's topics soon"
+    );
+}
+
+#[tokio::test]
 async fn enrichment_service_class_generic_import_is_bulk_without_demoting_interactive() {
     let (db, _dir) = test_db().await;
     let origin = EnrichmentOrigin {
@@ -59828,5 +59872,323 @@ async fn edited_acceptance_memory_rolls_back_edit_when_activation_fails() {
     assert_eq!(
         rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
         1
+    );
+}
+
+/// Growth: the memory's topic narrows the candidate pages, similarity picks
+/// among them and must clear the bar. Vectors are set by hand so the test does
+/// not depend on what the embedding model thinks is similar.
+#[tokio::test]
+async fn growth_takes_the_closest_page_of_the_topic_and_needs_similarity() {
+    let (db, _dir) = test_db().await;
+    let entity_id = db
+        .create_entity("Broad Topic", "Topic", Some("work"))
+        .await
+        .unwrap();
+    for id in ["a-unrelated-page", "b-related-page"] {
+        db.insert_page_with_kind(
+            id,
+            id,
+            None,
+            "machine-owned page body",
+            Some(&entity_id),
+            Some("work"),
+            &[],
+            &chrono::Utc::now().to_rfc3339(),
+            "research",
+            "confirmed",
+            Some("work"),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    let dims = db.generate_embeddings(&["x".to_string()]).unwrap()[0].len();
+    let unit = |axis: usize, weight: f32, other: Option<(usize, f32)>| {
+        let mut v = vec![0.0f32; dims];
+        v[axis] = weight;
+        if let Some((axis, weight)) = other {
+            v[axis] = weight;
+        }
+        v
+    };
+    {
+        let conn = db.conn.lock().await;
+        // The lowest id is the unrelated page: entity-first used to take it.
+        for (id, vector) in [
+            ("a-unrelated-page", unit(1, 1.0, None)),
+            ("b-related-page", unit(0, 0.9, Some((1, 0.1)))),
+        ] {
+            conn.execute(
+                "UPDATE pages SET embedding = vector32(?1) WHERE id = ?2",
+                libsql::params![MemoryDB::vec_to_sql(&vector), id],
+            )
+            .await
+            .unwrap();
+        }
+    }
+    let related = unit(0, 1.0, None);
+    let unrelated = unit(2, 1.0, None);
+
+    for (name, matched) in [
+        (
+            "slice",
+            db.find_growable_page_scoped(Some(&entity_id), &related, 0.75, Some("work"))
+                .await
+                .unwrap(),
+        ),
+        (
+            "post-ingest",
+            db.find_page_to_grow_scoped(Some(&entity_id), &related, 0.75, Some("work"))
+                .await
+                .unwrap(),
+        ),
+    ] {
+        assert_eq!(
+            matched.map(|page| page.id).as_deref(),
+            Some("b-related-page"),
+            "{name}: the topic's closest page grows, not its oldest"
+        );
+    }
+
+    assert!(
+        db.find_growable_page_scoped(Some(&entity_id), &unrelated, 0.75, Some("work"))
+            .await
+            .unwrap()
+            .is_none(),
+        "sharing a topic is not enough: an unrelated memory grows no page"
+    );
+    assert!(db
+        .find_page_to_grow_scoped(Some(&entity_id), &unrelated, 0.75, Some("work"))
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        db.find_matching_page_scoped(Some(&entity_id), &unrelated, 0.75, Some("work"), false)
+            .await
+            .unwrap()
+            .map(|page| page.id)
+            .as_deref(),
+        Some("a-unrelated-page"),
+        "dedup keeps entity-first"
+    );
+}
+
+/// Links written before the hub rule: a memory with a specific topic loses
+/// its hub link and moves its primary topic off the hub; a hub-only memory
+/// keeps it. Runs once, and records what it changed.
+#[tokio::test]
+async fn old_hub_links_are_unfiled_once() {
+    let (db, _dir) = test_db().await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("PRAGMA foreign_keys = OFF", ()).await.unwrap();
+        for i in 0..HUB_MIN_LINKS {
+            conn.execute(
+                "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'hub')",
+                libsql::params![format!("other_{i}")],
+            )
+            .await
+            .unwrap();
+        }
+        for (source_id, entity) in [("m_specific", "hub"), ("m_hub_only", "hub")] {
+            conn.execute(
+                "INSERT INTO memories
+                     (id,content,source,source_id,title,chunk_index,last_modified,chunk_type,
+                      supersede_mode,memory_type,stability,entity_id)
+                 VALUES (?1,'body','memory',?1,?1,0,1,'text','hide','fact','new',?2)",
+                libsql::params![source_id, entity],
+            )
+            .await
+            .unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES
+                 ('m_specific','hub'), ('m_specific','specific'), ('m_hub_only','hub');",
+        )
+        .await
+        .unwrap();
+        conn.execute("PRAGMA foreign_keys = ON", ()).await.unwrap();
+    }
+
+    assert_eq!(db.unfile_old_hub_links_once().await.unwrap(), 1);
+
+    let links = |memory: &'static str| {
+        let db = &db;
+        async move {
+            let conn = db.conn.lock().await;
+            let mut rows = conn
+                .query(
+                    "SELECT entity_id FROM memory_entities WHERE memory_id = ?1 ORDER BY entity_id",
+                    libsql::params![memory],
+                )
+                .await
+                .unwrap();
+            let mut out = Vec::new();
+            while let Some(row) = rows.next().await.unwrap() {
+                out.push(row.get::<String>(0).unwrap());
+            }
+            out
+        }
+    };
+    assert_eq!(links("m_specific").await, vec!["specific".to_string()]);
+    assert_eq!(links("m_hub_only").await, vec!["hub".to_string()]);
+    assert_eq!(
+        db.get_memory_entity_id("m_specific")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("specific")
+    );
+    assert_eq!(
+        db.get_memory_entity_id("m_hub_only")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("hub")
+    );
+    let record: serde_json::Value = serde_json::from_str(
+        &db.get_app_metadata("kg_unfile_hub_links_v1")
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        record["removed_links"],
+        serde_json::json!([["m_specific", "hub"]])
+    );
+    assert_eq!(
+        record["moved_primary"],
+        serde_json::json!([["m_specific", "hub", "specific"]])
+    );
+
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES ('m_specific','hub')",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        db.unfile_old_hub_links_once().await.unwrap(),
+        0,
+        "the cleanup runs once"
+    );
+
+    // A hub link some path added back is taken off by the daily pass, which
+    // keeps its own record and leaves the one-time record alone.
+    assert_eq!(db.unfile_hub_links_daily().await.unwrap(), 1);
+    assert_eq!(links("m_specific").await, vec!["specific".to_string()]);
+    assert_eq!(links("m_hub_only").await, vec!["hub".to_string()]);
+    let last: serde_json::Value = serde_json::from_str(
+        &db.get_app_metadata("kg_unfile_hub_links_last")
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        last["removed_links"],
+        serde_json::json!([["m_specific", "hub"]])
+    );
+    assert_eq!(db.unfile_hub_links_daily().await.unwrap(), 0);
+    assert_eq!(
+        db.get_app_metadata("kg_unfile_hub_links_last")
+            .await
+            .unwrap(),
+        Some(last.to_string()),
+        "a run with nothing to do keeps the last run's record"
+    );
+}
+
+/// The hub cleanup moves a memory's main topic to a topic that is still
+/// shown, and the repair moves memories the first run left on an archived
+/// topic, once.
+#[tokio::test]
+async fn unfiled_memories_get_a_shown_main_topic() {
+    let (db, _dir) = test_db().await;
+    for id in ["archived_topic", "shown_topic"] {
+        db.test_seed_entity_shadow_page(TestEntity::new(id, id, "project"))
+            .await
+            .unwrap();
+    }
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("PRAGMA foreign_keys = OFF", ()).await.unwrap();
+        for i in 0..HUB_MIN_LINKS {
+            conn.execute(
+                "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 'hub')",
+                libsql::params![format!("other_{i}")],
+            )
+            .await
+            .unwrap();
+        }
+        for (source_id, entity) in [("m_new", "hub"), ("m_old", "archived_topic")] {
+            conn.execute(
+                "INSERT INTO memories
+                     (id,content,source,source_id,title,chunk_index,last_modified,chunk_type,
+                      supersede_mode,memory_type,stability,entity_id)
+                 VALUES (?1,'body','memory',?1,?1,0,1,'text','hide','fact','new',?2)",
+                libsql::params![source_id, entity],
+            )
+            .await
+            .unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES
+                 ('m_new','hub'), ('m_new','archived_topic'), ('m_new','shown_topic'),
+                 ('m_old','archived_topic'), ('m_old','shown_topic');
+             UPDATE pages SET status = 'archived'
+              WHERE id = (SELECT page_id FROM entity_page_map WHERE entity_id = 'archived_topic');",
+        )
+        .await
+        .unwrap();
+        conn.execute("PRAGMA foreign_keys = ON", ()).await.unwrap();
+    }
+
+    assert_eq!(db.unfile_old_hub_links_once().await.unwrap(), 1);
+    assert_eq!(
+        db.get_memory_entity_id("m_new").await.unwrap().as_deref(),
+        Some("shown_topic"),
+        "a shown topic wins over an archived one linked earlier"
+    );
+
+    // What the first build's run left behind: a moved memory on an
+    // archived topic.
+    let record: serde_json::Value = serde_json::from_str(
+        &db.get_app_metadata("kg_unfile_hub_links_v1")
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let mut earlier = record.clone();
+    earlier["moved_primary"] = serde_json::json!([
+        ["m_new", "hub", "shown_topic"],
+        ["m_old", "hub", "archived_topic"]
+    ]);
+    db.set_app_metadata("kg_unfile_hub_links_v1", &earlier.to_string())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.move_unfiled_primaries_off_archived_topics_once()
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.get_memory_entity_id("m_old").await.unwrap().as_deref(),
+        Some("shown_topic")
+    );
+    assert_eq!(
+        db.move_unfiled_primaries_off_archived_topics_once()
+            .await
+            .unwrap(),
+        0,
+        "the repair runs once"
     );
 }

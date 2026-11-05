@@ -17,7 +17,7 @@ use wenlan_core::db::MemoryDB;
 use wenlan_types::{
     SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingDetailResponse, ThingMapAuthor,
     ThingMapOpsRequest, ThingMapOpsResponse, ThingMapResponse, ThingMergeRequest, ThingMoveRequest,
-    ThingRenameRequest, ThingSummary, ThingsResponse,
+    ThingNightPointsResponse, ThingRenameRequest, ThingSummary, ThingsResponse,
 };
 
 use crate::error::ServerError;
@@ -29,6 +29,7 @@ use crate::state::SharedState;
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
         .route("/api/things", get(handle_list_things))
+        .route("/api/things/points", get(handle_thing_night_points))
         .route(
             "/api/things/{id}",
             get(handle_get_thing).patch(handle_rename_thing),
@@ -88,6 +89,22 @@ pub async fn handle_list_things(
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     Ok(Json(ThingsResponse {
         things: db.list_things(&scope, None).await?,
+    }))
+}
+
+/// GET /api/things/points
+///
+/// Every live thing the caller may see with points its nights wrote that
+/// still stand, so the big map can draw each thing with its points around it
+/// (UX-CHAT-5). Points of a memory outside the caller's Space are left out.
+pub async fn handle_thing_night_points(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+) -> Result<Json<ThingNightPointsResponse>, ServerError> {
+    let db = open_db(&state).await?;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    Ok(Json(ThingNightPointsResponse {
+        things: db.thing_night_points(&scope).await?,
     }))
 }
 

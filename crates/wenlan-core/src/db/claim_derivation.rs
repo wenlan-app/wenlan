@@ -71,11 +71,12 @@ pub const MAX_MODEL_CALLS_PER_PAGE: usize = 200;
 pub const MAX_JUDGE_TOKENS_PER_PAGE: usize = 250_000;
 const M5_JUDGE_MAX_OUTPUT_TOKENS: usize = 2048;
 
-/// The one measured on-device judge Wenlan is allowed to activate in
-/// production. Eligibility is deliberately compiled, not inferred from an
-/// arbitrary locally pinned model: a snapshot that did not pass the frozen M5
-/// benchmark cannot authorize itself merely by being available.
+/// The judge that used to be compiled in as the only approved one. It now
+/// qualifies at runtime like every other model (and a live run on 2026-11-04
+/// found it order-sensitive on N12), so it survives only as a test fixture.
+#[cfg(test)]
 pub(super) const M5_PRODUCTION_JUDGE_MODEL_ID: &str = "qwen3-4b";
+#[cfg(test)]
 pub(super) const M5_PRODUCTION_JUDGE_MODEL_VERSION: &str =
     "hf:unsloth/Qwen3-4B-Instruct-2507-GGUF@a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf";
 /// One threshold for runtime qualification and production scoring, so the
@@ -1535,25 +1536,14 @@ impl MemoryDB {
             .transpose()
     }
 
-    /// The judge whose frozen-benchmark receipt was measured before release.
-    /// It needs no runtime check.
-    fn is_measured_m5_claim_judge(snapshot: &crate::claim_judge::M5ClaimJudgeSnapshot) -> bool {
-        snapshot.backend == crate::llm_provider::LlmBackend::OnDevice
-            && snapshot.model_id == M5_PRODUCTION_JUDGE_MODEL_ID
-            && snapshot.model_version == M5_PRODUCTION_JUDGE_MODEL_VERSION
-            && snapshot.prompt_version == crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION
-    }
-
-    /// A judge may write support when it is the measured release judge, or
-    /// when this exact on-device model passed the same frozen M5 accuracy
-    /// batch in this process ([`crate::claim_judge::qualify_m5_claim_judge`]).
-    /// Being available is never enough: an unmeasured model cannot authorize
-    /// itself without answering the benchmark correctly.
+    /// A judge may write support only when this exact model passed
+    /// the frozen M5 accuracy batch in this process
+    /// ([`crate::claim_judge::qualify_m5_claim_judge`]). No model is approved
+    /// by name: being available is never enough, and every model, including
+    /// one measured before a release, answers the same batch, wherever it runs.
     fn is_approved_m5_claim_judge(snapshot: &crate::claim_judge::M5ClaimJudgeSnapshot) -> bool {
-        snapshot.backend == crate::llm_provider::LlmBackend::OnDevice
-            && snapshot.prompt_version == crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION
-            && (Self::is_measured_m5_claim_judge(snapshot)
-                || crate::claim_judge::m5_judge_qualified(snapshot))
+        snapshot.prompt_version == crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION
+            && crate::claim_judge::m5_judge_qualified(snapshot)
     }
 
     /// Idempotently activate a benchmark-approved M5 judge.
@@ -2811,9 +2801,7 @@ impl MemoryDB {
             return Ok(PromotionTurn::RefusedProvider);
         };
         // Inference runs here, before any database guard is taken.
-        if !Self::is_measured_m5_claim_judge(&snapshot)
-            && !crate::claim_judge::qualify_m5_claim_judge(provider, &snapshot).await
-        {
+        if !crate::claim_judge::qualify_m5_claim_judge(provider, &snapshot).await {
             return Ok(PromotionTurn::RefusedProvider);
         }
         if !self.activate_approved_m5_claim_judge(&snapshot).await? {

@@ -665,7 +665,8 @@ function EntityGraphOverlay({
                     onClose();
                     onPageClick(target.id);
                   }
-                } else if (onMemoryClick) {
+                } else if (target.kind === "memory" && onMemoryClick) {
+                  // A thing has no route inside this overlay; its node stays put.
                   onClose();
                   onMemoryClick(target.id);
                 }
