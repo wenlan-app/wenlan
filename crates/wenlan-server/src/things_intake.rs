@@ -540,6 +540,19 @@ pub async fn connect_old_night_points(
     db: &MemoryDB,
     model: &dyn LlmProvider,
 ) -> Result<wenlan_types::NightLinksBackfill, String> {
+    // One run at a time: a client that gives up and asks again must not
+    // start a second run that calls the model for every thing again.
+    static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    struct Running;
+    impl Drop for Running {
+        fn drop(&mut self) {
+            RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    if RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("connecting the old points is already running".into());
+    }
+    let _running = Running;
     let mut report = wenlan_types::NightLinksBackfill::default();
     if db
         .night_links_backfilled()
@@ -606,11 +619,16 @@ pub async fn connect_old_night_points(
             if !topic.fits(point.space.as_deref()) {
                 continue;
             }
-            links.extend(
-                db.link_night_point(&point.id, &topic.entity_id)
-                    .await
-                    .map_err(|e| e.to_string())?,
-            );
+            match db.link_night_point(&point.id, &topic.entity_id).await {
+                Ok(link) => links.extend(link),
+                Err(e) => {
+                    // Keep the links already made undoable: record them
+                    // below, and leave this thing to the next run.
+                    tracing::warn!("[things] connecting a night point of {thing_id} failed: {e}");
+                    report.failed += 1;
+                    break;
+                }
+            }
         }
         report.linked += links.len();
         db.record_night_links_backfill(&thing_id, &links)

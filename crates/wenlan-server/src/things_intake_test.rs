@@ -44,6 +44,38 @@ impl LlmProvider for Scripted {
     }
 }
 
+/// Answers once it is let go, so a test can act while a call is waiting.
+struct Held {
+    answer: String,
+    release: tokio::sync::Notify,
+}
+
+impl Held {
+    fn new(answer: &str) -> Arc<Self> {
+        Arc::new(Self {
+            answer: answer.into(),
+            release: tokio::sync::Notify::new(),
+        })
+    }
+}
+
+#[async_trait]
+impl LlmProvider for Held {
+    async fn generate(&self, _request: LlmRequest) -> Result<String, LlmError> {
+        self.release.notified().await;
+        Ok(self.answer.clone())
+    }
+    fn is_available(&self) -> bool {
+        true
+    }
+    fn name(&self) -> &str {
+        "held"
+    }
+    fn backend(&self) -> LlmBackend {
+        LlmBackend::Api
+    }
+}
+
 fn conv(id: &str, said: &[&str], minutes_ago: i64) -> FoundConversation {
     let now = chrono::Utc::now().timestamp();
     FoundConversation {
@@ -571,11 +603,18 @@ async fn ux_chat_5_old_points_are_connected_once_and_can_be_taken_back() {
         .await
         .unwrap();
 
-    // The model fails: nothing is linked and it can run again.
-    let failing = Scripted::new(&["not json"]);
-    let report = connect_old_night_points(&db, failing.as_ref())
-        .await
-        .unwrap();
+    // The model fails: nothing is linked and it can run again. While it
+    // runs, a second start is refused instead of asking the model again.
+    let failing = Held::new("not json");
+    let second = Scripted::new(&[]);
+    let (report, refused) = tokio::join!(connect_old_night_points(&db, failing.as_ref()), async {
+        let refused = connect_old_night_points(&db, second.as_ref()).await;
+        failing.release.notify_one();
+        refused
+    });
+    assert!(refused.is_err());
+    assert_eq!(second.prompts.lock().unwrap().len(), 0);
+    let report = report.unwrap();
     assert_eq!((report.points, report.linked, report.failed), (2, 0, 1));
     assert!(db.night_links_backfilled().await.unwrap().is_none());
 
