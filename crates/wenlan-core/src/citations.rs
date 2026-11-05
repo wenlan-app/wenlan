@@ -630,7 +630,7 @@ pub async fn run_citation_backfill_tick(
     llm: &Arc<dyn LlmProvider>,
     prompts: &PromptRegistry,
 ) -> Result<(), WenlanError> {
-    run_citation_backfill_with_page_limit(db, llm, prompts, BACKFILL_BATCH_SIZE)
+    run_citation_backfill_with_page_limit(db, llm, prompts, BACKFILL_BATCH_SIZE, None)
         .await
         .map(|_| ())
 }
@@ -643,7 +643,21 @@ pub async fn run_citation_backfill_slice(
     llm: &Arc<dyn LlmProvider>,
     prompts: &PromptRegistry,
 ) -> Result<usize, WenlanError> {
-    run_citation_backfill_with_page_limit(db, llm, prompts, 1).await
+    run_citation_backfill_with_page_limit(db, llm, prompts, 1, None).await
+}
+
+/// [`run_citation_backfill_slice`], also writing an annotated page's file in
+/// `knowledge_path`. The daemon passes its pages folder: without it the
+/// database moves a version ahead of the file, and the page then refuses
+/// renames and later edits as holding unsynced changes until a restart's
+/// reconcile catches the file up.
+pub async fn run_citation_backfill_slice_projected(
+    db: &MemoryDB,
+    llm: &Arc<dyn LlmProvider>,
+    prompts: &PromptRegistry,
+    knowledge_path: Option<&std::path::Path>,
+) -> Result<usize, WenlanError> {
+    run_citation_backfill_with_page_limit(db, llm, prompts, 1, knowledge_path).await
 }
 
 async fn run_citation_backfill_with_page_limit(
@@ -651,6 +665,7 @@ async fn run_citation_backfill_with_page_limit(
     llm: &Arc<dyn LlmProvider>,
     prompts: &PromptRegistry,
     page_limit: usize,
+    knowledge_path: Option<&std::path::Path>,
 ) -> Result<usize, WenlanError> {
     match db.rearm_citation_timeouts_once().await {
         Ok(0) => {}
@@ -947,6 +962,9 @@ async fn run_citation_backfill_with_page_limit(
                     )
                     .await?;
                 if committed {
+                    if let Some(path) = knowledge_path {
+                        project_annotated_page(db, path, &page_id).await;
+                    }
                     // Terminal write (citations now populated): delete
                     // rather than reset the counter so app_metadata doesn't
                     // keep a dead row per generation forever. Only because
@@ -973,6 +991,27 @@ async fn run_citation_backfill_with_page_limit(
         }
     }
     Ok(selected)
+}
+
+/// Write the page's file after an annotate commit, the way page growth does.
+/// A refused or failed write is logged; the next restart's reconcile repairs
+/// a file left behind.
+async fn project_annotated_page(db: &MemoryDB, knowledge_path: &std::path::Path, page_id: &str) {
+    let page = match db.get_page(page_id).await {
+        Ok(Some(page)) => page,
+        Ok(None) => return,
+        Err(error) => {
+            log::warn!("[citation_backfill] page {page_id} re-read for its file failed: {error}");
+            return;
+        }
+    };
+    let projection =
+        crate::export::knowledge::KnowledgeProjectionWrite::new(knowledge_path.to_path_buf(), db);
+    match projection.write_page_gated(db, &page).await {
+        Ok(Some(path)) => log::info!("[citation_backfill] wrote page to {path}"),
+        Ok(None) => log::debug!("[citation_backfill] not projecting page {page_id}"),
+        Err(error) => log::warn!("[citation_backfill] page {page_id} file write failed: {error}"),
+    }
 }
 
 /// What the daemon made of the `[n]` markers in a page an AI tool wrote.
@@ -1381,6 +1420,47 @@ mod tests {
                 .unwrap()
                 .contains(&"p_happy".to_string()),
             "page should no longer be citations-missing"
+        );
+    }
+
+    /// An annotated page's file follows the database, so the page is not
+    /// left a version behind its file (it would then refuse a rename as
+    /// holding unsynced edits).
+    #[tokio::test]
+    async fn backfill_writes_the_annotated_page_file() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let knowledge = tempfile::TempDir::new().unwrap();
+        seed_backfill_page(&db, "p_file", true).await;
+        let projection = crate::export::knowledge::KnowledgeProjectionWrite::new(
+            knowledge.path().to_path_buf(),
+            &db,
+        );
+        let before = db.get_page("p_file").await.unwrap().unwrap();
+        let filename = projection
+            .write_page_gated(&db, &before)
+            .await
+            .unwrap()
+            .expect("a fresh page is projected");
+        drop(projection);
+
+        let annotated = format!("{BACKFILL_BODY}[1]");
+        let llm: Arc<dyn LlmProvider> = Arc::new(MockProvider::new(&annotated));
+        run_citation_backfill_slice_projected(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            Some(knowledge.path()),
+        )
+        .await
+        .unwrap();
+
+        let after = db.get_page("p_file").await.unwrap().unwrap();
+        assert_eq!(after.version, before.version + 1);
+        let file = std::fs::read_to_string(knowledge.path().join(&filename)).unwrap();
+        assert_eq!(
+            file,
+            crate::export::knowledge::render_markdown_for(&after),
+            "the file must hold the annotated version"
         );
     }
 
@@ -2851,8 +2931,14 @@ mod tests {
             let db = db.clone();
             let llm = llm.clone();
             tokio::spawn(async move {
-                run_citation_backfill_with_page_limit(&db, &llm, &PromptRegistry::default(), 2)
-                    .await
+                run_citation_backfill_with_page_limit(
+                    &db,
+                    &llm,
+                    &PromptRegistry::default(),
+                    2,
+                    None,
+                )
+                .await
             })
         };
 
