@@ -5400,7 +5400,9 @@ async fn producer_root_acquisition_error_requeues_before_sealing_absence() {
 }
 
 #[tokio::test]
-async fn producer_refuses_non_on_device_before_leasing() {
+async fn producer_accepts_a_qualified_api_judge() {
+    // A model served by LM Studio, Ollama or a cloud API judges like an
+    // on-device one once its exact triple has passed the frozen batch.
     let (db, _temp) = db_with_queue().await;
     authorize_producer_judge(&db).await;
     add_producer_page(&db, "api-page", "A factual claim.", "space-a").await;
@@ -5409,13 +5411,12 @@ async fn producer_refuses_non_on_device_before_leasing() {
         ..ProducerJudge::pinned(&db)
     };
 
-    assert_eq!(
+    assert_ne!(
         db.run_page_linked_truth_promotion_turn(&judge, "producer-worker")
             .await
             .unwrap(),
         PromotionTurn::RefusedProvider
     );
-    assert_eq!(job_for(&db, "api-page").await.unwrap().2, 0);
 }
 
 #[tokio::test]

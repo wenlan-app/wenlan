@@ -136,7 +136,11 @@ pub fn parse_m5_claim_entailment_score(raw: &str) -> Option<f64> {
 }
 
 pub fn snapshot_m5_claim_judge(provider: &dyn LlmProvider) -> Option<M5ClaimJudgeSnapshot> {
-    if !provider.is_available() || provider.backend() != LlmBackend::OnDevice {
+    // Any model may judge once it passes the frozen batch, whether Wenlan
+    // runs it, a local server (LM Studio, Ollama) does, or a cloud API the
+    // person configured does. A provider that cannot name its model cannot be
+    // qualified and is refused below.
+    if !provider.is_available() {
         return None;
     }
 
@@ -150,7 +154,7 @@ pub fn snapshot_m5_claim_judge(provider: &dyn LlmProvider) -> Option<M5ClaimJudg
         model_id,
         model_version,
         prompt_version: M5_CLAIM_ENTAILMENT_PROMPT_VERSION,
-        backend: LlmBackend::OnDevice,
+        backend: provider.backend(),
     })
 }
 
@@ -613,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshots_only_available_pinned_on_device_provider() {
+    fn snapshots_any_available_versioned_provider() {
         let pinned = TestProvider {
             available: true,
             backend: LlmBackend::OnDevice,
@@ -634,8 +638,43 @@ mod tests {
             backend: LlmBackend::Api,
             ..pinned
         };
-        assert!(snapshot_m5_claim_judge(&api).is_none());
+        assert_eq!(
+            snapshot_m5_claim_judge(&api).unwrap().backend,
+            LlmBackend::Api
+        );
         assert!(snapshot_m5_claim_judge(&UnversionedProvider(LlmBackend::OnDevice)).is_none());
+    }
+
+    #[test]
+    fn local_server_and_cloud_models_may_judge_after_qualifying() {
+        use crate::llm_provider::{ApiProvider, OpenAICompatibleProvider};
+        for endpoint in [
+            "http://localhost:1234/v1",
+            "http://127.0.0.1:11434/v1/",
+            "https://api.openai.com/v1",
+        ] {
+            let provider = OpenAICompatibleProvider::new_with_key(
+                endpoint.to_string(),
+                "gemma-4-e4b-mlx".to_string(),
+                None,
+            );
+            let snapshot = snapshot_m5_claim_judge(&provider).expect(endpoint);
+            assert_eq!(snapshot.model_id, "gemma-4-e4b-mlx");
+            assert_eq!(
+                snapshot.model_version,
+                format!(
+                    "endpoint:{}#gemma-4-e4b-mlx",
+                    endpoint.trim_end_matches('/')
+                )
+            );
+            assert_eq!(snapshot.backend, LlmBackend::Api);
+        }
+        let cloud = ApiProvider::new("key".to_string(), "claude-model".to_string());
+        let snapshot = snapshot_m5_claim_judge(&cloud).expect("configured cloud API");
+        assert_eq!(snapshot.model_version, "anthropic:claude-model");
+
+        let unconfigured = ApiProvider::new(String::new(), "claude-model".to_string());
+        assert!(snapshot_m5_claim_judge(&unconfigured).is_none());
     }
 
     #[test]
