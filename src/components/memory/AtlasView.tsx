@@ -1012,7 +1012,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           return;
         }
         if (elapsed > 0) {
-          flightAt = from + (to - from) * growthAt(elapsed, FLIGHT_MS);
+          // Eased in and out, so the whole way is seen, not a jump and a settle.
+          const t = elapsed / FLIGHT_MS;
+          const eased = t < 0.5 ? 4 * t ** 3 : 1 - (2 - 2 * t) ** 3 / 2;
+          flightAt = from + (to - from) * eased;
           setThingFlight(graph, thing, flightAt, flightTargets);
           showFlight();
         }
