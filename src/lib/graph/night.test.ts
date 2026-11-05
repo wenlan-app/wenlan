@@ -333,7 +333,9 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     expect(fromHub("mem:n2")).toBeLessThan(half);
     // Right beside the hub, on the side facing its thing.
     const hubR = map.getNodeAttribute("hub", "size") as number;
-    expect(fromHub("mem:n2")).toBeLessThan(hubR + 2 * (map.getNodeAttribute("mem:n2", "size") as number) + 4);
+    const dot = map.getNodeAttribute("mem:n2", "size") as number;
+    expect(fromHub("mem:n2")).toBeGreaterThan(hubR + dot);
+    expect(fromHub("mem:n2")).toBeLessThan(hubR + 3 * dot + 5);
     const towardThing = (xy(map, "thing:t1").x - xy(map, "hub").x) * (xy(map, "mem:n2").x - xy(map, "hub").x)
       + (xy(map, "thing:t1").y - xy(map, "hub").y) * (xy(map, "mem:n2").y - xy(map, "hub").y);
     expect(towardThing).toBeGreaterThan(0);

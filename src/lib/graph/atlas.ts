@@ -537,8 +537,9 @@ export interface FlyTo {
 }
 
 /** Room between a topic's disc and the points that come to sit by it, graph
- *  units. */
-const FLY_GAP = 3;
+ *  units, besides a point's own width: they sit clear of the disc, not on
+ *  its rim. */
+const FLY_GAP = 4;
 
 /**
  * Where each of a picked thing's points goes (UX-CHAT-5, Qi-Xuan 11-05): a
@@ -579,8 +580,9 @@ export function thingFlightTargets(graph: Graph, thing: string): Map<string, Fly
     const { x, y } = at(topic);
     const facing = Math.atan2(ty - y, tx - x);
     const dot = Math.max(...points.map((point) => (graph.getNodeAttribute(point, "size") as number | undefined) ?? 0), 1);
-    const radius = bodyRadius(graph.getNodeAttributes(topic)) + FLY_GAP + dot;
-    const step = (2 * dot + FLY_GAP) / radius;
+    const radius = bodyRadius(graph.getNodeAttributes(topic)) + FLY_GAP + 2 * dot;
+    // Side by side as far apart as in their thing's cluster (2 * size + 3).
+    const step = (2 * dot + 3) / radius;
     points.forEach((point, index) => {
       const angle = facing + (index - (points.length - 1) / 2) * step;
       targets.set(point, { anchor: topic, dx: radius * Math.cos(angle), dy: radius * Math.sin(angle) });

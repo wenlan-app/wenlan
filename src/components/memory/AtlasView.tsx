@@ -635,6 +635,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     setThingStop(stop);
     hoverStateRef.current = thingFocusState(drawn, thing, stop);
     focusLayoutRef.current = null;
+    // Its points set off now, with the camera, so its long lines never show.
+    flyRef.current(thing, true);
     const { width } = renderer.getDimensions();
     // The sentences run beside their points, either side; the title sits
     // above. Room on both sides keeps the thing centred.
@@ -953,6 +955,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // thing reaching into it. A quiet thing's are by their topics already.
     let flightThing: string | null = null;
     let flightAt = 0;
+    let flightTo = 0;
     let flightFrame = 0;
     const showFlight = () => {
       sim.placeSatellitesNow();
@@ -961,7 +964,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     };
     const fly = (wanted: string | null, animate: boolean) => {
       if (wanted !== null && !graph.hasNode(wanted)) wanted = null;
-      if (wanted === flightThing && (wanted === null || flightAt === 1)) return;
+      // Already there, or already on its way there.
+      if (wanted === flightThing && (wanted === null || flightTo === 1)) return;
       cancelAnimationFrame(flightFrame);
       // Another thing picked: the last one's points are home at once.
       if (flightThing !== null && wanted !== null && wanted !== flightThing) {
@@ -973,11 +977,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       flightThing = thing;
       const from = flightAt;
       const to = wanted === null ? 0 : 1;
+      flightTo = to;
       const land = () => {
         flightAt = to;
         if (to === 0) {
           setThingFlight(graph, null, 0);
           flightThing = null;
+          flightTo = 0;
         } else {
           setThingFlight(graph, thing, 1);
         }
