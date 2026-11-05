@@ -1018,7 +1018,7 @@ async fn resolve_memory_entity_links(
            ) m ON m.source_id=me.memory_id
            LEFT JOIN (SELECT epm.entity_id FROM entity_page_map epm
                       JOIN pages p ON p.id = epm.page_id
-                      WHERE p.kind = 'entity' AND p.status = 'active') e
+                      WHERE p.kind = 'entity' AND p.status IN ('active', 'archived')) e
              ON e.entity_id=me.entity_id
           WHERE (m.source_id IS NULL OR e.entity_id IS NULL){scope_clause}
           ORDER BY me.memory_id,me.entity_id"

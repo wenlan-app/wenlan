@@ -2892,7 +2892,12 @@ impl LockedProjection<'_> {
                 .remove("content_sha256");
             stored.get("content_sha256").is_none() && stored == &expected_without_hash
         });
-        if !state_matches || target_bytes.as_slice() != expected_markdown.as_bytes() {
+        let current_render =
+            state_matches && target_bytes.as_slice() == expected_markdown.as_bytes();
+        let earlier_build = stored_page.is_some_and(|stored| {
+            projection_from_earlier_build(stored, &expected_state, &target_bytes, page)
+        });
+        if !current_render && !earlier_build {
             return Err(WenlanError::Conflict(
                 "page projection contains unsynced edits".to_string(),
             ));
@@ -5182,6 +5187,58 @@ fn write_new_file_nofollow(directory: &Dir, name: &OsStr, bytes: &[u8]) -> Resul
 /// the DB's.
 fn projection_digest(bytes: &[u8]) -> String {
     format!("{:x}", sha2::Sha256::digest(bytes))
+}
+
+/// Whether a file that differs from today's render is only the render of an
+/// earlier build. `render_markdown` stamps the build into the frontmatter, so
+/// every upgrade changes the render of every untouched page; reconcile rewrites
+/// only files behind the page's version, and the rest keep the old bytes.
+///
+/// The state entry must describe this version of the page and the body must
+/// hold its text. Beyond that the file must be what Wenlan wrote: its bytes are
+/// the ones recorded for it, or, for an entry from before hashes were recorded,
+/// every frontmatter field a person could have typed matches today's render.
+/// `generated` is the build stamp; `sources` and `related` follow other records
+/// without moving this page's version. A build may have added fields since, so
+/// only the file's own fields are compared, and an added one is an edit.
+fn projection_from_earlier_build(
+    stored: &serde_json::Value,
+    expected_state: &serde_json::Value,
+    target_bytes: &[u8],
+    page: &Page,
+) -> bool {
+    let without_hash = |state: &serde_json::Value| {
+        let mut state = state.clone();
+        if let Some(fields) = state.as_object_mut() {
+            fields.remove("content_sha256");
+        }
+        state
+    };
+    if without_hash(stored) != without_hash(expected_state) {
+        return false;
+    }
+    let Ok(raw) = std::str::from_utf8(target_bytes) else {
+        return false;
+    };
+    if !crate::export::provenance::same_page_text_ignoring_save_noise(
+        &crate::export::provenance::page_body_from_projection(raw),
+        &crate::export::provenance::page_body_from_projection(&render_markdown(page)),
+    ) {
+        return false;
+    }
+    match stored.get("content_sha256") {
+        Some(recorded) => recorded.as_str() == Some(projection_digest(target_bytes).as_str()),
+        None => {
+            let (file, _) = crate::sources::obsidian::extract_frontmatter(raw);
+            let rendered = render_markdown(page);
+            let (current, _) = crate::sources::obsidian::extract_frontmatter(&rendered);
+            file.get_str("origin_id") == Some(page.id.as_str())
+                && file.fields.iter().all(|(field, value)| {
+                    matches!(field.as_str(), "generated" | "sources" | "related")
+                        || current.fields.get(field) == Some(value)
+                })
+        }
+    }
 }
 
 fn projection_bytes_replaceable(

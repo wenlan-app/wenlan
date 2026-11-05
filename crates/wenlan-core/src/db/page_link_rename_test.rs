@@ -178,6 +178,142 @@ async fn rename_rewrites_every_link_form_in_same_space_pages() {
         .any(|link| link.label == "New" && link.target_page_id.as_deref() == Some("page-a")));
 }
 
+/// One record per `[1]` marker in `page-b`, with the fields a stored record
+/// has.
+async fn seed_citations(db: &super::MemoryDB, id: &str, count: u32) -> serde_json::Value {
+    let records = serde_json::Value::Array(
+        (1..=count)
+            .map(|occurrence| {
+                serde_json::json!({
+                    "occurrence": occurrence,
+                    "marker": 1,
+                    "source_kind": "memory",
+                    "locator": "memory-a",
+                    "score": 1.0,
+                    "status": "verified",
+                    "scope": "sentence",
+                    "cited_version": 2,
+                    "cited_digest": "digest-a"
+                })
+            })
+            .collect(),
+    );
+    db.conn
+        .lock()
+        .await
+        .execute(
+            "UPDATE pages SET citations=?1 WHERE id=?2",
+            libsql::params![records.to_string(), id],
+        )
+        .await
+        .unwrap();
+    records
+}
+
+async fn stored_citations(db: &super::MemoryDB, id: &str) -> Option<serde_json::Value> {
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT citations FROM pages WHERE id=?1",
+            libsql::params![id],
+        )
+        .await
+        .unwrap();
+    let row = rows.next().await.unwrap().unwrap();
+    row.get::<Option<String>>(0)
+        .unwrap()
+        .map(|json| serde_json::from_str(&json).unwrap())
+}
+
+#[tokio::test]
+async fn a_link_update_keeps_the_citations_of_the_page_it_rewrites() {
+    let fixture = fixture(&[
+        (
+            "page-a",
+            "Old",
+            "work",
+            "The renamed page.",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-b",
+            "Linker",
+            "work",
+            "A claim [1] about [[Old]]. Another claim [1].",
+            0,
+            0,
+            "distilled",
+        ),
+    ])
+    .await;
+    let db = &fixture.db;
+    let records = seed_citations(db, "page-b", 2).await;
+
+    rename_page(
+        db,
+        "page-a",
+        "New",
+        3,
+        &ReadScope::Global,
+        Some(fixture.page_root.path()),
+    )
+    .await
+    .unwrap();
+
+    let after = db.get_page("page-b").await.unwrap().unwrap();
+    assert_eq!(
+        after.content,
+        "A claim [1] about [[New]]. Another claim [1]."
+    );
+    assert_eq!(stored_citations(db, "page-b").await, Some(records));
+    assert_eq!(after.citations.len(), 2);
+}
+
+#[tokio::test]
+async fn a_link_update_that_moves_a_marker_clears_the_citations() {
+    // `[[1]]` reads as a marker, so the records no longer line up afterwards.
+    let fixture = fixture(&[
+        (
+            "page-a",
+            "1",
+            "work",
+            "The renamed page.",
+            0,
+            0,
+            "distilled",
+        ),
+        (
+            "page-b",
+            "Linker",
+            "work",
+            "See [[1]]. A claim [1].",
+            0,
+            0,
+            "distilled",
+        ),
+    ])
+    .await;
+    let db = &fixture.db;
+    seed_citations(db, "page-b", 2).await;
+
+    rename_page(
+        db,
+        "page-a",
+        "New",
+        3,
+        &ReadScope::Global,
+        Some(fixture.page_root.path()),
+    )
+    .await
+    .unwrap();
+
+    let after = db.get_page("page-b").await.unwrap().unwrap();
+    assert_eq!(after.content, "See [[New]]. A claim [1].");
+    assert_eq!(stored_citations(db, "page-b").await, None);
+}
+
 #[tokio::test]
 async fn replaying_the_rename_changes_nothing_more() {
     let fixture = fixture(&[
