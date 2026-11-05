@@ -1386,6 +1386,9 @@ pub fn spawn_scheduler(
         let mut steep_batch: Option<AutomaticSteepBatch> = None;
         let mut maintenance_round: Option<AutomaticMaintenanceRound> = None;
         let mut on_demand_maintenance_round: Option<AutomaticMaintenanceRound> = None;
+        // One-time cleanups of data written under older rules; a failed pass
+        // is retried on the next polls, at most three times per daemon run.
+        let mut one_time_cleanup_tries_left = 3u8;
         let mut ambient_turn_owed = false;
         let mut last_deferred_resource_reason = None;
         let mut document_prep_claim_log = DocumentPrepClaimLog::default();
@@ -2201,6 +2204,22 @@ pub fn spawn_scheduler(
             // review cards and orphan labels still appear for the user's AI
             // to act on. Import priority defers both.
             if !import_work_ran && !write_signal.import_priority_active() {
+                if one_time_cleanup_tries_left > 0 {
+                    one_time_cleanup_tries_left -= 1;
+                    let report = wenlan_core::housekeeping::run_one_time_cleanups(&db).await;
+                    if report.hub_links_removed > 0 || report.duplicate_recaps_removed > 0 {
+                        tracing::info!(
+                            "[scheduler] one-time cleanup: hub_links_removed={} duplicate_recaps_removed={}",
+                            report.hub_links_removed,
+                            report.duplicate_recaps_removed,
+                        );
+                    }
+                    if report.errors.is_empty() {
+                        one_time_cleanup_tries_left = 0;
+                    } else {
+                        tracing::warn!("[scheduler] one-time cleanup: errors={:?}", report.errors);
+                    }
+                }
                 let now_epoch = chrono::Utc::now().timestamp();
                 if wenlan_core::housekeeping::housekeeping_due(
                     wenlan_core::housekeeping::last_housekeeping_run(&db).await,

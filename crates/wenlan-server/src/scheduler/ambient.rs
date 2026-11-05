@@ -614,7 +614,14 @@ pub(super) async fn run_ambient_job(
                     elapsed: started.elapsed(),
                 };
             };
-            match wenlan_core::citations::run_citation_backfill_slice(db, provider, prompts).await {
+            match wenlan_core::citations::run_citation_backfill_slice_projected(
+                db,
+                provider,
+                prompts,
+                knowledge_path,
+            )
+            .await
+            {
                 Ok(selected) => selected > 0,
                 Err(error) => {
                     tracing::warn!("[scheduler] citation backfill slice error: {error}");
