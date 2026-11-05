@@ -5343,8 +5343,12 @@ fn read_projected_file(root: &Dir, file: &str) -> Result<Vec<u8>, WenlanError> {
 /// names the page and is stamped with that version, its body holds that
 /// version's text, and every frontmatter field a person could have typed
 /// matches. `generated`, `modified` and `status` follow the build and the
-/// page's later state; `sources` and `related` follow other records. Only
-/// the file's own fields are compared, as in [`projection_from_earlier_build`].
+/// page's later state; `sources` and `related` follow other records.
+/// `description` is the page summary, which `page_history` does not keep, so
+/// an earlier render holds an earlier summary that cannot be checked; the
+/// page watcher never reads it back either, and a file holding today's body
+/// is already replaced whatever its description says. Only the file's own
+/// fields are compared, as in [`projection_from_earlier_build`].
 fn file_is_earlier_render(
     bytes: &[u8],
     page: &Page,
@@ -5381,7 +5385,7 @@ fn file_is_earlier_render(
     file.fields.iter().all(|(field, value)| {
         matches!(
             field.as_str(),
-            "generated" | "modified" | "status" | "sources" | "related"
+            "generated" | "modified" | "status" | "sources" | "related" | "description"
         ) || expected.fields.get(field) == Some(value)
     })
 }
@@ -7731,6 +7735,34 @@ mod tests {
             .unwrap();
         assert_eq!(adopted, 1);
 
+        let stats = writer
+            .reconcile_for_test(std::slice::from_ref(&now))
+            .unwrap();
+        assert_eq!((stats.rewritten, stats.errors), (1, 0));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            render_markdown(&now)
+        );
+    }
+
+    /// The summary is not in `page_history`, so a file from an earlier
+    /// version carries that version's summary, which no record can confirm.
+    #[test]
+    fn unhashed_file_with_an_earlier_summary_is_adopted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let earlier = test_concept();
+        let path = write_page_with_unhashed_entry(&writer, &earlier);
+        let mut now = backfilled(&earlier);
+        now.summary = Some("Memory safety without GC, checked at compile time".to_string());
+
+        let adopted = writer
+            .adopt_hashes_of_earlier_renders_for_test(
+                std::slice::from_ref(&now),
+                &[history_of(&earlier)],
+            )
+            .unwrap();
+        assert_eq!(adopted, 1);
         let stats = writer
             .reconcile_for_test(std::slice::from_ref(&now))
             .unwrap();
