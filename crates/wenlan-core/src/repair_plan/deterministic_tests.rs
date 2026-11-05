@@ -934,6 +934,90 @@ async fn imported_document_owner_with_missing_entity_prepares_and_applies_in_sco
     assert_eq!(owner_count, 1);
 }
 
+/// An archived entity comes back with its links on restore, so its links are
+/// neither proposed for deletion nor deleted by a repair prepared earlier.
+#[tokio::test]
+#[cfg_attr(not(unix), ignore = "repair artifacts are unix-only")]
+async fn a_link_to_an_archived_entity_is_not_deleted() {
+    let (db, _dir) = test_db().await;
+    db.test_seed_entity_shadow_page(crate::db::TestEntity::new(
+        "entity_shelved",
+        "shelved",
+        "concept",
+    ))
+    .await
+    .unwrap();
+    let set_status = |status: &'static str| {
+        let db = &db;
+        async move {
+            db.test_primary_session()
+                .await
+                .execute(
+                    "UPDATE pages SET status=?1 WHERE id=(SELECT page_id FROM entity_page_map
+                      WHERE entity_id='entity_shelved')",
+                    libsql::params![status],
+                )
+                .await
+                .unwrap();
+        }
+    };
+    db.test_primary_session()
+        .await
+        .execute_batch(
+            "INSERT INTO memories
+                 (id,content,source,source_id,title,chunk_index,last_modified,chunk_type)
+             VALUES
+                 ('row_shelved','Owner','local_files','/tmp/shelved.md','doc',0,1,'text');
+             INSERT INTO memory_entities(memory_id,entity_id)
+             VALUES ('/tmp/shelved.md','entity_shelved');",
+        )
+        .await
+        .unwrap();
+
+    set_status("archived").await;
+    let snapshot = db.open_isolated_lint_snapshot_for_test().await.unwrap();
+    let resolutions = resolve_current(&snapshot, &RepairLintScope::global(), None)
+        .await
+        .unwrap();
+    assert!(!resolutions.iter().any(|resolution| matches!(
+        resolution,
+        DeterministicResolution::Exact(exact)
+            if exact.writer == RepairWriter::DeleteMemoryEntityLink
+    )));
+    snapshot.finish().await.unwrap();
+
+    // Prepared while the entity was gone, applied after it reads as archived.
+    set_status("deleted").await;
+    let repair_root = tempfile::tempdir().unwrap();
+    let store = RepairArtifactStore::new(repair_root.path().to_path_buf());
+    let manifest = prepared_manifest(&db, &store, RepairWriter::DeleteMemoryEntityLink).await;
+    set_status("archived").await;
+    assert!(crate::repair::apply_repair(
+        &db,
+        &store,
+        exact_apply_request(&manifest),
+        1_721_000_003
+    )
+    .await
+    .is_err());
+    let link_count = db
+        .test_primary_session()
+        .await
+        .query(
+            "SELECT COUNT(*) FROM memory_entities WHERE entity_id='entity_shelved'",
+            (),
+        )
+        .await
+        .unwrap()
+        .next()
+        .await
+        .unwrap()
+        .unwrap()
+        .get::<i64>(0)
+        .unwrap();
+    assert_eq!(link_count, 1);
+}
+
 /// G6 Stage 1.5a review fix #3: the applier's `DeleteMemoryEntityLink` guard
 /// (`db/repair_deterministic.rs`) used to re-check legacy `entities`
 /// existence while the planner (`resolve_memory_entity_links`, above) already

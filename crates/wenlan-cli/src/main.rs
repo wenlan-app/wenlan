@@ -55,7 +55,7 @@ enum Commands {
         /// Set up without a model or API key.
         #[arg(long)]
         basic: bool,
-        /// Download and select a local model, for example qwen3-4b.
+        /// Download and select a local model, for example qwen3.5-4b.
         #[arg(long, value_name = "MODEL_ID")]
         model: Option<String>,
         /// Read an Anthropic key from this environment variable.

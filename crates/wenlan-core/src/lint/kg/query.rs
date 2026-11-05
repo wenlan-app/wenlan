@@ -155,7 +155,9 @@ async fn relation_integrity(context: &LintContext<'_, '_>) -> Result<RowCheck, (
 // G6 Stage 1.5a: the entity-existence side (`e.id IS NULL`) moved onto the
 // `kind='entity'` shadow page via `entity_page_map` -- safe because the
 // scope clause here filters on the memories-derived alias `m`, never on
-// `entities`/the entity side's space at all.
+// `entities`/the entity side's space at all. An archived entity still exists:
+// archiving and restoring leave `memory_entities` alone, so its links are what
+// a restore brings back, and flagging them would offer to delete them.
 async fn link_integrity(context: &LintContext<'_, '_>) -> Result<RowCheck, ()> {
     let (clause, params) = scope_clause(context.scope().filter(), "m", true);
     row_check(
@@ -169,7 +171,7 @@ async fn link_integrity(context: &LintContext<'_, '_>) -> Result<RowCheck, ()> {
                  ON m.source_id=me.memory_id
                LEFT JOIN (SELECT epm.entity_id FROM entity_page_map epm
                           JOIN pages p ON p.id = epm.page_id
-                          WHERE p.kind = 'entity' AND p.status = 'active') e
+                          WHERE p.kind = 'entity' AND p.status IN ('active', 'archived')) e
                  ON e.entity_id=me.entity_id
                {clause}"
         ),

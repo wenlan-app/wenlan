@@ -1223,3 +1223,14 @@ crates/wenlan-core/src/synthesis/recaps.rs|crate::synthesis::recaps::tests::an_e
 crates/wenlan-core/src/synthesis/recaps.rs|crate::synthesis::recaps::tests::an_earlier_burst_is_recapped_once|TestDbRows::next|1
 crates/wenlan-core/src/synthesis/recaps.rs|crate::synthesis::recaps::tests::an_earlier_burst_is_recapped_once|TestDbSession::query|1
 crates/wenlan-core/src/synthesis/recaps.rs|crate::synthesis::recaps::tests::an_earlier_burst_is_recapped_once|test_primary_session|1
+crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::a_link_to_an_archived_entity_is_intact_and_one_to_a_deleted_entity_is_not|TestDbSession::execute_batch|1
+crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::a_link_to_an_archived_entity_is_intact_and_one_to_a_deleted_entity_is_not|test_primary_session|1
+crates/wenlan-core/src/repair_plan/deterministic_tests.rs|crate::repair_plan::deterministic::tests::a_link_to_an_archived_entity_is_not_deleted|TestDbRow::get|1
+crates/wenlan-core/src/repair_plan/deterministic_tests.rs|crate::repair_plan::deterministic::tests::a_link_to_an_archived_entity_is_not_deleted|TestDbRows::next|1
+crates/wenlan-core/src/repair_plan/deterministic_tests.rs|crate::repair_plan::deterministic::tests::a_link_to_an_archived_entity_is_not_deleted|TestDbSession::execute|1
+crates/wenlan-core/src/repair_plan/deterministic_tests.rs|crate::repair_plan::deterministic::tests::a_link_to_an_archived_entity_is_not_deleted|TestDbSession::execute_batch|1
+crates/wenlan-core/src/repair_plan/deterministic_tests.rs|crate::repair_plan::deterministic::tests::a_link_to_an_archived_entity_is_not_deleted|TestDbSession::query|1
+crates/wenlan-core/src/repair_plan/deterministic_tests.rs|crate::repair_plan::deterministic::tests::a_link_to_an_archived_entity_is_not_deleted|open_isolated_lint_snapshot_for_test|1
+crates/wenlan-core/src/repair_plan/deterministic_tests.rs|crate::repair_plan::deterministic::tests::a_link_to_an_archived_entity_is_not_deleted|test_primary_session|1
+crates/wenlan-core/src/repair_plan/deterministic_tests.rs|crate::repair_plan::deterministic::tests::a_link_to_an_archived_entity_is_not_deleted|test_primary_session|2
+crates/wenlan-core/src/repair_plan/deterministic_tests.rs|crate::repair_plan::deterministic::tests::a_link_to_an_archived_entity_is_not_deleted|test_primary_session|3

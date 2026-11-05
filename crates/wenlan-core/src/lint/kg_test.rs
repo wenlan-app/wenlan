@@ -49,6 +49,33 @@ async fn structural_orphans_and_invalid_rows_are_errors_without_mutation() {
 }
 
 #[tokio::test]
+async fn a_link_to_an_archived_entity_is_intact_and_one_to_a_deleted_entity_is_not() {
+    let (db, _dir) = test_db().await;
+    insert_memory(&db, "memory-ok", None).await;
+    for id in ["entity-archived", "entity-deleted"] {
+        db.test_seed_entity_shadow_page(crate::db::TestEntity::new(id, id, "project"))
+            .await
+            .unwrap();
+    }
+    let conn = db.test_primary_session().await;
+    conn.execute_batch(
+        "INSERT INTO memory_entities (memory_id,entity_id) VALUES
+             ('memory-ok','entity-archived'),('memory-ok','entity-deleted');
+         UPDATE pages SET status='archived' WHERE id=(SELECT page_id FROM entity_page_map WHERE entity_id='entity-archived');
+         UPDATE pages SET status='deleted' WHERE id=(SELECT page_id FROM entity_page_map WHERE entity_id='entity-deleted');",
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    let report = run(&db, None, test_config(true)).await;
+
+    let result = check(&report, LINKS);
+    assert_eq!(result.outcome(), LintOutcome::Finding);
+    assert_eq!(metric(result, LintMetricCode::AffectedRecords), 1);
+}
+
+#[tokio::test]
 async fn imported_document_entity_links_have_a_valid_memory_owner() {
     let (db, _tmp) = test_db().await;
     db.test_primary_session()

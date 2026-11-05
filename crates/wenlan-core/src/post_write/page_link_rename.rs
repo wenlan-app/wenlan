@@ -162,6 +162,7 @@ pub(crate) async fn update_links_to_renamed_page(
             counts.not_updated += 1;
             continue;
         }
+        let citations = carried_citations(&page, &content);
         let written = page_write(
             db,
             PageWrite::Update {
@@ -177,7 +178,7 @@ pub(crate) async fn update_links_to_renamed_page(
                 require_stale: false,
                 expected_source_revision: Some(source_revision),
                 knowledge_path,
-                citations: None,
+                citations,
             },
         )
         .await;
@@ -214,6 +215,28 @@ pub(crate) async fn update_links_to_renamed_page(
         }
     }
     Ok(counts)
+}
+
+/// The page's citation records for a body that differs only in link targets.
+/// Records are kept by marker position, not by text, and the sentences they
+/// support did not change, so clearing them here would lose them for nothing.
+/// `None`, which clears them, when the rewrite moved a marker (a page titled
+/// `1` is linked as `[[1]]`, which reads as a marker) or the page has none.
+fn carried_citations(page: &crate::pages::Page, rewritten: &str) -> Option<(String, String)> {
+    if page.citations.is_empty() {
+        return None;
+    }
+    let markers = |body: &'_ str| -> Vec<String> {
+        crate::citations::marker_spans(body)
+            .into_iter()
+            .map(|(start, end)| body[start..end].to_string())
+            .collect()
+    };
+    if markers(&page.content) != markers(rewritten) {
+        return None;
+    }
+    let json = serde_json::to_string(&page.citations).ok()?;
+    Some((json, "citations kept across a link update".to_string()))
 }
 
 /// The titles a link card from an earlier rename of the page can name.
