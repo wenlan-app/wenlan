@@ -63,6 +63,16 @@ owns that suite` and stops at Clippy. Narrow plans still run their own lib and
 integration tests locally, which is where the fast local signal is worth paying
 for.
 
+**macOS runs in the merge queue, not on PR pushes.** Hosted macOS allows five
+jobs at once, and in the week of 2026-11-02 PR pushes used 159 of 263 macOS
+runner-hours while the merge queue re-ran the same work. Ordinary PR runs now
+skip every macOS job (`detect-changes.outputs.macos-allowed == 'false'`): the
+macOS nextest archive and slices, the macOS `test`, `platform-compile` and
+`native-platform-contracts` legs, `app-check`, and the darwin release preflight.
+The merge-queue run keeps all of them, and its `conclusion` still requires each
+selected one before a PR lands. Release-please and manual runs keep macOS on the
+PR. A macOS-only failure therefore first shows up in the queue.
+
 **Focused Windows unit coverage.** `workspace-lib-required` runs on Linux and
 macOS; the full Windows workspace lib suite remains skipped. The required
 `native-platform-contracts` matrix now executes selected platform behavior on

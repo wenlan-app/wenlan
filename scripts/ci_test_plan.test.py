@@ -464,6 +464,11 @@ class AppFrontendJobTests(unittest.TestCase):
             "needs.detect-changes.outputs.trusted-release-candidate != 'true' && "
             "needs.detect-changes.outputs.app == 'true'"
         )
+        # Ordinary PRs leave the macOS app-check to the merge queue.
+        cls.macos_prefix = "needs.detect-changes.outputs.macos-allowed == 'true' && "
+
+    def guard(self, name):
+        return (self.macos_prefix if name == "app-check" else "") + self.predicate
 
     def job(self, name):
         match = re.search(r"(?ms)^  " + re.escape(name) + r":\n(.*?)(?=^  [a-z][\w-]*:|\Z)", self.workflow)
@@ -474,7 +479,7 @@ class AppFrontendJobTests(unittest.TestCase):
         for name in ("app-check", "app-frontend", "app-e2e"):
             body = self.job(name)
             self.assertRegex(body, r"(?m)^    needs: detect-changes$")
-            self.assertIn("    if: " + self.predicate + "\n", body)
+            self.assertIn("    if: " + self.guard(name) + "\n", body)
         self.assertIn("    runs-on: ubuntu-24.04\n", self.job("app-frontend"))
 
     def test_frontend_keeps_full_suite_dist_guard_and_linux_browser_dependencies(self):
@@ -510,7 +515,7 @@ class AppFrontendJobTests(unittest.TestCase):
         needs = {name.strip() for name in body.split("needs: [", 1)[1].split("]", 1)[0].split(",")}
         for name in ("app-check", "app-frontend", "app-e2e"):
             self.assertIn(name, needs)
-            self.assertIn("expect_job " + name + " '${{ " + self.predicate + " }}' '${{ needs." + name + ".result }}'", body)
+            self.assertIn("expect_job " + name + " '${{ " + self.guard(name) + " }}' '${{ needs." + name + ".result }}'", body)
 
 
 class PackageClosureTests(unittest.TestCase):
