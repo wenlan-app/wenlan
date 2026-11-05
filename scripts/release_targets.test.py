@@ -68,14 +68,15 @@ class ReleaseTargetTests(unittest.TestCase):
             {"include": EXPECTED[:-1]},
         )
 
-    def test_ordinary_pr_preflight_excludes_windows(self) -> None:
+    def test_ordinary_pr_preflight_excludes_windows_and_macos(self) -> None:
+        # macOS is re-proved by the merge queue (see the next test).
         self.assertEqual(
             release_preflight_matrix(
                 event_name="pull_request",
                 ref="refs/pull/431/merge",
                 head_ref="codex/promote-release-artifacts",
             ),
-            {"include": EXPECTED[:-1]},
+            {"include": EXPECTED[1:-1]},
         )
 
     def test_release_sensitive_main_preflight_only_warms_windows(self) -> None:

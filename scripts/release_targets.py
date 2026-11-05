@@ -127,7 +127,12 @@ def release_preflight_matrix(*, event_name: str, ref: str, head_ref: str) -> dic
     if event_name == "pull_request":
         if head_ref.startswith("release-please--branches--"):
             return release_matrix()
-        return release_matrix(exclude_targets=["x86_64-pc-windows-msvc"])
+        # Hosted macOS runs at most five jobs at once, so ordinary PRs leave the
+        # darwin target to the merge queue, which re-proves it on the commit
+        # main will become before anything lands.
+        return release_matrix(
+            exclude_targets=["x86_64-pc-windows-msvc", "aarch64-apple-darwin"]
+        )
     if event_name == "push":
         if ref != "refs/heads/main":
             raise TargetError(f"release preflight does not accept push ref {ref!r}")
