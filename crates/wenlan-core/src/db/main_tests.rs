@@ -59946,6 +59946,31 @@ async fn old_hub_links_are_unfiled_once() {
         0,
         "the cleanup runs once"
     );
+
+    // A hub link some path added back is taken off by the daily pass, which
+    // keeps its own record and leaves the one-time record alone.
+    assert_eq!(db.unfile_hub_links_daily().await.unwrap(), 1);
+    assert_eq!(links("m_specific").await, vec!["specific".to_string()]);
+    assert_eq!(links("m_hub_only").await, vec!["hub".to_string()]);
+    let last: serde_json::Value = serde_json::from_str(
+        &db.get_app_metadata("kg_unfile_hub_links_last")
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        last["removed_links"],
+        serde_json::json!([["m_specific", "hub"]])
+    );
+    assert_eq!(db.unfile_hub_links_daily().await.unwrap(), 0);
+    assert_eq!(
+        db.get_app_metadata("kg_unfile_hub_links_last")
+            .await
+            .unwrap(),
+        Some(last.to_string()),
+        "a run with nothing to do keeps the last run's record"
+    );
 }
 
 /// The hub cleanup moves a memory's main topic to a topic that is still
