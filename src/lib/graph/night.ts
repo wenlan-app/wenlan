@@ -57,6 +57,8 @@ export interface NightSentence extends NightSpot {
    *  written on the side away from it, in a column with the others there. */
   anchor?: string;
   anchorAt?: { x: number; y: number };
+  /** Lands to the right of its topic on screen (from its flight's offset). */
+  landsRight?: boolean;
 }
 
 /**
@@ -155,7 +157,13 @@ export function nightMarks(
           return;
         }
         const anchorAt = anchor ? drawnAt(anchor) : null;
-        awayPoints.push({ ...sentence, away: true, ...(anchor && anchorAt ? { anchor, anchorAt: { x: anchorAt.x, y: anchorAt.y } } : {}) });
+        const dx = (pointAttrs.flyTo as { dx?: number } | undefined)?.dx;
+        awayPoints.push({
+          ...sentence,
+          away: true,
+          ...(anchor && anchorAt ? { anchor, anchorAt: { x: anchorAt.x, y: anchorAt.y } } : {}),
+          ...(typeof dx === "number" && dx !== 0 ? { landsRight: dx > 0 } : {}),
+        });
         return;
       }
       left = Math.min(left, at.x - at.r);
@@ -167,8 +175,11 @@ export function nightMarks(
     if (points.length === 0) {
       // Every point is out by its topic: the frame stays, small, on the
       // thing's centre, so its name still says where the thing is.
-      // So does a picked thing with nothing drawn, so you see what you picked.
-      const centre = awayPoints.length > 0 || thing === picked ? centreAt(thing) : null;
+      // So does a picked thing with nothing drawn, so you see what you picked,
+      // unless it is quiet with its points lit by their topics: that is its
+      // whole picture (no frame for them, Fable's design).
+      const litElsewhere = attrs.quiet === true && ((attrs.elsewhere as string[] | undefined) ?? []).some((id) => graph.hasNode(id));
+      const centre = awayPoints.length > 0 || (thing === picked && !litElsewhere) ? centreAt(thing) : null;
       if (!centre) return;
       left = right = centre.x;
       top = bottom = centre.y;
@@ -191,8 +202,9 @@ export function nightMarks(
       spots: points.map(({ x, y, r }) => ({ x, y, r })),
     };
     if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) {
-      // The camera went to a far topic: a sign leads back to the thing.
-      if (thing === picked) {
+      // The camera went to a far topic: a sign leads back to the thing. A
+      // quiet thing's centre holds nothing to go back to.
+      if (thing === picked && attrs.quiet !== true) {
         edges.push({ kind: "back", thing, goTo: thing, title: frame.title, count: 0, text: "", open: false, toward: { x: (frame.left + frame.right) / 2, y: (frame.top + frame.bottom) / 2 } });
         sentences.push(...awayPoints.filter((point) => point.text && sentencesFor(thing, point.id)));
       }
@@ -374,8 +386,10 @@ export function layoutNightSentences(
   for (const anchor of [...columns.keys()].sort()) {
     const members = columns.get(anchor)!;
     const ids = new Set(members.map((member) => member.id));
-    const meanX = members.reduce((sum, member) => sum + member.x, 0) / members.length;
-    const outward: "left" | "right" = meanX >= members[0]!.anchorAt!.x ? "left" : "right";
+    // The side they land on, not where they are this frame, so the column
+    // stays on one side all through the flight.
+    const landing = members.reduce((sum, member) => sum + (member.landsRight === undefined ? member.x - member.anchorAt!.x : member.landsRight ? 1 : -1), 0);
+    const outward: "left" | "right" = landing >= 0 ? "left" : "right";
     for (const align of [outward, outward === "left" ? "right" as const : "left" as const]) {
       const waiting = members.filter((member) => !inColumn.has(member.id));
       if (waiting.length === 0) break;
@@ -396,6 +410,7 @@ export function layoutNightSentences(
           const inWay = blockers.filter((other) => overlapping(other, reach));
           if (inWay.length === 0) break;
           from = align === "left" ? Math.max(...inWay.map((other) => other.right)) + SENTENCE_GAP : Math.min(...inWay.map((other) => other.left)) - SENTENCE_GAP;
+          if (Math.abs(from - start) > COLUMN_SHIFT_MAX) break;
           spot = besideAt(point, align, from, y, measure, blockers, viewport);
         }
         if (!spot) continue;
@@ -423,6 +438,10 @@ export function layoutNightSentences(
   }
   return placed;
 }
+
+/** How far a flown column may move out past what is in its way, CSS px:
+ *  further, and it no longer reads as beside its points. */
+const COLUMN_SHIFT_MAX = 72;
 
 /** A sentence written from `start` (its anchor, per `align`), its first line
  *  centred on `y`, at the widest of SENTENCE_WIDTHS that covers nothing in

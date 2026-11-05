@@ -498,6 +498,18 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
     const [spot] = layoutNightSentences([flown("a", 216, 200)], measure, [name], { width: 800 }, [{ left: 190, right: 210, top: 190, bottom: 210 }]);
     expect(spot!.align).toBe("left");
     expect(spot!.box.left).toBeGreaterThanOrEqual(280);
+    // Never further out than reads as beside its point.
+    const wide = { left: 220, right: 600, top: 192, bottom: 208 };
+    const far = layoutNightSentences([flown("a", 216, 200)], measure, [wide], { width: 800 }, [{ left: 190, right: 210, top: 190, bottom: 210 }]);
+    expect(far.every((placed) => placed.box.left < 400)).toBe(true);
+  });
+
+  it("keeps a flying column on the side its points land on, wherever they are on the way", () => {
+    const flying = (x: number) => ({ ...sentence("a", x, 200, "Sentence a"), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 }, landsRight: true });
+    for (const x of [120, 180, 216]) {
+      const [spot] = layoutNightSentences([flying(x)], measure, [], { width: 800 });
+      expect(spot!.align).toBe("left");
+    }
   });
 
   it("writes the sentences of points flown out round one topic as a column on the side away from it, none left out", () => {
@@ -785,6 +797,12 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     const bare = nightMarks(map, () => null, hover, viewport, undefined, "thing:t1", undefined, false, () => ({ x: 50, y: 60 }));
     expect(bare.frames).toEqual([expect.objectContaining({ thing: "thing:t1", title: "Site redesign" })]);
     expect(nightMarks(map, () => null, hover, viewport, undefined, null, undefined, true, () => ({ x: 50, y: 60 })).frames).toEqual([]);
+    // A quiet thing lit by its topics has no frame, and its centre, holding
+    // nothing, gets no sign back.
+    map.mergeNodeAttributes("thing:t1", { quiet: true, elsewhere: ["mem:n2"] });
+    const quiet = nightMarks(map, (id) => (id === "mem:n2" ? { x: 300, y: 300, r: 3 } : null), hover, viewport, undefined, "thing:t1", undefined, false, () => ({ x: -900, y: 60 }));
+    expect(quiet.frames).toEqual([]);
+    expect(quiet.edges).toEqual([]);
   });
 
   it("puts an edge sign on the edge facing what it points at, its arrow the true way, and slides signs apart", () => {
