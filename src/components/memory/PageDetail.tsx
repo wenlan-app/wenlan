@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
+import { SourceDocumentReader } from "./sources/SourceDocumentReader";
 import { RestorePageDialog } from "./pages/RestorePageDialog";
 import { archiveWikiPage, canArchivePage } from "./pages/archiveWikiPage";
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
@@ -322,7 +323,13 @@ export default function PageDetail({
   const [renameNeedsReview, setRenameNeedsReview] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [sourcePreview, setSourcePreview] = useState<IndexedFileInfo | null>(null);
-  useEffect(() => setSourcePreview(null), [pageId]);
+  const [pdfPreview, setPdfPreview] = useState<IndexedFileInfo | null>(null);
+  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
+  useEffect(() => {
+    setSourcePreview(null);
+    setPdfPreview(null);
+    setPdfPreviewOpen(false);
+  }, [pageId]);
   const [canvasWorkspaceExpanded, setCanvasWorkspaceExpanded] = useState(false);
   const [canvasWorkspaceHost, setCanvasWorkspaceHost] = useState<HTMLDivElement | null>(null);
   const [canvasWorkspaceSupported, setCanvasWorkspaceSupported] = useState(false);
@@ -630,18 +637,28 @@ export default function PageDetail({
   // Imported source memories can be read alongside this note. Ordinary
   // memories retain their existing detail navigation and editing behavior.
   const openSourceMemory = (sourceId: string) => {
+    if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
     const memory = pageSources?.find((row) => row.source.memory_source_id === sourceId)?.memory;
     if (memory && ["folder", "obsidian", "logseq", "zotero"].includes(memory.source_agent ?? "")) {
       if (showCanvas) void requestToggleCanvas();
       changeCanvasWorkspaceExpanded(false);
-      setSourcePreview({
+      const file: IndexedFileInfo = {
         source: memory.source_agent === "zotero" ? "file" : "memory",
         source_agent: memory.source_agent,
         source_id: memory.source_id,
         title: memory.title,
         chunk_count: memory.chunk_count,
         last_modified: memory.last_modified,
-      });
+      };
+      if (memory.source_agent === "zotero") {
+        setSourcePreview(null);
+        setInfoOpen(false);
+        setPdfPreview(file);
+        setPdfPreviewOpen(true);
+      } else {
+        setPdfPreviewOpen(false);
+        setSourcePreview(file);
+      }
     } else {
       onMemoryClick(sourceId);
     }
@@ -684,6 +701,7 @@ export default function PageDetail({
       if (!file) return;
       if (showCanvas) void requestToggleCanvas();
       changeCanvasWorkspaceExpanded(false);
+      setPdfPreviewOpen(false);
       setSourcePreview(file);
     },
     menu: {
@@ -1581,6 +1599,7 @@ export default function PageDetail({
     }
     if (!editing) {
       canvasReturnToEditorRef.current = false;
+      setPdfPreviewOpen(false);
       setInfoOpen(false);
       setCanvasOpen(true);
       return;
@@ -1601,6 +1620,7 @@ export default function PageDetail({
       if (!await flushEditor() || !isCurrentAttempt()) return;
       closeEditor();
       canvasReturnToEditorRef.current = true;
+      setPdfPreviewOpen(false);
       setInfoOpen(false);
       setCanvasOpen(true);
     } finally {
@@ -1613,6 +1633,7 @@ export default function PageDetail({
 
   const requestPageInfo = async () => {
     if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
+    setPdfPreviewOpen(false);
     // Keep the same pane mounted while the map yields back to document editing.
     setInfoOpen(true);
     if (showCanvas) {
@@ -1622,8 +1643,13 @@ export default function PageDetail({
   };
 
   const selectInspectorTab = (tab: NoteInspectorTab) => {
+    if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
     if (tab === "canvas") {
       if (!showCanvas) void requestToggleCanvas();
+    } else if (tab === "pdf" && pdfPreview) {
+      if (showCanvas) void requestToggleCanvas();
+      setInfoOpen(false);
+      setPdfPreviewOpen(true);
     } else {
       void requestPageInfo();
     }
@@ -1635,6 +1661,7 @@ export default function PageDetail({
       return;
     }
     const returningToEditor = showCanvas && canvasReturnToEditorRef.current;
+    setPdfPreviewOpen(false);
     changeCanvasWorkspaceExpanded(false);
     if (showCanvas) void requestToggleCanvas();
     else setInfoOpen(false);
@@ -2424,14 +2451,16 @@ export default function PageDetail({
   const hideOuterTitleWhileEditing =
     editing && editGate.kind === "editor" && editHasMatchingTitle;
 
+  const inspectorTab: NoteInspectorTab = pdfPreviewOpen ? "pdf" : showCanvas ? "canvas" : "info";
+  const inspectorOpen = infoOpen || showCanvas || pdfPreviewOpen;
   const inspectorToggle = <button ref={inspectorToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-inspector-toggle"
-    aria-label={t(infoOpen || showCanvas || sourcePreview ? "pageInspector.close" : "pageInspector.open")}
-    title={t(infoOpen || showCanvas || sourcePreview ? "pageInspector.close" : "pageInspector.open")}
-    aria-expanded={infoOpen || showCanvas || !!sourcePreview} disabled={canvasSwitchPending}
+    aria-label={t(inspectorOpen || sourcePreview ? "pageInspector.close" : "pageInspector.open")}
+    title={t(inspectorOpen || sourcePreview ? "pageInspector.close" : "pageInspector.open")}
+    aria-expanded={inspectorOpen || !!sourcePreview} disabled={canvasSwitchPending}
     onClick={(event) => {
       // WebKit pointer clicks do not focus buttons; give the pane a stable return target.
       event.currentTarget.focus({ preventScroll: true });
-      if (infoOpen || showCanvas || sourcePreview) closeInspector(); else void requestPageInfo();
+      if (inspectorOpen || sourcePreview) closeInspector(); else void requestPageInfo();
     }}>
     <SidebarSimple aria-hidden="true" size={18} style={{transform:"scaleX(-1)"}} />
   </button>;
@@ -2593,7 +2622,7 @@ export default function PageDetail({
 
 
   return (
-    <div className={`page-detail document-context-host${infoOpen || showCanvas ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && (infoOpen || showCanvas) ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
+    <div className={`page-detail document-context-host${inspectorOpen ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && inspectorOpen ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
       {documentToolsHost && createPortal(<>{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
       {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
@@ -3155,24 +3184,29 @@ export default function PageDetail({
 
       <PageInfoDrawer
         docked inspector
+        defaultWidth={pdfPreviewOpen ? 560 : undefined}
         variant={showCanvas ? "canvas" : "info"}
         expanded={canvasWorkspaceExpanded}
         expandedHost={canvasWorkspaceHost}
         onExpandedChange={canvasWorkspaceSupported ? changeCanvasWorkspaceExpanded : undefined}
         expandLabel={t("pageCanvas.expandWorkspace")}
         restoreLabel={t("pageCanvas.restoreSidebar")}
-        open={!sourcePreview && (infoOpen || showCanvas)}
+        open={!sourcePreview && inspectorOpen}
         onClose={closeInspector}
         title={t("pageInspector.label")}
         closeLabel={t("common.close")}
         headerContent={<>
-          <NoteInspectorTabs idPrefix={inspectorId} active={showCanvas ? "canvas" : "info"}
+          <NoteInspectorTabs idPrefix={inspectorId} active={inspectorTab} includePdf={!!pdfPreview}
             onSelect={selectInspectorTab} disabled={canvasSwitchPending} />
         </>}
       >
-        <div id={`${inspectorId}-panel`} role="tabpanel" aria-labelledby={`${inspectorId}-${showCanvas ? "canvas" : "info"}`}
+        <div id={`${inspectorId}-panel`} role="tabpanel" aria-labelledby={`${inspectorId}-${inspectorTab}`}
           className={`note-inspector-panel${showCanvas ? " note-inspector-panel--canvas" : ""}`}>
-          {showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
+          {pdfPreview && <div className="source-document-preview note-inspector-pdf" hidden={!pdfPreviewOpen}>
+            <h3 className="note-info-section-heading">{pdfPreview.title}</h3>
+            <SourceDocumentReader key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} />
+          </div>}
+          {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
             onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} />
             : <DetailInfoContent className="note-inspector-info">
           <InfoAction
@@ -3319,7 +3353,7 @@ export default function PageDetail({
               onOpenPage={onPageClick}
             />
           </div>
-            </DetailInfoContent>}
+            </DetailInfoContent>)}
         </div>
       </PageInfoDrawer>
       {sourcePreview && <SourceDocumentPreview

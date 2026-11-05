@@ -6,6 +6,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "./PageDetail";
 import { i18n } from "../../i18n";
 
+vi.mock("./sources/SourceDocumentReader", () => ({
+  SourceDocumentReader: ({ file, space }: { file: { source_id: string }; space?: string }) => (
+    <section aria-label="PDF reader" data-source={file.source_id} data-space={space} />
+  ),
+}));
+
 // Same reasoning as PageCanvas.test.tsx: React Flow needs real dimensions.
 // These tests only care that the canvas tab mounts, so the node state hook is
 // stubbed down to plain useState — selection and dragging are exercised in
@@ -134,6 +140,46 @@ async function selectInspectorTab(user: ReturnType<typeof userEvent.setup>, name
 }
 
 describe("PageDetail page inspector", () => {
+  it("opens Zotero in the existing inspector and switches PDF, Mind map and Info without stacking panes", async () => {
+    const { getPageSources } = await import("../../lib/tauri");
+    const sources = await getPageSources("concept_abc");
+    vi.mocked(getPageSources).mockResolvedValueOnce(sources.map(row => ({
+      ...row, memory: row.memory ? { ...row.memory, source_agent: "zotero" } : row.memory,
+    })));
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    try {
+      const { user } = renderDetail();
+      await screen.findByText("libSQL Architecture");
+      const panel = await openInspector(user);
+      expect(screen.queryByRole("tab", { name: "PDF" })).toBeNull();
+      await user.click(within(panel).getByRole("button", { name: /libSQL stores vectors/ }));
+      expect(await screen.findByRole("tab", { name: "PDF" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getAllByRole("complementary")).toHaveLength(1);
+      expect(screen.getByRole("complementary", { name: i18n.t("pageInspector.label") })).toBe(panel);
+      const reader = within(panel).getByRole("region", { name: "PDF reader" });
+      expect(reader).toHaveAttribute("data-source", "mem_1");
+      expect(screen.getByText("More prose here.")).toBeTruthy();
+
+      await user.click(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") }));
+      expect(await screen.findByRole("region", { name: "Canvas for libSQL Architecture" })).toBeTruthy();
+      expect(screen.queryByRole("region", { name: "PDF reader" })).toBeNull();
+      await user.click(screen.getByRole("tab", { name: "PDF" }));
+      expect(screen.getByRole("region", { name: "PDF reader" })).toBe(reader);
+      expect(screen.getByRole("region", { name: "PDF reader" })).toHaveAttribute("data-source", "mem_1");
+      expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", expect.stringContaining("-pdf"));
+      await user.click(screen.getByRole("tab", { name: i18n.t("pageInspector.info") }));
+      expect(screen.queryByRole("region", { name: "PDF reader" })).toBeNull();
+      await user.click(screen.getByRole("tab", { name: "PDF" }));
+      await user.click(panel.querySelector<HTMLButtonElement>(".page-info-drawer-close")!);
+      expect(screen.queryByRole("region", { name: "PDF reader" })).toBeNull();
+      expect(screen.getByRole("button", { name: i18n.t("pageInspector.open") })).toHaveFocus();
+      await openInspector(user);
+      await user.click(screen.getByRole("tab", { name: "PDF" }));
+      expect(screen.getByRole("region", { name: "PDF reader" })).toBeTruthy();
+    } finally { window.matchMedia = original; }
+  });
+
   it("opens the dedicated page sidebar with Info selected and no inspector actions in the overflow menu", async () => {
     const { user, container } = renderDetail();
     await screen.findByText("libSQL Architecture");

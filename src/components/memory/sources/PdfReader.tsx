@@ -85,7 +85,9 @@ export default function PdfReader({ data, documentId, page }: {
       viewer.setDocument(doc); links.setDocument(doc);
     }).catch(() => { if (!disposed) setFailed(true); });
     const resize = new ResizeObserver(() => {
-      if (!disposed && viewer.pagesCount && viewer.currentScaleValue === "page-width") viewer.currentScaleValue = "page-width";
+      // The shared inspector keeps this reader alive behind its other tabs.
+      // Wait for a visible width before recomputing a fit-to-width scale.
+      if (!disposed && container.current?.clientWidth && viewer.pagesCount && viewer.currentScaleValue === "page-width") viewer.currentScaleValue = "page-width";
     });
     resize.observe(container.current);
     return () => {

@@ -12,11 +12,27 @@ vi.mock("react-i18next", () => ({
       "pageInspector.info": "Info",
       "knowledgeContext.localGraph": "Connections",
       "pageCanvas.tabCanvas": "Mind map",
+      "pdfReader.tab": "PDF",
     }[key] ?? key),
   }),
 }));
 
 describe("NoteInspectorTabs", () => {
+  it("adds an optional PDF tab after Mind map with the same keyboard navigation", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<NoteInspectorTabs active="pdf" includePdf idPrefix="pdf-view" onSelect={onSelect} />);
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map(tab => tab.textContent)).toEqual(["Info", "Mind map", "PDF"]);
+    const pdf = screen.getByRole("tab", { name: "PDF" });
+    expect(pdf).toHaveAttribute("aria-selected", "true");
+    pdf.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(tabs[0]).toHaveFocus();
+    await user.keyboard("{ArrowLeft}{Enter}");
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith("pdf");
+  });
+
   it("exposes a labelled tablist with linked tabs and focus-only arrow navigation", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();

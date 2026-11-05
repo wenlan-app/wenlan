@@ -8,8 +8,11 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
 
 1. In Settings → Sources, or a Space → Sources, choose a local Zotero collection
    and a destination Space. Import is manual. Zotero must enable its local API.
-2. Read the imported papers in the existing source list. Open a PDF alongside
-   the page, or use the existing full-source view. Search, select text, navigate
+2. Read the imported papers in the existing source list. A Zotero citation opens
+   PDF after Info and Mind map in the page's existing right inspector. The PDF
+   tab appears after opening a paper; switching tabs keeps the reader, selected
+   attachment, page and search alive. Reuse the inspector's resize, expand and
+   close controls, or use the existing full-source view. Search, select text, navigate
    pages and zoom using bundled PDF.js. Saved PDFs remain readable offline.
 3. Select sources to prepare a summary and classification suggestions in an
    external AI tool. Default instructions are included; custom instructions are
