@@ -133,7 +133,18 @@ export async function invoke(
   // fixtures, no daemon (UX-CHAT-5). See THING_MAP_GRAPH.
   if (new URLSearchParams(window.location.search).get("things") === "1") {
     if (cmd === "get_knowledge_graph_cmd") return THING_MAP_GRAPH;
-    if (cmd === "list_thing_night_points") return THING_MAP_POINTS;
+    if (cmd === "list_thing_night_points") {
+      // `&quiet=1`: the same things after they have gone quiet, the first with
+      // only its points that sit by a topic.
+      const quiet = new URLSearchParams(window.location.search).get("quiet") === "1";
+      if (!quiet) return THING_MAP_POINTS;
+      const linked = new Set(THING_MAP_GRAPH.memory_links.map((link) => link.memory_id));
+      return THING_MAP_POINTS.map((thing, i) => ({
+        ...thing,
+        quiet: true,
+        points: i === 0 ? thing.points.filter((point) => linked.has(point.memory_id)) : thing.points,
+      }));
+    }
     // No regions yet: an honest empty read, not an error.
     if (cmd === "list_communities") return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, scope: { kind: "space", name: args?.space ?? null }, communities: [], next_cursor: null };
     if (cmd === "list_community_members") return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, scope: { kind: "space", name: args?.space ?? null }, members: [], next_cursor: null };

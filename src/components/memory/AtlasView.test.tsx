@@ -912,6 +912,40 @@ describe("AtlasView", () => {
     expect(settings.nodeReducer!(point, graph.getNodeAttributes(point)).hidden).toBe(true);
   });
 
+  it("keeps a quiet thing's points with no topic off the open map and out of Working on, and shows them when it is picked (UX-CHAT-5)", async () => {
+    mockConnectedPair();
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      quiet: true,
+      points: [{ memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 }],
+    }]);
+    const { unmount } = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const { settings, graph } = capturedSigmaInstances[0];
+    const point = graph.nodes().find((id: string) => graph.getNodeAttribute(id, "night") === true);
+    expect(point).toBeDefined();
+    expect(settings.nodeReducer!(point, graph.getNodeAttributes(point)).hidden).toBe(true);
+    // Only a quiet thing on the map: no switch to offer, and a stored choice
+    // to show active things does not show it.
+    fireEvent.click(screen.getByRole("button", { name: "Display" }));
+    expect(screen.queryByRole("button", { name: "Working on" })).toBeNull();
+    unmount();
+    window.localStorage.setItem(WORKING_STORAGE_KEY, "true");
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    const working = capturedSigmaInstances[1];
+    expect(working.settings.nodeReducer!(point, working.graph.getNodeAttributes(point)).hidden).toBe(true);
+    window.localStorage.removeItem(WORKING_STORAGE_KEY);
+    cleanup();
+    renderWithQuery(<AtlasView focusThingId="t1" />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    await screen.findByRole("group", { name: "Zoom to" });
+    const arrived = capturedSigmaInstances[2];
+    expect(arrived.settings.nodeReducer!(point, arrived.graph.getNodeAttributes(point)).hidden).not.toBe(true);
+  });
+
   it("gives a picked thing's points no forced labels at 全部 (UX-CHAT-5)", async () => {
     mockConnectedPair();
     mockMemories([], [{ memory_id: "n2", entity_id: "e1" }]);

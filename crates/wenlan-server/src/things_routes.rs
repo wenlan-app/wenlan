@@ -31,6 +31,14 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/things", get(handle_list_things))
         .route("/api/things/points", get(handle_thing_night_points))
         .route(
+            "/api/things/points/connect",
+            post(handle_connect_night_points),
+        )
+        .route(
+            "/api/things/points/connect/undo",
+            post(handle_undo_connect_night_points),
+        )
+        .route(
             "/api/things/{id}",
             get(handle_get_thing).patch(handle_rename_thing),
         )
@@ -106,6 +114,39 @@ pub async fn handle_thing_night_points(
     Ok(Json(ThingNightPointsResponse {
         things: db.thing_night_points(&scope).await?,
     }))
+}
+
+/// POST /api/things/points/connect
+///
+/// The person connects the night points kept before nights named their topics
+/// (UX-CHAT-5). Once only, and nothing runs it for them: a model reads each
+/// thing's points.
+pub async fn handle_connect_night_points(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<wenlan_types::NightLinksBackfill>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    let models = crate::things_intake::models(&state)
+        .await
+        .ok_or_else(|| ServerError::ValidationError("no model to read the points with".into()))?;
+    let report = crate::things_intake::connect_old_night_points(&db, models.group.as_ref())
+        .await
+        .map_err(ServerError::ValidationError)?;
+    Ok(Json(report))
+}
+
+/// POST /api/things/points/connect/undo
+///
+/// The person takes back what connecting the old points linked (UX-CHAT-5).
+pub async fn handle_undo_connect_night_points(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<wenlan_types::NightLinksBackfillUndo>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    let removed = db.undo_night_links_backfill().await?;
+    Ok(Json(wenlan_types::NightLinksBackfillUndo { removed }))
 }
 
 /// GET /api/things/{id}

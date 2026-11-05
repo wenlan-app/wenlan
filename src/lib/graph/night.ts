@@ -91,7 +91,7 @@ export function nightMarks(
   const lit = (id: string) => hover.hovered === null || hover.hovered === id || hover.neighbors.has(id);
   graph.forEachNode((thing, attrs) => {
     if (attrs.entityType !== THING_NODE_TYPE) return;
-    if (!showAll && thing !== picked) return;
+    if (thing !== picked && (!showAll || attrs.quiet === true)) return;
     let left = Infinity;
     let top = Infinity;
     let right = -Infinity;
@@ -535,7 +535,9 @@ export const THING_STOPS: readonly ThingStop[] = ["this", "nearby", "all"];
 /** A thing's points on the map, in id order. */
 export function thingPointIds(graph: Graph, thing: string): string[] {
   if (!graph.hasNode(thing)) return [];
-  return graph.filterNeighbors(thing, (_id, attrs) => attrs.night === true && (attrs.dustOf === undefined || attrs.dustOf === thing)).sort();
+  const under = graph.filterNeighbors(thing, (_id, attrs) => attrs.night === true && (attrs.dustOf === undefined || attrs.dustOf === thing));
+  const elsewhere = (graph.getNodeAttribute(thing, "elsewhere") as string[] | undefined) ?? [];
+  return [...under, ...elsewhere.filter((id) => graph.hasNode(id))].sort();
 }
 
 /** What a thing's points link to on the map: pages and entities. */

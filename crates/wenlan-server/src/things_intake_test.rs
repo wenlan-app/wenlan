@@ -445,3 +445,162 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
     let back = map.nodes.iter().find(|n| n.id == pricing_node.id).unwrap();
     assert_eq!(back, &pricing_node);
 }
+
+/// A thing with one conversation read for nothing yet, in the wenlan Space.
+async fn thing_for_links(
+    db: &MemoryDB,
+    said: &[&str],
+) -> (String, HashMap<String, FoundConversation>) {
+    db.create_space("wenlan", None, false).await.unwrap();
+    let found = vec![conv("a", said, 90)];
+    let label = Scripted::new(&[
+        r#"{"work": true, "title": "Site redesign", "space": "wenlan", "about": "a", "status": "Going"}"#,
+    ]);
+    let group = Scripted::new(&[
+        r#"{"new": [{"title": "Site redesign", "conversations": ["C0"], "now": "Going"}]}"#,
+    ]);
+    let models = IntakeModels { label, group };
+    look_with(
+        db,
+        found.clone(),
+        &models,
+        "English",
+        &mut Backoff::default(),
+    )
+    .await
+    .unwrap();
+    let thing = db.list_things(&ReadScope::Global, None).await.unwrap()[0]
+        .id
+        .clone();
+    let by_session = found
+        .into_iter()
+        .map(|c| (found_session_id(&c).unwrap(), c))
+        .collect();
+    (thing, by_session)
+}
+
+async fn unlinked(db: &MemoryDB, thing: &str) -> Vec<String> {
+    db.unlinked_night_points(thing)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.id)
+        .collect()
+}
+
+/// UX-CHAT-5: the same one call that writes a night's points names each one's
+/// topic. It connects there and then; a point with no topic stays under its
+/// thing, and an id that names nothing never loses the point. Taking the night
+/// back removes the links.
+#[tokio::test]
+async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (thing, found) = thing_for_links(
+        &db,
+        &["keep the GitHub repository private", "which plan first?"],
+    )
+    .await;
+    db.store_entity("GitHub", "tool", Some("wenlan"), None, Some(1.0))
+        .await
+        .unwrap();
+    let group = Scripted::new(&[r#"{"points": [
+        {"text": "The repository stays private.", "settled": true, "from": "C0", "topic": "T0"},
+        {"text": "Which plan comes first is open.", "settled": false, "from": "C0", "topic": null},
+        {"text": "Named a topic that is not there.", "settled": true, "from": "C0", "topic": "T9"}
+    ]}"#]);
+    let keep = Keep(&db, Default::default());
+    let due = db
+        .things_to_dream(chrono::Utc::now().timestamp(), 10)
+        .await
+        .unwrap();
+    let done = dream_with(&db, &due, &found, group.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+    assert_eq!(done, (1, 3));
+    assert_eq!(group.prompts.lock().unwrap().len(), 1, "one call");
+    let asked = group.prompts.lock().unwrap()[0].clone();
+    assert!(asked.contains("T0: GitHub"), "{asked}");
+
+    assert_eq!(db.dream_points(&thing).await.unwrap().len(), 3);
+    assert_eq!(unlinked(&db, &thing).await, ["mem_2", "mem_1"]);
+
+    // Taking the night back removes the link, before anything is forgotten.
+    let forget = db.undo_thing_dream(&thing).await.unwrap();
+    assert_eq!(forget.len(), 3);
+    db.record_dream(
+        &thing,
+        &["mem_0".into()],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+    )
+    .await
+    .unwrap();
+    assert_eq!(unlinked(&db, &thing).await, ["mem_0"]);
+}
+
+/// UX-CHAT-5: old points are connected through the same path, once. A model
+/// failure leaves it able to run again; a connected point is not asked about
+/// twice, and undo takes it all back.
+#[tokio::test]
+async fn ux_chat_5_old_points_are_connected_once_and_can_be_taken_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (thing, found) = thing_for_links(&db, &["x", "y"]).await;
+    // A night with no topic to offer.
+    let night = Scripted::new(&[r#"{"points": [
+        {"text": "Keep the GitHub repository private.", "settled": true, "from": "C0"},
+        {"text": "Which plan comes first?", "settled": false, "from": "C0"}
+    ]}"#]);
+    let keep = Keep(&db, Default::default());
+    let due = db
+        .things_to_dream(chrono::Utc::now().timestamp(), 10)
+        .await
+        .unwrap();
+    dream_with(&db, &due, &found, night.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+    assert!(!night.prompts.lock().unwrap()[0].contains("big map"));
+    db.store_entity("GitHub", "tool", Some("wenlan"), None, Some(1.0))
+        .await
+        .unwrap();
+
+    // The model fails: nothing is linked and it can run again.
+    let failing = Scripted::new(&["not json"]);
+    let report = connect_old_night_points(&db, failing.as_ref())
+        .await
+        .unwrap();
+    assert_eq!((report.points, report.linked, report.failed), (2, 0, 1));
+    assert!(db.night_links_backfilled().await.unwrap().is_none());
+
+    let model = Scripted::new(&[r#"{"points": [
+        {"point": "P0", "topic": "T0"},
+        {"point": "P1", "topic": null}
+    ]}"#]);
+    let report = connect_old_night_points(&db, model.as_ref()).await.unwrap();
+    assert_eq!(
+        (report.things, report.points, report.linked, report.failed),
+        (1, 2, 1, 0)
+    );
+    assert_eq!(unlinked(&db, &thing).await, ["mem_1"]);
+    assert!(model.prompts.lock().unwrap()[0].contains("T0: GitHub"));
+
+    // Once only: asks nobody.
+    let again = Scripted::new(&[]);
+    let report = connect_old_night_points(&db, again.as_ref()).await.unwrap();
+    assert!(report.already_done);
+    assert_eq!(again.prompts.lock().unwrap().len(), 0);
+
+    // The thing's last night is still the night.
+    let dream = db.thing_dream(&thing).await.unwrap().unwrap();
+    assert_eq!((dream.decided, dream.open), (1, 1));
+
+    assert_eq!(db.undo_night_links_backfill().await.unwrap(), 1);
+    assert_eq!(unlinked(&db, &thing).await, ["mem_0", "mem_1"]);
+}

@@ -8,6 +8,7 @@ import {
   edgeDisplay,
   lodFor,
   nodeDisplay,
+  OPENING_LOD,
   nodeSizeCapPx,
   runAtlasLayout,
   satelliteAnchor,
@@ -33,6 +34,7 @@ import {
   STEEPING_SECS,
   SENTENCE_MAX_PX,
   thingFocusState,
+  thingPointIds,
   thingStopNodeIds,
   thingStopsFor,
   uncrowdedSentences,
@@ -349,9 +351,42 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t2").frames).toEqual([]);
     // The "Working on" switch draws every active thing, picked or not.
     expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, null, undefined, true).frames.map((f) => f.thing)).toEqual(["thing:t1"]);
+    // A quiet thing's points with no topic are framed under it when it is
+    // picked; "Working on" is for active things.
+    const quietMap = mapWith([{ ...loose, quiet: true }]);
+    annotateDust(quietMap, satellitePlan(quietMap));
+    const quietAt = (id: string) => (id.startsWith("mem:q") ? { x: 40, y: 50, r: 3 } : null);
+    expect(nightMarks(quietMap, quietAt, { hovered: null, neighbors: new Set() }, viewport).frames).toEqual([]);
+    expect(nightMarks(quietMap, quietAt, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t2").frames.map((f) => f.thing)).toEqual(["thing:t2"]);
+    expect(nightMarks(quietMap, quietAt, { hovered: null, neighbors: new Set() }, viewport, undefined, null, undefined, true).frames).toEqual([]);
     // Nothing drawn, or all off screen: no frame.
     expect(nightMarks(map, () => null, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1").frames).toEqual([]);
     expect(nightMarks(map, () => ({ x: 900, y: 50, r: 3 }), { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1").frames).toEqual([]);
+  });
+
+  it("lights a picked quiet thing's points where they sit, beside their topics, and draws no frame for them", () => {
+    const quiet = things()
+      .map((thing) => ({ ...thing, quiet: true, points: thing.points.filter((point) => point.memory_id === "n2") }))
+      .filter((thing) => thing.points.length > 0);
+    const map = mapWith(quiet);
+    const plan = satellitePlan(map);
+    annotateDust(map, plan);
+    // It rides its topic, not the thing, so picking it moves nothing.
+    const anchor = plan.find((s) => s.id === "mem:n2")!.anchor;
+    expect(anchor).not.toBe("thing:t1");
+    expect(thingPointIds(map, "thing:t1")).toEqual(["mem:n2"]);
+    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["mem:n2"]);
+    expect(thingStopsFor(map, "thing:t1")).toContain("nearby");
+    const lit = thingFocusState(map, "thing:t1", "this");
+    expect(lit.neighbors).toContain("mem:n2");
+    expect(lit.neighbors).toContain(anchor);
+    // Folded away as dust at this zoom, but not while its thing is picked.
+    const attrs = { ...map.getNodeAttributes("mem:n2"), dustRank: 99, dustOf: anchor };
+    const lod = { ...OPENING_LOD, dustVisible: 0 };
+    expect(nodeDisplay({ hovered: null, neighbors: new Set() }, "mem:n2", attrs, PALETTE, lod).hidden).toBe(true);
+    expect(nodeDisplay(lit, "mem:n2", attrs, PALETTE, lod).hidden).not.toBe(true);
+    const at = () => ({ x: 40, y: 50, r: 3 });
+    expect(nightMarks(map, at, lit, { width: 400, height: 300 }, undefined, "thing:t1").frames).toEqual([]);
   });
 
   it("ends a thing's name cut short when it was stored at the length cap, at a word, with an ellipsis", () => {

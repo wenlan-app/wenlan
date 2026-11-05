@@ -453,6 +453,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const tuckedRef = useRef(tucked);
   tuckedRef.current = tucked;
   const hasThings = visibleModel.nodes.some((node) => node.kind === "thing");
+  const hasActiveThings = visibleModel.nodes.some((node) => node.kind === "thing" && !node.quiet);
   const hasThingsRef = useRef(hasThings);
   hasThingsRef.current = hasThings;
 
@@ -875,8 +876,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       const positions = new Map(graph.nodes()
         .filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE)
         .map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }]));
-      // A thing gone quiet has no frame on this map, but keeps its spot, so
-      // its frame comes back where it was when the thing is active again.
+      // A thing no longer on this map keeps its spot, so its frame comes back
+      // where it was if it returns.
       for (const [id, position] of kept) {
         if (thingIdOf(id) !== null && !positions.has(id)) positions.set(id, position);
       }
@@ -1043,10 +1044,14 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       point === pointerNode || point === pinnedPointRef.current || (selectedRef.current === thing && thingStopRef.current === "this");
     const drawLabel = (ctx: CanvasRenderingContext2D, data: Record<string, any>, s: Record<string, any>) => {
       const nodeAttrs = graph.hasNode(data.key) ? graph.getNodeAttributes(data.key) : null;
-      if (nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string") {
+      const nightPoint = nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string";
+      // A picked quiet thing's point beside its topic: a short title too, not
+      // its whole sentence.
+      const litPoint = nodeAttrs?.entityType === MEMORY_NODE_TYPE && hoverStateRef.current.thing !== undefined && hoverStateRef.current.neighbors.has(data.key);
+      if (nightPoint || litPoint) {
         // Its sentence is painted by the overlay, wrapped beside its point;
         // zoomed out, a point carries no words at all.
-        if (sentencesFor(nodeAttrs.dustOf, data.key)) return;
+        if (nightPoint && sentencesFor(nodeAttrs.dustOf, data.key)) return;
         if (lodRef.current.phase === "overview") return;
         ctx.font = NODE_LABEL_FONT;
         const title = truncateOverviewLabel(ctx, String(data.label ?? ""), POINT_TITLE_PX);
@@ -1152,8 +1157,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         // A thing's night points show only while that thing is picked (from
         // its page, search, or a stop): the open map stays clear of them
         // (UX-CHAT-5; Fable's design: the thing is a camera, not a mark).
-        // The "Working on" switch shows every active thing's points at once.
-        if (attrs.night === true && typeof attrs.dustOf === "string" && !showWorkingRef.current && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
+        // The "Working on" switch shows every active thing's points at once;
+        // a quiet thing's show only while it is picked.
+        if (attrs.night === true && typeof attrs.dustOf === "string" && (!showWorkingRef.current || attrs.quiet === true) && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
         // A small group stays out of sight until the islands come up solid,
         // unless it is what the reader is looking at.
         const hover = hoverStateRef.current;
@@ -1928,7 +1934,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
               <span>{t("atlas.regionsToggle")}</span>
             </button>
             </AtlasTooltip>
-            {hasThings && (
+            {hasActiveThings && (
               <AtlasTooltip content={t("atlas.workingDescription")}>
               <button
                 type="button"

@@ -124,6 +124,8 @@ export function buildAtlasGraph(model: GraphModel, palette: GraphPalette): Graph
       // A night's point keeps its moon and its age: satellitePlan puts a
       // thing's points in the order they were written.
       ...(node.night ? { night: true, createdAt: node.createdAt, open: node.open === true } : {}),
+      ...(node.quiet ? { quiet: true } : {}),
+      ...(node.elsewhere ? { elsewhere: node.elsewhere } : {}),
       x: i === undefined && !thing ? 0 : Math.cos(angle),
       y: i === undefined && !thing ? 0 : Math.sin(angle),
     });
@@ -2341,7 +2343,9 @@ export function nodeDisplay(
   // A night's points are the thing's whole picture: never folded into a count.
   if (dustRank !== undefined && dustRank >= lod.dustVisible && attrs.night !== true) {
     const anchorHovered = state.hovered === attrs.dustOf && dustRank < Math.max(lod.dustVisible, HOVER_DUST_MAX);
-    if (!anchorHovered && state.hovered !== nodeId) return { ...attrs, hidden: true };
+    // A picked thing's point is never folded away, wherever it sits.
+    const pickedPoint = state.thing !== undefined && state.neighbors.has(nodeId);
+    if (!anchorHovered && !pickedPoint && state.hovered !== nodeId) return { ...attrs, hidden: true };
   }
   let base = attrs;
   // A night's point is the work itself: drawn whole at every zoom, never as
