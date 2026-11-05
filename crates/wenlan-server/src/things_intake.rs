@@ -606,9 +606,21 @@ pub async fn connect_old_night_points(
                 timeout_secs: Some(300),
             })
             .await;
-        let pairs = answer
-            .ok()
-            .and_then(|text| intake::parse_night_links(&text, points.len(), topics.len()));
+        let pairs = match answer {
+            Ok(text) => {
+                let pairs = intake::parse_night_links(&text, points.len(), topics.len());
+                if pairs.is_none() {
+                    tracing::warn!(
+                        "[things] connecting old points of {thing_id}: unreadable answer"
+                    );
+                }
+                pairs
+            }
+            Err(e) => {
+                tracing::warn!("[things] connecting old points of {thing_id} failed: {e}");
+                None
+            }
+        };
         let Some(pairs) = pairs else {
             report.failed += 1;
             continue;
