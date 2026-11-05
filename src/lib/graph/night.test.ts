@@ -31,6 +31,7 @@ import {
   nightMarks,
   nightOffsetsOf,
   nightPointIds,
+  labelYieldsToFrames,
   placeFrameTitles,
   SENTENCE_LINE,
   STEEPING_SECS,
@@ -605,6 +606,29 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
     const picked = placeFrameTitles([frame("thing:a", "Other", 0, 300, 100, 340), wide], measure, [...full], "thing:w");
     expect(picked.map((t) => t.thing)).toEqual(["thing:w"]);
     expect(picked[0]!.baseline).toBe(96);
+  });
+
+  it("moves a picked thing's title further out rather than cover a linked topic's name", () => {
+    const wide = { thing: "thing:w", title: "Merge queue", left: 0, top: 100, right: 300, bottom: 160, dim: false };
+    // A name across the whole line above the frame and the whole line below.
+    const names = [
+      { left: -10, right: 310, top: 78, bottom: 99 },
+      { left: -10, right: 310, top: 161, bottom: 182 },
+    ];
+    const [title] = placeFrameTitles([wide], measure, [...names], "thing:w");
+    expect(title).toBeDefined();
+    for (const name of names) {
+      const covers = title!.box.left < name.right && name.left < title!.box.right && title!.box.top < name.bottom && name.top < title!.box.bottom;
+      expect(covers).toBe(false);
+    }
+    // Only the picked thing moves away; another thing's title is left out.
+    expect(placeFrameTitles([wide], measure, [...names])).toEqual([]);
+  });
+
+  it("keeps a linked topic's name even where the picked frame already sits", () => {
+    expect(labelYieldsToFrames(false, true)).toBe(false);
+    expect(labelYieldsToFrames(false, false)).toBe(true);
+    expect(labelYieldsToFrames(true, false)).toBe(false);
   });
 
   it("cuts a crowded frame's title shorter rather than leaving it out", () => {

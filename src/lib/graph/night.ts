@@ -168,6 +168,8 @@ const TITLE_MAX_PX = 240;
 const TITLE_SHORTER_PX = [140, 80] as const;
 /** A title's line, CSS px: the 12px face's ascent and descent with room. */
 const TITLE_LINE = 17;
+/** How many lines further out a picked thing's title may go in a crowd. */
+const TITLE_FURTHER_LINES = [1, 2, 3] as const;
 const SENTENCE_FONT = '12px "Instrument Sans", -apple-system, sans-serif';
 /** A sentence wraps at this width, CSS px. */
 export const SENTENCE_MAX_PX = 320;
@@ -388,7 +390,7 @@ export function uncrowdedSentences<F extends ThingFrame>(frames: readonly F[], p
  *  crowded small frame still says what it is. A title is left out where
  *  every spot would cover a name, a sentence, another title or another
  *  frame's border, except the picked thing's: it is placed first and always
- *  gets its full title, so what is picked can be read. `occupied` is read
+ *  gets a title, further out where it must be, so what is picked can be read. `occupied` is read
  *  and extended. A steeping thing's title keeps room after it for its moon. */
 export function placeFrameTitles(
   frames: readonly ThingFrame[],
@@ -431,12 +433,29 @@ export function placeFrameTitles(
       spot = spotsFor(text).find(free);
       if (spot) break;
     }
-    if (!spot && frame.thing === picked) spot = spotsFor(full)[0];
+    if (!spot && frame.thing === picked) {
+      // Crowded all round: a line or more further out, before covering a name.
+      const near = spotsFor(full);
+      const further = TITLE_FURTHER_LINES.flatMap((lines) =>
+        near.map((spot) => {
+          const shift = (spot.baseline < frame.top ? -lines : lines) * TITLE_LINE;
+          return { ...spot, baseline: spot.baseline + shift, box: { ...spot.box, top: spot.box.top + shift, bottom: spot.box.bottom + shift } };
+        }),
+      );
+      spot = further.find(free) ?? near[0];
+    }
     if (!spot) continue;
     occupied.push(spot.box);
     out.push({ thing: frame.thing, text: spot.text, x: spot.x, baseline: spot.baseline, box: spot.box });
   }
   return out;
+}
+
+/** Whether a name is left off where a frame or its title already sits. Points
+ *  have their own rule, and a name the picked thing's points link to is the
+ *  reason for the picture: it stays, and the frame's marks keep off it. */
+export function labelYieldsToFrames(isNight: boolean, isLinked: boolean): boolean {
+  return !isNight && !isLinked;
 }
 
 /**
