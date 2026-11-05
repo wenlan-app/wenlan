@@ -1048,7 +1048,7 @@ fn pick_growth_sources(
 
 /// Lowercased words of two or more letters or digits, plus each pair of
 /// adjacent CJK characters.
-fn overlap_terms(text: &str) -> std::collections::HashSet<String> {
+pub(crate) fn overlap_terms(text: &str) -> std::collections::HashSet<String> {
     let mut terms = std::collections::HashSet::new();
     let mut word = String::new();
     let mut previous_cjk: Option<char> = None;

@@ -522,6 +522,109 @@ async fn record_annotate_failure(
 /// rewrites text; 3 consecutive rejections poison-pill the page to
 /// `citations = '[]'` so the sweep doesn't retry it forever (it regains
 /// citations naturally at its next growth re-distill).
+/// Token estimate for budgeting an annotate request: one token per three
+/// UTF-8 bytes, the same rule page refresh uses. It over-counts English and
+/// Chinese text for the Qwen and Gemma tokenizers, so a request it accepts
+/// fits.
+fn estimate_annotate_tokens(text: &str) -> usize {
+    text.len().div_ceil(3)
+}
+
+/// Bytes each numbered source adds besides its text (`[n] ` and the blank
+/// line between sources).
+const ANNOTATE_SOURCE_OVERHEAD_BYTES: usize = 8;
+
+/// The token budget of one annotate request, or `None` when the page cannot
+/// be annotated by this model at all.
+///
+/// The answer is the whole page again with `[n]` markers added, so the reply
+/// needs about as many tokens as the page plus room for the markers. On a
+/// local model the instructions, the page, the sources and that reply share
+/// one fixed context window. Before this check, a page with hundreds of
+/// sources sent a 37k-token prompt into a 6k window: the engine dropped the
+/// middle and the model returned nothing (16 empty replies in one heat test,
+/// 2026-11-04), each one spending a full model turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AnnotateBudget {
+    /// Output tokens to ask for.
+    max_output_tokens: u32,
+    /// Bytes of numbered-source block that still fit.
+    source_bytes: usize,
+}
+
+fn annotate_budget(
+    llm: &dyn LlmProvider,
+    system_prompt: &str,
+    body: &str,
+) -> Option<AnnotateBudget> {
+    let body_tokens = estimate_annotate_tokens(body);
+    let output_tokens = body_tokens + body_tokens / 4 + 128;
+    let fixed_input = estimate_annotate_tokens(system_prompt) + body_tokens + 64;
+    let source_tokens = if llm.backend() == crate::llm_provider::LlmBackend::OnDevice {
+        let window = llm.context_size() as usize;
+        window
+            .checked_sub(output_tokens)?
+            .min(llm.synthesis_token_limit())
+            .checked_sub(fixed_input)?
+    } else {
+        if output_tokens > llm.recommended_max_output() as usize {
+            return None;
+        }
+        llm.synthesis_token_limit().checked_sub(fixed_input)?
+    };
+    Some(AnnotateBudget {
+        max_output_tokens: u32::try_from(output_tokens).ok()?,
+        source_bytes: source_tokens.saturating_mul(3),
+    })
+}
+
+/// Choose the sources that fit `byte_budget`: those sharing the most words
+/// with the page (Chinese, Japanese and Korean compared by character pairs),
+/// kept in their original order and numbered from 1. Empty when not even
+/// one fits.
+fn pick_annotate_sources(
+    numbered: Vec<NumberedSource>,
+    body: &str,
+    byte_budget: usize,
+) -> Vec<NumberedSource> {
+    let cost = |s: &NumberedSource| s.text.len() + ANNOTATE_SOURCE_OVERHEAD_BYTES;
+    if numbered.iter().map(cost).sum::<usize>() <= byte_budget {
+        return numbered;
+    }
+    let target = crate::post_ingest::overlap_terms(body);
+    let mut ranked: Vec<(usize, f64)> = numbered
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let terms = crate::post_ingest::overlap_terms(&s.text);
+            let shared = terms.intersection(&target).count() as f64;
+            let norm = ((terms.len().max(1) * target.len().max(1)) as f64).sqrt();
+            (i, shared / norm)
+        })
+        .collect();
+    // Higher score first; among equals the newer (later linked) source wins.
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.0.cmp(&a.0)));
+    let mut budget = byte_budget;
+    let mut keep = vec![false; numbered.len()];
+    for (i, _) in ranked {
+        let need = cost(&numbered[i]);
+        if need <= budget {
+            budget -= need;
+            keep[i] = true;
+        }
+    }
+    numbered
+        .into_iter()
+        .zip(keep)
+        .filter(|(_, kept)| *kept)
+        .enumerate()
+        .map(|(i, (mut source, _))| {
+            source.index = (i + 1) as u32;
+            source
+        })
+        .collect()
+}
+
 pub async fn run_citation_backfill_tick(
     db: &MemoryDB,
     llm: &Arc<dyn LlmProvider>,
@@ -707,6 +810,51 @@ async fn run_citation_backfill_with_page_limit(
             continue;
         }
 
+        let budget = annotate_budget(llm.as_ref(), &prompts.annotate_citations, &page.content);
+        let numbered = match budget {
+            Some(budget) => pick_annotate_sources(numbered, &page.content, budget.source_bytes),
+            None => Vec::new(),
+        };
+        let Some(budget) = budget.filter(|_| !numbered.is_empty()) else {
+            // The page is too long for this model to write back with
+            // markers, or not one source fits beside it. Asking anyway only
+            // spends a model turn on a cut prompt or a cut answer, so give
+            // up like the other no-model-call give-ups above, without an
+            // attempt. Any page edit or source change re-arms it.
+            log::info!(
+                "[citation_backfill] page {page_id} ({} bytes) does not fit {}'s window \
+                 with a source; giving up without a model call",
+                page.content.len(),
+                llm.name()
+            );
+            let changelog = build_backfill_changelog(
+                db,
+                &page_id,
+                page.version,
+                "citation backfill gave up: page too long for the model",
+            )
+            .await;
+            let landed = db
+                .set_page_citations_with_changelog_at_version(
+                    &page_id,
+                    Some("[]"),
+                    &changelog,
+                    page.version,
+                    source_revision,
+                    &fence.incarnation,
+                )
+                .await?;
+            if landed {
+                let _ = db
+                    .delete_app_metadata_if_value_starts_with(
+                        &attempt_key(&page_id),
+                        &attempt_generation(&fence.incarnation, page.version, source_revision),
+                    )
+                    .await;
+            }
+            continue;
+        };
+
         let user_prompt = format!(
             "## Page Body\n{}\n\n## Numbered Sources\n{}",
             page.content,
@@ -716,7 +864,7 @@ async fn run_citation_backfill_with_page_limit(
             .generate(LlmRequest {
                 system_prompt: Some(prompts.annotate_citations.clone()),
                 user_prompt,
-                max_tokens: llm.recommended_max_output(),
+                max_tokens: budget.max_output_tokens,
                 temperature: 0.0,
                 label: Some("citation_annotate".to_string()),
                 timeout_secs: Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS),
@@ -1277,6 +1425,142 @@ mod tests {
             *provider.timeouts.lock().unwrap(),
             vec![Some(crate::llm_provider::PAGE_OUTPUT_TIMEOUT_SECS)]
         );
+    }
+
+    struct RequestCapturingProvider {
+        requests: std::sync::Mutex<Vec<LlmRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for RequestCapturingProvider {
+        async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+            self.requests.lock().unwrap().push(request);
+            Ok(String::new())
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn name(&self) -> &str {
+            "request-capturing"
+        }
+
+        fn backend(&self) -> LlmBackend {
+            LlmBackend::OnDevice
+        }
+
+        fn kind(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    fn capturing() -> Arc<RequestCapturingProvider> {
+        Arc::new(RequestCapturingProvider {
+            requests: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    /// A page with far more sources than fit beside it gets the sources
+    /// closest to its text, within the model's window, instead of a prompt
+    /// the engine has to cut (heat test 2026-11-04: 37k tokens into 6k).
+    #[tokio::test]
+    async fn backfill_sends_only_the_sources_that_fit_the_window() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page("p_many", "T", None, BACKFILL_BODY, None, None, &[], &now)
+            .await
+            .unwrap();
+        let filler = "Gardening notes about tomatoes and watering schedules. ".repeat(14);
+        for i in 0..40 {
+            let id = format!("mem_filler_{i:02}");
+            insert_test_memory(&db, &id, &filler).await;
+            db.link_page_evidence("p_many", "memory", Some(&id), None, "test")
+                .await
+                .unwrap();
+        }
+        insert_test_memory(&db, "mem_port", BACKFILL_MEM_CONTENT).await;
+        db.link_page_evidence("p_many", "memory", Some("mem_port"), None, "test")
+            .await
+            .unwrap();
+
+        let provider = capturing();
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let prompts = PromptRegistry::default();
+        run_citation_backfill_tick(&db, &llm, &prompts)
+            .await
+            .unwrap();
+
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        let prompt_tokens = estimate_annotate_tokens(&prompts.annotate_citations)
+            + estimate_annotate_tokens(&request.user_prompt);
+        assert!(
+            prompt_tokens + request.max_tokens as usize <= llm.context_size() as usize,
+            "prompt {prompt_tokens} + output {} must fit the window",
+            request.max_tokens
+        );
+        assert!(
+            request.user_prompt.contains(BACKFILL_MEM_CONTENT),
+            "the source that matches the page is kept"
+        );
+        let sent = request.user_prompt.matches("] Gardening notes").count();
+        assert!(sent > 0 && sent < 40, "{sent} filler sources sent");
+    }
+
+    /// A page the model cannot write back inside its window is given up
+    /// without spending a model turn or an attempt.
+    #[tokio::test]
+    async fn backfill_gives_up_on_a_page_too_long_for_the_model_without_a_call() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        let body = "The daemon binds to port 7878 by default. ".repeat(800);
+        db.insert_page("p_long", "T", None, &body, None, None, &[], &now)
+            .await
+            .unwrap();
+        insert_test_memory(&db, "mem_a", BACKFILL_MEM_CONTENT).await;
+        db.link_page_evidence("p_long", "memory", Some("mem_a"), None, "test")
+            .await
+            .unwrap();
+
+        let provider = capturing();
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        run_citation_backfill_tick(&db, &llm, &PromptRegistry::default())
+            .await
+            .unwrap();
+
+        assert!(provider.requests.lock().unwrap().is_empty());
+        let page = db.get_page("p_long").await.unwrap().unwrap();
+        assert_eq!(page.content, body, "body untouched");
+        assert!(page.citations.is_empty());
+        assert!(!db
+            .get_pages_missing_citations(10)
+            .await
+            .unwrap()
+            .contains(&"p_long".to_string()));
+        assert_eq!(count_attempt_rows(&db, "p_long").await, 0);
+    }
+
+    #[test]
+    fn picked_annotate_sources_prefer_the_page_words_and_renumber() {
+        let source = |index: u32, text: &str| NumberedSource {
+            index,
+            source_kind: "memory".into(),
+            locator: format!("m{index}"),
+            text: text.into(),
+        };
+        let numbered = vec![
+            source(1, "Tomatoes need water twice a week in summer."),
+            source(2, "The daemon listens on port 7878."),
+            source(3, "Basil grows well next to tomatoes."),
+        ];
+        let picked = pick_annotate_sources(numbered.clone(), "Daemon port 7878 settings.", 45);
+        assert_eq!(picked.len(), 1);
+        assert_eq!(picked[0].locator, "m2");
+        assert_eq!(picked[0].index, 1);
+        let all = pick_annotate_sources(numbered, "anything", 10_000);
+        assert_eq!(all.len(), 3);
     }
 
     /// PR A: inserting `[N]` markers rewrites the body bytes, so a
