@@ -40547,6 +40547,126 @@ impl MemoryDB {
         Ok(hubs)
     }
 
+    /// Repair for the first run of [`Self::unfile_old_hub_links_once`],
+    /// which picked a memory's new main topic without looking at whether that
+    /// topic was archived. A memory it moved onto an archived topic, and that
+    /// still links a topic that is shown, moves to that one. Runs once,
+    /// recorded like the cleanup it repairs; returns how many moved.
+    pub async fn move_unfiled_primaries_off_archived_topics_once(
+        &self,
+    ) -> Result<u64, WenlanError> {
+        const MARKER: &str = "kg_unfile_hub_links_v1_shown_primary";
+        if self.get_app_metadata(MARKER).await?.is_some() {
+            return Ok(0);
+        }
+        let record = self.get_app_metadata("kg_unfile_hub_links_v1").await?;
+        let record: serde_json::Value = record
+            .as_deref()
+            .and_then(|raw| serde_json::from_str(raw).ok())
+            .unwrap_or_default();
+        let hubs: Vec<String> = record["hubs"]
+            .as_array()
+            .map(|hubs| {
+                hubs.iter()
+                    .filter_map(|hub| hub.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let moved_by_cleanup: Vec<(String, String)> = record["moved_primary"]
+            .as_array()
+            .map(|moved| {
+                moved
+                    .iter()
+                    .filter_map(|row| {
+                        Some((row[0].as_str()?.to_string(), row[2].as_str()?.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let conn = self.conn.lock().await;
+        let query_err =
+            |e: libsql::Error| WenlanError::VectorDb(format!("shown primary repair: {e}"));
+        conn.execute("BEGIN IMMEDIATE", ())
+            .await
+            .map_err(query_err)?;
+        let result: Result<u64, WenlanError> = async {
+            let marks = (3..hubs.len() + 3)
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let not_hub = if hubs.is_empty() {
+                String::new()
+            } else {
+                format!("AND o.entity_id NOT IN ({marks})")
+            };
+            let mut moved: Vec<(String, String, String)> = Vec::new();
+            for (source_id, to) in &moved_by_cleanup {
+                let mut params = vec![
+                    libsql::Value::Text(source_id.clone()),
+                    libsql::Value::Text(to.clone()),
+                ];
+                params.extend(hubs.iter().cloned().map(libsql::Value::Text));
+                let mut rows = conn
+                    .query(
+                        &format!(
+                            "SELECT o.entity_id FROM memories m
+                               JOIN memory_entities o ON o.memory_id = m.source_id
+                              WHERE m.source_id = ?1 AND m.chunk_index = 0 AND m.entity_id = ?2
+                                AND EXISTS (SELECT 1 FROM entity_page_map epm
+                                              JOIN pages p ON p.id = epm.page_id
+                                             WHERE epm.entity_id = ?2 AND p.status = 'archived')
+                                AND NOT {ARCHIVED_TOPIC_SQL} {not_hub}
+                              ORDER BY o.rowid LIMIT 1"
+                        ),
+                        params,
+                    )
+                    .await
+                    .map_err(query_err)?;
+                let next = match rows.next().await.map_err(query_err)? {
+                    Some(row) => Some(row.get::<String>(0).map_err(query_err)?),
+                    None => None,
+                };
+                drop(rows);
+                if let Some(next) = next {
+                    conn.execute(
+                        "UPDATE memories SET entity_id = ?1 WHERE source_id = ?2",
+                        libsql::params![next.clone(), source_id.clone()],
+                    )
+                    .await
+                    .map_err(query_err)?;
+                    moved.push((source_id.clone(), to.clone(), next));
+                }
+            }
+            let record = serde_json::json!({
+                "moved_primary": moved
+                    .iter()
+                    .map(|(source_id, from, to)| serde_json::json!([source_id, from, to]))
+                    .collect::<Vec<_>>(),
+            })
+            .to_string();
+            conn.execute(
+                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                libsql::params![MARKER, record],
+            )
+            .await
+            .map_err(query_err)?;
+            Ok(u64::try_from(moved.len()).unwrap_or(u64::MAX))
+        }
+        .await;
+        match result {
+            Ok(moved) => {
+                commit_or_rollback(&conn).await.map_err(query_err)?;
+                Ok(moved)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(e)
+            }
+        }
+    }
+
     /// One-time cleanup of links written before the hub rule
     /// ([`is_hub_entity`]): a memory that also links a more specific topic
     /// loses its link to a hub topic, and its primary topic moves from the hub
@@ -40608,11 +40728,12 @@ impl MemoryDB {
                     .map(|i| format!("?{i}"))
                     .collect::<Vec<_>>()
                     .join(",");
+                // A topic still shown wins over an archived one.
                 let specific = |memory: &str| {
                     format!(
                         "SELECT o.entity_id FROM memory_entities o
                           WHERE o.memory_id = {memory} AND o.entity_id NOT IN ({marks})
-                          ORDER BY o.rowid LIMIT 1"
+                          ORDER BY {ARCHIVED_TOPIC_SQL}, o.rowid LIMIT 1"
                     )
                 };
                 let with_hubs = |first: libsql::Value| {
@@ -62953,6 +63074,12 @@ mod entity_lifecycle_test;
 #[cfg(test)]
 #[path = "db/relation_preserve_tests.rs"]
 mod relation_preserve_tests;
+
+/// SQL that is true when the topic of link `o` is archived: its page is.
+const ARCHIVED_TOPIC_SQL: &str = "EXISTS (SELECT 1 FROM entity_page_map epm_a
+                                     JOIN pages p_a ON p_a.id = epm_a.page_id
+                                    WHERE epm_a.entity_id = o.entity_id
+                                      AND p_a.status = 'archived')";
 
 /// Fewest links a topic needs before it can count as a hub.
 pub(crate) const HUB_MIN_LINKS: i64 = 200;
