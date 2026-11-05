@@ -10,6 +10,8 @@ import "./PageInfoDrawer.css";
 
 interface PageInfoDrawerProps {
   open: boolean;
+  /** Keep an expensive reader mounted while the pane is closed. */
+  keepMounted?: boolean;
   /** Automatically visible docked context should leave focus in the reader. */
   focusOnOpen?: boolean;
   /**
@@ -64,7 +66,7 @@ function returnTarget(named: RefObject<HTMLElement | null> | undefined, trigger:
   return trigger?.isConnected ? trigger : null;
 }
 
-export default function PageInfoDrawer({ open, focusOnOpen = true, returnFocusRef, defaultWidth: preferredWidth, onClose, title, children, closeLabel, headerContent, headerActions, inspector = false, docked = false, expanded = false, expandedHost, onExpandedChange, expandLabel, restoreLabel, variant = "info" }: PageInfoDrawerProps) {
+export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen = true, returnFocusRef, defaultWidth: preferredWidth, onClose, title, children, closeLabel, headerContent, headerActions, inspector = false, docked = false, expanded = false, expandedHost, onExpandedChange, expandLabel, restoreLabel, variant = "info" }: PageInfoDrawerProps) {
   const workspacePaneHost = useContext(WorkspacePaneHostContext);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
   const [groupWidth, setGroupWidth] = useState(0);
@@ -169,9 +171,9 @@ export default function PageInfoDrawer({ open, focusOnOpen = true, returnFocusRe
   const groupOverlayCssWidth = `min(${displayWidth}px, max(0px, calc(100% - max(${minimumNoteHeaderLane}px, min(320px, 50%)))))`;
   const groupOverlayBodyReserved = groupOverlay;
   const expandedHeaderWidth = Math.min(320, Math.max(0, effectiveGroupWidth - minimumNoteHeaderLane));
-  const groupHeaderReserveWidth = groupOverlay
+  const groupHeaderReserveWidth = open && groupOverlay
     ? groupOverlayCssWidth
-    : groupScoped && expandedWorkspace ? `${expandedHeaderWidth}px` : null;
+    : open && groupScoped && expandedWorkspace ? `${expandedHeaderWidth}px` : null;
 
   useLayoutEffect(() => {
     const frame = groupScoped ? noteGroup?.element : null;
@@ -326,7 +328,7 @@ export default function PageInfoDrawer({ open, focusOnOpen = true, returnFocusRe
     };
   }, [open, nonModal, inspector, groupScoped, noteGroup, focusOnOpen, returnFocusRef]);
 
-  if (!open) return null;
+  if (!open && !keepMounted) return null;
 
   const hostClass = expandedWorkspace
     ? ` page-info-drawer-expanded-workspace${groupScoped ? " page-info-drawer-expanded-group" : ""}`
@@ -347,7 +349,7 @@ export default function PageInfoDrawer({ open, focusOnOpen = true, returnFocusRe
         ? { width: "100%", ...(groupScoped ? { "--note-inspector-header-width": `${expandedHeaderWidth}px` } : {}) } as CSSProperties
         : undefined;
   const drawer = (
-    <div className={`page-info-drawer-overlay${nonModal ? " page-info-drawer-docked" : ""}${groupOverlay ? ` page-info-drawer-group-overlay${bodyReservedOverlayClass}` : ""}${hostClass}`} style={overlayStyle} onClick={(event) => {
+    <div aria-hidden={!open || undefined} hidden={!open} inert={!open || undefined} className={`page-info-drawer-overlay${nonModal ? " page-info-drawer-docked" : ""}${groupOverlay ? ` page-info-drawer-group-overlay${bodyReservedOverlayClass}` : ""}${hostClass}`} style={overlayStyle} onClick={(event) => {
       if (!groupScoped && event.target === event.currentTarget) onClose();
       }}>
       {(hosted || groupOverlay) && <RightSidebarResizeHandle

@@ -23,9 +23,9 @@ for(const locale of ['en'] as const) for(const theme of ['light']) for(const wid
   if(width===375) expect(boxes[1]!.y).toBeGreaterThanOrEqual(boxes[0]!.y+boxes[0]!.height-1);
   else expect(boxes[1]!.x).toBeGreaterThanOrEqual(boxes[0]!.x+boxes[0]!.width-1);
   await page.screenshot({path:info.outputPath('01-notes.png'),fullPage:true});
-  await left.getByRole('button',{name:copy.pageInspector.open,exact:true}).click();
-  await right.getByRole('button',{name:copy.pageInspector.open,exact:true}).click();
-  await right.getByRole('tab',{name:copy.pageCanvas.tabCanvas,exact:true}).click();
+  await left.getByRole('button',{name:copy.pageInspector.info,exact:true}).click();
+  await right.getByRole('button',{name:copy.pageInspector.info,exact:true}).click();
+  await right.getByRole('button',{name:copy.pageCanvas.tabCanvas,exact:true}).click();
   for(const frame of [left,right]) {
    const bounds=await frame.boundingBox(),panel=await frame.getByRole('complementary').boundingBox();
    expect(panel!.x).toBeGreaterThanOrEqual(bounds!.x-1);

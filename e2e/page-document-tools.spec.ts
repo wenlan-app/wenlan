@@ -5,7 +5,7 @@ import { openPageTool } from "./helpers/pageTools";
 import { openWikiNote } from "./helpers/wikiWorkspace";
 
 const copies = [
-  { locale: "en", open: "Open Fixture architecture", editor: "Page editor", actions: "Page actions", info: "Page info", map: "Mind map", note: "Page", close: "Close", pane: "Page views", toggle: "Open page sidebar", untoggle: "Close page sidebar" },
+  { locale: "en", open: "Open Fixture architecture", editor: "Page editor", actions: "Page actions", info: "Page info", map: "Mind map", note: "Page", close: "Close", pane: "Page views", toggle: "Info", untoggle: "Info" },
 ] as const;
 
 async function expectDocumentToolsAligned(page: Page, actionsName: string, toggleName: string): Promise<void> {
@@ -31,6 +31,22 @@ for (const copy of copies) for (const width of [1280, 375]) {
     const controller = await installTauriMock(page, { locale: copy.locale, rawActions: [] });
     await page.goto("/");
     await openWikiNote(page, "Fixture architecture");
+    await expect(page.locator(".page-info-drawer")).toHaveCount(0);
+    await expect(page.locator(".note-inspector-tabs")).toHaveCount(0);
+    const infoButton = page.getByRole("button", { name: "Info", exact: true });
+    const mapButton = page.getByRole("button", { name: copy.map, exact: true });
+    await expect(infoButton).toBeVisible();
+    await expect(mapButton).toBeVisible();
+    await mapButton.click();
+    await expect(page.getByRole("region", { name: "Canvas for Fixture architecture", exact: true })).toBeVisible();
+    await expect(page.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", /canvas/);
+    await mapButton.click();
+    await expect(page.locator(".page-info-drawer")).toHaveCount(0);
+    await expect(page.locator(".note-inspector-tabs")).toHaveCount(0);
+    await infoButton.click();
+    await expect(page.getByRole("tab", { name: "Info", exact: true })).toHaveAttribute("aria-selected", "true");
+    await page.locator(".page-info-drawer").getByRole("button", { name: copy.close, exact: true }).click();
+    await expect(page.locator(".page-info-drawer")).toHaveCount(0);
     const editor = page.getByRole("textbox", { name: copy.editor, exact: true });
     // Note-group inspectors remain non-modal at every viewport width.
     const role = "complementary";
@@ -55,7 +71,7 @@ for (const copy of copies) for (const width of [1280, 375]) {
     expect(entryBox.x).toBeGreaterThanOrEqual(0);
     expect(entryBox.x + entryBox.width).toBeLessThanOrEqual(width);
     await expect(editor).toBeEditable();
-    await info.getByRole("button", { name: copy.close, exact: true }).press("Escape");
+    await info.getByRole("button", { name: copy.close, exact: true }).press("Enter");
     await expect(info).toHaveCount(0);
     await expect(page.getByRole("button", {name:copy.toggle, exact:true})).toBeFocused();
     await expect(editor).toBeEditable();
@@ -75,8 +91,8 @@ for (const copy of copies) for (const width of [1280, 375]) {
     await expect(reading).toContainText("Saved before the map pane opens.");
     await expect(reading.locator('[contenteditable="true"], textarea')).toHaveCount(0);
     const calls = controller.calls();
-    const writeIndex = calls.findIndex((call) => call.command === "update_page");
-    const mapIndex = calls.findIndex((call) => call.command === "get_page_map");
+    const writeIndex = calls.findIndex((call) => call.command === "update_page" && call.args.content === draft);
+    const mapIndex = calls.findIndex((call, index) => index > writeIndex && call.command === "get_page_map");
     expect(writeIndex).toBeGreaterThanOrEqual(0);
     expect(mapIndex).toBeGreaterThan(writeIndex);
     expect(calls[writeIndex].args).toMatchObject({ content: draft });
@@ -248,5 +264,5 @@ test('many tabs leave the entire action group reachable with the main sidebar hi
  await expect(page.locator('.note-tabs-list [role=tab][aria-selected=true]')).toHaveText('Independent research');
  const plus=(await page.locator('.note-tab-create').boundingBox())!,actions=(await page.locator('.workspace-header-actions').boundingBox())!;
  await page.screenshot({path:info.outputPath('many-tabs.png')});expect(plus.x+plus.width).toBeLessThanOrEqual(actions.x+1);
- await expect(page.getByRole('button',{name:'Open page sidebar',exact:true})).toBeInViewport();await page.getByRole('button',{name:'Open page sidebar',exact:true}).click();await expect(page.getByRole('complementary',{name:'Page views',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Info',exact:true})).toBeInViewport();await page.getByRole('button',{name:'Info',exact:true}).click();await expect(page.getByRole('complementary',{name:'Page views',exact:true})).toBeVisible();
 });

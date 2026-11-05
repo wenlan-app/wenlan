@@ -34,7 +34,7 @@ test("inspector drag widths belong to each group and cancel without changing the
  const { errors } = await start(page, "light", 2560);
  await move(page);
  const left = group(page, "primary"), right = group(page, "secondary");
- for (const frame of [left, right]) await frame.getByRole("button", { name: "Open page sidebar", exact: true }).click();
+ for (const frame of [left, right]) await frame.getByRole("button", { name: "Info", exact: true }).click();
  const paneWidth = (frame: Locator) => frame.locator(".page-info-drawer-group-overlay-panel").evaluate(el => el.getBoundingClientRect().width);
  const preference = (id: string) => page.evaluate(k => localStorage.getItem(k), `wenlan-right-sidebar-v1:${id}`);
  await left.getByTestId("right-sidebar-resize-handle").focus();
@@ -56,7 +56,7 @@ test("inspector drag widths belong to each group and cancel without changing the
  expect(await preference("primary")).toBe(savedLeft);
  await right.getByRole("button", { name: "Close", exact: true }).click();
  await expect(left.getByRole("complementary")).toBeVisible();
- await right.getByRole("button", { name: "Open page sidebar", exact: true }).click();
+ await right.getByRole("button", { name: "Info", exact: true }).click();
  await expect.poll(() => paneWidth(right)).toBe(400);
  expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
@@ -67,8 +67,8 @@ test("independent editors, local inspectors, and a failed save cannot lose a mov
  await expect(group(page,"primary").getByRole("tab",{name:"Fixture architecture",exact:true})).toBeVisible();
  const rightEditor=await append(page,"secondary","\nRight group edit remains.");
  await rightEditor.evaluate(el=>el.setAttribute("data-editor-instance","right"));
- await group(page,"primary").getByRole("button",{name:"Open page sidebar",exact:true}).click();
- await group(page,"secondary").getByRole("button",{name:"Open page sidebar",exact:true}).click();
+ await group(page,"primary").getByRole("button",{name:"Info",exact:true}).click();
+ await group(page,"secondary").getByRole("button",{name:"Info",exact:true}).click();
  await expect(group(page,"primary").getByRole("tab",{name:"Info",exact:true})).toBeVisible();
  await expect(group(page,"secondary").getByRole("tab",{name:"Info",exact:true})).toBeVisible();
  // Closing an inspector in one group does not close the other.
@@ -96,9 +96,9 @@ test("switching the central page preserves the right editor and both inspector c
  const {tree,errors}=await start(page,"light",2560);
  await move(page);
  const right=group(page,"secondary"), left=group(page,"primary");
- await right.getByRole("button",{name:"Open page sidebar",exact:true}).click();
+ await right.getByRole("button",{name:"Info",exact:true}).click();
  await right.getByRole("tab",{name:"Mind map",exact:true}).click();
- await left.getByRole("button",{name:"Open page sidebar",exact:true}).click();
+ await left.getByRole("button",{name:"Info",exact:true}).click();
  const editor=right.locator(".page-detail");
  await editor.evaluate(el=>el.setAttribute("data-editor-instance","right-stays"));
  // Focus the central group before choosing another note in the shared tree.
@@ -190,7 +190,7 @@ test("a newer right tab choice cancels a pending global graph navigation", async
  await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
  await tree.getByRole("button",{name:"Open Independent research",exact:true}).click();
  await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
- await right.getByRole("button",{name:"Open page sidebar",exact:true}).click();
+ await right.getByRole("button",{name:"Info",exact:true}).click();
  await append(page,"primary","\nSave before global graph navigation.");
  await right.getByRole("button",{name:"Open in graph",exact:true}).click();
  await right.getByRole("tab",{name:"Independent research",exact:true}).click();

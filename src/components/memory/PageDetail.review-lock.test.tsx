@@ -95,7 +95,7 @@ describe("PageDetail review lock", () => {
   });
 
   async function openInfo(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.open") }));
+    await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.info") }));
     await user.click(screen.getByRole("tab", { name: i18n.t("pageInspector.info") }));
     return lock();
   }
@@ -141,7 +141,7 @@ describe("PageDetail review lock", () => {
   it("offers no switch on an entity shadow page", async () => {
     current = { ...PAGE, creation_kind: "entity" } as typeof current;
     const { user } = renderPage();
-    await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.open") }));
+    await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.info") }));
     await user.click(screen.getByRole("tab", { name: i18n.t("pageInspector.info") }));
     await screen.findByText(i18n.t("detailInfo.details"));
     expect(screen.queryByRole("button", { name: i18n.t("pageLock.title") })).toBeNull();

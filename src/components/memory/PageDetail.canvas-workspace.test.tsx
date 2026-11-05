@@ -82,7 +82,7 @@ describe("PageDetail canvas workspace", () => {
       await screen.findByText("Workspace scroll");
       const wikiContent = screen.getByTestId("wiki-content");
       wikiContent.scrollTop = 640;
-      await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.open") }));
+      await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
       await user.click(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") }));
 
       const map = await screen.findByRole("region", { name: "Canvas for Workspace scroll" });

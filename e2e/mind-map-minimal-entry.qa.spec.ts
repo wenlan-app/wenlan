@@ -15,8 +15,7 @@ async function start(page:Page,locale:"en"|"zh-Hant"|"zh-Hans"="en",width=1440,m
  },mode);
  await page.goto("/");await openWikiNote(page,"Fixture architecture");
  const tr=resources[locale].translation;
- await group(page).getByRole("button",{name:tr.pageInspector.open,exact:true}).click();
- await group(page).getByRole("tab",{name:tr.pageCanvas.tabCanvas,exact:true}).click();
+ await group(page).getByRole("button",{name:tr.pageCanvas.tabCanvas,exact:true}).click();
  const surface=group(page).locator(".page-canvas-surface");await expect(surface).toBeVisible();
  await expect(group(page).locator(".page-canvas-new-node")).toHaveCount(0);
  await expect(group(page).getByRole("button",{name:/^(Apply to page|Improve|Generate canvas|Preview changes)$/})).toHaveCount(0);
@@ -55,10 +54,11 @@ test("N is group-local and does not capture page editing",async({page},info) => 
  const {runtime,errors}=await start(page,"en",1920);await openWikiNote(page,"Why fixtures stay deterministic");
  await group(page).getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click({button:"right"});await page.getByRole("menuitem",{name:"Move to right group",exact:true}).click();
  const left=group(page),right=group(page,"secondary");
- for(const f of [left,right]){const open=f.getByRole("button",{name:"Open page sidebar",exact:true});if(await open.count())await open.click();await f.getByRole("tab",{name:"Mind map",exact:true}).click();await expect(f.locator(".page-canvas-surface")).toBeVisible();}
+ await expect(left.locator(".page-canvas-surface")).toBeVisible();
+ await right.getByRole("button",{name:"Mind map",exact:true}).click();await expect(right.locator(".page-canvas-surface")).toBeVisible();
  await right.locator(".page-canvas-surface").focus();await page.keyboard.press("n");
  await expect(right.getByRole("textbox",{name:"Name this node",exact:true})).toBeVisible();await expect(left.getByRole("textbox",{name:"Name this node",exact:true})).toHaveCount(0);await page.keyboard.press("Escape");
- await left.getByRole("tab",{name:"Info",exact:true}).click();await expect(left.locator(".page-canvas-surface")).toHaveCount(0);await expect(right.locator(".page-canvas-surface")).toBeVisible();
+ await left.getByRole("button",{name:"Mind map",exact:true}).click();await expect(left.locator(".page-canvas-surface")).toHaveCount(0);await expect(right.locator(".page-canvas-surface")).toBeVisible();
  const editor=left.getByRole("textbox",{name:"Page editor",exact:true});await editor.click();await page.keyboard.press("n");
  await expect(page.getByRole("textbox",{name:"Name this node",exact:true})).toHaveCount(0);await page.keyboard.press("Backspace");
  await page.screenshot({path:info.outputPath("local-controls.png")});expect(runtime.calls().filter(c=>c.command==="create_page_map_node")).toHaveLength(0);

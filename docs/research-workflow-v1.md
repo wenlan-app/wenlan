@@ -10,8 +10,12 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
    and a destination Space. Import is manual. Zotero must enable its local API.
 2. Read the imported papers in the existing source list. A Zotero citation opens
    PDF after Info and Mind map in the page's existing right inspector. The PDF
-   tab appears after opening a paper; switching tabs keeps the reader, selected
-   attachment, page and search alive. Reuse the inspector's resize, expand and
+   tab appears after opening a paper. The inspector starts closed: Page info
+   and Mind map buttons open their corresponding views; citations open PDF.
+   Tabs live inside the open inspector only. Switching views or closing and
+   reopening the inspector keeps the reader, selected attachment, page and
+   search alive for that page. Closing returns the space to the document.
+   Reuse the inspector's resize, expand and
    close controls, or use the existing full-source view. Search, select text, navigate
    pages and zoom using bundled PDF.js. Saved PDFs remain readable offline.
 3. Select sources to prepare a summary and classification suggestions in an

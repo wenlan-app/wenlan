@@ -221,7 +221,7 @@ test("marks a stored page reviewed through the Review presence contract", async 
   const reviewedSource = `${initialPage!.content}\n\nEdited in the Review editor before marking reviewed.`;
   await editor.fill(reviewedSource);
   // The Info action lives in the note sidebar, opened from the toolbar.
-  await page.getByRole("button", { name: "Open page sidebar", exact: true }).click();
+  await page.getByRole("button", { name: "Info", exact: true }).click();
   await expect(page.getByRole("tab", { name: "Info", exact: true })).toBeVisible();
   const review = page.getByRole("button", { name: "Mark page reviewed", exact: true });
   await expect(review).toBeEnabled();

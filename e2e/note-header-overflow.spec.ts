@@ -21,12 +21,12 @@ async function geometry(group: Locator) {
       return { x: r.x, right: r.right, y: r.y, width: r.width, height: r.height };
     };
     const header = rect(".note-group-header"), list = rect(".note-tabs-list");
-    const add = rect(".note-tab-create"), toggle = rect(".note-inspector-toggle");
+    const add = rect(".note-tab-create"), toggle = rect(".note-mind-map-toggle");
     return { header, list, add, toggle, gap: add.x - list.right,
       inset: header.right - toggle.right,
       scroll: el.querySelector(".note-tabs-list")!.scrollWidth > list.width,
       documentOverflow: document.documentElement.scrollWidth > innerWidth,
-      visibleAtToggle: el.querySelector(".note-inspector-toggle")!.contains(document.elementFromPoint(toggle.x + toggle.width / 2, toggle.y + toggle.height / 2)) };
+      visibleAtToggle: el.querySelector(".note-mind-map-toggle")!.contains(document.elementFromPoint(toggle.x + toggle.width / 2, toggle.y + toggle.height / 2)) };
   });
 }
 async function assertGeometry(group: Locator) {

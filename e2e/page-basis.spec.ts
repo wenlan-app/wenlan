@@ -118,7 +118,7 @@ for (const locale of LOCALES) {
       const controller = await install(page, locale, { related: true });
       await openNote(page);
 
-      await page.getByRole("button", { name: t("pageInspector.open"), exact: true }).click();
+      await page.getByRole("button", { name: t("pageInspector.info"), exact: true }).click();
       const related = page.getByRole("region", { name: t("knowledgeContext.linkedPages") });
       await expect(related).toBeVisible();
       await expect(related.getByText(t("noteBasis.badge"), { exact: true })).toHaveCount(0);

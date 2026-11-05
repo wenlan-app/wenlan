@@ -138,13 +138,13 @@ beforeAll(() => {
 });
 
 async function openPageInfo(user = userEvent.setup()) {
-  await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.open") }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.info") }));
   return screen.getByRole("dialog", { name: i18n.t("pageInspector.label") });
 }
 
 async function selectInspectorTab(user: ReturnType<typeof userEvent.setup>, name: string) {
   if (!screen.queryByRole("tablist")) {
-    await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.open") }));
+    await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
   }
   await user.click(await screen.findByRole("tab", { name }));
 }
@@ -536,7 +536,7 @@ describe("PageDetail", () => {
     const { updatePage } = await import("../../lib/tauri");
     renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />);
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
-    const trigger = screen.getByRole("button", { name: i18n.t("pageInspector.open") });
+    const trigger = screen.getByRole("button", { name: i18n.t("pageInspector.info") });
     // Control the 650 ms debounce so CI wall-clock load cannot save the draft
     // mid-test. Testing Library's async helpers wait on a setTimeout(0) these
     // fake timers never run, so the pane is driven with synchronous events.
@@ -640,7 +640,7 @@ describe("PageDetail", () => {
     await act(async () => pending.resolve({ outcome: "saved" }));
     expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(nextEditor);
     expect(screen.queryByRole("region", { name: "Canvas for Next Page" })).toBeNull();
-    expect(screen.getByRole("button", { name: i18n.t("pageInspector.close") })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-expanded", "true");
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValue(original);
   });
 

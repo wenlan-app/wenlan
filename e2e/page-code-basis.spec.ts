@@ -379,7 +379,7 @@ for (const locale of LOCALES) {
       });
       await openNote(page);
 
-      await page.getByRole("button", { name: t("pageInspector.open"), exact: true }).click();
+      await page.getByRole("button", { name: t("pageInspector.info"), exact: true }).click();
       const group = page.getByRole("region", { name: t("codeBasis.groupLabel") });
       await expect(group).toBeVisible();
       await expect(group.getByRole("heading", { name: t("codeBasis.group"), exact: true })).toBeVisible();

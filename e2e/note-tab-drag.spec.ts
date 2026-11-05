@@ -48,7 +48,7 @@ test("reorder keeps active editor, edit state and reading position; click remain
 
 test("split preview, destination insertion, reverse transfer and independent inspectors",async({page},info)=>{
  const{errors}=await start(page,2560);const left=group(page),scroll=left.locator('.note-group-content');
- await left.getByRole('button',{name:'Open page sidebar',exact:true}).click();
+ await left.getByRole('button',{name:'Info',exact:true}).click();
  await scroll.evaluate(el=>el.scrollTop=480);
  const b=(await scroll.boundingBox())!;
  await hold(page,tab(page,3),{x:b.x+b.width-12,y:b.y+110});
@@ -56,8 +56,7 @@ test("split preview, destination insertion, reverse transfer and independent ins
  await expect(tab(page,3,'secondary')).toHaveAttribute('aria-selected','true');
  await expect.poll(()=>group(page,'secondary').locator('.note-group-content').evaluate(el=>el.scrollTop)).toBe(480);
  await expect(left.getByRole('tab',{name:'Info',exact:true})).toBeVisible();
- await group(page,'secondary').getByRole('button',{name:'Open page sidebar',exact:true}).click();
- await group(page,'secondary').getByRole('tab',{name:'Mind map',exact:true}).click();
+ await group(page,'secondary').getByRole('button',{name:'Mind map',exact:true}).click();
  await drag(page,tab(page,1),await point(tab(page,3,'secondary'),'before'));
  await expect.poll(()=>order(page,'secondary')).toEqual(['Drag page 1','Drag page 3']);
  await expect(group(page,'secondary').getByRole('tab',{name:'Mind map',exact:true})).toHaveAttribute('aria-selected','true');
@@ -111,14 +110,14 @@ test("overflow auto-scroll permits distant reordering while fixed controls stay 
  await expect.poll(()=>strip.evaluate(el=>el.scrollLeft),{timeout:10000}).toBe(0);
  await page.mouse.move(box.x+5,box.y+box.height/2);await page.mouse.up();
  await expect.poll(async()=> (await order(page))[0]).toBe('Drag page 12');
- const toggle=group(page).getByRole('button',{name:'Open page sidebar',exact:true});await expect(toggle).toBeInViewport();await expect(group(page).getByRole('button',{name:'New page',exact:true})).toBeInViewport();
+ const toggle=group(page).getByRole('button',{name:'Info',exact:true});await expect(toggle).toBeInViewport();await expect(group(page).getByRole('button',{name:'New page',exact:true})).toBeInViewport();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
  await page.screenshot({path:info.outputPath('overflow.png')});await assertClean(errors);
 });
 
 test("narrow groups can move in both directions without a third group",async({page},info)=>{
  const{errors}=await start(page,375,'dark',2);await split(page,2);await expect(tab(page,2,'secondary')).toBeVisible();
- await group(page,'secondary').getByRole('button',{name:'Open page sidebar',exact:true}).click();
+ await group(page,'secondary').getByRole('button',{name:'Info',exact:true}).click();
  await expect(group(page,'secondary').getByRole('tab',{name:'Info',exact:true})).toBeVisible();
  await group(page,'secondary').getByRole('button',{name:'Close',exact:true}).click();
  await drag(page,tab(page,2,'secondary'),await point(tab(page,1),'before'));

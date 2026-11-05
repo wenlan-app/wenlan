@@ -42,7 +42,7 @@ test("Memory, Topic and Wiki consume the same reading and Info template", async 
     if (kind === "memory") {
       // Memories have no place in the navigation: one opens from a page's sources.
       await openMemoryFromPage(page, "Fixture architecture", /Fixture architecture$/,
-        { wiki: t.sidebar.pages, more: t.sidebar.more, info: t.pageInspector.open });
+        { wiki: t.sidebar.pages, more: t.sidebar.more, info: t.pageInspector.info });
     } else if (kind === "topic") {
       await nav.getByRole("button", { name: t.sidebar.entities, exact: true }).click();
       await page.locator(".entities-view").getByRole("button", { name: topic.name, exact: true }).click();
@@ -56,7 +56,7 @@ test("Memory, Topic and Wiki consume the same reading and Info template", async 
     const panel = page.locator(".page-info-drawer:visible");
     if (!await panel.count()) {
       await page.getByRole("button", {
-        name: kind === "wiki" ? t.pageInspector.open : t.knowledgeContext.memoryPanel, exact: true,
+        name: kind === "wiki" ? t.pageInspector.info : t.knowledgeContext.memoryPanel, exact: true,
       }).click();
     }
     const info = panel.locator("[data-detail-info]");

@@ -36,6 +36,17 @@ function InspectorHarness() {
   </>;
 }
 
+function RetainedInspectorHarness() {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  return <>
+    <button onClick={() => setOpen(true)} type="button">Open retained inspector</button>
+    <PageInfoDrawer keepMounted open={open} onClose={close} title="Retained inspector" closeLabel="Close retained inspector">
+      <input aria-label="Reader position" defaultValue="page 4" />
+    </PageInfoDrawer>
+  </>;
+}
+
 function CanvasProbe({ onMount, onUnmount }: { onMount: () => void; onUnmount: () => void }) {
   const [draft, setDraft] = useState("saved map label");
   useEffect(() => {
@@ -89,6 +100,28 @@ function GroupExpandableInspectorHarness() {
 }
 
 describe("PageInfoDrawer", () => {
+  it("keeps a requested reader mounted while the closed pane is fully hidden", async () => {
+    const user = userEvent.setup();
+    render(<RetainedInspectorHarness />);
+    const opener = screen.getByRole("button", { name: "Open retained inspector" });
+    expect(screen.queryByRole("complementary", { name: "Retained inspector" })).toBeNull();
+    const hiddenOverlay = document.querySelector<HTMLElement>(".page-info-drawer-overlay[hidden]");
+    expect(hiddenOverlay).toBeTruthy();
+    expect(hiddenOverlay).toHaveAttribute("inert");
+
+    await user.click(opener);
+    const position = screen.getByRole("textbox", { name: "Reader position" });
+    const drawer = screen.getByRole("dialog", { name: "Retained inspector" });
+    expect(position).toHaveValue("page 4");
+    await user.click(within(drawer).getByRole("button", { name: "Close retained inspector" }));
+    expect(screen.queryByRole("dialog", { name: "Retained inspector" })).toBeNull();
+    expect(opener).toHaveFocus();
+
+    await user.click(opener);
+    expect(screen.getByRole("textbox", { name: "Reader position" })).toBe(position);
+    expect(position).toHaveValue("page 4");
+  });
+
   it.each([true, false])("preserves reader focus only for automatic docked context (wide=%s)", (wide) => {
     const original = window.matchMedia;
     window.matchMedia = vi.fn().mockReturnValue({ matches: wide, addEventListener: vi.fn(), removeEventListener: vi.fn() });

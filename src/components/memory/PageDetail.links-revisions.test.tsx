@@ -72,7 +72,7 @@ beforeAll(() => {
 });
 
 async function openPageInfo(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.open") }));
+  await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
   return screen.getByRole("dialog", { name: i18n.t("pageInspector.label") });
 }
 

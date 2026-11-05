@@ -34,7 +34,7 @@ async function assertClean(errors:ReturnType<typeof collectBrowserErrors>){expec
 
 for (const target of ['inspector', 'header']) test(`right ${target} creates a new group with inspector open`,async({page},info)=>{
  const {errors}=await start(page,1440);
- await group(page).getByRole('button',{name:'Open page sidebar',exact:true}).click();
+ await group(page).getByRole('button',{name:'Info',exact:true}).click();
  const drawer=group(page).getByRole('complementary');await expect(drawer).toBeVisible();
  const frame=(await group(page).boundingBox())!;
  const to={x:frame.x+frame.width-30,y:frame.y+(target==='header'?25:220)};
@@ -59,7 +59,7 @@ for(const theme of ['light','dark']) test(`insertion line stays vertical and neu
 
 test('existing opposite inspector accepts transfer; save refusal preserves source',async({page},info)=>{
  const {errors,runtime}=await start(page,2560,'dark');await menu(page,3);
- await group(page,'secondary').getByRole('button',{name:'Open page sidebar',exact:true}).click();
+ await group(page,'secondary').getByRole('button',{name:'Info',exact:true}).click();
  const drawer=group(page,'secondary').getByRole('complementary');await expect(drawer).toBeVisible();
  await hold(page,tab(page,1),await point(drawer));
  await expect(page.locator('.note-tab-split-preview[data-kind="transfer"]')).toBeVisible();
@@ -75,7 +75,7 @@ test('existing opposite inspector accepts transfer; save refusal preserves sourc
 
 test('compact group overlay is a split target without trapping the source tab',async({page},info)=>{
  const {errors}=await start(page,375,'dark',2);
- await group(page).getByRole('button',{name:'Open page sidebar',exact:true}).click();
+ await group(page).getByRole('button',{name:'Info',exact:true}).click();
  await page.screenshot({path:info.outputPath('before-drag.png')});
  await info.attach('source-hit',{body:JSON.stringify(await tab(page,2).evaluate(el=>{const r=el.getBoundingClientRect();return{rect:r.toJSON(),hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML};})),contentType:'application/json'});
  const frame=(await group(page).boundingBox())!;
@@ -88,7 +88,7 @@ test('compact group overlay is a split target without trapping the source tab',a
 
 test('expanded local inspector still exposes the right split target',async({page},info)=>{
  const {errors}=await start(page,1440);
- await group(page).getByRole('button',{name:'Open page sidebar',exact:true}).click();
+ await group(page).getByRole('button',{name:'Info',exact:true}).click();
  await group(page).getByRole('button',{name:'Expand workspace',exact:true}).click();
  await expect(group(page).locator('.page-info-drawer-expanded-group')).toBeVisible();
  await page.screenshot({path:info.outputPath('before-drag.png')});

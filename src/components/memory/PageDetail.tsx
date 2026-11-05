@@ -11,7 +11,7 @@ import type { TFunction } from "i18next";
 import { createPortal } from "react-dom";
 import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "./navigation/WorkspacePaneHost";
 import { NoteInspectorTabs, type NoteInspectorTab } from "./page/NoteInspectorTabs";
-import { ArrowLeft, PencilSimple, SidebarSimple } from "@phosphor-icons/react";
+import { ArrowLeft, Info, PencilSimple, TreeStructure } from "@phosphor-icons/react";
 import {
   getPage,
   getPageLinks,
@@ -477,7 +477,8 @@ export default function PageDetail({
   const editorPageRef = useRef<Page | null>(null);
   const backAttemptRef = useRef(0);
   const actionMenuTriggerRef = useRef<HTMLButtonElement>(null);
-  const inspectorToggleRef = useRef<HTMLButtonElement>(null);
+  const infoToggleRef = useRef<HTMLButtonElement>(null);
+  const canvasToggleRef = useRef<HTMLButtonElement>(null);
   const actionMenuRef = useRef<HTMLDivElement>(null);
   const actionMenuListRef = useRef<HTMLDivElement>(null);
   const actionMenuInitialFocusRef = useRef<MenuInitialFocus>("first");
@@ -1633,6 +1634,7 @@ export default function PageDetail({
 
   const requestPageInfo = async () => {
     if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
+    setSourcePreview(null);
     setPdfPreviewOpen(false);
     // Keep the same pane mounted while the map yields back to document editing.
     setInfoOpen(true);
@@ -1644,6 +1646,7 @@ export default function PageDetail({
 
   const selectInspectorTab = (tab: NoteInspectorTab) => {
     if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
+    setSourcePreview(null);
     if (tab === "canvas") {
       if (!showCanvas) void requestToggleCanvas();
     } else if (tab === "pdf" && pdfPreview) {
@@ -1657,7 +1660,7 @@ export default function PageDetail({
   const closeInspector = () => {
     if (sourcePreview) {
       setSourcePreview(null);
-      inspectorToggleRef.current?.focus({ preventScroll: true });
+      infoToggleRef.current?.focus({ preventScroll: true });
       return;
     }
     const returningToEditor = showCanvas && canvasReturnToEditorRef.current;
@@ -1667,7 +1670,9 @@ export default function PageDetail({
     else setInfoOpen(false);
     // Each group owns its return target. A map opened while writing resumes
     // that editor; otherwise closing the inspector returns to its own toggle.
-    if (!returningToEditor) inspectorToggleRef.current?.focus({ preventScroll: true });
+    if (!returningToEditor) {
+      (showCanvas ? canvasToggleRef.current : infoToggleRef.current)?.focus({ preventScroll: true });
+    }
   };
 
   useEffect(() => {
@@ -2453,17 +2458,30 @@ export default function PageDetail({
 
   const inspectorTab: NoteInspectorTab = pdfPreviewOpen ? "pdf" : showCanvas ? "canvas" : "info";
   const inspectorOpen = infoOpen || showCanvas || pdfPreviewOpen;
-  const inspectorToggle = <button ref={inspectorToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-inspector-toggle"
-    aria-label={t(inspectorOpen || sourcePreview ? "pageInspector.close" : "pageInspector.open")}
-    title={t(inspectorOpen || sourcePreview ? "pageInspector.close" : "pageInspector.open")}
-    aria-expanded={inspectorOpen || !!sourcePreview} disabled={canvasSwitchPending}
-    onClick={(event) => {
-      // WebKit pointer clicks do not focus buttons; give the pane a stable return target.
-      event.currentTarget.focus({ preventScroll: true });
-      if (inspectorOpen || sourcePreview) closeInspector(); else void requestPageInfo();
-    }}>
-    <SidebarSimple aria-hidden="true" size={18} style={{transform:"scaleX(-1)"}} />
-  </button>;
+  const inspectorToggle = <>
+    <button ref={infoToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-inspector-toggle"
+      aria-label={t("pageInspector.info")} title={t("pageInspector.info")}
+      aria-expanded={inspectorOpen} aria-pressed={infoOpen && !showCanvas && !pdfPreviewOpen} disabled={canvasSwitchPending}
+      onClick={(event) => {
+        // WebKit pointer clicks do not focus buttons; keep a stable return target.
+        event.currentTarget.focus({ preventScroll: true });
+        if (sourcePreview) void requestPageInfo();
+        else if (infoOpen && !showCanvas && !pdfPreviewOpen) closeInspector();
+        else void requestPageInfo();
+      }}>
+      <Info aria-hidden="true" size={18} />
+    </button>
+    <button ref={canvasToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-mind-map-toggle"
+      aria-label={t("pageCanvas.tabCanvas")} title={t("pageCanvas.tabCanvas")}
+      aria-expanded={inspectorOpen} aria-pressed={showCanvas} disabled={canvasSwitchPending}
+      onClick={(event) => {
+        event.currentTarget.focus({ preventScroll: true });
+        if (showCanvas) closeInspector();
+        else selectInspectorTab("canvas");
+      }}>
+      <TreeStructure aria-hidden="true" size={18} />
+    </button>
+  </>;
 
   // The example wiki is for looking at: nothing in it can be moved, renamed or deleted.
   // Page actions sit in the top bar beside the page sidebar toggle, as Obsidian's
@@ -3184,11 +3202,13 @@ export default function PageDetail({
 
       <PageInfoDrawer
         docked inspector
+        keepMounted={!!pdfPreview}
         defaultWidth={pdfPreviewOpen ? 560 : undefined}
         variant={showCanvas ? "canvas" : "info"}
         expanded={canvasWorkspaceExpanded}
         expandedHost={canvasWorkspaceHost}
         onExpandedChange={canvasWorkspaceSupported ? changeCanvasWorkspaceExpanded : undefined}
+        returnFocusRef={showCanvas ? canvasToggleRef : infoToggleRef}
         expandLabel={t("pageCanvas.expandWorkspace")}
         restoreLabel={t("pageCanvas.restoreSidebar")}
         open={!sourcePreview && inspectorOpen}
