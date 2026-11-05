@@ -163,7 +163,7 @@ Configure Wenlan's runtime mode.
 ```bash
 wenlan setup                  # interactive
 wenlan setup --basic          # local memory, no local model or API key
-wenlan setup --model qwen3-4b # download/select a local model
+wenlan setup --model qwen3.5-4b # download/select a local model
 wenlan setup --anthropic-api-key-env ANTHROPIC_API_KEY
 ```
 
@@ -209,7 +209,7 @@ Manage opt-in local models.
 ```bash
 wenlan models list
 wenlan models status
-wenlan models install qwen3-4b
+wenlan models install qwen3.5-4b
 wenlan models reranker lite
 ```
 
@@ -642,7 +642,7 @@ wenlan setup [OPTIONS]
 Options:
 
 - `--basic`: Set up without a model or API key.
-- `--model <MODEL_ID>`: Download and select a local model, for example qwen3-4b.
+- `--model <MODEL_ID>`: Download and select a local model, for example qwen3.5-4b.
 - `--anthropic-api-key-env <ENV_VAR>`: Read an Anthropic key from this environment variable.
 - `-y, --yes`: Skip confirmation prompts where possible.
 
@@ -748,7 +748,7 @@ wenlan models install [OPTIONS] [MODEL_ID]
 
 Arguments:
 
-- `[MODEL_ID]`: Model id, for example qwen3-4b.
+- `[MODEL_ID]`: Model id, for example qwen3.5-4b.
 
 Options:
 
