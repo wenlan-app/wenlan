@@ -160,13 +160,6 @@ pub trait LlmProvider: Send + Sync {
     fn model_version(&self) -> Option<String> {
         None
     }
-    /// Whether inference runs on this computer: Wenlan's own on-device
-    /// runtime, or a local server such as LM Studio or Ollama on a loopback
-    /// address. Work that must not leave the machine checks this, not the
-    /// backend.
-    fn runs_on_this_computer(&self) -> bool {
-        self.backend() == LlmBackend::OnDevice
-    }
     /// Runtime backend selected for an on-device provider. Non-local
     /// providers return `None`; callers can expose this as optional status
     /// without downcasting the trait object.
@@ -1281,13 +1274,17 @@ impl LlmProvider for ApiProvider {
             body["system"] = serde_json::json!(sys);
         }
 
-        let resp = self
+        let mut http = self
             .client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
-            .json(&body)
+            .json(&body);
+        if let Some(secs) = request.timeout_secs {
+            http = http.timeout(std::time::Duration::from_secs(secs));
+        }
+        let resp = http
             .send()
             .await
             .map_err(|e| LlmError::InferenceFailed(format!("API request failed: {}", e)))?;
@@ -1373,6 +1370,12 @@ impl LlmProvider for ApiProvider {
     fn model_id(&self) -> String {
         self.model.clone()
     }
+
+    /// The cloud API names its model; see
+    /// [`OpenAICompatibleProvider::model_version`] for why a name is enough.
+    fn model_version(&self) -> Option<String> {
+        Some(format!("anthropic:{}", self.model))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1403,22 +1406,6 @@ impl OpenAICompatibleProvider {
 
     pub fn endpoint(&self) -> &str {
         &self.endpoint
-    }
-
-    /// True when the endpoint is a loopback address (`localhost`,
-    /// `127.0.0.0/8`, `::1`), so requests never leave this computer.
-    pub fn is_loopback_endpoint(&self) -> bool {
-        let Ok(url) = reqwest::Url::parse(&self.endpoint) else {
-            return false;
-        };
-        let Some(host) = url.host_str() else {
-            return false;
-        };
-        let host = host.trim_start_matches('[').trim_end_matches(']');
-        host.eq_ignore_ascii_case("localhost")
-            || host
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
     }
 
     pub fn model(&self) -> &str {
@@ -1521,17 +1508,12 @@ impl LlmProvider for OpenAICompatibleProvider {
         self.model.clone()
     }
 
-    /// A local server can only name the model it serves, so the version is
-    /// that name at that address. The support check re-qualifies it in every
-    /// process, which bounds how long a model swapped under the same name
-    /// goes unnoticed. Remote endpoints prove nothing and get no version.
+    /// A server (LM Studio, Ollama, a cloud API) can only name the model it
+    /// serves, so the version is that name at that address. The support check
+    /// re-qualifies it in every process, which bounds how long a model swapped
+    /// under the same name goes unnoticed.
     fn model_version(&self) -> Option<String> {
-        self.runs_on_this_computer()
-            .then(|| format!("local-endpoint:{}#{}", self.endpoint, self.model))
-    }
-
-    fn runs_on_this_computer(&self) -> bool {
-        self.is_loopback_endpoint()
+        Some(format!("endpoint:{}#{}", self.endpoint, self.model))
     }
 }
 

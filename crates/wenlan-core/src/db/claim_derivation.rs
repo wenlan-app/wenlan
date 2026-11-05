@@ -1536,13 +1536,11 @@ impl MemoryDB {
             .transpose()
     }
 
-    /// A judge may write support only when this exact local model passed
+    /// A judge may write support only when this exact model passed
     /// the frozen M5 accuracy batch in this process
     /// ([`crate::claim_judge::qualify_m5_claim_judge`]). No model is approved
     /// by name: being available is never enough, and every model, including
-    /// one measured before a release, answers the same batch. Only a model
-    /// on this computer gets a snapshot at all
-    /// ([`crate::claim_judge::snapshot_m5_claim_judge`]).
+    /// one measured before a release, answers the same batch, wherever it runs.
     fn is_approved_m5_claim_judge(snapshot: &crate::claim_judge::M5ClaimJudgeSnapshot) -> bool {
         snapshot.prompt_version == crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION
             && crate::claim_judge::m5_judge_qualified(snapshot)
