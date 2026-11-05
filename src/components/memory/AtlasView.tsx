@@ -10,14 +10,17 @@ import Sigma from "sigma";
 import { EdgeRectangleProgram } from "sigma/rendering";
 import {
   ArrowCounterClockwise,
+  ArrowRight,
   CaretDown,
   CornersOut,
   Minus,
   Funnel,
   Plus,
+  Shuffle,
   SlidersHorizontal,
 } from "@phosphor-icons/react";
 import {
+  ATLAS_CONTROL_INSETS,
   captureAtlasViewpoint,
   frameAtlasView,
   restoreAtlasViewpoint,
@@ -34,10 +37,9 @@ import "./assets/collectionToolbar.css";
 import AtlasInspector from "./AtlasInspector";
 import AtlasSelect from "./AtlasSelect";
 import AtlasTooltip from "./AtlasTooltip";
-import AtlasTypeFilters from "./AtlasTypeFilters";
 import { entityTypeHidden, filterGraphEntityTypes } from "../../lib/graph/typeFilter";
-import { getKnowledgeGraph } from "../../lib/tauri";
-import type { Entity, KnowledgeGraph } from "../../lib/tauri";
+import { getKnowledgeGraph, listThingNightPoints } from "../../lib/tauri";
+import type { Entity, KnowledgeGraph, ThingNightPoints } from "../../lib/tauri";
 import {
   buildKnowledgeGraphModel,
   entitySpace,
@@ -45,12 +47,16 @@ import {
   memorySourceId,
   pageIdOf,
   pageNodeId,
-  drawableModel,
   attachMemories,
-  smallGroupNodeCount,
+  attachThingPoints,
+  thingIdOf,
+  thingNodeId,
+  smallGroupIds,
+  tuckedNodeIds,
   DEFAULT_LAYERS,
   MEMORY_NODE_TYPE,
   PAGE_NODE_TYPE,
+  THING_NODE_TYPE,
 } from "../../lib/graph/model";
 import type { GraphLayers, GraphModel, GraphNode } from "../../lib/graph/model";
 import {
@@ -68,9 +74,38 @@ import {
   layoutFocusLabels,
   NEIGHBOR_LABEL_MAX,
   NODE_LABEL_FONT,
+  nodeSizeCapPx,
 } from "../../lib/graph/atlas";
 import type { HoverState, AtlasSimulation, LodState, LabelPlacement } from "../../lib/graph/atlas";
 import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
+import {
+  applyNightOffsets,
+  drawNightMarks,
+  frameAt,
+  growthAt,
+  GROWTH_MS,
+  newNightPoints,
+  nightMarks,
+  nightOffsetsOf,
+  nightPointIds,
+  SENTENCE_MAX_PX,
+  THING_STOPS,
+  thingFocusState,
+  thingStopsFor,
+  thingStopNodeIds,
+  type FrameHit,
+  type ThingStop,
+} from "../../lib/graph/night";
+import {
+  readNightOffsets,
+  readSeenNightPoints,
+  readStoredPositions,
+  startRearrange,
+  storeNightOffsets,
+  storePositions,
+  storeSeenNightPoints,
+  undoRearrange,
+} from "../../lib/graph/positions";
 import type { CartographyScene } from "../../lib/graph/cartography";
 import {
   communitiesFor,
@@ -101,6 +136,13 @@ class ScreenSpaceEdgeProgram extends EdgeRectangleProgram {
 // and repaints every edge each render until the fetch lands.
 const EMPTY_CARTOGRAPHY: Map<string, SpaceCartography> = new Map();
 
+/** The closest a thing's own stop (這件事) zooms, CSS px per graph unit:
+ *  its points a sentence's line apart or more, not a screen apart. */
+const THING_STOP_DENSITY = 12;
+/** A point's short title when zoomed in, CSS px: a few words, about ten
+ *  Chinese characters. Its whole sentence comes up on hover. */
+const POINT_TITLE_PX = 120;
+
 // Same reason as EMPTY_CARTOGRAPHY: a stable identity for the unresolved
 // graph query, so the model memo below doesn't rebuild on every render.
 const EMPTY_GRAPH: KnowledgeGraph = {
@@ -112,23 +154,13 @@ const EMPTY_GRAPH: KnowledgeGraph = {
   page_links: [],
 };
 
+const EMPTY_THING_POINTS: ThingNightPoints[] = [];
+
 /** Where the layer choice survives a reload. */
 const LAYERS_STORAGE_KEY = "atlas.layers";
 
-/** Where the small-groups choice is remembered across reloads. */
-export const SMALL_GROUPS_STORAGE_KEY = "atlas.smallGroups";
-
-/** Read the persisted small-groups choice. Only a stored `true` turns them
- *  on; anything malformed — bad JSON, a number, a string — leaves them
- *  hidden, which is the default the map is designed around. */
-export function readStoredSmallGroups(raw: string | null): boolean {
-  if (raw === null) return false;
-  try {
-    return JSON.parse(raw) === true;
-  } catch {
-    return false;
-  }
-}
+/** Where the "Working on" choice is remembered across reloads. */
+export const WORKING_STORAGE_KEY = "atlas.showWorking";
 
 /** Read the persisted layer choice. Anything malformed — bad JSON, a
  *  non-object, a non-boolean field, or all three off — falls back to the
@@ -163,12 +195,15 @@ export function readStoredLayers(raw: string | null): GraphLayers {
 export type AtlasNodeTarget =
   | { kind: "entity"; id: string }
   | { kind: "memory"; id: string }
-  | { kind: "page"; id: string };
+  | { kind: "page"; id: string }
+  | { kind: "thing"; id: string };
 
 /** The node id a click landed on, resolved to a navigable target. */
 function targetForNode(nodeId: string): AtlasNodeTarget {
   const sourceId = memorySourceId(nodeId);
   if (sourceId !== null) return { kind: "memory", id: sourceId };
+  const thingId = thingIdOf(nodeId);
+  if (thingId !== null) return { kind: "thing", id: thingId };
   const pageId = pageIdOf(nodeId);
   if (pageId !== null) return { kind: "page", id: pageId };
   return { kind: "entity", id: nodeId };
@@ -182,6 +217,8 @@ interface AtlasViewProps {
   focusEntityId?: string;
   /** Initial camera target in the whole graph; never restricts its membership. */
   focusPageId?: string;
+  /** Open at this thing's 這件事 stop (from its page's 「在大图上看」). */
+  focusThingId?: string;
   // Main.tsx's Graph view passes navigateBack; renders a back button as the
   // first toolbar item (a floating one would sit on the search box).
   onBack?: () => void;
@@ -200,13 +237,18 @@ function prefersReducedMotion(): boolean {
  * entity overlay's "Atlas" mode. Replaced the canvas ConstellationMap; the
  * query keys keep the "constellation-" prefix so nothing else invalidates.
  */
-export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onBack }: AtlasViewProps) {
+export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, onBack }: AtlasViewProps) {
   const { t } = useTranslation();
   const effectiveFocusId = focusPageId ? pageNodeId(focusPageId) : focusEntityId;
   const palette = useGraphPalette();
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const rendererDisposeRef = useRef<(() => void) | null>(null);
+  // UX-GRAPH-1: points keep their places; moving all of them is the
+  // person's choice, asked first, and can be taken back once.
+  const [layoutVersion, setLayoutVersion] = useState(0);
+  const [rearrange, setRearrange] = useState<"idle" | "asking" | "done">("idle");
+  const rearrangeRef = useRef<"fresh" | "undo" | null>(null);
   const viewpointRef = useRef<{ scope: string | null; view: AtlasViewpoint; body: Map<string, { x: number; y: number }> } | null>(null);
   const graphRef = useRef<Graph | null>(null);
   const simRef = useRef<AtlasSimulation | null>(null);
@@ -238,11 +280,25 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   const displayOpenRef = useRef(false);
   displayOpenRef.current = displayOpen;
   const selectedRef = useRef<string | null>(null);
+  /** The point whose sentence a click pinned open. */
+  const pinnedPointRef = useRef<string | null>(null);
+  const thingArrivalDoneRef = useRef(false);
   const overviewRef = useRef<AtlasViewpoint | null>(null);
-  const pendingFocusRef = useRef<string | null>(null);
   const openingRatioRef = useRef(1);
   const focusNodeRef = useRef<(id: string) => void>(() => {});
   const returnToMapRef = useRef<() => void>(() => {});
+  // A picked thing's zoom stop (UX-CHAT-5), and where the last paint put each
+  // frame and title, so a click there picks its thing.
+  const [thingStop, setThingStop] = useState<ThingStop>("this");
+  const [selectedThing, setSelectedThing] = useState<string | null>(null);
+  const [thingStops, setThingStops] = useState<readonly ThingStop[]>(THING_STOPS);
+  const thingStopRef = useRef<ThingStop>("this");
+  const selectThingRef = useRef<(thing: string, stop: ThingStop) => void>(() => {});
+  const frameHitsRef = useRef<FrameHit[]>([]);
+  // Night points that are new to this viewer and have not finished growing
+  // in yet. They are marked seen as soon as they are found, so this is what
+  // carries them over a rebuild that cuts their growth short.
+  const growQueueRef = useRef<Set<string>>(new Set());
   const sceneRef = useRef<CartographyScene | null>(null);
   const sceneDirtyRef = useRef(true);
 
@@ -260,6 +316,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     refetchInterval: 120_000,
   });
   const entities = graph.entities;
+  // Each thing with the points its nights wrote (UX-CHAT-5). Those points have
+  // no entity or page link of their own, so this is the only way they reach
+  // the map. An older daemon without the route leaves the map as it was.
+  const { data: thingPoints = EMPTY_THING_POINTS, isPending: thingPointsPending } = useQuery({
+    queryKey: ["thing-night-points"],
+    queryFn: async (): Promise<ThingNightPoints[]> => {
+      try {
+        return (await listThingNightPoints()) ?? EMPTY_THING_POINTS;
+      } catch {
+        return EMPTY_THING_POINTS;
+      }
+    },
+    refetchInterval: 120_000,
+  });
 
   // Same field precedence as the entity page (EntityDetail's space-then-domain
   // rule), through model.ts's entitySpace so the list, the filter, and the
@@ -311,37 +381,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       // Private mode / quota: the choice still applies for this session.
     }
   };
-  // Components of fewer than MIN_COMPONENT_SIZE nodes are off the map until
-  // the reader asks for them; the chip below is the ask. Persisted like the
-  // layer choice, and a malformed stored value falls back to hidden.
-  const [showSmallGroups, setShowSmallGroups] = useState<boolean>(() => {
-    if (focusPageId) return true;
-    if (typeof window === "undefined") return false;
-    try {
-      return readStoredSmallGroups(window.localStorage.getItem(SMALL_GROUPS_STORAGE_KEY));
-    } catch {
-      return false;
-    }
-  });
-  const toggleSmallGroups = () => {
-    const next = !showSmallGroups;
-    setShowSmallGroups(next);
-    try {
-      window.localStorage.setItem(SMALL_GROUPS_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // Private mode / quota: the choice still applies for this session.
-    }
-  };
-  const revealSmallGroupsForFocus = () => {
-    if (showSmallGroups) return;
-    setShowSmallGroups(true);
-    try {
-      window.localStorage.setItem(SMALL_GROUPS_STORAGE_KEY, JSON.stringify(true));
-    } catch {
-      // Private mode / quota: the choice still applies for this session.
-    }
-  };
-
   const onlyLayerOn = (key: keyof GraphLayers) =>
     layers[key] && Object.values(layers).filter(Boolean).length === 1;
 
@@ -381,33 +420,41 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     [scopedGraph, layers, model],
   );
 
-  // What sigma actually draws. Nodes in a connected component smaller than
-  // MIN_COMPONENT_SIZE are left out (model.ts) unless the reader turns them
-  // on: on real data ~960 of 1,600 entities have no relation at all, and
-  // another ~196 sit in small groups of four or fewer. Both buried the map.
-  // The count is shown on the toolbar chip that turns them back on.
-  // Overlay entry point: a focused entity that sits in a small group would
-  // otherwise vanish with it and the mount focus below would silently not
-  // fire, so the small groups are drawn for that mount whatever the chip says.
+  // What sigma draws: every node. Small groups (components of fewer than
+  // MIN_COMPONENT_SIZE, model.ts) are laid out with the rest but kept out of
+  // sight until the reader zooms in (see `tucked` and the node reducer): on
+  // real data ~960 of 1,600 entities have no relation at all, and another ~196
+  // sit in small groups of four or fewer, which buried the opening map.
+  // What active things' steeped points link to is never tucked away, or a
+  // linked thing would have no 附近 to go to.
+  const thingAnchors = useMemo(() => {
+    const points = new Set(thingPoints.filter((thing) => !thing.quiet).flatMap((thing) => thing.points.map((point) => point.memory_id)));
+    return new Set(scopedGraph.memory_links.filter((link) => points.has(link.memory_id)).map((link) => link.entity_id));
+  }, [thingPoints, scopedGraph]);
   const visibleModel = useMemo<GraphModel>(() => {
-    let drawable = drawableModel(baseModel, showSmallGroups);
-    if (
-      effectiveFocusId &&
-      !drawable.nodes.some((n) => n.id === effectiveFocusId) &&
-      baseModel.nodes.some((n) => n.id === effectiveFocusId)
-    ) {
-      drawable = drawableModel(baseModel, true);
+    let withMemories = baseModel;
+    if (layers.memory) {
+      // Nothing to hang the memories on (entity and page layers both off):
+      // fall back to drawing the memory model as it is.
+      withMemories = baseModel.nodes.length === 0 ? model : attachMemories(baseModel, model);
     }
-    if (!layers.memory) return drawable;
-    // Nothing to hang the memories on (entity and page layers both off):
-    // fall back to drawing the memory model as it is.
-    if (baseModel.nodes.length === 0) return drawableModel(model, showSmallGroups);
-    return attachMemories(drawable, model);
-  }, [baseModel, model, layers.memory, showSmallGroups, effectiveFocusId]);
-  // Counted off the FULL base model, so the chip keeps its number when the
-  // groups are showing and can offer to hide them again — and keeps it when
-  // the memory chip flips, since memories never make or break a group.
-  const smallGroupCount = useMemo(() => smallGroupNodeCount(baseModel), [baseModel]);
+    // Things and their night's points are drawn whatever the memory layer
+    // says: they are the work, not a layer of evidence.
+    return attachThingPoints(withMemories, thingPoints, scopedGraph.memory_links, spaceFilter);
+  }, [baseModel, model, layers.memory, thingPoints, scopedGraph, spaceFilter]);
+  // The small groups, and the memories hung only on them: hidden until the
+  // view is zoomed in far enough for the islands to come up solid.
+  // The group the map was opened on (a page or topic handed off to it) is
+  // never tucked either: the reader came to see it.
+  const tucked = useMemo(() => {
+    const anchors = effectiveFocusId ? new Set([...thingAnchors, effectiveFocusId]) : thingAnchors;
+    return tuckedNodeIds(visibleModel, smallGroupIds(baseModel, anchors));
+  }, [visibleModel, baseModel, thingAnchors, effectiveFocusId]);
+  const tuckedRef = useRef(tucked);
+  tuckedRef.current = tucked;
+  const hasThings = visibleModel.nodes.some((node) => node.kind === "thing");
+  const hasThingsRef = useRef(hasThings);
+  hasThingsRef.current = hasThings;
 
   // Anything in cartography.ts's unscoped bucket is drawn on the fallback
   // climb, so the badge must never read all-durable while such a node is on
@@ -449,25 +496,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   const communitiesRef = useRef<Map<string, string>>(communities);
 
   const filteredModel = useMemo(() => filterGraphEntityTypes(visibleModel, excludedTypes), [visibleModel, excludedTypes]);
-  const entityTypes = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const node of visibleModel.nodes) if (node.kind === "entity") counts.set(node.entityType, (counts.get(node.entityType) ?? 0) + 1);
-    return [...counts].sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b));
-  }, [visibleModel]);
-  const toggleEntityType = (type: string) => setExcludedTypes((previous) => {
-    const next = new Set(previous);
-    if (next.has(type)) next.delete(type); else next.add(type);
-    return next;
-  });
 
   // Region count for the toolbar count line — membership only, so it agrees
   // with the regions the cartography scene actually names without needing
-  // node positions. Counted over the DRAWN nodes for the same reason:
-  // communities come from the full model, but a hidden small group's
-  // community is not on the map.
+  // node positions. Counted over the nodes on the map at rest for the same
+  // reason: communities come from the full model, but a small group's
+  // community is out of sight until zoomed in.
   const regionCount = useMemo(() => {
     const groups = new Map<string, GraphNode[]>();
     for (const node of filteredModel.nodes) {
+      if (tucked.has(node.id)) continue;
       const community = communities.get(node.id);
       if (community === undefined) continue;
       const list = groups.get(community);
@@ -479,7 +517,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       if (members.length >= MIN_REGION_SIZE) count += 1;
     }
     return count;
-  }, [filteredModel, communities]);
+  }, [filteredModel, communities, tucked]);
 
   // Toolbar search (artifact screen 01): type → listbox of entity names,
   // Enter/click → camera fly + the same emphasis hover applies.
@@ -499,14 +537,38 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   // model) can apply the current choice without re-running on toggle.
   const [showRegions, setShowRegions] = useState(false);
   const showRegionsRef = useRef(false);
+  // "Working on": every active thing with its steeped points, not only the
+  // picked one. Off by default so the map opens clean; the choice is kept.
+  const [showWorking, setShowWorking] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(WORKING_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const showWorkingRef = useRef(showWorking);
+  showWorkingRef.current = showWorking;
+  const toggleWorking = () => {
+    const next = !showWorking;
+    showWorkingRef.current = next;
+    setShowWorking(next);
+    try {
+      window.localStorage.setItem(WORKING_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Private mode / quota: the choice still applies for this session.
+    }
+  };
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const areasRef = useRef<HTMLCanvasElement | null>(null);
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return [];
-    return model.nodes.filter((node) => !entityTypeHidden(node.entityType, excludedTypes) && node.name.toLowerCase().includes(needle)).slice(0, 8);
-  }, [model, query, excludedTypes]);
+    // A thing being worked on is found by its title too (UX-CHAT-5).
+    const things = visibleModel.nodes.filter((node) => node.kind === "thing");
+    return [...things, ...model.nodes].filter((node) => !entityTypeHidden(node.entityType, excludedTypes) && node.name.toLowerCase().includes(needle)).slice(0, 8);
+  }, [model, visibleModel, query, excludedTypes]);
 
 
   const focusEntity = (nodeId: string) => {
@@ -515,22 +577,18 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     searchInputRef.current?.blur();
     const renderer = sigmaRef.current;
     const drawn = graphRef.current;
-    // A degree-0 node is not on the map at all (see visibleModel), but search
-    // can still name it. Reveal hidden small groups first so the same search
-    // action can select the node in the map, including in the browser preview
-    // where no details callback is present.
-    if (!drawn || !drawn.hasNode(nodeId)) {
-      if (model.nodes.some((node) => node.id === nodeId)) {
-        pendingFocusRef.current = nodeId;
-        revealSmallGroupsForFocus();
-      }
-      return;
-    }
+    if (!drawn || !drawn.hasNode(nodeId)) return;
     const graph = drawn;
     if (!renderer) return;
+    // A thing (found by search) is picked like a click on its frame.
+    if (graph.getNodeAttribute(nodeId, "entityType") === THING_NODE_TYPE) {
+      selectThing(nodeId, "this");
+      return;
+    }
     if (!selectedRef.current) overviewRef.current = captureAtlasViewpoint(renderer, graph);
     selectedRef.current = nodeId;
     setSelectedId(nodeId);
+    setSelectedThing(null);
     // Selection persists while reading the inspector or traversing neighbors.
     hoverStateRef.current = hoverStateFor(graph, nodeId);
     const display = renderer.getNodeDisplayData(nodeId);
@@ -546,9 +604,56 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   };
 
   focusNodeRef.current = focusEntity;
+  /**
+   * Pick a thing and move to one of its three zoom stops (UX-CHAT-5): 這件事
+   * fits its frame with room for the sentences, 附近 adds what its points
+   * link to and their neighbours, 全部 fits the whole map. The thing stays
+   * picked (its lit set lit, the stops offered) at every stop. The map itself
+   * is its picture, so no inspector opens over it.
+   */
+  const selectThing = (thing: string, stop: ThingStop) => {
+    const renderer = sigmaRef.current;
+    const drawn = graphRef.current;
+    if (!renderer || !drawn || !drawn.hasNode(thing)) return;
+    if (!selectedRef.current) overviewRef.current = captureAtlasViewpoint(renderer, drawn);
+    else if (selectedRef.current !== thing) setSelectedId(null);
+    selectedRef.current = thing;
+    setSelectedThing(thing);
+    setThingStops(thingStopsFor(drawn, thing));
+    thingStopRef.current = stop;
+    setThingStop(stop);
+    hoverStateRef.current = thingFocusState(drawn, thing, stop);
+    focusLayoutRef.current = null;
+    const { width } = renderer.getDimensions();
+    // The sentences run beside their points, either side; the title sits
+    // above. Room on both sides keeps the thing centred.
+    const sentenceRoom = Math.min(SENTENCE_MAX_PX * 0.75, width * 0.2);
+    const insets = stop === "this"
+      ? { ...ATLAS_CONTROL_INSETS, top: ATLAS_CONTROL_INSETS.top + 24, left: ATLAS_CONTROL_INSETS.left + sentenceRoom, right: ATLAS_CONTROL_INSETS.right + sentenceRoom }
+      : ATLAS_CONTROL_INSETS;
+    const duration = prefersReducedMotion() ? 0 : 450;
+    if (stop === "all") {
+      const visibleNodeIds = new Set(
+        drawn.nodes().filter((id) => !entityTypeHidden(drawn.getNodeAttribute(id, "entityType"), excludedTypesRef.current)),
+      );
+      frameAtlasView(renderer, drawn, { mode: "all", visibleNodeIds, insets, duration });
+    } else {
+      frameAtlasView(renderer, drawn, {
+        nodeIds: thingStopNodeIds(drawn, thing, stop),
+        insets,
+        duration,
+        padding: 40,
+        maxDensity: stop === "this" ? THING_STOP_DENSITY : undefined,
+      });
+    }
+    renderer.refresh();
+  };
+  selectThingRef.current = selectThing;
   const returnToMap = () => {
     selectedRef.current = null;
+    pinnedPointRef.current = null;
     setSelectedId(null);
+    setSelectedThing(null);
     restoreSearchFocusOnCloseRef.current = true;
     const renderer = sigmaRef.current;
     const drawn = graphRef.current;
@@ -569,6 +674,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     const drawn = graphRef.current;
     selectedRef.current = null;
     setSelectedId(null);
+    setSelectedThing(null);
     overviewRef.current = null;
     focusLayoutRef.current = null;
     if (!renderer || !drawn) return;
@@ -578,7 +684,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     const visibleNodeIds = new Set(
       drawn.nodes().filter((id) => !entityTypeHidden(drawn.getNodeAttribute(id, "entityType"), excludedTypesRef.current)),
     );
-    frameAtlasView(renderer, drawn, { mode, visibleNodeIds, padding: 56 });
+    frameAtlasView(renderer, drawn, { mode, visibleNodeIds, padding: 56, insets: ATLAS_CONTROL_INSETS });
     // Replace a pending search animation with the NEW frame. Animating the
     // old state before fitting would overwrite the fit on its next frame.
     if (wasAnimated) void camera.animate({ x: camera.x, y: camera.y, ratio: camera.ratio, angle: camera.angle }, { duration: 1 });
@@ -651,12 +757,14 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     if (selectedRef.current && !filteredModel.nodes.some((node) => node.id === selectedRef.current)) {
       selectedRef.current = null;
       setSelectedId(null);
+      setSelectedThing(null);
       overviewRef.current = null;
     }
   }, [filteredModel]);
   useEffect(() => {
     selectedRef.current = null;
     setSelectedId(null);
+    setSelectedThing(null);
     overviewRef.current = null;
   }, [spaceFilter]);
   const selectedNode = filteredModel.nodes.find((node) => node.id === selectedId);
@@ -701,6 +809,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     }
   };
 
+  // The map's host only exists once both reads are in (see the loading state
+  // below). The things' read can land after the graph's and leave the model
+  // as it was (no thing has points), so readiness itself must re-run the
+  // mount: keyed on the model alone, the effect already ran with no host and
+  // never ran again, and the map stayed blank.
+  const mapReady = !graphLoading && !thingPointsPending;
   // Mount/rebuild sigma whenever the model changes. `palette` is read here
   // (fresh at build time) but deliberately not a dependency — a theme flip
   // recolors the existing graph in place (below) instead of tearing down and
@@ -710,7 +824,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // Dispose the current imperative renderer before React mutates or detaches
     // its host. Mount/rebuild stays passive so large layouts do not block paint.
     return () => rendererDisposeRef.current?.();
-  }, [visibleModel]);
+  }, [visibleModel, layoutVersion, mapReady]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -718,9 +832,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // are all smaller than MIN_COMPONENT_SIZE draws nothing but must still
     // mount, so the map frame and the "N unconnected or paired, hidden" chip
     // explain the emptiness instead of the view silently showing a blank slot.
-    if (!container || model.nodes.length === 0) return;
+    if (!container || (model.nodes.length === 0 && visibleModel.nodes.length === 0)) return;
 
     const graph = buildAtlasGraph(visibleModel, palette);
+    // Each night point goes back to the spot it was given the first time it
+    // was on the map; only new ones are placed (UX-CHAT-5).
+    applyNightOffsets(graph, readNightOffsets());
     runAtlasLayout(graph);
     graphRef.current = graph;
     hoverStateRef.current = hoverStateFor(graph, null);
@@ -736,17 +853,75 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     });
     const previous = viewpointRef.current;
     const bodyIds = graph.nodes().filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE);
-    if (previous?.scope === spaceFilter && bodyIds.length > 0) {
-      // Layer/small-group changes may add or remove nodes. Restore every
-      // survivor rather than requiring an identical set, so the learned map
-      // stays put while the changed layer settles around it.
+    // Within a visit the last layout is in memory; on a new visit it comes
+    // from the kept layout, so the same point is where it was (UX-GRAPH-1).
+    const layoutChange = rearrangeRef.current;
+    rearrangeRef.current = null;
+    if (layoutChange === "fresh") startRearrange(spaceFilter);
+    else if (layoutChange === "undo") undoRearrange(spaceFilter);
+    const kept = previous?.scope === spaceFilter && !layoutChange ? previous.body : readStoredPositions(spaceFilter);
+    if (bodyIds.length > 0 && kept.size > 0) {
+      // Layer/small-group changes and new pages may add or remove nodes.
+      // Restore every survivor rather than requiring an identical set, so the
+      // learned map stays put while what is new settles around it.
       const survivorPositions = new Map(
         bodyIds
-          .map((id) => [id, previous.body.get(id)] as const)
+          .map((id) => [id, kept.get(id)] as const)
           .filter((entry): entry is readonly [string, { x: number; y: number }] => entry[1] !== undefined),
       );
       if (survivorPositions.size > 0) sim.restorePositions(survivorPositions);
     }
+    const bodyPositions = () => {
+      const positions = new Map(graph.nodes()
+        .filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE)
+        .map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }]));
+      // A thing gone quiet has no frame on this map, but keeps its spot, so
+      // its frame comes back where it was when the thing is active again.
+      for (const [id, position] of kept) {
+        if (thingIdOf(id) !== null && !positions.has(id)) positions.set(id, position);
+      }
+      return positions;
+    };
+    // Keep this layout now, so it holds even if the app quits without
+    // unmounting the map, and again when the window goes away.
+    storePositions(spaceFilter, bodyPositions());
+    storeNightOffsets(nightOffsetsOf(graph));
+    // A point new since the map was last opened grows out of its thing's
+    // centre, once (UX-CHAT-5); it is seen from now on, so it never does again.
+    const nightNow = nightPointIds(graph);
+    for (const id of newNightPoints(nightNow, readSeenNightPoints())) growQueueRef.current.add(id);
+    storeSeenNightPoints(nightNow);
+    const growing = prefersReducedMotion() ? [] : nightNow.filter((id) => growQueueRef.current.has(id));
+    if (prefersReducedMotion()) growQueueRef.current.clear();
+    // Sigma (3.0.3) takes a node's place from the graph on every full paint,
+    // not from the reducer, so a growing point is moved on the graph itself:
+    // out from its thing's centre to the spot just kept, which it ends on
+    // exactly. Nothing kept is touched (its spot was stored above).
+    let growth: { targets: Map<string, { x: number; y: number }>; start: number; at: number } | null = growing.length > 0
+      ? {
+        targets: new Map(growing.map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }])),
+        start: 0,
+        at: 0,
+      }
+      : null;
+    const placeGrowth = (at: number) => {
+      if (!growth) return;
+      growth.at = at;
+      for (const [id, target] of growth.targets) {
+        const thing = graph.getNodeAttribute(id, "dustOf") as string | undefined;
+        if (at >= 1 || !thing || !graph.hasNode(thing)) {
+          graph.mergeNodeAttributes(id, target);
+          continue;
+        }
+        const cx = graph.getNodeAttribute(thing, "x") as number;
+        const cy = graph.getNodeAttribute(thing, "y") as number;
+        graph.mergeNodeAttributes(id, { x: cx + (target.x - cx) * at, y: cy + (target.y - cy) * at });
+      }
+    };
+    placeGrowth(0);
+    let growthFrame = 0;
+    const keepOnHide = () => storePositions(spaceFilter, bodyPositions());
+    window.addEventListener("pagehide", keepOnHide);
     applyAtlasHierarchy(graph);
     // Large maps intentionally label only hierarchy landmarks at overview
     // zoom. Keep one stable name for a represented component that has no
@@ -782,7 +957,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     const hasMeaningfulComponent = [...components.values()].some((members) =>
       members.some((id) => graph.getNodeAttribute(id, "landmark") === true),
     );
-    const showOverviewFallbackLabels = showSmallGroups || !hasMeaningfulComponent;
+    const showOverviewFallbackLabels = !hasMeaningfulComponent;
     simRef.current = sim;
     if (import.meta.env.DEV) {
       // Preview/debug handle only — stripped from prod builds.
@@ -797,7 +972,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     overlay.style.width = "100%";
     overlay.style.height = "100%";
     overlay.style.pointerEvents = "none";
-    overlay.style.display = showRegionsRef.current || layers.memory ? "" : "none";
+    overlay.style.display = showRegionsRef.current || layers.memory || hasThingsRef.current ? "" : "none";
     overlayRef.current = overlay;
     const areas = overlay.cloneNode() as HTMLCanvasElement;
     areas.dataset.testid = "atlas-community-areas";
@@ -840,17 +1015,49 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // Sigma's grid budgets label count, but long labels can cross cell boundaries.
     // Reserve actual painted rectangles and share them with the region overlay.
     const labelBoxes: { left: number; right: number; top: number; bottom: number }[] = [];
-    const reserveLabel = (ctx: CanvasRenderingContext2D, label: string, at: LabelPlacement) => {
+    // The things' frames and titles as last painted: no other name is
+    // printed across them (UX-CHAT-5). Frames are painted after the labels,
+    // so the labels go by the previous paint's (see drawOverlay).
+    let frameGuards: readonly { left: number; right: number; top: number; bottom: number }[] = [];
+    let guardRender = false;
+    let guardPasses = 0;
+    const reserveLabel = (ctx: CanvasRenderingContext2D, label: string, at: LabelPlacement, guarded = false) => {
       ctx.font = NODE_LABEL_FONT;
       const width = ctx.measureText(label).width;
       const left = at.align === "center" ? at.x - width / 2 : at.align === "right" ? at.x - width : at.x;
       const top = at.baseline === "middle" ? at.y - 6 : at.baseline === "top" ? at.y : at.y - 12;
       const box = { left: left - 4, right: left + width + 4, top: top - 3, bottom: top + 15 };
-      if (labelBoxes.some((other) => other.left < box.right && box.left < other.right && other.top < box.bottom && box.top < other.bottom)) return false;
+      const taken = (other: { left: number; right: number; top: number; bottom: number }) =>
+        other.left < box.right && box.left < other.right && other.top < box.bottom && box.top < other.bottom;
+      if (labelBoxes.some(taken) || (guarded && frameGuards.some(taken))) return false;
       labelBoxes.push(box);
       return true;
     };
+    // The node under the pointer, whatever the hover state shows.
+    let pointerNode: string | null = null;
+    // A point shows its whole sentence only when asked: under the pointer,
+    // pinned by a click, or at its picked thing's own stop (one thing, and
+    // the reader went there to read it). The overlay paints it (night.ts).
+    // Zoomed in, every other point carries a short title; zoomed out, none.
+    const sentencesFor = (thing: string, point: string) =>
+      point === pointerNode || point === pinnedPointRef.current || (selectedRef.current === thing && thingStopRef.current === "this");
     const drawLabel = (ctx: CanvasRenderingContext2D, data: Record<string, any>, s: Record<string, any>) => {
+      const nodeAttrs = graph.hasNode(data.key) ? graph.getNodeAttributes(data.key) : null;
+      if (nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string") {
+        // Its sentence is painted by the overlay, wrapped beside its point;
+        // zoomed out, a point carries no words at all.
+        if (sentencesFor(nodeAttrs.dustOf, data.key)) return;
+        if (lodRef.current.phase === "overview") return;
+        ctx.font = NODE_LABEL_FONT;
+        const title = truncateOverviewLabel(ctx, String(data.label ?? ""), POINT_TITLE_PX);
+        if (!title) return;
+        const angle = Math.atan2(-(graph.getNodeAttribute(data.key, "y") as number), graph.getNodeAttribute(data.key, "x") as number);
+        const sector = Math.round((angle + Math.PI) / (Math.PI / 2)) % 4;
+        const at = labelAnchor(data.x, data.y, data.size, sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above");
+        // Where titles would overlap, the later one is left off.
+        if (reserveLabel(ctx, title, at, false)) drawNodeLabelAt(ctx, { ...data, label: title }, s, at, paletteRef.current.surface);
+        return;
+      }
       // Truncation, collision reservation, and drawNodeLabelAt must all use
       // the same body face or a measured width is not a screen-space bound.
       ctx.font = NODE_LABEL_FONT;
@@ -887,7 +1094,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       const angle = Math.atan2(-(graph.getNodeAttribute(data.key, "y") as number), graph.getNodeAttribute(data.key, "x") as number);
       const sector = Math.round((angle + Math.PI) / (Math.PI / 2)) % 4;
       const at = labelAnchor(data.x, data.y, data.size, sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above");
-      if (reserveLabel(ctx, label, at)) drawNodeLabelAt(ctx, { ...data, label }, s, at, paletteRef.current.surface);
+      if (reserveLabel(ctx, label, at, nodeAttrs?.night !== true)) drawNodeLabelAt(ctx, { ...data, label }, s, at, paletteRef.current.surface);
     };
     let minimumGraphRadius = 0;
     let graphUnitsPerPixel = Infinity;
@@ -942,6 +1149,15 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       defaultDrawNodeLabel: drawLabel,
       nodeReducer: (node, attrs) => {
         if (entityTypeHidden(attrs.entityType, excludedTypesRef.current)) return { ...attrs, hidden: true };
+        // A thing's night points show only while that thing is picked (from
+        // its page, search, or a stop): the open map stays clear of them
+        // (UX-CHAT-5; Fable's design: the thing is a camera, not a mark).
+        // The "Working on" switch shows every active thing's points at once.
+        if (attrs.night === true && typeof attrs.dustOf === "string" && !showWorkingRef.current && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
+        // A small group stays out of sight until the islands come up solid,
+        // unless it is what the reader is looking at.
+        const hover = hoverStateRef.current;
+        if (tuckedRef.current.has(node) && !lodRef.current.islandsSolid && hover.hovered !== node && !hover.neighbors.has(node) && node !== effectiveFocusId) return { ...attrs, hidden: true };
         const display = nodeDisplay(hoverStateRef.current, node, attrs, paletteRef.current, lodRef.current);
         if (
           showOverviewFallbackLabels &&
@@ -963,9 +1179,14 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
           display.forceLabel = true;
           display.highlighted = true;
         }
+        // Zoomed in, each shown point is offered its short title; drawLabel
+        // leaves off the ones that would overlap.
+        if (attrs.night === true && lodRef.current.phase !== "overview" && !display.hidden) display.forceLabel = true;
         const floor = lodRef.current.phase === "overview" && attrs.landmark ? minimumGraphRadius * 2 : minimumGraphRadius;
-        const cap = node === hoverStateRef.current.hovered ? 12 : attrs.entityType === MEMORY_NODE_TYPE ? 2.8 : 8;
-        return { ...display, size: Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel) };
+        const cap = nodeSizeCapPx(attrs, node === hoverStateRef.current.hovered);
+        const size = Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel);
+        if (growth && growth.targets.has(node)) return { ...display, size: size * Math.max(0.15, growth.at) };
+        return { ...display, size };
       },
       edgeReducer: (edge, attrs) => {
         const [source, target] = graph.extremities(edge);
@@ -1025,6 +1246,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       // drops the field the names simply stay on, as before.
       const labelledNodes = (renderer as unknown as { displayedNodeLabels?: ReadonlySet<string> })
         .displayedNodeLabels;
+      // Region names and counts keep off the frames too; the frames' own
+      // marks are placed against the fresh labels only.
+      const guardStart = labelBoxes.length;
+      labelBoxes.push(...frameGuards);
       if (showRegionsRef.current) drawRegionNames(ctx, named, project, paletteRef.current, { width, height }, labelledNodes, labelBoxes);
       drawDustCounts(
         ctx,
@@ -1038,6 +1263,39 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
         renderer.scaleSize(1),
         labelBoxes,
       );
+      labelBoxes.splice(guardStart, frameGuards.length);
+      const drawnAt = (id: string) => {
+        const display = renderer.getNodeDisplayData(id);
+        if (!display || display.hidden) return null;
+        const at = renderer.framedGraphToViewport(display);
+        return { x: at.x, y: at.y, r: renderer.scaleSize(display.size) };
+      };
+      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current);
+      // Sentences keep off the other bodies on screen, not only the labels.
+      const bodies: { left: number; right: number; top: number; bottom: number }[] = [];
+      if (marks.sentences.length > 0) {
+        graph.forEachNode((id, attrs) => {
+          if (attrs.night === true || attrs.entityType === THING_NODE_TYPE) return;
+          const at = drawnAt(id);
+          if (!at || at.x < -at.r || at.y < -at.r || at.x > width + at.r || at.y > height + at.r) return;
+          bodies.push({ left: at.x - at.r, right: at.x + at.r, top: at.y - at.r, bottom: at.y + at.r });
+        });
+      }
+      const hits = drawNightMarks(ctx, marks, paletteRef.current, labelBoxes, bodies, selectedRef.current);
+      frameHitsRef.current = hits;
+      // Where the frames moved, paint the labels once more against them;
+      // twice at most in a row, so the two can never chase each other.
+      const moved = hits.length !== frameGuards.length || hits.some((hit, index) => {
+        const was = frameGuards[index]!;
+        return Math.abs(hit.left - was.left) > 0.5 || Math.abs(hit.top - was.top) > 0.5 || Math.abs(hit.right - was.right) > 0.5 || Math.abs(hit.bottom - was.bottom) > 0.5;
+      });
+      frameGuards = hits;
+      guardPasses = guardRender ? guardPasses + 1 : 0;
+      guardRender = false;
+      if (moved && guardPasses < 2) {
+        guardRender = true;
+        renderer.scheduleRender();
+      }
     };
     // One handler paints the overlay from one scene — rebuilt only when a
     // paint marked it dirty — and sigma sees a single afterRender listener.
@@ -1061,7 +1319,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     );
     const saved = viewpointRef.current;
     const restored = saved?.scope === spaceFilter && restoreAtlasViewpoint(renderer, graph, saved.view);
-    if (!restored) frameAtlasView(renderer, graph, { mode: "main", visibleNodeIds, padding: 56 });
+    // The opening view keeps the toolbar's band clear: no frame starts
+    // under the search field (UX-CHAT-5).
+    if (!restored) frameAtlasView(renderer, graph, { mode: "main", visibleNodeIds, padding: 56, insets: ATLAS_CONTROL_INSETS });
     // Zoom level of detail, relative to THIS opening view: how much memory
     // dust each anchor shows, and whether the islands are solid yet (see
     // atlas.ts's lodFor). The reducers only re-run on refresh(), not on a
@@ -1121,13 +1381,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
         camera.setState({ x: display.x, y: display.y, ratio: Math.min(camera.ratio, 1, focusPageId ? openingRatioRef.current / 2.5 : 1) });
       }
     }
-    const pendingFocus = pendingFocusRef.current;
-    if (pendingFocus && graph.hasNode(pendingFocus)) {
-      pendingFocusRef.current = null;
-      focusNodeRef.current(pendingFocus);
+    // Arriving from a thing's page: go straight to its 這件事 stop, once.
+    if (focusThingId && !thingArrivalDoneRef.current && graph.hasNode(thingNodeId(focusThingId))) {
+      thingArrivalDoneRef.current = true;
+      selectThingRef.current(thingNodeId(focusThingId), "this");
     }
     if (selectedRef.current && graph.hasNode(selectedRef.current)) {
-      hoverStateRef.current = hoverStateFor(graph, selectedRef.current);
+      // A picked thing keeps its lit set across a rebuild (a new night's
+      // points arriving while it is open, UX-CHAT-5).
+      const isThing = graph.getNodeAttribute(selectedRef.current, "entityType") === THING_NODE_TYPE;
+      hoverStateRef.current = isThing
+        ? thingFocusState(graph, selectedRef.current, thingStopRef.current)
+        : hoverStateFor(graph, selectedRef.current);
+      // A new link can bring 附近 in.
+      if (isThing) setThingStops(thingStopsFor(graph, selectedRef.current));
     }
     // First paint of THIS renderer, and the only thing that draws the
     // overlay canvas above at all. Sigma's constructor render already happened
@@ -1141,26 +1408,76 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     // the fresh canvas stayed at its untouched 300x150 default and every
     // region name vanished from the map.
     renderer.refresh();
+    // New points grow in from the first painted frame on.
+    if (growth) {
+      const grow = () => {
+        if (!growth) return;
+        if (growth.start === 0) growth.start = performance.now();
+        const elapsed = performance.now() - growth.start;
+        placeGrowth(growthAt(elapsed));
+        if (elapsed >= GROWTH_MS) {
+          for (const id of growth.targets.keys()) growQueueRef.current.delete(id);
+          growth = null;
+        }
+        sceneDirtyRef.current = true;
+        renderer.refresh();
+        if (growth) growthFrame = requestAnimationFrame(grow);
+      };
+      growthFrame = requestAnimationFrame(grow);
+    }
     renderer.on("clickNode", ({ node }) => {
       // A moved drag must not also navigate on release.
       if (movedDuringPressRef.current) return;
+      // A click on a point pins its sentence open (again unpins it), to read
+      // it through or copy it.
+      if (graph.getNodeAttribute(node, "night") === true) {
+        pinnedPointRef.current = pinnedPointRef.current === node ? null : node;
+        renderer.refresh();
+        return;
+      }
       focusNodeRef.current(node);
     });
-    renderer.on("clickStage", () => { if (selectedRef.current) returnToMapRef.current(); });
+    renderer.on("clickStage", ({ event }) => {
+      if (pinnedPointRef.current) {
+        pinnedPointRef.current = null;
+        renderer.refresh();
+        return;
+      }
+      // A click on a frame or its title picks its thing, at its own stop.
+      const thing = frameAt(frameHitsRef.current, event.x, event.y);
+      if (thing) {
+        selectThingRef.current(thing, "this");
+        return;
+      }
+      if (selectedRef.current) returnToMapRef.current();
+    });
     // Hover is LOCKED while a drag is live: our drag doesn't capture the
     // pointer (sigma's captor keeps picking), so sweeping the grabbed node
     // across other hit areas would fire enter/leave mid-drag — the graph
     // dims/undims, labels pop, and the cursor flickers grabbing→pointer→
     // default. force-graph never shows this (d3-drag captures the pointer,
     // hover is inert mid-drag), and the flashing reads as jank.
+    let overNode = false;
     renderer.on("enterNode", ({ node }) => {
-      if (draggedNodeRef.current || selectedRef.current) return;
+      overNode = true;
+      pointerNode = node;
+      if (draggedNodeRef.current || selectedRef.current) {
+        // A point's sentence still comes up under the pointer.
+        if (graph.getNodeAttribute(node, "night") === true) renderer.refresh();
+        return;
+      }
       hoverStateRef.current = hoverStateFor(graph, node);
       container.style.cursor = "pointer";
       renderer.refresh();
     });
     renderer.on("leaveNode", () => {
-      if (draggedNodeRef.current || selectedRef.current) return;
+      overNode = false;
+      const left = pointerNode;
+      pointerNode = null;
+      if (draggedNodeRef.current || selectedRef.current) {
+        if (left !== null && graph.hasNode(left) && graph.getNodeAttribute(left, "night") === true) renderer.refresh();
+        return;
+      }
       hoverStateRef.current = hoverStateFor(graph, null);
       container.style.cursor = "default";
       renderer.refresh();
@@ -1206,7 +1523,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     });
     mouseCaptor.on("mousemovebody", (e) => {
       const draggedNode = draggedNodeRef.current;
-      if (!draggedNode) return;
+      if (!draggedNode) {
+        // A frame and its title answer a click, so they show the hand.
+        if (!overNode) container.style.cursor = frameAt(frameHitsRef.current, e.x, e.y) ? "pointer" : "default";
+        return;
+      }
       movedDuringPressRef.current = true;
       const pos = renderer.viewportToGraph(e);
       graph.setNodeAttribute(draggedNode, "x", pos.x);
@@ -1283,15 +1604,25 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
       if (disposed) return;
       disposed = true;
       containerSizeObserver?.disconnect();
+      cancelAnimationFrame(growthFrame);
+      placeGrowth(1);
+      growth = null;
       // Sigma only detaches its own camera listener; release our listener too.
       camera.off("updated", onCameraUpdated);
-      viewpointRef.current = {
-        scope: spaceFilter,
-        view: captureAtlasViewpoint(renderer, graph),
-        body: new Map(graph.nodes()
-          .filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE)
-          .map((id) => [id, { x: graph.getNodeAttribute(id, "x"), y: graph.getNodeAttribute(id, "y") }])),
-      };
+      window.removeEventListener("pagehide", keepOnHide);
+      if (rearrangeRef.current) {
+        // The next build lays out fresh (or brings the old layout back);
+        // keeping this one would undo the person's choice.
+        viewpointRef.current = null;
+      } else {
+        const body = bodyPositions();
+        viewpointRef.current = {
+          scope: spaceFilter,
+          view: captureAtlasViewpoint(renderer, graph),
+          body,
+        };
+        storePositions(spaceFilter, body);
+      }
       sim.stop();
       simRef.current = null;
       sigmaRef.current = null;
@@ -1307,7 +1638,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     rendererDisposeRef.current = dispose;
     return dispose;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleModel]);
+  }, [visibleModel, layoutVersion, mapReady]);
 
   // Theme flip: recolor the live graph and repaint — no remount. Also keeps
   // paletteRef current so nodeReducer/edgeReducer (read at paint time) see
@@ -1354,12 +1685,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
-    overlay.style.display = showRegions || layers.memory ? "" : "none";
+    overlay.style.display = showRegions || layers.memory || hasThings ? "" : "none";
     if (areasRef.current) areasRef.current.style.display = showRegions ? "" : "none";
     // The canvas keeps its last frame while hidden; repaint on re-show so it
     // matches wherever the camera and drags went in the meantime.
     if (showRegions) sigmaRef.current?.refresh();
-  }, [showRegions, layers.memory]);
+  }, [showRegions, layers.memory, hasThings]);
+
+  useEffect(() => {
+    // Showing or hiding every active thing's points changes what is drawn,
+    // so the cached scene and the labels laid round it are stale.
+    focusLayoutRef.current = null;
+    sceneDirtyRef.current = true;
+    sigmaRef.current?.refresh();
+  }, [showWorking]);
 
   const statusStyle = {
     height: "100%",
@@ -1393,7 +1732,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     );
   }
 
-  if (graphLoading) {
+  // The things' points are waited for too (their read never fails, see
+  // above), so the first layout and the opening frame already hold them.
+  if (graphLoading || thingPointsPending) {
     return (
       <div data-testid="atlas-view" style={statusStyle}>
         <span className="entity-empty">{t("constellationMap.loading")}</span>
@@ -1403,7 +1744,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
 
   // Nothing to draw only when the daemon has neither entities NOR wiki pages:
   // a knowledge base made purely of pages is a real map, not an empty one.
-  if (entities.length === 0 && graph.pages.length === 0) {
+  if (entities.length === 0 && graph.pages.length === 0 && !hasThings) {
     return (
       <div data-testid="atlas-view" style={statusStyle}>
         <TabEmptyMark tab="graph" />
@@ -1412,13 +1753,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
     );
   }
 
-  // Counts describe what is actually ON THE MAP: layer on, and connected to
-  // something. What the degree-0 filter took out is reported by its own chip,
-  // and a layer that is off contributes nothing rather than a zero.
-  const drawn = filteredModel.nodes;
+  // Counts describe what is ON THE MAP at rest: layer on, and not tucked
+  // away in a small group until zoomed in. A layer that is off contributes
+  // nothing rather than a zero.
+  const drawn = filteredModel.nodes.filter((node) => !tucked.has(node.id));
   const pageCount = drawn.filter((node) => node.kind === "page").length;
   const memoryCount = drawn.filter((node) => node.kind === "memory").length;
-  const entityCount = drawn.length - pageCount - memoryCount;
+  const entityCount = drawn.filter((node) => node.kind === "entity").length;
   // A kind appears when its layer is on and it actually contributed nodes.
   // Entities are the exception and always report, zero included — the round-1
   // line did, and "0 entities" is the honest answer to an empty entity layer.
@@ -1491,6 +1832,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
                       backgroundColor:
                         node.entityType === MEMORY_NODE_TYPE
                           ? palette.memory
+                          : node.entityType === THING_NODE_TYPE
+                            ? palette.bridge
                           : node.entityType === PAGE_NODE_TYPE
                             ? palette.page
                             : colorForEntityType(node.entityType, palette),
@@ -1568,17 +1911,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
               </AtlasTooltip>
             );
           })}
-          <div className="atlas-content-actions">
-            <div className="atlas-content-toolgroup">
-            {layers.entity && entityTypes.length > 0 && <AtlasTypeFilters
-              types={entityTypes} excluded={excludedTypes} palette={palette} onToggle={toggleEntityType}
-              onReset={() => setExcludedTypes(new Set())}
-            />}
-
+          {/* What is laid over the map, in the same rows as what is drawn on it. */}
+          <div className="atlas-display-group">
             <AtlasTooltip content={t("atlas.regionsDescription")}>
             <button
               type="button"
-              className="atlas-content-secondary-toggle"
+              className="atlas-content-toggle"
               aria-pressed={showRegions}
               aria-label={t("atlas.regionsToggle")}
               onClick={() => {
@@ -1590,21 +1928,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
               <span>{t("atlas.regionsToggle")}</span>
             </button>
             </AtlasTooltip>
-            {smallGroupCount > 0 && (
-              <AtlasTooltip content={t(showSmallGroups ? "atlas.hideSmallGroups" : "atlas.smallGroupsHidden", { count: smallGroupCount })}>
+            {hasThings && (
+              <AtlasTooltip content={t("atlas.workingDescription")}>
               <button
                 type="button"
-                onClick={toggleSmallGroups}
-                aria-pressed={showSmallGroups}
-                aria-label={t(showSmallGroups ? "atlas.hideSmallGroups" : "atlas.showSmallGroups")}
-                className="atlas-content-secondary-toggle"
+                className="atlas-content-toggle"
+                aria-pressed={showWorking}
+                aria-label={t("atlas.workingToggle")}
+                onClick={toggleWorking}
               >
                 <span className="atlas-content-dot" aria-hidden="true" />
-                <span>{t("atlas.smallGroupsLabel")}</span>
+                <span>{t("atlas.workingToggle")}</span>
               </button>
               </AtlasTooltip>
             )}
-            </div>
             {cartographyStatus === "partial-error" && (
               <span role="alert" className="atlas-cartography-alert">
                 {t("atlas.cartographyPartialError")}
@@ -1616,7 +1953,31 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
         )}
       </div>
 
-      <div className="atlas-count-line" aria-live="polite">{countLine}</div>
+      {selectedThing ? (
+        // A picked thing's three zoom stops, in the camera controls' own
+        // style, where the count line sits (UX-CHAT-5).
+        <div className="atlas-camera-controls atlas-thing-stops" role="group" aria-label={t("atlas.thingStops")}>
+          {thingStops.map((stop) => (
+            <button
+              key={stop}
+              type="button"
+              className="atlas-icon-button atlas-thing-stop"
+              aria-pressed={thingStop === stop}
+              onClick={() => selectThing(selectedThing, stop)}
+            >
+              {t(`atlas.thingStop.${stop}`)}
+            </button>
+          ))}
+          {onNodeClick && (
+            <button type="button" className="atlas-icon-button atlas-thing-stop" onClick={() => onNodeClick(targetForNode(selectedThing))}>
+              {t("atlas.openDetails")}
+              <ArrowRight size={14} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="atlas-count-line" aria-live="polite">{countLine}</div>
+      )}
 
       {filteredModel.nodes.length === 0 && excludedTypes.size > 0 && <div className="atlas-filter-empty">
         <p>{t("atlas.noTypeMatches")}</p><button type="button" className="atlas-action" onClick={() => setExcludedTypes(new Set())}>{t("atlas.allEntityTypes")}</button>
@@ -1647,7 +2008,34 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
             <CornersOut size={16} weight="regular" aria-hidden="true" />
           </button>
         </AtlasTooltip>
+        <AtlasTooltip content={t("atlas.rearrange")}>
+          <button type="button" className="atlas-icon-button" aria-label={t("atlas.rearrange")} aria-expanded={rearrange === "asking"}
+            onClick={() => setRearrange((state) => (state === "asking" ? "idle" : "asking"))}>
+            <Shuffle size={16} weight="regular" aria-hidden="true" />
+          </button>
+        </AtlasTooltip>
       </div>
+      {rearrange !== "idle" && (
+        <div className="atlas-rearrange-note" role={rearrange === "asking" ? "dialog" : "status"} aria-label={t("atlas.rearrange")}>
+          <span>{t(rearrange === "asking" ? "atlas.rearrangeAsk" : "atlas.rearranged")}</span>
+          {rearrange === "asking" ? (
+            <>
+              <button type="button" className="atlas-rearrange-go" onClick={() => {
+                rearrangeRef.current = "fresh";
+                setRearrange("done");
+                setLayoutVersion((version) => version + 1);
+              }}>{t("atlas.rearrangeConfirm")}</button>
+              <button type="button" onClick={() => setRearrange("idle")}>{t("atlas.rearrangeCancel")}</button>
+            </>
+          ) : (
+            <button type="button" onClick={() => {
+              rearrangeRef.current = "undo";
+              setRearrange("idle");
+              setLayoutVersion((version) => version + 1);
+            }}>{t("atlas.rearrangeUndo")}</button>
+          )}
+        </div>
+      )}
 
     </div>
   );

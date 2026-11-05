@@ -216,7 +216,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## The big map
 
-- **UX-GRAPH-1** `planned` The same point is in the same place every time you
+- **UX-GRAPH-1** `shipped` The same point is in the same place every time you
   open it. Rearranging asks you first and can be undone.
   原文：同一個點，兩次打開位置一樣；要重排先問你，能退回。
 - **UX-GRAPH-2** `planned` Three zoom levels (this thing, nearby, everything)

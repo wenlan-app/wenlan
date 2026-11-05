@@ -1312,6 +1312,8 @@ impl MemoryDB {
             serde_json::json!({ "rule": "move", "from": from }),
         )
         .await?;
+        // The points that came from it go with it (UX-THING-1).
+        super::thing_map::carry_session_points(&tx, from, &target, session_id, now).await?;
         tx.commit().await.map_err(db_err("thing move commit"))?;
         Ok(target)
     }

@@ -119,6 +119,41 @@ pub struct ThingDream {
     pub fresh: Vec<String>,
 }
 
+/// A point a night wrote for a thing that still stands: not taken back, not
+/// forgotten, not replaced (UX-CHAT-5). The big map draws it beside its thing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingNightPoint {
+    /// The memory's `source_id`.
+    pub memory_id: String,
+    /// Its title, else the start of its text.
+    pub title: String,
+    /// Settled, or still open.
+    pub decided: bool,
+    /// Unix seconds.
+    pub created_at: i64,
+}
+
+/// A live thing and the points its nights wrote, oldest point first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingNightPoints {
+    pub thing_id: String,
+    pub title: Option<String>,
+    /// As [`ThingSummary::spaces`].
+    pub spaces: Vec<String>,
+    /// As [`ThingSummary::quiet`]: off home's "what you're working on". The
+    /// map frames only the things that are not.
+    #[serde(default)]
+    pub quiet: bool,
+    pub points: Vec<ThingNightPoint>,
+}
+
+/// `GET /api/things/points`: every live thing the caller may see that has
+/// night points, newest activity first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingNightPointsResponse {
+    pub things: Vec<ThingNightPoints>,
+}
+
 /// `POST /api/things/{id}/merge` and `POST /api/things/{id}/keep-apart`: the
 /// person answers a merge proposal. Merging folds `other_thing_id` into `{id}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

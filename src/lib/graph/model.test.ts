@@ -10,6 +10,7 @@ import type {
   GraphRelation,
   KnowledgeGraph,
   RelationWithEntity,
+  ThingNightPoints,
 } from "../tauri";
 import {
   buildEgoModel,
@@ -22,7 +23,13 @@ import {
   componentSizeByNode,
   drawableModel,
   attachMemories,
-  smallGroupNodeCount,
+  attachThingPoints,
+  thingIdOf,
+  thingNodeId,
+  NIGHT_EDGE_TYPE,
+  THING_NODE_TYPE,
+  smallGroupIds,
+  tuckedNodeIds,
   DEFAULT_LAYERS,
   MIN_COMPONENT_SIZE,
   SHARED_SOURCE_MAX_FANOUT,
@@ -687,28 +694,42 @@ describe("componentSizeByNode / drawableModel", () => {
     expect(drawableModel(full, false).nodes).toHaveLength(5);
   });
 
-  it("counts the nodes in the small groups for the chip", () => {
+  it("draws a small group that an active thing's steeped point links to, with its edges", () => {
     const full = model(
       ["a", "b", "c", "d", "e", "f", "g", "h"],
       [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"], ["f", "g"]],
     );
-    // Four nodes are small: the f-g pair and the lone "h".
-    expect(smallGroupNodeCount(full)).toBe(3);
-    // The count is about the FULL model, so turning the groups on does not
-    // change what the chip has to offer back.
-    expect(smallGroupNodeCount(drawableModel(full, true))).toBe(3);
+    const drawable = drawableModel(full, false, new Set(["g"]));
+    expect(drawable.nodes.map((n) => n.id)).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
+    expect(drawable.edges.map((e) => e.id)).toContain("e4");
+  });
+
+  it("names the small groups, never one an active thing's point links to", () => {
+    const full = model(
+      ["a", "b", "c", "d", "e", "f", "g", "h"],
+      [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"], ["f", "g"]],
+    );
+    // The f-g pair and the lone "h".
+    expect([...smallGroupIds(full)].sort()).toEqual(["f", "g", "h"]);
+    expect([...smallGroupIds(full, new Set(["g"]))]).toEqual(["h"]);
+  });
+
+  it("tucks away a memory hung only on a small group, but not one that also touches the core", () => {
+    const full = model(["a", "b", "c", "d", "e", "f", "m1", "m2"], [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"], ["m1", "f"], ["m2", "f"], ["m2", "a"]]);
+    const withMemories = { ...full, nodes: full.nodes.map((node) => (node.id.startsWith("m") ? { ...node, kind: "memory" as const } : node)) };
+    expect([...tuckedNodeIds(withMemories, new Set(["f"]))].sort()).toEqual(["f", "m1"]);
   });
 
   it("hides nothing when no component clears the bar — there is no core to be small beside", () => {
     const tiny = model(["a", "b", "c", "d"], [["a", "b"], ["c", "d"]]);
     expect(drawableModel(tiny)).toBe(tiny);
-    expect(smallGroupNodeCount(tiny)).toBe(0);
+    expect(smallGroupIds(tiny).size).toBe(0);
   });
 
   it("returns the model untouched when every component is big enough", () => {
     const full = model(["a", "b", "c", "d", "e"], [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"]]);
     expect(drawableModel(full)).toBe(full);
-    expect(smallGroupNodeCount(full)).toBe(0);
+    expect(smallGroupIds(full).size).toBe(0);
   });
 });
 
@@ -774,5 +795,111 @@ describe("attachMemories", () => {
       { layers: ALL_LAYERS },
     );
     expect(attachMemories(base, full)).toBe(base);
+  });
+});
+
+describe("attachThingPoints (UX-CHAT-5)", () => {
+  /** A drawn core of five entities, and the memory layer's m1 on A. */
+  function graph(): KnowledgeGraph {
+    return makeGraph({
+      entities: ["A", "B", "C", "D", "E"].map((id) => makeEntity({ id, name: id })),
+      relations: [
+        makeGraphRelation({ id: "r1", from_entity: "A", to_entity: "B" }),
+        makeGraphRelation({ id: "r2", from_entity: "B", to_entity: "C" }),
+        makeGraphRelation({ id: "r3", from_entity: "C", to_entity: "D" }),
+        makeGraphRelation({ id: "r4", from_entity: "D", to_entity: "E" }),
+      ],
+      memories: [makeGraphMemory({ source_id: "m1" })],
+      memory_links: [
+        { memory_id: "m1", entity_id: "A" },
+        // A night point that later gained an entity link.
+        { memory_id: "n2", entity_id: "C" },
+        // A link to an entity the map does not draw.
+        { memory_id: "n1", entity_id: "gone" },
+      ],
+    });
+  }
+  function things(): ThingNightPoints[] {
+    return [
+      {
+        thing_id: "t1",
+        title: "Site redesign",
+        spaces: ["wenlan"],
+        points: [
+          { memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 },
+          { memory_id: "n2", title: "Pricing page open", decided: false, created_at: 20 },
+        ],
+      },
+      { thing_id: "t2", title: "Release notes", spaces: ["other"], points: [] },
+    ];
+  }
+
+  it("draws each thing as its own node with its night's points, even with the memory layer off", () => {
+    const base = drawableModel(buildKnowledgeGraphModel(graph(), { layers: DEFAULT_LAYERS }));
+    const result = attachThingPoints(base, things(), graph().memory_links);
+    // Nothing in the base moves or changes.
+    for (const node of base.nodes) expect(result.nodes).toContainEqual(node);
+    for (const edge of base.edges) expect(result.edges).toContainEqual(edge);
+
+    const thing = result.nodes.find((node) => node.id === thingNodeId("t1"))!;
+    expect(thing).toMatchObject({ kind: "thing", entityType: THING_NODE_TYPE, name: "Site redesign", degree: 2 });
+    expect(thingIdOf(thing.id)).toBe("t1");
+    // A thing with no points is not drawn.
+    expect(result.nodes.some((node) => node.id === thingNodeId("t2"))).toBe(false);
+
+    const points = result.nodes.filter((node) => node.night).map((node) => [node.id, node.kind, node.name, node.createdAt]);
+    expect(points).toEqual([
+      ["mem:n1", "memory", "Tagline settled", 10],
+      ["mem:n2", "memory", "Pricing page open", 20],
+    ]);
+    const tied = result.edges.filter((edge) => edge.type === NIGHT_EDGE_TYPE).map((edge) => [edge.source, edge.target]);
+    expect(tied).toEqual([["thing:t1", "mem:n1"], ["thing:t1", "mem:n2"]]);
+
+    // n2's entity link is one more line to C; n1's to an undrawn entity is not drawn.
+    expect(result.edges.filter((edge) => edge.source.startsWith("mem:n")).map((edge) => [edge.source, edge.target])).toEqual([
+      ["mem:n2", "C"],
+    ]);
+    expect(result.nodes.find((node) => node.id === "mem:n2")!.degree).toBe(2);
+    // C keeps its degree: the base is the layout, the points only hang on it.
+    expect(result.nodes.find((node) => node.id === "C")).toEqual(base.nodes.find((node) => node.id === "C"));
+  });
+
+  it("marks a point the memory layer already drew instead of drawing it twice", () => {
+    const base = drawableModel(buildKnowledgeGraphModel(graph(), { layers: { entity: true, page: true, memory: false } }));
+    const withMemories = attachMemories(base, buildKnowledgeGraphModel(graph(), { layers: ALL_LAYERS }));
+    const result = attachThingPoints(
+      withMemories,
+      [{ thing_id: "t1", title: "Site redesign", spaces: [], points: [{ memory_id: "m1", title: "m1", decided: true, created_at: 5 }] }],
+      graph().memory_links,
+    );
+    const m1 = result.nodes.filter((node) => node.id === "mem:m1");
+    expect(m1).toHaveLength(1);
+    expect(m1[0]!.night).toBe(true);
+    // Its existing line to A is not doubled.
+    expect(result.edges.filter((edge) => edge.source === "mem:m1" && edge.target === "A")).toHaveLength(1);
+    expect(result.edges.some((edge) => edge.source === "thing:t1" && edge.target === "mem:m1")).toBe(true);
+  });
+
+  it("frames no quiet thing: only its points with a drawn entity link stay, as plain memories by that entity", () => {
+    const base = drawableModel(buildKnowledgeGraphModel(graph(), { layers: DEFAULT_LAYERS }));
+    const quiet = things().map((thing) => ({ ...thing, quiet: true }));
+    const result = attachThingPoints(base, quiet, graph().memory_links);
+    expect(result.nodes.some((node) => node.kind === "thing")).toBe(false);
+    const added = result.nodes.filter((node) => !base.nodes.includes(node));
+    // n2 links to C; n1 links only to an entity the map does not draw.
+    expect(added.map((node) => [node.id, node.kind, node.night, node.degree])).toEqual([["mem:n2", "memory", undefined, 1]]);
+    expect(result.edges.filter((edge) => !base.edges.includes(edge)).map((edge) => [edge.source, edge.target, edge.type])).toEqual([
+      ["mem:n2", "C", "mentions"],
+    ]);
+    // Nothing linked to a drawn entity: the base itself.
+    expect(attachThingPoints(base, quiet, [])).toBe(base);
+  });
+
+  it("keeps to the things of the space being viewed, and returns the base when nothing is left", () => {
+    const base = drawableModel(buildKnowledgeGraphModel(graph(), { layers: DEFAULT_LAYERS }));
+    expect(attachThingPoints(base, things(), [], "other")).toBe(base);
+    expect(attachThingPoints(base, [], [])).toBe(base);
+    const inSpace = attachThingPoints(base, things(), [], "wenlan");
+    expect(inSpace.nodes.find((node) => node.kind === "thing")?.space).toBe("wenlan");
   });
 });

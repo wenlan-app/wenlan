@@ -350,6 +350,21 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
     assert!(asked.contains("the tagline is in place"));
     assert!(asked.contains("\"Site redesign\""));
 
+    // The points are the thing's map too: under a top point named after it,
+    // each naming its memory (UX-CHAT-5).
+    let map = db.get_thing_map(&thing.id).await.unwrap();
+    assert_eq!(map.nodes.len(), 3, "{:?}", map.nodes);
+    let root = map.nodes.iter().find(|n| n.parent_id.is_none()).unwrap();
+    assert_eq!(root.label, "Site redesign");
+    let pricing_node = map
+        .nodes
+        .iter()
+        .find(|n| n.label.starts_with("Whether the site gets a pricing page"))
+        .unwrap()
+        .clone();
+    assert_eq!(pricing_node.state, Some(wenlan_types::ThingMapState::Open));
+    assert!(pricing_node.sources[0].memory_id.is_some());
+
     let detail = db
         .get_thing_detail(&thing.id, &ReadScope::Global)
         .await
@@ -416,4 +431,17 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
             "The site gets no pricing page for now."
         ]
     );
+    // The replacement is the same point on the map, now settled.
+    let map = db.get_thing_map(&thing.id).await.unwrap();
+    assert_eq!(map.nodes.len(), 3);
+    let same = map.nodes.iter().find(|n| n.id == pricing_node.id).unwrap();
+    assert_eq!(same.label, "The site gets no pricing page for now.");
+    assert_eq!(same.state, Some(wenlan_types::ThingMapState::Decided));
+    assert_ne!(same.sources[0].memory_id, pricing_node.sources[0].memory_id);
+
+    // Taking the night back puts the point back as it was.
+    db.undo_thing_dream(&thing.id).await.unwrap();
+    let map = db.get_thing_map(&thing.id).await.unwrap();
+    let back = map.nodes.iter().find(|n| n.id == pricing_node.id).unwrap();
+    assert_eq!(back, &pricing_node);
 }

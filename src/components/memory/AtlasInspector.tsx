@@ -7,7 +7,7 @@ import { entityTypeLabel } from "../../lib/graph/typeFilter";
 import PageInfoDrawer from "./page/PageInfoDrawer";
 import "./atlasInspectorGroups.css";
 
-const GROUP_ORDER: GraphNodeKind[] = ["page", "entity", "memory"];
+const GROUP_ORDER: GraphNodeKind[] = ["thing", "page", "entity", "memory"];
 const INITIAL_GROUP_LIMIT = 12;
 const GROUP_PAGE_SIZE = 12;
 
@@ -66,6 +66,7 @@ function AtlasInspectorContents({
   const sectionRefs = useRef<Partial<Record<GraphNodeKind, HTMLElement | null>>>({});
   const [filter, setFilter] = useState("");
   const [expandedCounts, setExpandedCounts] = useState<Record<GraphNodeKind, number>>({
+    thing: INITIAL_GROUP_LIMIT,
     page: INITIAL_GROUP_LIMIT,
     entity: INITIAL_GROUP_LIMIT,
     memory: INITIAL_GROUP_LIMIT,
@@ -87,7 +88,7 @@ function AtlasInspectorContents({
 
   const changeFilter = (next: string) => {
     setFilter(next);
-    setExpandedCounts({ page: INITIAL_GROUP_LIMIT, entity: INITIAL_GROUP_LIMIT, memory: INITIAL_GROUP_LIMIT });
+    setExpandedCounts({ thing: INITIAL_GROUP_LIMIT, page: INITIAL_GROUP_LIMIT, entity: INITIAL_GROUP_LIMIT, memory: INITIAL_GROUP_LIMIT });
   };
 
   const scrollToGroup = (kind: GraphNodeKind) => {

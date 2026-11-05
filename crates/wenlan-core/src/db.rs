@@ -42131,6 +42131,11 @@ impl MemoryDB {
     /// legacy one-to-one mirror. Terminal step outcomes exclude valid
     /// no-entity memories and poison rows even though they remain unlinked.
     /// `only_source_id` narrows the same selection to one memory.
+    ///
+    /// Order: replacements, then points a thing's night steeped (UX-CHAT-5:
+    /// so they join the big map's topics the morning after, not days later
+    /// behind the backlog), then service class, then oldest first. Only the
+    /// order changes; what the stage links them to does not.
     async fn select_entity_enrichment_candidate(
         &self,
         only_source_id: Option<&str>,
@@ -42193,6 +42198,14 @@ impl MemoryDB {
                            ) \
                        ) \
                      ORDER BY CASE WHEN m.supersedes IS NOT NULL THEN 0 ELSE 1 END, \
+                              CASE WHEN EXISTS ( \
+                                  SELECT 1 FROM thing_history th \
+                                  WHERE th.op = 'thing.dream' \
+                                    AND (EXISTS (SELECT 1 FROM json_each(th.data, '$.decided') d \
+                                                 WHERE d.value = m.source_id) \
+                                         OR EXISTS (SELECT 1 FROM json_each(th.data, '$.open') o \
+                                                    WHERE o.value = m.source_id)) \
+                              ) THEN 0 ELSE 1 END, \
                               COALESCE(eo.service_class, 2) ASC, \
                               COALESCE(es.updated_at, m.last_modified) ASC, m.source_id ASC \
                      LIMIT 1"

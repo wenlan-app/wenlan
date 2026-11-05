@@ -42246,6 +42246,50 @@ async fn enrichment_service_class_promotes_user_mutations_without_guessing_prove
 }
 
 #[tokio::test]
+async fn entity_enrichment_takes_steeped_points_before_the_backlog() {
+    let (db, _dir) = test_db().await;
+    for (id, at) in [("old-backlog", 1), ("night-point", 100)] {
+        db.upsert_documents(vec![RawDocument {
+            source: "memory".to_string(),
+            source_id: id.to_string(),
+            title: id.to_string(),
+            content: format!("{id} is waiting for its topics."),
+            last_modified: at,
+            memory_type: Some("fact".to_string()),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+    }
+    async fn next(db: &MemoryDB) -> Option<String> {
+        db.select_entity_enrichment_candidate(None)
+            .await
+            .unwrap()
+            .map(|c| c.source_id)
+    }
+    assert_eq!(
+        next(&db).await.as_deref(),
+        Some("old-backlog"),
+        "oldest first otherwise"
+    );
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO thing_history (ts, actor, op, thing_id, data)
+             VALUES (200, 'ai', 'thing.dream', 'thg_1', '{\"decided\":[],\"open\":[\"night-point\"]}')",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        next(&db).await.as_deref(),
+        Some("night-point"),
+        "a night's point goes before the older backlog so it reaches the map's topics soon"
+    );
+}
+
+#[tokio::test]
 async fn enrichment_service_class_generic_import_is_bulk_without_demoting_interactive() {
     let (db, _dir) = test_db().await;
     let origin = EnrichmentOrigin {

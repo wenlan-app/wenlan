@@ -26,6 +26,7 @@ use chrono::Timelike;
 use wenlan_core::conversation_intake::{self as intake, FoundConversation};
 use wenlan_core::db::intake::{found_session_id, needs_label};
 use wenlan_core::db::thing_dream::DreamDue;
+use wenlan_core::db::thing_map::DreamMapWrite;
 use wenlan_core::db::MemoryDB;
 use wenlan_core::llm_provider::{LlmProvider, LlmRequest};
 use wenlan_types::requests::StoreMemoryRequest;
@@ -341,15 +342,39 @@ pub async fn dream_with(
             .filter_map(|c| found.get(&c.session_id).map(|f| (c, f.clone())))
             .collect();
         if conversations.is_empty() {
-            db.record_dream(&thing.thing_id, &[], &[], &thing.conversations)
-                .await
-                .map_err(|e| e.to_string())?;
+            db.record_dream(
+                &thing.thing_id,
+                &[],
+                &[],
+                &Default::default(),
+                &thing.conversations,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             continue;
         }
         let prior = db
             .dream_points(&thing.thing_id)
             .await
             .map_err(|e| e.to_string())?;
+        // The thing's map: its points no night kept yet are offered, so a
+        // point the model writes can say it is one of them (UX-CHAT-5).
+        let map = db
+            .dream_map_view(&thing.thing_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let map_points: Vec<intake::MapPoint> = map
+            .unkept
+            .iter()
+            .map(|p| intake::MapPoint {
+                text: p.label.clone(),
+                decided: p.state.and_then(|s| match s {
+                    wenlan_types::ThingMapState::Decided => Some(true),
+                    wenlan_types::ThingMapState::Open => Some(false),
+                    wenlan_types::ThingMapState::Dropped => None,
+                }),
+            })
+            .collect();
         let read: Vec<FoundConversation> = conversations.iter().map(|(_, f)| f.clone()).collect();
         let answer = model
             .generate(LlmRequest {
@@ -357,7 +382,7 @@ pub async fn dream_with(
                     "You keep what a person settled in their work, so it can be remembered. Answer with JSON only."
                         .into(),
                 ),
-                user_prompt: intake::dream_prompt(&thing.title, &read, &prior, language),
+                user_prompt: intake::dream_prompt(&thing.title, &read, &prior, &map_points, language),
                 max_tokens: 2_000,
                 temperature: 0.0,
                 label: Some("things_dream".into()),
@@ -374,7 +399,8 @@ pub async fn dream_with(
             }
             Err(error) => return Err(error),
         };
-        let Some(points) = intake::parse_dream(&answer, read.len(), prior.len()) else {
+        let Some(points) = intake::parse_dream(&answer, read.len(), prior.len(), map_points.len())
+        else {
             return if done > 0 {
                 Ok((done, points_written))
             } else {
@@ -383,6 +409,7 @@ pub async fn dream_with(
         };
         let mut decided = Vec::new();
         let mut open = Vec::new();
+        let mut on_map = Vec::new();
         for point in points {
             let (from, _) = &conversations[point.from];
             let space = if from.space.is_empty() {
@@ -418,6 +445,21 @@ pub async fn dream_with(
             db.attach_dream_point(&id, &from.session_id)
                 .await
                 .map_err(|e| e.to_string())?;
+            // The map point it is: one not kept yet that the model named, or
+            // the one the memory it replaces is.
+            let node = point.map.map(|n| map.unkept[n].id.clone()).or_else(|| {
+                point
+                    .replaces
+                    .and_then(|p| map.by_memory.get(&prior[p].id).cloned())
+            });
+            on_map.push(DreamMapWrite {
+                memory_id: id.clone(),
+                session_id: from.session_id.clone(),
+                text: point.text.clone(),
+                decided: point.decided,
+                node,
+                replaces: point.replaces.is_some(),
+            });
             if point.decided {
                 decided.push(id);
             } else {
@@ -425,9 +467,19 @@ pub async fn dream_with(
             }
         }
         points_written += decided.len() + open.len();
-        db.record_dream(&thing.thing_id, &decided, &open, &thing.conversations)
+        let changed = db
+            .dream_into_map(&thing.thing_id, &thing.title, &on_map)
             .await
             .map_err(|e| e.to_string())?;
+        db.record_dream(
+            &thing.thing_id,
+            &decided,
+            &open,
+            &changed,
+            &thing.conversations,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
     }
     Ok((due.len(), points_written))
 }

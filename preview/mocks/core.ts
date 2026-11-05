@@ -25,6 +25,8 @@ import {
   GRAPH_PAGES,
   SOURCE_LIBRARY_FILES,
   REPEAT_CITED_SOURCES,
+  THING_MAP_GRAPH,
+  THING_MAP_POINTS,
 } from "../fixtures";
 import { TauriMockRuntime } from "../../e2e/tauriMock/runtime";
 import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
@@ -55,7 +57,23 @@ const projectSourceText = new Map([
   ["/preview/sources/讀書會資料/每週摘錄.md", "# 每週摘錄\n\n## 本週問題\n哪一段內容改變了我們原先的想法？\n\n## 討論後記\n保留不同觀點，並連回各自引用的段落。"],
 ]);
 import { liveInvoke } from "./live-invoke";
+import { COMMUNITY_READ_SCHEMA_VERSION } from "../../src/lib/tauri";
 import { invokeRemoteFixture } from "./remote-access";
+
+// `&things=1&grow=1`: this viewer has seen every night point but the newest,
+// so that one grows in when the map opens (UX-CHAT-5).
+{
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("things") === "1" && params.get("grow") === "1") {
+    try {
+      const newest = "tm-n-rel-3";
+      const seen = THING_MAP_POINTS.flatMap((thing) => thing.points.map((point) => `mem:${point.memory_id}`)).filter((id) => id !== `mem:${newest}`);
+      window.localStorage.setItem("atlas.night.seen", JSON.stringify(seen));
+    } catch {
+      // No storage: nothing grows, the map is the same.
+    }
+  }
+}
 
 let graphObsSeq = 0;
 let fixtureBackgroundAiEnabled = false;
@@ -110,6 +128,15 @@ export async function invoke(
   }
   if (new URLSearchParams(window.location.search).get("mode") === "remote-access") {
     return invokeRemoteFixture(cmd, args);
+  }
+  // `?mode=atlas&things=1`: the big map with things being worked on, from
+  // fixtures, no daemon (UX-CHAT-5). See THING_MAP_GRAPH.
+  if (new URLSearchParams(window.location.search).get("things") === "1") {
+    if (cmd === "get_knowledge_graph_cmd") return THING_MAP_GRAPH;
+    if (cmd === "list_thing_night_points") return THING_MAP_POINTS;
+    // No regions yet: an honest empty read, not an error.
+    if (cmd === "list_communities") return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, scope: { kind: "space", name: args?.space ?? null }, communities: [], next_cursor: null };
+    if (cmd === "list_community_members") return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, scope: { kind: "space", name: args?.space ?? null }, members: [], next_cursor: null };
   }
   switch (cmd) {
     case "knowledge_folders_list":

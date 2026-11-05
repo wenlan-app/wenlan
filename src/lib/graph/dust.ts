@@ -1,6 +1,7 @@
 import type Graph from "graphology";
 import type { LodState } from "./atlas";
 import type { GraphPalette } from "./palette";
+import { THING_NODE_TYPE } from "./model";
 
 /**
  * The memory count beside a busy anchor. At the opening view an anchor shows
@@ -11,10 +12,11 @@ import type { GraphPalette } from "./palette";
  */
 export const DUST_BADGE_MIN = 25;
 
-/** The anchors that can carry a count — fixed for a mounted graph. */
+/** The anchors that can carry a count — fixed for a mounted graph. A
+ *  thing's points are all drawn (its frame holds them), so it has none. */
 export function dustBadgeAnchors(graph: Graph): string[] {
   return graph.filterNodes(
-    (_id, attrs) => ((attrs.dustCount as number | undefined) ?? 0) >= DUST_BADGE_MIN,
+    (_id, attrs) => attrs.entityType !== THING_NODE_TYPE && ((attrs.dustCount as number | undefined) ?? 0) >= DUST_BADGE_MIN,
   );
 }
 

@@ -116,7 +116,7 @@ interface MainProps {
 function scrollDestinationKey(view: View): string {
   switch (view.kind) {
     case "graph":
-      return `graph:${view.focusPageId ?? "all"}`;
+      return `graph:${view.focusPageId ?? (view.focusThingId ? `thing:${view.focusThingId}` : "all")}`;
     case "source-document":
       return JSON.stringify(["source-document", view.file.source, view.file.source_id, view.file.space ?? null]);
     case "entity":
@@ -148,7 +148,7 @@ function sameDestination(current: View, next: View): boolean {
   switch (current.kind) {
     case "page": return next.kind === "page" && current.pageId === next.pageId
       && (current.mode ?? "edit") === (next.mode ?? "edit");
-    case "graph": return next.kind === "graph" && current.focusPageId === next.focusPageId;
+    case "graph": return next.kind === "graph" && current.focusPageId === next.focusPageId && current.focusThingId === next.focusThingId;
     case "source-document": return next.kind === "source-document" && current.file.source === next.file.source && current.file.source_id === next.file.source_id && (current.file.space ?? null) === (next.file.space ?? null);
     case "memory": return next.kind === "memory" && current.sourceId === next.sourceId;
     case "entity": return next.kind === "entity" && current.entityId === next.entityId;
@@ -1685,6 +1685,7 @@ export default function Main({
               onBack={navigateBack}
               onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })}
               onOpenThing={(thingId) => navigateTo({ kind: "thing", thingId })}
+              onOpenGraph={(thingId) => navigateTo({ kind: "graph", focusThingId: thingId })}
             />
           ) : view.kind === "entity" ? (
             <EntityDetail
@@ -1841,14 +1842,17 @@ export default function Main({
           ) : view.kind === "graph" ? (
             <div style={{ position: "relative", width: "100%", height: "100%" }}>
               <AtlasView
-                key={view.focusPageId ?? "all"}
+                key={view.focusPageId ?? (view.focusThingId ? `thing:${view.focusThingId}` : "all")}
                 focusPageId={view.focusPageId}
+                focusThingId={view.focusThingId}
                 onNodeClick={(target) =>
                   target.kind === "memory"
                     ? navigateTo({ kind: "memory", sourceId: target.id })
                     : target.kind === "page"
                       ? navigateTo({ kind: "page", pageId: target.id })
-                      : handleEntityClick(target.id)
+                      : target.kind === "thing"
+                        ? navigateTo({ kind: "thing", thingId: target.id })
+                        : handleEntityClick(target.id)
                 }
                 onBack={navigateBack}
               />

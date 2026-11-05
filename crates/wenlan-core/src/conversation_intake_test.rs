@@ -350,6 +350,9 @@ fn ux_thing_1_titles_follow_the_app_language() {
     );
     assert!(prompt.contains("in Traditional Chinese"));
     assert!(prompt.contains("folder \"wenlan\""));
+    // Real use (2026-11-04): a design discussion with no code came out as
+    // not work.
+    assert!(prompt.contains("even when nothing was built"));
 }
 
 #[test]
@@ -399,7 +402,7 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
   {"text": "", "settled": true, "from": "C0"},
   {"text": "Bad replace.", "settled": true, "from": "C0", "replaces": "P9"}
 ]}"#;
-    let points = parse_dream(answer, 2, 2).unwrap();
+    let points = parse_dream(answer, 2, 2, 0).unwrap();
     assert_eq!(
         points,
         vec![
@@ -408,23 +411,26 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
                 decided: true,
                 from: 0,
                 replaces: Some(1),
+                map: None,
             },
             DreamPoint {
                 text: "Pricing page is open.".into(),
                 decided: false,
                 from: 1,
                 replaces: None,
+                map: None,
             },
             DreamPoint {
                 text: "Bad replace.".into(),
                 decided: true,
                 from: 0,
                 replaces: None,
+                map: None,
             },
         ]
     );
-    assert_eq!(parse_dream(r#"{"points": []}"#, 1, 0), Some(vec![]));
-    assert!(parse_dream("no json", 1, 0).is_none());
+    assert_eq!(parse_dream(r#"{"points": []}"#, 1, 0, 0), Some(vec![]));
+    assert!(parse_dream("no json", 1, 0, 0).is_none());
     let prompt = dream_prompt(
         "Site",
         &[],
@@ -433,7 +439,34 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
             text: "Kept.".into(),
             decided: false,
         }],
+        &[MapPoint {
+            text: "Which tagline?".into(),
+            decided: None,
+        }],
         "English",
     );
     assert!(prompt.contains("P0 (open): Kept.") && prompt.contains("in English"));
+    assert!(prompt.contains("N0: Which tagline?"), "{prompt}");
+    // Real use (2026-11-04): merge approvals, handoffs and long sentences
+    // made noisy points, and a question answered later stayed open.
+    assert!(prompt.contains("approving a merge, a review, a handoff or a run"));
+    assert!(prompt.contains("answered or done later in the same conversations is settled"));
+    assert!(prompt.contains("at most 15 words"));
+    assert!(prompt.contains("where a pull request stands are not decisions"));
+}
+
+/// UX-CHAT-5: a point can say which point on the thing's map it is, once
+/// per map point, so the map and long-term memory stay one point.
+#[test]
+fn ux_chat_5_a_nights_point_names_its_map_point() {
+    let answer = r#"{"points": [
+  {"text": "Tagline is You do the thinking.", "settled": true, "from": "C0", "map": "N1"},
+  {"text": "Pricing waits.", "settled": false, "from": "C0", "map": "N1"},
+  {"text": "Docs move.", "settled": true, "from": "C0", "map": "N5"}
+]}"#;
+    let points = parse_dream(answer, 1, 0, 2).unwrap();
+    assert_eq!(
+        points.iter().map(|p| p.map).collect::<Vec<_>>(),
+        [Some(1), None, None]
+    );
 }

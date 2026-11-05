@@ -17,7 +17,31 @@ export interface AtlasFrameOptions {
   visibleNodeIds?: ReadonlySet<string>;
   /** Extra CSS pixels kept around the framed nodes. */
   padding?: number;
+  /** Frame exactly these nodes instead of a mode's pick (a thing's zoom
+   *  stops, UX-CHAT-5). */
+  nodeIds?: readonly string[];
+  /** Per-side room in CSS px, each side at least `padding`: the map's own
+   *  controls sit over the canvas, so the top keeps the toolbar's band free
+   *  and the bottom the camera controls'. */
+  insets?: Partial<AtlasFrameInsets>;
+  /** Move there over this many ms instead of at once. */
+  duration?: number;
+  /** Never closer than this many CSS px per graph unit: a handful of points
+   *  framed alone would otherwise fill the screen with empty space. */
+  maxDensity?: number;
 }
+
+export interface AtlasFrameInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+/** What the controls laid over the map take, CSS px: the search and back
+ *  button band at the top (24px down, 36px tall), the count line and camera
+ *  controls at the bottom. The opening view and every stop keep it free. */
+export const ATLAS_CONTROL_INSETS: AtlasFrameInsets = { top: 84, right: 56, bottom: 60, left: 56 };
 
 const DEFAULT_FRAME_PADDING = 56;
 
@@ -66,7 +90,10 @@ export function atlasFrameNodeIds(
     const componentId = graph.getNodeAttribute(id, "componentId") as string | undefined;
     return componentId !== undefined && representedComponents.has(componentId);
   });
-  return main.length > 0 ? main : visible;
+  // What the person is working on opens in view: every thing's points
+  // (UX-CHAT-5), whatever component their hidden centre sits in.
+  const work = visible.filter((id) => graph.getNodeAttribute(id, "night") === true);
+  return main.length > 0 ? [...main, ...work] : visible;
 }
 
 function graphCorrectionRatio(
@@ -98,7 +125,7 @@ export function frameAtlasView(
   graph: Graph,
   options: AtlasFrameOptions = {},
 ): boolean {
-  const ids = atlasFrameNodeIds(graph, options);
+  const ids = options.nodeIds ? options.nodeIds.filter((id) => graph.hasNode(id)) : atlasFrameNodeIds(graph, options);
   if (ids.length === 0) return false;
 
   const points = ids.flatMap((id) => {
@@ -136,8 +163,10 @@ export function frameAtlasView(
   const width = Math.max(1, renderer.getDimensions().width);
   const height = Math.max(1, renderer.getDimensions().height);
   const padding = Math.max(0, options.padding ?? DEFAULT_FRAME_PADDING);
-  const availableWidth = Math.max(1, width - padding * 2);
-  const availableHeight = Math.max(1, height - padding * 2);
+  const side = (key: keyof AtlasFrameInsets) => Math.max(padding, options.insets?.[key] ?? 0);
+  const insets = { top: side("top"), right: side("right"), bottom: side("bottom"), left: side("left") };
+  const availableWidth = Math.max(1, width - insets.left - insets.right);
+  const availableHeight = Math.max(1, height - insets.top - insets.bottom);
   const stagePadding = Number(renderer.getSetting?.("stagePadding") ?? 0);
   const smallest = Math.max(1, Math.min(width, height) - 2 * stagePadding);
   const graphDimensions = (renderer.getGraphDimensions?.() ?? renderer.getBBox()) as {
@@ -161,12 +190,31 @@ export function frameAtlasView(
     (Math.max(maxX - minX, 1e-9) * smallest * correction) / availableWidth,
     (Math.max(maxY - minY, 1e-9) * smallest * correction) / availableHeight,
   );
-  camera.setState({
-    x: center.x,
-    y: center.y,
-    ratio: camera.getBoundedRatio(ratio),
-    angle,
-  });
+  const target = { x: center.x, y: center.y, ratio: camera.getBoundedRatio(ratio), angle };
+  if (options.maxDensity && typeof renderer.graphToViewport === "function") {
+    const origin = renderer.graphToViewport({ x: 0, y: 0 }, { cameraState: target });
+    const unit = renderer.graphToViewport({ x: 1, y: 0 }, { cameraState: target });
+    const close = Math.hypot(unit.x - origin.x, unit.y - origin.y);
+    if (Number.isFinite(close) && close > options.maxDensity) {
+      target.ratio = camera.getBoundedRatio(target.ratio * (close / options.maxDensity));
+    }
+  }
+  // Unequal insets: the framed box's middle goes to the middle of the room
+  // left between them, not of the canvas. Sigma maps viewport to graph
+  // linearly for a given camera, so the shift is read off that map.
+  const wanted = { x: (insets.left + width - insets.right) / 2, y: (insets.top + height - insets.bottom) / 2 };
+  // Only on a canvas with room for the insets: a canvas not laid out yet
+  // (0 x 0) has no meaningful middle, and its projection is not finite.
+  const roomy = width > insets.left + insets.right && height > insets.top + insets.bottom;
+  if (roomy && (wanted.x !== width / 2 || wanted.y !== height / 2) && typeof renderer.viewportToFramedGraph === "function") {
+    const landed = renderer.viewportToFramedGraph(wanted, { cameraState: target });
+    if (Number.isFinite(landed.x) && Number.isFinite(landed.y)) {
+      target.x = 2 * target.x - landed.x;
+      target.y = 2 * target.y - landed.y;
+    }
+  }
+  if (options.duration && options.duration > 0) void camera.animate(target, { duration: options.duration });
+  else camera.setState(target);
   return true;
 }
 

@@ -11,7 +11,7 @@ async function boot(page: Page, width = 1280, mode = 'normal') {
   const errors = collectBrowserErrors(page);
   await page.setViewportSize({ width, height: 900 });
   const controller = await installTauriMock(page, { locale: 'en', rawActions: [], localStorage: {
-    'atlas.layers': JSON.stringify({ entity: true, page: true, memory: false }), 'atlas.smallGroups': 'false',
+    'atlas.layers': JSON.stringify({ entity: true, page: true, memory: false }),
   } });
   if (mode !== 'normal') await page.addInitScript(({ mode }) => {
     const api = window.__TAURI_INTERNALS__!; const original = api.invoke;
@@ -37,7 +37,6 @@ for (const width of [1280, 375]) test(`whole graph handoff and roundtrip ${width
   await expect(page.locator('.atlas-count-line')).toContainText('7 pages');
   await expect(page.getByRole('button', { name: 'Show full graph', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem('atlas.layers'))).toBe(JSON.stringify({ entity: true, page: true, memory: false }));
-  expect(await page.evaluate(() => localStorage.getItem('atlas.smallGroups'))).toBe('false');
   await page.screenshot({ path: info.outputPath('01-focused.png') });
   const filter = page.getByRole('combobox');
   await filter.fill('Weekly');

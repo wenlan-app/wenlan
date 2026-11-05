@@ -222,6 +222,16 @@ impl MemoryDB {
         for third in carry {
             Self::propose_thing_merge(&tx, now, id, &third).await?;
         }
+        // Its map and its nights go along: the map hangs under this one's
+        // top point, and its nights can be taken back from here.
+        super::thing_map::carry_whole_map(&tx, id, other, now).await?;
+        tx.execute(
+            "UPDATE thing_history SET thing_id = ?1
+              WHERE thing_id = ?2 AND op IN ('thing.dream', 'thing.dream_undo')",
+            libsql::params![id, other],
+        )
+        .await
+        .map_err(db_err("thing merge nights"))?;
         tx.commit().await.map_err(db_err("thing merge commit"))?;
         Ok(())
     }
