@@ -147,7 +147,7 @@ const EMPTY_CARTOGRAPHY: Map<string, SpaceCartography> = new Map();
 const THING_STOP_DENSITY = 12;
 /** How long a picked thing's points take to fly out to their topics, or
  *  home again, ms: long enough to follow where each one goes. */
-const FLIGHT_MS = 600;
+const FLIGHT_MS = 1200;
 /** How long the camera takes to reach a picked thing's stop, ms. */
 const THING_CAMERA_MS = 450;
 /** A point's short title when zoomed in, CSS px: a few words, about ten
