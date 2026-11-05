@@ -647,8 +647,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     hoverStateRef.current = thingFocusState(drawn, thing, stop);
     focusLayoutRef.current = null;
     // Its points set off as the camera arrives, so the flight is seen.
-    pickedAtRef.current = performance.now();
+    // With reduced motion the camera is there at once, and so is the rest.
+    pickedAtRef.current = performance.now() - (prefersReducedMotion() ? THING_CAMERA_MS : 0);
     flyRef.current(thing, pickedAtRef.current + THING_CAMERA_MS);
+    // Its sentences come up once the camera is there (sentencesFor).
+    window.setTimeout(() => sigmaRef.current?.refresh(), THING_CAMERA_MS + 20);
     const { width } = renderer.getDimensions();
     // The sentences run beside their points, either side; the title sits
     // above. Room on both sides keeps the thing centred.
@@ -1183,8 +1186,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // pinned by a click, or at its picked thing's own stop (one thing, and
     // the reader went there to read it). The overlay paints it (night.ts).
     // Zoomed in, every other point carries a short title; zoomed out, none.
+    // At the thing's stop they wait for the camera to arrive, so they are not
+    // seen in a pile while it is still zoomed out.
     const sentencesFor = (thing: string, point: string) =>
-      point === pointerNode || point === pinnedPointRef.current || (selectedRef.current === thing && thingStopRef.current === "this");
+      point === pointerNode || point === pinnedPointRef.current
+      || (selectedRef.current === thing && thingStopRef.current === "this" && performance.now() >= pickedAtRef.current + THING_CAMERA_MS);
     const drawLabel = (ctx: CanvasRenderingContext2D, data: Record<string, any>, s: Record<string, any>) => {
       const nodeAttrs = graph.hasNode(data.key) ? graph.getNodeAttributes(data.key) : null;
       const nightPoint = nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string";
@@ -1419,10 +1425,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         const at = renderer.framedGraphToViewport(display);
         return { x: at.x, y: at.y, r: renderer.scaleSize(display.size) };
       };
-      const centreAt = (thing: string) => renderer.framedGraphToViewport({
-        x: graph.getNodeAttribute(thing, "x") as number,
-        y: graph.getNodeAttribute(thing, "y") as number,
-      });
+      // The thing's node is hidden but still laid out: its display spot is in
+      // the same framed units as every other node's.
+      const centreAt = (thing: string) => {
+        const display = renderer.getNodeDisplayData(thing);
+        return display ? renderer.framedGraphToViewport(display) : null;
+      };
       const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current, centreAt);
       // Sentences keep off the other bodies on screen, not only the labels.
       const bodies: { left: number; right: number; top: number; bottom: number }[] = [];

@@ -53,6 +53,10 @@ export interface NightSentence extends NightSpot {
   /** Out beside its topic while its thing is picked (atlas.ts's
    *  setThingFlight): its sentence is not wrapped into the thing's frame. */
   away?: boolean;
+  /** The topic it flew to, and where that topic is drawn: its sentence is
+   *  written on the side away from it, in a column with the others there. */
+  anchor?: string;
+  anchorAt?: { x: number; y: number };
 }
 
 /**
@@ -150,7 +154,8 @@ export function nightMarks(
           else edges.push({ kind: "topic", thing, goTo: anchor, title: String(graph.getNodeAttribute(anchor, "label") ?? ""), count: 1, text: sentence.text, open: sentence.open, toward: drawnAt(anchor) ?? at });
           return;
         }
-        awayPoints.push({ ...sentence, away: true });
+        const anchorAt = anchor ? drawnAt(anchor) : null;
+        awayPoints.push({ ...sentence, away: true, ...(anchor && anchorAt ? { anchor, anchorAt: { x: anchorAt.x, y: anchorAt.y } } : {}) });
         return;
       }
       left = Math.min(left, at.x - at.r);
@@ -162,7 +167,8 @@ export function nightMarks(
     if (points.length === 0) {
       // Every point is out by its topic: the frame stays, small, on the
       // thing's centre, so its name still says where the thing is.
-      const centre = awayPoints.length > 0 || edges.some((edge) => edge.thing === thing) ? centreAt(thing) : null;
+      // So does a picked thing with nothing drawn, so you see what you picked.
+      const centre = awayPoints.length > 0 || thing === picked ? centreAt(thing) : null;
       if (!centre) return;
       left = right = centre.x;
       top = bottom = centre.y;
@@ -353,27 +359,48 @@ export function layoutNightSentences(
   const ordered = [...sentences].sort((a, b) => a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : 1));
   const discs = sentences.map((point) => ({ id: point.id, left: point.x - point.r, right: point.x + point.r, top: point.y - point.r, bottom: point.y + point.r }));
   const placed: PlacedSentence[] = [];
+  // Points flown out beside a topic sit close round it, so a sentence beside
+  // each would run over its neighbours. They are written as one column on the
+  // side away from the topic, clear of all of them, each level with its
+  // point where it can be, else just under the one above.
+  const columns = new Map<string, NightSentence[]>();
   for (const point of ordered) {
+    if (!point.away || !point.anchor || !point.anchorAt) continue;
+    const column = columns.get(point.anchor) ?? [];
+    column.push(point);
+    columns.set(point.anchor, column);
+  }
+  const inColumn = new Set<string>();
+  for (const anchor of [...columns.keys()].sort()) {
+    const members = columns.get(anchor)!;
+    const ids = new Set(members.map((member) => member.id));
+    const meanX = members.reduce((sum, member) => sum + member.x, 0) / members.length;
+    const outward: "left" | "right" = meanX >= members[0]!.anchorAt!.x ? "left" : "right";
+    for (const align of [outward, outward === "left" ? "right" as const : "left" as const]) {
+      const waiting = members.filter((member) => !inColumn.has(member.id));
+      if (waiting.length === 0) break;
+      const start = align === "left"
+        ? Math.max(...members.map((member) => member.x + member.r)) + SENTENCE_GAP
+        : Math.min(...members.map((member) => member.x - member.r)) - SENTENCE_GAP;
+      let floor = -Infinity;
+      for (const point of waiting) {
+        const blockers: Box[] = [...discs.filter((disc) => !ids.has(disc.id)), ...bodies, ...occupied];
+        const spot = besideAt(point, align, start, Math.max(point.y, floor), measure, blockers, viewport);
+        if (!spot) continue;
+        inColumn.add(point.id);
+        occupied.push(spot.box);
+        placed.push(spot);
+        floor = spot.box.bottom + SENTENCE_LINE / 2 + 2;
+      }
+    }
+    for (const member of members) inColumn.add(member.id);
+  }
+  for (const point of ordered) {
+    if (inColumn.has(point.id)) continue;
     const blockers: Box[] = [...discs.filter((disc) => disc.id !== point.id), ...bodies, ...occupied];
     // `align` is the text's anchor, so "left" writes to the right of the point.
-    const trySide = (align: "left" | "right"): PlacedSentence | null => {
-      const start = align === "left" ? point.x + point.r + SENTENCE_GAP : point.x - point.r - SENTENCE_GAP;
-      const edge = viewport ? (align === "left" ? viewport.width - SENTENCE_GAP - start : start - SENTENCE_GAP) : Infinity;
-      for (const widest of SENTENCE_WIDTHS) {
-        const width = Math.min(widest, edge);
-        if (width < SENTENCE_WIDTHS[SENTENCE_WIDTHS.length - 1]!) return null;
-        const lines = wrapText(measure, point.text, width);
-        if (lines.length === 0) return null;
-        const inked = Math.max(...lines.map(measure));
-        const top = point.y - SENTENCE_LINE / 2;
-        const box = align === "left"
-          ? { left: start - 2, right: start + inked + 2, top, bottom: top + lines.length * SENTENCE_LINE }
-          : { left: start - inked - 2, right: start + 2, top, bottom: top + lines.length * SENTENCE_LINE };
-        if (blockers.some((other) => overlapping(other, box))) continue;
-        return { id: point.id, thing: point.thing, lines, x: start, y: point.y, align, open: point.open, dim: point.dim, box, ...(point.away ? { away: true } : {}) };
-      }
-      return null;
-    };
+    const trySide = (align: "left" | "right"): PlacedSentence | null =>
+      besideAt(point, align, align === "left" ? point.x + point.r + SENTENCE_GAP : point.x - point.r - SENTENCE_GAP, point.y, measure, blockers, viewport);
     const after = trySide("left");
     const whole = (spot: PlacedSentence | null) => spot !== null && !spot.lines[spot.lines.length - 1]!.endsWith("…");
     const before = whole(after) ? null : trySide("right");
@@ -383,6 +410,35 @@ export function layoutNightSentences(
     placed.push(spot);
   }
   return placed;
+}
+
+/** A sentence written from `start` (its anchor, per `align`), its first line
+ *  centred on `y`, at the widest of SENTENCE_WIDTHS that covers nothing in
+ *  `blockers` and stays inside the viewport; null when none does. */
+function besideAt(
+  point: NightSentence,
+  align: "left" | "right",
+  start: number,
+  y: number,
+  measure: Measure,
+  blockers: readonly Box[],
+  viewport?: { width: number },
+): PlacedSentence | null {
+  const edge = viewport ? (align === "left" ? viewport.width - SENTENCE_GAP - start : start - SENTENCE_GAP) : Infinity;
+  for (const widest of SENTENCE_WIDTHS) {
+    const width = Math.min(widest, edge);
+    if (width < SENTENCE_WIDTHS[SENTENCE_WIDTHS.length - 1]!) return null;
+    const lines = wrapText(measure, point.text, width);
+    if (lines.length === 0) return null;
+    const inked = Math.max(...lines.map(measure));
+    const top = y - SENTENCE_LINE / 2;
+    const box = align === "left"
+      ? { left: start - 2, right: start + inked + 2, top, bottom: top + lines.length * SENTENCE_LINE }
+      : { left: start - inked - 2, right: start + 2, top, bottom: top + lines.length * SENTENCE_LINE };
+    if (blockers.some((other) => overlapping(other, box))) continue;
+    return { id: point.id, thing: point.thing, lines, x: start, y, align, open: point.open, dim: point.dim, box, ...(point.away ? { away: true } : {}) };
+  }
+  return null;
 }
 
 /** The part of the overlay a click on a frame answers to: the frame itself
@@ -765,7 +821,7 @@ export function thingStopNodeIds(graph: Graph, thing: string, stop: ThingStop): 
     // would pull the camera back until the thing is a speck (Fable's design,
     // Qi-Xuan 11-05). Its points that fly off to a far topic are shown at the
     // screen's edge instead (nightMarks' `edges`).
-    if (graph.getNodeAttribute(thing, "quiet") === true) return [...points, ...linked].sort();
+    if (graph.getNodeAttribute(thing, "quiet") === true) return points.length + linked.length > 0 ? [...points, ...linked].sort() : [thing];
     const near = new Set(nearLinkedBodies(graph, thing));
     const stays = points.filter((point) => {
       const flown = graph.getNodeAttribute(point, "flyTo") as { anchor: string } | undefined;

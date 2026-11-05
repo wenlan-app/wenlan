@@ -491,6 +491,19 @@ const LONG = "Pricing page stays open until the owner confirms the annual discou
 const LONG_ZH = "週末重寫了定價頁的文案，年繳方案的折扣還要等財務確認後才能定下來，先不放到首頁上";
 
 describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
+  it("writes the sentences of points flown out round one topic as a column on the side away from it, none left out", () => {
+    // Three dots close round the hub's right side, the hub at (200, 200).
+    const flown = (id: string, x: number, y: number) => ({ ...sentence(id, x, y, `Sentence ${id}`), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 } });
+    const hub = { left: 190, right: 210, top: 190, bottom: 210 };
+    const placed = layoutNightSentences([flown("a", 216, 192), flown("b", 218, 200), flown("c", 216, 208)], measure, [], { width: 800 }, [hub]);
+    expect(placed.map(({ id }) => id)).toEqual(["a", "b", "c"]);
+    for (const spot of placed) {
+      expect(spot.align).toBe("left");
+      expect(spot.box.left).toBeGreaterThanOrEqual(218 + 4);
+    }
+    for (let i = 1; i < placed.length; i++) expect(placed[i]!.box.top).toBeGreaterThanOrEqual(placed[i - 1]!.box.bottom);
+  });
+
   it("writes each sentence to the right of its point, or to the left where the right would cut it short", () => {
     const placed = layoutNightSentences([
       sentence("a", 100, 100, "Things are frames, not nodes"),
@@ -759,6 +772,10 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     expect(back.frames).toEqual([]);
     expect(back.edges).toEqual([expect.objectContaining({ kind: "back", goTo: "thing:t1", title: "Site redesign" })]);
     expect(back.sentences).toEqual([expect.objectContaining({ id: "mem:n2", away: true })]);
+    // Picked with none of its points drawn: its name still shows, on its centre.
+    const bare = nightMarks(map, () => null, hover, viewport, undefined, "thing:t1", undefined, false, () => ({ x: 50, y: 60 }));
+    expect(bare.frames).toEqual([expect.objectContaining({ thing: "thing:t1", title: "Site redesign" })]);
+    expect(nightMarks(map, () => null, hover, viewport, undefined, null, undefined, true, () => ({ x: 50, y: 60 })).frames).toEqual([]);
   });
 
   it("puts an edge sign on the edge facing what it points at, its arrow the true way, and slides signs apart", () => {
