@@ -76,9 +76,10 @@ import {
   NODE_LABEL_FONT,
   nodeSizeCapPx,
   setThingFlight,
+  thingFlightTargets,
   thingLinkedBodies,
 } from "../../lib/graph/atlas";
-import type { HoverState, AtlasSimulation, LodState, LabelPlacement } from "../../lib/graph/atlas";
+import type { HoverState, AtlasSimulation, FlyTo, LodState, LabelPlacement } from "../../lib/graph/atlas";
 import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
 import {
   applyNightOffsets,
@@ -147,6 +148,8 @@ const THING_STOP_DENSITY = 12;
 /** How long a picked thing's points take to fly out to their topics, or
  *  home again, ms: long enough to follow where each one goes. */
 const FLIGHT_MS = 600;
+/** How long the camera takes to reach a picked thing's stop, ms. */
+const THING_CAMERA_MS = 450;
 /** A point's short title when zoomed in, CSS px: a few words, about ten
  *  Chinese characters. Its whole sentence comes up on hover. */
 const POINT_TITLE_PX = 120;
@@ -308,7 +311,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // carries them over a rebuild that cuts their growth short.
   const growQueueRef = useRef<Set<string>>(new Set());
   // Sends the picked thing's points out to their topics (see the build).
-  const flyRef = useRef<(thing: string | null, animate: boolean) => void>(() => {});
+  const flyRef = useRef<(thing: string | null, startAt: number | null) => void>(() => {});
+  // When the last thing was picked (performance.now()), so its points' flight
+  // keeps its time across a rebuild.
+  const pickedAtRef = useRef(0);
   const sceneRef = useRef<CartographyScene | null>(null);
   const sceneDirtyRef = useRef(true);
 
@@ -635,8 +641,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     setThingStop(stop);
     hoverStateRef.current = thingFocusState(drawn, thing, stop);
     focusLayoutRef.current = null;
-    // Its points set off now, with the camera, so its long lines never show.
-    flyRef.current(thing, true);
+    // Its points set off as the camera arrives, so the flight is seen.
+    pickedAtRef.current = performance.now();
+    flyRef.current(thing, pickedAtRef.current + THING_CAMERA_MS);
     const { width } = renderer.getDimensions();
     // The sentences run beside their points, either side; the title sits
     // above. Room on both sides keeps the thing centred.
@@ -644,7 +651,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const insets = stop === "this"
       ? { ...ATLAS_CONTROL_INSETS, top: ATLAS_CONTROL_INSETS.top + 24, left: ATLAS_CONTROL_INSETS.left + sentenceRoom, right: ATLAS_CONTROL_INSETS.right + sentenceRoom }
       : ATLAS_CONTROL_INSETS;
-    const duration = prefersReducedMotion() ? 0 : 450;
+    const duration = prefersReducedMotion() ? 0 : THING_CAMERA_MS;
     if (stop === "all") {
       const visibleNodeIds = new Set(
         drawn.nodes().filter((id) => !entityTypeHidden(drawn.getNodeAttribute(id, "entityType"), excludedTypesRef.current)),
@@ -783,7 +790,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // Picking a thing flies its linked points out to their topics; letting it
   // go flies them home.
   useEffect(() => {
-    flyRef.current(selectedThing, true);
+    flyRef.current(selectedThing, performance.now());
   }, [selectedThing]);
   const selectedNode = filteredModel.nodes.find((node) => node.id === selectedId);
   const selectedNeighbors = useMemo(() => {
@@ -954,6 +961,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // Qi-Xuan 11-05): no line runs across the map, and the flight shows the
     // thing reaching into it. A quiet thing's are by their topics already.
     let flightThing: string | null = null;
+    let flightTargets: ReadonlyMap<string, FlyTo> = new Map();
     let flightAt = 0;
     let flightTo = 0;
     let flightFrame = 0;
@@ -962,7 +970,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       sceneDirtyRef.current = true;
       sigmaRef.current?.refresh();
     };
-    const fly = (wanted: string | null, animate: boolean) => {
+    // `startAt` (performance.now() time) is when the flight sets off, so a
+    // pick's points wait for the camera to arrive and are then seen to fly;
+    // null puts them there at once.
+    const fly = (wanted: string | null, startAt: number | null) => {
       if (wanted !== null && !graph.hasNode(wanted)) wanted = null;
       // Already there, or already on its way there.
       if (wanted === flightThing && (wanted === null || flightTo === 1)) return;
@@ -974,6 +985,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       }
       const thing = wanted ?? flightThing;
       if (thing === null) return;
+      if (thing !== flightThing) flightTargets = thingFlightTargets(graph, thing);
       flightThing = thing;
       const from = flightAt;
       const to = wanted === null ? 0 : 1;
@@ -985,24 +997,25 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           flightThing = null;
           flightTo = 0;
         } else {
-          setThingFlight(graph, thing, 1);
+          setThingFlight(graph, thing, 1, flightTargets);
         }
         showFlight();
       };
-      if (!animate || prefersReducedMotion()) {
+      if (startAt === null || prefersReducedMotion() || performance.now() >= startAt + FLIGHT_MS) {
         land();
         return;
       }
-      const start = performance.now();
       const step = () => {
-        const elapsed = performance.now() - start;
+        const elapsed = performance.now() - startAt;
         if (elapsed >= FLIGHT_MS) {
           land();
           return;
         }
-        flightAt = from + (to - from) * growthAt(elapsed, FLIGHT_MS);
-        setThingFlight(graph, thing, flightAt);
-        showFlight();
+        if (elapsed > 0) {
+          flightAt = from + (to - from) * growthAt(elapsed, FLIGHT_MS);
+          setThingFlight(graph, thing, flightAt, flightTargets);
+          showFlight();
+        }
         flightFrame = requestAnimationFrame(step);
       };
       flightFrame = requestAnimationFrame(step);
@@ -1494,9 +1507,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         : hoverStateFor(graph, selectedRef.current);
       // A new link can bring 附近 in.
       if (isThing) setThingStops(thingStopsFor(graph, selectedRef.current));
-      // Its points are out by their topics already on a rebuild; an arrival
-      // flies them out once the map is up (the selectedThing effect).
-      if (isThing && !arriving) fly(selectedRef.current, false);
+      // Its points carry on out to their topics on a rebuild: still on the
+      // way when it was just picked (an arrival's map is often built twice),
+      // else there already.
+      if (isThing && !arriving) fly(selectedRef.current, pickedAtRef.current + THING_CAMERA_MS);
     }
     // First paint of THIS renderer, and the only thing that draws the
     // overlay canvas above at all. Sigma's constructor render already happened

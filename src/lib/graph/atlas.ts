@@ -576,17 +576,48 @@ export function thingFlightTargets(graph: Graph, thing: string): Map<string, Fly
     if (list) list.push(point);
     else byTopic.set(nearest, [point]);
   }
+  const flying = new Set([...byTopic.values()].flat());
   for (const [topic, points] of byTopic) {
     const { x, y } = at(topic);
     const facing = Math.atan2(ty - y, tx - x);
     const dot = Math.max(...points.map((point) => (graph.getNodeAttribute(point, "size") as number | undefined) ?? 0), 1);
-    const radius = bodyRadius(graph.getNodeAttributes(topic)) + FLY_GAP + 2 * dot;
+    const inner = bodyRadius(graph.getNodeAttributes(topic)) + FLY_GAP + 2 * dot;
     // Side by side as far apart as in their thing's cluster (2 * size + 3).
-    const step = (2 * dot + 3) / radius;
-    points.forEach((point, index) => {
-      const angle = facing + (index - (points.length - 1) / 2) * step;
-      targets.set(point, { anchor: topic, dx: radius * Math.cos(angle), dy: radius * Math.sin(angle) });
+    const spacing = 2 * dot + 3;
+    // What already sits round the topic, so the points can keep off it.
+    const reach = inner + 2 * spacing + points.length * spacing;
+    const ink: { x: number; y: number; r: number }[] = [];
+    graph.forEachNode((id, attrs) => {
+      if (id === topic || id === thing || flying.has(id) || attrs.entityType === THING_NODE_TYPE) return;
+      const ox = attrs.x as number;
+      const oy = attrs.y as number;
+      const r = (attrs.size as number | undefined) ?? 0;
+      if (Math.hypot(ox - x, oy - y) - r < reach) ink.push({ x: ox, y: oy, r });
     });
+    const spots = (radius: number, base: number) => points.map((_point, index) => {
+      const angle = base + (index - (points.length - 1) / 2) * (spacing / radius);
+      return { dx: radius * Math.cos(angle), dy: radius * Math.sin(angle) };
+    });
+    const clashes = (placed: readonly { dx: number; dy: number }[]) => placed.reduce(
+      (count, { dx, dy }) => count + ink.filter((other) => Math.hypot(x + dx - other.x, y + dy - other.y) < other.r + dot + 1).length,
+      0,
+    );
+    // Facing the thing where that side is clear; else turned a little at a
+    // time either way, then one ring further out.
+    let best = spots(inner, facing);
+    let fewest = clashes(best);
+    for (const radius of [inner, inner + spacing]) {
+      for (let turn = 0; turn <= 12 && fewest > 0; turn += 1) {
+        const base = facing + (turn % 2 === 0 ? 1 : -1) * Math.ceil(turn / 2) * (Math.PI / 8);
+        const placed = spots(radius, base);
+        const count = clashes(placed);
+        if (count < fewest) {
+          best = placed;
+          fewest = count;
+        }
+      }
+    }
+    points.forEach((point, index) => targets.set(point, { anchor: topic, ...best[index]! }));
   }
   return targets;
 }
@@ -594,8 +625,13 @@ export function thingFlightTargets(graph: Graph, thing: string): Map<string, Fly
 /** Send a thing's linked points `at` of the way to their topics (0 home, 1
  *  there; thingFlightTargets), or, with `thing` null, clear every flight.
  *  Returns the points that fly. The next placeSatellites puts them there. */
-export function setThingFlight(graph: Graph, thing: string | null, at: number): string[] {
-  const targets = thing === null ? new Map<string, FlyTo>() : thingFlightTargets(graph, thing);
+export function setThingFlight(
+  graph: Graph,
+  thing: string | null,
+  at: number,
+  /** Worked out once for a whole flight (thingFlightTargets). */
+  targets: ReadonlyMap<string, FlyTo> = thing === null ? new Map() : thingFlightTargets(graph, thing),
+): string[] {
   graph.forEachNode((id, attrs) => {
     if (attrs.fly === undefined || targets.has(id)) return;
     graph.removeNodeAttribute(id, "fly");

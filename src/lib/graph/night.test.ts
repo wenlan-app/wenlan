@@ -16,6 +16,7 @@ import {
   satelliteAnchor,
   satellitePlan,
   setThingFlight,
+  thingFlightTargets,
 } from "./atlas";
 import { attachThingPoints, buildKnowledgeGraphModel, DEFAULT_LAYERS, drawableModel, MEMORY_NODE_TYPE, thingTitle } from "./model";
 import {
@@ -359,6 +360,19 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     expect(map.getNodeAttribute("mem:n2", "fly")).toBeUndefined();
     expect(xy(map, "mem:n2").x).toBeCloseTo(home.n2.x, 9);
     expect(xy(map, "mem:n2").y).toBeCloseTo(home.n2.y, 9);
+  });
+
+  it("turns a flown point off a dot already sitting where it would go", () => {
+    const map = mapWith(things());
+    runAtlasLayout(map);
+    createAtlasSimulation(map);
+    const first = thingFlightTargets(map, "thing:t1").get("mem:n2")!;
+    const hub = xy(map, "hub");
+    const spot = { x: hub.x + first.dx, y: hub.y + first.dy };
+    map.addNode("blocker", { x: spot.x, y: spot.y, size: 2, entityType: "concept" });
+    const turned = thingFlightTargets(map, "thing:t1").get("mem:n2")!;
+    const dot = map.getNodeAttribute("mem:n2", "size") as number;
+    expect(Math.hypot(hub.x + turned.dx - spot.x, hub.y + turned.dy - spot.y)).toBeGreaterThan(2 + dot);
   });
 
   it("keeps a frame visibly a frame when its points are drawn tiny", () => {
