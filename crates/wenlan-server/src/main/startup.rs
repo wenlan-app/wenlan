@@ -439,6 +439,18 @@ pub(super) async fn prepare_startup_state(
                         knowledge_path.clone(),
                         &db_arc,
                     );
+                    // Files from before hashes were recorded that hold an
+                    // earlier version of their page read as edited outside
+                    // Wenlan; adopt the ones `page_history` proves are ours
+                    // so the reconcile below can bring them up to date.
+                    match projection.adopt_hashes_from_history(&db_arc, &pages).await {
+                        Ok(0) => {}
+                        Ok(adopted) => tracing::info!(
+                            "[reconcile] {adopted} page file(s) from an earlier version recognised \
+                             as Wenlan's own"
+                        ),
+                        Err(e) => tracing::warn!("[reconcile] hash adoption failed: {e}"),
+                    }
                     match projection.reconcile(&pages) {
                         Ok(stats)
                             if stats.rewritten > 0

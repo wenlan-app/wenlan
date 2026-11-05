@@ -53889,6 +53889,40 @@ impl MemoryDB {
         Ok(out)
     }
 
+    /// The recorded snapshot of one version of a page, if `page_history`
+    /// holds it.
+    pub async fn get_page_history_at(
+        &self,
+        page_id: &str,
+        version: i64,
+    ) -> Result<Option<PageHistoryEntry>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT version, title, content, source_memory_ids, edited_by, created_at \
+                 FROM page_history WHERE page_id = ?1 AND version = ?2",
+                libsql::params![page_id, version],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("get_page_history_at: {e}")))?;
+        let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("get_page_history_at row: {e}")))?
+        else {
+            return Ok(None);
+        };
+        let source_ids_json: String = row.get(3).unwrap_or_else(|_| "[]".to_string());
+        Ok(Some(PageHistoryEntry {
+            version: row.get(0).unwrap_or(0),
+            title: row.get(1).unwrap_or(None),
+            content: row.get(2).unwrap_or_default(),
+            source_memory_ids: serde_json::from_str(&source_ids_json).unwrap_or_default(),
+            edited_by: row.get(4).unwrap_or_default(),
+            created_at: row.get(5).unwrap_or(0),
+        }))
+    }
+
     /// Look up a stored retry receipt. `None` means this caller has not run
     /// this operation — or ran it and rolled back, which is the same thing.
     pub async fn get_operation_receipt(
