@@ -549,6 +549,14 @@ const FLY_GAP = 4;
  * thing, where they came from. A point with no link stays with its thing.
  * Deterministic: same graph, same spots.
  */
+/** The side of a body its name is written on, from where it sits on the map
+ *  (graph units): the same rule as AtlasView's drawLabel. */
+export function labelSideFor(x: number, y: number): "right" | "below" | "left" | "above" {
+  const angle = Math.atan2(-y, x);
+  const sector = Math.round((angle + Math.PI) / (Math.PI / 2)) % 4;
+  return sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above";
+}
+
 export function thingFlightTargets(graph: Graph, thing: string): Map<string, FlyTo> {
   const targets = new Map<string, FlyTo>();
   if (!graph.hasNode(thing)) return targets;
@@ -598,8 +606,20 @@ export function thingFlightTargets(graph: Graph, thing: string): Map<string, Fly
       const angle = base + (index - (points.length - 1) / 2) * (spacing / radius);
       return { dx: radius * Math.cos(angle), dy: radius * Math.sin(angle) };
     });
+    // The topic's own name sits on one side of it (AtlasView's drawLabel
+    // picks the side from where the topic is on the map); a dot there would
+    // sit on its name.
+    const side = labelSideFor(x, y);
+    const onName = (dx: number, dy: number) => {
+      const angle = Math.atan2(dy, dx);
+      const off = (to: number) => Math.abs(Math.atan2(Math.sin(angle - to), Math.cos(angle - to)));
+      if (side === "right") return off(0) < (Math.PI * 7) / 18;
+      if (side === "left") return off(Math.PI) < (Math.PI * 7) / 18;
+      // Above or below, centred on it: keep to its sides.
+      return off(Math.PI / 2) < (Math.PI * 5) / 18 || off(-Math.PI / 2) < (Math.PI * 5) / 18;
+    };
     const clashes = (placed: readonly { dx: number; dy: number }[]) => placed.reduce(
-      (count, { dx, dy }) => count + ink.filter((other) => Math.hypot(x + dx - other.x, y + dy - other.y) < other.r + dot + 1).length,
+      (count, { dx, dy }) => count + (onName(dx, dy) ? 1 : 0) + ink.filter((other) => Math.hypot(x + dx - other.x, y + dy - other.y) < other.r + dot + 1).length,
       0,
     );
     // Facing the thing where that side is clear; else turned a little at a

@@ -78,6 +78,7 @@ import {
   setThingFlight,
   thingFlightTargets,
   thingLinkedBodies,
+  labelSideFor,
 } from "../../lib/graph/atlas";
 import type { HoverState, AtlasSimulation, FlyTo, LodState, LabelPlacement } from "../../lib/graph/atlas";
 import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
@@ -1245,9 +1246,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       const maxWidth = overviewLabelMaxWidth(labelSigma?.getDimensions().width ?? 160);
       const label = overview ? truncateOverviewLabel(ctx, rawLabel, maxWidth) : rawLabel;
       if (!label) return;
-      const angle = Math.atan2(-(graph.getNodeAttribute(data.key, "y") as number), graph.getNodeAttribute(data.key, "x") as number);
-      const sector = Math.round((angle + Math.PI) / (Math.PI / 2)) % 4;
-      const at = labelAnchor(data.x, data.y, data.size, sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above");
+      const at = labelAnchor(data.x, data.y, data.size, labelSideFor(graph.getNodeAttribute(data.key, "x") as number, graph.getNodeAttribute(data.key, "y") as number));
       if (reserveLabel(ctx, label, at, labelYieldsToFrames(nodeAttrs?.night === true, hoverStateRef.current.linked?.has(data.key) === true))) drawNodeLabelAt(ctx, { ...data, label }, s, at, paletteRef.current.surface);
     };
     let minimumGraphRadius = 0;

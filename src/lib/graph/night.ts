@@ -385,7 +385,19 @@ export function layoutNightSentences(
       let floor = -Infinity;
       for (const point of waiting) {
         const blockers: Box[] = [...discs.filter((disc) => !ids.has(disc.id)), ...bodies, ...occupied];
-        const spot = besideAt(point, align, start, Math.max(point.y, floor), measure, blockers, viewport);
+        const y = Math.max(point.y, floor);
+        // Where a name or a body is in the way, the column moves out past it.
+        let from = start;
+        let spot = besideAt(point, align, from, y, measure, blockers, viewport);
+        for (let tries = 0; !spot && tries < 3; tries += 1) {
+          const least = SENTENCE_WIDTHS[SENTENCE_WIDTHS.length - 1]!;
+          const top = y - SENTENCE_LINE / 2;
+          const reach = align === "left" ? { left: from - 2, right: from + least, top, bottom: top + SENTENCE_LINE } : { left: from - least, right: from + 2, top, bottom: top + SENTENCE_LINE };
+          const inWay = blockers.filter((other) => overlapping(other, reach));
+          if (inWay.length === 0) break;
+          from = align === "left" ? Math.max(...inWay.map((other) => other.right)) + SENTENCE_GAP : Math.min(...inWay.map((other) => other.left)) - SENTENCE_GAP;
+          spot = besideAt(point, align, from, y, measure, blockers, viewport);
+        }
         if (!spot) continue;
         inColumn.add(point.id);
         occupied.push(spot.box);
@@ -821,7 +833,13 @@ export function thingStopNodeIds(graph: Graph, thing: string, stop: ThingStop): 
     // would pull the camera back until the thing is a speck (Fable's design,
     // Qi-Xuan 11-05). Its points that fly off to a far topic are shown at the
     // screen's edge instead (nightMarks' `edges`).
-    if (graph.getNodeAttribute(thing, "quiet") === true) return points.length + linked.length > 0 ? [...points, ...linked].sort() : [thing];
+    if (graph.getNodeAttribute(thing, "quiet") === true) {
+      // Points with no topic stay round its centre (model.ts), so the centre
+      // is framed with them: they may have no spot of their own until shown.
+      const elsewhere = new Set((graph.getNodeAttribute(thing, "elsewhere") as string[] | undefined) ?? []);
+      const under = points.some((point) => !elsewhere.has(point));
+      return [...new Set([...(under || linked.length === 0 ? [thing] : []), ...points, ...linked])].sort();
+    }
     const near = new Set(nearLinkedBodies(graph, thing));
     const stays = points.filter((point) => {
       const flown = graph.getNodeAttribute(point, "flyTo") as { anchor: string } | undefined;

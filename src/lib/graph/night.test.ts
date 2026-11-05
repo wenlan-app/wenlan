@@ -14,6 +14,7 @@ import {
   runAtlasLayout,
   satelliteAnchor,
   satellitePlan,
+  labelSideFor,
   setThingFlight,
   thingFlightTargets,
 } from "./atlas";
@@ -491,6 +492,14 @@ const LONG = "Pricing page stays open until the owner confirms the annual discou
 const LONG_ZH = "週末重寫了定價頁的文案，年繳方案的折扣還要等財務確認後才能定下來，先不放到首頁上";
 
 describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
+  it("moves a flown column out past a topic's name in its way", () => {
+    const flown = (id: string, x: number, y: number) => ({ ...sentence(id, x, y, `Sentence ${id}`), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 } });
+    const name = { left: 220, right: 280, top: 192, bottom: 208 };
+    const [spot] = layoutNightSentences([flown("a", 216, 200)], measure, [name], { width: 800 }, [{ left: 190, right: 210, top: 190, bottom: 210 }]);
+    expect(spot!.align).toBe("left");
+    expect(spot!.box.left).toBeGreaterThanOrEqual(280);
+  });
+
   it("writes the sentences of points flown out round one topic as a column on the side away from it, none left out", () => {
     // Three dots close round the hub's right side, the hub at (200, 200).
     const flown = (id: string, x: number, y: number) => ({ ...sentence(id, x, y, `Sentence ${id}`), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 } });
@@ -796,6 +805,21 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     const hits = [{ thing: "thing:t1", goTo: "hub", ...a!.box }];
     expect(edgeSignAt(hits, a!.box.left + 1, a!.box.top + 1)).toBe("hub");
     expect(frameAt(hits, a!.box.left + 1, a!.box.top + 1)).toBeNull();
+  });
+
+  it("never lands a flown point on its topic's name", () => {
+    const map = mapWith(things());
+    annotateDust(map, satellitePlan(map));
+    const hub = xy(map, "hub");
+    for (const [tx, ty] of [[hub.x + 50, hub.y], [hub.x - 50, hub.y], [hub.x, hub.y + 50], [hub.x, hub.y - 50]] as const) {
+      map.mergeNodeAttributes("thing:t1", { x: tx, y: ty });
+      const { dx, dy } = thingFlightTargets(map, "thing:t1").get("mem:n2")!;
+      const side = labelSideFor(hub.x, hub.y);
+      const angle = Math.atan2(dy, dx);
+      if (side === "right") expect(Math.cos(angle)).toBeLessThan(Math.cos((Math.PI * 7) / 18));
+      if (side === "left") expect(-Math.cos(angle)).toBeLessThan(Math.cos((Math.PI * 7) / 18));
+      if (side === "above" || side === "below") expect(Math.abs(Math.sin(angle))).toBeLessThan(Math.cos((Math.PI * 5) / 18) + 1e-9);
+    }
   });
 
   it("leaves a far topic, and the point flying to it, out of the 這件事 frame", () => {
