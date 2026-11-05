@@ -1170,6 +1170,7 @@ carrying the authority of agreement.
 | `core/db.rs::find_distillation_clusters_scoped` | `pub` | no | no | — | `core/db.rs::query_distillation_staging_pool` |
 | `core/db.rs::find_growable_page_scoped` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::find_matching_page_scoped` | `pub` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
+| `core/db.rs::find_page_to_grow_scoped` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::folded_title_owners_by_scope` | `pub(crate)` | no | no | — | `core/db.rs::folded_title_owners_by_scope_on_conn` |
 | `core/db.rs::get_page` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_resolve_embed`, `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/sentence_routes.rs::require_visible_page`, `server/steep_new_routes.rs::handle_steep_new_commit`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
 | `core/db.rs::get_page_browse` | `pub` | no | no | — | `core/db.rs::get_page_inner` |
@@ -1403,7 +1404,7 @@ carrying the authority of agreement.
 | `core/page_map_improve.rs::improve_page_map` | `pub` | no | **yes** | `server/page_map_routes.rs::handle_improve_page_map` | `core/db.rs::get_page`, `core/page_map_improve.rs::source_suggestions` |
 | `core/page_map_improve.rs::run_proactive_page_maps` | `pub` | no | no | — | `core/db.rs::list_pages` |
 | `core/post_ingest.rs::auto_link_entity` | `pub(crate)` | no | no | — | `core/db.rs::search_entities_by_vector` |
-| `core/post_ingest.rs::grow_page` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::get_page` |
+| `core/post_ingest.rs::grow_page` | `pub(crate)` | no | no | — | `core/db.rs::find_page_to_grow_scoped`, `core/db.rs::get_page` |
 | `core/post_ingest.rs::run_page_growth_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/db.rs::find_growable_page_scoped`, `core/db.rs::get_page` |
 | `core/post_write.rs::restore_page` | `pub` | yes | no | — | `core/db/page_restore.rs::commit_page_restore` |
 | `core/post_write/entity_graph.rs::create_entity` | `pub` | yes | no | — | `core/db.rs::resolve_or_create_entity` |

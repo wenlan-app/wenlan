@@ -40497,6 +40497,216 @@ impl MemoryDB {
         Ok(None)
     }
 
+    /// The candidates that are hub topics: linked to so many memories that a
+    /// new link says nothing about the memory. A hub is never chosen as the
+    /// topic a new memory is filed under. On real data one topic ("wenlan")
+    /// collected 877 links, about a quarter of all memories, because every
+    /// note about the project resolved to it (2026-11-04).
+    pub async fn hub_entity_ids(
+        &self,
+        candidates: &[&str],
+    ) -> Result<std::collections::HashSet<String>, WenlanError> {
+        let mut hubs = std::collections::HashSet::new();
+        if candidates.is_empty() {
+            return Ok(hubs);
+        }
+        let conn = self.conn.lock().await;
+        let count = |sql: &'static str, params: Vec<libsql::Value>| {
+            let conn = &conn;
+            async move {
+                let mut rows = conn
+                    .query(sql, params)
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("hub_entity_ids: {e}")))?;
+                let n = match rows
+                    .next()
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("hub_entity_ids: {e}")))?
+                {
+                    Some(row) => row.get::<i64>(0).unwrap_or(0),
+                    None => 0,
+                };
+                Ok::<i64, WenlanError>(n)
+            }
+        };
+        let total = count(
+            "SELECT COUNT(DISTINCT memory_id) FROM memory_entities",
+            Vec::new(),
+        )
+        .await?;
+        for id in candidates {
+            let links = count(
+                "SELECT COUNT(*) FROM memory_entities WHERE entity_id = ?1",
+                vec![libsql::Value::Text((*id).to_string())],
+            )
+            .await?;
+            if is_hub_entity(links, total) {
+                hubs.insert((*id).to_string());
+            }
+        }
+        Ok(hubs)
+    }
+
+    /// One-time cleanup of links written before the hub rule
+    /// ([`is_hub_entity`]): a memory that also links a more specific topic
+    /// loses its link to a hub topic, and its primary topic moves from the hub
+    /// to its first specific link. A memory whose only topics are hubs keeps
+    /// them, as the write path now does. Gated by an `app_metadata` marker
+    /// whose value records every removed link and moved primary, so the
+    /// cleanup can be undone by hand. Returns the number of links removed (0
+    /// when it already ran or there is no hub).
+    pub async fn unfile_old_hub_links_once(&self) -> Result<u64, WenlanError> {
+        const MARKER: &str = "kg_unfile_hub_links_v1";
+        let conn = self.conn.lock().await;
+        let query_err = |e: libsql::Error| WenlanError::VectorDb(format!("unfile hub links: {e}"));
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM app_metadata WHERE key = ?1",
+                libsql::params![MARKER],
+            )
+            .await
+            .map_err(query_err)?;
+        if rows.next().await.map_err(query_err)?.is_some() {
+            return Ok(0);
+        }
+        drop(rows);
+
+        let mut rows = conn
+            .query("SELECT COUNT(DISTINCT memory_id) FROM memory_entities", ())
+            .await
+            .map_err(query_err)?;
+        let total = match rows.next().await.map_err(query_err)? {
+            Some(row) => row.get::<i64>(0).unwrap_or(0),
+            None => 0,
+        };
+        drop(rows);
+        let mut rows = conn
+            .query(
+                "SELECT entity_id, COUNT(*) FROM memory_entities
+                  GROUP BY entity_id HAVING COUNT(*) >= ?1 ORDER BY entity_id",
+                libsql::params![HUB_MIN_LINKS],
+            )
+            .await
+            .map_err(query_err)?;
+        let mut hubs: Vec<String> = Vec::new();
+        while let Some(row) = rows.next().await.map_err(query_err)? {
+            let links = row.get::<i64>(1).unwrap_or(0);
+            if is_hub_entity(links, total) {
+                hubs.push(row.get::<String>(0).map_err(query_err)?);
+            }
+        }
+        drop(rows);
+
+        conn.execute("BEGIN IMMEDIATE", ())
+            .await
+            .map_err(query_err)?;
+        let result: Result<u64, WenlanError> = async {
+            let mut removed: Vec<(String, String)> = Vec::new();
+            let mut moved: Vec<(String, String, String)> = Vec::new();
+            if !hubs.is_empty() {
+                let marks = (2..hubs.len() + 2)
+                    .map(|i| format!("?{i}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let specific = |memory: &str| {
+                    format!(
+                        "SELECT o.entity_id FROM memory_entities o
+                          WHERE o.memory_id = {memory} AND o.entity_id NOT IN ({marks})
+                          ORDER BY o.rowid LIMIT 1"
+                    )
+                };
+                let with_hubs = |first: libsql::Value| {
+                    let mut params = vec![first];
+                    params.extend(hubs.iter().cloned().map(libsql::Value::Text));
+                    params
+                };
+                for hub in &hubs {
+                    let mut rows = conn
+                        .query(
+                            &format!(
+                                "SELECT me.memory_id FROM memory_entities me
+                                  WHERE me.entity_id = ?1
+                                    AND EXISTS ({})
+                                  ORDER BY me.memory_id",
+                                specific("me.memory_id")
+                            ),
+                            with_hubs(libsql::Value::Text(hub.clone())),
+                        )
+                        .await
+                        .map_err(query_err)?;
+                    while let Some(row) = rows.next().await.map_err(query_err)? {
+                        removed.push((row.get::<String>(0).map_err(query_err)?, hub.clone()));
+                    }
+                }
+                let mut rows = conn
+                    .query(
+                        &format!(
+                            "SELECT DISTINCT m.source_id, m.entity_id, ({}) FROM memories m
+                              WHERE ?1 IS NULL AND m.entity_id IN ({marks}) AND EXISTS ({})
+                              ORDER BY m.source_id",
+                            specific("m.source_id"),
+                            specific("m.source_id")
+                        ),
+                        with_hubs(libsql::Value::Null),
+                    )
+                    .await
+                    .map_err(query_err)?;
+                while let Some(row) = rows.next().await.map_err(query_err)? {
+                    moved.push((
+                        row.get::<String>(0).map_err(query_err)?,
+                        row.get::<String>(1).map_err(query_err)?,
+                        row.get::<String>(2).map_err(query_err)?,
+                    ));
+                }
+                drop(rows);
+                for (source_id, _, to) in &moved {
+                    conn.execute(
+                        "UPDATE memories SET entity_id = ?1 WHERE source_id = ?2",
+                        libsql::params![to.clone(), source_id.clone()],
+                    )
+                    .await
+                    .map_err(query_err)?;
+                }
+                for (memory_id, hub) in &removed {
+                    conn.execute(
+                        "DELETE FROM memory_entities WHERE memory_id = ?1 AND entity_id = ?2",
+                        libsql::params![memory_id.clone(), hub.clone()],
+                    )
+                    .await
+                    .map_err(query_err)?;
+                }
+            }
+            let record = serde_json::json!({
+                "hubs": hubs,
+                "removed_links": removed,
+                "moved_primary": moved
+                    .iter()
+                    .map(|(source_id, from, to)| serde_json::json!([source_id, from, to]))
+                    .collect::<Vec<_>>(),
+            })
+            .to_string();
+            conn.execute(
+                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                libsql::params![MARKER, record],
+            )
+            .await
+            .map_err(query_err)?;
+            Ok(u64::try_from(removed.len()).unwrap_or(u64::MAX))
+        }
+        .await;
+        match result {
+            Ok(removed) => {
+                commit_or_rollback(&conn).await.map_err(query_err)?;
+                Ok(removed)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(e)
+            }
+        }
+    }
+
     /// Update a memory's entity_id (for post-ingest entity linking).
     /// Returns the number of memory rows updated (0 = unknown `source_id`).
     ///
@@ -48810,6 +49020,36 @@ impl MemoryDB {
 
     /// Check if a recap already exists covering a specific burst range.
     /// A recap covers a burst if its last_modified falls within [burst_start, burst_end + 60].
+    /// Every recap, oldest first: `(source_id, memory_type, structured_fields)`.
+    pub(crate) async fn list_recap_sources(
+        &self,
+    ) -> Result<Vec<(String, String, Option<String>)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT source_id, COALESCE(memory_type, ''), structured_fields FROM memories
+                  WHERE source = 'memory' AND is_recap = 1 AND chunk_index = 0
+                  ORDER BY COALESCE(created_at, last_modified) ASC, source_id ASC",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_recap_sources: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_recap_sources row: {e}")))?
+        {
+            out.push((
+                row.get::<String>(0)
+                    .map_err(|e| WenlanError::VectorDb(format!("list_recap_sources id: {e}")))?,
+                row.get::<String>(1).unwrap_or_default(),
+                row.get::<Option<String>>(2).unwrap_or(None),
+            ));
+        }
+        Ok(out)
+    }
+
     pub async fn has_recap_covering_range(
         &self,
         burst_start: i64,
@@ -55074,6 +55314,24 @@ impl MemoryDB {
             workspace,
             allow_user_edited,
             false,
+            false,
+        )
+        .await
+    }
+
+    /// Post-ingest growth (`grow_page`): the dedup scoping of
+    /// `find_matching_page_scoped` with human-owned pages allowed (the
+    /// ownership gate turns those writes into revision cards), but the topic
+    /// only narrows the candidates -- the page must also be similar.
+    pub(crate) async fn find_page_to_grow_scoped(
+        &self,
+        entity_id: Option<&str>,
+        embedding: &[f32],
+        threshold: f64,
+        workspace: Option<&str>,
+    ) -> Result<Option<Page>, WenlanError> {
+        self.find_matching_page_with_policy(
+            entity_id, embedding, threshold, workspace, true, false, true,
         )
         .await
     }
@@ -55092,10 +55350,13 @@ impl MemoryDB {
     ) -> Result<Option<Page>, WenlanError> {
         // Matching must not collapse a temporary write veto into a terminal
         // no-match. The growth caller checks the permit and defers the receipt.
-        self.find_matching_page_with_policy(entity_id, embedding, threshold, workspace, false, true)
-            .await
+        self.find_matching_page_with_policy(
+            entity_id, embedding, threshold, workspace, false, true, true,
+        )
+        .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn find_matching_page_with_policy(
         &self,
         entity_id: Option<&str>,
@@ -55104,9 +55365,50 @@ impl MemoryDB {
         workspace: Option<&str>,
         allow_user_edited: bool,
         growth: bool,
+        grows: bool,
     ) -> Result<Option<Page>, WenlanError> {
+        // A memory that will be written INTO the page (`grows`): the memory's
+        // topic narrows the candidates but does not decide the page. Among
+        // that topic's pages the closest one is taken, and only when it clears
+        // the same similarity bar as any other page. Taking the topic's
+        // lowest-id page unconditionally made every memory filed under one
+        // broad topic grow the same page (756 versions of one page on real
+        // data, 2026-11-04). Dedup (`grows=false`) keeps entity-first: there
+        // the topic match is the point.
+        if grows {
+            if let Some(eid) = entity_id {
+                let emb_sql = Self::vec_to_sql(embedding);
+                let allow_human_owned = i64::from(allow_user_edited);
+                let conn = self.conn.lock().await;
+                let mut rows = conn
+                    .query(
+                        "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0),
+                                vector_distance_cos(embedding, vector32(?6)) as dist
+                         FROM pages
+                         WHERE entity_id = ?1 AND status = 'active' AND embedding IS NOT NULL
+                           AND ((?5=0 AND COALESCE(creation_kind, 'distilled') <> 'source' AND COALESCE(kind, 'concept') <> 'entity') OR (?5=1 AND creation_kind IN ('distilled','research') AND LOWER(title) <> 'overview' AND COALESCE(kind, 'concept') <> 'entity'))
+                           AND (?2 IS NULL OR (?2 = ?4 AND space IS NULL) OR space = ?2)
+                           AND (?3 != 0 OR (COALESCE(user_edited, 0) = 0 AND COALESCE(creation_kind, 'distilled') <> 'authored'))
+                           AND (?5 = 0 OR COALESCE(review_required, 0) = 0)
+                         ORDER BY dist ASC, id ASC LIMIT 1",
+                        libsql::params![eid, workspace, allow_human_owned, UNFILED_SPACE_ID, i64::from(growth), emb_sql],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("growth page entity match: {e}")))?;
+                if let Some(row) = rows
+                    .next()
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?
+                {
+                    let dist: f64 = row.get(23).unwrap_or(1.0);
+                    if 1.0 - dist >= threshold {
+                        return Ok(Some(Self::row_to_page(&row)?));
+                    }
+                }
+            }
+        }
         // Entity-first, but scoped.
-        if let Some(eid) = entity_id {
+        if let Some(eid) = entity_id.filter(|_| !grows) {
             let allow_human_owned = i64::from(allow_user_edited);
             let conn = self.conn.lock().await;
             let mut rows = conn
@@ -61638,6 +61940,75 @@ impl MemoryDB {
     }
 
     /// Set a value in the app_metadata key-value store (upsert).
+    /// One-time re-arm of pages whose citation backfill gave up only because
+    /// the model kept timing out. Until whole-page requests got their own
+    /// budget, a long page could not be annotated inside the 30 s default, so
+    /// three timeouts poison-pilled it to `citations = '[]'` and the
+    /// `citations IS NULL` sweep never looked at it again. Clearing the pill
+    /// (as migration 126 did for another cause) gives each such page one more
+    /// round of three attempts. Only a give-up that is still the page's latest
+    /// changelog entry counts: any later write already re-decided the page.
+    /// Gated by an `app_metadata` marker so it runs once per database; returns
+    /// how many pages were re-armed (0 when it already ran).
+    pub async fn rearm_citation_timeouts_once(&self) -> Result<u64, WenlanError> {
+        const MARKER: &str = "citation_backfill_rearm_provider_errors_v1";
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM app_metadata WHERE key = ?1",
+                libsql::params![MARKER],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("citation rearm marker: {e}")))?;
+        if rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(e.to_string()))?
+            .is_some()
+        {
+            return Ok(0);
+        }
+        drop(rows);
+        conn.execute("BEGIN IMMEDIATE", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("citation rearm begin: {e}")))?;
+        let result: Result<u64, WenlanError> = async {
+            let rearmed = conn
+                .execute(
+                    "UPDATE pages SET citations = NULL
+                      WHERE status = 'active' AND citations = '[]'
+                        AND json_valid(changelog)
+                        AND json_extract(changelog, '$[#-1].edited_by') = 'citation_backfill'
+                        AND json_extract(changelog, '$[#-1].citations_summary')
+                            LIKE 'citation backfill gave up: provider error%'",
+                    (),
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("citation rearm: {e}")))?;
+            conn.execute(
+                "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                libsql::params![MARKER, rearmed.to_string()],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("citation rearm marker write: {e}")))?;
+            Ok(rearmed)
+        }
+        .await;
+        match result {
+            Ok(rearmed) => {
+                commit_or_rollback(&conn)
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("citation rearm commit: {e}")))?;
+                Ok(rearmed)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(e)
+            }
+        }
+    }
+
     pub async fn set_app_metadata(&self, key: &str, value: &str) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute(
@@ -62582,3 +62953,14 @@ mod entity_lifecycle_test;
 #[cfg(test)]
 #[path = "db/relation_preserve_tests.rs"]
 mod relation_preserve_tests;
+
+/// Fewest links a topic needs before it can count as a hub.
+pub(crate) const HUB_MIN_LINKS: i64 = 200;
+/// Share of all linked memories (percent) a hub topic is linked to.
+pub(crate) const HUB_MIN_SHARE_PERCENT: i64 = 10;
+
+/// True when a topic with `links` linked memories, out of `total` memories
+/// that have any topic, is a hub: too common to tell memories apart.
+pub(crate) fn is_hub_entity(links: i64, total: i64) -> bool {
+    links >= HUB_MIN_LINKS && links * 100 >= total * HUB_MIN_SHARE_PERCENT
+}
