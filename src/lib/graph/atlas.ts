@@ -2262,7 +2262,14 @@ export interface HoverState {
    *  thingFocusState): `neighbors` is then its lit set, and the lines inside
    *  that set are drawn. */
   thing?: string;
+  /** What a picked thing's points link to (UX-CHAT-5): always named, and each
+   *  point's line to one is drawn clearly enough to follow across the map. */
+  linked?: Set<string>;
 }
+
+/** A picked thing's line from a point to its topic, in sigma's edge size:
+ *  thick enough to follow when the camera is pulled back to fit both ends. */
+export const THING_LINK_LINE_SIZE = 2.2;
 
 /** The most a node's disc grows to on screen, CSS px radius: memory dust
  *  stays a speck at any zoom, a subject grows to 8, the hovered node to 12.
@@ -2379,7 +2386,7 @@ export function nodeDisplay(
   if (state.hovered === null) return base;
   if (nodeId === state.hovered) return { ...attrs, color: attrs.entityType ? nodeFillFor(attrs.entityType, true, palette) : attrs.color, size: attrs.size * 1.15, forceLabel: true, highlighted: true, zIndex: 2 };
   if (state.neighbors.has(nodeId)) {
-    return state.neighbors.size <= NEIGHBOR_LABEL_MAX
+    return state.neighbors.size <= NEIGHBOR_LABEL_MAX || state.linked?.has(nodeId) === true
       ? { ...attrs, color: attrs.entityType ? nodeFillFor(attrs.entityType, true, palette) : attrs.color, forceLabel: true, highlighted: true, zIndex: 1 }
       : { ...attrs, color: attrs.entityType ? nodeFillFor(attrs.entityType, true, palette) : attrs.color, zIndex: 1 };
   }
@@ -2412,6 +2419,10 @@ export function edgeDisplay(
   // A picked thing: the lines among its lit set show, its points' lines to
   // what they are about drawn strong.
   if (state.thing !== undefined && state.neighbors.has(source) && state.neighbors.has(target)) {
+    const pointLink = endpointAttrs !== undefined
+      && ((state.linked?.has(source) === true && endpointAttrs.target.entityType === MEMORY_NODE_TYPE)
+        || (state.linked?.has(target) === true && endpointAttrs.source.entityType === MEMORY_NODE_TYPE));
+    if (pointLink) return { ...attrs, color: palette.bridge, size: Math.max(attrs.size ?? 0, THING_LINK_LINE_SIZE), zIndex: 2 };
     const night = endpointAttrs !== undefined && (endpointAttrs.source.night === true || endpointAttrs.target.night === true);
     return night ? { ...attrs, color: palette.edgeStrong, size: Math.max(attrs.size ?? 0, 0.9), zIndex: 1 } : { ...attrs, zIndex: 1 };
   }

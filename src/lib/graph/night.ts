@@ -552,15 +552,16 @@ function linkedBodies(graph: Graph, points: readonly string[]): string[] {
 }
 
 /**
- * The nodes a stop frames. 這件事 (this): the thing's points. 附近 (nearby):
- * those, what they link to, and each of those bodies' own neighbours (pages
- * and entities, not their memory dust). 全部 (all): every node.
+ * The nodes a stop frames. 這件事 (this): the thing's points and what they link
+ * to, so a link is never a line running off the screen. 附近 (nearby): those,
+ * and each of those bodies' own neighbours (pages and entities, not their memory
+ * dust). 全部 (all): every node.
  */
 export function thingStopNodeIds(graph: Graph, thing: string, stop: ThingStop): string[] {
   if (stop === "all") return graph.nodes();
   const points = thingPointIds(graph, thing);
-  if (stop === "this") return points;
   const linked = linkedBodies(graph, points);
+  if (stop === "this") return [...points, ...linked].sort();
   const near = new Set([...points, ...linked]);
   for (const body of linked) {
     graph.forEachNeighbor(body, (other, attrs) => {
@@ -581,8 +582,9 @@ export function thingStopsFor(graph: Graph, thing: string): ThingStop[] {
  *  to its own centre stay hidden and the lines inside the lit set show. */
 export function thingFocusState(graph: Graph, thing: string, stop: ThingStop): HoverState {
   const points = thingPointIds(graph, thing);
-  const lit = stop === "nearby" ? thingStopNodeIds(graph, thing, stop) : [...points, ...linkedBodies(graph, points)];
-  return { hovered: thing, neighbors: new Set(lit), thing };
+  const linked = linkedBodies(graph, points);
+  const lit = stop === "nearby" ? thingStopNodeIds(graph, thing, stop) : [...points, ...linked];
+  return { hovered: thing, neighbors: new Set(lit), thing, linked: new Set(linked) };
 }
 
 /** How long a new point takes to grow out of its thing's centre, ms. */

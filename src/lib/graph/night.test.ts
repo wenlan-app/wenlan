@@ -6,6 +6,8 @@ import {
   buildAtlasGraph,
   createAtlasSimulation,
   edgeDisplay,
+  NEIGHBOR_LABEL_MAX,
+  THING_LINK_LINE_SIZE,
   lodFor,
   nodeDisplay,
   OPENING_LOD,
@@ -375,7 +377,7 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     const anchor = plan.find((s) => s.id === "mem:n2")!.anchor;
     expect(anchor).not.toBe("thing:t1");
     expect(thingPointIds(map, "thing:t1")).toEqual(["mem:n2"]);
-    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["mem:n2"]);
+    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual([anchor, "mem:n2"].sort());
     expect(thingStopsFor(map, "thing:t1")).toContain("nearby");
     const lit = thingFocusState(map, "thing:t1", "this");
     expect(lit.neighbors).toContain("mem:n2");
@@ -640,10 +642,10 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     expect(thingStopsFor(alone, "thing:t1")).toEqual(["this", "all"]);
   });
 
-  it("frames its points, then what they link to and those bodies' neighbours, then the whole map", () => {
+  it("frames its points and what they link to, then those bodies' neighbours, then the whole map", () => {
     const map = mapWith(things());
     annotateDust(map, satellitePlan(map));
-    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["mem:n1", "mem:n2"]);
+    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["hub", "mem:n1", "mem:n2"]);
     // n2 links to hub; hub's neighbours are a, b and c. d and e are further.
     expect(thingStopNodeIds(map, "thing:t1", "nearby")).toEqual(["a", "b", "c", "hub", "mem:n1", "mem:n2"]);
     expect(thingStopNodeIds(map, "thing:t1", "all")).toEqual(map.nodes());
@@ -660,7 +662,15 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     const thing = { entityType: "thing" };
     const line = edgeDisplay(state, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub });
     expect(line.hidden).toBeUndefined();
-    expect(line.color).toBe(PALETTE.edgeStrong);
+    expect(line.color).toBe(PALETTE.bridge);
+    expect(line.size).toBe(THING_LINK_LINE_SIZE);
+    // The same line whichever way round the edge runs, and still at 附近.
+    expect(edgeDisplay(state, "e", "hub", "mem:n2", attrs, PALETTE, lodFor(1), { source: hub, target: point }).size).toBe(THING_LINK_LINE_SIZE);
+    expect(edgeDisplay(thingFocusState(map, "thing:t1", "nearby"), "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).size).toBe(THING_LINK_LINE_SIZE);
+    // Nothing picked: the line stays hidden, the map at rest is unchanged.
+    expect(edgeDisplay({ hovered: null, neighbors: new Set() }, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).hidden).toBe(true);
+    // Lines among topics are not point links, even at 附近.
+    expect(edgeDisplay(thingFocusState(map, "thing:t1", "nearby"), "e", "hub", "a", attrs, PALETTE, lodFor(1), { source: hub, target: hub }).size).toBe(0.5);
     expect(edgeDisplay(state, "e", "thing:t1", "mem:n2", attrs, PALETTE, lodFor(1), { source: thing, target: point }).hidden).toBe(true);
     // Hub to a is outside the lit set at 這件事, inside it at 附近.
     expect(edgeDisplay(state, "e", "hub", "a", attrs, PALETTE, lodFor(1), { source: hub, target: hub }).hidden).toBe(true);
@@ -669,6 +679,23 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     // The thing's own node stays hidden, its points lit.
     expect(nodeDisplay(state, "thing:t1", { entityType: "thing", size: 1, label: "Site redesign" }, PALETTE).hidden).toBe(true);
     expect(nodeDisplay(state, "mem:n1", { entityType: "memory", night: true, size: 3, color: "#7a7a7a" }, PALETTE).highlighted).toBe(true);
+  });
+});
+
+describe("a picked thing names what its points link to (UX-CHAT-5)", () => {
+  it("names a linked topic however many points are lit, and not its neighbours at 附近", () => {
+    const state = {
+      hovered: "thing:t1",
+      thing: "thing:t1",
+      neighbors: new Set(["hub", "near", ...Array.from({ length: NEIGHBOR_LABEL_MAX + 1 }, (_, i) => `mem:${i}`)]),
+      linked: new Set(["hub"]),
+    };
+    const topic = { entityType: "concept", size: 3, label: "Topic" };
+    expect(nodeDisplay(state, "hub", topic, PALETTE).forceLabel).toBe(true);
+    expect(nodeDisplay(state, "near", topic, PALETTE).forceLabel).toBeUndefined();
+    expect(nodeDisplay(state, "mem:0", { entityType: "memory", night: true, size: 3 }, PALETTE).forceLabel).toBeUndefined();
+    // Nothing picked: no name is forced.
+    expect(nodeDisplay({ hovered: null, neighbors: new Set() }, "hub", topic, PALETTE).forceLabel).toBeUndefined();
   });
 });
 
