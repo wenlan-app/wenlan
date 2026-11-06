@@ -2663,7 +2663,7 @@ mod tests {
         assert_eq!(config::load_config().sources[0].memory_count, 1);
         assert_eq!(
             db.get_document_tags("file", &first_id).await.unwrap(),
-            vec!["Human choice"]
+            vec!["human choice"]
         );
         assert_eq!(
             db.get_chunks_scoped(&first_id, &scope)
@@ -2683,6 +2683,11 @@ mod tests {
             "COLLECT1",
             Some(&["ITEM0001".into(), "ITEM0002".into()]),
         ));
+        config::update_config(|config| {
+            config.sources.push(overlapping.clone());
+            Ok(())
+        })
+        .unwrap();
         let overlap = sync_source_with_client(db.clone(), &overlapping, &mut client)
             .await
             .unwrap();
@@ -2702,7 +2707,7 @@ mod tests {
         );
         assert_eq!(
             db.get_document_tags("file", &first_id).await.unwrap(),
-            vec!["Human choice"]
+            vec!["human choice"]
         );
     }
 

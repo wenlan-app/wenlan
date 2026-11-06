@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
 import * as api from "../../lib/tauri";
-import ReviewDialog, { reviewApproveBlocked, reviewKindLabel } from "./ReviewDialog";
+import ReviewDialog, { reviewApproveBlocked, reviewKindLabel, useReviewItemSummary } from "./ReviewDialog";
 import { reviewItemId, type ReviewItem } from "./useReviewQueue";
 import { createSpacesNavigationFixture } from "../../../e2e/fixtures/spacesNavigation";
 
@@ -53,8 +53,11 @@ beforeEach(async () => {
 describe("Review decision contracts", () => {
   it("shows a whole classification proposal and sends edited changes on acceptance", async () => {
     const change = { source: "file", source_id: "zotero::A", title: "Paper A", before_tags: ["human"], source_content_digest: "digest", expected_decision_revision: 2, add_tags: ["method"], remove_tags: ["old"], reason: "Interviews" };
-    const item: ReviewItem = { ...archive, id: "classification", action: "source_classification", sourceIds: ["zotero::A"], payload: { action: "source_classification", run_id: "run", space_id: "space", rules_digest: "rules", changes: [change] } };
+    const item: ReviewItem = { ...archive, id: "classification", action: "source_classification", confidence: 1, sourceIds: ["zotero::A"], payload: { action: "source_classification", run_id: "run", space_id: "space", rules_digest: "rules", changes: [change] } };
+    const { result } = renderHook(() => useReviewItemSummary(item), { wrapper: ({ children }) => <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{children}</QueryClientProvider> });
+    expect(result.current.reason).toBeNull();
     const { resolve, user } = mount(item);
+    expect(screen.queryByText("100% confidence")).not.toBeInTheDocument();
     expect(screen.getByText(/Current tags: human/)).toBeVisible();
     expect(screen.getByText(/Interviews/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Adjust suggested tags" }));

@@ -385,6 +385,9 @@ export function useReviewItemSummary(item: ReviewItem | null): {
     });
     reason = confidence;
     switch (item.action) {
+      case "source_classification":
+        reason = null;
+        break;
       case "research_dispute":
         title = t("researchDispute.title");
         reason = t("researchDispute.reviewHint");
@@ -1267,7 +1270,7 @@ export default function ReviewDialog({
               >
                 {heading}
               </h3>
-              <p
+              {!(item.kind === "refinement" && item.action === "source_classification") && <p
                 style={{
                   fontFamily: "var(--mem-font-body)",
                   color: "var(--mem-text-secondary)",
@@ -1333,7 +1336,7 @@ export default function ReviewDialog({
                                   : t("review.confidence", {
                                       percent: Math.round(item.confidence * 100),
                                     })}
-              </p>
+              </p>}
 
               {contractBlocked && !reviewReadOnly(item) && !isExampleReviewItem(item) &&
                 !(item.kind === "refinement" && (item.action === "research_dispute" || (item.action === "lint_repair_review" && item.payload?.action === "lint_repair_review"))) && (
