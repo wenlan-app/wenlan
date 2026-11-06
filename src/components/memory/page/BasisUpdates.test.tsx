@@ -13,7 +13,6 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
 
 import { confirmPageBasis, getPageBasisDiff, listBasisPending } from "../../../lib/tauri";
 import { BasisUpdatesSection } from "./BasisUpdatesSection";
-import { BasisUpdatesSummary } from "./BasisUpdatesSummary";
 
 const entry = (over: Partial<BasisPendingEntry> = {}): BasisPendingEntry => ({
   basis_page_id: "pricing",
@@ -45,55 +44,6 @@ afterEach(() => {
   vi.mocked(listBasisPending).mockReset();
   vi.mocked(getPageBasisDiff).mockReset();
   vi.mocked(confirmPageBasis).mockReset();
-});
-
-describe("BasisUpdatesSummary on Home", () => {
-  it("shows one line per changed source note, with the count of notes, and opens the group", async () => {
-    vi.mocked(listBasisPending).mockResolvedValue([
-      entry({
-        citers: Array.from({ length: 20 }, (_, index) => ({ page_id: `n${index}`, title: `Note ${index}`, minor_only: false })),
-      }),
-      entry({ basis_page_id: "roadmap", title: "Roadmap", citers: [{ page_id: "n1", title: "Note 1", minor_only: false }] }),
-    ]);
-    const onOpen = vi.fn();
-    renderWith(<BasisUpdatesSummary onOpen={onOpen} />);
-
-    const list = await screen.findByRole("list", { name: "Source updates" });
-    const rows = within(list).getAllByRole("listitem");
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent("“Pricing” changed. 20 pages to confirm");
-    expect(rows[1]).toHaveTextContent("“Roadmap” changed. 1 page to confirm");
-    expect(listBasisPending).toHaveBeenCalledWith(null);
-
-    // A compact neutral notice, not an attention box, with a visible action per line.
-    const notice = list.closest(".note-review-notice");
-    expect(notice).not.toBeNull();
-    expect(notice).not.toHaveClass("note-review-notice--attention");
-    const lines = within(list).getAllByRole("button", { name: "Review" });
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toHaveAccessibleDescription("“Pricing” changed. 20 pages to confirm");
-
-    fireEvent.click(lines[0]);
-    expect(onOpen).toHaveBeenCalledTimes(1);
-  });
-
-  it("renders nothing when no note is waiting, or only an archived source remains", async () => {
-    vi.mocked(listBasisPending).mockResolvedValue([entry({ state: "archived" }), entry({ basis_page_id: "x", citers: [] })]);
-    const { container, client } = renderWith(<BasisUpdatesSummary onOpen={vi.fn()} />);
-
-    await waitFor(() => expect(listBasisPending).toHaveBeenCalled());
-    await waitFor(() => expect(client.isFetching()).toBe(0));
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it("renders nothing when the read fails", async () => {
-    vi.mocked(listBasisPending).mockRejectedValue(new Error("offline"));
-    const { container, client } = renderWith(<BasisUpdatesSummary onOpen={vi.fn()} />);
-
-    await waitFor(() => expect(listBasisPending).toHaveBeenCalled());
-    await waitFor(() => expect(client.isFetching()).toBe(0));
-    expect(container).toBeEmptyDOMElement();
-  });
 });
 
 describe("BasisUpdatesSection in the review panel", () => {

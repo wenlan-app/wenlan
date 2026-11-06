@@ -93,7 +93,7 @@ and wait for evidence that people need them.
   The recent list holds pages you edited and pages the AI newly wrote (quietly
   marked as the AI's); the AI's small edits to old pages don't put them there.
   原文（2026-10-31 選擇卡）：正在做的事 + 最近編輯，不放小圖。選擇卡「你改的 + AI 新写的」（2026-10-31 17:16）
-- **UX-HOME-4** `planned` Check results and source updates are not on home.
+- **UX-HOME-4** `shipped` Check results and source updates are not on home.
   原文：檢查結果和來源更新不放首頁。
 - **UX-HOME-5** `shipped` A thing with no new conversation and no Brief change
   for a week leaves "what you're working on". Wenlan does not guess whether a
