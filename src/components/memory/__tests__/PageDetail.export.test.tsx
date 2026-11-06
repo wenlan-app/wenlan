@@ -86,8 +86,8 @@ describe("PageDetail export", () => {
     expect(await screen.findByRole("dialog", { name: "Export page" })).toBeInTheDocument();
     await waitFor(() => expect(pageExportApi.capturePageExport).toHaveBeenCalledWith("c1"));
     expect(await screen.findByLabelText("Version")).toHaveValue("saved-v2");
-    await waitFor(() => expect(screen.getByRole("button", { name: "Export", exact: true })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Export", exact: true }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
     expect(vi.mocked(writeTextFile).mock.calls[0][1]).toContain("Fresh saved content");
     expect(pageExportApi.getPageExportBundle).toHaveBeenCalledTimes(2);

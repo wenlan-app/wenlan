@@ -119,7 +119,7 @@ export class ResearchFixtureStore {
                 return { space_id: space.id, source: file.source, source_id: file.source_id, source_agent: file.source_agent ?? null, title: file.title };
             const key = JSON.stringify([space.id, file.source, file.source_id]);
             const history = this.lifecycle.get(key) ?? [];
-            let record = history.at(-1) ?? { space_id: space.id, source: file.source, source_id: file.source_id, revision: 0, state: "active" as const, reason: "", actor: "fixture", updated_at: now };
+            let record = history[history.length - 1] ?? { space_id: space.id, source: file.source, source_id: file.source_id, revision: 0, state: "active" as const, reason: "", actor: "fixture", updated_at: now };
             if (command === "set_source_lifecycle") {
                 if (revision(r.expected_revision) !== record.revision)
                     throw new Error("Source lifecycle revision conflict");
