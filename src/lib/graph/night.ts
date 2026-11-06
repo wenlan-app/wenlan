@@ -226,6 +226,7 @@ export function nightMarks(
         edges.push({ kind: "back", thing, goTo: thing, title: frame.title, count: 0, text: "", open: false, toward: { x: (frame.left + frame.right) / 2, y: (frame.top + frame.bottom) / 2 } });
         sentences.push(...awayPoints.filter((point) => point.text && sentencesFor(thing, point.id)));
       }
+      sentences.push(...quietHere);
       return;
     }
     frames.push(frame);
