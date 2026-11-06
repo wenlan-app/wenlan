@@ -77,6 +77,8 @@ interface SetupWizardProps {
   // May return a promise: the Done step awaits it and, on a rejection, stays
   // put with an inline alert so the user can try again.
   onComplete: () => void | Promise<void>;
+  /** Open the workspace without claiming the daemon saved setup. */
+  onContinueWithoutDaemon?: () => void;
   initialStep?: WizardStep;
   // Preview-harness seams. The model and import rows of the setting-up step are
   // conditional on picks made in earlier steps, so entering at `setting-up`
@@ -171,13 +173,13 @@ function StepShell({
   return (
     <div
       className="flex flex-col"
-      style={{ height: embedded ? "100%" : "100vh", backgroundColor: "var(--mem-bg)" }}
+      style={{ height: embedded ? "100%" : "100vh", minHeight: 0, overflow: "hidden", backgroundColor: "var(--mem-bg)" }}
     >
       {!embedded && <div data-tauri-drag-region style={{ height: dragStripHeight(), flexShrink: 0 }} />}
 
       <ScrollElement
         data-testid="wizard-scroll-main"
-        className="flex-1 overflow-y-auto"
+        className="flex-1 min-h-0 overflow-y-auto"
       >
         <div className="max-w-xl mx-auto" style={{ padding: "0 24px 32px" }}>
           {children}
@@ -1033,6 +1035,7 @@ function SettingUpStep({
   wizardEnteredAt,
   hideDots,
   daemonGateErrored,
+  onContinueWithoutDaemon,
 }: {
   selected: McpClient[];
   pendingModelId: string | null;
@@ -1043,6 +1046,7 @@ function SettingUpStep({
   wizardEnteredAt: number;
   hideDots: boolean;
   daemonGateErrored: boolean;
+  onContinueWithoutDaemon?: () => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -1734,7 +1738,9 @@ function SettingUpStep({
       hideDots={hideDots}
       activeStep="setting-up"
       leftActions={[{ label: t("setup.back"), onClick: onBack }]}
-      primaryAction={{ label: t("setup.continue"), onClick: onNext }}
+      primaryAction={onContinueWithoutDaemon && rows.some(row => row.kind === "daemon" && statusOf(row) === "failed")
+        ? { label: t("setup.done.openWenlan"), onClick: onContinueWithoutDaemon }
+        : { label: t("setup.continue"), onClick: onNext }}
     >
     <div className="flex flex-col" style={{ gap: "24px", paddingTop: "24px" }}>
       <div>
@@ -2150,6 +2156,7 @@ export function DoneStep({
   connectedAgents,
   seenSince,
   onComplete,
+  onContinueWithoutDaemon,
   hideDots,
   wireRouting,
 }: {
@@ -2164,6 +2171,7 @@ export function DoneStep({
    *  Without it, any sighting counts. */
   seenSince?: number;
   onComplete: () => void | Promise<void>;
+  onContinueWithoutDaemon?: () => void;
   hideDots: boolean;
   wireRouting: boolean;
 }) {
@@ -2319,6 +2327,8 @@ export function DoneStep({
           onClick: handleComplete,
           loading: completing,
         }}
+        leftActions={completeFailed && onContinueWithoutDaemon
+          ? [{ label: t("setup.skip"), onClick: onContinueWithoutDaemon }] : undefined}
         alert={completeError}
       >
       <div
@@ -2366,6 +2376,8 @@ export function DoneStep({
     <StepShell
       hideDots={hideDots}
       activeStep="done"
+      leftActions={completeFailed && onContinueWithoutDaemon
+        ? [{ label: t("setup.skip"), onClick: onContinueWithoutDaemon }] : undefined}
       primaryAction={{
         label: wireRouting ? t("setup.getStarted") : t("setup.done.backToWiki"),
         onClick: handleComplete,
@@ -2590,6 +2602,7 @@ export function DoneStep({
 
 function SetupWizardFlow({
   onComplete,
+  onContinueWithoutDaemon,
   initialStep,
   initialPendingModelId = null,
   initialPendingImportPick = null,
@@ -2621,11 +2634,11 @@ function SetupWizardFlow({
   }, []);
 
   if (startupPreflightFailed) {
-    return <StartupPreflightFailure />;
+    return <StartupPreflightFailure onContinueWithoutDaemon={onContinueWithoutDaemon} />;
   }
 
   if (step === "welcome" && !daemonGateErrored) {
-    return <NotesWelcome onComplete={onComplete} />;
+    return <NotesWelcome onComplete={onComplete} onContinueWithoutDaemon={onContinueWithoutDaemon} />;
   }
 
   if (step === "welcome") {
@@ -2697,6 +2710,7 @@ function SetupWizardFlow({
         onConnected={handleConnectedAgents}
         wizardEnteredAt={wizardEnteredAtRef.current}
         daemonGateErrored={daemonGateErrored}
+        onContinueWithoutDaemon={onContinueWithoutDaemon}
       />
     );
   }
@@ -2710,14 +2724,16 @@ function SetupWizardFlow({
       connectedAgents={connectedAgents}
       seenSince={wizardEnteredAtRef.current}
       onComplete={onComplete}
+      onContinueWithoutDaemon={onContinueWithoutDaemon}
     />
   );
 }
 
-function StartupPreflightFailure() {
+function StartupPreflightFailure({ onContinueWithoutDaemon }: { onContinueWithoutDaemon?: () => void }) {
   const { t } = useTranslation();
   return (
-    <StepShell hideDots activeStep="setting-up">
+    <StepShell hideDots activeStep="setting-up" primaryAction={onContinueWithoutDaemon
+      ? { label: t("setup.done.openWenlan"), onClick: onContinueWithoutDaemon } : undefined}>
       <div
         role="alert"
         data-testid="startup-preflight-failure"

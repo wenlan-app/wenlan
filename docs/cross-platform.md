@@ -222,3 +222,31 @@ The copied Microsoft DLLs remain unmodified; each local Tauri build re-verifies 
 staged copies as described above. Installer/ZIP inventory checks require the DLLs and
 notices, and `scripts/release_targets.py` is the single list of the Windows release
 payload that the bundle, workflows and tests are checked against.
+
+### Setup when the daemon is unavailable
+
+An unsuccessful daemon connection must not trap the user in setup. The failed
+connection step and startup preflight expose an action to open the workspace;
+the welcome and completion steps expose the same escape after a save fails.
+This is session-local navigation, not `set_setup_completed`: the workspace keeps
+its service warning and retries health, and recovery does not reopen the wizard.
+The footer stays visible in short windows while the setup content scrolls.
+
+The app retains a sidecar's exit status and bounded stderr after reaping it and
+includes them in a failed wire-state health check. A new launch clears that
+diagnostic, and a late exit from an older launch cannot overwrite the new one.
+Windows loader status codes can therefore distinguish missing DLLs, invalid
+images and unsupported instructions instead of reporting only an HTTP failure.
+Managed-service failures without an app-owned child still need the service log.
+
+The published v0.20.7 Windows NSIS payload was checked on Windows on 2026-11-05:
+its SHA-256 matched the release checksum, all ten CRT/OpenMP DLLs were present,
+and its extracted daemon reached health with a fresh isolated data/pages root.
+The process loaded CRT/OpenMP and ONNX from the extracted payload. It also kept
+serving when the embedding model failed to load. This does not reproduce the
+reported failure on another PC or replace a clean-machine installer test; the
+reported screenshot alone establishes an unreachable service, not its cause.
+
+Regression coverage: `src/App.test.tsx`, `src/components/SetupWizard.test.tsx`,
+`e2e/setup-offline.spec.ts`, and the `daemon_launch_failure` module in
+`scripts/platform-contracts`.

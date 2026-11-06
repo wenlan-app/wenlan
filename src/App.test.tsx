@@ -110,6 +110,7 @@ vi.mock("./components/SetupWizard", () => ({
   // wizard on a rejection (the real step shows an inline alert).
   default: (props: {
     onComplete: () => void | Promise<void>;
+    onContinueWithoutDaemon?: () => void;
     daemonGateErrored?: boolean;
     startupPreflightFailed?: boolean;
     initialStep?: string;
@@ -121,6 +122,7 @@ vi.mock("./components/SetupWizard", () => ({
       data-initial-step={props.initialStep}
     >
       wizard
+      <button onClick={props.onContinueWithoutDaemon}>Open without service</button>
       <button
         type="button"
         onClick={() => {
@@ -514,6 +516,22 @@ describe("App - first-run wizard gate", () => {
     expect(screen.queryByText(STARTING_RUNTIME)).not.toBeInTheDocument();
     expect(vi.mocked(shouldShowWizard).mock.calls.length).toBe(gateChecks);
     vi.mocked(setSetupCompleted).mockReset().mockResolvedValue(undefined);
+  });
+
+  it("lets a failed first run open the workspace without saving completion, then recovers in place", async () => {
+    vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
+    vi.mocked(setSetupCompleted).mockReset();
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Open without service" }));
+    expect(await screen.findByTestId("home-main")).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
+    expect(setSetupCompleted).not.toHaveBeenCalled();
+    expect(getDaemonStartupPhase()).toBe("failed");
+    vi.mocked(shouldShowWizard).mockResolvedValue(true);
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
+    expect(screen.getByTestId("home-main")).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
+    expect(setSetupCompleted).not.toHaveBeenCalled();
   });
 
   it("a completion that fails once and then saves opens Home", async () => {

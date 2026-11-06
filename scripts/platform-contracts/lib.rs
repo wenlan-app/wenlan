@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Compile and exercise the modules the product uses, rather than replicas.
 #![allow(dead_code)]
+#[path = "../../app/src/daemon_start/failure.rs"]
+mod daemon_launch_failure;
 extern crate self as wenlan_types;
 #[path = "../../app/src/config.rs"]
 mod config;

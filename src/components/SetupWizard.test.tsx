@@ -178,6 +178,7 @@ const STALE = () => Math.floor(Date.now() / 1000) - 3600;
 function renderWizard(
   props: {
     onComplete?: () => void;
+    onContinueWithoutDaemon?: () => void;
     initialStep?: "welcome" | "intelligence-choice" | "import" | "connect" | "setting-up" | "done";
     initialPendingModelId?: string | null;
     initialPendingImportPick?: { sourceType: "obsidian" | "directory"; path: string; label: string } | null;
@@ -198,6 +199,7 @@ function renderWizard(
       <QueryClientProvider client={queryClient}>
         <SetupWizard
           onComplete={onComplete}
+          onContinueWithoutDaemon={props.onContinueWithoutDaemon}
           initialStep={props.initialStep}
           initialPendingModelId={props.initialPendingModelId}
           initialPendingImportPick={props.initialPendingImportPick}
@@ -2159,6 +2161,41 @@ describe("SetupWizard", () => {
       expect(screen.getByTestId("task-status-daemon")).toHaveTextContent("Running");
     });
     expect(screen.queryByText("connection refused")).not.toBeInTheDocument();
+  });
+
+  it("a failed service offers an exit that never calls the daemon completion write", async () => {
+    vi.mocked(getWireState).mockResolvedValue({
+      daemon: { base_url: "http://127.0.0.1:7878", reachable: false, version: null, error: "missing runtime DLL", sidecar_spawned_on_unknown_owner: false },
+      mcp_binary: { command: "wenlan-mcp", args: [], candidates: [], undetermined: [] },
+      clients: [],
+    });
+    const onContinueWithoutDaemon = vi.fn();
+    const onComplete = vi.fn().mockRejectedValue(new Error("offline"));
+    renderWizard({ initialStep: "setting-up", onContinueWithoutDaemon, onComplete });
+    fireEvent.click(await screen.findByRole("button", { name: "Open Wenlan" }));
+    expect(onContinueWithoutDaemon).toHaveBeenCalledTimes(1);
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(storeMemory).not.toHaveBeenCalled();
+  });
+
+  it("the notes welcome can be left after saving setup fails", async () => {
+    const onContinueWithoutDaemon = vi.fn();
+    const onComplete = vi.fn().mockRejectedValue(new Error("offline"));
+    renderWizard({ onComplete, onContinueWithoutDaemon });
+    fireEvent.click(screen.getByRole("button", { name: /Start empty/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Wenlan" }));
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onContinueWithoutDaemon).toHaveBeenCalledTimes(1);
+  });
+
+  it("the Done step has an independent exit when its completion write fails", async () => {
+    const onContinueWithoutDaemon = vi.fn();
+    const onComplete = vi.fn().mockRejectedValue(new Error("offline"));
+    renderWizard({ initialStep: "done", onComplete, onContinueWithoutDaemon });
+    fireEvent.click(screen.getByRole("button", { name: "Open Wenlan" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onContinueWithoutDaemon).toHaveBeenCalledTimes(1);
   });
 
   // Reachable is not the same as working: the row must prove the actual
