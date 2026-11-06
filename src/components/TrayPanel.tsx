@@ -12,7 +12,7 @@ import {
   restartDaemon,
   type Page,
 } from "../lib/tauri";
-import { STEEP_COMMAND } from "../lib/steepMode";
+import { STEEP_COMMANDS } from "../lib/steepMode";
 import { isKnowledgePage, listAllActivePages } from "./memory/pages/listAllPages";
 import "./TrayPanel.css";
 
@@ -170,7 +170,7 @@ export default function TrayPanel() {
       steepLine = waiting > 0 ? t("trayPanel.steepAutoQueued", { count: waiting }) : t("trayPanel.steepAutoDone");
     } else {
       steepLine = waiting > 0
-        ? t("trayPanel.steepOnDemandReady", { count: waiting, command: STEEP_COMMAND })
+        ? t("trayPanel.steepOnDemandReady", { count: waiting, claude: STEEP_COMMANDS.claude, codex: STEEP_COMMANDS.codex })
         : t("trayPanel.steepOnDemandDone");
     }
   }
@@ -252,7 +252,7 @@ export default function TrayPanel() {
             </div>
           )}
 
-          {steepLine && <p className="tray-panel-quiet" data-testid="tray-panel-steep">{steepLine}</p>}
+          {steepLine && <p className="tray-panel-quiet tray-panel-steep" data-testid="tray-panel-steep">{steepLine}</p>}
         </>
       )}
 

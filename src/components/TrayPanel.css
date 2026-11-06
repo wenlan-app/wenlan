@@ -154,6 +154,11 @@
   text-overflow: ellipsis;
 }
 
+.tray-panel-steep {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .tray-panel-foot {
   display: flex;
   gap: 6px;
