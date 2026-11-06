@@ -104,6 +104,7 @@ impl Phase {
                 "stage_page_revision_card",
                 "stage_page_revision_card_proposed_by",
                 "stage_page_revision_card_with_citation_snapshot",
+                "stage_page_revision_card_with_citations",
             ] {
                 expected.insert(format!("pub:page_update:{item}"));
             }
@@ -520,7 +521,7 @@ pub use self::page_dispatch::{PageWrite, page_write, page_write_with_citation_sn
 pub(crate) use self::page_dispatch::update_page_growth_at_versions;
 pub use self::page_revision::{accept_pending_revision, accept_pending_revision_edited_with_knowledge_path, accept_pending_revision_with_knowledge_path, dismiss_pending_revision, dismiss_contradiction, PAGE_REVISION_OUTDATED};
 pub use self::page_create::resolve_page_creation_kind;
-pub use self::page_update::{PipelineStage, Writer, machine_write_requires_review, page_is_human_owned, stage_page_revision_card, stage_page_revision_card_proposed_by, stage_page_revision_card_with_citation_snapshot};
+pub use self::page_update::{PipelineStage, Writer, machine_write_requires_review, page_is_human_owned, stage_page_revision_card, stage_page_revision_card_proposed_by, stage_page_revision_card_with_citation_snapshot, stage_page_revision_card_with_citations};
 pub(crate) use self::page_update::{PRE_WRITE_GATE, merge_shrink_threshold, stage_basis_preview_card};
 pub(crate) async fn log_activity_best_effort() {}
 "#;
