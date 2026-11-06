@@ -1053,7 +1053,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   import_theme_image: async () => {
     throw new Error("not_an_image");
   },
-  open_themes_folder: null,
+  open_themes_folder: async () => null,
   set_note_ai_changes: (a) =>
     put(`/api/sources/${enc(a.sourceId)}/ai-changes`, { path: a.path, value: a.value ?? null }),
   list_note_proposals: async (a) =>
