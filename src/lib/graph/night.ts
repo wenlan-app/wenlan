@@ -59,6 +59,8 @@ export interface NightSentence extends NightSpot {
   anchorAt?: { x: number; y: number };
   /** Lands to the right of its topic on screen (from its flight's offset). */
   landsRight?: boolean;
+  /** Still on its way out (its flight not yet landed). */
+  flying?: boolean;
 }
 
 /**
@@ -163,6 +165,7 @@ export function nightMarks(
           away: true,
           ...(anchor && anchorAt ? { anchor, anchorAt: { x: anchorAt.x, y: anchorAt.y } } : {}),
           ...(typeof dx === "number" && dx !== 0 ? { landsRight: dx > 0 } : {}),
+          ...(pointAttrs.fly < 1 ? { flying: true } : {}),
         });
         return;
       }
@@ -390,7 +393,11 @@ export function layoutNightSentences(
     // stays on one side all through the flight.
     const landing = members.reduce((sum, member) => sum + (member.landsRight === undefined ? member.x - member.anchorAt!.x : member.landsRight ? 1 : -1), 0);
     const outward: "left" | "right" = landing >= 0 ? "left" : "right";
-    for (const align of [outward, outward === "left" ? "right" as const : "left" as const]) {
+    // While flying, only that side, so nothing switches sides on the way; a
+    // sentence with no room there waits for the landing.
+    const flying = members.some((member) => member.flying === true);
+    const sides = flying ? [outward] : [outward, outward === "left" ? "right" as const : "left" as const];
+    for (const align of sides) {
       const waiting = members.filter((member) => !inColumn.has(member.id));
       if (waiting.length === 0) break;
       const start = align === "left"
@@ -404,9 +411,12 @@ export function layoutNightSentences(
         let from = start;
         let spot = besideAt(point, align, from, y, measure, blockers, viewport);
         for (let tries = 0; !spot && tries < 3; tries += 1) {
+          // The narrowest block it could take, wrapped as it would be: the
+          // least it needs clear.
           const least = SENTENCE_WIDTHS[SENTENCE_WIDTHS.length - 1]!;
           const top = y - SENTENCE_LINE / 2;
-          const reach = align === "left" ? { left: from - 2, right: from + least, top, bottom: top + SENTENCE_LINE } : { left: from - least, right: from + 2, top, bottom: top + SENTENCE_LINE };
+          const tall = Math.max(1, wrapText(measure, point.text, least).length) * SENTENCE_LINE;
+          const reach = align === "left" ? { left: from - 2, right: from + least + 2, top, bottom: top + tall } : { left: from - least - 2, right: from + 2, top, bottom: top + tall };
           const inWay = blockers.filter((other) => overlapping(other, reach));
           if (inWay.length === 0) break;
           from = align === "left" ? Math.max(...inWay.map((other) => other.right)) + SENTENCE_GAP : Math.min(...inWay.map((other) => other.left)) - SENTENCE_GAP;
@@ -420,7 +430,9 @@ export function layoutNightSentences(
         floor = spot.box.bottom + SENTENCE_LINE / 2 + 2;
       }
     }
-    for (const member of members) inColumn.add(member.id);
+    // Landed with no room in the column: placed on its own below, like any
+    // other sentence. Still flying: it waits.
+    if (flying) for (const member of members) inColumn.add(member.id);
   }
   for (const point of ordered) {
     if (inColumn.has(point.id)) continue;
@@ -441,7 +453,7 @@ export function layoutNightSentences(
 
 /** How far a flown column may move out past what is in its way, CSS px:
  *  further, and it no longer reads as beside its points. */
-const COLUMN_SHIFT_MAX = 72;
+const COLUMN_SHIFT_MAX = 96;
 
 /** A sentence written from `start` (its anchor, per `align`), its first line
  *  centred on `y`, at the widest of SENTENCE_WIDTHS that covers nothing in

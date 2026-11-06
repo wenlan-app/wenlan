@@ -504,6 +504,15 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
     expect(far.every((placed) => placed.box.left < 400)).toBe(true);
   });
 
+  it("waits to write a flying point's sentence where its side has no room, and places it once landed", () => {
+    const point = (flying: boolean) => ({ ...sentence("a", 216, 200, "Sentence a"), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 }, landsRight: true, ...(flying ? { flying: true } : {}) });
+    // The right is walled off well past what a column may move.
+    const wall = { left: 220, right: 700, top: 150, bottom: 250 };
+    expect(layoutNightSentences([point(true)], measure, [wall], { width: 800 })).toEqual([]);
+    const [landed] = layoutNightSentences([point(false)], measure, [wall], { width: 800 });
+    expect(landed!.align).toBe("right");
+  });
+
   it("keeps a flying column on the side its points land on, wherever they are on the way", () => {
     const flying = (x: number) => ({ ...sentence("a", x, 200, "Sentence a"), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 }, landsRight: true });
     for (const x of [120, 180, 216]) {

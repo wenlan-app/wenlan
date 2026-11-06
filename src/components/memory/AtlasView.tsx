@@ -1431,11 +1431,15 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         return display ? renderer.framedGraphToViewport(display) : null;
       };
       const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current, centreAt);
-      // Sentences keep off the other bodies on screen, not only the labels.
+      // Sentences keep off the other bodies on screen, not only the labels;
+      // with a thing picked, only off what is lit: the dimmed rest is
+      // background a sentence may cross.
       const bodies: { left: number; right: number; top: number; bottom: number }[] = [];
+      const focus = hoverStateRef.current;
       if (marks.sentences.length > 0) {
         graph.forEachNode((id, attrs) => {
           if (attrs.night === true || attrs.entityType === THING_NODE_TYPE) return;
+          if (focus.thing !== undefined && !focus.neighbors.has(id)) return;
           const at = drawnAt(id);
           if (!at || at.x < -at.r || at.y < -at.r || at.x > width + at.r || at.y > height + at.r) return;
           bodies.push({ left: at.x - at.r, right: at.x + at.r, top: at.y - at.r, bottom: at.y + at.r });
