@@ -21,6 +21,38 @@ documents: the spec doc (claude.ai artifact G5qFLYM31zsH8iKHXBQPHW) and the
 design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 2026-10-31.
 
+## The whole experience
+
+You only think, in your own AI tool. Wenlan steeps the conversations into
+notes in the background, and when you come back you see at a glance where
+your thinking got to.
+
+```
+Chat in Claude/Codex  →  Wenlan steeps it   →  You come back
+  (you think)            (sorts into things,   Home: what you're working on
+                          links to topics,     Big map: how the ideas grew
+                          checks sources)      Page: a thing's conclusion
+```
+
+1. **Chat**: you discuss in your own AI tool. You don't switch to Wenlan and
+   you don't take notes.
+2. **Steep**: what the conversation settled becomes points, sorted into the
+   thing it belongs to and linked to topics. Every sentence has a source
+   (checked against the original conversation). Once a night it is tidied.
+3. **Come back**:
+   - Home shows only the things still in progress and where you stopped.
+   - A thing's page starts with its conclusion; below is how it got there.
+   - The big map shows every topic and the points that grew lately.
+4. **Chat again**: next time the AI tool carries this memory and goes on,
+   without you explaining again.
+
+Steps 2 and 3 are the core: you see your own thinking clearly without
+tidying it yourself. Rules that serve neither (a mind map window in the AI
+tool, the terminal text tree, editing and lassoing the big map) are extras
+and wait for evidence that people need them.
+
+原文：「对，我觉得这个体验就该是这个样子的。请你把这个给就是确定下来」（2026-11-06 00:38，回覆這段：「你只管在 AI 工具里思考，文澜在后台把对话沉淀成笔记，你回来时一眼看到自己想到哪了」）；「22的话，应该是专注在更重要的事情上，就是专注在那个思考的体验上」（2026-11-06 00:35）
+
 ## Words
 
 - **A thing (一件事)**: one line of work, such as "the new tagline" or "the
@@ -49,13 +81,13 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## Home
 
-- **UX-HOME-1** `planned` The first screen is "what you're working on". Each
+- **UX-HOME-1** `shipped` The first screen is "what you're working on". Each
   thing gets one line saying where it stands; opening it goes to that thing.
   原文：打開 app 的第一屏是「正在做的事」，每件一句做到哪，點進去就是那件事。
-- **UX-HOME-2** `planned` Home shows no counts: no number of sources, pages,
+- **UX-HOME-2** `shipped` Home shows no counts: no number of sources, pages,
   archived pages or conversations.
   原文：首頁沒有任何計數：來源數、頁數、封存數、幾段對話都不放。
-- **UX-HOME-3** `planned` Below "what you're working on" are the pages you
+- **UX-HOME-3** `shipped` Below "what you're working on" are the pages you
   edited last. Home has no thumbnail of the mind map or the big map; maps stay
   inside pages. "What you're working on" shows only when there is something.
   The recent list holds pages you edited and pages the AI newly wrote (quietly
@@ -73,7 +105,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## Sorting conversations into things
 
-- **UX-THING-1** `planned` Every conversation belongs to at least one thing.
+- **UX-THING-1** `shipped` Every conversation belongs to at least one thing.
   You can see which, and change it in one step. When a conversation fits no
   thing yet, the AI starts a new thing and names it without asking.
   原文：每段對話都歸到至少一件事，看得到歸到哪，一步就能改。選擇卡「自动开新的」（2026-11-01 00:03）：對話不屬於任何一件事時，AI 直接開一件新事並取名，不問你；名字和歸屬都能一步改。
@@ -88,7 +120,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   line on where the whole thing stands. Titles and lines follow the app's
   language. A space with nothing written to it for a month is not suggested.
   原文：「正在做的事」直接從你跟 AI 的對話來，不用你記得叫 AI 存（2026-11-02）；選擇卡「用你接的 AI 工具（建議）」（2026-11-03 05:52）；「可以的那做完這個吧」（2026-11-03 05:23）；看了第七版：「有比較像最近在做的事情了」「wenlan-app 老早就沒在用的 space。」（2026-11-03 07:02）
-- **UX-THING-2** `planned` After you correct it once, the same case is not
+- **UX-THING-2** `shipped` After you correct it once, the same case is not
   sorted wrong again.
   原文：改過一次，同樣的情況下次不再分錯。
 - **UX-THING-3** `shipped` Merging two things is only ever a proposal; they
@@ -97,7 +129,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## A thing's page: short text, mind map, any shape you want
 
-- **UX-VIEW-1** `planned` Short text and mind map are two views of the same
+- **UX-VIEW-1** `shipped` Short text and mind map are two views of the same
   thing. Switching does not change pages, and the last view you used is
   remembered. There is no third view for now: an HTML page an AI tool draws in
   chat is saved as its own page (UX-ART-1 to 3). Add a third view only once
@@ -128,7 +160,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   from. What an AI reads about a thing is a separate, fuller version; the
   person sees only the recap.
   原文：「肯定是要 structure 的嘛」「有点像 recap 这样的概念」（2026-11-01 17:34）「AI 跟人看的，我不确定是不是要一样的」（2026-11-01 18:43）
-- **UX-VIEW-7** `planned` A thing's mind map takes its shape from the
+- **UX-VIEW-7** `shipped` A thing's mind map takes its shape from the
   conversation, not from fixed groups. The AI picks the shape: working toward a
   decision or fixing a problem becomes questions, options, reasons, and what
   was decided, left open or dropped; exploring or learning becomes a topic
@@ -138,10 +170,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## Who said each sentence
 
-- **UX-WHO-1** `planned` Every sentence shows whether it is yours (including
+- **UX-WHO-1** `shipped` Every sentence shows whether it is yours (including
   ones you approved) or the AI's: visible, but quiet.
   原文：每一句都分得出是你的（含你點頭的）還是 AI 的，看得出來但不吵。
-- **UX-WHO-2** `planned` The AI updates the sentences it wrote that nobody has
+- **UX-WHO-2** `shipped` The AI updates the sentences it wrote that nobody has
   touched; each update is recorded and can be undone. It cannot change your
   sentences: it proposes, one sentence at a time, with accept or no under that
   sentence, never a whole-page card. Each page has one Lock switch, off by
@@ -149,10 +181,10 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   your sentence only when the facts changed: a source no longer supports it or
   it has gone out of date. It never proposes a rewording.
   原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。
-- **UX-WHO-3** `planned` Every sentence has "not right": fix it yourself or ask
+- **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
-- **UX-WHO-4** `planned` A sentence that can't be backed up is marked next to
+- **UX-WHO-4** `shipped` A sentence that can't be backed up is marked next to
   that sentence, not in a banner at the top. One press asks the AI to recheck
   only that sentence.
   原文：靠不住的句子標在那一句旁邊，不是頁頂橫幅；按一下，AI 只重查那一句。
@@ -214,7 +246,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 - **UX-CHAT-6** `shipped` The check's rules live in Wenlan itself, not in each
   tool's plugin, so every AI tool gets the same result.
   原文：檢查的規則寫在文瀾本身，不寫在各家外掛裡；換哪個 AI 工具結果都一樣。
-- **UX-CHAT-7** `planned` The AI tool tells you in one quiet line, with a
+- **UX-CHAT-7** `shipped` The AI tool tells you in one quiet line, with a
   link that opens it in the Wenlan app, only when Wenlan did something you
   can't see from the chat but may want to look at:
   1. the conversation is first saved into a thing, or moves to another one
@@ -253,7 +285,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   working on, pages, points on the map, the words said in conversations, then
   topics. Memories, the AI's own notes, have no group of their own.
   原文：一個框，結果包含頁、圖上的點和對話裡的原話。選擇卡「一个搜寻框找全部」（2026-11-01 22:19）；分組順序「正在做的事 → 笔记 → 图上的点 → 原话」、主題留在最後，「其他都可以」（2026-11-01 23:47）
-- **UX-FIND-2** `planned` Opening a source shows that sentence with a little
+- **UX-FIND-2** `shipped` Opening a source shows that sentence with a little
   of what came before and after, and where it is used. You can expand it to
   the whole original. Imported originals stay backstage: they are not in page
   lists or on home. The whole conversation reads like the AI tool it came from:
@@ -262,7 +294,7 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
   原文：點出處只顯示那一句和用在哪，文瀾裡不顯示整段對話。「C 啊，不过能看到前后一点点的话会更好，然后也能展开看全部」（2026-10-31 16:54）「一般这种对话怎么渲染会更适合一些？就像现在这样在左边，还是说要左右左右这样子的？」（2026-11-02 16:03）「2. 同意」（2026-11-02 16:47）
 - **UX-FIND-3** `shipped` There is "open in the original AI tool".
   原文：有「在原本的 AI 工具打開」。
-- **UX-FIND-4** `planned` The left side shows Search, Home, Wiki, Spaces, the
+- **UX-FIND-4** `shipped` The left side shows Search, Home, Wiki, Spaces, the
   graph and topics, with no More menu: there are few enough to show them all.
   Activity stays at the bottom. There is no Memories page and no
   Sources page: a source is what a sentence cites, so a source shows which
@@ -297,11 +329,11 @@ design boards (claude.ai artifact Xcq7Uh2EAmoyGHeL3JdmFU), both from
 
 ## History
 
-- **UX-HIST-1** `planned` One history per page, with three kinds of change in
+- **UX-HIST-1** `shipped` One history per page, with three kinds of change in
   one list: what you changed, what the AI changed, and a source it cites that
   changed. Renames, moves and locking are not listed.
   原文：一頁一本歷史，三種變動在同一個列表。選擇卡「你改的、AI 改的、来源变了」（2026-10-31 17:34）
-- **UX-HIST-2** `planned` Every entry opens to show what changed.
+- **UX-HIST-2** `shipped` Every entry opens to show what changed.
   原文：每筆都能打開看改了什麼。
 
 ## Working in the background
