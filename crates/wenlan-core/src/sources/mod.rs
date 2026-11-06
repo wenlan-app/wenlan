@@ -249,6 +249,7 @@ mod tests {
     #[test]
     fn test_source_roundtrip() {
         let source = Source {
+            display_name: None,
             id: "obsidian-main".to_string(),
             source_type: SourceType::Obsidian,
             path: PathBuf::from("/Users/x/vault"),

@@ -6402,6 +6402,7 @@ mod managed_blob_paths_tests {
     fn managed_blob_paths_targets_only_the_managed_dir() {
         let sources_dir = std::path::Path::new("/home/u/.wenlan/sources");
         let managed = crate::sources::Source {
+            display_name: None,
             id: "directory-sources".into(),
             source_type: crate::sources::SourceType::Directory,
             path: sources_dir.to_path_buf(),
@@ -6744,6 +6745,7 @@ mod sync_registered_source_tests {
         std::env::remove_var("ORIGIN_DATA_DIR");
         config::save_config(&config::Config {
             sources: vec![Source {
+                display_name: None,
                 id: "directory-notes".to_string(),
                 source_type: SourceType::Directory,
                 path: data_dir.path().join("notes"),
@@ -7484,6 +7486,7 @@ mod registered_source_tests {
         path: &str,
     ) -> crate::sources::Source {
         crate::sources::Source {
+            display_name: None,
             id: id.to_string(),
             source_type,
             path: PathBuf::from(path),

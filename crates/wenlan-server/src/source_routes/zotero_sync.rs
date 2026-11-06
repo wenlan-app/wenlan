@@ -384,6 +384,7 @@ pub async fn handle_add_source(
             suffix += 1;
         }
         let source = Source {
+            display_name: Some(collection.data.name.clone()),
             id,
             source_type: SourceType::Zotero,
             path: PathBuf::from(&locator),
@@ -1061,6 +1062,14 @@ async fn sync_source_with_client<C: ZoteroApi>(
             "Zotero collection {collection_key} is unavailable or the listing was incomplete"
         )));
     }
+    let collection_display_name = collection_page
+        .items
+        .iter()
+        .find(|collection| collection.key == collection_key)
+        .expect("complete collection listing checked above")
+        .data
+        .name
+        .clone();
     let mut item_page = client
         .collection_items(&collection_key)
         .await
@@ -1413,20 +1422,39 @@ async fn sync_source_with_client<C: ZoteroApi>(
     db.observe_zotero_selection(&identity, &listed, &imported)
         .await?;
 
+    if registration_identity(&db, source).await? != identity
+        || client.server_id() != Some(identity.server_id.as_str())
+    {
+        return Err(ServerError::Conflict(
+            "Zotero registration changed; reload Sources".into(),
+        ));
+    }
     let skipped = files_found.saturating_sub(ingested);
     let detail = (errors > 0).then(|| "zotero_item_errors".to_string());
     config::update_config(|config| {
-        if let Some(stored) = config
+        super::require_unambiguous_source(config, &source.id)?;
+        let stored = config
             .sources
             .iter_mut()
-            .find(|stored| stored.id == source.id)
-        {
-            stored.last_sync = Some(chrono::Utc::now().timestamp());
-            stored.file_count = files_found as u64;
-            stored.memory_count = indexed_source_ids.len() as u64;
-            stored.last_sync_errors = errors as u64;
-            stored.last_sync_error_detail = detail.clone();
-            stored.status = SyncStatus::Paused;
+            .find(|stored| {
+                stored.id == source.id
+                    && stored.source_type == SourceType::Zotero
+                    && stored.path == source.path
+                    && stored.space == source.space
+            })
+            .ok_or_else(|| {
+                wenlan_core::WenlanError::Conflict(
+                    "Zotero registration changed; reload Sources".into(),
+                )
+            })?;
+        stored.last_sync = Some(chrono::Utc::now().timestamp());
+        stored.file_count = files_found as u64;
+        stored.memory_count = indexed_source_ids.len() as u64;
+        stored.last_sync_errors = errors as u64;
+        stored.last_sync_error_detail = detail.clone();
+        stored.status = SyncStatus::Paused;
+        if errors == 0 {
+            stored.display_name = Some(collection_display_name.clone());
         }
         Ok(())
     })?;
@@ -2302,6 +2330,8 @@ mod tests {
         items: Vec<ZoteroItem>,
         fail_children_for: HashSet<String>,
         incomplete_items: bool,
+        incomplete_collections: bool,
+        replace_source_after_items: Option<Source>,
     }
 
     impl ZoteroApi for FakeZotero {
@@ -2314,7 +2344,12 @@ mod tests {
         ) -> impl Future<Output = anyhow::Result<zotero::ZoteroPageSet<ZoteroCollection>>> + Send
         {
             let collection = self.collection.clone();
-            async move { Ok(page(vec![collection])) }
+            let incomplete = self.incomplete_collections;
+            async move {
+                let mut listed = page(vec![collection]);
+                listed.complete = !incomplete;
+                Ok(listed)
+            }
         }
 
         fn collection_items(
@@ -2322,6 +2357,17 @@ mod tests {
             key: &str,
         ) -> impl Future<Output = anyhow::Result<zotero::ZoteroPageSet<ZoteroItem>>> + Send
         {
+            if let Some(replacement) = self.replace_source_after_items.take() {
+                config::update_config(|config| {
+                    *config
+                        .sources
+                        .iter_mut()
+                        .find(|source| source.id == replacement.id)
+                        .unwrap() = replacement.clone();
+                    Ok(())
+                })
+                .unwrap();
+            }
             let valid = key == self.collection.key;
             let items = self.items.clone();
             let incomplete = self.incomplete_items;
@@ -2401,6 +2447,8 @@ mod tests {
         FakeZotero {
             identity: Some("test-server".into()),
             incomplete_items: false,
+            incomplete_collections: false,
+            replace_source_after_items: None,
             collection: ZoteroCollection {
                 key: "COLLECT1".into(),
                 version: Some(1),
@@ -2419,6 +2467,7 @@ mod tests {
 
     fn source() -> Source {
         Source {
+            display_name: None,
             id: "zotero-research-0123456789".into(),
             source_type: SourceType::Zotero,
             path: PathBuf::from(locator(&Some("test-server".into()), "COLLECT1")),
@@ -2596,6 +2645,88 @@ mod tests {
             validate_selection(&mut client, "COLLECT1", "test-server", &["ITEM0001".into()])
                 .await
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn verified_sync_refreshes_collection_display_name_without_changing_identity() {
+        let _lock = data_dir_lock().await;
+        let _data_root = super::super::tests::DataDirGuard::new();
+        let (db, _db_dir) = super::super::tests::new_test_db().await;
+        db.create_space("Research", None, false).await.unwrap();
+        let source = source();
+        assert!(
+            source.display_name.is_none(),
+            "legacy registrations have no label"
+        );
+        config::save_config(&config::Config {
+            sources: vec![source.clone()],
+            ..config::Config::default()
+        })
+        .unwrap();
+        let mut client = fake(vec![article("ITEM0001", "Paper", "Text")], &[]);
+        client.collection.data.name = "Reading · 方法".into();
+        let result = sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .unwrap();
+        assert_eq!(result.errors, 0);
+        let stored = config::load_config().sources.remove(0);
+        assert_eq!(stored.display_name.as_deref(), Some("Reading · 方法"));
+        assert_eq!(
+            (&stored.id, &stored.path, &stored.space),
+            (&source.id, &source.path, &source.space)
+        );
+        client.collection.data.name = "Renamed collection".into();
+        sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .unwrap();
+        assert_eq!(
+            config::load_config().sources[0].display_name.as_deref(),
+            Some("Renamed collection")
+        );
+
+        client.collection.data.name = "Unverified replacement".into();
+        client.incomplete_collections = true;
+        assert!(sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .is_err());
+        client.incomplete_collections = false;
+        client.incomplete_items = true;
+        assert!(sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .is_err());
+        client.incomplete_items = false;
+        client.identity = Some("other-server".into());
+        assert!(sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .is_err());
+        client.identity = Some("test-server".into());
+        assert_eq!(
+            config::load_config().sources[0].display_name.as_deref(),
+            Some("Renamed collection")
+        );
+
+        client.fail_children_for.insert("ITEM0001".into());
+        let failed = sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .unwrap();
+        assert!(failed.errors > 0);
+        assert_eq!(
+            config::load_config().sources[0].display_name.as_deref(),
+            Some("Renamed collection")
+        );
+        client.fail_children_for.clear();
+
+        let mut replacement = stored;
+        replacement.path = PathBuf::from(locator(&Some("different-server".into()), "COLLECT1"));
+        replacement.display_name = Some("New connection label".into());
+        client.replace_source_after_items = Some(replacement);
+        assert!(sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .is_err());
+        assert_eq!(
+            config::load_config().sources[0].display_name.as_deref(),
+            Some("New connection label")
         );
     }
 

@@ -130,7 +130,7 @@ export default function SourcesSection() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-[var(--mem-text)] truncate">
-                        {disconnectPending ? t("zoteroDisconnect.pendingRowTitle", {space: source.space || t("zoteroDisconnect.pendingSpace")}) : folderName(source.path)}
+                        {disconnectPending ? t("zoteroDisconnect.pendingRowTitle", {space: source.space || t("zoteroDisconnect.pendingSpace")}) : source.source_type === "zotero" ? source.display_name?.trim() || `Zotero ${t("zoteroSource.collection")}` : folderName(source.path)}
                       </span>
                     </div>
                     <p

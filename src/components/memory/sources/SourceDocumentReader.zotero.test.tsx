@@ -34,6 +34,14 @@ function show(readingSessionKey = "page:abc:primary") {
   return render(<QueryClientProvider client={client}><SourceDocumentReader file={file} space="Research" readingSessionKey={readingSessionKey} /></QueryClientProvider>);
 }
 describe("Zotero annotation to embedded PDF", () => {
+  it("describes an unspecified citation location without claiming it changed", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const citation = { occurrence: 1, marker: 1, source_kind: "memory" as const, locator: file.source_id, score: 1, status: "verified" as const, scope: "sentence" as const };
+    render(<QueryClientProvider client={client}><ZoteroDocumentReader sourceId={file.source_id} space="Research" citation={citation} /></QueryClientProvider>);
+    expect(await screen.findByTestId("pdf-reader")).toHaveAttribute("data-page", "saved");
+    expect(screen.getByText("This citation does not specify a PDF location.")).toBeInTheDocument();
+    expect(screen.queryByText("The cited PDF location is unavailable or has changed.")).not.toBeInTheDocument();
+  });
   it("selects only the current document attachment and passes the requested page", async () => {
     show("page:annotation:primary");
     await screen.findByTestId("pdf-reader");

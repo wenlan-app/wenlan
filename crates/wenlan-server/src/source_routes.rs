@@ -199,6 +199,7 @@ pub async fn handle_list_sources(
                     source.last_sync_error_detail = Some("zotero_disconnect_pending".into());
                 } else {
                     sources.push(Source {
+                        display_name: None,
                         id: identity.registration_id,
                         source_type: SourceType::Zotero,
                         path: identity.locator.into(),
@@ -353,6 +354,7 @@ pub async fn handle_add_source(
     }
 
     let mut source = Source {
+        display_name: None,
         id: base_id.clone(),
         source_type: st.clone(),
         path: path.clone(),
@@ -1290,6 +1292,7 @@ mod tests {
         let mut config = Config::default();
         for parent in ["a", "b"] {
             config.sources.push(Source {
+                display_name: None,
                 id: "directory-notes".into(),
                 source_type: SourceType::Directory,
                 path: PathBuf::from(parent).join("Notes"),
@@ -1331,6 +1334,7 @@ mod tests {
             )
             .unwrap();
             let source = Source {
+                display_name: None,
                 id: "directory-notes".into(),
                 source_type: SourceType::Directory,
                 path: root,
@@ -1707,6 +1711,7 @@ mod tests {
 
     fn register_directory_source(id: &str, path: &std::path::Path) {
         let source = Source {
+            display_name: None,
             id: id.to_string(),
             source_type: SourceType::Directory,
             path: path.to_path_buf(),
@@ -2090,6 +2095,7 @@ mod tests {
 
         let source_id = "directory-notes".to_string();
         let source = Source {
+            display_name: None,
             id: source_id.clone(),
             source_type: SourceType::Directory,
             path: source_root.path().to_path_buf(),
@@ -2292,6 +2298,7 @@ mod tests {
         let source_id = "directory-notes".to_string();
         wenlan_core::config::save_config(&Config {
             sources: vec![Source {
+                display_name: None,
                 id: source_id.clone(),
                 source_type: SourceType::Directory,
                 path: source_root.path().to_path_buf(),

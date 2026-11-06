@@ -301,6 +301,9 @@ pub struct SourceStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
     pub id: String,
+    /// Human-readable provider collection name; never part of source identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub source_type: SourceType,
     pub path: std::path::PathBuf,
     #[serde(default = "default_sync_status")]
@@ -398,4 +401,27 @@ pub struct NoteProposal {
     /// sha256 of the file the proposal was made against. Accepting refuses
     /// when the file no longer matches, so an edit made since is never lost.
     pub base_hash: String,
+}
+
+#[cfg(test)]
+mod source_display_name_tests {
+    use super::*;
+
+    #[test]
+    fn source_display_name_is_backward_compatible_and_optional() {
+        let legacy = serde_json::json!({"id":"source","source_type":"zotero","path":"zotero://fixture","last_sync":null});
+        let mut source: Source = serde_json::from_value(legacy).unwrap();
+        assert!(source.display_name.is_none());
+        assert!(serde_json::to_value(&source)
+            .unwrap()
+            .get("display_name")
+            .is_none());
+        source.display_name = Some("Human collection · 研究".into());
+        let json = serde_json::to_value(&source).unwrap();
+        assert_eq!(json["display_name"], "Human collection · 研究");
+        assert_eq!(
+            serde_json::from_value::<Source>(json).unwrap().display_name,
+            source.display_name
+        );
+    }
 }

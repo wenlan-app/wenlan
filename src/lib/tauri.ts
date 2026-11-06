@@ -242,6 +242,8 @@ export interface RegisteredSource {
   id: string;
   source_type: SourceTypeStr;
   path: string;
+  /** Human-readable source name when supplied by the registration. */
+  display_name?: string | null;
   status: SyncStatusStr;
   last_sync: number | null;
   file_count: number;

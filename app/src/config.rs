@@ -69,6 +69,7 @@ impl Config {
             }
             let slug = slug_from_path(path);
             self.sources.push(Source {
+                display_name: None,
                 id: {
                     use sha2::{Digest, Sha256};
                     format!(

@@ -47,6 +47,7 @@ fn write(root: &Path, rel: &str, text: &str) -> PathBuf {
 /// `~/.wenlan/pages`.
 fn register_okf_source(root: &Path, space: Option<&str>, pages: &Path) -> Source {
     let source = Source {
+        display_name: None,
         id: SOURCE_ID.to_string(),
         source_type: SourceType::Okf,
         path: root.to_path_buf(),

@@ -105,12 +105,27 @@ describe("SourcesSection", () => {
       id: "zotero-source", source_type: "zotero", path: "zotero-local/instance/users/0/collections/ABCD", status: "Active", last_sync: null, file_count: 2, memory_count: 2,
     }]);
     render(<SourcesSection />, { wrapper });
-    expect(await screen.findByText("ABCD")).toBeInTheDocument();
+    expect(await screen.findByText("Zotero Collection")).toBeInTheDocument();
+    expect(screen.queryByText("ABCD")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Connect Zotero" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sync" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "More" }));
     expect(screen.queryByRole("menuitem", { name: "Reveal in Finder" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Remove source" })).toBeInTheDocument();
+  });
+
+  it("shows a trimmed Zotero collection name without changing folder names", async () => {
+    vi.mocked(tauri.listRegisteredSources).mockResolvedValue([
+      { id: "zotero", source_type: "zotero", path: "zotero-local/instance/users/0/collections/ABCD", display_name: "  RAG20-research-acceptance  ", status: "Active", last_sync: null, file_count: 21, memory_count: 21 },
+      { id: "folder", source_type: "directory", path: "/tmp/papers", display_name: "Ignored name", status: "Active", last_sync: null, file_count: 1, memory_count: 1 },
+      { id: "legacy", source_type: "zotero", path: "zotero-local/instance/users/0/collections/LEGACY", display_name: "  ", status: "Active", last_sync: null, file_count: 0, memory_count: 0 },
+    ]);
+    render(<SourcesSection />, { wrapper });
+    expect(await screen.findByText("RAG20-research-acceptance")).toBeInTheDocument();
+    expect(screen.getByText("papers")).toBeInTheDocument();
+    expect(screen.getByText("Zotero Collection")).toBeInTheDocument();
+    expect(screen.queryByText("Ignored name")).not.toBeInTheDocument();
+    expect(screen.queryByText("LEGACY")).not.toBeInTheDocument();
   });
 
   it("offers interrupted Zotero disconnection without pretending to know file counts", async () => {

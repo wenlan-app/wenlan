@@ -2012,6 +2012,7 @@ impl Drop for DataDirGuard {
 fn register_directory_source(id: &str, path: &std::path::Path) {
     wenlan_core::config::save_config(&wenlan_core::config::Config {
         sources: vec![wenlan_types::sources::Source {
+            display_name: None,
             id: id.to_string(),
             source_type: wenlan_types::sources::SourceType::Directory,
             path: path.to_path_buf(),
@@ -2033,6 +2034,7 @@ fn register_directory_source(id: &str, path: &std::path::Path) {
 #[test]
 fn directory_sync_tick_polls_recoverable_sources_but_not_paused() {
     let mut source = wenlan_types::sources::Source {
+        display_name: None,
         id: "directory-notes".to_string(),
         source_type: wenlan_types::sources::SourceType::Directory,
         path: std::path::PathBuf::from("/tmp/notes"),
@@ -2212,6 +2214,7 @@ fn directory_source(
     last_sync: Option<i64>,
 ) -> wenlan_types::sources::Source {
     wenlan_types::sources::Source {
+        display_name: None,
         id: id.to_string(),
         source_type: wenlan_types::sources::SourceType::Directory,
         path: path.to_path_buf(),

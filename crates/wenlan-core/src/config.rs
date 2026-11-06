@@ -163,6 +163,7 @@ impl Config {
             }
             let slug = slug_from_path(path);
             self.sources.push(Source {
+                display_name: None,
                 id: {
                     use sha2::{Digest, Sha256};
                     format!(
@@ -625,6 +626,7 @@ mod tests {
                 std::thread::spawn(move || {
                     update_config_at(&path, |config| {
                         let source = Source {
+                            display_name: None,
                             id: format!("directory-{n}"),
                             source_type: SourceType::Directory,
                             path: PathBuf::from(format!("/tmp/src-{n}")),

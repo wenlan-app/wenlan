@@ -74,11 +74,16 @@ export default function ZoteroDocumentReader({ sourceId, space, annotationTarget
   useEffect(() => {
     if (!citation || !info.data) return;
     const target = citation.pdf_target;
+    if (!target) {
+      handledCitation.current = undefined;
+      setCitationWarning(false);
+      return;
+    }
     const attachment = target && info.data.attachments.find(a => a.key === target.attachment_key);
     const attachmentState = JSON.stringify([attachment?.key ?? null, attachment?.available ?? false, attachment?.pdf_digest ?? null]);
     if (handledCitation.current?.citation === citation && handledCitation.current.attachmentState === attachmentState) return;
     handledCitation.current = { citation, attachmentState };
-    if (!target || !attachment || !attachment.available || !attachment.pdf_digest ||
+    if (!attachment || !attachment.available || !attachment.pdf_digest ||
         attachment.pdf_digest !== target.pdf_digest || !Number.isSafeInteger(target.page) || target.page < 1) {
       setCitationWarning(true);
       return;
@@ -95,7 +100,8 @@ export default function ZoteroDocumentReader({ sourceId, space, annotationTarget
     {info.data.warnings.length > 0 && <div role="status">
       {info.data.warnings.map((warning, index) => <p key={index}>{warning}</p>)}
     </div>}
-    {citationWarning && <p role="status">{t("pdfReader.locationUnavailable")}</p>}
+    {citation && !citation.pdf_target && <p role="status">{t("pdfReader.locationNotSpecified")}</p>}
+    {citation?.pdf_target && citationWarning && <p role="status">{t("pdfReader.locationUnavailable")}</p>}
     <div className="zotero-document-tools">
       {safePublicSourceUrl(info.data.source_url) && <button type="button" className="source-pdf-open-zotero" onClick={() => void openSearchResult(safePublicSourceUrl(info.data.source_url)!).catch(() => toast(t("sourceAccess.openFailed")))}>{t("pdfReader.openSourcePage")}</button>}
       {!frozen && info.data.attachments.length > 1 && <label>{t("pdfReader.attachment")}<select value={selected?.key ?? ""} onChange={e => {
