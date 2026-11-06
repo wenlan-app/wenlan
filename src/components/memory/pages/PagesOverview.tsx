@@ -11,7 +11,6 @@ import { useGettingStartedState } from "../../onboarding/useGettingStartedState"
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { onStartIntent, peekStartIntent, takeStartIntent } from "../../onboarding/startIntent";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
-import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 import type { SourceContainerLocation } from "../sources/SourceContainer";
 import { NoteSuggestionsSummary } from "../sources/VaultNotes";
 import { pagesWrittenSince, useWritePages, WritePagesLine } from "../askAi/WritePages";
@@ -41,8 +40,6 @@ interface PagesOverviewProps {
   /** Opens the paste-back import, the quick way to bring past AI chats in. */
   readonly onImportChatsQuick?: () => void;
   readonly onOpenIntelligence?: () => void;
-  /** Open the review group for notes whose source note changed. */
-  readonly onOpenBasisUpdates?: () => void;
   /** Open a vault note an AI wants to change, where Accept and Decline are. */
   readonly onOpenNoteSuggestion?: (location: SourceContainerLocation) => void;
 }
@@ -58,7 +55,6 @@ export function PagesOverview({
   onSeeExample,
   onImportChatsQuick,
   onOpenIntelligence,
-  onOpenBasisUpdates,
   onOpenNoteSuggestion,
 }: PagesOverviewProps) {
   const { t } = useTranslation();
@@ -144,7 +140,7 @@ export function PagesOverview({
       data-lists-pages={listsPages ? "true" : undefined}
       data-home="true"
     >
-      {onOpenBasisUpdates && <BasisUpdatesSummary onOpen={onOpenBasisUpdates} />}
+      {/* A changed source shows on the pages that cite it, never on Home (UX-HOME-4). */}
       {onOpenNoteSuggestion && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}
       {onboarding ? null : (

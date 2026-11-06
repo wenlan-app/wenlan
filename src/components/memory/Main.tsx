@@ -58,7 +58,6 @@ import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
-import { BASIS_UPDATES_REVIEW_ID } from "./page/useBasisActions";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
 import { useLibraryInventory } from "./pages/useLibraryInventory";
 import { SecondaryNoteGroup, type SecondaryNoteGroupHandle } from "./pages/SecondaryNoteGroup";
@@ -1625,7 +1624,6 @@ export default function Main({
                 onSeeExample={() => switchExampleWiki(true)}
                 onImportChatsQuick={() => navigateTo({ kind: "import", fromHome: true })}
                 onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
-                onOpenBasisUpdates={() => navigateTo({ kind: "distill-review", reviewItemId: BASIS_UPDATES_REVIEW_ID })}
                 onOpenNoteSuggestion={(container) => {
                   setSourceLibraryState({ search: "", filter: "all", container });
                   navigateTo({ kind: "sources" });
