@@ -156,13 +156,9 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
   // so folding the rail to make room does not change the answer.
   useReportWorkspaceDemand("info", open && !expandedWorkspace && (hosted || groupOverlay) ? clampRightSidebarWidth(baseWidth, 600) : 0);
   const effectiveGroupWidth = groupWidth || noteGroup?.element?.getBoundingClientRect().width || 0;
-  // Keep enough room for a readable selected note title, its close/menu
-  // controls, the new-note button, and the global search action.
-  const minimumNoteHeaderLane = typeof window !== "undefined"
-    && typeof window.matchMedia === "function"
-    && window.matchMedia("(pointer: coarse)").matches
-    ? 228
-    : 204;
+  // Include both on-demand context tools when reserving the note header.
+  // Below this width they can squeeze the selected page title to zero.
+  const minimumNoteHeaderLane = 230;
   // Keep the note and its inspector as two visible regions at every width.
   // A narrow group shares its space; only the explicit expand action may
   // cover the note. The header and body use this same boundary.

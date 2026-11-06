@@ -90,6 +90,13 @@
   .note-tabs { gap:4px; padding-inline:10px 4px; }
   .note-tabs-list { gap:8px; }
 }
+/* Reclaim decorative spacing before shrinking the selected tab's hit area
+   when a narrow note shares its header with the inspector. */
+@container note-group (max-width:400px) {
+  .note-tabs { padding-inline:6px 0; }
+  .note-group-header .note-group-document-tools,
+  .note-group-header .note-group-global-tools { --mem-icon-action-size:24px; }
+}
 .note-group-global-tools { display:flex; align-items:center; flex:0 0 auto; }
 .note-group-header > * { pointer-events:auto; }
 html[data-theme="light"] .note-group-header { background:var(--mem-bg); }

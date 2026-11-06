@@ -431,7 +431,7 @@ it("overlays a narrow inspector against only its own group edge", () => {
     expect(overlay).toHaveClass("page-info-drawer-group-overlay-panel");
     expect(overlay).not.toHaveAttribute("aria-modal");
     expect(group).toContainElement(overlay.closest(".page-info-drawer-group-overlay"));
-    expect(overlay).toHaveStyle({ width: "min(320px, max(0px, calc(100% - max(204px, min(320px, 50%)))))" });
+    expect(overlay).toHaveStyle({ width: "min(320px, max(0px, calc(100% - max(230px, min(320px, 50%)))))" });
   } finally {
     vi.restoreAllMocks();
   }

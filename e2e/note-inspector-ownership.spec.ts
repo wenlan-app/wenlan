@@ -45,7 +45,8 @@ for(const scene of scenes)test.describe(`${scene.width} ${scene.theme} ${scene.l
  await expect(left.locator('.note-inspector-tabs [role="tab"]').first()).toHaveAttribute('aria-selected','true');
  await page.screenshot({path:info.outputPath('right-expanded.png')});
  await right.locator('.page-info-drawer-workspace-toggle').click();await expect(async()=>{await aligned(right);}).toPass({timeout:10_000});
- await right.locator('.note-inspector-toggle').click();
+ // Clicking the active tool closes its pane; Info would switch the open map to Info.
+ await right.locator('.note-mind-map-toggle').click();
  await expect(right.locator('.page-info-drawer')).toHaveCount(0);
  await expect(right.locator('.note-inspector-toggle')).toHaveAttribute('aria-expanded','false');
  await expect(left.locator('.page-info-drawer')).toBeVisible();
@@ -66,8 +67,14 @@ for(const scene of scenes)test.describe(`${scene.width} ${scene.theme} ${scene.l
   }
  }
  if(!scene.touch){
-  const tab=right.getByRole('tab',{name:'Why fixtures stay deterministic',exact:true});const from=(await tab.boundingBox())!,target=(await left.locator('.page-info-drawer').boundingBox())!;
-  await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();await page.mouse.move(target.x+target.width-15,target.y+150,{steps:14});
+  const tab=right.getByRole('tab',{name:'Why fixtures stay deterministic',exact:true});
+  await tab.hover();
+  const from=(await tab.boundingBox())!;
+  await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();
+  await page.mouse.move(from.x+from.width/2+8,from.y+from.height/2,{steps:2});
+  await expect(page.locator('.note-tab-drag-ghost')).toBeVisible();
+  // Activating the group can reflow the shell; target the current pane bounds.
+  await left.locator('.page-info-drawer').hover({position:{x:20,y:150}});
   await expect(page.locator('.note-tab-split-preview[data-kind="transfer"]')).toBeVisible();await page.keyboard.press('Escape');await page.mouse.up();
   await expect(tab).toBeVisible();await expect(page.locator('[data-note-group-id]')).toHaveCount(2);
  }

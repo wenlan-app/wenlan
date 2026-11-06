@@ -21,14 +21,18 @@ test("draft inspector toggles without leaving the draft or losing autosaved cont
   await expect.poll(() => runtime.calls().find((call) => call.command === "create_page_draft")?.args)
     .toMatchObject({ title: "Regression draft", content: "Draft body survives opening and closing Info." });
 
-  await page.getByRole("button", { name: "Info", exact: true }).click();
+  // New drafts keep the existing generic sidebar toggle, whose accessible
+  // name describes the action rather than the selected Info view.
+  const inspectorToggle = page.getByRole("button", { name: "Open page sidebar", exact: true });
+  await expect(inspectorToggle).toBeVisible();
+  await inspectorToggle.click();
   const infoDialog = page.getByRole("complementary", { name: "Info" });
   await expect(infoDialog.getByText("Regression draft", { exact: true })).toBeVisible();
   await expect(infoDialog.getByRole("status")).toHaveText("Saved");
   await page.screenshot({ path: info.outputPath("draft-info-sidebar.png") });
   await page.keyboard.press("Escape");
   await expect(infoDialog).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Info", exact: true })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Open page sidebar", exact: true })).toBeFocused();
   await expect(title).toHaveValue("Regression draft");
   await expectEditorSource(content, "Draft body survives opening and closing Info.");
   expect(runtime.calls().filter((call) => call.command === "publish_page_draft")).toHaveLength(0);
