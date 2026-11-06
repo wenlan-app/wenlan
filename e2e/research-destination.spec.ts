@@ -17,10 +17,11 @@ test("selected sources continue an existing research page with visible scope cha
     (window as unknown as { destinationEvidence: typeof state }).destinationEvidence = state;
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { state.clipboard = text; } } });
     bridge.invoke = (command, args) => {
+      const params = args as { prompt?: string; domain?: string } | undefined;
       if (command === "list_research_runs") return Promise.resolve({ runs: [oldRun] });
       if (command === "get_research_rules") return Promise.resolve(rules);
-      if (command === "open_tool_with_prompt") { state.clipboard = String(args?.prompt ?? ""); return Promise.resolve(); }
-      if (command === "list_pages" && args?.domain === "讀書會") return Promise.resolve([{ id: "page-existing", title: "Existing research", space: "讀書會" }]);
+      if (command === "open_tool_with_prompt") { state.clipboard = String(params?.prompt ?? ""); return Promise.resolve(); }
+      if (command === "list_pages" && params?.domain === "讀書會") return Promise.resolve([{ id: "page-existing", title: "Existing research", space: "讀書會" }]);
       if (command === "create_research_run") {
         state.requests.push(args);
         return Promise.resolve({ ...oldRun, id: "new-run", revision: 1, state: "pending" });

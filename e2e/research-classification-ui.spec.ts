@@ -14,7 +14,7 @@ test("saved organizing run is visible and resumes its exact scope", async ({ pag
     const bridge = window.__TAURI_INTERNALS__!, original = bridge.invoke;
     const rules = { space_id: "project-reading", revision: 2, name: "", instructions: "Compare limitations", content_digest: "rules" };
     const run = { id: "run-one", space_id: "project-reading", revision: 1, rules, items: [{ source: "webpage", source_id: "web::one", title: "Paper One", coverage: "complete", content_digest: "digest", decision_revision: 0, next_offset: null, error: null }, { source: "webpage", source_id: "web::two", title: "Paper Two", coverage: "failed", content_digest: "", decision_revision: 0, next_offset: null, error: "Unavailable" }], target_page_id: "page-existing", target_page_version: 1, result_page_version: 1, pending_revision_id: null, state: "partial", created_at: 1, updated_at: 2 };
-    bridge.invoke = (command, args) => command === "get_page" && args?.id === "page-existing" ? Promise.resolve({id:"page-existing",title:"How retrieval changes answers",space:"讀書會"}) : command === "list_research_runs" ? Promise.resolve({ runs: [run] }) : command === "get_research_rules" ? Promise.resolve(rules) : original(command, args);
+    bridge.invoke = (command, args) => command === "get_page" && (args as { id?: string } | undefined)?.id === "page-existing" ? Promise.resolve({id:"page-existing",title:"How retrieval changes answers",space:"讀書會"}) : command === "list_research_runs" ? Promise.resolve({ runs: [run] }) : command === "get_research_rules" ? Promise.resolve(rules) : original(command, args);
   });
   await openPrimaryDestination(page, "Spaces", "More");
   await page.getByTestId("space-row-project-reading").getByRole("button", { name: "讀書會", exact: true }).click();
