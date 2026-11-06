@@ -33,8 +33,10 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
    or partial runs retain progress and require an explicit continuation action.
 4. The local MCP `read_source` tool reads each selected document in bounded
    Unicode-character pages. Every response carries a whole-text digest; callers
-   must restart a document if that digest changes between pages. Completion
-   means all **indexed text**, not proof that every PDF figure/table was parsed.
+   pass `organize_run_id` to record the text actually returned for that run.
+   Skipped slices or a model's completion assertion cannot complete coverage.
+   Changed source generations require a new run. Completion means all
+   **indexed text**, not proof that every PDF figure/table was parsed or understood.
 5. The AI writes a knowledge page using the existing write permissions and review
    policy. Structured classification proposals use the same Review queue with
    reasons, current tags and editable additions/removals. Human tag decisions
@@ -66,6 +68,17 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
 - Sync does not overwrite manual tags. Transient attachment failures preserve
   the prior successful content/cache. Each unsuccessful item is reported; a
   corrupt metadata sidecar does not abort unrelated items.
+- A complete collection listing can identify previously imported papers that
+  left the selection. Partial or failed listings cannot establish absence.
+  Affected pages require review without treating a selection change as a
+  retraction or deleting the retained paper. The review requirement survives
+  automatic refreshes and is resolved only by adoption against the same evidence
+  generation. An in-flight machine write cannot bypass this requirement.
+- Disconnecting Zotero stops synchronization and keeps imported documents,
+  PDFs, tags, human text and old exports. If disconnecting is interrupted, the
+  source list offers **Finish disconnect**, using a fresh impact preview.
+  Legacy registrations without import provenance show an unknown impact scope
+  rather than inventing a complete affected-paper count.
 - Bibliographic changes participate in the source digest. Prior source text and
   bibliography snapshots are retained. PDFs are cached by content digest.
 - Zotero document and PDF reads require a Space and acknowledge that scope.
@@ -129,9 +142,8 @@ acceptance checklist.
   an incomplete map, can require rebuilding the map. This is not a general
   citation-marker editor.
 - No Zotero writes, annotation editing, automatic polling or cloud OAuth are
-  introduced. Removing a connection retains imported content. Automatic
-  reconciliation of disappeared collection members is a separate acceptance
-  boundary from manually changing a source's lifecycle status.
+  introduced. Selection-loss checks occur during explicit synchronization;
+  they are distinct from manually excluding or retracting a source.
 - Native packaged WebView, save dialogs, restart and offline behavior must be
   exercised separately from browser mocks. Windows GUI is not established by
   Windows CI. Final integrated native verification is still required for the

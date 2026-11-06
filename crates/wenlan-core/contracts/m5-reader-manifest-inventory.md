@@ -745,7 +745,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `PUT` | `/api/profile` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/profile/narrative` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `POST` | `/api/profile/narrative/regenerate` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
-| `GET` | `/api/refinery/queue` | main | no | not_applicable | `none` | — | no prose fields |
+| `GET` | `/api/refinery/queue` | main | no | not_applicable | `none` | — | validated query/header Space filters research dispute/classification payloads; legacy generic proposals remain global; no Wenlan Page prose |
 | `GET` | `/api/refinery/queue` | repair | no | not_applicable | `none` | `handle_list_repair_queue` | validated durable repair review row only |
 | `POST` | `/api/refinery/queue/{id}/accept` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/refinery/queue/{id}/reject` | main | no | not_applicable | `none` | — | no prose fields |
@@ -836,8 +836,16 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/zotero/sources` | main | no | not_applicable | `none` | — | registers one Zotero collection; returns source metadata |
 | `GET` | `/api/zotero/documents` | main | no | not_applicable | `none` | — | Zotero bibliographic metadata and attachment links; no Wenlan page prose |
 | `GET` | `/api/zotero/pdf` | main | no | not_applicable | `none` | — | cached original Zotero PDF bytes; not page prose |
+| `GET` | `/api/research/disputes/{id}` | main | no | not_applicable | `none` | — | Dispute contains original Source quotes and human decisions, no Page prose |
+| `GET` | `/api/research/source-lifecycle` | main | no | not_applicable | `none` | — | scoped retained-source status/history and affected page identities; no page prose |
+| `GET` | `/api/research/source-lifecycle/reference` | main | no | not_applicable | `none` | — | scoped retained-document locator resolution metadata; no page prose |
+| `GET` | `/api/zotero/pdf-page` | main | no | not_applicable | `none` | — | bounded original PDF page extraction; not page prose |
+| `GET` | `/api/zotero/sources/{id}/disconnect-preview` | main | no | not_applicable | `none` | — | exact retained Zotero registration identity, canonical source IDs and affected Page IDs; no page prose |
+| `POST` | `/api/research/disputes` | main | no | not_applicable | `none` | — | Dispute proposal identity only, no Page prose |
+| `POST` | `/api/research/disputes/{id}/decision` | main | no | not_applicable | `none` | — | Dispute contains original Source quotes and human decisions, no Page prose |
+| `POST` | `/api/research/source-lifecycle` | main | no | not_applicable | `none` | — | explicit retained-source status change and affected identities; no page prose |
 
-## MCP — all 46 `#[tool(` declarations
+## MCP — all 51 `#[tool(` declarations
 
 From `crates/wenlan-mcp/src/tools.rs` **in this tree**. An earlier draft listed
 `search_pages`, `get_page`, `get_page_links`, `list_pages_recent`, and
@@ -852,6 +860,11 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 
 | Tool | Page-bearing | Class | Marker-shape | Adapter |
 |---|---|---|---|---|
+| `propose_research_dispute` | no | not_applicable | `none` | dispute proposal receipt over file/webpage evidence |
+| `propose_source_classifications` | no | not_applicable | `none` | classification proposal ID and created flag |
+| `read_organize_run` | no | not_applicable | `none` | frozen rules, file/webpage identities and run progress; no Page prose |
+| `read_research_dispute` | no | not_applicable | `none` | file/webpage quotes and explicit dispute decisions; no Page prose |
+| `update_organize_run` | no | not_applicable | `none` | run progress receipt; no Page prose |
 | `create_folder` | no | not_applicable | `none` | — |
 | `get_page_links` | yes | automatic | `none` | tool handler |
 | `list_entities` | no | not_applicable | `none` | — |

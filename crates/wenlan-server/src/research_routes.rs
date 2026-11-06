@@ -39,16 +39,18 @@ pub struct ResearchQuery {
     pub source: Option<String>,
     pub source_id: Option<String>,
 }
-async fn scoped_database(
-    db: Arc<MemoryDB>,
-    space: &str,
-    header: Option<&str>,
-) -> Result<(Arc<MemoryDB>, String), ServerError> {
+fn validate_scope(space: &str, header: Option<&str>) -> Result<(), ServerError> {
     if space.trim().is_empty() || header.is_some_and(|s| s != space) {
         return Err(ServerError::BadRequest(
             "explicit research Space and header must agree".into(),
         ));
     }
+    Ok(())
+}
+async fn scoped_database(
+    db: Arc<MemoryDB>,
+    space: &str,
+) -> Result<(Arc<MemoryDB>, String), ServerError> {
     let registered = db
         .get_space(space)
         .await?
@@ -60,11 +62,12 @@ async fn scoped(
     space: &str,
     header: Option<&str>,
 ) -> Result<(Arc<MemoryDB>, String), ServerError> {
+    validate_scope(space, header)?;
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
-    scoped_database(db, space, header).await
+    scoped_database(db, space).await
 }
 async fn guarded_scoped(
     state: &SharedState,
@@ -78,6 +81,7 @@ async fn guarded_scoped(
     ),
     ServerError,
 > {
+    validate_scope(space, header)?;
     let (db, coordinator) = {
         let s = state.read().await;
         (
@@ -88,7 +92,7 @@ async fn guarded_scoped(
     let guard = coordinator
         .try_begin_background()
         .ok_or_else(|| ServerError::Conflict("repair_write_fence_conflict".into()))?;
-    let (db, id) = scoped_database(db, space, header).await?;
+    let (db, id) = scoped_database(db, space).await?;
     Ok((db, id, guard))
 }
 async fn get_rules(

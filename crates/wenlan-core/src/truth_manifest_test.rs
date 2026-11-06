@@ -481,7 +481,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        273 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited (removed again: -1), +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +6: sentences, +2: in-chat check, +1: page original, +1: embed lookup, +1: sentence revert, +4: things, +2: thing map, +1: saved-in, +2: conversation words, +1: hide thing, +1: preserve relation, +2: merge or keep things apart, +1: take a night's points back, +1: night points on the big map, +5: Zotero and atomic tags, +2: connect old night points and undo)
+        295 // Existing 273 plus 22 research workflow routes, all with no page markers.
     );
 }
 
