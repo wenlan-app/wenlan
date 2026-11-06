@@ -1472,6 +1472,16 @@ describe("PageDetail", () => {
     expect(screen.queryByText("updating...")).toBeNull();
   });
 
+  it("shows selection loss in Info without calling it a citation failure", async () => {
+    const { getPage } = await import("../../lib/tauri");
+    const basePage = await getPage("concept_abc");
+    (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...basePage, stale_reason: "source_updated", refresh_blocked_reason: "zotero_selection_changed", selection_impacts: [{ reason: "selection_removed", titles: ["RAGChecker"], unavailable: false }] });
+    renderWithQuery(<PageDetail {...defaultProps} />);
+    await openPageInfo();
+    expect(await screen.findByText("RAGChecker")).toBeInTheDocument();
+    expect(screen.queryByText("update blocked: citations couldn't be verified")).not.toBeInTheDocument();
+  });
+
   it("confirms before re-distilling a user-edited page", async () => {
     const { getPage, redistillPage } = await import("../../lib/tauri");
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

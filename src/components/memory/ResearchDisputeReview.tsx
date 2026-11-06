@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import "./ResearchDisputeReview.css";
@@ -8,7 +8,7 @@ import { resolveSourceReference } from "../../lib/sourceLifecycleApi";
 import type { IndexedFileInfo, PageCitation } from "../../lib/tauri";
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
 
-export function ResearchDisputeReview({ id, space, payload }: { id: string; space: string; payload: ResearchDisputePayload | null }) {
+export function ResearchDisputeReview({ id, space, payload, onSourceOpenChange }: { id: string; space: string; payload: ResearchDisputePayload | null; onSourceOpenChange?: (open: boolean) => void }) {
   const { t } = useTranslation();
   const client = useQueryClient();
   const [decision, setDecision] = useState<DisputeDecision | "">("");
@@ -33,6 +33,13 @@ export function ResearchDisputeReview({ id, space, payload }: { id: string; spac
     onSuccess: async result => { setFailed(false); setReason(""); setDecision(""); client.setQueryData(["research-dispute", space, id], result); await client.invalidateQueries({ queryKey: ["refinement-proposals"] }); },
     onError: async () => { setFailed(true); await query.refetch(); },
   });
+  const sourceVisible = opened !== null && valid && !query.isPending && !query.isError && !!currentValid;
+  // Keep this review and its unsaved decision mounted while the portaled
+  // source reader owns the screen. Cleanup also releases an external close.
+  useLayoutEffect(() => {
+    onSourceOpenChange?.(sourceVisible);
+    return () => onSourceOpenChange?.(false);
+  }, [sourceVisible, onSourceOpenChange]);
   if (!valid) return <p role="alert">{t("researchDispute.invalid")}</p>;
   if (query.isPending) return <p role="status">{t("researchDispute.loading")}</p>;
   if (query.isError || !currentValid) return <p role="alert">{t("researchDispute.loadFailed")} <button type="button" className="page-editor-action" onClick={() => void query.refetch()}>{t("sourceAccess.retry")}</button></p>;

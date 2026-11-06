@@ -426,6 +426,34 @@ describe("PageDetail reading mode by page kind", () => {
     expect(within(reading).queryByRole("table")).toBeNull();
   });
 
+  it("renders the saved evaluation table as a table with citation chips in distilled reading mode", async () => {
+    tauriMocks.getPage.mockResolvedValue({
+      ...BASE_PAGE,
+      title: "What answer evaluation measures",
+      summary: "The five papers have different evaluation targets.",
+      creation_kind: "distilled",
+      content: [
+        "# What answer evaluation measures",
+        "",
+        "These five selected papers do not measure one interchangeable notion of trustworthiness.",
+        "",
+        "| Paper | Evaluation target and required evidence | Boundary to retain |",
+        "| --- | --- | --- |",
+        "| **ARES** [1] | Three judges assess context relevance, answer faithfulness, and answer relevance. | Evaluated datasets are English. |",
+        "| **ALCE** [2] | Scores fluency, correctness, and citation quality separately. | Attaching a citation does not itself establish support. |",
+      ].join("\n"),
+      citations: [cite(1, 1), cite(2, 2)],
+    });
+    renderPage();
+    const reading = await screen.findByTestId("page-document-reading");
+    const table = within(reading).getByRole("table");
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(3);
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(within(table).getByRole("button", { name: /Memory 1/ })).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: /Memory 2/ })).toBeInTheDocument();
+    expect(within(reading).queryByRole("separator")).toBeNull();
+  });
+
   async function waitForLede() {
     await screen.findByRole("button", { name: /Memory 1/ });
     return document.querySelector(".page-detail-lede") as HTMLElement;

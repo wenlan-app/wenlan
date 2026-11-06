@@ -3325,6 +3325,8 @@ export default function PageDetail({
               : undefined}>
               {page.stale_reason === "source_conflict"
                 ? t("pageDetail.dateline.needsReview")
+                : page.refresh_blocked_reason === "zotero_selection_changed"
+                  ? t("noteReview.sourceSelectionChanged")
                 : datelineBlocked
                   ? t("pageDetail.dateline.updateBlocked")
                   : t("noteReview.sourceUpdated")}
@@ -3383,6 +3385,7 @@ export default function PageDetail({
             <PageInfo
               embedded
               sourceCount={sourceCount}
+              selectionImpacts={page.selection_impacts}
               sources={pageSources}
               inbound={inboundLinks}
               revisions={pageRevisionEntries}

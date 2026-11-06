@@ -717,6 +717,9 @@ pub struct OkfConceptRef {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PageReadResponse {
     pub page: PageInventoryEntry,
+    /// Pending Zotero selection changes; titles are scoped and no locators are exposed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selection_impacts: Vec<PageSelectionImpact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub okf: Option<OkfConceptRef>,
     /// Every basis of this note, in any state.
@@ -734,6 +737,13 @@ pub struct PageReadResponse {
     /// it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<crate::chat_check::PageBodyParts>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PageSelectionImpact {
+    pub reason: String,
+    pub titles: Vec<String>,
+    pub unavailable: bool,
 }
 
 /// Wikilink graph centered on a single page. Outbound = labels parsed

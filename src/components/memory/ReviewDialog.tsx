@@ -655,6 +655,7 @@ export default function ReviewDialog({
   const queryClient = useQueryClient();
   const [showDone, setShowDone] = useState(false);
   const [sideBySide, setSideBySide] = useState(false);
+  const [disputeSourceOpen, setDisputeSourceOpen] = useState(false);
   // Keep both the draft and the proposal it was based on, by exact card id.
   // Closing or navigating does not save or discard a human's adjustment.
   const [classificationDrafts, setClassificationDrafts] = useState<Record<string, ClassificationChange[]>>({});
@@ -1003,7 +1004,7 @@ export default function ReviewDialog({
   };
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || disputeSourceOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const el = event.target as HTMLElement | null;
       if (event.key === "Tab") {
@@ -1084,12 +1085,16 @@ export default function ReviewDialog({
   return createPortal(
     <div
       role="dialog"
-      aria-modal="true"
+      aria-modal={disputeSourceOpen ? undefined : true}
+      aria-hidden={disputeSourceOpen || undefined}
+      inert={disputeSourceOpen || undefined}
       aria-label={t("review.title")}
       style={{
         position: "fixed",
         inset: 0,
-        display: "flex",
+        // The source reader portals outside this DOM subtree. Hiding the
+        // modal removes its backdrop without unmounting the decision draft.
+        display: disputeSourceOpen ? "none" : "flex",
         alignItems: "flex-start",
         justifyContent: "center",
         padding: "6vh 16px 16px",
@@ -1621,7 +1626,7 @@ export default function ReviewDialog({
                 </div>
               )}
 
-              {item.kind === "refinement" && item.action === "research_dispute" && <ResearchDisputeReview id={item.id} space={isResearchDisputePayload(item.payload) ? item.payload.space : ""} payload={isResearchDisputePayload(item.payload) ? item.payload : null} />}
+              {item.kind === "refinement" && item.action === "research_dispute" && <ResearchDisputeReview key={item.id} onSourceOpenChange={setDisputeSourceOpen} id={item.id} space={isResearchDisputePayload(item.payload) ? item.payload.space : ""} payload={isResearchDisputePayload(item.payload) ? item.payload : null} />}
               {classification && <SourceClassificationReview changes={classificationDraft ?? classification.changes} editing={!!classificationDraft} onChange={changes => setClassificationDrafts(drafts => ({ ...drafts, [item.id]: changes }))} />}
               {item.kind === "refinement" &&
                 item.action === "entity_merge" && (

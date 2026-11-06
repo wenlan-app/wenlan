@@ -77,6 +77,14 @@ function renderInfo(over: Partial<React.ComponentProps<typeof PageInfo>> = {}) {
 }
 
 describe("PageInfo", () => {
+  it("shows scoped selection impacts and an unavailable fallback", () => {
+    renderInfo({ embedded: true, selectionImpacts: [{ reason: "selection_removed", titles: ["RAGChecker"], unavailable: true }, { reason: "disconnected", titles: [], unavailable: true }] });
+    expect(screen.getByRole("heading", { name: "Zotero change details" })).toBeInTheDocument();
+    expect(screen.getByText("RAGChecker")).toBeInTheDocument();
+    expect(screen.getByText("No longer in the synchronized Zotero selection.")).toBeInTheDocument();
+    expect(screen.getByText("The Zotero connection was disconnected.")).toBeInTheDocument();
+    expect(screen.getAllByText("Some affected sources are unavailable.")).toHaveLength(2);
+  });
   it("always renders, with zero counts in the summary line", () => {
     renderInfo();
     expect(

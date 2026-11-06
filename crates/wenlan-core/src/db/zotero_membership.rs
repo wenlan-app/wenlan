@@ -372,6 +372,49 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn pending_impact_projection_obeys_space_and_incarnation() {
+        let (db, _temp) = test_db().await;
+        let identity = seed(&db).await;
+        db.bind_zotero_registration(&identity).await.unwrap();
+        db.observe_zotero_selection(
+            &identity,
+            &BTreeSet::from(["ITEM0001".into()]),
+            &BTreeMap::from([("ITEM0001".into(), "paper-a".into())]),
+        )
+        .await
+        .unwrap();
+        db.observe_zotero_selection(&identity, &BTreeSet::new(), &BTreeMap::new())
+            .await
+            .unwrap();
+        let impacts = db
+            .pending_zotero_scope_impacts("review", "Research")
+            .await
+            .unwrap();
+        assert_eq!(impacts.len(), 1);
+        assert_eq!(impacts[0].0, "selection_removed");
+        assert!(impacts[0].1.contains(&"paper-a".to_string()));
+        assert!(db
+            .pending_zotero_scope_impacts("review", "Other")
+            .await
+            .unwrap()
+            .is_empty());
+        {
+            let conn = db.conn.lock().await;
+            conn.execute(
+                "UPDATE pages SET incarnation='replacement' WHERE id='review'",
+                (),
+            )
+            .await
+            .unwrap();
+        }
+        assert!(db
+            .pending_zotero_scope_impacts("review", "Research")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
     async fn zotero_selection_absence_is_impact_only_deduplicated_and_survives_auto_recheck() {
         let (db, _temp) = test_db().await;
         let identity = seed(&db).await;

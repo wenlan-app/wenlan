@@ -2011,6 +2011,7 @@ export interface Page {
    * source changes. Missing on older daemon versions (migration 127).
    */
   refresh_blocked_reason?: string | null;
+  selection_impacts?: { reason: "selection_removed" | "disconnected" | "unknown"; titles: string[]; unavailable: boolean }[];
   user_edited?: boolean;
   /** When the person last edited the page, unix seconds; null or missing when
    *  no recent edit is theirs. */

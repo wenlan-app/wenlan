@@ -145,6 +145,38 @@ async fn pending_on(conn: &libsql::Connection, page_id: &str) -> Result<Vec<Impa
         .filter(|i| !i.reviewed && i.incarnation == incarnation && i.space_id == space)
         .collect())
 }
+/// Internal locators are returned only to the authorized page-detail adapter.
+/// The adapter must resolve them within the page Space and never expose them.
+impl super::MemoryDB {
+    pub async fn pending_zotero_scope_impacts(
+        &self,
+        page_id: &str,
+        expected_space: &str,
+    ) -> Result<Vec<(String, Vec<String>)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query("SELECT space FROM pages WHERE id=?1", [page_id])
+            .await
+            .map_err(sql)?;
+        let matches = match rows.next().await.map_err(sql)? {
+            Some(row) => row.get::<String>(0).ok().as_deref() == Some(expected_space),
+            None => false,
+        };
+        drop(rows);
+        if !matches {
+            return Ok(Vec::new());
+        }
+        Ok(pending_on(&conn, page_id).await?.into_iter().map(|impact| {
+            let reason = match impact.reason.as_str() {
+                "Zotero item is no longer in the synchronized selection; retained evidence requires review" => "selection_removed",
+                "Zotero connection was disabled; retained evidence requires review" => "disconnected",
+                _ => "unknown",
+            };
+            (reason.to_string(), impact.locators.into_iter().collect())
+        }).collect())
+    }
+}
+
 /// Caller holds the write transaction so selection loss cannot race the body write.
 pub(super) async fn has_pending_on(
     conn: &libsql::Connection,

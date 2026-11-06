@@ -25,6 +25,7 @@ interface PageInfoProps {
   /** Render inside PageDetail's single expandable information section. */
   embedded?: boolean;
   sourceCount: number;
+  selectionImpacts?: { reason: "selection_removed" | "disconnected" | "unknown"; titles: string[]; unavailable: boolean }[];
   sources: PageSourceWithMemory[] | undefined;
   inbound: PageLinkInbound[];
   revisions: PageChangelogEntry[];
@@ -101,6 +102,7 @@ function sortSourceRows(
 export default function PageInfo({
   embedded = false,
   sourceCount,
+  selectionImpacts,
   sources,
   inbound,
   revisions,
@@ -211,6 +213,14 @@ export default function PageInfo({
         </span>
       </summary>}
       <div className={embedded ? "flex flex-col gap-4" : "flex flex-col gap-4 px-4 pb-4"}>
+      {selectionImpacts && selectionImpacts.length > 0 && <section aria-label={t("noteReview.selectionImpactTitle")}>
+        <h3 style={groupHeading}>{t("noteReview.selectionImpactTitle")}</h3>
+        {selectionImpacts.map((impact, index) => <div key={index}>
+          <p>{t(impact.reason === "selection_removed" ? "noteReview.selectionRemoved" : impact.reason === "disconnected" ? "noteReview.selectionDisconnected" : "noteReview.selectionUnknown")}</p>
+          {impact.titles.length > 0 && <ul>{impact.titles.map(title => <li key={title}>{title}</li>)}</ul>}
+          {impact.unavailable && <p>{t("noteReview.selectionUnavailable")}</p>}
+        </div>)}
+      </section>}
         {uniqueInbound.length > 0 && (
           <div>
             <h4 className={embedded ? "note-info-section-heading" : "mb-1"} style={embedded ? undefined : groupHeading}>

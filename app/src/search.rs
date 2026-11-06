@@ -4244,6 +4244,9 @@ mod remaining_json_command_type_tests {
 /// `code_basis` for lines of code). They belong to the note, so they are folded
 /// into the page the UI receives; the page's own fields win.
 fn page_from_wire(mut wire: serde_json::Value) -> Option<serde_json::Value> {
+    let impacts = wire
+        .get_mut("selection_impacts")
+        .map(serde_json::Value::take);
     let basis = wire.get_mut("basis").map(serde_json::Value::take);
     // The lines of code a note relies on ride beside it the same way.
     let code_basis = wire.get_mut("code_basis").map(serde_json::Value::take);
@@ -4252,6 +4255,9 @@ fn page_from_wire(mut wire: serde_json::Value) -> Option<serde_json::Value> {
         _ => return None,
     };
     if let Some(fields) = page.as_object_mut() {
+        if let Some(impacts) = impacts.filter(|v| !v.is_null()) {
+            fields.entry("selection_impacts").or_insert(impacts);
+        }
         if let Some(basis) = basis.filter(|b| !b.is_null()) {
             fields.entry("basis").or_insert(basis);
         }
@@ -4301,6 +4307,17 @@ mod get_page_tests {
         let page = page_from_wire(wire).expect("page present");
         assert_eq!(page["id"], "p1");
         assert_eq!(page["citations"][0]["occurrence"], 1);
+    }
+
+    #[test]
+    fn page_from_wire_folds_selection_impacts() {
+        let wire = serde_json::json!({"page":{"id":"p1"},"selection_impacts":[{"reason":"selection_removed","titles":["Study A"],"unavailable":false}]});
+        let page = page_from_wire(wire).unwrap();
+        assert_eq!(page["selection_impacts"][0]["titles"][0], "Study A");
+        assert!(page_from_wire(serde_json::json!({"page":{"id":"p2"}}))
+            .unwrap()
+            .get("selection_impacts")
+            .is_none());
     }
 
     #[test]

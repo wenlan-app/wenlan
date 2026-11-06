@@ -234,6 +234,7 @@ pub async fn handle_get_page(
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Q1 browse surface: a shadow id resolves 200 here, so read the unfenced
     // `_browse` twin (mutation/export by-id reads keep fenced `get_page_scoped`).
+    let impact_fence = db.try_get_page_fence(&id).await?;
     let page = db
         .get_page_scoped_browse(&id, &scope)
         .await
@@ -320,8 +321,77 @@ pub async fn handle_get_page(
                     version,
                 })
                 .collect();
+            let mut selection_impacts = Vec::new();
+            // Only a Full page may disclose its source information.
+            let full = !wenlan_core::truth_adapter::filter_page_refs(
+                &db,
+                &view.grant,
+                vec![id.clone()],
+                |id| id.as_str(),
+            )
+            .await?
+            .is_empty();
+            if full && impact_fence.is_some() {
+                if let Some(space) = page.space.as_deref() {
+                    let source_scope = wenlan_core::read_scope::ReadScope::Space(space.to_owned());
+                    let pending = db.pending_zotero_scope_impacts(&id, space).await?;
+                    for (reason, locators) in &pending {
+                        let mut titles = Vec::new();
+                        let mut unavailable = reason == "selection_removed";
+                        // Selection removal events are created for one source. Disconnect
+                        // and unknown legacy events can contain a collection-wide batch.
+                        if reason == "selection_removed" {
+                            let mut canonical = std::collections::BTreeSet::new();
+                            let mut display = std::collections::BTreeSet::new();
+                            for locator in locators {
+                                if let Ok(sources) = db
+                                    .citation_sources(std::slice::from_ref(locator), &source_scope)
+                                    .await
+                                {
+                                    if let Some(Some(source)) = sources.first() {
+                                        canonical.insert(source.snapshot.source_id.clone());
+                                        if let Ok(metadata) = db
+                                            .citation_source_metadata(
+                                                std::slice::from_ref(locator),
+                                                &source_scope,
+                                            )
+                                            .await
+                                        {
+                                            for entry in metadata {
+                                                let title = entry.title.trim();
+                                                if !title.is_empty()
+                                                    && !locators.iter().any(|id| id == title)
+                                                    && title != source.snapshot.source_id
+                                                {
+                                                    display.insert(title.to_owned());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if canonical.len() == 1 && display.len() == 1 {
+                                titles = display.into_iter().collect();
+                                unavailable = false;
+                            }
+                        }
+                        selection_impacts.push(wenlan_types::responses::PageSelectionImpact {
+                            reason: reason.clone(),
+                            titles,
+                            unavailable,
+                        });
+                    }
+                    // Refuse to attach details from another generation or moved/recreated Space.
+                    if db.try_get_page_fence(&id).await? != impact_fence
+                        || db.pending_zotero_scope_impacts(&id, space).await? != pending
+                    {
+                        selection_impacts.clear();
+                    }
+                }
+            }
             let body = Some(wenlan_core::page_body::body_parts(&page.content));
             Ok(Json(PageReadResponse {
+                selection_impacts,
                 code_basis: db.list_page_code_basis(&id).await?,
                 basis,
                 linked_changed,
