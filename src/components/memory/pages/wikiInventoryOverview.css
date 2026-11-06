@@ -88,7 +88,7 @@
 .wiki-working-on-steeped .steep-moon { flex:none;align-self:center;color:var(--mem-accent-page); }
 .wiki-working-on-steeped-label { white-space:nowrap; }
 .wiki-working-on-steeped-names { min-width:0;display:inline-flex;align-items:baseline;overflow:hidden;white-space:nowrap; }
-.wiki-working-on-steeped-names button { min-width:0;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;padding:0;border:0;background:none;color:var(--mem-text-secondary);font:inherit;cursor:pointer;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--mem-text) 18%,transparent);text-underline-offset:3px; }
+.wiki-working-on-steeped-names button { min-width:0;max-width:22em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;padding:0;border:0;background:none;color:var(--mem-text-secondary);font:inherit;cursor:pointer;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--mem-text) 18%,transparent);text-underline-offset:3px; }
 .wiki-working-on-steeped-sep { white-space:pre; }
 .wiki-working-on-steeped-names .wiki-working-on-steeped-more { flex:none;max-width:none;margin-left:.3em; }
 .wiki-working-on-steeped-more[data-narrow-only] { display:none; }
@@ -124,7 +124,7 @@
 .wiki-working-on-card:hover, .wiki-new-pages-row:hover { border-color:color-mix(in srgb,var(--mem-text) 16%,transparent);box-shadow:0 2px 8px color-mix(in srgb,#141820 6%,transparent); }
 .wiki-working-on-card:focus-visible, .wiki-new-pages-row:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
 .wiki-working-on-card { display:flex;flex-direction:column;gap:4px;width:100%;min-width:0;padding:12px 16px; }
-.wiki-working-on-title { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 15px/1.4 var(--mem-font-body); }
+.wiki-working-on-title { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;font:600 15px/1.4 var(--mem-font-body); }
 .wiki-working-on-text { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;color:var(--mem-text-secondary);font:400 13.5px/1.55 var(--mem-font-body); }
 .wiki-working-on-foot { display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;margin-top:auto;padding-top:4px; }
 .wiki-working-on-meta { flex:1;min-width:0;display:flex;align-items:center;gap:8px;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
@@ -143,8 +143,9 @@
 .wiki-working-on ul:hover::-webkit-scrollbar-thumb, .home-columns .wiki-new-pages ul:hover::-webkit-scrollbar-thumb { background:var(--separator); }
 .home-columns .wiki-new-pages-row { display:flex;flex-direction:column;align-items:stretch;gap:6px;width:100%;margin:0;padding:12px 16px;min-height:112px; }
 .home-columns .wiki-new-pages-row:hover { background:var(--mem-surface); }
-.wiki-new-pages-head { display:flex;align-items:center;gap:8px;min-width:0; }
-.home-columns .wiki-new-pages-title { font:600 14px/1.4 var(--mem-font-body); }
+.wiki-new-pages-head { display:flex;align-items:flex-start;gap:8px;min-width:0; }
+.home-columns .wiki-new-pages-icon { margin-top:2px; }
+.home-columns .wiki-new-pages-title { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;overflow-wrap:anywhere;font:600 14px/1.4 var(--mem-font-body); }
 .wiki-new-pages-preview { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;color:var(--mem-text-secondary);font:400 12.5px/1.55 var(--mem-font-body); }
 .home-columns .wiki-new-pages-by, .home-columns .wiki-new-pages-meta { margin-top:auto; }
 .home-columns ~ .getting-started-reopen { margin-top:28px; }

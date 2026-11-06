@@ -75,6 +75,19 @@ import { invokeRemoteFixture } from "./remote-access";
   }
 }
 
+const HOME_NOW = Math.floor(Date.now() / 1000);
+const HOME_NIGHT = (() => {
+  const night = new Date();
+  night.setHours(3, 0, 0, 0);
+  return Math.floor(night.getTime() / 1000);
+})();
+const HOME_THINGS = [
+  { id: "thg_home_1", title: "Home page: what you're working on and its layout", title_by: "ai" as const, status_line: "Cards now show only your own work; checking the layout before it ships.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 600, quiet: false },
+  { id: "thg_home_2", title: "Live self-testing of the new map", title_by: "ai" as const, status_line: "Night points now join their topics; next is replaying a night.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 3_600, quiet: false, dreamed_at: HOME_NIGHT },
+  { id: "thg_home_3", title: "Local model list", title_by: "ai" as const, status_line: "Picks a model by memory size; Ollama and LM Studio are listed.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 86_400, quiet: false },
+  { id: "thg_home_4", title: "Launch post", title_by: "ai" as const, status_line: "Draft is written; waiting on the final screenshots.", spaces: ["wenlan-site"], last_activity_at: HOME_NOW - 2 * 86_400, quiet: false },
+];
+
 let graphObsSeq = 0;
 let fixtureBackgroundAiEnabled = false;
 type PreviewPageUpdateRequest = {
@@ -128,6 +141,17 @@ export async function invoke(
   }
   if (new URLSearchParams(window.location.search).get("mode") === "remote-access") {
     return invokeRemoteFixture(cmd, args);
+  }
+  // `?mode=home`: what you're working on, from fixtures, no daemon
+  // (UX-HOME-1, UX-HOME-6). One title is long enough to need two lines, and
+  // one thing was steeped overnight under a long name.
+  if (new URLSearchParams(window.location.search).get("mode") === "home") {
+    if (cmd === "list_things") return HOME_THINGS;
+    if (cmd === "list_pages_explicit_browse") return args?.status === "active" && !args?.offset ? GRAPH_PAGES : [];
+    if (cmd === "get_thing") {
+      const thing = HOME_THINGS.find((item) => item.id === args?.id) ?? HOME_THINGS[0];
+      return { ...thing, sessions: [{ id: `ses_${thing.id}`, tool: "claude-code", title: thing.title, last_write_at: thing.last_activity_at }], pages: [], memories: [] };
+    }
   }
   // `?mode=atlas&things=1`: the big map with things being worked on, from
   // fixtures, no daemon (UX-CHAT-5). See THING_MAP_GRAPH.

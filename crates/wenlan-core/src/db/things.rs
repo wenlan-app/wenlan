@@ -777,7 +777,8 @@ impl MemoryDB {
                                 AND NOT EXISTS (SELECT 1 FROM thing_history u
                                                  WHERE u.thing_id = t.id
                                                    AND u.op = 'thing.dream_undo'
-                                                   AND json_extract(u.data, '$.seq') = h.seq))
+                                                   AND json_extract(u.data, '$.seq') = h.seq)),
+                            t.brief_item_id IS NOT NULL
                        FROM things t
                        LEFT JOIN brief_items bi ON bi.id = t.brief_item_id
                        LEFT JOIN spaces sp ON sp.id = bi.space_id
@@ -812,6 +813,10 @@ impl MemoryDB {
                 .get::<Option<i64>>(10)
                 .unwrap_or(None)
                 .is_some_and(|at| at >= last_activity_at);
+            // A thing that started as a Space Brief item is a line an AI tool
+            // wrote in its handoff, not the person's own thinking: it stays on
+            // the Space's Brief and in search, never on home (UX-HOME-6).
+            let from_brief = row.get::<i64>(12).unwrap_or(0) != 0;
             things.push(Row {
                 summary: ThingSummary {
                     id: row.get::<String>(0).unwrap_or_default(),
@@ -820,7 +825,7 @@ impl MemoryDB {
                     status_line: None,
                     spaces: item_space.into_iter().collect(),
                     last_activity_at,
-                    quiet: hidden || now - last_activity_at > THING_QUIET_AFTER_SECS,
+                    quiet: hidden || from_brief || now - last_activity_at > THING_QUIET_AFTER_SECS,
                     dreamed_at: row.get::<Option<i64>>(11).unwrap_or(None),
                 },
                 item_text: row.get::<Option<String>>(4).unwrap_or(None),
@@ -865,39 +870,10 @@ impl MemoryDB {
         }
         drop(rows);
 
-        // Where it stands: the Brief summary as of the newest handoff one of
-        // its conversations made, in a Space this caller may see.
-        let mut rows = conn
-            .query(
-                &format!(
-                    "SELECT ts.thing_id, sp.name, h.summary
-                       FROM thing_sessions ts
-                       JOIN things t ON t.id = ts.thing_id
-                       JOIN brief_history h ON h.session_id = ts.session_id
-                       JOIN spaces sp ON sp.id = h.space_id
-                      WHERE t.merged_into IS NULL AND trim(h.summary) <> ''{only_sql}
-                      ORDER BY h.created_at DESC, h.brief_version DESC"
-                ),
-                libsql::params_from_iter(params.clone()),
-            )
-            .await
-            .map_err(db_err("things status"))?;
-        while let Some(row) = rows.next().await.map_err(db_err("things status row"))? {
-            let Some(&i) = index.get(&row.get::<String>(0).unwrap_or_default()) else {
-                continue;
-            };
-            if things[i].summary.status_line.is_some() {
-                continue;
-            }
-            let space = row.get::<String>(1).unwrap_or_default();
-            if scope.matches(Some(space.as_str())) {
-                things[i].summary.status_line = Some(row.get::<String>(2).unwrap_or_default());
-            }
-        }
-        drop(rows);
-
-        // Else where the whole thing stands, as the grouping model last wrote
-        // it, unless a conversation was read again since.
+        // Where the whole thing stands, as the grouping model last wrote it,
+        // unless a conversation was read again since. A handoff's Brief summary
+        // is not used: it speaks for the whole Space, so it landed on whichever
+        // thing its conversation happened to join (UX-HOME-6).
         let mut rows = conn
             .query(
                 &format!(

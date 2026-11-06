@@ -253,6 +253,7 @@ async fn brief_items_become_things_and_their_conversations_join_them() {
         Some("Ship the new tagline")
     );
     assert_eq!(things[0].spaces, ["site"]);
+    assert!(things[0].quiet, "a Brief item is not home's work");
 
     let scoped = db
         .list_things(&ReadScope::Space("other".into()), None)
@@ -779,5 +780,92 @@ async fn ux_thing_3_merging_carries_the_map_and_nights() {
         after,
         vec!["Tagline copy".to_string()],
         "taking the night back takes its points"
+    );
+}
+
+#[tokio::test]
+async fn ux_home_6_a_brief_item_an_ai_tool_wrote_stays_off_working_on() {
+    let (db, _temp) = test_db().await;
+    db.create_space("wenlan", None, false).await.unwrap();
+    db.apply_brief_update(&BriefUpdateRequest {
+        space: "wenlan".into(),
+        caller_id: "handoff".into(),
+        operation_id: "handoff-item".into(),
+        summary: None,
+        mutations: vec![BriefMutation::Add {
+            text: "0.21 release: remaining before tagging are #1180 and the backfill".into(),
+            state: BriefItemState::Active,
+            added_at: None,
+            gate: None,
+        }],
+    })
+    .await
+    .unwrap();
+    db.sort_sessions_into_things().await.unwrap();
+    let things = db.list_things(&ReadScope::Global, None).await.unwrap();
+    assert_eq!(things.len(), 1, "still listed, for search");
+    assert!(things[0].quiet, "but not on home");
+    assert!(
+        db.intake_open_things().await.unwrap().is_empty(),
+        "and new conversations are not sorted into it"
+    );
+}
+
+#[tokio::test]
+async fn ux_home_6_a_handoff_summary_never_becomes_a_things_line() {
+    let (db, _temp) = test_db().await;
+    db.create_space("wenlan", None, false).await.unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let session = conversation(
+        &db,
+        "claude-code:moon",
+        Some("Moon line style"),
+        None,
+        Some("wenlan"),
+        now - 60,
+    )
+    .await;
+    db.sort_sessions_into_things().await.unwrap();
+    db.apply_brief_update(&BriefUpdateRequest {
+        space: "wenlan".into(),
+        caller_id: "handoff".into(),
+        operation_id: "backlog".into(),
+        summary: None,
+        mutations: vec![BriefMutation::Add {
+            text: "Later: replay a night".into(),
+            state: BriefItemState::Backlog,
+            added_at: None,
+            gate: None,
+        }],
+    })
+    .await
+    .unwrap();
+    let parsed = SessionRef::parse("claude-code:moon").unwrap();
+    db.apply_brief_update_in_session(
+        &BriefUpdateRequest {
+            space: "wenlan".into(),
+            caller_id: "handoff".into(),
+            operation_id: "space-summary".into(),
+            summary: Some(wenlan_types::BriefSummaryUpdate {
+                text: "2026-11-06: Installed Wenlan Dev from main ed2f2dcf".into(),
+                expected_version: 1,
+            }),
+            mutations: vec![],
+        },
+        Some(&parsed),
+    )
+    .await
+    .unwrap();
+    let thing = things_of(&db, &session).await.remove(0);
+    let listed = db
+        .get_thing(&thing, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!listed.quiet);
+    assert_ne!(
+        listed.status_line.as_deref(),
+        Some("2026-11-06: Installed Wenlan Dev from main ed2f2dcf"),
+        "the Space's handoff summary is not this thing's line"
     );
 }

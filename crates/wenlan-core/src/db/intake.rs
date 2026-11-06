@@ -300,7 +300,7 @@ impl MemoryDB {
                    FROM things t
                    JOIN thing_sessions ts ON ts.thing_id = t.id
                    JOIN agent_sessions a ON a.id = ts.session_id
-                  WHERE t.merged_into IS NULL AND t.title IS NOT NULL
+                  WHERE t.merged_into IS NULL AND t.title IS NOT NULL AND t.brief_item_id IS NULL
                   GROUP BY t.id
                  HAVING last >= ?1 AND (t.hidden_at IS NULL OR t.hidden_at < last)
                   ORDER BY last DESC, t.id

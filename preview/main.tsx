@@ -159,6 +159,8 @@ function Harness() {
     setPendingPairingCode(pair === "long" ? "a".repeat(64) : "K7MQ-4WXZ");
   }, [mode, pair]);
 
+  // `?mode=home`: Home with fixture things (UX-HOME-1, UX-HOME-6).
+  if (params.get("mode") === "home") return <Main initialView={{ kind: "home" }} />;
   if (params.get("mode") === "spaces") return <Main initialView={{kind:"space",spaceId:null,spaceName:params.get("space") ?? "Wenlan"}} />;
   if (params.get("mode") === "sources") return <Main initialView={{ kind: "sources" }} />;
   if (params.get("mode") === "folders") return <Main initialView={{kind:"pages",inventoryScope:params.has("folder") ? `folder:${params.get("folder") ?? ""}` : "all"}} />;

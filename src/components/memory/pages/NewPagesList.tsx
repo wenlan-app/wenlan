@@ -114,7 +114,7 @@ export function NewPagesList({
                   ) : (
                     <PageIcon className="wiki-new-pages-icon" size={16} />
                   )}
-                  <span className="wiki-new-pages-title">{page.title}</span>
+                  <span className="wiki-new-pages-title" title={page.title}>{page.title}</span>
                 </span>
                 <span className="wiki-new-pages-preview">{preview}</span>
                 {/* Home counts nothing, sources included (UX-HOME-2). */}

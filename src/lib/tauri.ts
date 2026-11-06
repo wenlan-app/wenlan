@@ -955,12 +955,13 @@ export interface ThingSummary {
   title: string | null;
   /** Who gave the current title: the AI names new things, the person can rename. */
   title_by: "ai" | "person";
-  /** One line on where the work stands: the newest handoff summary of one of
-   *  its conversations, else its Brief item text. */
+  /** One line on where the work stands, as the grouping model wrote it for
+   *  the whole thing, else its newest conversation's, else its Brief item text. */
   status_line: string | null;
   spaces: string[];
   last_activity_at: number;
-  /** Nothing new for two weeks: left out of "what you're working on", still
+  /** Nothing new for a week, hidden, or a Brief item an AI tool wrote: left
+   *  out of "what you're working on" (UX-HOME-6), still
    *  found by search, back on its own with the next conversation (UX-HOME-5).
    *  Absent from an older daemon. */
   quiet?: boolean;

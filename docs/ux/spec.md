@@ -58,8 +58,9 @@ and wait for evidence that people need them.
 - **A thing (一件事)**: one line of work, such as "the new tagline" or "the
   Product Hunt launch". It is smaller than a Space: a Space is a project and
   follows a folder or repository, and one Space holds several things. A thing
-  can span Spaces. Until things have their own record, each active item of a
-  Space Brief stands for one thing.
+  can span Spaces. Things come from your conversations; a Space Brief item is
+  what an AI tool leaves the next one in its handoff, and it is not a thing
+  (UX-HOME-6).
 - **Original (原文)**: text that came in from outside, such as an imported
   chat, a web page or a PDF. It is an ordinary page whose author is 原文. The
   AI can't edit it, and it is not yours, so it never counts as decided.
@@ -102,6 +103,14 @@ and wait for evidence that people need them.
   conversation brings it back. There is no cap: home lists six, and "See all"
   opens the rest in place, without a count.
   原文：選擇卡「显示，安静 2 周后离开」（2026-11-02 23:40）；「我很担心我设上限会出现什么问题」（2026-11-02 21:53）；選擇卡「安静 1 周 +「不用显示」」（2026-11-03 02:46）；「我有点担心会 over engineering…第一性原理就是UI UX」（2026-11-03 02:39）。
+- **UX-HOME-6** `shipped` "What you're working on" holds only your own work,
+  read from your conversations, in plain words. A Space Brief item an AI tool
+  wrote in its handoff stays on that Space's Brief and in search, not on home,
+  and a handoff's summary of a whole Space is never one thing's line. Titles
+  and lines carry no pull request numbers, commit hashes or dates. A title or
+  steeped name is written out whole: only the window's width cuts it, and a
+  card title takes two lines before it is cut.
+  原文：選擇卡「只放对话来的事」（2026-11-06 04:08，問：首页「正在做」还要不要放 Space Brief 里的条目）；「我以為 brief 一直沒有和正在做的事給討論好邊界」（2026-11-06 04:09）；「可以啊，總之這三點都要修掉，還有左上的 icon 都卡在一起」（2026-11-06 03:47，回覆：首頁「正在做」被 AI 的工作紀錄填滿、帶 PR 號和 commit、標題和「今天沉澱」被截斷）
 
 ## Sorting conversations into things
 
