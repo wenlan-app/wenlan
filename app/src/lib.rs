@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #[cfg(target_os = "macos")]
+mod native_edit_history;
+#[cfg(target_os = "macos")]
 #[macro_use]
 extern crate objc;
 
@@ -879,6 +881,9 @@ pub fn run() {
         .manage(tray_panel::TrayPanelState::default())
         .setup(|app| {
             let handle = app.handle().clone();
+
+            #[cfg(target_os = "macos")]
+            native_edit_history::install(&handle)?;
 
             build_main_window(&handle)?;
 
