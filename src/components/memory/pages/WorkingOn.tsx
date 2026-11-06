@@ -15,28 +15,6 @@ const RETRY_SOON = { retry: 5, retryDelay: (attempt: number) => Math.min(2_000 *
 
 /** How many lines of work home shows before "See all". */
 export const WORKING_ON_LISTED = 6;
-/** How wide a name in the "steeped overnight" line may be, in CJK characters. */
-const STEEPED_NAME_WIDTH = 8;
-
-/** Cuts a name to about eight CJK characters (a Latin letter a bit under half),
- * never in the middle of an English word. */
-export function shortName(name: string): string {
-  let width = 0;
-  const chars = Array.from(name);
-  for (let index = 0; index < chars.length; index += 1) {
-    width += chars[index].codePointAt(0)! < 0x2e80 ? 0.45 : 1;
-    if (width <= STEEPED_NAME_WIDTH) continue;
-    let cut = index;
-    const inWord = (at: number) => /[\p{L}\p{N}]/u.test(chars[at] ?? "") && chars[at].codePointAt(0)! < 0x2e80;
-    if (inWord(cut) && inWord(cut - 1)) {
-      while (cut > 0 && inWord(cut - 1)) cut -= 1;
-      if (chars.slice(0, cut).join("").trim() === "") cut = index;
-    }
-    return `${chars.slice(0, cut).join("").replace(/[\s,.;:–-]+$/u, "")}…`;
-  }
-  return name;
-}
-
 /** Most things the "steeped overnight" line names; the rest are "and more". */
 const STEEPED_NAMED = 2;
 /** Steeping before this local hour happened overnight. */
@@ -69,11 +47,23 @@ export function whereItStands(t: TFunction, thing: ThingSummary, detail?: ThingD
 }
 
 /**
+ * The point the large card writes out under where a thing stands
+ * (UX-HOME-1): the newest one the night left open, which is what to pick up
+ * in the next chat. Home says no counts (UX-HOME-2), so it never says how many.
+ */
+export function openPointOf(detail?: ThingDetail): string | null {
+  const openIds = new Set(detail?.open_points ?? []);
+  const open = (detail?.memories ?? [])
+    .filter((memory) => openIds.has(memory.source_id) && memory.title.trim())
+    .sort((a, b) => b.created_at - a.created_at)[0];
+  return open?.title ?? null;
+}
+
+/**
  * Home's first section: what you're working on (docs/ux/spec.md, UX-HOME-1).
  * Each thing gets one line saying where it stands, and opening it goes to
- * that thing. Until things have their own record (an older daemon, or none
- * sorted yet), each active item of a Space Brief stands for one thing and
- * opens its Space. Nothing shows when there is no work, and the section never
+ * that thing. Only where things cannot be opened does each active item of
+ * a Space Brief stand for one, opening its Space. Nothing shows when there is no work, and the section never
  * counts anything (UX-HOME-2).
  */
 export function WorkingOn({
@@ -123,8 +113,8 @@ export function WorkingOn({
   // What Wenlan steeped from today's things into long-term memory (UX-CHAT-5),
   // named in one quiet line beside the heading so the night's work is seen.
   // It names things, never counts them, and is gone tomorrow.
-  // Two names at most, each cut short, then "and more", so the line stays
-  // one short phrase however many things were steeped or how long their names.
+  // Two names at most, then "and more". Each name is written out whole and
+  // only the window's width cuts it, so a short name is never cut.
   const steepedAll = onOpenThing
     ? (things.data ?? []).filter((thing) => thing.title && thing.dreamed_at && steepedToday(thing.dreamed_at))
     : [];
@@ -159,10 +149,10 @@ export function WorkingOn({
       staleTime: 60_000,
     })),
   });
-  // A failed things read is not "no things": wait for it instead of falling
-  // back to the Space Briefs. Things that have all gone quiet are not "no
-  // things" either: the Briefs they came from are just as old.
-  const useBrief = !onOpenThing || (things.isSuccess && (things.data ?? []).length === 0);
+  // Space Brief items are what AI tools leave each other in their handoffs,
+  // not the person's work: they stand in for things only where this home
+  // cannot open a thing at all (UX-HOME-6).
+  const useBrief = !onOpenThing;
   const brief = useQuery({
     queryKey: WORKING_ON_QUERY_KEY,
     queryFn: listWorkingOn,
@@ -184,7 +174,7 @@ export function WorkingOn({
               {steeped.map((thing, index) => (
                 <Fragment key={thing.id}>
                   {index > 0 ? <span className="wiki-working-on-steeped-sep">{t("pages.overview.steepedSeparator")}</span> : null}
-                  <button type="button" title={thing.title ?? undefined} aria-label={thing.title ?? undefined} onClick={() => showSteeped([thing.id])}>{shortName(thing.title ?? "")}</button>
+                  <button type="button" title={thing.title ?? undefined} aria-label={thing.title ?? undefined} onClick={() => showSteeped([thing.id])}>{thing.title}</button>
                 </Fragment>
               ))}
               {/* A narrow window names one thing and says "and more" for the rest. */}
@@ -206,16 +196,26 @@ export function WorkingOn({
         {thingItems.map((thing, index) => {
           const detail = details[index]?.data;
           const line = whereItStands(t, thing, detail);
+          // The newest thing leads in large type and also says what is still
+          // open; every thing says which tool it was talked through in, and when.
+          const openPoint = index === 0 ? openPointOf(detail) : null;
           // A tool with a mark shows the mark; others keep their name.
           const slugs = [...new Set((detail?.sessions ?? []).map((session) => session.tool).filter((tool): tool is string => !!tool))];
           const marked = slugs.filter(hasToolMark);
           const named = [...new Set(slugs.filter((tool) => !hasToolMark(tool)).map((tool) => agentDisplayName(tool)).filter(Boolean))];
-          const where = [...named, ...thing.spaces].join(" · ");
+          // Home names the tool, not the Space: fewer words (UX-HOME-6).
+          const where = named.join(" · ");
           return (
             <li key={thing.id} data-thing-id={thing.id}>
               <button type="button" className="wiki-working-on-card" data-glow={glowing.includes(thing.id) ? "true" : undefined} onClick={() => onOpenThing?.(thing.id)}>
-                <span className="wiki-working-on-title">{thing.title ?? t("thing.untitled")}</span>
-                <span className="wiki-working-on-text">{line ?? ""}</span>
+                <span className="wiki-working-on-title" title={thing.title ?? undefined}>{thing.title ?? t("thing.untitled")}</span>
+                <span className="wiki-working-on-text" title={line ?? undefined}>{line ?? ""}</span>
+                {openPoint ? (
+                  <span className="wiki-working-on-open" data-testid="wiki-working-on-open">
+                    <span className="wiki-working-on-open-label">{t("pages.overview.workingOnStillOpen")}</span>
+                    {openPoint}
+                  </span>
+                ) : null}
                 <span className="wiki-working-on-foot">
                   <span className="wiki-working-on-meta">
                     {marked.length > 0 ? (

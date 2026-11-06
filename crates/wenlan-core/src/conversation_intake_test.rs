@@ -355,6 +355,16 @@ fn ux_thing_1_titles_follow_the_app_language() {
     assert!(prompt.contains("even when nothing was built"));
 }
 
+/// Real use (2026-11-06): home cards read "PR #1168 night points… (ed2f2dcf)".
+#[test]
+fn ux_home_6_titles_and_lines_are_asked_for_in_plain_words() {
+    let label = label_prompt(&conv(&["a", "b"]), &[], "English");
+    let group = group_prompt(&[], &[], &[], "English");
+    for prompt in [label, group] {
+        assert!(prompt.contains("no pull request or issue numbers, commit hashes"));
+    }
+}
+
 #[test]
 fn ux_thing_1_a_worktree_belongs_to_its_main_checkout() {
     let dir = tempfile::tempdir().unwrap();

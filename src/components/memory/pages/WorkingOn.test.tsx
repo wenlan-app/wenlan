@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getThing, hideThing, listThings, listWorkingOn, setUiLanguage, type ThingSummary } from "../../../lib/tauri";
-import { shortName, WorkingOn } from "./WorkingOn";
+import { WorkingOn } from "./WorkingOn";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
@@ -46,7 +46,7 @@ describe("WorkingOn", () => {
     vi.mocked(hideThing).mockReset();
   });
 
-  it("shows a tool by its mark, and a tool without one by its name", async () => {
+  it("UX-HOME-6: shows a tool by its mark, and a tool without one by its name, and no Space", async () => {
     vi.mocked(listThings).mockResolvedValue([thing()]);
     vi.mocked(getThing).mockResolvedValue({
       ...thing(),
@@ -61,7 +61,7 @@ describe("WorkingOn", () => {
     const mark = await screen.findByRole("img", { name: "Claude Code" });
     expect(screen.getByRole("img", { name: "ChatGPT / Codex" })).toBeInTheDocument();
     const meta = mark.closest(".wiki-working-on-meta")!;
-    expect(meta.querySelector(".wiki-working-on-where")?.textContent).toBe("Kiro · wenlan");
+    expect(meta.querySelector(".wiki-working-on-where")?.textContent).toBe("Kiro");
   });
 
   it("does not name the tool again when its mark is on the card", async () => {
@@ -104,20 +104,21 @@ describe("WorkingOn", () => {
     await waitFor(() => expect(setUiLanguage).toHaveBeenCalledWith(expect.stringMatching(/^(en|zh)/)));
   });
 
-  it("UX-HOME-1: falls back to Brief items while there are no things", async () => {
+  it("UX-HOME-6: Brief items never fill home, even while there are no things", async () => {
     vi.mocked(listThings).mockResolvedValue([]);
     vi.mocked(listWorkingOn).mockResolvedValue([
       { space: "wenlan", id: "b1", text: "Ship the grey line", added_at: now },
     ]);
-    const { onSelectSpace } = renderWorkingOn();
-    fireEvent.click(await screen.findByRole("button", { name: /Ship the grey line/ }));
-    expect(onSelectSpace).toHaveBeenCalledWith("wenlan");
+    renderWorkingOn();
+    await waitFor(() => expect(listThings).toHaveBeenCalled());
+    expect(listWorkingOn).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("wiki-working-on")).toBeNull();
   });
 
   it("UX-HOME-3: shows nothing when there is no work", async () => {
     vi.mocked(listThings).mockResolvedValue([]);
     renderWorkingOn();
-    await waitFor(() => expect(listWorkingOn).toHaveBeenCalled());
+    await waitFor(() => expect(listThings).toHaveBeenCalled());
     expect(screen.queryByTestId("wiki-working-on")).toBeNull();
   });
 
@@ -217,15 +218,55 @@ describe("WorkingOn", () => {
     const line = await screen.findByTestId("wiki-working-on-steeped");
     expect(line).toHaveTextContent("Site redesign, Release notesand more");
     expect(line).not.toHaveTextContent("Zotero workflow");
-    expect(shortName("Wenlan 迁移与整合验收")).toBe("Wenlan 迁移与整…");
-    expect(shortName("Release notes")).toBe("Release notes");
-    expect(shortName("Launch the public beta")).toBe("Launch the public…");
-    expect(shortName("Onboarding walkthrough")).toBe("Onboarding…");
-    expect(shortName("Internationalization")).toBe("Internationalizat…");
     fireEvent.click(screen.getByRole("button", { name: "and more" }));
     for (const id of ["thg_1", "thg_2", "thg_3"]) {
       expect(document.querySelector(`[data-thing-id="${id}"] .wiki-working-on-card`)).toHaveAttribute("data-glow", "true");
     }
+  });
+
+  it("UX-HOME-6: writes a steeped name and a card title out whole, never cut short by the app", async () => {
+    const tonight = new Date();
+    tonight.setHours(3, 0, 0, 0);
+    const at = Math.floor(tonight.getTime() / 1000);
+    vi.mocked(listThings).mockResolvedValue([
+      thing({ id: "thg_1", title: "Live self-testing of the new map", dreamed_at: at }),
+    ]);
+    renderWorkingOn();
+    const line = await screen.findByTestId("wiki-working-on-steeped");
+    expect(line).toHaveTextContent("Live self-testing of the new map");
+    expect(line.textContent).not.toContain("…");
+    const title = document.querySelector('[data-thing-id="thg_1"] .wiki-working-on-title');
+    expect(title).toHaveTextContent("Live self-testing of the new map");
+    expect(title).toHaveAttribute("title", "Live self-testing of the new map");
+  });
+
+  it("UX-HOME-1, UX-HOME-2: only the newest thing writes out its newest open point, and nothing is counted", async () => {
+    vi.mocked(listThings).mockResolvedValue([
+      thing({ id: "thg_1", title: "Home layout", last_activity_at: now - 60 }),
+      thing({ id: "thg_2", title: "Launch post", last_activity_at: now - 7200 }),
+    ]);
+    const point = (source_id: string, title: string, ago: number) => ({ source_id, title, created_at: now - ago });
+    vi.mocked(getThing).mockImplementation(async (id) => ({
+      ...thing({ id }),
+      sessions: [],
+      pages: [],
+      memories: [
+        point("mem_a", "Home shows only your own chats", 900),
+        point("mem_b", "Should the Brief merge into things?", 800),
+        point("mem_c", "Which screenshot goes first?", 700),
+      ],
+      dream: { at: now - 3600, decided: 1, open: 2, fresh: [] },
+      open_points: ["mem_b", "mem_c"],
+    }));
+    renderWorkingOn();
+    const open = await screen.findByTestId("wiki-working-on-open");
+    const large = document.querySelector('[data-thing-id="thg_1"]');
+    expect(large).toContainElement(open);
+    expect(open).toHaveTextContent("Still open:Which screenshot goes first?");
+    expect(screen.getAllByTestId("wiki-working-on-open")).toHaveLength(1);
+    expect(large?.textContent).not.toMatch(/\d+ (settled|still open|points?)/);
+    expect(large?.querySelector(".wiki-working-on-when")).not.toBeNull();
+    expect(document.querySelector('[data-thing-id="thg_2"] .wiki-working-on-when')).not.toBeNull();
   });
 
   it("UX-CHAT-5: says nothing about steeping that was not today", async () => {

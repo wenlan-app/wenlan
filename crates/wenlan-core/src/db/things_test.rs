@@ -221,7 +221,7 @@ async fn a_conversation_on_the_same_branch_joins_its_thing() {
 }
 
 #[tokio::test]
-async fn brief_items_become_things_and_their_conversations_join_them() {
+async fn ux_home_6_a_brief_item_makes_no_thing_and_its_conversation_is_sorted_like_any_other() {
     let (db, _temp) = test_db().await;
     db.create_space("site", None, false).await.unwrap();
     let session = SessionRef::parse("codex:brief").unwrap();
@@ -243,22 +243,14 @@ async fn brief_items_become_things_and_their_conversations_join_them() {
     .await
     .unwrap();
     let report = db.sort_sessions_into_things().await.unwrap();
-    assert_eq!(report.brief_things, 1);
-    assert_eq!(report.sorted, [(session_row_id(&session), SortRule::Brief)]);
+    assert_eq!(report.sorted, [(session_row_id(&session), SortRule::New)]);
     let things = db.list_things(&ReadScope::Global, None).await.unwrap();
-    assert_eq!(things.len(), 1);
-    assert_eq!(things[0].title.as_deref(), Some("Ship the new tagline"));
     assert_eq!(
-        things[0].status_line.as_deref(),
-        Some("Ship the new tagline")
+        things.len(),
+        1,
+        "the conversation's thing, none for the item"
     );
-    assert_eq!(things[0].spaces, ["site"]);
-
-    let scoped = db
-        .list_things(&ReadScope::Space("other".into()), None)
-        .await
-        .unwrap();
-    assert!(scoped.is_empty(), "another Space sees nothing");
+    assert_ne!(things[0].title.as_deref(), Some("Ship the new tagline"));
 }
 
 #[tokio::test]
@@ -528,44 +520,6 @@ async fn ux_home_5_a_hidden_thing_leaves_working_on_until_its_next_conversation(
     ));
 }
 
-#[tokio::test]
-async fn ux_home_5_a_thing_from_an_old_brief_item_is_as_old_as_the_item() {
-    let (db, _temp) = test_db().await;
-    db.create_space("site", None, false).await.unwrap();
-    let now = chrono::Utc::now().timestamp();
-    db.apply_brief_update(&BriefUpdateRequest {
-        space: "site".into(),
-        caller_id: "things-test".into(),
-        operation_id: "old-item".into(),
-        summary: None,
-        mutations: vec![BriefMutation::Add {
-            text: "Rewrite the pricing page".into(),
-            state: BriefItemState::Active,
-            added_at: Some(now - 30 * 24 * 60 * 60),
-            gate: None,
-        }],
-    })
-    .await
-    .unwrap();
-    {
-        let conn = db.conn.lock().await;
-        conn.execute(
-            "UPDATE brief_items SET updated_at = ?1",
-            libsql::params![now - 30 * 24 * 60 * 60],
-        )
-        .await
-        .unwrap();
-    }
-    db.sort_sessions_into_things().await.unwrap();
-    let things = db.list_things(&ReadScope::Global, None).await.unwrap();
-    assert_eq!(things.len(), 1);
-    assert!(
-        things[0].quiet,
-        "made today from a month-old item, still quiet"
-    );
-    assert!(things[0].last_activity_at <= now - 29 * 24 * 60 * 60);
-}
-
 fn things_of_list<'a>(
     things: &'a [wenlan_types::ThingSummary],
     id: &str,
@@ -779,5 +733,110 @@ async fn ux_thing_3_merging_carries_the_map_and_nights() {
         after,
         vec!["Tagline copy".to_string()],
         "taking the night back takes its points"
+    );
+}
+
+#[tokio::test]
+async fn ux_home_6_a_thing_an_older_daemon_made_from_a_brief_item_stays_off_working_on() {
+    let (db, _temp) = test_db().await;
+    db.create_space("wenlan", None, false).await.unwrap();
+    db.apply_brief_update(&BriefUpdateRequest {
+        space: "wenlan".into(),
+        caller_id: "handoff".into(),
+        operation_id: "handoff-item".into(),
+        summary: None,
+        mutations: vec![BriefMutation::Add {
+            text: "0.21 release: remaining before tagging are #1180 and the backfill".into(),
+            state: BriefItemState::Active,
+            added_at: None,
+            gate: None,
+        }],
+    })
+    .await
+    .unwrap();
+    db.sort_sessions_into_things().await.unwrap();
+    assert!(
+        db.list_things(&ReadScope::Global, None)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a Brief item makes no thing"
+    );
+    // One an older daemon made is still listed, for search, but quiet.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO things (id, title, title_by, brief_item_id, created_at, updated_at)
+             SELECT 'thg_legacy', text, 'ai', id, ?1, ?1 FROM brief_items",
+            libsql::params![chrono::Utc::now().timestamp()],
+        )
+        .await
+        .unwrap();
+    }
+    let things = db.list_things(&ReadScope::Global, None).await.unwrap();
+    assert_eq!(things.len(), 1);
+    assert!(things[0].quiet, "not on home");
+    assert!(
+        db.intake_open_things().await.unwrap().is_empty(),
+        "and new conversations are not grouped into it"
+    );
+}
+
+#[tokio::test]
+async fn ux_home_6_a_handoff_summary_never_becomes_a_things_line() {
+    let (db, _temp) = test_db().await;
+    db.create_space("wenlan", None, false).await.unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let session = conversation(
+        &db,
+        "claude-code:moon",
+        Some("Moon line style"),
+        None,
+        Some("wenlan"),
+        now - 60,
+    )
+    .await;
+    db.sort_sessions_into_things().await.unwrap();
+    db.apply_brief_update(&BriefUpdateRequest {
+        space: "wenlan".into(),
+        caller_id: "handoff".into(),
+        operation_id: "backlog".into(),
+        summary: None,
+        mutations: vec![BriefMutation::Add {
+            text: "Later: replay a night".into(),
+            state: BriefItemState::Backlog,
+            added_at: None,
+            gate: None,
+        }],
+    })
+    .await
+    .unwrap();
+    let parsed = SessionRef::parse("claude-code:moon").unwrap();
+    db.apply_brief_update_in_session(
+        &BriefUpdateRequest {
+            space: "wenlan".into(),
+            caller_id: "handoff".into(),
+            operation_id: "space-summary".into(),
+            summary: Some(wenlan_types::BriefSummaryUpdate {
+                text: "2026-11-06: Installed Wenlan Dev from main ed2f2dcf".into(),
+                expected_version: 1,
+            }),
+            mutations: vec![],
+        },
+        Some(&parsed),
+    )
+    .await
+    .unwrap();
+    let thing = things_of(&db, &session).await.remove(0);
+    let listed = db
+        .get_thing(&thing, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!listed.quiet);
+    assert_ne!(
+        listed.status_line.as_deref(),
+        Some("2026-11-06: Installed Wenlan Dev from main ed2f2dcf"),
+        "the Space's handoff summary is not this thing's line"
     );
 }

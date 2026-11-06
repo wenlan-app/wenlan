@@ -194,6 +194,11 @@ const INTRO_TABS: Partial<Record<View["kind"], IntroTab>> = {
   activity: "activity",
 };
 
+/** The sidebar button, its gap and the back and forward buttons at the
+ *  header's start: the home's tab strip begins after them, never under them,
+ *  when the sidebar is narrower than they are. */
+const HEADER_TOOLS_WIDTH = 32 + 12 + 66;
+
 export default function Main({
   initialView,
   initialMemoryId,
@@ -1433,7 +1438,7 @@ export default function Main({
       data-sidebar-auto-transition={autoSidebar.transitioning || undefined}
       data-note-workspace={isWikiWorkspaceView || undefined}
       inert={mobileSearchOpen || movingNote}
-      style={{ backgroundColor: "var(--mem-bg)", color: "var(--mem-text)", "--workspace-labels-width": `${effectiveSidebar.width ?? 240}px` } as CSSProperties}
+      style={{ backgroundColor: "var(--mem-bg)", color: "var(--mem-text)", "--workspace-labels-width": `${effectiveSidebar.width ?? 240}px`, "--workspace-header-tools-end": `${topBarLeftInset() + HEADER_TOOLS_WIDTH}px` } as CSSProperties}
     >
       {/* Header follows the width of the primary workspace. */}
       <header

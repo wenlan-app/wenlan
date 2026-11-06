@@ -75,6 +75,47 @@ import { invokeRemoteFixture } from "./remote-access";
   }
 }
 
+const HOME_NOW = Math.floor(Date.now() / 1000);
+const HOME_NIGHT = (() => {
+  const night = new Date();
+  night.setHours(3, 0, 0, 0);
+  return Math.floor(night.getTime() / 1000);
+})();
+/** Recently edited pages for `?mode=home`, dated from today; some yours, some the AI's. */
+const homePage = (id: string, title: string, body: string, daysAgo: number, yours = false) => {
+  const at = new Date(Date.now() - daysAgo * 86_400_000 - 3_600_000).toISOString();
+  return {
+    ...GRAPH_PAGES[1],
+    id,
+    title,
+    content: `# ${title}\n\n${body}`,
+    entity_id: null,
+    created_at: at,
+    last_compiled: at,
+    last_modified: at,
+    ...(yours ? { user_edited: true } : {}),
+  };
+};
+const HOME_PAGES = [
+  homePage("page-home-ai-memory", "AI memory systems compared: Mem0, Letta and Wenlan", "How each one stores, finds and forgets what an AI tool learned.", 0),
+  homePage("page-home-mcp", "Wenlan MCP setup", "Remote MCP needs its own settings: field defaults, the origin URL, and what happens while the daemon is off.", 0, true),
+  homePage("page-home-release-notes", "0.21 release notes", "Home shows only what you are working on; overnight steeping; Codex handoff.", 1),
+  homePage("page-home-design-notes", "Home design notes", "One Home button; whole cards, nothing scrolls sideways.", 1, true),
+  homePage("page-home-positioning", "Wenlan positioning", "Who it is for and the one sentence that says it.", 2, true),
+  homePage("page-home-remote-office", "Remote Office Setup", "Notes on the remote-office arrangement.", 3, true),
+  homePage("page-home-overview", "Wenlan Project Overview", "Local-first personal memory layer: daemon, desktop shell, and knowledge graph.", 8),
+];
+
+const HOME_THINGS = [
+  { id: "thg_home_1", title: "Home page: what you're working on and its layout", title_by: "ai" as const, status_line: "Cards now show only your own work; checking the layout before it ships.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 600, quiet: false, dreamed_at: HOME_NIGHT },
+  { id: "thg_home_2", title: "Live self-testing of the new map", title_by: "ai" as const, status_line: "Night points now join their topics; next is replaying a night.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 3_600, quiet: false, dreamed_at: HOME_NIGHT },
+  { id: "thg_home_3", title: "Local model list", title_by: "ai" as const, status_line: "Picks a model by memory size; Ollama and LM Studio are listed.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 86_400, quiet: false },
+  { id: "thg_home_4", title: "Launch post", title_by: "ai" as const, status_line: "Draft is written; waiting on the final screenshots.", spaces: ["wenlan-site"], last_activity_at: HOME_NOW - 2 * 86_400, quiet: false },
+  { id: "thg_home_5", title: "0.21 release", title_by: "ai" as const, status_line: "Two fixes left before tagging; waiting for CI to finish.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 3 * 86_400, quiet: false },
+  { id: "thg_home_6", title: "Reading group notes", title_by: "ai" as const, status_line: "Chapter four summarized; next week's question is still open.", spaces: ["reading"], last_activity_at: HOME_NOW - 4 * 86_400, quiet: false },
+  { id: "thg_home_7", title: "New Mac setup", title_by: "ai" as const, status_line: "Apps moved over; backups still need a schedule.", spaces: [], last_activity_at: HOME_NOW - 5 * 86_400, quiet: false },
+];
+
 let graphObsSeq = 0;
 let fixtureBackgroundAiEnabled = false;
 type PreviewPageUpdateRequest = {
@@ -128,6 +169,32 @@ export async function invoke(
   }
   if (new URLSearchParams(window.location.search).get("mode") === "remote-access") {
     return invokeRemoteFixture(cmd, args);
+  }
+  // `?mode=home`: what you're working on, from fixtures, no daemon
+  // (UX-HOME-1, UX-HOME-6). One title is long enough to need two lines, and
+  // one thing was steeped overnight under a long name.
+  if (new URLSearchParams(window.location.search).get("mode") === "home") {
+    if (cmd === "list_things") return HOME_THINGS;
+    if (cmd === "list_pages_explicit_browse") return args?.status === "active" && !args?.offset ? HOME_PAGES : [];
+    if (cmd === "get_thing") {
+      const thing = HOME_THINGS.find((item) => item.id === args?.id) ?? HOME_THINGS[0];
+      const base = { ...thing, sessions: [{ id: `ses_${thing.id}`, tool: "claude-code", title: thing.title, last_write_at: thing.last_activity_at }], pages: [], memories: [] };
+      // The first thing was steeped last night: three points settled, one
+      // still open, which the large card writes out.
+      if (thing.id !== "thg_home_1") return base;
+      const point = (id: string, title: string, ago: number) => ({ source_id: id, title, memory_type: "decision", space: "wenlan", created_at: HOME_NOW - ago });
+      return {
+        ...base,
+        memories: [
+          point("mem_home_a", "Home shows only things from your own chats", 30_000),
+          point("mem_home_b", "One Home button, in the sidebar", 29_000),
+          point("mem_home_c", "Cards are whole; nothing scrolls sideways", 28_000),
+          point("mem_home_d", "Should the Space Brief and handoff merge into things?", 27_000),
+        ],
+        dream: { at: HOME_NIGHT, decided: 3, open: 1, fresh: [] },
+        open_points: ["mem_home_d"],
+      };
+    }
   }
   // `?mode=atlas&things=1`: the big map with things being worked on, from
   // fixtures, no daemon (UX-CHAT-5). See THING_MAP_GRAPH.

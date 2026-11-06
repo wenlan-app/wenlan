@@ -4,7 +4,8 @@
 //!
 //! Migration 149 adds three tables:
 //! - `things`: one row per thing. `title` is `NULL` until the AI has a
-//!   name; `brief_item_id` links a thing that started as a Space Brief item;
+//!   name; `brief_item_id` links a thing an older daemon made from a Space
+//!   Brief item (no longer made, and never on home: UX-HOME-6);
 //!   `merged_into` is reserved for merges (UX-THING-3), which only the
 //!   person makes.
 //! - `thing_sessions`: which conversations (`agent_sessions.id`) are in which
@@ -22,9 +23,8 @@ use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use std::collections::{HashMap, HashSet};
 use wenlan_types::{
-    AgentSession, BriefAppliedMutation, BriefMutationKind, ThingActor, ThingDetailResponse,
-    ThingPageEntry, ThingPageVia, ThingRef, ThingSessionEntry, ThingSummary,
-    THING_QUIET_AFTER_SECS,
+    AgentSession, ThingActor, ThingDetailResponse, ThingPageEntry, ThingPageVia, ThingRef,
+    ThingSessionEntry, ThingSummary, THING_QUIET_AFTER_SECS,
 };
 
 const THINGS_DDL: &str = "
@@ -81,8 +81,6 @@ fn db_err(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
 /// Why the daemon put a conversation in a thing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortRule {
-    /// The conversation added, edited or moved this thing's Brief item.
-    Brief,
     /// Same Space, same repository, same non-default branch.
     Branch,
     /// Same Space, a title alike enough.
@@ -94,7 +92,6 @@ pub enum SortRule {
 impl SortRule {
     fn as_str(self) -> &'static str {
         match self {
-            Self::Brief => "brief",
             Self::Branch => "branch",
             Self::Title => "title",
             Self::New => "new",
@@ -105,8 +102,6 @@ impl SortRule {
 /// What one sorting pass did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SortReport {
-    /// Things made for active Brief items.
-    pub brief_things: usize,
     /// Conversations sorted, by the rule that placed them.
     pub sorted: Vec<(String, SortRule)>,
     /// Things the AI named this pass.
@@ -312,7 +307,7 @@ pub(super) async fn assign(
 }
 
 /// Take a conversation out of the things the daemon's rules put it in,
-/// keeping Brief items' things and every placement the person made, so the
+/// keeping every placement the person made, so the
 /// grouping model can place it instead (UX-THING-1).
 pub(super) async fn unassign_rule_placements(
     tx: &libsql::Transaction,
@@ -322,7 +317,7 @@ pub(super) async fn unassign_rule_placements(
     let things = query_strings(
         tx,
         "SELECT ts.thing_id FROM thing_sessions ts JOIN things t ON t.id = ts.thing_id
-          WHERE ts.session_id = ?1 AND ts.assigned_by = 'ai' AND t.brief_item_id IS NULL
+          WHERE ts.session_id = ?1 AND ts.assigned_by = 'ai'
             AND t.title_by = 'ai'
             AND NOT EXISTS (SELECT 1 FROM thing_history h
                              WHERE h.thing_id = ts.thing_id AND h.session_id = ts.session_id
@@ -372,47 +367,6 @@ async fn query_strings(
 
 fn text_or_null(value: Option<&str>) -> libsql::Value {
     value.map_or(libsql::Value::Null, |v| libsql::Value::Text(v.to_string()))
-}
-
-/// The things a conversation that touched these Brief items belongs to.
-async fn brief_things_of(
-    tx: &libsql::Transaction,
-    session_id: &str,
-) -> Result<Vec<String>, WenlanError> {
-    let mutations = query_strings(
-        tx,
-        "SELECT mutations_json FROM brief_history WHERE session_id = ?1",
-        vec![libsql::Value::Text(session_id.to_string())],
-        "thing sort brief history",
-    )
-    .await?;
-    let mut items: Vec<String> = Vec::new();
-    for json in mutations {
-        let applied: Vec<BriefAppliedMutation> = serde_json::from_str(&json).unwrap_or_default();
-        for mutation in applied {
-            if mutation.kind == BriefMutationKind::Summary {
-                continue;
-            }
-            if let Some(item) = mutation.item_id {
-                if !items.contains(&item) {
-                    items.push(item);
-                }
-            }
-        }
-    }
-    let mut things = Vec::new();
-    for item in items {
-        things.extend(
-            query_strings(
-                tx,
-                "SELECT id FROM things WHERE brief_item_id = ?1 AND merged_into IS NULL",
-                vec![libsql::Value::Text(item)],
-                "thing sort brief thing",
-            )
-            .await?,
-        );
-    }
-    Ok(things)
 }
 
 /// The thing of the newest conversation on the same repository branch in the
@@ -634,38 +588,9 @@ impl MemoryDB {
             .await
             .map_err(db_err("thing sort begin"))?;
 
-        let mut rows = tx
-            .query(
-                "SELECT bi.id, bi.text FROM brief_items bi
-                  WHERE bi.state = 'active'
-                    AND NOT EXISTS (SELECT 1 FROM things t WHERE t.brief_item_id = bi.id)
-                  ORDER BY bi.added_at, bi.id",
-                (),
-            )
-            .await
-            .map_err(db_err("thing sort brief items"))?;
-        let mut items = Vec::new();
-        while let Some(row) = rows.next().await.map_err(db_err("thing sort brief row"))? {
-            items.push((
-                row.get::<String>(0).unwrap_or_default(),
-                row.get::<String>(1).unwrap_or_default(),
-            ));
-        }
-        drop(rows);
-        for (item, text) in items {
-            let title = clean_thing_title(&text);
-            create_thing(
-                &tx,
-                now,
-                title.as_deref(),
-                ThingActor::Ai,
-                Some(&item),
-                "brief",
-            )
-            .await?;
-            report.brief_things += 1;
-        }
-
+        // Space Brief items are what AI tools leave each other in handoffs,
+        // not the person's work: they make no thing, and a conversation that
+        // touched one is sorted like any other (UX-HOME-6).
         for (session, title) in unsorted {
             let already = query_strings(
                 &tx,
@@ -678,10 +603,7 @@ impl MemoryDB {
             if !already.is_empty() {
                 continue;
             }
-            let brief = brief_things_of(&tx, &session.id).await?;
-            let (targets, rule) = if !brief.is_empty() {
-                (brief, SortRule::Brief)
-            } else if let Some(thing) = branch_thing_of(&tx, &session).await? {
+            let (targets, rule) = if let Some(thing) = branch_thing_of(&tx, &session).await? {
                 (vec![thing], SortRule::Branch)
             } else if let Some(thing) = match title.as_deref() {
                 Some(title) => title_thing_of(&tx, session.space.as_deref(), title).await?,
@@ -777,7 +699,8 @@ impl MemoryDB {
                                 AND NOT EXISTS (SELECT 1 FROM thing_history u
                                                  WHERE u.thing_id = t.id
                                                    AND u.op = 'thing.dream_undo'
-                                                   AND json_extract(u.data, '$.seq') = h.seq))
+                                                   AND json_extract(u.data, '$.seq') = h.seq)),
+                            t.brief_item_id IS NOT NULL
                        FROM things t
                        LEFT JOIN brief_items bi ON bi.id = t.brief_item_id
                        LEFT JOIN spaces sp ON sp.id = bi.space_id
@@ -812,6 +735,10 @@ impl MemoryDB {
                 .get::<Option<i64>>(10)
                 .unwrap_or(None)
                 .is_some_and(|at| at >= last_activity_at);
+            // A thing that started as a Space Brief item is a line an AI tool
+            // wrote in its handoff, not the person's own thinking: it stays on
+            // the Space's Brief and in search, never on home (UX-HOME-6).
+            let from_brief = row.get::<i64>(12).unwrap_or(0) != 0;
             things.push(Row {
                 summary: ThingSummary {
                     id: row.get::<String>(0).unwrap_or_default(),
@@ -820,7 +747,7 @@ impl MemoryDB {
                     status_line: None,
                     spaces: item_space.into_iter().collect(),
                     last_activity_at,
-                    quiet: hidden || now - last_activity_at > THING_QUIET_AFTER_SECS,
+                    quiet: hidden || from_brief || now - last_activity_at > THING_QUIET_AFTER_SECS,
                     dreamed_at: row.get::<Option<i64>>(11).unwrap_or(None),
                 },
                 item_text: row.get::<Option<String>>(4).unwrap_or(None),
@@ -865,39 +792,10 @@ impl MemoryDB {
         }
         drop(rows);
 
-        // Where it stands: the Brief summary as of the newest handoff one of
-        // its conversations made, in a Space this caller may see.
-        let mut rows = conn
-            .query(
-                &format!(
-                    "SELECT ts.thing_id, sp.name, h.summary
-                       FROM thing_sessions ts
-                       JOIN things t ON t.id = ts.thing_id
-                       JOIN brief_history h ON h.session_id = ts.session_id
-                       JOIN spaces sp ON sp.id = h.space_id
-                      WHERE t.merged_into IS NULL AND trim(h.summary) <> ''{only_sql}
-                      ORDER BY h.created_at DESC, h.brief_version DESC"
-                ),
-                libsql::params_from_iter(params.clone()),
-            )
-            .await
-            .map_err(db_err("things status"))?;
-        while let Some(row) = rows.next().await.map_err(db_err("things status row"))? {
-            let Some(&i) = index.get(&row.get::<String>(0).unwrap_or_default()) else {
-                continue;
-            };
-            if things[i].summary.status_line.is_some() {
-                continue;
-            }
-            let space = row.get::<String>(1).unwrap_or_default();
-            if scope.matches(Some(space.as_str())) {
-                things[i].summary.status_line = Some(row.get::<String>(2).unwrap_or_default());
-            }
-        }
-        drop(rows);
-
-        // Else where the whole thing stands, as the grouping model last wrote
-        // it, unless a conversation was read again since.
+        // Where the whole thing stands, as the grouping model last wrote it,
+        // unless a conversation was read again since. A handoff's Brief summary
+        // is not used: it speaks for the whole Space, so it landed on whichever
+        // thing its conversation happened to join (UX-HOME-6).
         let mut rows = conn
             .query(
                 &format!(
