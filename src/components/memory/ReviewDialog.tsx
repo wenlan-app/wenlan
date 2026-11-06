@@ -434,14 +434,14 @@ export function useReviewItemSummary(item: ReviewItem | null): {
 // read as grey behind rendered page text, and the light theme's danger tint
 // almost vanished behind struck-through words.
 const INS_STYLE: React.CSSProperties = {
-  backgroundColor: "rgba(76, 175, 106, 0.26)",
+  backgroundColor: "color-mix(in srgb, var(--mem-signal-leaf) 26%, transparent)",
   textDecoration: "none",
   borderRadius: "var(--mem-r-3)",
   padding: "0 2px",
 };
 
 const DEL_STYLE: React.CSSProperties = {
-  backgroundColor: "rgba(205, 92, 74, 0.24)",
+  backgroundColor: "color-mix(in srgb, var(--mem-signal-clay) 24%, transparent)",
   borderRadius: "var(--mem-r-3)",
   padding: "0 2px",
 };

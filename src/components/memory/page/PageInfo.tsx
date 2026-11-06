@@ -418,7 +418,7 @@ export default function PageInfo({
                           style={{
                             fontFamily: "var(--mem-font-mono)",
                             fontSize: "10px",
-                            color: "var(--mem-accent-blue, #60a5fa)",
+                            color: "var(--mem-accent-blue)",
                           }}
                         >
                           v{mem.version}

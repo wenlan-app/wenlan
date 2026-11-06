@@ -125,7 +125,7 @@
 .fus-warning {
   font-family: var(--mem-font-body);
   font-size: 13px;
-  color: #ef4444;
+  color: var(--mem-signal-red);
   line-height: 1.6;
   margin: 0;
 }

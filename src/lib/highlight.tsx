@@ -19,7 +19,7 @@ export function relevanceLabel(score: number): { text: string; tier: "strong" | 
 export function highlightTerms(
   text: string,
   query: string,
-  markClass = "bg-[rgba(74,222,128,0.2)] text-inherit rounded-sm",
+  markClass = "bg-[color-mix(in_srgb,var(--mem-signal-mint)_20%,transparent)] text-inherit rounded-sm",
 ): ReactNode {
   const terms = query
     .toLowerCase()

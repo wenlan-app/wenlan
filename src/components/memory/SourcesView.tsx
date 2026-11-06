@@ -52,7 +52,7 @@ function statusLabel(status: SyncStatusStr): string | null {
 
 const STATUS_COLORS: Record<string, string> = {
   "Imported once": "var(--mem-text-tertiary)",
-  "Sync error": "#ef4444",
+  "Sync error": "var(--mem-signal-red)",
   Unavailable: "var(--mem-text-tertiary)",
 };
 

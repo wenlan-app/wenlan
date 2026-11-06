@@ -193,7 +193,7 @@ function PhaseDot({ state }: { state: ImportPhaseState }) {
     state === "complete"
       ? "var(--mem-accent-sage)"
       : state === "failed"
-        ? "#ef4444"
+        ? "var(--mem-signal-red)"
         : state === "running"
           ? "var(--mem-accent-indigo)"
           : "var(--mem-text-tertiary)";
@@ -278,7 +278,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
               fontFamily: "var(--mem-font-body)",
               fontSize: "13px",
               fontWeight: entry.state === "running" ? 500 : 400,
-              color: entry.state === "failed" ? "#ef4444" : "var(--mem-text)",
+              color: entry.state === "failed" ? "var(--mem-signal-red)" : "var(--mem-text)",
             }}>
               {t(`importBatch.phases.${phase}`)}
             </span>
@@ -294,7 +294,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
               whiteSpace: "nowrap",
             }}>
               {entry.state === "failed" && (
-                <span style={{ color: "#ef4444" }}>{t("importBatch.states.failed")}</span>
+                <span style={{ color: "var(--mem-signal-red)" }}>{t("importBatch.states.failed")}</span>
               )}
               {hasTotal ? (
                 <span>{t("importBatch.countOf", { done: entry.done, total: entry.total })}</span>
@@ -302,7 +302,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
                 <span>{t("importBatch.states.waiting")}</span>
               )}
               {entry.failed > 0 && (
-                <span style={{ color: "#ef4444" }}>
+                <span style={{ color: "var(--mem-signal-red)" }}>
                   {t("importBatch.failedUnits", { count: entry.failed })}
                 </span>
               )}
@@ -327,7 +327,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
                 <div style={{
                   height: "100%",
                   borderRadius: "var(--mem-r-2)",
-                  backgroundColor: entry.state === "failed" ? "#ef4444" : "var(--mem-accent-indigo)",
+                  backgroundColor: entry.state === "failed" ? "var(--mem-signal-red)" : "var(--mem-accent-indigo)",
                   width: `${fraction * 100}%`,
                   transition: "width 0.3s ease-out",
                 }} />
@@ -391,9 +391,9 @@ export function ImportStatusPill({
         padding: "1px 8px",
         border: "none",
         cursor: "pointer",
-        color: failed ? "#ef4444" : "var(--mem-accent-indigo)",
+        color: failed ? "var(--mem-signal-red)" : "var(--mem-accent-indigo)",
         backgroundColor: failed
-          ? "color-mix(in srgb, #ef4444 12%, transparent)"
+          ? "color-mix(in srgb, var(--mem-signal-red) 12%, transparent)"
           : "var(--mem-indigo-bg)",
         whiteSpace: "nowrap",
       }}

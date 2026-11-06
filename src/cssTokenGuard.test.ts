@@ -16,9 +16,7 @@ const TOKEN_RE = /var\(\s*(--(?:mem|kg)-[a-zA-Z0-9-]+)/g;
 // literal "blue" accent — the hardcoded #60a5fa fallback suggests a new token
 // was intended, not a rename of an existing one). Reported upstream instead
 // of guessed at. New occurrences anywhere else still fail.
-const KNOWN_MISSING_TOKENS = new Set([
-  "src/components/memory/page/PageInfo.tsx\t--mem-accent-blue",
-]);
+const KNOWN_MISSING_TOKENS = new Set<string>([]);
 
 function listTsxFiles(dir: string): string[] {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -118,5 +116,34 @@ describe("corner radius guard", () => {
     for (const [, , size, value] of steps) {
       expect(value.trim()).toBe(`calc(${size}px * var(--mem-radius-scale))`);
     }
+  });
+});
+
+// Custom themes recolor the app through index.css tokens, so a color
+// written as a literal inside a component ignores the theme. Allowed:
+// black scrims and shadows (theme-neutral), third-party logo colors, and
+// files that only use literals as fallbacks or canvas plumbing.
+describe("component color literal guard", () => {
+  const COLOR_LITERAL = /["'`](#[0-9A-Fa-f]{3,8}|rgba?\([^"'`]*\))["'`]/g;
+  const BLACK = /^rgba?\(\s*0\s*,\s*0\s*,\s*0\s*(,\s*[\d.]+\s*)?\)$/;
+  const ALLOWED_FILES = new Set([
+    "src/components/memory/assets/toolMarks.tsx", // third-party logo colors
+    "src/components/memory/MermaidDiagram.tsx", // fallbacks for unset tokens
+    "src/lib/graph/cartography.ts", // builds rgba() from token channels
+    "src/lib/graph/atlas.ts", // canvas default when sigma passes no color
+  ]);
+
+  it("components take colors from index.css tokens", () => {
+    const offenders: string[] = [];
+    const scripts = [...listFiles(SRC_DIR, ".tsx"), ...listFiles(SRC_DIR, ".ts")].filter((file) => !file.endsWith(".d.ts"));
+    for (const file of scripts) {
+      const relativeFile = repoRelativePath(file);
+      if (ALLOWED_FILES.has(relativeFile) || relativeFile.includes("/__tests__/") || relativeFile.includes("/test/")) continue;
+      const text = fs.readFileSync(file, "utf8");
+      for (const match of text.matchAll(COLOR_LITERAL)) {
+        if (!BLACK.test(match[1])) offenders.push(`${relativeFile}\t${match[1]}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

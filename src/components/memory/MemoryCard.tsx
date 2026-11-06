@@ -376,7 +376,7 @@ export default function MemoryCard({
                     style={{
                       backgroundColor: "var(--mem-indigo-bg)",
                       color: "var(--mem-accent-indigo)",
-                      borderColor: "rgba(123,123,232,0.2)",
+                      borderColor: "color-mix(in srgb, var(--mem-signal-indigo) 20%, transparent)",
                     }}
                   >
                     distilled
@@ -438,9 +438,9 @@ export default function MemoryCard({
               <div
                 className="mt-2 rounded-md px-3 py-2 text-xs"
                 style={{
-                  backgroundColor: "rgba(245, 158, 11, 0.1)",
-                  border: "1px solid rgba(245, 158, 11, 0.3)",
-                  color: "rgb(245, 158, 11)",
+                  backgroundColor: "color-mix(in srgb, var(--mem-signal-amber) 10%, transparent)",
+                  border: "1px solid color-mix(in srgb, var(--mem-signal-amber) 30%, transparent)",
+                  color: "var(--mem-signal-amber)",
                 }}
               >
                 <div className="font-medium mb-1">
@@ -454,8 +454,8 @@ export default function MemoryCard({
                     onClick={handleAcceptRevision}
                     className="px-2 py-0.5 rounded text-[10px] font-medium transition-colors"
                     style={{
-                      backgroundColor: "rgba(245, 158, 11, 0.2)",
-                      color: "rgb(245, 158, 11)",
+                      backgroundColor: "color-mix(in srgb, var(--mem-signal-amber) 20%, transparent)",
+                      color: "var(--mem-signal-amber)",
                     }}
                   >
                     Accept
@@ -464,7 +464,7 @@ export default function MemoryCard({
                     onClick={handleDismissRevision}
                     className="px-2 py-0.5 rounded text-[10px] font-medium transition-colors"
                     style={{
-                      backgroundColor: "rgba(161, 161, 170, 0.15)",
+                      backgroundColor: "color-mix(in srgb, var(--mem-signal-zinc) 15%, transparent)",
                       color: "var(--mem-text-tertiary)",
                     }}
                   >

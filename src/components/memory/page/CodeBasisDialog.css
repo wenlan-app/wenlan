@@ -34,12 +34,8 @@
    blue grey on the raised surface, so the added tint there is a plainer
    green. */
 .code-basis-panel {
-  --code-basis-removed-bg: rgba(205, 92, 74, 0.22);
-  --code-basis-added-bg: rgba(118, 184, 110, 0.24);
-}
-html[data-theme="light"] .code-basis-panel {
-  --code-basis-removed-bg: rgba(164, 68, 47, 0.22);
-  --code-basis-added-bg: rgba(111, 143, 118, 0.30);
+  --code-basis-removed-bg: var(--mem-diff-removed-bg);
+  --code-basis-added-bg: var(--mem-diff-added-bg);
 }
 
 /* The box (a pre) keeps the frame and scrolls vertically past 46dvh. The lines

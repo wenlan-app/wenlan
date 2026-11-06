@@ -2710,14 +2710,14 @@ export default function PageDetail({
             style={{
               backgroundColor:
                 redistillNotice.kind === "error"
-                  ? "rgba(239, 68, 68, 0.08)"
+                  ? "color-mix(in srgb, var(--mem-signal-red) 8%, transparent)"
                   : redistillNotice.kind === "warning"
-                    ? "rgba(245, 158, 11, 0.08)"
-                    : "rgba(16, 185, 129, 0.08)",
+                    ? "color-mix(in srgb, var(--mem-signal-amber) 8%, transparent)"
+                    : "color-mix(in srgb, var(--mem-signal-green) 8%, transparent)",
               border: "1px solid var(--mem-border)",
               color:
                 redistillNotice.kind === "error"
-                  ? "#ef4444"
+                  ? "var(--mem-signal-red)"
                   : redistillNotice.kind === "warning"
                     ? "var(--mem-accent-amber)"
                     : "var(--mem-text-secondary)",
@@ -2739,14 +2739,14 @@ export default function PageDetail({
             style={{
               backgroundColor:
                 reviewNotice.kind === "error"
-                  ? "rgba(239, 68, 68, 0.08)"
+                  ? "color-mix(in srgb, var(--mem-signal-red) 8%, transparent)"
                   : reviewNotice.kind === "warning"
-                    ? "rgba(245, 158, 11, 0.08)"
-                    : "rgba(16, 185, 129, 0.08)",
+                    ? "color-mix(in srgb, var(--mem-signal-amber) 8%, transparent)"
+                    : "color-mix(in srgb, var(--mem-signal-green) 8%, transparent)",
               border: "1px solid var(--mem-border)",
               color:
                 reviewNotice.kind === "error"
-                  ? "#ef4444"
+                  ? "var(--mem-signal-red)"
                   : reviewNotice.kind === "warning"
                     ? "var(--mem-accent-amber)"
                     : "var(--mem-text-secondary)",

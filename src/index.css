@@ -145,6 +145,32 @@ body {
 
 /* Shared fonts (theme-independent) */
 :root {
+  /* Signal colors that used to be written as literals inside components
+     (import errors, review diff marks, search highlights, capture toast).
+     Same value in both themes, exactly as before; a custom theme can now
+     override them. Alpha variants are made at the use site with
+     color-mix(in srgb, var(--mem-signal-*) N%, transparent). */
+  --mem-signal-red: #EF4444;
+  --mem-signal-amber: #F59E0B;
+  --mem-signal-yellow: #FBBF24;
+  --mem-signal-green: #10B981;
+  --mem-signal-mint: #4ADE80;
+  --mem-signal-leaf: #4CAF6A;
+  --mem-signal-clay: #CD5C4A;
+  --mem-signal-indigo: #7B7BE8;
+  --mem-signal-violet: #6366F1;
+  --mem-signal-warm: #D4884A;
+  --mem-signal-zinc: #A1A1AA;
+  --mem-signal-purple: #C084FC;
+  --mem-signal-teal: #2DD4BF;
+  --mem-signal-rose: #FB7185;
+  --mem-signal-pink: #F472B6;
+  --mem-accent-blue: #60A5FA;
+  /* The capture toast window is always dark, whatever the app theme. */
+  --mem-toast-bg: #14141C;
+  --mem-toast-border: #2A2A3A;
+  --mem-toast-text: rgba(255, 255, 255, 0.9);
+  --mem-toast-text-muted: rgba(255, 255, 255, 0.4);
   --mem-font-heading: 'Fraunces', Georgia, serif;
   --mem-font-body: 'Instrument Sans', -apple-system, sans-serif;
   --mem-font-mono: 'JetBrains Mono', monospace;
@@ -445,6 +471,9 @@ html[data-theme="dark"] {
   /* Completes the status triplet — warning and danger have borders,
      success never did. */
   --mem-status-success-border: rgba(157, 169, 144, 0.36);
+  /* Removed / added line tints in code diffs (code basis dialog). */
+  --mem-diff-removed-bg: rgba(205, 92, 74, 0.22);
+  --mem-diff-added-bg: rgba(118, 184, 110, 0.24);
   --mem-focus-ring: rgba(169, 174, 242, 0.55);
   /* Elevation: borders carry structure; shadow only for hover-lift
      and overlays. --mem-shadow-toast stays as a back-compat alias. */
@@ -562,6 +591,8 @@ html[data-theme="light"] {
   --mem-accent-indigo-hover: #524CB8;
   --mem-accent-indigo-border: rgba(94, 88, 200, 0.34);
   --mem-status-success-border: rgba(111, 143, 118, 0.28);
+  --mem-diff-removed-bg: rgba(164, 68, 47, 0.22);
+  --mem-diff-added-bg: rgba(111, 143, 118, 0.30);
   --mem-focus-ring: rgba(94, 88, 200, 0.45);
   --mem-shadow-raised: 0 1px 3px rgba(26, 26, 46, 0.08);
   --mem-shadow-overlay:
