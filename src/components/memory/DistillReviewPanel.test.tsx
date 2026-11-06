@@ -481,6 +481,28 @@ describe("DistillReviewPanel review queue", () => {
     expect(within(dialog).getByText("1 of 2")).toBeInTheDocument();
   });
 
+  it.each([false, true])("refreshes after page approval and skips its stale card (refresh fails: %s)", async (refreshFails) => {
+    const samePage = { ...reviewPayload.stale_pages[0], page_id: "page_stale", title: "Approved page" };
+    const otherPage = { ...samePage, page_id: "page_other", title: "Other stale page" };
+    vi.mocked(distillReview).mockResolvedValueOnce({ ...reviewPayload, stale_pages: [samePage, otherPage], stale_truncated: false });
+    if (refreshFails) vi.mocked(distillReview).mockRejectedValue(new Error("refresh offline"));
+    else vi.mocked(distillReview).mockResolvedValue({ ...reviewPayload, stale_pages: [otherPage], stale_truncated: false });
+    vi.mocked(listPendingRevisions).mockResolvedValueOnce([revision({ target_source_id: "page_stale", target_kind: "page", revision_content: "Updated page content" })]).mockResolvedValue([]);
+    vi.mocked(getPage).mockImplementation(async (id: string) => ({ id, title: id === "page_stale" ? "Approved page" : "Other stale page", content: "Previous page content", summary: null, entity_id: null, domain: null, source_memory_ids: [], version: 1, status: "active", created_at: "2026-07-09T00:00:00Z", last_compiled: "2026-07-09T00:00:00Z", last_modified: "2026-07-09T00:00:00Z" }));
+    const { user } = renderPanel();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /Review Approved page/ })).toHaveLength(2));
+    await user.click(screen.getAllByRole("button", { name: /Review Approved page/ })[0]);
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(distillReview).toHaveBeenCalledTimes(2));
+    expect(await within(dialog).findByText("Other stale page")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /close/i }));
+    if (refreshFails) expect(screen.getByRole("button", { name: /Review Approved page/ })).toBeInTheDocument();
+    else expect(screen.queryByRole("button", { name: /Review Approved page/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Review Other stale page/ })).toBeInTheDocument();
+    await waitFor(() => expect(listRecentChanges).toHaveBeenCalledTimes(2));
+  });
+
   it("approves the last revision and shows the caught-up pane when nothing else is queued", async () => {
     vi.mocked(distillReview).mockResolvedValue({
       pages_created: 0,

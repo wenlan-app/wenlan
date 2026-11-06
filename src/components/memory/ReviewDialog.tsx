@@ -906,7 +906,7 @@ export default function ReviewDialog({
       item.kind === "topic" ||
       item.kind === "page_candidate" ||
       item.kind === "stale_page";
-    const next = items[index + 1] ?? (index > 0 ? items[index - 1] : null);
+    let next = items[index + 1] ?? (index > 0 ? items[index - 1] : null);
     const navigationVersion = navigationVersionRef.current;
     const requestId = ++resolveRequestRef.current;
     setResolveError(null);
@@ -914,9 +914,13 @@ export default function ReviewDialog({
     let outdated = false;
     let discardedNotice: "review.revisionOutdated" | "review.revisionBasisRefused" = "review.revisionOutdated";
     try {
-      await onResolve(approve && item.kind === "revision" && revisionDraft
+      const resolution = await onResolve(approve && item.kind === "revision" && revisionDraft
         ? { item: { ...item, content: revisionDraft.expectedContent }, approve, edited_content: revisionDraft.content }
         : approve && classificationDraft ? { item, approve, classification_changes: classificationDraft } : { item, approve });
+      if (resolution && typeof resolution === "object" && "skipStalePageId" in resolution && typeof resolution.skipStalePageId === "string") {
+        const remaining = items.filter(candidate => candidate !== item && !(candidate.kind === "stale_page" && candidate.id === resolution.skipStalePageId));
+        if (next?.kind === "stale_page" && next.id === resolution.skipStalePageId) next = remaining[0] ?? null;
+      }
       if (item.kind === "revision") clearRevisionDraft(item.revisionSourceId);
     } catch (error) {
       if (error instanceof SteepNeedsAiToolError && item.kind === "stale_page") {

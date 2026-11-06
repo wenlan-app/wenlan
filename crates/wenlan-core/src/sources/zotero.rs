@@ -904,11 +904,12 @@ mod tests {
             result.items[0].data.annotation_position.as_ref().unwrap()["pageIndex"],
             0
         );
-        let captured = requests.lock().unwrap();
-        assert!(captured[0].starts_with(
-            "GET /api/users/0/items?limit=100&start=0&itemKey=YXNSB3HI&itemType=annotation "
-        ));
-        drop(captured);
+        {
+            let captured = requests.lock().unwrap();
+            assert!(captured[0].starts_with(
+                "GET /api/users/0/items?limit=100&start=0&itemKey=YXNSB3HI&itemType=annotation "
+            ));
+        }
         for row in [
             annotation.replace("YXNSB3HI", "FOREIGN1"),
             annotation.replace("\"annotation\"", "\"note\""),

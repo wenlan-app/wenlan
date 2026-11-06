@@ -617,6 +617,16 @@ export default function DistillReviewPanel({
     if (item.kind === "stale_page" && approve) {
       setResolvedStaleIds((prev) => new Set(prev).add(item.id));
     }
+    if (item.kind === "revision" && item.targetKind === "page" && approve) {
+      void queryClient.invalidateQueries({ queryKey: ["recent-changes"] });
+      try {
+        await review.mutateAsync();
+      } catch {
+        // Approval already succeeded; the Review refresh has its own error UI.
+      }
+      // Do not immediately advance into a stale snapshot of the approved page.
+      return { skipStalePageId: item.targetSourceId };
+    }
     return result;
   };
 
