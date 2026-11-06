@@ -21,9 +21,10 @@ type Start = (typeof STARTS)[number]["id"];
 
 interface NotesWelcomeProps {
   onComplete: () => void | Promise<void>;
+  onContinueWithoutDaemon?: () => void;
 }
 
-export function NotesWelcome({ onComplete }: NotesWelcomeProps) {
+export function NotesWelcome({ onComplete, onContinueWithoutDaemon }: NotesWelcomeProps) {
   const { t } = useTranslation();
   const titleId = useId();
   const inFlight = useRef(false);
@@ -67,6 +68,11 @@ export function NotesWelcome({ onComplete }: NotesWelcomeProps) {
             <p className="notes-welcome__error" role="alert">
               {t("setup.notesFirst.openFailed")}
             </p>
+          )}
+          {failed && onContinueWithoutDaemon && (
+            <button type="button" className="source-add-option" onClick={onContinueWithoutDaemon}>
+              {t("setup.done.openWenlan")}
+            </button>
           )}
           <div className="notes-welcome__starts">
             {STARTS.map(({ id, icon }) => (

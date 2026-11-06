@@ -293,7 +293,11 @@ fn client_wire(client: &mcp_config::McpClient) -> ClientWire {
 /// errors — a down daemon shows up as `daemon.reachable: false`, and an
 /// unresolvable binary as `mcp_binary.command: null`, not a failed command.
 pub async fn compute(client: &WenlanClient) -> WireState {
-    let health = client.health().await.map(|h| h.version);
+    let health = client
+        .health()
+        .await
+        .map(|h| h.version)
+        .map_err(crate::daemon_start::explain_connection_error);
     let daemon = daemon_wire_for(
         client.base_url().to_string(),
         health,

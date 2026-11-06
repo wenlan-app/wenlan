@@ -28,6 +28,7 @@ use tokio::sync::RwLock;
 
 use crate::state::AppState;
 
+mod failure;
 mod repair_runtime;
 pub use repair_runtime::resume_repair_runtime;
 
@@ -1067,7 +1068,31 @@ pub fn spawn_daemon_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
     })
 }
 
+static LAUNCH_FAILURE: Mutex<failure::LaunchFailure> = Mutex::new(failure::LaunchFailure::new());
+
+pub(crate) fn explain_connection_error(error: String) -> String {
+    LAUNCH_FAILURE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .explain(error)
+}
+
 fn spawn_daemon_sidecar_unlocked(app: &tauri::AppHandle) -> Result<(), String> {
+    let attempt = LAUNCH_FAILURE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .begin();
+    let result = spawn_daemon_attempt(app, attempt);
+    if let Err(message) = &result {
+        LAUNCH_FAILURE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record(attempt, message.clone());
+    }
+    result
+}
+
+fn spawn_daemon_attempt(app: &tauri::AppHandle, attempt: u64) -> Result<(), String> {
     // Every caller holds OWNER_DECISION, the same lock as lease acquisition.
     ensure_update_spawn_allowed()?;
     use tauri_plugin_shell::ShellExt;
@@ -1106,6 +1131,7 @@ fn spawn_daemon_sidecar_unlocked(app: &tauri::AppHandle) -> Result<(), String> {
     let generation = remember_sidecar(child, identity, job_binding);
     tauri::async_runtime::spawn(async move {
         use tauri_plugin_shell::process::CommandEvent;
+        let mut last_stderr = String::new();
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
@@ -1113,9 +1139,19 @@ fn spawn_daemon_sidecar_unlocked(app: &tauri::AppHandle) -> Result<(), String> {
                 }
                 CommandEvent::Stderr(line) => {
                     log::warn!("[daemon] {}", String::from_utf8_lossy(&line));
+                    if !line.is_empty() {
+                        last_stderr = String::from_utf8_lossy(&line).chars().take(2048).collect();
+                    }
                 }
                 CommandEvent::Terminated(status) => {
                     log::warn!("[daemon] exited: {:?}", status);
+                    LAUNCH_FAILURE
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .record(
+                            attempt,
+                            failure::exit_message(status.code, status.signal, &last_stderr),
+                        );
                     forget_sidecar(generation);
                     break;
                 }

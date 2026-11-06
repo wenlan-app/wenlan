@@ -341,6 +341,11 @@ const en = {
     },
     settingUp: {
       title: "Setting up",
+      pausedTitle: "Setup needs another try",
+      pausedBody: "You can open Wenlan now. Your notes will be available once the background service is working again.",
+      openAnyway: "Open Wenlan for now",
+      errorDetails: "View error details",
+      retryConnection: "Retry connection",
       description:
         "Wenlan is connecting the tools you picked. Nothing here blocks you, so you can continue at any time.",
       statusPending: "Waiting",
@@ -3564,6 +3569,11 @@ const zhHans = {
     },
     settingUp: {
       title: "正在设置",
+      pausedTitle: "暂时无法完成设置",
+      pausedBody: "你可以先打开文澜。背景服务恢复后，就能继续使用笔记。",
+      openAnyway: "先打开文澜",
+      errorDetails: "查看错误信息",
+      retryConnection: "重试连接",
       description: "文澜正在接入你选择的工具。这里不会拦住你，你随时可以继续。",
       statusPending: "等待中",
       statusRunning: "正在设置…",
@@ -6730,6 +6740,11 @@ const zhHant = {
     },
     settingUp: {
       title: "正在設定",
+      pausedTitle: "暫時無法完成設定",
+      pausedBody: "你可以先開啟文瀾。背景服務恢復後，就能繼續使用筆記。",
+      openAnyway: "先開啟文瀾",
+      errorDetails: "查看錯誤資訊",
+      retryConnection: "重試連線",
       description: "文瀾正在接入你選擇的工具。這裡不會擋住你，你隨時可以繼續。",
       statusPending: "等待中",
       statusRunning: "正在設定…",

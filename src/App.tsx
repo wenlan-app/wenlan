@@ -93,15 +93,25 @@ export default function App() {
     refetchInterval: (query) => query.state.data === "pending" ? 100 : false,
     refetchIntervalInBackground: true,
   });
-  const openedEarly = localSetupDone === true;
+  // Leaving a broken setup is a local navigation choice, not a successful
+  // setup write. Keep the service warning and retry health in the workspace.
+  const [setupDeferred, setSetupDeferred] = useState(false);
+  const [offlineEntry, setOfflineEntry] = useState(false);
+  const continueWithoutDaemon = () => {
+    setSetupDeferred(true);
+    setOfflineEntry(true);
+  };
+  const openedEarly = localSetupDone === true || setupDeferred;
   const startupPreflightFailed = localSetupDone !== undefined && startupPreflightStatus === "failed";
-  const daemonStartupPhase: DaemonStartupPhase = !openedEarly
-    ? "ready"
-    : wizardPending
-      ? "starting"
-      : wizardError
-        ? "failed"
-        : "ready";
+  const daemonStartupPhase: DaemonStartupPhase = offlineEntry
+    ? "failed"
+    : !openedEarly
+      ? "ready"
+      : wizardPending
+        ? "starting"
+        : wizardError
+          ? "failed"
+          : "ready";
   // A layout effect, so daemon calls are held before any child's passive
   // effect (where queries start fetching) can send one.
   const startupFailedOnce = useRef(false);
@@ -130,7 +140,10 @@ export default function App() {
       timer = setTimeout(() => {
         withBootAttemptTimeout(shouldShowWizard()).then(
           (value) => {
-            if (!stopped) queryClient.setQueryData(["shouldShowWizard"], value);
+            if (!stopped) {
+              queryClient.setQueryData(["shouldShowWizard"], value);
+              setOfflineEntry(false);
+            }
           },
           () => {
             if (!stopped) recheck();
@@ -375,7 +388,7 @@ export default function App() {
     // One local file read, well under a frame or two. The background is what
     // index.html already paints, so this is the same empty window, not a flash.
     body = <div className="w-screen h-screen bg-[var(--bg-primary)]" />;
-  } else if (startupPreflightFailed) {
+  } else if (startupPreflightFailed && !setupDeferred) {
     // A failed server-plist preflight is terminal for this app launch: the
     // service start command intentionally refuses to mutate the plist from a
     // click. Show the explicit quit/reopen instruction now, without waiting
@@ -383,6 +396,7 @@ export default function App() {
     body = (
       <SetupWizard
         onComplete={handleWizardComplete}
+        onContinueWithoutDaemon={continueWithoutDaemon}
         initialStep="setting-up"
         daemonGateErrored
         startupPreflightFailed
@@ -407,7 +421,7 @@ export default function App() {
         )}
       </div>
     );
-  } else if (showWizard || (wizardError && !openedEarly)) {
+  } else if (!setupDeferred && (showWizard || (wizardError && !openedEarly))) {
     // ponytail: fail CLOSED. If the daemon is still unreachable after retries,
     // show the wizard rather than silently falling through to Home — an
     // existing user whose daemon is dead for 15s+ sees the wizard too, but its
@@ -417,7 +431,11 @@ export default function App() {
     // answer". The wizard says which of the two it is instead of opening on
     // welcome copy that reads as a wiped install.
     body = (
-      <SetupWizard onComplete={handleWizardComplete} daemonGateErrored={!!wizardError} />
+      <SetupWizard
+        onComplete={handleWizardComplete}
+        onContinueWithoutDaemon={continueWithoutDaemon}
+        daemonGateErrored={!!wizardError}
+      />
     );
   } else if (migration) {
     const pct = migration.total > 0 ? Math.round((migration.current / migration.total) * 100) : 0;
