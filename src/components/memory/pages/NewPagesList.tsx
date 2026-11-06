@@ -7,6 +7,9 @@ import { askablePages } from "../../onboarding/useGettingStartedState";
 
 /** How many of the newest pages the Wiki home lists. */
 export const NEW_PAGES_LISTED = 5;
+/** How many pages Home's "Recently edited" holds: two full rows of four
+ *  cards; a narrower window shows fewer whole rows, never a cut card. */
+export const HOME_RECENT_LISTED = 8;
 
 /** The newest pages worth opening: written from the user's material or by
  *  the user, newest first. Copies of brought-in files are not among them. */
@@ -52,7 +55,7 @@ export interface RecentPage {
  * small edits to its older pages don't bring them back up. A page counts as
  * yours once you wrote or edited it.
  */
-export function recentPages(pages: readonly Page[], limit = NEW_PAGES_LISTED): RecentPage[] {
+export function recentPages(pages: readonly Page[], limit = HOME_RECENT_LISTED): RecentPage[] {
   return askablePages(pages)
     .map((page) => {
       const yours = page.user_edited === true || page.creation_kind === "authored";

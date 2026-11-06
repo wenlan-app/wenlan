@@ -79,6 +79,11 @@
 .note-tab-home:hover { background: var(--mem-hover); color: var(--mem-text); }
 .note-tab-home:focus-visible { outline: 2px solid var(--mem-text-secondary); outline-offset: 1px; }
 
+/* One Home at a time: while the sidebar shows its own Home, the strip has
+   none; with the sidebar hidden, the strip's Home is the way back. */
+.memory-shell[data-sidebar-layout="labels"] .note-tab-home,
+.memory-shell[data-sidebar-layout="icons"] .note-tab-home { display: none; }
+
 /* In a very narrow group the open note outranks the shortcut; the sidebar's
    Wiki entry still leads home. */
 @container note-tabs (max-width: 160px) {

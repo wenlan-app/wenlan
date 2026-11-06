@@ -46,6 +46,30 @@ export function whereItStands(t: TFunction, thing: ThingSummary, detail?: ThingD
   return tool ? t("pages.overview.workingOnTalkedIn", { tool }) : null;
 }
 
+/** Most still-open points the large card writes out. */
+export const OPEN_POINTS_SHOWN = 2;
+
+/**
+ * What the large card adds under where a thing stands (UX-HOME-1): what last
+ * night steeped from it, settled and still open, and the open points written
+ * out, newest first. The open points are what to pick up in the next chat.
+ */
+export function nightOf(detail?: ThingDetail): { readonly steeped: { readonly decided: number; readonly open: number; readonly overnight: boolean } | null; readonly openPoints: readonly string[] } | null {
+  if (!detail) return null;
+  const openIds = new Set(detail.open_points ?? []);
+  const openPoints = (detail.memories ?? [])
+    .filter((memory) => openIds.has(memory.source_id) && memory.title.trim())
+    .sort((a, b) => b.created_at - a.created_at)
+    .slice(0, OPEN_POINTS_SHOWN)
+    .map((memory) => memory.title);
+  const dream = detail.dream && steepedToday(detail.dream.at) ? detail.dream : null;
+  if (!dream && openPoints.length === 0) return null;
+  return {
+    steeped: dream ? { decided: dream.decided, open: dream.open, overnight: new Date(dream.at * 1000).getHours() < NIGHT_ENDS } : null,
+    openPoints,
+  };
+}
+
 /**
  * Home's first section: what you're working on (docs/ux/spec.md, UX-HOME-1).
  * Each thing gets one line saying where it stands, and opening it goes to
@@ -183,6 +207,7 @@ export function WorkingOn({
         {thingItems.map((thing, index) => {
           const detail = details[index]?.data;
           const line = whereItStands(t, thing, detail);
+          const night = index === 0 ? nightOf(detail) : null;
           // A tool with a mark shows the mark; others keep their name.
           const slugs = [...new Set((detail?.sessions ?? []).map((session) => session.tool).filter((tool): tool is string => !!tool))];
           const marked = slugs.filter(hasToolMark);
@@ -193,6 +218,19 @@ export function WorkingOn({
               <button type="button" className="wiki-working-on-card" data-glow={glowing.includes(thing.id) ? "true" : undefined} onClick={() => onOpenThing?.(thing.id)}>
                 <span className="wiki-working-on-title" title={thing.title ?? undefined}>{thing.title ?? t("thing.untitled")}</span>
                 <span className="wiki-working-on-text" title={line ?? undefined}>{line ?? ""}</span>
+                {index === 0 && night ? (
+                  <span className="wiki-working-on-night" data-testid="wiki-working-on-night">
+                    <span className="wiki-working-on-night-line">
+                      {night.steeped ? <SteepMoon /> : null}
+                      {!night.steeped
+                        ? t("pages.overview.workingOnStillOpen")
+                        : t(`pages.overview.workingOnNight${night.steeped.open > 0 ? "" : "Settled"}${night.steeped.overnight ? "" : "Today"}`, night.steeped)}
+                    </span>
+                    {night.openPoints.map((point) => (
+                      <span key={point} className="wiki-working-on-open-point">{point}</span>
+                    ))}
+                  </span>
+                ) : null}
                 <span className="wiki-working-on-foot">
                   <span className="wiki-working-on-meta">
                     {marked.length > 0 ? (

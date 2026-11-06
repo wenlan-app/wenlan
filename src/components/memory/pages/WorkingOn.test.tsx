@@ -240,6 +240,56 @@ describe("WorkingOn", () => {
     expect(title).toHaveAttribute("title", "Live self-testing of the new map");
   });
 
+  it("UX-HOME-1: the large card says what last night settled and writes out what is still open; the others don't", async () => {
+    const tonight = new Date();
+    tonight.setHours(3, 0, 0, 0);
+    const at = Math.floor(tonight.getTime() / 1000);
+    vi.mocked(listThings).mockResolvedValue([
+      thing({ id: "thg_1", title: "Home layout", last_activity_at: now - 60 }),
+      thing({ id: "thg_2", title: "Launch post", last_activity_at: now - 7200 }),
+    ]);
+    const point = (source_id: string, title: string, ago: number) => ({ source_id, title, created_at: now - ago });
+    vi.mocked(getThing).mockImplementation(async (id) => ({
+      ...thing({ id }),
+      sessions: [],
+      pages: [],
+      memories: [
+        point("mem_a", "Home shows only your own chats", 900),
+        point("mem_b", "Should the Brief merge into things?", 800),
+        point("mem_c", "Which screenshot goes first?", 700),
+        point("mem_d", "Is the old list kept?", 600),
+      ],
+      dream: { at, decided: 1, open: 3, fresh: [] },
+      open_points: ["mem_b", "mem_c", "mem_d"],
+    }));
+    renderWorkingOn();
+    const night = await screen.findByTestId("wiki-working-on-night");
+    expect(document.querySelector('[data-thing-id="thg_1"]')).toContainElement(night);
+    expect(night).toHaveTextContent("Steeped overnight: 1 settled, 3 still open");
+    // Newest open points first, two of them, each whole.
+    expect([...night.querySelectorAll(".wiki-working-on-open-point")].map((item) => item.textContent)).toEqual([
+      "Is the old list kept?",
+      "Which screenshot goes first?",
+    ]);
+    expect(screen.getAllByTestId("wiki-working-on-night")).toHaveLength(1);
+  });
+
+  it("UX-HOME-1: with no night today, the large card still writes out the open points", async () => {
+    vi.mocked(listThings).mockResolvedValue([thing()]);
+    vi.mocked(getThing).mockImplementation(async (id) => ({
+      ...thing({ id }),
+      sessions: [],
+      pages: [],
+      memories: [{ source_id: "mem_b", title: "Should the Brief merge into things?", created_at: now - 900 }],
+      dream: { at: now - 86_400 * 3, decided: 2, open: 1, fresh: [] },
+      open_points: ["mem_b"],
+    }));
+    renderWorkingOn();
+    const night = await screen.findByTestId("wiki-working-on-night");
+    expect(night).toHaveTextContent("Still open:Should the Brief merge into things?");
+    expect(night.querySelector(".steep-moon")).toBeNull();
+  });
+
   it("UX-CHAT-5: says nothing about steeping that was not today", async () => {
     vi.mocked(listThings).mockResolvedValue([thing({ dreamed_at: now - 86_400 * 3 })]);
     renderWorkingOn();

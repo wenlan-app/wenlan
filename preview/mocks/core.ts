@@ -81,11 +81,34 @@ const HOME_NIGHT = (() => {
   night.setHours(3, 0, 0, 0);
   return Math.floor(night.getTime() / 1000);
 })();
+/** Two full rows of recently edited pages for `?mode=home`. */
+const homePage = (id: string, title: string, body: string, day: number) => ({
+  ...GRAPH_PAGES[1],
+  id,
+  title,
+  content: `# ${title}\n\n${body}`,
+  entity_id: null,
+  created_at: `2026-07-${day}T09:00:00+00:00`,
+  last_compiled: `2026-07-${day}T09:00:00+00:00`,
+  last_modified: `2026-07-${day}T09:00:00+00:00`,
+});
+const HOME_PAGES = [
+  ...GRAPH_PAGES,
+  homePage("page-home-ai-memory", "AI memory systems compared: Mem0, Letta and Wenlan", "How each one stores, finds and forgets what an AI tool learned.", 20),
+  homePage("page-home-mcp", "Wenlan MCP setup", "Remote MCP needs its own settings: field defaults, the origin URL, and what happens while the daemon is off.", 19),
+  homePage("page-home-release-notes", "0.21 release notes", "Home shows only what you are working on; overnight steeping; Codex handoff.", 18),
+  homePage("page-home-design-notes", "Home design notes", "One Home button; whole cards, nothing scrolls sideways.", 17),
+  homePage("page-home-positioning", "Wenlan positioning", "Who it is for and the one sentence that says it.", 16),
+];
+
 const HOME_THINGS = [
-  { id: "thg_home_1", title: "Home page: what you're working on and its layout", title_by: "ai" as const, status_line: "Cards now show only your own work; checking the layout before it ships.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 600, quiet: false },
+  { id: "thg_home_1", title: "Home page: what you're working on and its layout", title_by: "ai" as const, status_line: "Cards now show only your own work; checking the layout before it ships.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 600, quiet: false, dreamed_at: HOME_NIGHT },
   { id: "thg_home_2", title: "Live self-testing of the new map", title_by: "ai" as const, status_line: "Night points now join their topics; next is replaying a night.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 3_600, quiet: false, dreamed_at: HOME_NIGHT },
   { id: "thg_home_3", title: "Local model list", title_by: "ai" as const, status_line: "Picks a model by memory size; Ollama and LM Studio are listed.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 86_400, quiet: false },
   { id: "thg_home_4", title: "Launch post", title_by: "ai" as const, status_line: "Draft is written; waiting on the final screenshots.", spaces: ["wenlan-site"], last_activity_at: HOME_NOW - 2 * 86_400, quiet: false },
+  { id: "thg_home_5", title: "0.21 release", title_by: "ai" as const, status_line: "Two fixes left before tagging; waiting for CI to finish.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 3 * 86_400, quiet: false },
+  { id: "thg_home_6", title: "Reading group notes", title_by: "ai" as const, status_line: "Chapter four summarized; next week's question is still open.", spaces: ["reading"], last_activity_at: HOME_NOW - 4 * 86_400, quiet: false },
+  { id: "thg_home_7", title: "New Mac setup", title_by: "ai" as const, status_line: "Apps moved over; backups still need a schedule.", spaces: [], last_activity_at: HOME_NOW - 5 * 86_400, quiet: false },
 ];
 
 let graphObsSeq = 0;
@@ -147,10 +170,25 @@ export async function invoke(
   // one thing was steeped overnight under a long name.
   if (new URLSearchParams(window.location.search).get("mode") === "home") {
     if (cmd === "list_things") return HOME_THINGS;
-    if (cmd === "list_pages_explicit_browse") return args?.status === "active" && !args?.offset ? GRAPH_PAGES : [];
+    if (cmd === "list_pages_explicit_browse") return args?.status === "active" && !args?.offset ? HOME_PAGES : [];
     if (cmd === "get_thing") {
       const thing = HOME_THINGS.find((item) => item.id === args?.id) ?? HOME_THINGS[0];
-      return { ...thing, sessions: [{ id: `ses_${thing.id}`, tool: "claude-code", title: thing.title, last_write_at: thing.last_activity_at }], pages: [], memories: [] };
+      const base = { ...thing, sessions: [{ id: `ses_${thing.id}`, tool: "claude-code", title: thing.title, last_write_at: thing.last_activity_at }], pages: [], memories: [] };
+      // The first thing was steeped last night: three points settled, one
+      // still open, which the large card writes out.
+      if (thing.id !== "thg_home_1") return base;
+      const point = (id: string, title: string, ago: number) => ({ source_id: id, title, memory_type: "decision", space: "wenlan", created_at: HOME_NOW - ago });
+      return {
+        ...base,
+        memories: [
+          point("mem_home_a", "Home shows only things from your own chats", 30_000),
+          point("mem_home_b", "One Home button, in the sidebar", 29_000),
+          point("mem_home_c", "Cards are whole; nothing scrolls sideways", 28_000),
+          point("mem_home_d", "Should the Space Brief and handoff merge into things?", 27_000),
+        ],
+        dream: { at: HOME_NIGHT, decided: 3, open: 1, fresh: [] },
+        open_points: ["mem_home_d"],
+      };
     }
   }
   // `?mode=atlas&things=1`: the big map with things being worked on, from
