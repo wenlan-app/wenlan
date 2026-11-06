@@ -10,7 +10,7 @@ It does keep a local record of its own use, in two tables of the same database t
 
 Two of those descriptions carry your own words. A search stores the query you typed. Forgetting a memory stores its title, deliberately, because the memory itself is gone by then and the title could not be looked up later. The other table records which memory was read and when; results that are pages rather than memories are left out of both.
 
-Some of this is cleared as you go: deleting a memory removes its read records, and `wenlan cleanup-legacy-captures` clears both tables. Nothing expires rows with age, so otherwise this history grows for the life of the install. Deleting the database, as described under "Data deletion" below, deletes it too.
+Some of this is cleared as you go: deleting a memory removes its read records, and `scripts/cleanup-legacy-captures.sh` clears the legacy hotkey-capture rows from both tables. Nothing expires rows with age, so otherwise this history grows for the life of the install. Deleting the database, as described under "Data deletion" below, deletes it too.
 
 One thing is automatic, and you switch it on yourself. When you connect a folder as a source, Wenlan watches it and reads changed files without asking again for each one -- it syncs that folder once at startup and then whenever a file in it changes. Choosing the folder is the consent; each individual file is not a separate prompt.
 
