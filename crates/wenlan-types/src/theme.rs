@@ -3,7 +3,7 @@
 //!
 //! A theme lives in `<data root>/themes/<id>/theme.json`, next to any image
 //! it uses. The daemon checks it and turns it into CSS custom properties; the
-//! app only applies what the daemon returns, so every interface (app, CLI,
+//! app only applies what the daemon returns, so every interface (app and
 //! MCP) sees the same verdict.
 
 use serde::{Deserialize, Serialize};
