@@ -79,6 +79,9 @@ claim hooks are active without checking the current worktree.
 - Preserve cross-platform behavior on macOS arm64, Linux x86_64/aarch64, and Windows
   x86_64. Read `docs/cross-platform.md` before changing platform conditionals or release
   matrices.
+- For platform bugs, check the equivalent Windows, macOS, and Linux paths in
+  the same change. Add regression coverage for each applicable platform; never
+  treat one platform's pass as evidence for another, and report untested paths.
 
 ## Git and release
 
