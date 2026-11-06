@@ -2155,7 +2155,7 @@ describe("SetupWizard", () => {
     });
     expect(screen.getByText("connection refused")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("task-retry-daemon"));
+    fireEvent.click(screen.getByTestId("task-start-daemon"));
 
     await waitFor(() => {
       expect(screen.getByTestId("task-status-daemon")).toHaveTextContent("Running");
@@ -2172,7 +2172,7 @@ describe("SetupWizard", () => {
     const onContinueWithoutDaemon = vi.fn();
     const onComplete = vi.fn().mockRejectedValue(new Error("offline"));
     renderWizard({ initialStep: "setting-up", onContinueWithoutDaemon, onComplete });
-    fireEvent.click(await screen.findByRole("button", { name: "Open Wenlan" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Wenlan for now" }));
     expect(onContinueWithoutDaemon).toHaveBeenCalledTimes(1);
     expect(onComplete).not.toHaveBeenCalled();
     expect(storeMemory).not.toHaveBeenCalled();
@@ -2513,8 +2513,7 @@ describe("SetupWizard", () => {
       // Spawned, first poll missed: still starting, no fresh failure shown.
       await act(async () => { await vi.advanceTimersByTimeAsync(100); });
       expect(screen.getByTestId("task-start-daemon")).toBeDisabled();
-      expect(screen.getByTestId("task-retry-daemon")).toBeDisabled();
-      expect(screen.getByTestId("task-status-daemon")).toHaveTextContent("Couldn't set up");
+      expect(screen.getByTestId("task-status-daemon")).toHaveTextContent("Starting…");
       // Two more misses, then the daemon answers and the row re-runs itself.
       await act(async () => { await vi.advanceTimersByTimeAsync(SERVICE_START_POLL_MS * 3 + 100); });
     } finally {
@@ -2530,7 +2529,7 @@ describe("SetupWizard", () => {
 
   // Two spawns of the same service, and a re-probe racing one of them, can
   // only produce a result nobody can read.
-  it("spawns once however many times the button is pressed, and holds Retry back", async () => {
+  it("spawns once however many times Retry connection is pressed", async () => {
     (getWireState as ReturnType<typeof vi.fn>).mockResolvedValue({
       daemon: { base_url: "http://127.0.0.1:7878", reachable: false, version: null, error: "connection refused" },
       mcp_binary: { command: "wenlan-mcp", args: [], candidates: [] },
@@ -2553,7 +2552,7 @@ describe("SetupWizard", () => {
 
     expect(startDaemonSidecar).toHaveBeenCalledTimes(1);
     await waitFor(() => {
-      expect(screen.getByTestId("task-retry-daemon")).toBeDisabled();
+      expect(screen.getByTestId("task-start-daemon")).toBeDisabled();
     });
 
     await act(async () => { release!(); });
@@ -2677,7 +2676,7 @@ describe("SetupWizard", () => {
     expect(screen.getByRole("button", { name: "Check connection" })).toBeInTheDocument();
   });
 
-  it("carries the connection problem onto the daemon row while it is still down", async () => {
+  it("explains failed setup once and keeps technical details collapsed", async () => {
     (getWireState as ReturnType<typeof vi.fn>).mockResolvedValue({
       daemon: { base_url: "http://127.0.0.1:7878", reachable: false, version: null, error: "connection refused" },
       mcp_binary: { command: "wenlan-mcp", args: [], candidates: [] },
@@ -2688,7 +2687,12 @@ describe("SetupWizard", () => {
     await waitFor(() => {
       expect(screen.getByTestId("task-status-daemon")).toHaveTextContent("Couldn't set up");
     });
-    expect(screen.getByTestId("daemon-gate-problem")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Setup needs another try" })).toBeInTheDocument();
+    expect(screen.queryByTestId("daemon-gate-problem")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Checking that Wenlan can save a memory/)).not.toBeInTheDocument();
+    const details = screen.getByText("connection refused").closest("details");
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.getByText("View error details")).toBeInTheDocument();
   });
 
   it("drops the gate problem once the daemon row has answered", async () => {

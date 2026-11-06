@@ -142,13 +142,16 @@ function StepIndicator({ currentStep }: { currentStep: WizardStep }) {
 // Structural fix for defect 5 ("actions clipped off-screen"): a fixed-height
 // (100vh) flex column with a scrollable `main` and a 64px action bar that
 // never scrolls out of view — every step's Back/Skip/Continue is visible by
-// construction, regardless of content height. See design-spec.md §4.0.
+// construction, regardless of content height. Failed setup groups its actions
+// with the explanation; its content still shrinks and scrolls before the controls.
+// See design-spec.md §4.0.
 
 interface StepShellAction {
   label: string;
   onClick: () => void;
   disabled?: boolean;
   loading?: boolean;
+  testId?: string;
 }
 
 function StepShell({
@@ -156,6 +159,7 @@ function StepShell({
   activeStep,
   leftActions,
   primaryAction,
+  recoveryLayout = false,
   alert,
   children,
 }: {
@@ -163,6 +167,7 @@ function StepShell({
   activeStep: WizardStep;
   leftActions?: StepShellAction[];
   primaryAction?: StepShellAction;
+  recoveryLayout?: boolean;
   // Shown just above the action bar, outside the scroll area, so a failed
   // primary action is explained next to the button whatever the scroll.
   alert?: string | null;
@@ -172,16 +177,16 @@ function StepShell({
   const ScrollElement = embedded ? "div" : "main";
   return (
     <div
-      className="flex flex-col"
+      className={`flex flex-col${recoveryLayout ? " justify-center" : ""}`}
       style={{ height: embedded ? "100%" : "100vh", minHeight: 0, overflow: "hidden", backgroundColor: "var(--mem-bg)" }}
     >
       {!embedded && <div data-tauri-drag-region style={{ height: dragStripHeight(), flexShrink: 0 }} />}
 
       <ScrollElement
         data-testid="wizard-scroll-main"
-        className="flex-1 min-h-0 overflow-y-auto"
+        className={`${recoveryLayout ? "" : "flex-1 "}min-h-0 overflow-y-auto`}
       >
-        <div className="max-w-xl mx-auto" style={{ padding: "0 24px 32px" }}>
+        <div className="max-w-xl mx-auto" style={{ padding: recoveryLayout ? "0 24px 16px" : "0 24px 32px" }}>
           {children}
         </div>
       </ScrollElement>
@@ -209,41 +214,45 @@ function StepShell({
         className="flex items-center shrink-0"
         style={{
           height: "64px",
-          padding: "0 24px",
-          borderTop: "1px solid var(--mem-border)",
+          padding: recoveryLayout ? 0 : "0 24px",
+          borderTop: recoveryLayout ? "none" : "1px solid var(--mem-border)",
           backgroundColor: "var(--mem-bg)",
         }}
       >
-        <div className="flex items-center gap-2" style={{ minWidth: "60px" }}>
-          {(leftActions ?? []).map((action) => (
-            <Button
-              key={action.label}
-              variant="ghost"
-              size="md"
-              onClick={action.onClick}
-              disabled={action.disabled}
-            >
-              {action.label}
-            </Button>
-          ))}
-        </div>
-        <div className="flex-1 flex items-center justify-center">
-          {!hideDots && <StepIndicator currentStep={activeStep} />}
-        </div>
-        <div
-          style={{ minWidth: "60px", display: "flex", justifyContent: "flex-end" }}
-        >
-          {primaryAction && (
-            <Button
-              variant="primary"
-              size="md"
-              onClick={primaryAction.onClick}
-              disabled={primaryAction.disabled}
-              loading={primaryAction.loading}
-            >
-              {primaryAction.label}
-            </Button>
-          )}
+        <div className={`flex items-center w-full${recoveryLayout ? " max-w-xl mx-auto px-6" : ""}`}>
+          <div className="flex items-center gap-2" style={{ minWidth: "60px" }}>
+            {(leftActions ?? []).map((action) => (
+              <Button
+                key={action.label}
+                variant="ghost"
+                size="md"
+                onClick={action.onClick}
+                disabled={action.disabled}
+                loading={action.loading}
+                data-testid={action.testId}
+              >
+                {action.label}
+              </Button>
+            ))}
+          </div>
+          <div className="flex-1 flex items-center justify-center">
+            {!hideDots && <StepIndicator currentStep={activeStep} />}
+          </div>
+          <div
+            style={{ minWidth: "60px", display: "flex", justifyContent: "flex-end" }}
+          >
+            {primaryAction && (
+              <Button
+                variant="primary"
+                size="md"
+                onClick={primaryAction.onClick}
+                disabled={primaryAction.disabled}
+                loading={primaryAction.loading}
+              >
+                {primaryAction.label}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1359,7 +1368,7 @@ function SettingUpStep({
     [pendingModelId, pendingImportPick, queryClient, t],
   );
 
-  // Retry only re-probes; it cannot raise a service that is not running. The
+  // Retry starts the service if needed, then proves it can answer. The
   // command that actually can has existed since Diagnostics shipped
   // (start_daemon_sidecar, guarded app-side against a double spawn) and was
   // reachable only from a Settings pane the fail-closed wizard hides.
@@ -1687,6 +1696,7 @@ function SettingUpStep({
   };
 
   const statusTextOf = (row: TaskRow): string => {
+    if (row.kind === "daemon" && startingDaemon) return t("setup.settingUp.startingService");
     // Read before the gate. `displayedStatusOf` withholds a terminal state
     // until every row above it is terminal, so a stalled model row under a
     // still-running row reads back as "running" and would say "Downloading"
@@ -1732,17 +1742,23 @@ function SettingUpStep({
 
   const anyFailed = rows.some((row) => statusOf(row) === "failed");
   const anyRunning = rows.some((row) => statusOf(row) === "running");
+  const daemonFailed = rows.some((row) => row.kind === "daemon" && statusOf(row) === "failed");
+  const daemonRow = rows.find((row) => row.kind === "daemon");
+  const hasToolRows = rows.some((row) => row.kind === "plugin" || row.kind === "config");
 
   return (
     <StepShell
       hideDots={hideDots}
       activeStep="setting-up"
-      leftActions={[{ label: t("setup.back"), onClick: onBack }]}
-      primaryAction={onContinueWithoutDaemon && rows.some(row => row.kind === "daemon" && statusOf(row) === "failed")
-        ? { label: t("setup.done.openWenlan"), onClick: onContinueWithoutDaemon }
+      recoveryLayout={daemonFailed}
+      leftActions={daemonFailed && daemonRow
+        ? [{ label: t("setup.settingUp.retryConnection"), onClick: () => startDaemon(daemonRow), disabled: startingDaemon, loading: startingDaemon, testId: "task-start-daemon" }]
+        : [{ label: t("setup.back"), onClick: onBack }]}
+      primaryAction={onContinueWithoutDaemon && daemonFailed
+        ? { label: t("setup.settingUp.openAnyway"), onClick: onContinueWithoutDaemon }
         : { label: t("setup.continue"), onClick: onNext }}
     >
-    <div className="flex flex-col" style={{ gap: "24px", paddingTop: "24px" }}>
+    <div className="flex flex-col" style={{ gap: daemonFailed ? "32px" : "24px", paddingTop: "24px" }}>
       <div>
         <h1
           style={{
@@ -1752,18 +1768,18 @@ function SettingUpStep({
             color: "var(--mem-text)",
           }}
         >
-          {t("setup.settingUp.title")}
+          {t(daemonFailed ? "setup.settingUp.pausedTitle" : "setup.settingUp.title")}
         </h1>
         <p
           style={{
             fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-base)",
             color: "var(--mem-text-secondary)",
-            marginTop: "4px",
-            lineHeight: "1.5",
+            marginTop: daemonFailed ? "12px" : "4px",
+            lineHeight: "1.7",
           }}
         >
-          {t("setup.settingUp.description")}
+          {t(daemonFailed ? "setup.settingUp.pausedBody" : "setup.settingUp.description")}
         </p>
       </div>
 
@@ -1872,7 +1888,7 @@ function SettingUpStep({
                 className="min-w-0 flex-1"
                 style={{ paddingBottom: isLast ? 0 : "var(--mem-space-5)" }}
               >
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
                     <p
                       style={{
@@ -1889,7 +1905,7 @@ function SettingUpStep({
                         here, above the row that is about to try again, rather
                         than letting the user read a generic "Setting up". Once
                         the row has answered the problem is over, so drop it. */}
-                    {row.kind === "daemon" && daemonGateErrored && !isDone && (
+                    {row.kind === "daemon" && daemonGateErrored && !isDone && !canRetry && (
                       <p
                         data-testid="daemon-gate-problem"
                         style={{
@@ -1905,7 +1921,7 @@ function SettingUpStep({
                     )}
                     {/* Prose, not data — these are sentences. Mono is reserved
                         for the machine-state column on the right. */}
-                    <p
+                    {!(row.kind === "daemon" && canRetry) && <p
                       id={row.kind === "model" ? modelProgressDescId(row.id) : undefined}
                       style={{
                         fontFamily: "var(--mem-font-body)",
@@ -1916,7 +1932,7 @@ function SettingUpStep({
                       }}
                     >
                       {subOf(row)}
-                    </p>
+                    </p>}
                     {/* Only once we have a real numerator AND an estimated
                         total (both gated above) — never a bar with nothing
                         behind it. Bytes-unavailable falls back to exactly
@@ -1972,27 +1988,10 @@ function SettingUpStep({
                     >
                       {statusTextOf(row)}
                     </span>
-                    {canRetry && row.kind === "daemon" && (
+                    {canRetry && row.kind !== "daemon" && (
                       <Button
                         variant="ghost"
                         size="sm"
-                        disabled={startingDaemon}
-                        onClick={() => startDaemon(row)}
-                        data-testid="task-start-daemon"
-                      >
-                        {startingDaemon
-                          ? t("setup.settingUp.startingService")
-                          : t("setup.settingUp.startService")}
-                      </Button>
-                    )}
-                    {canRetry && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        // Two probes of the same row at once, one of them
-                        // racing a spawn, can only produce a result nobody
-                        // can read.
-                        disabled={startingDaemon && row.kind === "daemon"}
                         onClick={() => runRow(row)}
                         data-testid={`task-retry-${row.id}`}
                       >
@@ -2014,23 +2013,32 @@ function SettingUpStep({
                       color: "var(--mem-status-danger-text)",
                     }}
                   >
-                    <p>
+                    {row.kind !== "daemon" && <p>
                       {t(error.headingKey ?? setupErrorHeadingKey(error.kind))}
-                    </p>
+                    </p>}
                     {/* The raw text is the only thing a bug report can use, so
                         it is never dropped — only demoted below a sentence
                         that says what class of thing went wrong. */}
                     {error.detail && (
+                      <details style={{ color: "var(--mem-text-secondary)", marginTop: "8px" }}>
+                        <summary style={{ cursor: "pointer", width: "fit-content", padding: "4px 0" }}>
+                          {t("setup.settingUp.errorDetails")}
+                        </summary>
+                        {row.kind === "daemon" && <p style={{ marginTop: "8px" }}>
+                          {t(error.headingKey ?? setupErrorHeadingKey(error.kind))}
+                        </p>}
                       <p
                         data-testid={`task-error-detail-${row.id}`}
                         style={{
-                          color: "var(--mem-text-tertiary)",
-                          marginTop: "2px",
+                          color: "var(--mem-text-secondary)",
+                          marginTop: "8px",
                           overflowWrap: "anywhere",
+                          whiteSpace: "pre-wrap",
                         }}
                       >
                         {error.detail}
                       </p>
+                      </details>
                     )}
                   </div>
                 )}
@@ -2056,7 +2064,7 @@ function SettingUpStep({
         })}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+      {(anyRunning || hasToolRows || (anyFailed && !daemonFailed)) && <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
         {/* Nothing on this step is a gate — Continue was always live. It just
             never said so, so a model download made the screen feel like a wait.
             The daemon keeps downloading and ingesting after the wizard closes. */}
@@ -2073,7 +2081,7 @@ function SettingUpStep({
             {t("setup.settingUp.walkAwayNote")}
           </p>
         )}
-        <p
+        {hasToolRows && <p
           style={{
             fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-sm)",
@@ -2082,8 +2090,8 @@ function SettingUpStep({
           }}
         >
           {t("setup.settingUp.configuredNote")}
-        </p>
-        {anyFailed && (
+        </p>}
+        {anyFailed && !daemonFailed && (
           <p
             style={{
               fontFamily: "var(--mem-font-body)",
@@ -2095,7 +2103,7 @@ function SettingUpStep({
             {t("setup.settingUp.failedHint", settingsPath(t))}
           </p>
         )}
-      </div>
+      </div>}
     </div>
     </StepShell>
   );
