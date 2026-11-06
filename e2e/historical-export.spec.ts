@@ -5,7 +5,7 @@ import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 import { openPrimaryDestination } from "./helpers/primaryNavigation";
 import { openWikiNote } from "./helpers/wikiWorkspace";
 
-test("export chooses a retained version and labels pending and unavailable entries", async ({page}) => {
+test("export chooses a retained version and labels pending and unavailable entries", async ({page}, info) => {
   const errors = collectBrowserErrors(page);
   const fixture = createSpacesNavigationFixture();
   const note = { id:"export-note",title:"Export research",summary:null,content:"Current text",entity_id:null,domain:"Wenlan",space:"Wenlan",source_memory_ids:[],version:4,status:"active",creation_kind:"authored",review_status:"confirmed",created_at:"2026-11-03T12:00:00Z",last_compiled:"2026-11-03T12:00:00Z",last_modified:"2026-11-03T12:00:00Z",user_edited:false };
@@ -33,7 +33,7 @@ test("export chooses a retained version and labels pending and unavailable entri
   await expect(page.getByRole("option",{name:/Pending draft.*not adopted/})).toBeAttached();
   await expect(page.getByRole("option",{name:/References were not retained/})).toHaveAttribute("disabled", "");
   await select.selectOption("old"); await expect(page.getByRole("radio",{name:"BibTeX"})).toBeEnabled();
-  await page.screenshot({path:"/Users/lucian/.codex/visualizations/2026/11/03/01a19fbf-c0b9-77f2-99af-fbf769921f49/research-v1/completion-v021/historical-export/selection.png"});
+  await page.screenshot({path:info.outputPath("selection.png")});
   await page.getByRole("button",{name:"Export",exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as unknown as {exportEvidence:{contents:string}}).exportEvidence.contents)).toContain("Old paper");
   expect(await page.evaluate(()=>(window as unknown as {exportEvidence:{contents:string}}).exportEvidence.contents)).toContain("Old claim");

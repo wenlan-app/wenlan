@@ -258,7 +258,7 @@ async fn capture_kind_on(
 
 /// Lower trust for a whole producer claim group, never just an individual
 /// source whose score was only an audit component of the union-level check.
-fn effective_map(
+pub(super) fn effective_map(
     body: &str,
     citations: &[PageCitation],
     affected: &BTreeSet<String>,

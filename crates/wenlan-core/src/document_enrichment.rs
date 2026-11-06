@@ -1410,6 +1410,26 @@ mod tests {
             .unwrap();
         }
 
+        if matches!(
+            corruption,
+            PreparedGenerationCorruption::BlobContentHash
+                | PreparedGenerationCorruption::BlobContent
+        ) {
+            let error = db
+                .citation_sources(
+                    &[first.doc_source_id.clone()],
+                    &crate::read_scope::ReadScope::Global,
+                )
+                .await
+                .err()
+                .expect("invalid stored bytes cannot produce a trusted source snapshot");
+            assert!(
+                matches!(error, WenlanError::Validation(ref message)
+                    if message.starts_with("source_read_refused: malformed stored source")),
+                "{corruption:?}: malformed values are refused without hiding database failures"
+            );
+        }
+
         let retry_entry = db
             .claim_next_pending()
             .await

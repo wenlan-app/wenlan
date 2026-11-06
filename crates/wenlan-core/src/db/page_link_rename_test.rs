@@ -181,6 +181,19 @@ async fn rename_rewrites_every_link_form_in_same_space_pages() {
 /// One record per `[1]` marker in `page-b`, with the fields a stored record
 /// has.
 async fn seed_citations(db: &super::MemoryDB, id: &str, count: u32) -> serde_json::Value {
+    // These are live citations, not dangling historical locators. The reader
+    // correctly lowers trust when their source is absent from the page's Space.
+    let conn = db.conn.lock().await;
+    conn.execute(
+        "INSERT INTO memories
+             (id,source,source_id,title,content,space,chunk_index,last_modified,
+              chunk_type,version,content_hash)
+         SELECT 'memory-a','file','memory-a','Evidence','A claim. Another claim.',
+                space,0,1,'text',2,'digest-a' FROM pages WHERE id=?1",
+        [id],
+    )
+    .await
+    .unwrap();
     let records = serde_json::Value::Array(
         (1..=count)
             .map(|occurrence| {
@@ -198,15 +211,12 @@ async fn seed_citations(db: &super::MemoryDB, id: &str, count: u32) -> serde_jso
             })
             .collect(),
     );
-    db.conn
-        .lock()
-        .await
-        .execute(
-            "UPDATE pages SET citations=?1 WHERE id=?2",
-            libsql::params![records.to_string(), id],
-        )
-        .await
-        .unwrap();
+    conn.execute(
+        "UPDATE pages SET citations=?1 WHERE id=?2",
+        libsql::params![records.to_string(), id],
+    )
+    .await
+    .unwrap();
     records
 }
 

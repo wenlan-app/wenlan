@@ -4,7 +4,7 @@ import { installTauriMock, collectBrowserErrors } from "./tauriMock";
 import { createSpaceProjectFixture } from "./fixtures/spaceProject";
 import { openPrimaryDestination } from "./helpers/primaryNavigation";
 
-test("selected sources continue an existing research page with visible scope changes", async ({ page }) => {
+test("selected sources continue an existing research page with visible scope changes", async ({ page }, info) => {
   const errors = collectBrowserErrors(page);
   await installTauriMock(page, { fixture: createSpaceProjectFixture(), locale: "en", rawActions: [], localStorage: { "wenlan-spaces-view-mode": "rows" } });
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -39,7 +39,7 @@ test("selected sources continue an existing research page with visible scope cha
   await page.getByText("Compared with the last run: 1 added, 1 no longer selected").click();
   await expect(page.getByText("Previous paper", { exact: true })).toBeVisible();
   await expect(page.getByText("This changes the sources for this run. It does not remove sources or existing writing.")).toBeVisible();
-  await page.screenshot({ path: "/Users/lucian/.codex/visualizations/2026/11/03/01a19fbf-c0b9-77f2-99af-fbf769921f49/research-v1/completion-v021/research-destination/destination.png" });
+  await page.screenshot({ path: info.outputPath("destination.png") });
   await page.getByRole("button", { name: "Open Claude Code with prompt" }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { destinationEvidence: { clipboard: string } }).destinationEvidence.clipboard)).toContain('existing target page "page-existing"');
   const evidence = await page.evaluate(() => (window as unknown as { destinationEvidence: { requests: { request: { target_page_id: string; sources: { source_id: string }[] } }[] } }).destinationEvidence);

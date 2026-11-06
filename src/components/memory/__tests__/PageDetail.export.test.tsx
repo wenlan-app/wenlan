@@ -5,8 +5,12 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "../PageDetail";
 import * as tauri from "../../../lib/tauri";
+import * as pageExportApi from "../../../lib/pageExportApi";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 
 vi.mock("../../../lib/tauri");
+vi.mock("../../../lib/pageExportApi");
 
 const MOCK_PAGE: tauri.Page = {
   id: "c1",
@@ -68,16 +72,26 @@ describe("PageDetail export", () => {
     expect(tauri.exportPageToObsidian).not.toHaveBeenCalled();
   });
 
-  it("offers a current saved-version snapshot and reloads the page when opened", async () => {
+  it("captures and exports the freshly saved version when opened", async () => {
     vi.mocked(tauri.listRegisteredSources).mockResolvedValue(sources("vault-one"));
+    const bundle: pageExportApi.PageExportBundle = { id: "saved-v2", digest: "digest-v2", kind: "saved", page_id: "c1", page_incarnation: "inc", space_id: null, version: 2, export_revision: 2, source_revision: 1, title: "Fresh title", content: "Fresh saved content", last_modified: "2026-11-03T12:00:00Z", captured_at: 1793707200000, citations: [], sources: [], bibliography: [], references_available: true, pending_revision_id: null };
+    vi.mocked(pageExportApi.capturePageExport).mockResolvedValue(bundle);
+    vi.mocked(pageExportApi.listPageExportVersions).mockResolvedValue({ versions: [{ bundle_id: bundle.id, kind: "saved", version: 2, export_revision: 2, title: bundle.title, saved_at: bundle.last_modified, captured_at: bundle.captured_at, references_available: true, bibliography_available: true, unavailable_reason: null }] });
+    vi.mocked(pageExportApi.getPageExportBundle).mockResolvedValue(bundle);
+    vi.mocked(save).mockResolvedValue("/tmp/fresh.md");
     const { user } = await renderMenu();
     const action = screen.getByRole("menuitem", { name: "Export…" });
     expect(action).toBeEnabled();
     await user.click(action);
     expect(await screen.findByRole("dialog", { name: "Export page" })).toBeInTheDocument();
-    await waitFor(() => expect(tauri.getPage).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText(/Saved version 1 ·/)).toBeInTheDocument();
-    await waitFor(() => expect(tauri.getPageSources).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(pageExportApi.capturePageExport).toHaveBeenCalledWith("c1"));
+    expect(await screen.findByLabelText("Version")).toHaveValue("saved-v2");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export", exact: true })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Export", exact: true }));
+    await waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
+    expect(vi.mocked(writeTextFile).mock.calls[0][1]).toContain("Fresh saved content");
+    expect(pageExportApi.getPageExportBundle).toHaveBeenCalledTimes(2);
+    expect(pageExportApi.getPageExportBundle).toHaveBeenLastCalledWith("c1", "saved-v2");
   });
 
 

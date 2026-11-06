@@ -263,15 +263,19 @@ async fn source_presentation(
         .as_ref()
         .map(|s| ReadScope::Space(s.clone()))
         .unwrap_or(ReadScope::Uncategorized);
-    let current = if historical {
-        None
+    let (current, refused) = if historical {
+        (None, false)
     } else {
         match citation_sources::read_on(conn, locator, &scope).await {
-            Ok(source) => source,
-            Err(WenlanError::Validation(_)) => None,
+            Ok(source) => (source, false),
+            Err(WenlanError::Validation(_)) => (None, true),
             Err(error) => return Err(error),
         }
     };
+    // An explicit unreadable-source refusal may retain old presentation, but
+    // cannot certify it as current. Ordinary non-indexed references return
+    // Ok(None) and retain their existing semantics.
+    let historical = historical || refused;
     let matches = current
         .as_ref()
         .is_some_and(|s| expected.is_none_or(|d| d == s.snapshot.text_digest));
@@ -375,7 +379,7 @@ async fn build_on(
 ) -> Result<PageExportBundle, WenlanError> {
     // Drafts remain unadopted evidence. Membership review has not been resolved
     // merely because a freshly assembled draft found the same source text.
-    let citations = if kind == PageExportKind::PendingDraft {
+    let mut citations = if kind == PageExportKind::PendingDraft {
         let mut draft = page.page.clone();
         draft.content = body.into();
         draft.citations = citations.clone().unwrap_or_default();
@@ -432,6 +436,16 @@ async fn build_on(
                 bibliography.push(bib)
             }
         }
+    }
+    // Clamp only this newly assembled map; the saved page and immutable
+    // prior bundles retain their original text, source generations and map.
+    let historical: BTreeSet<_> = sources
+        .iter()
+        .filter(|source| source.historical)
+        .map(|source| source.locator.clone())
+        .collect();
+    if let Some(map) = citations.as_mut() {
+        *map = citation_provenance::effective_map(body, map, &historical, &historical);
     }
     let occurrences = crate::citations::marker_spans(body);
     let map_available = if occurrences.is_empty() {
@@ -787,7 +801,7 @@ pub(super) async fn purge_on(conn: &libsql::Connection, id: &str) -> Result<(), 
     Ok(())
 }
 #[cfg(test)]
-#[path = "page_export_tests.rs"]
+#[path = "page_export_test.rs"]
 mod tests;
 
 #[cfg(test)]

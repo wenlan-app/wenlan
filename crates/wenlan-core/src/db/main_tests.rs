@@ -54897,6 +54897,7 @@ async fn dual_write_page_citations_retracts_edge_even_when_backed_by_page_eviden
     // -- `page_evidence` independently still backing the same (page,
     // locator) pair no longer grants immunity.
     let (db, _dir) = test_db().await;
+    seed_memory_with_source_id_and_space(&db, "mem_shared", "cited source", "space_a").await;
     let edge_id = crate::provenance::compute_edge_id(
         "cites",
         "page",
@@ -54917,6 +54918,14 @@ async fn dual_write_page_citations_retracts_edge_even_when_backed_by_page_eviden
     db.set_page_citations("page_dc", Some(&initial.to_string()))
         .await
         .unwrap();
+    {
+        let conn = db.conn.lock().await;
+        assert_eq!(
+            edge_valid_until(&conn, &edge_id).await,
+            None,
+            "precondition: the initial citation write must create an active edge"
+        );
+    }
 
     // Replace with an empty citation set -- mem_shared drops out of
     // pages.citations, but page_evidence still cites it.
@@ -54937,6 +54946,7 @@ async fn dual_write_page_citations_retracts_dropped_citation_when_unbacked() {
     // without cleanup for NULL/malformed JSON" gap) -- never leaving a
     // removed citation's edge dangling active.
     let (db, _dir) = test_db().await;
+    seed_memory_with_source_id_and_space(&db, "mem_x", "cited source", "space_a").await;
     let edge_id =
         crate::provenance::compute_edge_id("cites", "page", "page_dc2", "memory", "mem_x", "mem_x");
     {

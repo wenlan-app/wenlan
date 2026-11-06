@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,7 +59,7 @@ describe("live pasted-link sources", () => {
  *  plain `invoke("name", ...)` form and the generic-typed `invoke<T>("name")`
  *  form. */
 function invokedCommands(source: string): Set<string> {
-  const re = /\binvoke(?:<[^>]*>)?\(\s*"([^"]+)"/g;
+  const re = /\binvoke[A-Za-z]*(?:<[^>]*>)?\(\s*"([a-z0-9_]+)"/g;
   const out = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = re.exec(source))) out.add(m[1]);
@@ -1417,8 +1417,14 @@ const UNSTUBBED_DEBT = new Set([
 // invoke() ships with no harness stub at all. One-directional on purpose: an
 // unused extra HANDLERS/DEFAULTS entry is fine, a missing one is the bug.
 describe("tauri.ts -> live-invoke.ts command coverage (parity)", () => {
-  const source = readFileSync(TAURI_TS_PATH, "utf8");
-  const commands = invokedCommands(source);
+  // Match the Review contract scanner's invoke aliases, including modular
+  // invokeDaemonCommand calls. Discover API modules instead of naming a frozen
+  // subset that would silently miss the next extracted module.
+  const apiRoot = dirname(TAURI_TS_PATH);
+  const apiFiles = readdirSync(apiRoot, {recursive:true,withFileTypes:true})
+    .filter(entry=>entry.isFile() && entry.name.endsWith(".ts") && !entry.name.includes(".test.") && !entry.parentPath.includes("__tests__"))
+    .map(entry=>resolve(entry.parentPath,entry.name));
+  const commands = new Set(apiFiles.flatMap(path=>[...invokedCommands(readFileSync(path,"utf8"))]));
   const covered = new Set([...Object.keys(HANDLERS), ...Object.keys(DEFAULTS)]);
 
   it("extracted a realistic number of commands (extraction regex sanity floor)", () => {
@@ -1544,5 +1550,84 @@ describe("isolated authored Page preview bridge", () => {
       method: "POST",
       body: JSON.stringify({ content: "Updated body", source_memory_ids: [], expected_version: 3, caller_id: "wenlan-app", operation_id: "op_live_preview_17" }),
     }));
+  });
+});
+
+describe("research and Zotero command parity", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("preserves dispute scope, decision fence, and HTTP conflicts", async () => {
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__", true);
+    const fetch=vi.fn(async()=>new Response("{}")); vi.stubGlobal("fetch",fetch);
+    await liveInvoke("get_research_dispute",{id:"card/1",space:"Study & notes"});
+    expect(fetch).toHaveBeenLastCalledWith("/daemon/api/research/disputes/card%2F1?space=Study%20%26%20notes",expect.objectContaining({method:"GET"}));
+    await liveInvoke("decide_research_dispute",{id:"card/1",space:"Study",expectedPayloadDigest:"a".repeat(64),decision:"defer",reason:"Need evidence"});
+    expect(fetch).toHaveBeenLastCalledWith("/daemon/api/research/disputes/card%2F1/decision",expect.objectContaining({method:"POST",body:JSON.stringify({space:"Study",expected_payload_digest:"a".repeat(64),decision:"defer",reason:"Need evidence"})}));
+    fetch.mockImplementation(async()=>new Response("changed",{status:409}));
+    await expect(liveInvoke("decide_research_dispute",{id:"x",space:"Study"})).rejects.toMatchObject({status:409,body:"changed"});
+  });
+  it("sends selected items and fresh disconnect fences without losing identity", async()=>{
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__",true);
+    const fetch=vi.fn(async()=>new Response("{}"));vi.stubGlobal("fetch",fetch);
+    await liveInvoke("list_zotero_items",{collectionKey:"C/1",expectedServerId:"server?"});
+    expect(fetch).toHaveBeenLastCalledWith("/daemon/api/zotero/items?collection_key=C%2F1&expected_server_id=server%3F",expect.anything());
+    await liveInvoke("add_zotero_source",{collectionKey:"C",expectedServerId:"s",space:"Study",itemKeys:["A","B"]});
+    expect(fetch).toHaveBeenLastCalledWith("/daemon/api/zotero/sources",expect.objectContaining({body:JSON.stringify({collection_key:"C",expected_server_id:"s",space:"Study",item_keys:["A","B"]})}));
+    await liveInvoke("get_zotero_disconnect_preview",{id:"zotero/C"});
+    expect(fetch).toHaveBeenLastCalledWith("/daemon/api/zotero/sources/zotero%2FC/disconnect-preview",expect.anything());
+    const preview={identity:{registration_id:"zotero/C"},identity_digest:"b".repeat(64),revision:7};
+    await liveInvoke("remove_source",{id:"zotero/C",expectedZoteroPreview:preview});
+    expect(fetch).toHaveBeenLastCalledWith(`/daemon/api/sources/zotero%2FC?expected_revision=7&expected_identity=${"b".repeat(64)}`,expect.objectContaining({method:"DELETE"}));
+    fetch.mockClear();
+    await expect(liveInvoke("remove_source",{id:"reused",expectedZoteroPreview:preview})).rejects.toThrow("does not match");
+    await expect(liveInvoke("remove_source",{id:"zotero/C",expectedZoteroPreview:{...preview,revision:undefined}})).rejects.toThrow("does not match");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("retained PDF preview arguments",()=>{
+  afterEach(()=>vi.unstubAllGlobals());
+  it("preserves exact attachment, generation, retained consent, and Space",async()=>{
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__",true);
+    const fetch=vi.fn(async()=>new Response("{}"));vi.stubGlobal("fetch",fetch);
+    const args={sourceId:"item/1",attachmentKey:"PDF?",space:"Study",expectedDigest:"a".repeat(64),allowRetained:true};
+    await liveInvoke("get_zotero_document",args);
+    expect(fetch).toHaveBeenLastCalledWith(`/daemon/api/zotero/documents?source_id=item%2F1&space=Study&attachment_key=PDF%3F&expected_digest=${args.expectedDigest}&allow_retained=true`,expect.anything());
+    fetch.mockImplementation(async()=>new Response(new Uint8Array([1,2,3])));
+    await expect(liveInvoke("read_zotero_pdf",args)).resolves.toBeInstanceOf(ArrayBuffer);
+    expect(fetch).toHaveBeenLastCalledWith(`/daemon/api/zotero/pdf?source_id=item%2F1&attachment_key=PDF%3F&space=Study&expected_digest=${args.expectedDigest}&allow_retained=true`);
+  });
+});
+
+describe("modular research API preview routes",()=>{
+  afterEach(()=>vi.unstubAllGlobals());
+  const request={space:"Study & notes",expected_revision:3,name:"Rules",instructions:"Compare",sources:[],resume:true};
+  const cases: [string,Record<string,unknown>,string,string,unknown?][]=[
+    ["get_research_dispute",{id:"card/1",space:request.space},"GET","/api/research/disputes/card%2F1?space=Study%20%26%20notes"],
+    ["get_research_rules",{space:request.space},"GET","/api/research/rules?space=Study%20%26%20notes"],
+    ["save_research_rules",{request},"POST","/api/research/rules",request],
+    ["list_research_runs",{space:request.space},"GET","/api/research/runs?space=Study%20%26%20notes"],
+    ["create_research_run",{request},"POST","/api/research/runs",request],
+    ["get_research_run",{space:request.space,id:"run/1"},"GET","/api/research/runs/run%2F1?space=Study%20%26%20notes"],
+    ["update_research_run",{id:"run/1",request},"POST","/api/research/runs/run%2F1",request],
+    ["accept_research_classification",{id:"card/1",space:request.space,changes:[]},"POST","/api/refinery/queue/card%2F1/accept?space=Study%20%26%20notes",{action:"classification_edit",changes:[]}],
+    ["merge_research_tags",{request},"POST","/api/research/merge-tags",request],
+    ["get_source_lifecycle",{space:request.space,source:"file",sourceId:"paper/1"},"GET","/api/research/source-lifecycle?space=Study%20%26%20notes&source=file&source_id=paper%2F1"],
+    ["set_source_lifecycle",{request},"POST","/api/research/source-lifecycle",request],
+    ["resolve_source_reference",{space:request.space,locator:"file::paper/1"},"GET","/api/research/source-lifecycle/reference?space=Study%20%26%20notes&locator=file%3A%3Apaper%2F1"],
+    ["capture_page_export",{pageId:"page/1",space:request.space},"POST","/api/pages/page%2F1/export-capture",{space:request.space}],
+    ["list_page_export_versions",{pageId:"page/1",space:request.space},"GET","/api/pages/page%2F1/export-versions?space=Study%20%26%20notes"],
+    ["get_page_export_bundle",{pageId:"page/1",bundleId:"bundle/1",space:request.space},"GET","/api/pages/page%2F1/export-bundles/bundle%2F1?space=Study%20%26%20notes"],
+  ];
+  it.each(cases)("maps %s with native scope and request fences",async(command,args,method,path,body)=>{
+    const fetch=vi.fn(async()=>new Response("{}"));vi.stubGlobal("fetch",fetch);
+    await expect(liveInvoke(command,args)).rejects.toThrow("isolated");
+    expect(fetch).not.toHaveBeenCalled();
+    vi.stubGlobal("__WENLAN_SOURCE_PREVIEW__",true);
+    await liveInvoke(command,args);
+    expect(fetch).toHaveBeenLastCalledWith(`/daemon${path}`,expect.objectContaining({method,...(body===undefined?{}:{body:JSON.stringify(body)})}));
+  });
+  it("refuses native diagnostics collection explicitly",async()=>{
+    await expect(liveInvoke("problem_report")).rejects.toThrow("native app");
   });
 });

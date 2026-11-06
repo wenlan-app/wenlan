@@ -86,7 +86,25 @@ pub(super) async fn read_on(
     let mut bytes = 0usize;
     while let Some(row) = rows.next().await.map_err(error)? {
         total = row.get::<i64>(10).map_err(error)? as usize;
-        let content: String = row.get(7).map_err(error)?;
+        // Malformed stored values are an explicit source-read refusal. Keep
+        // query/row-access failures distinct so callers cannot hide DB errors.
+        let content = match row.get_value(7).map_err(error)? {
+            libsql::Value::Text(value) => value,
+            _ => {
+                return Err(WenlanError::Validation(
+                    "source_read_refused: malformed stored source content".into(),
+                ));
+            }
+        };
+        let content_hash = match row.get_value(5).map_err(error)? {
+            libsql::Value::Null => None,
+            libsql::Value::Text(value) => Some(value),
+            _ => {
+                return Err(WenlanError::Validation(
+                    "source_read_refused: malformed stored source content hash".into(),
+                ));
+            }
+        };
         bytes = bytes.saturating_add(content.len());
         if bytes > MAX_TEXT_BYTES || chunks.len() >= MAX_CHUNKS {
             return Err(WenlanError::Validation(
@@ -103,7 +121,7 @@ pub(super) async fn read_on(
                 .map_err(error)?
                 .filter(|s| s != UNFILED_SPACE_ID),
             version: row.get(4).map_err(error)?,
-            content_hash: row.get(5).map_err(error)?,
+            content_hash,
             chunk_index: row.get(6).map_err(error)?,
             content,
             source_agent: row.get(8).map_err(error)?,

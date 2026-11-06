@@ -420,3 +420,79 @@ async fn page_export_archived_saved_versions_retain_existing_export_access() {
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn page_export_malformed_source_downgrades_only_new_bundle() {
+    for column in ["content", "content_hash"] {
+        let (db, _tmp) = test_db().await;
+        seed(&db).await;
+        publish(&db, "Retained bibliography", "import1")
+            .await
+            .unwrap();
+        let old = db.capture_page_export("page", &scope()).await.unwrap();
+        let old_bytes = serde_json::to_vec(&old).unwrap();
+        assert_eq!(old.citations.as_ref().unwrap()[0].status, "verified");
+        assert!(!old.citations.as_ref().unwrap()[0].historical);
+        assert!(!old.sources[0].historical);
+        {
+            let conn = db.conn.lock().await;
+            let sql = match column {
+                "content" => "UPDATE memories SET content=x'80' WHERE id='paper'",
+                "content_hash" => "UPDATE memories SET content_hash=x'80' WHERE id='paper'",
+                _ => unreachable!(),
+            };
+            conn.execute(sql, ()).await.unwrap();
+        }
+        let fresh = db.capture_page_export("page", &scope()).await.unwrap();
+        assert_ne!(
+            fresh.id, old.id,
+            "{column}: the trust downgrade is a new export revision"
+        );
+        assert_eq!(fresh.content, old.content);
+        assert_eq!(fresh.version, old.version);
+        let citation = &fresh.citations.as_ref().unwrap()[0];
+        assert!(
+            citation.historical,
+            "{column}: invalid bytes cannot remain current"
+        );
+        assert_eq!(citation.status, "unevaluated");
+        assert_eq!(citation.score, 0.0);
+        assert!(fresh.sources[0].historical);
+        assert_eq!(fresh.sources[0].title, "Retained bibliography");
+        assert!(
+            fresh.references_available,
+            "the retained historical map remains available"
+        );
+        assert_eq!(fresh.bibliography[0].bibtex, old.bibliography[0].bibtex);
+        let frozen = db
+            .page_export_bundle("page", &old.id, &scope())
+            .await
+            .unwrap();
+        assert_eq!(serde_json::to_vec(&frozen).unwrap(), old_bytes);
+        assert_eq!(
+            db.get_page("page").await.unwrap().unwrap().content,
+            old.content
+        );
+    }
+}
+
+#[tokio::test]
+async fn page_export_non_indexed_references_are_not_newly_historical() {
+    let (db, _tmp) = test_db().await;
+    seed(&db).await;
+    let conn = db.conn.lock().await;
+    let page = state_on(&conn, "page").await.unwrap().unwrap();
+    for (kind, locator) in [
+        ("external_url", "https://example.org/unindexed"),
+        ("external_file", "attachment.pdf"),
+        ("memory", "page"),
+    ] {
+        let (source, _) = source_presentation(&conn, &page, locator, kind, None, false, &[])
+            .await
+            .unwrap();
+        assert!(
+            !source.historical,
+            "{kind}: ordinary non-indexed references are unchanged"
+        );
+    }
+}

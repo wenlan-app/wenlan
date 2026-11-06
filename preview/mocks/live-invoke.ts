@@ -429,17 +429,47 @@ const nativeRemoteAccessRequired = async (): Promise<never> => {
 // Exported (not just module-local) so the parity test below can read the
 // covered-command key sets without re-parsing this file.
 export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
+  get_research_rules: a => { requireSourcePreview(); return get(`/api/research/rules${qs({space:a.space})}`); },
+  save_research_rules: a => { requireSourcePreview(); return post("/api/research/rules",a.request); },
+  list_research_runs: a => { requireSourcePreview(); return get(`/api/research/runs${qs({space:a.space})}`); },
+  create_research_run: a => { requireSourcePreview(); return post("/api/research/runs",a.request); },
+  get_research_run: a => { requireSourcePreview(); return get(`/api/research/runs/${enc(a.id)}${qs({space:a.space})}`); },
+  update_research_run: a => { requireSourcePreview(); return post(`/api/research/runs/${enc(a.id)}`,a.request); },
+  get_research_classification_decisions: a => { requireSourcePreview(); return get(`/api/research/classifications${qs({space:a.space,source:a.source,source_id:a.sourceId})}`); },
+  propose_research_classifications: a => { requireSourcePreview(); return post("/api/research/classifications",a.request); },
+  accept_research_classification: a => { requireSourcePreview(); return post(`/api/refinery/queue/${enc(a.id)}/accept${qs({space:a.space})}`,{action:"classification_edit",changes:a.changes}); },
+  merge_research_tags: a => { requireSourcePreview(); return post("/api/research/merge-tags",a.request); },
+  get_source_lifecycle: a => { requireSourcePreview(); return get(`/api/research/source-lifecycle${qs({space:a.space,source:a.source,source_id:a.sourceId})}`); },
+  set_source_lifecycle: a => { requireSourcePreview(); return post("/api/research/source-lifecycle",a.request); },
+  resolve_source_reference: a => { requireSourcePreview(); return get(`/api/research/source-lifecycle/reference${qs({space:a.space,locator:a.locator})}`); },
+  capture_page_export: a => { requireSourcePreview(); return post(`/api/pages/${enc(a.pageId)}/export-capture`,{space:a.space}); },
+  list_page_export_versions: a => { requireSourcePreview(); return get(`/api/pages/${enc(a.pageId)}/export-versions${qs({space:a.space})}`); },
+  get_page_export_bundle: a => { requireSourcePreview(); return get(`/api/pages/${enc(a.pageId)}/export-bundles/${enc(a.bundleId)}${qs({space:a.space})}`); },
+  // Native log collection has no equivalent in a browser. Never return null as
+  // if a diagnostic report had been gathered successfully.
+  problem_report: async () => { throw new Error("Problem reports require the native app's local diagnostics"); },
+  get_research_dispute: a => { requireSourcePreview(); return get(`/api/research/disputes/${enc(a.id)}${qs({space:a.space})}`); },
+  decide_research_dispute: a => { requireSourcePreview(); return post(`/api/research/disputes/${enc(a.id)}/decision`, {space:a.space,expected_payload_digest:a.expectedPayloadDigest,decision:a.decision,reason:a.reason}); },
+  get_zotero_disconnect_preview: a => { requireSourcePreview(); return get(`/api/zotero/sources/${enc(a.id)}/disconnect-preview`); },
+  list_zotero_items: a => { requireSourcePreview(); return get(`/api/zotero/items${qs({collection_key:a.collectionKey,expected_server_id:a.expectedServerId})}`); },
   list_zotero_collections: () => { requireSourcePreview(); return get("/api/zotero/collections"); },
-  add_zotero_source: (a) => { requireSourcePreview(); return post("/api/zotero/sources", { collection_key: a.collectionKey, expected_server_id: a.expectedServerId, space: a.space }); },
-  get_zotero_document: (a) => { requireSourcePreview(); return get(`/api/zotero/documents?source_id=${enc(a.sourceId)}${a.space === undefined ? "" : `&space=${enc(a.space)}`}`); },
+  add_zotero_source: (a) => { requireSourcePreview(); return post("/api/zotero/sources", { collection_key: a.collectionKey, expected_server_id: a.expectedServerId, space: a.space, item_keys: a.itemKeys }); },
+  get_zotero_document: (a) => { requireSourcePreview(); return get(`/api/zotero/documents${qs({source_id:a.sourceId,space:a.space,attachment_key:a.attachmentKey,expected_digest:a.expectedDigest,allow_retained:a.allowRetained})}`); },
   read_zotero_pdf: async (a) => {
     requireSourcePreview();
-    const response = await fetch(`/daemon/api/zotero/pdf?source_id=${enc(a.sourceId)}&attachment_key=${enc(a.attachmentKey)}${a.space === undefined ? "" : `&space=${enc(a.space)}`}`);
+    const response = await fetch(`/daemon/api/zotero/pdf${qs({source_id:a.sourceId,attachment_key:a.attachmentKey,space:a.space,expected_digest:a.expectedDigest,allow_retained:a.allowRetained})}`);
     if (!response.ok) throw new Error(`Could not read saved PDF: ${response.status}`);
     return response.arrayBuffer();
   },
   list_registered_sources: () => sourcePreviewEnabled() ? get("/api/sources") : Promise.resolve([]),
-  remove_source: (a) => { requireSourcePreview(); return del(`/api/sources/${enc(a.id)}`); },
+  remove_source: (a) => {
+    requireSourcePreview();
+    const preview = a.expectedZoteroPreview;
+    if (preview != null && (preview.identity?.registration_id !== a.id || !Number.isSafeInteger(preview.revision) || preview.revision < 0 || typeof preview.identity_digest !== "string" || !/^[0-9a-f]{64}$/i.test(preview.identity_digest))) {
+      throw new Error("Zotero disconnect preview does not match this connection");
+    }
+    return del(`/api/sources/${enc(a.id)}${preview == null ? "" : qs({expected_revision:preview.revision,expected_identity:preview.identity_digest})}`);
+  },
 
   repair_lint: nativeRepairRequired,
   repair_prepare: nativeRepairRequired,
