@@ -131,7 +131,7 @@ function serializeMarkdown(snapshot: PageExportSnapshot): string {
   const date = snapshot.page.last_modified || "Unknown date";
   const sections = [
     `# ${snapshot.page.title}`,
-    `> Snapshot of saved version ${snapshot.page.version} · ${date}`,
+    `> Exported from saved version ${snapshot.page.version} · ${date}`,
     bodyWithMarkdownFootnotes({ ...processed, content: omitLeadingTitle(processed.content, snapshot.page.title) }, refs, numberByOccurrence),
   ];
   if (refs.length) sections.push(`## Sources\n\n${refs.map(ref => ref.number
@@ -169,7 +169,7 @@ function serializeHtml(snapshot: PageExportSnapshot): string {
     return `<li${ref.number ? ` id="citation-${ref.number}"` : ""}>${target}</li>`;
   }).join("")}</ol></section>` : "";
   const date = escapeHtml(snapshot.page.last_modified || "Unknown date");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(snapshot.page.title)}</title></head><body><main><header><h1>${escapeHtml(snapshot.page.title)}</h1><p>Snapshot of saved version ${snapshot.page.version} · ${date}</p></header><article>${body}</article>${sourceList}</main></body></html>\n`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(snapshot.page.title)}</title></head><body><main><header><h1>${escapeHtml(snapshot.page.title)}</h1><p>Exported from saved version ${snapshot.page.version} · ${date}</p></header><article>${body}</article>${sourceList}</main></body></html>\n`;
 }
 
 function stripLocalBibFields(value: string): string {

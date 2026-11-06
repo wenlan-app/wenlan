@@ -71,10 +71,10 @@ describe("PageDetail export", () => {
   it("offers a current saved-version snapshot and reloads the page when opened", async () => {
     vi.mocked(tauri.listRegisteredSources).mockResolvedValue(sources("vault-one"));
     const { user } = await renderMenu();
-    const action = screen.getByRole("menuitem", { name: "Export snapshot…" });
+    const action = screen.getByRole("menuitem", { name: "Export…" });
     expect(action).toBeEnabled();
     await user.click(action);
-    expect(await screen.findByRole("dialog", { name: "Export page snapshot" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Export page" })).toBeInTheDocument();
     await waitFor(() => expect(tauri.getPage).toHaveBeenCalledTimes(2));
     expect(await screen.findByText(/Saved version 1 ·/)).toBeInTheDocument();
     await waitFor(() => expect(tauri.getPageSources).toHaveBeenCalledTimes(2));

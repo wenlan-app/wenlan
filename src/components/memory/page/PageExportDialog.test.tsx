@@ -39,13 +39,13 @@ describe("PageExportDialog", () => {
     expect(getPage).toHaveBeenCalledWith(page.id);
     expect(getPageSources).toHaveBeenCalledWith(page.id);
     await waitFor(() => expect(getZoteroDocument).toHaveBeenCalledWith("zotero::ITEM1", "Research"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save snapshot" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Save snapshot" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "Research-Notes.md" }));
     expect(writeTextFile).toHaveBeenCalledWith("/tmp/Research-Notes.md", expect.stringContaining("Saved text"));
     expect(writeTextFile).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("unsaved"));
-    expect(screen.getByText("Snapshot saved.")).toBeInTheDocument();
+    expect(screen.getByText("Page exported.")).toBeInTheDocument();
   });
 
   it("keeps Markdown and HTML available while blocking incomplete BibTeX", async () => {
@@ -54,7 +54,7 @@ describe("PageExportDialog", () => {
     expect(await screen.findByText("Some Zotero bibliography entries are unavailable. Markdown and HTML can still export; BibTeX needs every entry. Retry to load them.")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "BibTeX" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Save snapshot" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
   });
 
   it.each([
@@ -69,14 +69,14 @@ describe("PageExportDialog", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("BibTeX needs every entry");
     fireEvent.click(screen.getByRole("radio", { name: format }));
-    expect(screen.getByRole("button", { name: "Save snapshot" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Save snapshot" }));
+    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
 
     await waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
     expect(writeTextFile).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(body));
     expect(writeTextFile).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(title));
     expect(screen.getByRole("alert")).toHaveTextContent("BibTeX needs every entry");
-    expect(screen.getByText("Snapshot saved.")).toBeInTheDocument();
+    expect(screen.getByText("Page exported.")).toBeInTheDocument();
   });
 
   it("still refuses an export if the linked source list changes while the save dialog is open", async () => {
@@ -90,7 +90,7 @@ describe("PageExportDialog", () => {
     wrap();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("BibTeX needs every entry");
-    fireEvent.click(screen.getByRole("button", { name: "Save snapshot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("The page or its sources changed"));
     expect(writeTextFile).not.toHaveBeenCalled();
   });
@@ -103,8 +103,8 @@ describe("PageExportDialog", () => {
       return "/tmp/Research-Notes.md";
     });
     wrap();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save snapshot" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Save snapshot" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The page or its sources changed");
     expect(writeTextFile).not.toHaveBeenCalled();
   });
