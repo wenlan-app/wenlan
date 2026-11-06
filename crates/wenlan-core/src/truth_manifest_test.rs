@@ -280,10 +280,11 @@ fn manifest_counts_match_the_spec() {
         280,
         "registered (method, path, handler) triples"
     );
-    assert_eq!(MCP_READERS.len(), 46, "#[tool( declarations"); // +1: theme
-                                                               // No hand-bumped CLI count here: `wenlan-cli`'s
-                                                               // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
-                                                               // the expected set from clap's `Commands` enum, which this crate cannot see.
+    // +1: theme
+    assert_eq!(MCP_READERS.len(), 46, "#[tool( declarations");
+    // No hand-bumped CLI count here: `wenlan-cli`'s
+    // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
+    // the expected set from clap's `Commands` enum, which this crate cannot see.
 
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(

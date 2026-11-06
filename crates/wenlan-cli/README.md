@@ -848,62 +848,6 @@ Turn off all model-backed background work without removing providers.
 wenlan steep disable [OPTIONS]
 ```
 
-### `wenlan theme`
-
-Use, check, or reset a custom app theme (colors, fonts, corners, images).
-
-```text
-wenlan theme [OPTIONS] <COMMAND>
-```
-
-#### `wenlan theme list`
-
-List custom themes and whether each one passes its checks.
-
-```text
-wenlan theme list [OPTIONS]
-```
-
-#### `wenlan theme path`
-
-Print the folder where theme folders go.
-
-```text
-wenlan theme path [OPTIONS]
-```
-
-#### `wenlan theme check`
-
-Check one theme without applying it.
-
-```text
-wenlan theme check [OPTIONS] <ID>
-```
-
-Arguments:
-
-- `<ID>`: Theme id: its folder name, e.g. night-bunny.
-
-#### `wenlan theme apply`
-
-Use a theme in the app. Refused when the theme fails its checks.
-
-```text
-wenlan theme apply [OPTIONS] <ID>
-```
-
-Arguments:
-
-- `<ID>`: Theme id: its folder name, e.g. night-bunny.
-
-#### `wenlan theme reset`
-
-Go back to Wenlan's built-in light and dark themes.
-
-```text
-wenlan theme reset [OPTIONS]
-```
-
 **Maintenance**
 
 ### `wenlan sources`

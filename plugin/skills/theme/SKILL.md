@@ -92,8 +92,7 @@ in that spirit and say so.
    `theme.json` and check again. Never apply a theme that fails.
 2. `theme(action="apply", id="<id>")`. The app switches within a few seconds.
 3. Tell the user in one or two sentences what you made, and that they can go
-   back with `/wenlan theme reset` or in the app's settings.
+   back with `/wenlan theme reset` or with "Back to default" in the app's
+   Appearance settings.
 
-`theme(action="reset")` goes back to the built-in themes. Without the MCP
-tool, the CLI does the same: `wenlan theme path`, `wenlan theme check <id>`,
-`wenlan theme apply <id>`, `wenlan theme reset`.
+`theme(action="reset")` goes back to the built-in themes.

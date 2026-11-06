@@ -917,7 +917,6 @@ the projection-directory reader.
 | `wenlan outbox` | yes | automatic | `none` | subcommand renderer |
 | `wenlan entities` | yes | automatic | `none` | subcommand renderer |
 | `wenlan export` | yes | automatic | `none` | subcommand renderer |
-| `wenlan theme` | no | not_applicable | `none` | — |
 | `wenlan wiki` | yes | automatic | `none` | subcommand renderer |
 | `wenlan sweep` | yes | automatic | `none` | subcommand renderer |
 

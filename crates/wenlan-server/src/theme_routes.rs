@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Custom theme endpoints. The checks live in `wenlan_core::theme`, so the
-//! app, the CLI and MCP all get the same verdict. Theme files are local
+//! app and MCP get the same verdict. Theme files are local
 //! appearance settings, not memory: no database or user content is read.
 
 use crate::error::ServerError;

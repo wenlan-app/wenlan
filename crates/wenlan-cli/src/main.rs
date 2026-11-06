@@ -197,11 +197,6 @@ enum Commands {
         #[command(subcommand)]
         command: commands::export::ExportCommand,
     },
-    /// Use, check, or reset a custom app theme (colors, fonts, corners, images).
-    Theme {
-        #[command(subcommand)]
-        command: commands::theme::ThemeCommand,
-    },
     /// Put this Space's code pages into its git repository as a pull request.
     Wiki {
         #[command(subcommand)]
@@ -235,7 +230,6 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
             "models",
             "keys",
             "steep",
-            "theme",
         ],
     ),
     ("Maintenance", &["sources", "outbox", "export", "entities"]),
@@ -552,9 +546,6 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         Commands::Entities { cmd } => {
             commands::entities::run(&client, format, cli.quiet, cmd).await?
-        }
-        Commands::Theme { command } => {
-            commands::theme::run(&client, format, cli.quiet, command).await?
         }
         Commands::Wiki { command } => {
             commands::wiki::run(

@@ -590,37 +590,6 @@ impl WenlanClient {
         self.delete_ok("/api/spaces/default").await
     }
 
-    /// GET /api/themes — every custom theme with its check result.
-    pub async fn list_themes(&self) -> Result<wenlan_types::theme::ThemeListResponse> {
-        self.get_json("/api/themes", false).await
-    }
-
-    /// GET /api/themes/active — what the app is applying now.
-    pub async fn active_theme(&self) -> Result<wenlan_types::theme::ActiveThemeResponse> {
-        self.get_json("/api/themes/active", false).await
-    }
-
-    /// POST /api/themes/check — run every check on one theme without applying it.
-    pub async fn check_theme(&self, id: &str) -> Result<wenlan_types::theme::ThemeCheckResponse> {
-        self.post_json(
-            "/api/themes/check",
-            &wenlan_types::theme::CheckThemeRequest { id: id.to_string() },
-        )
-        .await
-    }
-
-    /// PUT /api/themes/active — choose a theme, or `None` for the built-in ones.
-    pub async fn set_active_theme(
-        &self,
-        id: Option<String>,
-    ) -> Result<wenlan_types::theme::ActiveThemeResponse> {
-        self.put_json(
-            "/api/themes/active",
-            &wenlan_types::theme::SetActiveThemeRequest { id },
-        )
-        .await
-    }
-
     /// PUT /api/pages/{id}/review-required — set or clear a page's review
     /// lock. While set, every machine write to the page is staged as a
     /// revision card; your own edits are unaffected.
