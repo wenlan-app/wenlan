@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe("sentence authorship", () => {
-  it("UX-WHO-1: marks yours with a solid line and the AI's with a dotted one, repeated sentences on their own occurrence", () => {
+  it("UX-WHO-1: retains human and AI authorship metadata on each sentence occurrence", () => {
     const v = mount(settings());
     expect(texts(v, ".cm-said-you")).toEqual(["We fly on May 12."]);
     expect(texts(v, ".cm-said-ai")).toEqual(["The flat is a three-minute walk.", "Tram 28 runs all night.", "We fly on May 12."]);

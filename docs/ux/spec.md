@@ -173,9 +173,12 @@ and wait for evidence that people need them.
 
 ## Who said each sentence
 
-- **UX-WHO-1** `shipped` Every sentence shows whether it is yours (including
-  ones you approved) or the AI's: visible, but quiet.
+- **UX-WHO-1** `shipped` Each sentence retains whether it is yours (including
+  ones you approved) or the AI's, inspectable in Info. Ordinary prose has no
+  permanent authorship underline. Citation links and weak-source notices keep
+  their own visible cues; authorship does not decorate the whole page.
   原文：每一句都分得出是你的（含你點頭的）還是 AI 的，看得出來但不吵。
+  閱讀修正（2026-11-05）：幾乎每段文字都有底線，閱讀上不舒服；正文恢復正常排版，身分資訊留在資訊面板。
 - **UX-WHO-2** `shipped` The AI updates the sentences it wrote that nobody has
   touched; each update is recorded and can be undone. It cannot change your
   sentences: it proposes, one sentence at a time, with accept or no under that

@@ -5,11 +5,9 @@ import type { WeakReason } from "../../../lib/tauri";
 import { foldedPageLayers, pageLayersField } from "./pageLayersEditing";
 
 /**
- * Who said each sentence (docs/ux/spec.md, UX-WHO-1): yours, including the
- * ones you accepted, carry a thin solid line; the AI's a thin dotted one.
- * Visible, but quiet. A sentence whose source no longer backs it gets a
- * small mark right after it, with one press to recheck only that sentence
- * (UX-WHO-4).
+ * Keep per-sentence authorship available to Info (UX-WHO-1/3) without
+ * decorating ordinary prose. A sentence whose source no longer backs it
+ * keeps its adjacent recheck control (UX-WHO-4).
  */
 export interface AuthoredSentence {
   readonly hash: string;
@@ -178,20 +176,6 @@ export function sentenceAuthorship(initial: SentenceAuthorshipSettings | null): 
     decorationsField,
     reportCursorSentence,
     EditorView.theme({
-      ".cm-said-you": {
-        textDecorationLine: "underline",
-        textDecorationStyle: "solid",
-        textDecorationThickness: "1px",
-        textUnderlineOffset: "5px",
-        textDecorationColor: "color-mix(in srgb, var(--mem-accent-sage) 55%, transparent)",
-      },
-      ".cm-said-ai": {
-        textDecorationLine: "underline",
-        textDecorationStyle: "dotted",
-        textDecorationThickness: "1px",
-        textUnderlineOffset: "5px",
-        textDecorationColor: "color-mix(in srgb, var(--mem-accent-amber) 55%, transparent)",
-      },
       ".cm-sentence-weak": {
         display: "inline-flex",
         alignItems: "center",
