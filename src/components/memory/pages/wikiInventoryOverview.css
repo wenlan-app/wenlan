@@ -132,20 +132,15 @@
   .wiki-working-on li:nth-child(4):nth-last-child(2) { grid-column:5 / 8; }
   .wiki-working-on li:nth-child(5):last-child { grid-column:8 / -1; }
 }
-.wiki-working-on li:first-child .wiki-working-on-card { justify-content:center;gap:8px;padding:22px 44px 20px 24px; }
-.wiki-working-on li:first-child .wiki-working-on-title { font-size:21px;line-height:1.35; }
-.wiki-working-on li:first-child .wiki-working-on-text { font-size:15px;line-height:1.65; }
-.wiki-working-on li:first-child .wiki-working-on-foot { margin-top:6px; }
-/* The large card's night: what was steeped, and the points still open,
-   each written out whole. */
-.wiki-working-on-night { display:flex;flex-direction:column;gap:3px;margin-top:6px;color:var(--mem-text-secondary);font:400 13.5px/1.55 var(--mem-font-body); }
-.wiki-working-on-night-line { display:flex;align-items:center;gap:6px;color:var(--mem-text-tertiary);font-size:13px; }
-.wiki-working-on-night-line .steep-moon { flex:none;color:var(--mem-accent-page); }
-.wiki-working-on-open-point { position:relative;padding-left:14px;overflow-wrap:anywhere; }
-.wiki-working-on-open-point::before { content:"";position:absolute;left:3px;top:.68em;width:4px;height:4px;border-radius:50%;background:currentColor;opacity:.6; }
-.wiki-working-on li:not(:first-child) .wiki-working-on-card { padding:12px 14px 11px; }
-.wiki-working-on li:not(:first-child) .wiki-working-on-title { font-size:14.5px; }
-.wiki-working-on li:not(:first-child) .wiki-working-on-text { font-size:13px;line-height:1.55; }
+.wiki-working-on li:first-child .wiki-working-on-card { gap:6px;padding:16px 40px 14px 20px; }
+.wiki-working-on li:first-child .wiki-working-on-title { font-size:18px;line-height:1.35; }
+.wiki-working-on li:first-child .wiki-working-on-text { font-size:14px;line-height:1.6; }
+/* The large card's open point: what to pick up in the next chat, whole. */
+.wiki-working-on-open { color:var(--mem-text-secondary);font:400 13.5px/1.55 var(--mem-font-body);overflow-wrap:anywhere; }
+.wiki-working-on-open-label { margin-right:.2em;color:var(--mem-text-tertiary); }
+.wiki-working-on li:not(:first-child) .wiki-working-on-card { gap:3px;padding:11px 14px 12px; }
+.wiki-working-on li:not(:first-child) .wiki-working-on-title { font-size:14px; }
+.wiki-working-on li:not(:first-child) .wiki-working-on-text { font-size:13px;line-height:1.5; }
 .wiki-working-on li { position:relative;display:flex;min-width:0; }
 /* "Don't show": quiet until the card is hovered or focused; always there on touch screens. */
 .wiki-working-on-hide { position:absolute;top:8px;right:8px;display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--mem-text-tertiary);cursor:pointer;opacity:0;transition:opacity .12s ease; }
