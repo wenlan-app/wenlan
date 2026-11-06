@@ -40,10 +40,10 @@ test('mirrored drag previews without saving and restores width across tabs close
   await page.mouse.up(); await expect.poll(() => stored(page)).not.toBe(initial);
   await expect(editor).toHaveAttribute('data-resize-original', 'true'); expect(await editor.innerText()).toBe(body);
   const saved = await stored(page);
-  await page.getByRole('tab', { name: 'Info', exact: true }).click(); await expectWidth(page, before + 40);
-  await page.getByRole('tab', { name: 'Mind map', exact: true }).click(); await expectWidth(page, before + 40);
+  await page.getByRole('button', { name: 'Mind map', exact: true }).click(); await expectWidth(page, before + 40);
   await expect(page.locator('.page-canvas')).toBeVisible();
-  await page.getByRole('tab', { name: 'Info', exact: true }).click(); await expectWidth(page, before + 40);
+  await page.getByRole('button', { name: 'Info', exact: true }).click(); await expectWidth(page, before + 40);
+  await expect(page.locator('.page-canvas')).toHaveCount(0);
   await page.getByRole('button', { name: 'Info', exact: true }).click(); await expect(handle(page)).toHaveCount(0);
   await page.getByRole('button', { name: 'Info', exact: true }).click(); await expectWidth(page, before + 40);
   await page.reload(); await openWikiNote(page, 'Fixture architecture');
@@ -63,7 +63,7 @@ test('cancel blur lost capture and viewport changes restore geometry without clo
     await page.mouse.up(); await expectWidth(page, before); expect(await stored(page)).toBe(initial);
   }
   const p = await begin(page); await page.mouse.move(p.x - 40, p.y); await page.setViewportSize({ width: 1099, height: 900 }); await page.mouse.up();
-  await expect(page.locator('[data-note-group-id="primary"] .page-info-drawer-group-overlay')).toBeVisible();
+  await expect(page.locator('.page-info-drawer')).toBeVisible();
   await expect(page.getByRole('complementary', { name: 'Page views', exact: true })).toBeVisible();
   expect(await stored(page)).toBe(initial); await page.setViewportSize({ width: 1600, height: 900 }); await expectWidth(page, before);
   expect(await page.evaluate(() => document.body.className)).not.toContain('resize-active');

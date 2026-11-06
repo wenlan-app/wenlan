@@ -9,14 +9,17 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
 1. In Settings → Sources, or a Space → Sources, choose a local Zotero collection
    and a destination Space. Import is manual. Zotero must enable its local API.
 2. Read the imported papers in the existing source list. A Zotero citation opens
-   PDF after Info and Mind map in the page's existing right inspector. The PDF
-   tab appears after opening a paper. The inspector starts closed: Page info
-   and Mind map buttons open their corresponding views; citations open PDF.
-   Tabs live inside the open inspector only. Switching views or closing and
-   reopening the inspector keeps the reader, selected attachment, page and
-   search alive for that page. Closing returns the space to the document.
-   Reuse the inspector's resize, expand and
-   close controls, or use the existing full-source view. Search, select text, navigate
+   PDF in the page's existing right inspector. Info and Mind map retain their
+   original icons in the upper-right toolbar; PDF joins them only after opening
+   a paper. There is no second row of inspector tabs. Clicking the active tool
+   collapses the pane; the PDF icon remains available for that page. Each Wiki
+   retains its attachment, page, zoom and search text within the app session.
+   Two document groups share one right inspector following the focused Wiki;
+   returning to a Wiki restores its own context. Desktop panes reserve document
+   space; narrow windows show the same pane over the document without unmounting
+   the editor. PDF controls stay compact and the document fills the pane height.
+   Reuse the inspector's resize and expand controls, or the full-source view.
+   Search, select text, navigate
    pages and zoom using bundled PDF.js. Saved PDFs remain readable offline.
 3. Select sources to prepare a summary and classification suggestions in an
    external AI tool. Default instructions are included; custom instructions are
@@ -66,7 +69,8 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
   indices. The reader accepts only links to that document's attachment inventory.
   It does not fabricate highlight coordinates.
 - Source selection and unfinished instructions survive navigation within the
-  session; PDF reading position persists locally. Imported documents, pages,
+  session. Wiki-specific PDF context is bounded in-memory session state; the
+  standalone source reader retains its existing local reading position. Imported documents, pages,
   pending revisions and source cache survive daemon restarts.
 - No model/API key is needed to import, read, edit or classify manually. Automatic
   summaries require an external AI tool configured by the person.

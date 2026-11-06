@@ -2,7 +2,7 @@
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ArrowsIn, ArrowsOut, X } from "@phosphor-icons/react";
-import { WorkspaceNoteGroupContext, WorkspacePaneHostContext } from "../navigation/WorkspacePaneHost";
+import { WorkspaceNoteGroupContext, WorkspacePaneHostContext, SharedWikiInspectorContext } from "../navigation/WorkspacePaneHost";
 import { clampRightSidebarWidth, readRightSidebarWidth, writeRightSidebarWidth } from "../navigation/rightSidebarPreferences";
 import { RightSidebarResizeHandle } from "../navigation/RightSidebarResizeHandle";
 import { useReportWorkspaceDemand } from "../navigation/workspaceDemand";
@@ -23,6 +23,7 @@ interface PageInfoDrawerProps {
   defaultWidth?: number;
   headerContent?: ReactNode;
   headerActions?: ReactNode;
+  headerless?: boolean;
   inspector?: boolean;
   docked?: boolean;
   expanded?: boolean;
@@ -66,9 +67,13 @@ function returnTarget(named: RefObject<HTMLElement | null> | undefined, trigger:
   return trigger?.isConnected ? trigger : null;
 }
 
-export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen = true, returnFocusRef, defaultWidth: preferredWidth, onClose, title, children, closeLabel, headerContent, headerActions, inspector = false, docked = false, expanded = false, expandedHost, onExpandedChange, expandLabel, restoreLabel, variant = "info" }: PageInfoDrawerProps) {
+export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen = true, returnFocusRef, defaultWidth: preferredWidth, onClose, title, children, closeLabel, headerContent, headerActions, headerless = false, inspector = false, docked = false, expanded = false, expandedHost, onExpandedChange, expandLabel, restoreLabel, variant = "info" }: PageInfoDrawerProps) {
   const workspacePaneHost = useContext(WorkspacePaneHostContext);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
+  const sharedWiki = useContext(SharedWikiInspectorContext);
+  const sharedGroup = !!sharedWiki && noteGroup !== null;
+  const paneOpen = open && (!sharedGroup || sharedWiki!.activeGroupId === noteGroup!.id);
+  const paneRoot = sharedGroup ? sharedWiki!.readingElement : noteGroup?.element;
   const [groupWidth, setGroupWidth] = useState(0);
   const [wide, setWide] = useState(() => typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1100px)").matches);
   useEffect(() => {
@@ -85,8 +90,8 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
   const canExpand = inspector && onExpandedChange !== undefined && expandedHost !== undefined && expandLabel !== undefined && restoreLabel !== undefined;
   const groupScoped = noteGroup !== null;
   const groupDocked = groupScoped && groupWidth >= 720;
-  const expandedDestination = groupScoped ? noteGroup.element : expandedHost;
-  const expandedWorkspace = canExpand && expanded && (groupScoped ? noteGroup.element !== null : wide && expandedHost !== null);
+  const expandedDestination = groupScoped ? paneRoot : expandedHost;
+  const expandedWorkspace = canExpand && expanded && (groupScoped ? paneRoot !== null : wide && expandedHost !== null);
   const nonModal = groupScoped || (docked && wide);
   const hosted = groupScoped
     ? false
@@ -107,10 +112,10 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
   useEffect(() => () => { portalMount?.remove(); }, [portalMount]);
   const portalDestination = expandedWorkspace
     ? expandedDestination
-    : hosted ? workspacePaneHost : groupOverlay ? noteGroup?.element : document.body;
+    : hosted ? workspacePaneHost : groupOverlay ? paneRoot : document.body;
   useLayoutEffect(() => {
     if ((!canExpand && !groupScoped) || !portalMount) return;
-    if (!open) {
+    if (!paneOpen) {
       portalMount.remove();
       return;
     }
@@ -121,7 +126,7 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
       restoreWorkspaceFocusRef.current = false;
       workspaceToggleRef.current?.focus({ preventScroll: true });
     }
-  }, [canExpand, groupScoped, open, portalDestination, portalMount]);
+  }, [canExpand, groupScoped, paneOpen, portalDestination, portalMount]);
   const [committedWidth, setCommittedWidth] = useState<number | undefined>(() => readRightSidebarWidth(noteGroup?.id));
   const [previewWidth, setPreviewWidth] = useState<number | null>(null);
   const [maxWidth, setMaxWidth] = useState(600);
@@ -154,25 +159,52 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
   const displayWidth = previewWidth === 0 ? 0 : clampRightSidebarWidth(previewWidth ?? baseWidth, maxWidth);
   // The shell weighs the preferred width, not the width this window allows,
   // so folding the rail to make room does not change the answer.
-  useReportWorkspaceDemand("info", open && !expandedWorkspace && (hosted || groupOverlay) ? clampRightSidebarWidth(baseWidth, 600) : 0);
-  const effectiveGroupWidth = groupWidth || noteGroup?.element?.getBoundingClientRect().width || 0;
+  useReportWorkspaceDemand("info", paneOpen && !expandedWorkspace && (hosted || groupOverlay) ? clampRightSidebarWidth(baseWidth, 600) : 0);
+  const effectiveGroupWidth = groupWidth || paneRoot?.getBoundingClientRect().width || 0;
   // Include both on-demand context tools when reserving the note header.
   // Below this width they can squeeze the selected page title to zero.
   const minimumNoteHeaderLane = 230;
-  // Keep the note and its inspector as two visible regions at every width.
-  // A narrow group shares its space; only the explicit expand action may
-  // cover the note. The header and body use this same boundary.
-  const minimumNoteContentWidth = Math.max(minimumNoteHeaderLane, Math.min(320, effectiveGroupWidth / 2));
-  const groupOverlayWidth = Math.min(displayWidth, Math.max(0, effectiveGroupWidth - minimumNoteContentWidth));
-  const groupOverlayCssWidth = `min(${displayWidth}px, max(0px, calc(100% - max(${minimumNoteHeaderLane}px, min(320px, 50%)))))`;
-  const groupOverlayBodyReserved = groupOverlay;
+  const sharedNarrowOverlay = sharedGroup && effectiveGroupWidth < 640 && !expandedWorkspace;
+  // Desktop reserves a reading lane beside the inspector. Narrow shared
+  // workspaces overlay the pane instead of shrinking the editor to a sliver.
+  // The rendered pane and its resize handle use the same measured width.
+  const minimumNoteContentWidth = sharedGroup && sharedWiki?.isSplit === true
+    ? Math.max(minimumNoteHeaderLane, Math.min(640, Math.max(effectiveGroupWidth / 2, effectiveGroupWidth - 320)))
+    : Math.max(minimumNoteHeaderLane, Math.min(320, effectiveGroupWidth / 2));
+  const groupOverlayWidth = sharedNarrowOverlay
+    ? Math.min(displayWidth, effectiveGroupWidth)
+    : Math.min(displayWidth, Math.max(0, effectiveGroupWidth - minimumNoteContentWidth));
+  const groupOverlayCssWidth = sharedGroup
+    ? `${groupOverlayWidth}px`
+    : `min(${displayWidth}px, max(0px, calc(100% - max(${minimumNoteHeaderLane}px, min(320px, 50%)))))`;
+  const groupOverlayBodyReserved = groupOverlay && !sharedGroup && !headerless;
   const expandedHeaderWidth = Math.min(320, Math.max(0, effectiveGroupWidth - minimumNoteHeaderLane));
-  const groupHeaderReserveWidth = open && groupOverlay
+  const groupHeaderReserveWidth = open && groupOverlay && !sharedGroup && !headerless
     ? groupOverlayCssWidth
-    : open && groupScoped && expandedWorkspace ? `${expandedHeaderWidth}px` : null;
+    : open && groupScoped && expandedWorkspace && !headerless ? `${expandedHeaderWidth}px` : null;
 
   useLayoutEffect(() => {
-    const frame = groupScoped ? noteGroup?.element : null;
+    const frame = groupScoped ? (sharedGroup ? paneRoot : noteGroup?.element) : null;
+    if (sharedGroup && frame) {
+      if (!paneOpen) return;
+      const hadOpenClass = frame.classList.contains("wiki-shared-inspector-open");
+      const previousWidth = frame.style.getPropertyValue("--wiki-shared-inspector-width");
+      const previousOwner = frame.dataset.wikiInspectorOwner;
+      frame.dataset.wikiInspectorOwner = titleId;
+      if (!expandedWorkspace && !sharedNarrowOverlay) {
+        frame.classList.add("wiki-shared-inspector-open");
+        frame.style.setProperty("--wiki-shared-inspector-width", groupOverlayCssWidth);
+      } else {
+        frame.classList.remove("wiki-shared-inspector-open");
+        frame.style.removeProperty("--wiki-shared-inspector-width");
+      }
+      return () => {
+        if (frame.dataset.wikiInspectorOwner !== titleId) return;
+        if (hadOpenClass) frame.classList.add("wiki-shared-inspector-open"); else frame.classList.remove("wiki-shared-inspector-open");
+        if (previousWidth) frame.style.setProperty("--wiki-shared-inspector-width", previousWidth); else frame.style.removeProperty("--wiki-shared-inspector-width");
+        if (previousOwner) frame.dataset.wikiInspectorOwner = previousOwner; else delete frame.dataset.wikiInspectorOwner;
+      };
+    }
     if (!frame) return;
     const property = "--note-group-inspector-header-width";
     const previous = frame.style.getPropertyValue(property);
@@ -182,13 +214,15 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
       if (previous) frame.style.setProperty(property, previous);
       else frame.style.removeProperty(property);
     };
-  }, [groupScoped, noteGroup?.element, groupHeaderReserveWidth]);
+  }, [groupScoped, noteGroup?.element, groupHeaderReserveWidth, sharedGroup, paneRoot, paneOpen, expandedWorkspace, sharedNarrowOverlay, groupOverlayCssWidth, titleId]);
 
   const measureWidthLimit = useCallback(() => {
     if (groupScoped) {
-      const width = noteGroup.element?.getBoundingClientRect().width ?? 0;
+      const width = paneRoot?.getBoundingClientRect().width ?? 0;
       setGroupWidth(current => current === width ? current : width);
-      const available = groupDocked ? Math.floor(width - 360) : 320;
+      const sharedReadingReserve = sharedWiki?.isSplit ? 640 : 480;
+      const narrowShared = sharedGroup && width < 640;
+      const available = sharedGroup ? Math.floor(width - (narrowShared ? 0 : sharedReadingReserve)) : groupDocked ? Math.floor(width - 360) : 320;
       const next = Math.min(600, Math.max(320, available));
       setMaxWidth(current => current === next ? current : next);
       return;
@@ -204,11 +238,11 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
     const available = Math.floor(shellWidth - sidebarWidth - 480 - hostPadding);
     const next = Math.min(600, Math.max(320, available));
     setMaxWidth(current => current === next ? current : next);
-  }, [workspacePaneHost, hosted, groupScoped, noteGroup, groupDocked]);
+  }, [workspacePaneHost, hosted, groupScoped, paneRoot, sharedGroup, sharedWiki?.isSplit, groupDocked]);
 
   useEffect(() => {
     if (groupScoped) {
-      const groupElement = noteGroup.element;
+      const groupElement = paneRoot;
       if (!groupElement) return;
       measureWidthLimit();
       // ResizeObserver runs before paint. Commit pane geometry in the next
@@ -238,7 +272,7 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
       observer?.disconnect();
       window.removeEventListener("resize", measureWidthLimit);
     };
-  }, [hosted, workspacePaneHost, measureWidthLimit, groupScoped, noteGroup?.element]);
+  }, [hosted, workspacePaneHost, measureWidthLimit, groupScoped, noteGroup?.element, paneRoot]);
 
   const commitWidth = (width: number) => {
     const sanitized = clampRightSidebarWidth(width, maxWidth);
@@ -248,7 +282,7 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
   };
 
   useEffect(() => {
-    if (!open) return;
+    if (!paneOpen) return;
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     triggerRef.current = trigger;
     if (!groupScoped && (!nonModal || focusOnOpen)) closeRef.current?.focus();
@@ -260,7 +294,11 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (groupScoped && !(event.target instanceof Node && noteGroup?.element?.contains(event.target))) return;
+      if (sharedGroup && !paneOpen) return;
+      if (groupScoped && !(event.target instanceof Node && (
+        noteGroup?.element?.contains(event.target) || panelRef.current?.contains(event.target) ||
+        (sharedGroup && sharedWiki?.toolsElement?.contains(event.target))
+      ))) return;
       if (!groupScoped && nonModal && !(event.target instanceof Node && panelRef.current?.contains(event.target))) return;
       // Map node editors, context menus, and shortcut sheets get the first
       // chance to handle Escape. A document capture listener closes the pane
@@ -322,14 +360,14 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
       const target = returnTarget(focusInside ? returnFocusRef : undefined, trigger);
       if (!groupScoped && target && (!nonModal || document.activeElement === document.body || panelRef.current?.contains(document.activeElement))) target.focus();
     };
-  }, [open, nonModal, inspector, groupScoped, noteGroup, focusOnOpen, returnFocusRef]);
+  }, [paneOpen, nonModal, inspector, groupScoped, sharedGroup, sharedWiki?.toolsElement, noteGroup, focusOnOpen, returnFocusRef]);
 
   if (!open && !keepMounted) return null;
 
   const hostClass = expandedWorkspace
     ? ` page-info-drawer-expanded-workspace${groupScoped ? " page-info-drawer-expanded-group" : ""}`
     : hosted ? ` page-info-drawer-hosted${variant === "canvas" ? " page-info-drawer-hosted--canvas" : ""}${inspector ? " page-info-drawer-hosted--inspector" : ""}` : "";
-  const bodyReservedOverlayClass = groupOverlayBodyReserved ? " page-info-drawer-group-overlay-body-reserved" : "";
+  const bodyReservedOverlayClass = `${groupOverlayBodyReserved ? " page-info-drawer-group-overlay-body-reserved" : ""}${sharedNarrowOverlay ? " page-info-drawer-shared-narrow-overlay" : ""}`;
   const overlayStyle = hosted
     ? { width: `${displayWidth}px` }
     : groupOverlay
@@ -364,7 +402,7 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
         role={nonModal ? "complementary" : "dialog"}
         style={panelStyle}
       >
-        <header className="page-info-drawer-header" data-tauri-drag-region={hosted ? "" : undefined}>
+        {headerless ? <h2 className="sr-only" id={titleId}>{title}</h2> : <header className="page-info-drawer-header" data-tauri-drag-region={hosted ? "" : undefined}>
           {headerContent != null ? (
             <>
               <h2 className="sr-only" data-tauri-drag-region={hosted ? "" : undefined} id={titleId}>{title}</h2>
@@ -387,7 +425,7 @@ export default function PageInfoDrawer({ open, keepMounted = false, focusOnOpen 
           <button aria-label={closeLabel} className="page-info-drawer-close" onClick={onClose} ref={closeRef} type="button">
             <X aria-hidden="true" size={18} />
           </button>
-        </header>
+        </header>}
         <div className="page-info-drawer-content">{children}</div>
       </aside>
     </div>

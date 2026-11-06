@@ -79,12 +79,11 @@ for (const mode of ['empty', 'missing']) test(`safe ${mode} page graph`, async (
 
 test('failed page save blocks graph navigation and preserves editor/sidebar', async ({ page }) => {
   const { errors, controller } = await boot(page);
-  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Info', exact: true }).click();
   controller.failNext('update_page', 'Synthetic save failure', 20);
   const editor = page.getByRole('textbox', { name: 'Page editor', exact: true });
   await editor.click(); await page.keyboard.press('End'); await page.keyboard.type(' protected edit');
   await page.getByRole('button', { name: 'Info', exact: true }).click();
-  await page.getByRole('tab', { name: 'Info', exact: true }).click();
   await page.getByRole('button', { name: 'Open in graph', exact: true }).click();
   await expect(page.getByTestId('atlas-view')).toHaveCount(0);
   await expect(editor).toContainText('protected edit');

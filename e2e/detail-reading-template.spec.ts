@@ -62,27 +62,29 @@ test("Memory, Topic and Wiki consume the same reading and Info template", async 
     const info = panel.locator("[data-detail-info]");
     await expect(info).toBeVisible();
     const body = frame.locator(kind === "topic" ? ".entity-obs-content" : ".cm-line").filter({ hasText: prose }).first();
-    const label = panel.locator(kind === "wiki" ? '[role="tab"][aria-selected="true"]' : ".page-info-drawer-header h2");
+    const label = panel.locator(kind === "wiki" ? ".note-info-summary .note-info-section-heading" : ".page-info-drawer-header h2");
+    const titleToken = kind === "wiki" ? "--detail-info-heading-size" : "--detail-info-title-size";
     await expect(body).toHaveCSS("font-size", "15px");
     await expect(info).toHaveCSS("gap", "24px");
-    await expect(label).toHaveCSS("font-size", "14px");
-    await page.evaluate(() => {
+    await expect(label).toHaveCSS("font-size", kind === "wiki" ? "15px" : "14px");
+    await page.evaluate((token) => {
       const style = document.documentElement.style;
       style.setProperty("--reading-font-size", "17px");
       style.setProperty("--detail-info-section-gap", "28px");
-      style.setProperty("--detail-info-title-size", "16px");
-    });
+      style.setProperty(token, "16px");
+    }, titleToken);
     await expect(body).toHaveCSS("font-size", "17px");
     await expect(info).toHaveCSS("gap", "28px");
     await expect(label).toHaveCSS("font-size", "16px");
-    await page.evaluate(() => {
+    await page.evaluate((titleToken) => {
       const style = document.documentElement.style;
-      for (const token of ["--reading-font-size", "--detail-info-section-gap", "--detail-info-title-size"]) {
+      for (const token of ["--reading-font-size", "--detail-info-section-gap", titleToken]) {
         style.removeProperty(token);
       }
-    });
+    }, titleToken);
     await expect(body).toHaveCSS("font-size", "15px");
-    await panel.getByRole("button", { name: t.common.close, exact: true }).click();
+    if (kind === "wiki") await page.getByRole("button", { name: t.pageInspector.info, exact: true }).click();
+    else await panel.getByRole("button", { name: t.common.close, exact: true }).click();
   }
   expect(errors.pageErrors).toEqual([]);
   expect(errors.consoleErrors).toEqual([]);

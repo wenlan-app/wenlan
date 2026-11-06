@@ -143,10 +143,9 @@ async function openPageInfo(user = userEvent.setup()) {
 }
 
 async function selectInspectorTab(user: ReturnType<typeof userEvent.setup>, name: string) {
-  if (!screen.queryByRole("tablist")) {
-    await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
-  }
-  await user.click(await screen.findByRole("tab", { name }));
+  const info = screen.getByRole("button", { name: i18n.t("pageInspector.info") });
+  if (info.getAttribute("aria-expanded") !== "true") await user.click(info);
+  await user.click(await screen.findByRole("button", { name }));
 }
 
 async function makeNextPageResolvable() {
@@ -577,8 +576,8 @@ describe("PageDetail", () => {
     await screen.findByRole("alert");
     expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     expect(editorViewFromTextbox(editor).state.doc.toString()).toBe("Keep this draft");
-    expect(screen.getByRole("tab", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveAttribute("aria-pressed", "false");
     expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
   });
 
@@ -593,8 +592,8 @@ describe("PageDetail", () => {
     expect(editorViewFromTextbox(editor).state.doc.toString()).toBe("Composing draft");
     expect(updatePage).not.toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
-    expect(screen.getByRole("tab", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveAttribute("aria-pressed", "false");
     fireEvent.compositionEnd(editor);
   });
 
@@ -611,8 +610,8 @@ describe("PageDetail", () => {
     expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     expect(editorViewFromTextbox(editor).state.doc.toString()).toBe("Local conflicting draft");
     expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
-    expect(screen.getByRole("tab", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("disables a pending map switch and ignores its save after navigating away", async () => {
@@ -626,10 +625,10 @@ describe("PageDetail", () => {
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     act(() => replaceDocument(editorViewFromTextbox(editor), "Pending map draft"));
     await selectInspectorTab(user, i18n.t("pageCanvas.tabCanvas"));
-    const pendingMap = screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") });
+    const pendingMap = screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") });
     expect(pendingMap).toBeDisabled();
-    expect(pendingMap).toHaveAttribute("aria-selected", "false");
-    expect(pendingMap).toHaveFocus();
+    expect(pendingMap).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: i18n.t("common.close") })).toHaveFocus();
     expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
     expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     await user.click(pendingMap);
@@ -640,7 +639,7 @@ describe("PageDetail", () => {
     await act(async () => pending.resolve({ outcome: "saved" }));
     expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(nextEditor);
     expect(screen.queryByRole("region", { name: "Canvas for Next Page" })).toBeNull();
-    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-expanded", "false");
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValue(original);
   });
 

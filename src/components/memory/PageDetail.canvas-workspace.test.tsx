@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "./PageDetail";
+import { WorkspaceDocumentToolsHostContext } from "./navigation/WorkspacePaneHost";
 import { i18n } from "../../i18n";
 
 vi.mock("@xyflow/react", async () => {
@@ -71,45 +72,47 @@ describe("PageDetail canvas workspace", () => {
     });
     const user = userEvent.setup();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const toolsHost = document.createElement("div");
+      document.body.append(toolsHost);
     try {
       const { container } = render(
         <QueryClientProvider client={client}>
+          <WorkspaceDocumentToolsHostContext.Provider value={toolsHost}>
           <div className="wiki-workspace-content" data-testid="wiki-content">
             <PageDetail pageId="concept_abc" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onEntityClick={vi.fn()} />
           </div>
+          </WorkspaceDocumentToolsHostContext.Provider>
         </QueryClientProvider>,
       );
       await screen.findByText("Workspace scroll");
       const wikiContent = screen.getByTestId("wiki-content");
       wikiContent.scrollTop = 640;
-      await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
-      await user.click(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") }));
+      await user.click(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") }));
 
       const map = await screen.findByRole("region", { name: "Canvas for Workspace scroll" });
-      const expand = await screen.findByRole("button", { name: i18n.t("pageCanvas.expandWorkspace") });
+      const expand = await within(toolsHost).findByRole("button", { name: i18n.t("pageCanvas.expandWorkspace") });
       await user.click(expand);
       expect(container.querySelector(".page-detail--workspace-expanded")).toBeInTheDocument();
       expect(screen.getByRole("region", { name: "Canvas for Workspace scroll" })).toBe(map);
 
       // Browsers can clamp scrollTop when the reading document leaves flow.
       wikiContent.scrollTop = 0;
-      await user.click(screen.getByRole("button", { name: i18n.t("pageCanvas.restoreSidebar") }));
+      await user.click(within(toolsHost).getByRole("button", { name: i18n.t("pageCanvas.restoreSidebar") }));
       expect(container.querySelector(".page-detail--workspace-expanded")).toBeNull();
       expect(wikiContent.scrollTop).toBe(640);
       expect(screen.getByRole("region", { name: "Canvas for Workspace scroll" })).toBe(map);
 
-      await user.click(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") }));
-      await user.click(screen.getByRole("button", { name: i18n.t("pageCanvas.expandWorkspace") }));
+      await user.click(within(toolsHost).getByRole("button", { name: i18n.t("pageCanvas.expandWorkspace") }));
       wikiContent.scrollTop = 0;
-      await user.click(screen.getByRole("tab", { name: i18n.t("pageInspector.info") }));
+      await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
       expect(container.querySelector(".page-detail--workspace-expanded")).toBeInTheDocument();
       expect(wikiContent.scrollTop).toBe(0);
-      expect(screen.getAllByRole("tab")).toHaveLength(2);
+      expect(screen.queryByRole("tablist")).toBeNull();
 
-      await user.click(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") }));
+      await user.click(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") }));
       expect(container.querySelector(".page-detail--workspace-expanded")).toBeInTheDocument();
       wikiContent.scrollTop = 0;
-      await user.click(screen.getByRole("button", { name: i18n.t("common.close") }));
+      await user.click(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") }));
       expect(container.querySelector(".page-detail--workspace-expanded")).toBeNull();
       expect(wikiContent.scrollTop).toBe(640);
 
@@ -117,6 +120,7 @@ describe("PageDetail canvas workspace", () => {
       expect(putPageMapLayout).not.toHaveBeenCalled();
     } finally {
       window.matchMedia = originalMatchMedia;
+      toolsHost.remove();
     }
   });
 });

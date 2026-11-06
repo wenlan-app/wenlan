@@ -10,8 +10,9 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { createPortal } from "react-dom";
 import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "./navigation/WorkspacePaneHost";
-import { NoteInspectorTabs, type NoteInspectorTab } from "./page/NoteInspectorTabs";
-import { ArrowLeft, Info, PencilSimple, TreeStructure } from "@phosphor-icons/react";
+import type { NoteInspectorTab } from "./page/NoteInspectorTabs";
+import { usePageInspectorSession } from "./page/usePageInspectorSession";
+import { ArrowLeft, ArrowsIn, ArrowsOut, FilePdf, Info, PencilSimple, TreeStructure } from "@phosphor-icons/react";
 import {
   getPage,
   getPageLinks,
@@ -321,14 +322,12 @@ export default function PageDetail({
   const [renameExpectedVersion, setRenameExpectedVersion] = useState<number | null>(null);
   const [renameError, setRenameError] = useState(false);
   const [renameNeedsReview, setRenameNeedsReview] = useState(false);
-  const [infoOpen, setInfoOpen] = useState(false);
+  const exampleWiki = useExampleWikiActive();
+  const readingSessionKey = JSON.stringify([exampleWiki ? "example" : "own", pageId]);
+  const { infoOpen, setInfoOpen, canvasOpen, setCanvasOpen, pdfPreview, setPdfPreview, pdfPreviewOpen, setPdfPreviewOpen } = usePageInspectorSession(readingSessionKey);
   const [sourcePreview, setSourcePreview] = useState<IndexedFileInfo | null>(null);
-  const [pdfPreview, setPdfPreview] = useState<IndexedFileInfo | null>(null);
-  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   useEffect(() => {
     setSourcePreview(null);
-    setPdfPreview(null);
-    setPdfPreviewOpen(false);
   }, [pageId]);
   const [canvasWorkspaceExpanded, setCanvasWorkspaceExpanded] = useState(false);
   const [canvasWorkspaceHost, setCanvasWorkspaceHost] = useState<HTMLDivElement | null>(null);
@@ -385,7 +384,6 @@ export default function PageDetail({
   const [conflictLatest, setConflictLatest] =
     useState<ConflictLatestSource>({ kind: "idle" });
   const [editValidation, setEditValidation] = useState<string | null>(null);
-  const exampleWiki = useExampleWikiActive();
   const [editorFallbackSessionId, setEditorFallbackSessionId] =
     useState<string | null>(null);
   const [editorShortcutModifier, setEditorShortcutModifier] =
@@ -442,7 +440,6 @@ export default function PageDetail({
   // The same for changed code: the next save of this note also confirms these lines.
   const codeConfirmIntentRef = useRef<{ pageId: string; row: CodeBasisRef } | null>(null);
   const codeSaveConfirmRef = useRef<(intent: { pageId: string; row: CodeBasisRef }) => void>(() => undefined);
-  const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasSwitchPending, setCanvasSwitchPending] = useState(false);
   const [storedActionPending, setStoredActionPending] = useState(false);
   const storedActionRef = useRef<object | null>(null);
@@ -479,6 +476,7 @@ export default function PageDetail({
   const actionMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const infoToggleRef = useRef<HTMLButtonElement>(null);
   const canvasToggleRef = useRef<HTMLButtonElement>(null);
+  const pdfToggleRef = useRef<HTMLButtonElement>(null);
   const actionMenuRef = useRef<HTMLDivElement>(null);
   const actionMenuListRef = useRef<HTMLDivElement>(null);
   const actionMenuInitialFocusRef = useRef<MenuInitialFocus>("first");
@@ -821,7 +819,7 @@ export default function PageDetail({
     setRedistillNotice(null);
     setReviewNotice(null);
     setActionErrorMessage(null);
-    // Inspector open/selected state belongs to the workspace, not this note.
+    // Pending transitions reset; each note retains its own inspector session.
     setCanvasSwitchPending(false);
     canvasSwitchPendingRef.current = false;
     canvasReturnToEditorRef.current = false;
@@ -1671,7 +1669,7 @@ export default function PageDetail({
     // Each group owns its return target. A map opened while writing resumes
     // that editor; otherwise closing the inspector returns to its own toggle.
     if (!returningToEditor) {
-      (showCanvas ? canvasToggleRef.current : infoToggleRef.current)?.focus({ preventScroll: true });
+      (pdfPreviewOpen ? pdfToggleRef.current : showCanvas ? canvasToggleRef.current : infoToggleRef.current)?.focus({ preventScroll: true });
     }
   };
 
@@ -2459,7 +2457,7 @@ export default function PageDetail({
   const inspectorTab: NoteInspectorTab = pdfPreviewOpen ? "pdf" : showCanvas ? "canvas" : "info";
   const inspectorOpen = infoOpen || showCanvas || pdfPreviewOpen;
   const inspectorToggle = <>
-    <button ref={infoToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-inspector-toggle"
+    <button id={`${inspectorId}-info`} aria-controls={`${inspectorId}-panel`} ref={infoToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-inspector-toggle"
       aria-label={t("pageInspector.info")} title={t("pageInspector.info")}
       aria-expanded={inspectorOpen} aria-pressed={infoOpen && !showCanvas && !pdfPreviewOpen} disabled={canvasSwitchPending}
       onClick={(event) => {
@@ -2471,7 +2469,7 @@ export default function PageDetail({
       }}>
       <Info aria-hidden="true" size={18} />
     </button>
-    <button ref={canvasToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-mind-map-toggle"
+    <button id={`${inspectorId}-canvas`} aria-controls={`${inspectorId}-panel`} ref={canvasToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-mind-map-toggle"
       aria-label={t("pageCanvas.tabCanvas")} title={t("pageCanvas.tabCanvas")}
       aria-expanded={inspectorOpen} aria-pressed={showCanvas} disabled={canvasSwitchPending}
       onClick={(event) => {
@@ -2481,6 +2479,22 @@ export default function PageDetail({
       }}>
       <TreeStructure aria-hidden="true" size={18} />
     </button>
+    {pdfPreview && <button id={`${inspectorId}-pdf`} aria-controls={`${inspectorId}-panel`} ref={pdfToggleRef} type="button"
+      className="mem-icon-action workspace-panel-toggle note-pdf-toggle"
+      aria-label={t("pdfReader.tab")} title={t("pdfReader.tab")}
+      aria-expanded={inspectorOpen} aria-pressed={pdfPreviewOpen} disabled={canvasSwitchPending}
+      onClick={event => {
+        event.currentTarget.focus({ preventScroll: true });
+        if (pdfPreviewOpen) closeInspector();
+        else selectInspectorTab("pdf");
+      }}><FilePdf aria-hidden="true" size={18} /></button>}
+    {documentToolsHost && inspectorOpen && canvasWorkspaceSupported && <button type="button"
+      className="mem-icon-action workspace-panel-toggle"
+      aria-label={t(canvasWorkspaceExpanded ? "pageCanvas.restoreSidebar" : "pageCanvas.expandWorkspace")}
+      title={t(canvasWorkspaceExpanded ? "pageCanvas.restoreSidebar" : "pageCanvas.expandWorkspace")}
+      onClick={() => changeCanvasWorkspaceExpanded(!canvasWorkspaceExpanded)}>
+      {canvasWorkspaceExpanded ? <ArrowsIn aria-hidden="true" size={18} /> : <ArrowsOut aria-hidden="true" size={18} />}
+    </button>}
   </>;
 
   // The example wiki is for looking at: nothing in it can be moved, renamed or deleted.
@@ -3201,30 +3215,26 @@ export default function PageDetail({
       <div aria-hidden={!canvasWorkspaceExpanded} className="page-detail-canvas-workspace-host" ref={setCanvasWorkspaceHost} />
 
       <PageInfoDrawer
-        docked inspector
+        docked inspector headerless={!!documentToolsHost}
         keepMounted={!!pdfPreview}
         defaultWidth={pdfPreviewOpen ? 560 : undefined}
         variant={showCanvas ? "canvas" : "info"}
         expanded={canvasWorkspaceExpanded}
         expandedHost={canvasWorkspaceHost}
         onExpandedChange={canvasWorkspaceSupported ? changeCanvasWorkspaceExpanded : undefined}
-        returnFocusRef={showCanvas ? canvasToggleRef : infoToggleRef}
+        returnFocusRef={pdfPreviewOpen ? pdfToggleRef : showCanvas ? canvasToggleRef : infoToggleRef}
         expandLabel={t("pageCanvas.expandWorkspace")}
         restoreLabel={t("pageCanvas.restoreSidebar")}
         open={!sourcePreview && inspectorOpen}
         onClose={closeInspector}
         title={t("pageInspector.label")}
         closeLabel={t("common.close")}
-        headerContent={<>
-          <NoteInspectorTabs idPrefix={inspectorId} active={inspectorTab} includePdf={!!pdfPreview}
-            onSelect={selectInspectorTab} disabled={canvasSwitchPending} />
-        </>}
       >
-        <div id={`${inspectorId}-panel`} role="tabpanel" aria-labelledby={`${inspectorId}-${inspectorTab}`}
+        <div id={`${inspectorId}-panel`} role="region" aria-labelledby={`${inspectorId}-${inspectorTab}`}
           className={`note-inspector-panel${showCanvas ? " note-inspector-panel--canvas" : ""}`}>
           {pdfPreview && <div className="source-document-preview note-inspector-pdf" hidden={!pdfPreviewOpen}>
-            <h3 className="note-info-section-heading">{pdfPreview.title}</h3>
-            <SourceDocumentReader key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} />
+            <h3 className="note-info-section-heading" title={pdfPreview.title}>{pdfPreview.title}</h3>
+            <SourceDocumentReader readingSessionKey={readingSessionKey} key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} />
           </div>}
           {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
             onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} />

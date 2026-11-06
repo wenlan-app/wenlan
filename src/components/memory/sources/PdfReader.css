@@ -1,8 +1,73 @@
-.source-pdf-reader { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.source-pdf-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.source-pdf-tools input { min-width: 0; width: 9em; padding: 4px 6px; border-radius: 4px; background: var(--mem-bg-secondary); color: var(--mem-text-primary); border: 1px solid var(--mem-border); }
-.source-pdf-tools input[type=number] { width: 3.5em; }
+.source-pdf-reader { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; }
+.pdf-reader-navigation,
+.pdf-reader-search { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.pdf-reader-navigation { flex-wrap: nowrap; }
+.pdf-reader-navigation input,
+.pdf-reader-search input,
+.zotero-document-tools select {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 30px;
+  border-radius: 5px;
+  background: var(--mem-bg-secondary);
+  color: var(--mem-text-primary);
+  border: 1px solid var(--mem-border);
+  font: var(--mem-text-control)/1.2 var(--mem-font-body);
+}
+.pdf-reader-navigation input { width: 3.5em; padding: 3px 5px; text-align: center; }
+.pdf-reader-page-total { flex: 0 0 auto; color: var(--mem-text-secondary); font: var(--mem-text-xs)/1.2 var(--mem-font-body); }
+.pdf-reader-control-divider { width: 1px; height: 18px; flex: 0 0 1px; margin-inline: 2px; background: var(--mem-border); }
+.pdf-reader-control {
+  box-sizing: border-box;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mem-text-secondary);
+  cursor: pointer;
+}
+.pdf-reader-control:hover:not(:disabled) { background: var(--mem-hover); color: var(--mem-text); }
+.pdf-reader-control:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 1px; }
+.pdf-reader-control:disabled { cursor: not-allowed; opacity: .45; }
+.pdf-reader-search input { flex: 1 1 auto; width: 0; padding: 4px 8px; }
+.zotero-document-tools { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-width: 0; }
+.zotero-document-tools label { display: flex; flex: 1 1 auto; align-items: center; gap: 6px; min-width: 0; color: var(--mem-text-secondary); font: var(--mem-text-xs)/1.2 var(--mem-font-body); }
+.zotero-document-tools select { flex: 1 1 auto; width: 0; padding: 3px 6px; }
+.source-pdf-open-zotero {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+  color: var(--mem-text-secondary);
+  cursor: pointer;
+  font: var(--mem-text-xs)/1.2 var(--mem-font-body);
+  white-space: nowrap;
+}
+.source-pdf-open-zotero:hover { color: var(--mem-text); text-decoration: underline; text-underline-offset: 2px; }
+.source-pdf-open-zotero:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 1px; border-radius: 3px; }
 .source-pdf-reader p { font-size: var(--mem-text-xs); color: var(--mem-text-secondary); }
 .source-pdf-stage { position: relative; height: 65vh; min-height: 320px; }
 .source-pdf-scroll { position: absolute; inset: 0; overflow: auto; background: #aaa; }
 .source-pdf-scroll .pdfViewer { --page-margin: 4px auto; }
+
+@media (pointer: coarse) {
+  .pdf-reader-control { width: 44px; height: 44px; min-width: 44px; min-height: 44px; flex-basis: 44px; }
+  .pdf-reader-navigation input,
+  .pdf-reader-search input,
+  .zotero-document-tools select,
+  .source-pdf-open-zotero { min-height: 44px; }
+  .pdf-reader-navigation { overflow-x: auto; scrollbar-width: none; }
+  .pdf-reader-navigation::-webkit-scrollbar { display: none; }
+}

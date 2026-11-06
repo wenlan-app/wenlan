@@ -5,6 +5,81 @@
   overflow-wrap: anywhere;
 }
 
+/* The in-inspector PDF uses the drawer height; ordinary source reads keep the
+   standalone reader's content-driven layout. */
+.page-info-drawer-content:has(.note-inspector-pdf:not([hidden])) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.note-inspector-panel:has(.note-inspector-pdf:not([hidden])) {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-inspector-pdf:not([hidden]) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-inspector-pdf:not([hidden]) > .note-info-section-heading {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-inspector-pdf:not([hidden]) > .source-document-reader {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-inspector-pdf:not([hidden]) .zotero-document-reader {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-inspector-pdf:not([hidden]) .zotero-document-reader > [role="status"] {
+  flex: 0 1 auto;
+  max-height: 4em;
+  overflow: auto;
+}
+
+.note-inspector-pdf:not([hidden]) .zotero-document-reader > .source-pdf-reader {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.note-inspector-pdf:not([hidden]) .source-pdf-stage {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+.note-inspector-pdf:not([hidden]) .source-document-reader > details {
+  flex: 0 1 auto;
+  max-height: 28%;
+  min-height: 0;
+  overflow: auto;
+}
+
 .source-document-preview .reading-document-frame {
   padding-block-start: 0;
 }

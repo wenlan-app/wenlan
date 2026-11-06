@@ -31,13 +31,14 @@ function safeOriginalUrl(file: IndexedFileInfo): string | null {
   return null;
 }
 
-export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, frame = false, renderRelatedPages }: {
+export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, frame = false, renderRelatedPages, readingSessionKey }: {
   file: IndexedFileInfo;
   space?: string;
   onReady?: () => void;
   onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
   frame?: boolean;
   renderRelatedPages?: (content: ReactNode) => ReactNode;
+  readingSessionKey?: string;
 }) {
   const { t, i18n } = useTranslation();
   const source = ["file", "webpage"].includes(file.source) ? file.source : "memory";
@@ -57,7 +58,7 @@ export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, fr
   const content = [...(chunks.data ?? [])].sort((a, b) => a.chunk_index - b.chunk_index).map((chunk) => chunk.content).join("\n\n");
 
   return <div className={`source-document-reader${frame ? " reading-document-frame" : ""}`}>
-    {isZotero && <ZoteroDocumentReader key={zoteroReaderKey} sourceId={file.source_id} space={space}
+    {isZotero && <ZoteroDocumentReader key={`${zoteroReaderKey}:${readingSessionKey ?? "default"}`} sourceId={file.source_id} space={space} readingSessionKey={readingSessionKey}
       annotationTarget={zoteroJump?.readerKey === zoteroReaderKey ? zoteroJump.target : undefined} />}
     {originalUrl && <div className="source-document-reader-url">
       {app && <span className="source-document-reader-app" data-source-app={app}>

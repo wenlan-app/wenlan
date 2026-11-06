@@ -23,20 +23,24 @@ for(const locale of ['en'] as const) for(const theme of ['light']) for(const wid
   if(width===375) expect(boxes[1]!.y).toBeGreaterThanOrEqual(boxes[0]!.y+boxes[0]!.height-1);
   else expect(boxes[1]!.x).toBeGreaterThanOrEqual(boxes[0]!.x+boxes[0]!.width-1);
   await page.screenshot({path:info.outputPath('01-notes.png'),fullPage:true});
-  await left.getByRole('button',{name:copy.pageInspector.info,exact:true}).click();
-  await right.getByRole('button',{name:copy.pageInspector.info,exact:true}).click();
-  await right.getByRole('button',{name:copy.pageCanvas.tabCanvas,exact:true}).click();
-  for(const frame of [left,right]) {
-   const bounds=await frame.boundingBox(),panel=await frame.getByRole('complementary').boundingBox();
-   expect(panel!.x).toBeGreaterThanOrEqual(bounds!.x-1);
-   expect(panel!.x+panel!.width).toBeLessThanOrEqual(bounds!.x+bounds!.width+1);
-   expect(panel!.y).toBeGreaterThanOrEqual(bounds!.y-1);
-   expect(panel!.y+panel!.height).toBeLessThanOrEqual(bounds!.y+bounds!.height+1);
-  }
-  await page.screenshot({path:info.outputPath('02-own-inspectors.png'),fullPage:true});
-  await right.getByRole('button',{name:copy.pageCanvas.expandWorkspace,exact:true}).click();
-  await expect(left.getByRole('tab',{name:copy.pageInspector.info,exact:true})).toBeVisible();
-  await expect(right.locator('.page-info-drawer-expanded-group')).toBeVisible();
+  await right.getByRole('tab',{selected:true}).click();
+  const infoTool=page.getByRole('button',{name:copy.pageInspector.info,exact:true});
+  const mapTool=page.getByRole('button',{name:copy.pageCanvas.tabCanvas,exact:true});
+  await infoTool.click();
+  const panel=page.locator('.page-info-drawer');
+  await expect(panel).toHaveCount(1);
+  await mapTool.click();
+  await expect(page.getByRole('region',{name:'Canvas for Why fixtures stay deterministic',exact:true})).toBeVisible();
+  const panelBox=await panel.boundingBox();
+  const shellBox=(await page.locator('.memory-shell').boundingBox())!;
+  expect(panelBox!.x).toBeGreaterThanOrEqual(shellBox.x-1);
+  expect(panelBox!.x+panelBox!.width).toBeLessThanOrEqual(shellBox.x+shellBox.width+1);
+  expect(panelBox!.width).toBeGreaterThanOrEqual(320);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:info.outputPath('02-shared-inspector.png'),fullPage:true});
+  await page.getByRole('button',{name:copy.pageCanvas.expandWorkspace,exact:true}).click();
+  await expect(panel).toBeVisible();
+  await expect(page.locator('.page-info-drawer-expanded-workspace, .page-info-drawer-expanded-group')).toBeVisible();
   await page.screenshot({path:info.outputPath('03-own-workspace.png'),fullPage:true});
   expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
  });

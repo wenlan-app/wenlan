@@ -50,6 +50,9 @@
   min-width: 0;
 }
 
+/* The shared Wiki toolbar is the only visible destination in split reading. */
+.note-group-document-tools--shared { display: none; }
+
 .note-group-frame:has(.page-info-drawer-group-overlay) .note-group-header,
 .note-group-frame:has(.page-info-drawer-expanded-group) .note-group-header {
   grid-template-columns: minmax(0, 1fr) auto auto;
