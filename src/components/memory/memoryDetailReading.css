@@ -90,7 +90,7 @@
   display: list-item;
   width: fit-content;
   max-width: 100%;
-  border-radius: 4px;
+  border-radius: var(--mem-r-4);
   cursor: pointer;
   color: var(--mem-text-secondary);
   font-weight: 500;

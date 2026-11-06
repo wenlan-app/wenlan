@@ -40,7 +40,7 @@
   max-height: calc(100dvh - 40px);
   overflow: hidden;
   border: 1px solid var(--mem-border);
-  border-radius: 12px;
+  border-radius: var(--mem-r-12);
   background: var(--mem-surface);
   color: var(--mem-text);
   box-shadow: 0 16px 64px rgb(0 0 0 / 22%);
@@ -66,7 +66,7 @@
   padding: 6px 8px;
   margin-inline: -8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: none;
   color: var(--mem-accent-page);
   font: 400 14px/1.4 var(--mem-font-body);
@@ -84,7 +84,7 @@
 .session-card-close {
   padding: 6px 12px;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: transparent;
   color: var(--mem-text);
   font: 500 13px/1.4 var(--mem-font-body);

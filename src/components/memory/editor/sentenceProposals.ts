@@ -150,7 +150,7 @@ export function sentenceProposals(initial: SentenceProposalSettings | null): Ext
     EditorView.theme({
       ".cm-sentence-proposed": {
         backgroundColor: "color-mix(in srgb, var(--mem-accent-indigo) 10%, transparent)",
-        borderRadius: "3px",
+        borderRadius: "var(--mem-r-3)",
       },
       ".cm-sentence-proposal": {
         display: "flex",
@@ -159,7 +159,7 @@ export function sentenceProposals(initial: SentenceProposalSettings | null): Ext
         gap: "4px 10px",
         margin: "6px 0 12px",
         padding: "8px 12px",
-        borderRadius: "8px",
+        borderRadius: "var(--mem-r-8)",
         background: "color-mix(in srgb, var(--mem-accent-indigo) 7%, transparent)",
         fontSize: "var(--mem-text-sm)",
         lineHeight: "1.6",
@@ -179,7 +179,7 @@ export function sentenceProposals(initial: SentenceProposalSettings | null): Ext
       },
       ".cm-sentence-proposal-button": {
         border: "none",
-        borderRadius: "6px",
+        borderRadius: "var(--mem-r-6)",
         padding: "2px 10px",
         font: "inherit",
         cursor: "pointer",

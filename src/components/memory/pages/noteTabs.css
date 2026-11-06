@@ -45,7 +45,7 @@
   margin-top: 4px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: transparent;
   color: var(--mem-text-secondary);
   cursor: pointer;
@@ -65,7 +65,7 @@
   margin-top: 4px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: transparent;
   color: var(--mem-text-secondary);
   cursor: pointer;
@@ -96,7 +96,7 @@
   flex: 0 0 auto;
   align-items: flex-start;
   max-width: 220px;
-  border-radius: 10px 10px 0 0;
+  border-radius: var(--mem-r-10) var(--mem-r-10) 0 0;
   transition: background-color 140ms ease;
 }
 
@@ -148,7 +148,7 @@
   flex: 1 1 auto;
   min-width: 0;
   padding: 0 4px 0 12px;
-  border-radius: 10px 0 0 0;
+  border-radius: var(--mem-r-10) 0 0 0;
 }
 
 .note-tab > [role="tab"] > span {
@@ -170,7 +170,7 @@
 .note-tab > button:focus-visible {
   outline: 2px solid var(--mem-text-secondary);
   outline-offset: -3px;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
 }
 
 .note-tab[data-dragging="true"] { opacity: 0.45; }
@@ -187,7 +187,7 @@ body.note-tab-dragging *::after {
 .note-tab-close {
   flex: 0 0 32px;
   width: 32px;
-  border-radius: 0 10px 0 0;
+  border-radius: 0 var(--mem-r-10) 0 0;
 }
 
 .note-tab-context-menu {
@@ -202,7 +202,7 @@ body.note-tab-dragging *::after {
   width: 100%;
   padding: 7px 9px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--mem-r-4);
   background: transparent;
   color: var(--mem-text);
   font: 13px/18px var(--mem-font-body);
@@ -240,7 +240,7 @@ body.note-tab-dragging *::after {
   gap: 2px;
   padding: 6px 10px;
   border: 1px solid color-mix(in srgb, var(--mem-border) 80%, transparent);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-bg);
   color: var(--mem-text);
   box-shadow: 0 3px 10px rgb(0 0 0 / 12%);
@@ -254,7 +254,7 @@ body.note-tab-dragging *::after {
   z-index: 1099;
   width: 2px;
   height: 28px;
-  border-radius: 2px;
+  border-radius: var(--mem-r-2);
   background: color-mix(in srgb, var(--mem-text-secondary) 76%, transparent);
   pointer-events: none;
 }
@@ -267,7 +267,7 @@ body.note-tab-dragging *::after {
   align-items: flex-start;
   justify-content: center;
   border: 1px solid color-mix(in srgb, var(--mem-border) 72%, transparent);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: color-mix(in srgb, var(--mem-text) 5%, transparent);
   pointer-events: none;
 }

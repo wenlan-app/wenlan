@@ -52,7 +52,7 @@
 .source-document-reader-url a:focus-visible {
   outline: 2px solid var(--mem-accent-page);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: var(--mem-r-2);
 }
 
 .source-document-reader-url a svg {
@@ -112,6 +112,6 @@
 .source-cited-by { display: flex; flex-direction: column; gap: 6px; }
 .source-cited-by-none { color: var(--mem-text-tertiary); font-family: var(--mem-font-body); font-size: 12px; margin: 0; }
 .source-cited-by .note-info-source-list { list-style: none; margin: 0; padding: 0; }
-.source-cited-by li { border-radius: 6px; padding: 6px 8px; }
+.source-cited-by li { border-radius: var(--mem-r-6); padding: 6px 8px; }
 .source-cited-by li:hover { background: var(--mem-hover); }
 .page-info-source-button.source-cited-by-page { align-items: center; color: var(--mem-text); display: flex; font-family: var(--mem-font-body); font-size: 13px; gap: 8px; }

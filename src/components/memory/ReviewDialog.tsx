@@ -434,21 +434,21 @@ export function useReviewItemSummary(item: ReviewItem | null): {
 // read as grey behind rendered page text, and the light theme's danger tint
 // almost vanished behind struck-through words.
 const INS_STYLE: React.CSSProperties = {
-  backgroundColor: "rgba(76, 175, 106, 0.26)",
+  backgroundColor: "color-mix(in srgb, var(--mem-signal-leaf) 26%, transparent)",
   textDecoration: "none",
-  borderRadius: 3,
+  borderRadius: "var(--mem-r-3)",
   padding: "0 2px",
 };
 
 const DEL_STYLE: React.CSSProperties = {
-  backgroundColor: "rgba(205, 92, 74, 0.24)",
-  borderRadius: 3,
+  backgroundColor: "color-mix(in srgb, var(--mem-signal-clay) 24%, transparent)",
+  borderRadius: "var(--mem-r-3)",
   padding: "0 2px",
 };
 
 const paneStyle: React.CSSProperties = {
   border: "1px solid var(--mem-border)",
-  borderRadius: 10,
+  borderRadius: "var(--mem-r-10)",
   backgroundColor: "var(--mem-detail-surface-raised)",
   padding: "13px 15px",
   fontFamily: "var(--mem-font-body)",
@@ -477,7 +477,7 @@ const paneLabelStyle: React.CSSProperties = {
 const actionButtonStyle: React.CSSProperties = {
   fontFamily: "var(--mem-font-body)",
   fontSize: "var(--mem-text-control)",
-  borderRadius: 8,
+  borderRadius: "var(--mem-r-8)",
   padding: "8px 15px",
   cursor: "pointer",
   border: "1px solid var(--mem-border)",
@@ -492,7 +492,7 @@ const examplePillStyle: React.CSSProperties = {
   fontSize: "var(--mem-text-meta)",
   letterSpacing: "0.06em",
   textTransform: "uppercase",
-  borderRadius: 5,
+  borderRadius: "var(--mem-r-5)",
   padding: "1px 7px",
   color: "var(--mem-text-secondary)",
   border: "1px dashed var(--mem-border)",
@@ -517,7 +517,7 @@ const evidenceRowStyle: React.CSSProperties = {
   width: "100%",
   textAlign: "left",
   border: "1px solid var(--mem-border)",
-  borderRadius: 8,
+  borderRadius: "var(--mem-r-8)",
   padding: "8px 12px",
   backgroundColor: "var(--mem-surface)",
   cursor: "pointer",
@@ -1073,7 +1073,7 @@ export default function ReviewDialog({
           overflowY: item?.kind === "refinement" && item.action === "lint_repair_review" ? "hidden" : "auto",
           backgroundColor: "var(--mem-surface)",
           border: "1px solid var(--mem-border)",
-          borderRadius: 16,
+          borderRadius: "var(--mem-r-16)",
           boxShadow: "0 24px 48px rgba(0,0,0,0.35)",
           outline: "none",
           display: "flex",
@@ -1090,7 +1090,7 @@ export default function ReviewDialog({
               justifyContent: "center",
               gap: 10,
               backgroundColor: "var(--mem-surface)",
-              borderRadius: 16,
+              borderRadius: "var(--mem-r-16)",
               zIndex: 3,
               fontFamily: "var(--mem-font-heading)",
               fontSize: flashNotice ? 16 : 19,
@@ -1120,7 +1120,7 @@ export default function ReviewDialog({
                 fontFamily: "var(--mem-font-body)",
                 fontSize: "var(--mem-text-meta)",
                 letterSpacing: "0.04em",
-                borderRadius: 5,
+                borderRadius: "var(--mem-r-5)",
                 padding: "2px 8px",
                 color: reviewKindTone(item).color,
                 backgroundColor: reviewKindTone(item).background,
@@ -1161,7 +1161,7 @@ export default function ReviewDialog({
               fontSize: 16,
               lineHeight: 1,
               padding: 6,
-              borderRadius: 6,
+              borderRadius: "var(--mem-r-6)",
             }}
           >
             ✕
@@ -1379,7 +1379,7 @@ export default function ReviewDialog({
                     style={{
                       display: "inline-flex",
                       border: "1px solid var(--mem-border)",
-                      borderRadius: 8,
+                      borderRadius: "var(--mem-r-8)",
                       overflow: "hidden",
                       marginBottom: 14,
                     }}
@@ -1772,7 +1772,7 @@ export default function ReviewDialog({
                 style={{
                   background: "var(--mem-status-danger-bg)",
                   border: "1px solid var(--mem-status-danger-border)",
-                  borderRadius: 8,
+                  borderRadius: "var(--mem-r-8)",
                   color: "var(--mem-status-danger-text)",
                   font: "var(--mem-text-description)/1.5 var(--mem-font-body)",
                   margin: "4px 20px 0",

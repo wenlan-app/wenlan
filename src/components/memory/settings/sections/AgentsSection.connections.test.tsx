@@ -214,7 +214,7 @@ describe("Connections settings layout", () => {
     expect(repairButton).toHaveClass("border", "border-[var(--mem-border)]");
     expect(repairButton.style.height).toBe("30px");
     expect(repairButton.style.paddingInline).toBe("12px");
-    expect(repairButton.style.borderRadius).toBe("8px");
+    expect(repairButton.style.borderRadius).toBe("var(--mem-r-8)");
     expect(repairButton.style.fontSize).toBe("13px");
     expect(screen.queryByText("Added")).not.toBeInTheDocument();
   });

@@ -645,7 +645,7 @@ export default function ActivityFeed({
               color: "var(--mem-accent-indigo)",
               background: "transparent",
               border: "1px solid var(--mem-accent-indigo)",
-              borderRadius: "6px",
+              borderRadius: "var(--mem-r-6)",
               padding: "5px 12px",
               cursor: "pointer",
             }}

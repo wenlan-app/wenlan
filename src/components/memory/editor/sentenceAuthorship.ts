@@ -211,7 +211,7 @@ export function sentenceAuthorship(initial: SentenceAuthorshipSettings | null): 
       ".cm-sentence-weak-recheck": {
         padding: "0 6px",
         border: "0",
-        borderRadius: "6px",
+        borderRadius: "var(--mem-r-6)",
         background: "transparent",
         color: "var(--mem-text-secondary)",
         font: "inherit",

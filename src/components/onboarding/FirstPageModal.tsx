@@ -106,7 +106,7 @@ export function FirstPageModal({ page, onOpen, onDismiss }: Props) {
           maxWidth: 480,
           width: "90%",
           padding: "28px 32px",
-          borderRadius: 16,
+          borderRadius: "var(--mem-r-16)",
           backgroundColor: "var(--mem-bg)",
           border: "1px solid var(--mem-accent-warm)",
           boxShadow: "0 24px 48px rgba(0,0,0,0.35)",
@@ -186,7 +186,7 @@ export function FirstPageModal({ page, onOpen, onDismiss }: Props) {
               backgroundColor: "var(--mem-accent-warm)",
               border: "none",
               padding: "8px 16px",
-              borderRadius: 8,
+              borderRadius: "var(--mem-r-8)",
               cursor: "pointer",
             }}
           >
