@@ -104,6 +104,7 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
     let router = things_routes::register(router);
     let router = crate::conversation_routes::register(router);
     let router = telemetry_routes::register(router);
+    let router = crate::theme_routes::register(router);
 
     router
         .finish()

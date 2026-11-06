@@ -20,6 +20,7 @@ pub mod space;
 pub mod status;
 pub mod store;
 pub mod sweep;
+pub mod theme;
 pub mod wiki;
 pub mod wiki_refresh;
 

@@ -59,7 +59,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 45 tools. The table below calls
+The local stdio surface is locked at exactly 46 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -91,6 +91,7 @@ queue.
 | `list_pending` | List pending captures waiting for review. |
 | `confirm_memory` | Confirm a pending memory by `source_id`. |
 | `forget` | Delete a memory by ID. Destructive. |
+| `theme` | List, check, apply or reset a custom app theme (colors, fonts, corner roundness, background image, corner sticker) written as `theme.json` in the themes folder. Wenlan checks every value before the app uses it. Local stdio only. |
 | `list_refinements` | Explicitly inspect the daemon's unique proposal queue, including `vocab_promote`; never polled ambiently. |
 | `accept_refinement` | Accept one listed proposal after an unambiguous item-level decision. Local stdio only. |
 | `reject_refinement` | Reject one listed proposal after an unambiguous item-level decision. Local stdio only. |

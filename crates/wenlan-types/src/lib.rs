@@ -48,6 +48,7 @@ pub mod space_context;
 pub mod steep;
 pub mod steep_new;
 pub mod system_info;
+pub mod theme;
 pub mod things;
 
 // Re-export commonly used types at crate root for convenience.
