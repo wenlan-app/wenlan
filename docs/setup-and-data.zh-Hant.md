@@ -70,7 +70,7 @@ npx -y wenlan setup
 - **本地基礎檢索：** [BGE 向量模型](https://huggingface.co/Qdrant/bge-base-en-v1.5-onnx-Q) 透過 FastEmbed 在你的裝置上執行，用於混合搜尋，不需要 API key。
 - **可選的裝置端整理：** 內容補充與頁面彙整可使用你選擇的 [`Qwen3.5 4B`](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF) 或 [`Qwen3.5 9B`](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF)，透過 [llama.cpp](https://github.com/ggml-org/llama.cpp) 執行。未經選擇，不會下載或啟用語言模型。
 - **其他模型來源：** Ollama 或 LM Studio 等 OpenAI 相容的本地端點，或已設定的雲端 provider，也可以提供模型支援的內容補充與頁面彙整。
-- **在 Mac 上用 MLX：** 想用蘋果 MLX 格式的模型，可以在 LM Studio 或 Ollama 裡載入它，再到 Wenlan 設定裡選這個模型來源。內容補充、頁面彙整和逐句核對來源都會用它。核對來源前會先讓模型做一次小測驗，全對才用。你設定的雲端模型也一樣。
+- **在 Mac 上用 MLX：** 想用蘋果 MLX 格式的模型，可以在 LM Studio 或 Ollama 裡載入它，再到 Wenlan 設定裡選這個模型來源。內容補充、頁面彙整和逐句核對來源都會用它。
 - **雲端說明：** 如果你選擇的模型端點位於遠端，Wenlan 會把該任務需要的 system prompt 與 user prompt 傳給它。本地檢索與裝置端整理仍留在你的裝置上。
 
 完整 workflow 參考：[plugin/skills](../plugin/skills/README.md)。模型分工與限制見：[技術基礎（英文）](technical-foundations.md#model-roles)。

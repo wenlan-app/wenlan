@@ -716,6 +716,8 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/things/{id}/merge` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/{id}/keep-apart` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/{id}/dream/undo` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `POST` | `/api/things/points/connect` | main | no | not_applicable | `none` | — | NightLinksBackfill: counts only, no page prose |
+| `POST` | `/api/things/points/connect/undo` | main | no | not_applicable | `none` | — | NightLinksBackfillUndo: a count only, no page prose |
 | `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
 | `POST` | `/api/pages/{id}/rename` | main | yes | automatic | `none` | `handle_rename_page` | title metadata — core page_write_permit before mutation |
@@ -1101,6 +1103,7 @@ carrying the authority of agreement.
 | `core/db/kg_quality_embedding_refresh.rs::stale_entity_embedding_candidates_for_refresh` | `pub(crate)` | no | no | — | — |
 | `core/db/maintenance_duplicate_reads.rs::scan_near_duplicate_slice` | `pub(crate)` | no | no | — | — |
 | `core/db/maintenance_retro_scan.rs::scan_automatic_retro_stub_slice` | `pub(crate)` | no | no | — | — |
+| `core/db/night_links.rs::offerable_topics` | `private` | no | no | — | — |
 | `core/db/page_basis.rs::linked_changed` | `pub` | no | **yes** | `server/page_routes.rs::handle_get_page` | — |
 | `core/db/page_basis.rs::list_basis_context` | `pub` | no | no | — | — |
 | `core/db/page_basis.rs::list_basis_pending` | `pub` | no | no | — | — |
@@ -1209,6 +1212,7 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::finalize_page_support` | `pub` | no | no | — | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::reconcile_supported_pages` | `pub` | no | **yes** | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::run_leased_page_linked_truth_promotion` | `pub(super)` | no | no | — | `core/db/claim_derivation.rs::derive_leased_page_claims`, `core/db/claim_derivation.rs::load_linked_memory_chunks` |
+| `core/db/night_links.rs::night_topics` | `pub` | no | **yes** | `server/things_intake.rs::connect_old_night_points`, `server/things_intake.rs::dream_with` | `core/db/night_links.rs::offerable_topics` |
 | `core/db/page_basis.rs::apply_card_mark` | `private` | no | no | — | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::basis_diff_in_scope` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_basis_diff` | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::check_basis_candidates` | `pub` | no | **yes** | `server/page_routes.rs::handle_create_page_inner` | `core/db/page_basis.rs::load_facts` |
@@ -1499,6 +1503,8 @@ carrying the authority of agreement.
 | `server/steep_new_routes.rs::handle_steep_new_list` | `pub` | no | no | — | `core/steep_new.rs::list_new` |
 | `server/steep_routes.rs::handle_steep_commit` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/steep_routes.rs::handle_steep_worklist` | `pub` | no | no | — | `core/steep.rs::waiting_page_ids` |
+| `server/things_intake.rs::connect_old_night_points` | `pub` | no | **yes** | `server/things_routes.rs::handle_connect_night_points` | `core/db/night_links.rs::night_topics` |
+| `server/things_intake.rs::dream_with` | `pub` | no | **yes** | `server/things_intake.rs::dream_once` | `core/db/night_links.rs::night_topics` |
 | `server/things_routes.rs::handle_get_thing` | `pub` | no | no | — | `core/db/things.rs::get_thing_detail` |
 
 ### Depth 3 — outer consumers — route handlers and orchestration
@@ -1670,6 +1676,8 @@ carrying the authority of agreement.
 | `server/steep_new_routes.rs::handle_steep_new_claim` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
 | `server/steep_new_routes.rs::handle_steep_new_links` | `pub` | no | no | — | `core/steep_new.rs::links_new` |
 | `server/steep_new_routes.rs::handle_steep_new_organize` | `pub` | no | no | — | `core/steep_new.rs::organize_new` |
+| `server/things_intake.rs::dream_once` | `private` | no | no | `server/things_intake.rs::look_once` | `server/things_intake.rs::dream_with` |
+| `server/things_routes.rs::handle_connect_night_points` | `pub` | no | no | — | `server/things_intake.rs::connect_old_night_points` |
 
 <!-- m5-reader-sweep:end -->
 

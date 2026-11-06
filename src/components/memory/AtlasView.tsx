@@ -75,12 +75,17 @@ import {
   NEIGHBOR_LABEL_MAX,
   NODE_LABEL_FONT,
   nodeSizeCapPx,
+  setThingFlight,
+  thingFlightTargets,
+  thingLinkedBodies,
+  labelSideFor,
 } from "../../lib/graph/atlas";
-import type { HoverState, AtlasSimulation, LodState, LabelPlacement } from "../../lib/graph/atlas";
+import type { HoverState, AtlasSimulation, FlyTo, LodState, LabelPlacement } from "../../lib/graph/atlas";
 import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
 import {
   applyNightOffsets,
   drawNightMarks,
+  edgeSignAt,
   frameAt,
   growthAt,
   GROWTH_MS,
@@ -95,15 +100,18 @@ import {
   thingStopNodeIds,
   type FrameHit,
   type ThingStop,
+  labelYieldsToFrames,
 } from "../../lib/graph/night";
 import {
   readNightOffsets,
   readSeenNightPoints,
   readStoredPositions,
+  readThingsApart,
   startRearrange,
   storeNightOffsets,
   storePositions,
   storeSeenNightPoints,
+  storeThingsApart,
   undoRearrange,
 } from "../../lib/graph/positions";
 import type { CartographyScene } from "../../lib/graph/cartography";
@@ -139,6 +147,14 @@ const EMPTY_CARTOGRAPHY: Map<string, SpaceCartography> = new Map();
 /** The closest a thing's own stop (這件事) zooms, CSS px per graph unit:
  *  its points a sentence's line apart or more, not a screen apart. */
 const THING_STOP_DENSITY = 12;
+/** How long a picked thing's points take to fly out to their topics, ms:
+ *  long enough to follow where each one goes (Fable's design, 800-1200). */
+const FLIGHT_MS = 900;
+/** How long they take to fly home when it is let go, ms, while the camera
+ *  goes back to the map in the same time. */
+const HOME_MS = 450;
+/** How long the camera takes to reach a picked thing's stop, ms. */
+const THING_CAMERA_MS = 450;
 /** A point's short title when zoomed in, CSS px: a few words, about ten
  *  Chinese characters. Its whole sentence comes up on hover. */
 const POINT_TITLE_PX = 120;
@@ -294,11 +310,17 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const [thingStops, setThingStops] = useState<readonly ThingStop[]>(THING_STOPS);
   const thingStopRef = useRef<ThingStop>("this");
   const selectThingRef = useRef<(thing: string, stop: ThingStop) => void>(() => {});
+  const goToSignRef = useRef<(id: string) => void>(() => {});
   const frameHitsRef = useRef<FrameHit[]>([]);
   // Night points that are new to this viewer and have not finished growing
   // in yet. They are marked seen as soon as they are found, so this is what
   // carries them over a rebuild that cuts their growth short.
   const growQueueRef = useRef<Set<string>>(new Set());
+  // Sends the picked thing's points out to their topics (see the build).
+  const flyRef = useRef<(thing: string | null, startAt: number | null) => void>(() => {});
+  // When the last thing was picked (performance.now()), so its points' flight
+  // keeps its time across a rebuild.
+  const pickedAtRef = useRef(0);
   const sceneRef = useRef<CartographyScene | null>(null);
   const sceneDirtyRef = useRef(true);
 
@@ -453,6 +475,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const tuckedRef = useRef(tucked);
   tuckedRef.current = tucked;
   const hasThings = visibleModel.nodes.some((node) => node.kind === "thing");
+  const hasActiveThings = visibleModel.nodes.some((node) => node.kind === "thing" && !node.quiet);
   const hasThingsRef = useRef(hasThings);
   hasThingsRef.current = hasThings;
 
@@ -624,6 +647,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     setThingStop(stop);
     hoverStateRef.current = thingFocusState(drawn, thing, stop);
     focusLayoutRef.current = null;
+    // Its points set off as the camera arrives, so the flight is seen.
+    // With reduced motion the camera is there at once, and so is the rest.
+    pickedAtRef.current = performance.now() - (prefersReducedMotion() ? THING_CAMERA_MS : 0);
+    flyRef.current(thing, pickedAtRef.current + THING_CAMERA_MS);
+    // Its sentences come up once the camera is there (sentencesFor).
+    window.setTimeout(() => sigmaRef.current?.refresh(), THING_CAMERA_MS + 20);
     const { width } = renderer.getDimensions();
     // The sentences run beside their points, either side; the title sits
     // above. Room on both sides keeps the thing centred.
@@ -631,7 +660,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const insets = stop === "this"
       ? { ...ATLAS_CONTROL_INSETS, top: ATLAS_CONTROL_INSETS.top + 24, left: ATLAS_CONTROL_INSETS.left + sentenceRoom, right: ATLAS_CONTROL_INSETS.right + sentenceRoom }
       : ATLAS_CONTROL_INSETS;
-    const duration = prefersReducedMotion() ? 0 : 450;
+    const duration = prefersReducedMotion() ? 0 : THING_CAMERA_MS;
     if (stop === "all") {
       const visibleNodeIds = new Set(
         drawn.nodes().filter((id) => !entityTypeHidden(drawn.getNodeAttribute(id, "entityType"), excludedTypesRef.current)),
@@ -649,7 +678,27 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     renderer.refresh();
   };
   selectThingRef.current = selectThing;
+  /** A tap on an edge sign (nightMarks' edges): the camera goes to the far
+   *  topic at the same zoom, where the thing's points sit with their
+   *  sentences; the back sign returns to the thing's own stop. */
+  const goToSign = (id: string) => {
+    const renderer = sigmaRef.current;
+    const drawn = graphRef.current;
+    if (!renderer || !drawn || !drawn.hasNode(id)) return;
+    if (id === selectedRef.current) {
+      selectThing(id, "this");
+      return;
+    }
+    const display = renderer.getNodeDisplayData(id);
+    if (!display) return;
+    const camera = renderer.getCamera();
+    const state = { x: display.x, y: display.y, ratio: camera.ratio, angle: camera.angle };
+    if (prefersReducedMotion()) camera.setState(state);
+    else void camera.animate(state, { duration: THING_CAMERA_MS, easing: "quadraticInOut" });
+  };
+  goToSignRef.current = goToSign;
   const returnToMap = () => {
+    const wasThing = selectedRef.current !== null && graphRef.current?.getNodeAttribute(selectedRef.current, "entityType") === THING_NODE_TYPE;
     selectedRef.current = null;
     pinnedPointRef.current = null;
     setSelectedId(null);
@@ -659,8 +708,21 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const drawn = graphRef.current;
     if (renderer && drawn) {
       hoverStateRef.current = hoverStateFor(drawn, null);
-      if (overviewRef.current) restoreAtlasViewpoint(renderer, drawn, overviewRef.current);
       const camera = renderer.getCamera();
+      if (wasThing && overviewRef.current && !prefersReducedMotion()) {
+        // Letting a thing go: the camera goes back to the map while its
+        // points fly home, in the same time, so both are seen going back.
+        const from = { x: camera.x, y: camera.y, ratio: camera.ratio, angle: camera.angle };
+        if (restoreAtlasViewpoint(renderer, drawn, overviewRef.current)) {
+          const to = { x: camera.x, y: camera.y, ratio: camera.ratio, angle: camera.angle };
+          camera.setState(from);
+          void camera.animate(to, { duration: HOME_MS, easing: "quadraticInOut" });
+        }
+        renderer.refresh();
+        overviewRef.current = null;
+        return;
+      }
+      if (overviewRef.current) restoreAtlasViewpoint(renderer, drawn, overviewRef.current);
       // setState does not cancel Sigma's pending fly-to frame. Replace that
       // animation with the restored state so an immediate Escape stays put.
       if (camera.isAnimated()) void camera.animate({ x: camera.x, y: camera.y, ratio: camera.ratio, angle: camera.angle }, { duration: 1 });
@@ -767,6 +829,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     setSelectedThing(null);
     overviewRef.current = null;
   }, [spaceFilter]);
+  // Picking a thing flies its linked points out to their topics; letting it
+  // go flies them home.
+  useEffect(() => {
+    flyRef.current(selectedThing, performance.now());
+  }, [selectedThing]);
   const selectedNode = filteredModel.nodes.find((node) => node.id === selectedId);
   const selectedNeighbors = useMemo(() => {
     if (!selectedId) return [];
@@ -860,12 +927,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     if (layoutChange === "fresh") startRearrange(spaceFilter);
     else if (layoutChange === "undo") undoRearrange(spaceFilter);
     const kept = previous?.scope === spaceFilter && !layoutChange ? previous.body : readStoredPositions(spaceFilter);
+    const apart = readThingsApart();
     if (bodyIds.length > 0 && kept.size > 0) {
       // Layer/small-group changes and new pages may add or remove nodes.
       // Restore every survivor rather than requiring an identical set, so the
       // learned map stays put while what is new settles around it.
+      // A thing kept apart from the map (placed before its points linked to
+      // anything) is placed afresh, next to its links, once they appear.
       const survivorPositions = new Map(
         bodyIds
+          .filter((id) => !((apart ? apart.has(id) : thingIdOf(id) !== null) && thingLinkedBodies(graph, id).length > 0))
           .map((id) => [id, kept.get(id)] as const)
           .filter((entry): entry is readonly [string, { x: number; y: number }] => entry[1] !== undefined),
       );
@@ -875,8 +946,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       const positions = new Map(graph.nodes()
         .filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE)
         .map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }]));
-      // A thing gone quiet has no frame on this map, but keeps its spot, so
-      // its frame comes back where it was when the thing is active again.
+      // A thing no longer on this map keeps its spot, so its frame comes back
+      // where it was if it returns.
       for (const [id, position] of kept) {
         if (thingIdOf(id) !== null && !positions.has(id)) positions.set(id, position);
       }
@@ -886,6 +957,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // unmounting the map, and again when the window goes away.
     storePositions(spaceFilter, bodyPositions());
     storeNightOffsets(nightOffsetsOf(graph));
+    // Which things on the map now sit apart from it: kept for the next open.
+    const thingsHere = bodyIds.filter((id) => thingIdOf(id) !== null);
+    const here = new Set(thingsHere);
+    storeThingsApart([
+      ...[...(apart ?? [])].filter((id) => !here.has(id)),
+      ...thingsHere.filter((id) => thingLinkedBodies(graph, id).length === 0),
+    ]);
     // A point new since the map was last opened grows out of its thing's
     // centre, once (UX-CHAT-5); it is seen from now on, so it never does again.
     const nightNow = nightPointIds(graph);
@@ -920,6 +998,76 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     };
     placeGrowth(0);
     let growthFrame = 0;
+    // A picked thing's points that link to a topic fly out of its frame to
+    // sit beside that topic, and home again when it is let go (UX-CHAT-5,
+    // Qi-Xuan 11-05): no line runs across the map, and the flight shows the
+    // thing reaching into it. A quiet thing's are by their topics already.
+    let flightThing: string | null = null;
+    let flightTargets: ReadonlyMap<string, FlyTo> = new Map();
+    let flightAt = 0;
+    let flightTo = 0;
+    let flightFrame = 0;
+    const showFlight = () => {
+      sim.placeSatellitesNow();
+      sceneDirtyRef.current = true;
+      sigmaRef.current?.refresh();
+    };
+    // `startAt` (performance.now() time) is when the flight sets off, so a
+    // pick's points wait for the camera to arrive and are then seen to fly;
+    // null puts them there at once.
+    const fly = (wanted: string | null, startAt: number | null) => {
+      if (wanted !== null && !graph.hasNode(wanted)) wanted = null;
+      // Already there, or already on its way there.
+      if (wanted === flightThing && (wanted === null || flightTo === 1)) return;
+      cancelAnimationFrame(flightFrame);
+      // Another thing picked: the last one's points are home at once.
+      if (flightThing !== null && wanted !== null && wanted !== flightThing) {
+        setThingFlight(graph, null, 0);
+        flightAt = 0;
+      }
+      const thing = wanted ?? flightThing;
+      if (thing === null) return;
+      if (thing !== flightThing) flightTargets = thingFlightTargets(graph, thing);
+      flightThing = thing;
+      const from = flightAt;
+      const to = wanted === null ? 0 : 1;
+      flightTo = to;
+      const land = () => {
+        flightAt = to;
+        if (to === 0) {
+          setThingFlight(graph, null, 0);
+          flightThing = null;
+          flightTo = 0;
+        } else {
+          setThingFlight(graph, thing, 1, flightTargets);
+        }
+        showFlight();
+      };
+      // Out: eased in and out over FLIGHT_MS, so the whole way is seen, not
+      // a jump and a settle. Home: quicker, easing out, beside the camera.
+      const duration = to === 1 ? FLIGHT_MS : HOME_MS;
+      if (startAt === null || prefersReducedMotion() || performance.now() >= startAt + duration) {
+        land();
+        return;
+      }
+      const step = () => {
+        const elapsed = performance.now() - startAt;
+        if (elapsed >= duration) {
+          land();
+          return;
+        }
+        if (elapsed > 0) {
+          const t = elapsed / duration;
+          const eased = to === 1 ? (t < 0.5 ? 4 * t ** 3 : 1 - (2 - 2 * t) ** 3 / 2) : growthAt(elapsed, duration);
+          flightAt = from + (to - from) * eased;
+          setThingFlight(graph, thing, flightAt, flightTargets);
+          showFlight();
+        }
+        flightFrame = requestAnimationFrame(step);
+      };
+      flightFrame = requestAnimationFrame(step);
+    };
+    flyRef.current = fly;
     const keepOnHide = () => storePositions(spaceFilter, bodyPositions());
     window.addEventListener("pagehide", keepOnHide);
     applyAtlasHierarchy(graph);
@@ -1039,14 +1187,21 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // pinned by a click, or at its picked thing's own stop (one thing, and
     // the reader went there to read it). The overlay paints it (night.ts).
     // Zoomed in, every other point carries a short title; zoomed out, none.
+    // At the thing's stop they wait for the camera to arrive, so they are not
+    // seen in a pile while it is still zoomed out.
     const sentencesFor = (thing: string, point: string) =>
-      point === pointerNode || point === pinnedPointRef.current || (selectedRef.current === thing && thingStopRef.current === "this");
+      point === pointerNode || point === pinnedPointRef.current
+      || (selectedRef.current === thing && thingStopRef.current === "this" && performance.now() >= pickedAtRef.current + THING_CAMERA_MS);
     const drawLabel = (ctx: CanvasRenderingContext2D, data: Record<string, any>, s: Record<string, any>) => {
       const nodeAttrs = graph.hasNode(data.key) ? graph.getNodeAttributes(data.key) : null;
-      if (nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string") {
+      const nightPoint = nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string";
+      // A picked quiet thing's point beside its topic: a short title too, not
+      // its whole sentence.
+      const litPoint = nodeAttrs?.entityType === MEMORY_NODE_TYPE && hoverStateRef.current.thing !== undefined && hoverStateRef.current.neighbors.has(data.key);
+      if (nightPoint || litPoint) {
         // Its sentence is painted by the overlay, wrapped beside its point;
         // zoomed out, a point carries no words at all.
-        if (sentencesFor(nodeAttrs.dustOf, data.key)) return;
+        if (nightPoint && sentencesFor(nodeAttrs.dustOf, data.key)) return;
         if (lodRef.current.phase === "overview") return;
         ctx.font = NODE_LABEL_FONT;
         const title = truncateOverviewLabel(ctx, String(data.label ?? ""), POINT_TITLE_PX);
@@ -1091,10 +1246,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       const maxWidth = overviewLabelMaxWidth(labelSigma?.getDimensions().width ?? 160);
       const label = overview ? truncateOverviewLabel(ctx, rawLabel, maxWidth) : rawLabel;
       if (!label) return;
-      const angle = Math.atan2(-(graph.getNodeAttribute(data.key, "y") as number), graph.getNodeAttribute(data.key, "x") as number);
-      const sector = Math.round((angle + Math.PI) / (Math.PI / 2)) % 4;
-      const at = labelAnchor(data.x, data.y, data.size, sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above");
-      if (reserveLabel(ctx, label, at, nodeAttrs?.night !== true)) drawNodeLabelAt(ctx, { ...data, label }, s, at, paletteRef.current.surface);
+      const at = labelAnchor(data.x, data.y, data.size, labelSideFor(graph.getNodeAttribute(data.key, "x") as number, graph.getNodeAttribute(data.key, "y") as number));
+      if (reserveLabel(ctx, label, at, labelYieldsToFrames(nodeAttrs?.night === true, hoverStateRef.current.linked?.has(data.key) === true))) drawNodeLabelAt(ctx, { ...data, label }, s, at, paletteRef.current.surface);
     };
     let minimumGraphRadius = 0;
     let graphUnitsPerPixel = Infinity;
@@ -1152,8 +1305,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         // A thing's night points show only while that thing is picked (from
         // its page, search, or a stop): the open map stays clear of them
         // (UX-CHAT-5; Fable's design: the thing is a camera, not a mark).
-        // The "Working on" switch shows every active thing's points at once.
-        if (attrs.night === true && typeof attrs.dustOf === "string" && !showWorkingRef.current && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
+        // The "Working on" switch shows every active thing's points at once;
+        // a quiet thing's show only while it is picked.
+        if (attrs.night === true && typeof attrs.dustOf === "string" && (!showWorkingRef.current || attrs.quiet === true) && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
         // A small group stays out of sight until the islands come up solid,
         // unless it is what the reader is looking at.
         const hover = hoverStateRef.current;
@@ -1270,12 +1424,22 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         const at = renderer.framedGraphToViewport(display);
         return { x: at.x, y: at.y, r: renderer.scaleSize(display.size) };
       };
-      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current);
-      // Sentences keep off the other bodies on screen, not only the labels.
+      // The thing's node is hidden but still laid out: its display spot is in
+      // the same framed units as every other node's.
+      const centreAt = (thing: string) => {
+        const display = renderer.getNodeDisplayData(thing);
+        return display ? renderer.framedGraphToViewport(display) : null;
+      };
+      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current, centreAt);
+      // Sentences keep off the other bodies on screen, not only the labels;
+      // with a thing picked, only off what is lit: the dimmed rest is
+      // background a sentence may cross.
       const bodies: { left: number; right: number; top: number; bottom: number }[] = [];
+      const focus = hoverStateRef.current;
       if (marks.sentences.length > 0) {
         graph.forEachNode((id, attrs) => {
           if (attrs.night === true || attrs.entityType === THING_NODE_TYPE) return;
+          if (focus.thing !== undefined && !focus.neighbors.has(id)) return;
           const at = drawnAt(id);
           if (!at || at.x < -at.r || at.y < -at.r || at.x > width + at.r || at.y > height + at.r) return;
           bodies.push({ left: at.x - at.r, right: at.x + at.r, top: at.y - at.r, bottom: at.y + at.r });
@@ -1382,8 +1546,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       }
     }
     // Arriving from a thing's page: go straight to its 這件事 stop, once.
+    let arriving = false;
     if (focusThingId && !thingArrivalDoneRef.current && graph.hasNode(thingNodeId(focusThingId))) {
       thingArrivalDoneRef.current = true;
+      arriving = true;
       selectThingRef.current(thingNodeId(focusThingId), "this");
     }
     if (selectedRef.current && graph.hasNode(selectedRef.current)) {
@@ -1395,6 +1561,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         : hoverStateFor(graph, selectedRef.current);
       // A new link can bring 附近 in.
       if (isThing) setThingStops(thingStopsFor(graph, selectedRef.current));
+      // Its points carry on out to their topics on a rebuild: still on the
+      // way when it was just picked (an arrival's map is often built twice),
+      // else there already.
+      if (isThing && !arriving) fly(selectedRef.current, pickedAtRef.current + THING_CAMERA_MS);
     }
     // First paint of THIS renderer, and the only thing that draws the
     // overlay canvas above at all. Sigma's constructor render already happened
@@ -1441,6 +1611,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       if (pinnedPointRef.current) {
         pinnedPointRef.current = null;
         renderer.refresh();
+        return;
+      }
+      // A sign at the screen's edge takes the camera to the far topic it
+      // names, or back to the thing.
+      const goTo = edgeSignAt(frameHitsRef.current, event.x, event.y);
+      if (goTo) {
+        goToSignRef.current(goTo);
         return;
       }
       // A click on a frame or its title picks its thing, at its own stop.
@@ -1525,7 +1702,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       const draggedNode = draggedNodeRef.current;
       if (!draggedNode) {
         // A frame and its title answer a click, so they show the hand.
-        if (!overNode) container.style.cursor = frameAt(frameHitsRef.current, e.x, e.y) ? "pointer" : "default";
+        if (!overNode) container.style.cursor = frameAt(frameHitsRef.current, e.x, e.y) || edgeSignAt(frameHitsRef.current, e.x, e.y) ? "pointer" : "default";
         return;
       }
       movedDuringPressRef.current = true;
@@ -1607,6 +1784,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       cancelAnimationFrame(growthFrame);
       placeGrowth(1);
       growth = null;
+      cancelAnimationFrame(flightFrame);
+      flyRef.current = () => {};
       // Sigma only detaches its own camera listener; release our listener too.
       camera.off("updated", onCameraUpdated);
       window.removeEventListener("pagehide", keepOnHide);
@@ -1928,7 +2107,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
               <span>{t("atlas.regionsToggle")}</span>
             </button>
             </AtlasTooltip>
-            {hasThings && (
+            {hasActiveThings && (
               <AtlasTooltip content={t("atlas.workingDescription")}>
               <button
                 type="button"

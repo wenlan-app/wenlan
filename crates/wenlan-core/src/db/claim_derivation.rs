@@ -1536,14 +1536,12 @@ impl MemoryDB {
             .transpose()
     }
 
-    /// A judge may write support only when this exact model passed
-    /// the frozen M5 accuracy batch in this process
-    /// ([`crate::claim_judge::qualify_m5_claim_judge`]). No model is approved
-    /// by name: being available is never enough, and every model, including
-    /// one measured before a release, answers the same batch, wherever it runs.
+    /// Any model the person configured may judge with the current prompt
+    /// (Qi-Xuan, 2026-11-05: every model must be usable). Passing the frozen
+    /// batch ([`crate::claim_judge::qualify_m5_claim_judge`]) is no longer a
+    /// gate; it is kept for a later "certified model" label.
     fn is_approved_m5_claim_judge(snapshot: &crate::claim_judge::M5ClaimJudgeSnapshot) -> bool {
         snapshot.prompt_version == crate::claim_judge::M5_CLAIM_ENTAILMENT_PROMPT_VERSION
-            && crate::claim_judge::m5_judge_qualified(snapshot)
     }
 
     /// Idempotently activate a benchmark-approved M5 judge.
@@ -2800,10 +2798,6 @@ impl MemoryDB {
         let Some(snapshot) = crate::claim_judge::snapshot_m5_claim_judge(provider) else {
             return Ok(PromotionTurn::RefusedProvider);
         };
-        // Inference runs here, before any database guard is taken.
-        if !crate::claim_judge::qualify_m5_claim_judge(provider, &snapshot).await {
-            return Ok(PromotionTurn::RefusedProvider);
-        }
         if !self.activate_approved_m5_claim_judge(&snapshot).await? {
             return Ok(PromotionTurn::RefusedProvider);
         }

@@ -124,6 +124,35 @@ export function storeNightOffsets(current: BodyPositions): void {
   }
 }
 
+/** Things whose cluster was placed while none of their points linked to the
+ *  map, so it went to free space beside it. The first time such a thing's
+ *  points link to something, its cluster moves once, next to what they link
+ *  to, so the link lines stay short (UX-CHAT-5); after that it stays put. */
+export const THINGS_APART_STORAGE_KEY = "atlas.thingsApart";
+
+/** The things kept apart, or null when this viewer has no record yet (a map
+ *  kept before this record existed): then every kept thing counts as apart,
+ *  so one placed before its points linked still moves next to them once. */
+export function readThingsApart(): Set<string> | null {
+  try {
+    const raw = window.localStorage.getItem(THINGS_APART_STORAGE_KEY);
+    if (raw === null) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function storeThingsApart(ids: Iterable<string>): void {
+  try {
+    const list = [...new Set(ids)].sort().slice(0, MAX_NIGHT_ENTRIES);
+    window.localStorage.setItem(THINGS_APART_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // Unavailable storage: a thing placed apart stays where it was.
+  }
+}
+
 /** The night points seen before, or null when this viewer has no record
  *  (never opened the map, or storage is unavailable). */
 export function readSeenNightPoints(): Set<string> | null {

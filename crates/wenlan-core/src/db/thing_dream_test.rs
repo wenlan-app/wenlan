@@ -146,6 +146,7 @@ async fn ux_chat_5_each_night_what_a_thing_settled_goes_into_long_term_memory() 
         &["mem_tagline".into()],
         &["mem_pricing".into()],
         &Default::default(),
+        &[],
         &due[0].conversations,
     )
     .await
@@ -215,6 +216,7 @@ async fn ux_chat_5_each_night_what_a_thing_settled_goes_into_long_term_memory() 
         &["mem_pricing_2".into()],
         &[],
         &Default::default(),
+        &[],
         &site_due.conversations,
     )
     .await
@@ -304,6 +306,7 @@ async fn ux_chat_5_the_big_map_reads_each_things_night_points() {
         &["mem_tagline".into(), "mem_other".into()],
         &["mem_pricing".into()],
         &Default::default(),
+        &[],
         &site_due.conversations,
     )
     .await
@@ -311,9 +314,16 @@ async fn ux_chat_5_the_big_map_reads_each_things_night_points() {
     // A second night, taken back; its memory is not forgotten here, so only
     // the history keeps it off the map.
     remember_in(&db, "mem_undone", "Undone", "A point taken back.", "wenlan").await;
-    db.record_dream(&site, &["mem_undone".into()], &[], &Default::default(), &[])
-        .await
-        .unwrap();
+    db.record_dream(
+        &site,
+        &["mem_undone".into()],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+    )
+    .await
+    .unwrap();
     assert_eq!(db.undo_thing_dream(&site).await.unwrap(), ["mem_undone"]);
 
     let things = db.thing_night_points(&ReadScope::Global).await.unwrap();

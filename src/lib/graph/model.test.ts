@@ -880,19 +880,36 @@ describe("attachThingPoints (UX-CHAT-5)", () => {
     expect(result.edges.some((edge) => edge.source === "thing:t1" && edge.target === "mem:m1")).toBe(true);
   });
 
-  it("frames no quiet thing: only its points with a drawn entity link stay, as plain memories by that entity", () => {
+  it("keeps a quiet thing's points with no drawn entity under the thing, and the linked ones as plain memories by their entity", () => {
     const base = drawableModel(buildKnowledgeGraphModel(graph(), { layers: DEFAULT_LAYERS }));
     const quiet = things().map((thing) => ({ ...thing, quiet: true }));
     const result = attachThingPoints(base, quiet, graph().memory_links);
-    expect(result.nodes.some((node) => node.kind === "thing")).toBe(false);
     const added = result.nodes.filter((node) => !base.nodes.includes(node));
-    // n2 links to C; n1 links only to an entity the map does not draw.
-    expect(added.map((node) => [node.id, node.kind, node.night, node.degree])).toEqual([["mem:n2", "memory", undefined, 1]]);
-    expect(result.edges.filter((edge) => !base.edges.includes(edge)).map((edge) => [edge.source, edge.target, edge.type])).toEqual([
-      ["mem:n2", "C", "mentions"],
-    ]);
-    // Nothing linked to a drawn entity: the base itself.
-    expect(attachThingPoints(base, quiet, [])).toBe(base);
+    // n2 links to C, so it stays a plain dot there. n1 links only to an entity
+    // the map does not draw, so its thing is the one place it belongs.
+    expect(added.find((node) => node.id === "mem:n2")).toMatchObject({ kind: "memory" });
+    expect(added.find((node) => node.id === "mem:n2")!.night).toBeUndefined();
+    expect(added.find((node) => node.id === "mem:n1")).toMatchObject({ kind: "memory", night: true });
+    const newEdges = result.edges.filter((edge) => !base.edges.includes(edge));
+    expect(newEdges.some((edge) => edge.source === "mem:n2" && edge.target === "C")).toBe(true);
+    expect(newEdges.some((edge) => edge.target === "mem:n1" && edge.type === NIGHT_EDGE_TYPE)).toBe(true);
+    expect(newEdges.some((edge) => edge.target === "mem:n2" && edge.type === NIGHT_EDGE_TYPE)).toBe(false);
+    const centre = result.nodes.filter((node) => node.kind === "thing");
+    expect(centre).toHaveLength(1);
+    expect(centre[0]).toMatchObject({ quiet: true, elsewhere: ["mem:n2"] });
+    expect(added.find((node) => node.id === "mem:n1")!.quiet).toBe(true);
+  });
+
+  it("keeps a centre for a quiet thing whose points all sit by an entity, with no line to them", () => {
+    const base = drawableModel(buildKnowledgeGraphModel(graph(), { layers: DEFAULT_LAYERS }));
+    const quiet = things()
+      .map((thing) => ({ ...thing, quiet: true, points: thing.points.filter((point) => point.memory_id === "n2") }))
+      .filter((thing) => thing.points.length > 0);
+    const result = attachThingPoints(base, quiet, graph().memory_links);
+    const centre = result.nodes.find((node) => node.kind === "thing")!;
+    expect(centre.elsewhere).toEqual(["mem:n2"]);
+    expect(result.edges.some((edge) => edge.source === centre.id || edge.target === centre.id)).toBe(false);
+    expect(result.nodes.find((node) => node.id === "mem:n2")!.night).toBeUndefined();
   });
 
   it("keeps to the things of the space being viewed, and returns the base when nothing is left", () => {

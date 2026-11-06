@@ -124,6 +124,8 @@ export function buildAtlasGraph(model: GraphModel, palette: GraphPalette): Graph
       // A night's point keeps its moon and its age: satellitePlan puts a
       // thing's points in the order they were written.
       ...(node.night ? { night: true, createdAt: node.createdAt, open: node.open === true } : {}),
+      ...(node.quiet ? { quiet: true } : {}),
+      ...(node.elsewhere ? { elsewhere: node.elsewhere } : {}),
       x: i === undefined && !thing ? 0 : Math.cos(angle),
       y: i === undefined && !thing ? 0 : Math.sin(angle),
     });
@@ -509,9 +511,154 @@ export function placeSatellites(graph: Graph, plan: Satellite[], skipId?: string
     if (satellite.id === skipId) continue;
     const ax = graph.getNodeAttribute(satellite.anchor, "x") as number;
     const ay = graph.getNodeAttribute(satellite.anchor, "y") as number;
-    graph.setNodeAttribute(satellite.id, "x", ax + satellite.radius * Math.cos(satellite.angle));
-    graph.setNodeAttribute(satellite.id, "y", ay + satellite.radius * Math.sin(satellite.angle));
+    let x = ax + satellite.radius * Math.cos(satellite.angle);
+    let y = ay + satellite.radius * Math.sin(satellite.angle);
+    // A picked thing's point out by its topic (setThingFlight): that far
+    // along the way from its own spot to its spot there.
+    const fly = graph.getNodeAttribute(satellite.id, "fly") as number | undefined;
+    const to = graph.getNodeAttribute(satellite.id, "flyTo") as FlyTo | undefined;
+    if (fly !== undefined && fly > 0 && to && graph.hasNode(to.anchor)) {
+      const tx = (graph.getNodeAttribute(to.anchor, "x") as number) + to.dx;
+      const ty = (graph.getNodeAttribute(to.anchor, "y") as number) + to.dy;
+      x += (tx - x) * fly;
+      y += (ty - y) * fly;
+    }
+    graph.setNodeAttribute(satellite.id, "x", x);
+    graph.setNodeAttribute(satellite.id, "y", y);
   }
+}
+
+/** Where a picked thing's point goes beside its topic: that body, and the
+ *  point's offset from it in graph units. */
+export interface FlyTo {
+  anchor: string;
+  dx: number;
+  dy: number;
+}
+
+/** Room between a topic's disc and the points that come to sit by it, graph
+ *  units, besides a point's own width: they sit clear of the disc, not on
+ *  its rim. */
+const FLY_GAP = 4;
+
+/**
+ * Where each of a picked thing's points goes (UX-CHAT-5, Qi-Xuan 11-05): a
+ * point that links to a topic on the map sits beside that topic, the nearest
+ * one to the thing when it links to several, so no line runs across the map.
+ * The points that come to one topic sit side by side on the side facing the
+ * thing, where they came from. A point with no link stays with its thing.
+ * Deterministic: same graph, same spots.
+ */
+/** The side of a body its name is written on, from where it sits on the map
+ *  (graph units): the same rule as AtlasView's drawLabel. */
+export function labelSideFor(x: number, y: number): "right" | "below" | "left" | "above" {
+  const angle = Math.atan2(-y, x);
+  const sector = Math.round((angle + Math.PI) / (Math.PI / 2)) % 4;
+  return sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above";
+}
+
+export function thingFlightTargets(graph: Graph, thing: string): Map<string, FlyTo> {
+  const targets = new Map<string, FlyTo>();
+  if (!graph.hasNode(thing)) return targets;
+  const tx = graph.getNodeAttribute(thing, "x") as number;
+  const ty = graph.getNodeAttribute(thing, "y") as number;
+  const at = (id: string) => ({ x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number });
+  const byTopic = new Map<string, string[]>();
+  for (const point of graph.neighbors(thing).sort()) {
+    const attrs = graph.getNodeAttributes(point);
+    if (attrs.night !== true || attrs.dustOf !== thing) continue;
+    let nearest: string | undefined;
+    let nearestDistance = Infinity;
+    for (const other of graph.neighbors(point).sort()) {
+      const type = graph.getNodeAttribute(other, "entityType");
+      if (type === MEMORY_NODE_TYPE || type === THING_NODE_TYPE) continue;
+      const { x, y } = at(other);
+      const distance = Math.hypot(x - tx, y - ty);
+      if (distance < nearestDistance) {
+        nearest = other;
+        nearestDistance = distance;
+      }
+    }
+    if (nearest === undefined) continue;
+    const list = byTopic.get(nearest);
+    if (list) list.push(point);
+    else byTopic.set(nearest, [point]);
+  }
+  const flying = new Set([...byTopic.values()].flat());
+  for (const [topic, points] of byTopic) {
+    const { x, y } = at(topic);
+    const facing = Math.atan2(ty - y, tx - x);
+    const dot = Math.max(...points.map((point) => (graph.getNodeAttribute(point, "size") as number | undefined) ?? 0), 1);
+    const inner = bodyRadius(graph.getNodeAttributes(topic)) + FLY_GAP + 2 * dot;
+    // Side by side as far apart as in their thing's cluster (2 * size + 3).
+    const spacing = 2 * dot + 3;
+    // What already sits round the topic, so the points can keep off it.
+    const reach = inner + 2 * spacing + points.length * spacing;
+    const ink: { x: number; y: number; r: number }[] = [];
+    graph.forEachNode((id, attrs) => {
+      if (id === topic || id === thing || flying.has(id) || attrs.entityType === THING_NODE_TYPE) return;
+      const ox = attrs.x as number;
+      const oy = attrs.y as number;
+      const r = (attrs.size as number | undefined) ?? 0;
+      if (Math.hypot(ox - x, oy - y) - r < reach) ink.push({ x: ox, y: oy, r });
+    });
+    const spots = (radius: number, base: number) => points.map((_point, index) => {
+      const angle = base + (index - (points.length - 1) / 2) * (spacing / radius);
+      return { dx: radius * Math.cos(angle), dy: radius * Math.sin(angle) };
+    });
+    // The topic's own name sits on one side of it (AtlasView's drawLabel
+    // picks the side from where the topic is on the map); a dot there would
+    // sit on its name.
+    const side = labelSideFor(x, y);
+    const onName = (dx: number, dy: number) => {
+      const angle = Math.atan2(dy, dx);
+      const off = (to: number) => Math.abs(Math.atan2(Math.sin(angle - to), Math.cos(angle - to)));
+      if (side === "right") return off(0) < (Math.PI * 7) / 18;
+      if (side === "left") return off(Math.PI) < (Math.PI * 7) / 18;
+      // Above or below, centred on it: keep to its sides.
+      return off(Math.PI / 2) < (Math.PI * 5) / 18 || off(-Math.PI / 2) < (Math.PI * 5) / 18;
+    };
+    const clashes = (placed: readonly { dx: number; dy: number }[]) => placed.reduce(
+      (count, { dx, dy }) => count + (onName(dx, dy) ? 1 : 0) + ink.filter((other) => Math.hypot(x + dx - other.x, y + dy - other.y) < other.r + dot + 1).length,
+      0,
+    );
+    // Facing the thing where that side is clear; else turned a little at a
+    // time either way, then one ring further out.
+    let best = spots(inner, facing);
+    let fewest = clashes(best);
+    for (const radius of [inner, inner + spacing]) {
+      for (let turn = 0; turn <= 12 && fewest > 0; turn += 1) {
+        const base = facing + (turn % 2 === 0 ? 1 : -1) * Math.ceil(turn / 2) * (Math.PI / 8);
+        const placed = spots(radius, base);
+        const count = clashes(placed);
+        if (count < fewest) {
+          best = placed;
+          fewest = count;
+        }
+      }
+    }
+    points.forEach((point, index) => targets.set(point, { anchor: topic, ...best[index]! }));
+  }
+  return targets;
+}
+
+/** Send a thing's linked points `at` of the way to their topics (0 home, 1
+ *  there; thingFlightTargets), or, with `thing` null, clear every flight.
+ *  Returns the points that fly. The next placeSatellites puts them there. */
+export function setThingFlight(
+  graph: Graph,
+  thing: string | null,
+  at: number,
+  /** Worked out once for a whole flight (thingFlightTargets). */
+  targets: ReadonlyMap<string, FlyTo> = thing === null ? new Map() : thingFlightTargets(graph, thing),
+): string[] {
+  graph.forEachNode((id, attrs) => {
+    if (attrs.fly === undefined || targets.has(id)) return;
+    graph.removeNodeAttribute(id, "fly");
+    graph.removeNodeAttribute(id, "flyTo");
+  });
+  for (const [id, to] of targets) graph.mergeNodeAttributes(id, { fly: at, flyTo: to });
+  return [...targets.keys()];
 }
 
 /** Write the halo bookkeeping the reducers read onto the graph: each memory's
@@ -1570,6 +1717,9 @@ export interface AtlasSimulation extends Simulation<AtlasSimNode, undefined> {
    *  over the cooling tail. The release path uses it when there will be no
    *  cooling tail (see shelfAnchorForce's `settle`). */
   settleShelf(): void;
+  /** Re-place every satellite on its anchor now, so a change to a point's
+   *  flight (setThingFlight) shows without a tick. */
+  placeSatellitesNow(): void;
 }
 
 export interface AtlasSimNode extends SimulationNodeDatum {
@@ -2250,6 +2400,7 @@ export function createAtlasSimulation(
     shelfAnchor.settle();
     writeBack();
   };
+  atlasSim.placeSatellitesNow = () => placeSatellites(graph, satellites, draggingId);
   return atlasSim;
 }
 
@@ -2260,6 +2411,9 @@ export interface HoverState {
    *  thingFocusState): `neighbors` is then its lit set, and the lines inside
    *  that set are drawn. */
   thing?: string;
+  /** What a picked thing's points link to (UX-CHAT-5): always named, and each
+   *  point's line to one is drawn clearly enough to follow across the map. */
+  linked?: Set<string>;
 }
 
 /** The most a node's disc grows to on screen, CSS px radius: memory dust
@@ -2341,7 +2495,9 @@ export function nodeDisplay(
   // A night's points are the thing's whole picture: never folded into a count.
   if (dustRank !== undefined && dustRank >= lod.dustVisible && attrs.night !== true) {
     const anchorHovered = state.hovered === attrs.dustOf && dustRank < Math.max(lod.dustVisible, HOVER_DUST_MAX);
-    if (!anchorHovered && state.hovered !== nodeId) return { ...attrs, hidden: true };
+    // A picked thing's point is never folded away, wherever it sits.
+    const pickedPoint = state.thing !== undefined && state.neighbors.has(nodeId);
+    if (!anchorHovered && !pickedPoint && state.hovered !== nodeId) return { ...attrs, hidden: true };
   }
   let base = attrs;
   // A night's point is the work itself: drawn whole at every zoom, never as
@@ -2375,7 +2531,7 @@ export function nodeDisplay(
   if (state.hovered === null) return base;
   if (nodeId === state.hovered) return { ...attrs, color: attrs.entityType ? nodeFillFor(attrs.entityType, true, palette) : attrs.color, size: attrs.size * 1.15, forceLabel: true, highlighted: true, zIndex: 2 };
   if (state.neighbors.has(nodeId)) {
-    return state.neighbors.size <= NEIGHBOR_LABEL_MAX
+    return state.neighbors.size <= NEIGHBOR_LABEL_MAX || state.linked?.has(nodeId) === true
       ? { ...attrs, color: attrs.entityType ? nodeFillFor(attrs.entityType, true, palette) : attrs.color, forceLabel: true, highlighted: true, zIndex: 1 }
       : { ...attrs, color: attrs.entityType ? nodeFillFor(attrs.entityType, true, palette) : attrs.color, zIndex: 1 };
   }
@@ -2405,9 +2561,15 @@ export function edgeDisplay(
   if (endpointAttrs && (endpointAttrs.source.entityType === THING_NODE_TYPE || endpointAttrs.target.entityType === THING_NODE_TYPE)) {
     return { ...attrs, hidden: true };
   }
-  // A picked thing: the lines among its lit set show, its points' lines to
-  // what they are about drawn strong.
+  // A picked thing: the lines among its lit set show, except its points'
+  // lines to what they are about. A point says where it belongs by sitting
+  // beside its topic (it flies there), or by a sign at the screen's edge
+  // when that is off screen: never a line (Fable's design, Qi-Xuan 11-05).
   if (state.thing !== undefined && state.neighbors.has(source) && state.neighbors.has(target)) {
+    const pointLink = endpointAttrs !== undefined
+      && ((state.linked?.has(source) === true && endpointAttrs.target.entityType === MEMORY_NODE_TYPE)
+        || (state.linked?.has(target) === true && endpointAttrs.source.entityType === MEMORY_NODE_TYPE));
+    if (pointLink) return { ...attrs, hidden: true };
     const night = endpointAttrs !== undefined && (endpointAttrs.source.night === true || endpointAttrs.target.night === true);
     return night ? { ...attrs, color: palette.edgeStrong, size: Math.max(attrs.size ?? 0, 0.9), zIndex: 1 } : { ...attrs, zIndex: 1 };
   }

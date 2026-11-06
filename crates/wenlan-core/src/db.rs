@@ -91,6 +91,7 @@ pub use activity_counts::{
 mod citation_sources;
 pub mod conversations;
 pub mod intake;
+pub mod night_links;
 mod scoped_entities;
 mod scoped_pages;
 pub mod sentence_history;
@@ -188,6 +189,8 @@ mod maintenance_queue_test;
 mod maintenance_retro_scan_test;
 #[cfg(test)]
 mod memory_point_reads_test;
+#[cfg(test)]
+mod night_links_test;
 #[cfg(test)]
 mod page_basis_test;
 #[cfg(test)]

@@ -150,6 +150,7 @@ import type {
   ThingNightPoints,
 } from "../../lib/tauri";
 import AtlasView, { WORKING_STORAGE_KEY } from "./AtlasView";
+import { THINGS_APART_STORAGE_KEY } from "../../lib/graph/positions";
 import { ATLAS_CONTROL_INSETS } from "../../lib/graph/viewpoint";
 
 const mockGetKnowledgeGraph = vi.mocked(getKnowledgeGraph);
@@ -440,6 +441,7 @@ describe("AtlasView", () => {
     for (const key of Object.keys(window.localStorage)) {
       if (key.startsWith("atlas.positions.")) window.localStorage.removeItem(key);
     }
+    window.localStorage.removeItem(THINGS_APART_STORAGE_KEY);
     mockGetKnowledgeGraph.mockImplementation(async () => {
       const entities = await entitiesSource();
       const details = await Promise.all(entities.map((entity) => detailSource(entity.id)));
@@ -859,9 +861,11 @@ describe("AtlasView", () => {
     expect(within(stops).getByRole("button", { name: "Nearby" })).toHaveAttribute("aria-pressed", "true");
     expect(within(stops).getByRole("button", { name: "This" })).toHaveAttribute("aria-pressed", "false");
     expect(instance.camera.setState.mock.calls.length + instance.camera.animate.mock.calls.length).toBeGreaterThan(moves);
-    // Back to the map: the stops go with the selection.
+    // Back to the map: the stops go with the selection, and the camera is
+    // seen going back while the points fly home (Fable's design).
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("group", { name: "Zoom to" })).not.toBeInTheDocument());
+    expect(instance.camera.animate).toHaveBeenLastCalledWith(expect.any(Object), { duration: 450, easing: "quadraticInOut" });
   });
 
   it("keeps a thing's points off the map until it is picked, and arrives at it from its page (UX-CHAT-5)", async () => {
@@ -910,6 +914,115 @@ describe("AtlasView", () => {
     expect(window.localStorage.getItem(WORKING_STORAGE_KEY)).toBe("true");
     fireEvent.click(working);
     expect(settings.nodeReducer!(point, graph.getNodeAttributes(point)).hidden).toBe(true);
+  });
+
+  it("keeps a quiet thing's points with no topic off the open map and out of Working on, and shows them when it is picked (UX-CHAT-5)", async () => {
+    mockConnectedPair();
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      quiet: true,
+      points: [{ memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 }],
+    }]);
+    const { unmount } = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const { settings, graph } = capturedSigmaInstances[0];
+    const point = graph.nodes().find((id: string) => graph.getNodeAttribute(id, "night") === true);
+    expect(point).toBeDefined();
+    expect(settings.nodeReducer!(point, graph.getNodeAttributes(point)).hidden).toBe(true);
+    // Only a quiet thing on the map: no switch to offer, and a stored choice
+    // to show active things does not show it.
+    fireEvent.click(screen.getByRole("button", { name: "Display" }));
+    expect(screen.queryByRole("button", { name: "Working on" })).toBeNull();
+    unmount();
+    window.localStorage.setItem(WORKING_STORAGE_KEY, "true");
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    const working = capturedSigmaInstances[1];
+    expect(working.settings.nodeReducer!(point, working.graph.getNodeAttributes(point)).hidden).toBe(true);
+    window.localStorage.removeItem(WORKING_STORAGE_KEY);
+    cleanup();
+    renderWithQuery(<AtlasView focusThingId="t1" />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    await screen.findByRole("group", { name: "Zoom to" });
+    const arrived = capturedSigmaInstances[2];
+    expect(arrived.settings.nodeReducer!(point, arrived.graph.getNodeAttributes(point)).hidden).not.toBe(true);
+  });
+
+  it.each([
+    ["with", true],
+    ["from a map kept before the record, without", false],
+  ])("moves a thing kept apart next to its topic once, when its points first link, %s a record of things apart (UX-CHAT-5)", async (_name, keepRecord) => {
+    mockConnectedPair();
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [{ memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 }],
+    }]);
+    const at = (id: string) => [latestGraph().getNodeAttribute(id, "x") as number, latestGraph().getNodeAttribute(id, "y") as number];
+    const apart = () => JSON.parse(window.localStorage.getItem(THINGS_APART_STORAGE_KEY) ?? "[]") as string[];
+    const fromAlice = () => {
+      const [tx, ty] = at("thing:t1");
+      const [ax, ay] = at("e1");
+      return Math.hypot(tx - ax, ty - ay);
+    };
+
+    // Nothing to link to yet: the thing sits apart from the map.
+    const first = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    const before = fromAlice();
+    expect(apart()).toEqual(["thing:t1"]);
+    first.unmount();
+    cleanup();
+    if (!keepRecord) window.localStorage.removeItem(THINGS_APART_STORAGE_KEY);
+
+    // Its point now links to Alice: the thing moves next to her, once.
+    mockMemories([], [{ memory_id: "n1", entity_id: "e1" }]);
+    const second = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    const moved = at("thing:t1");
+    expect(fromAlice()).toBeLessThan(before / 2);
+    expect(apart()).toEqual([]);
+    second.unmount();
+    cleanup();
+
+    // From then on it keeps that spot.
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    expect(at("thing:t1")[0]).toBeCloseTo(moved[0], 1);
+    expect(at("thing:t1")[1]).toBeCloseTo(moved[1], 1);
+  });
+
+  it("flies a picked thing's linked points out beside their topics, and keeps the rest in its frame (UX-CHAT-5)", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true } as MediaQueryList));
+    mockConnectedPair();
+    mockMemories([], [{ memory_id: "n1", entity_id: "e1" }]);
+    vi.mocked(listThingNightPoints).mockResolvedValue([{
+      thing_id: "t1",
+      title: "Site redesign",
+      spaces: [],
+      points: [
+        { memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 },
+        { memory_id: "n2", title: "Pick a launch week", decided: false, created_at: 11 },
+      ],
+    }]);
+    renderWithQuery(<AtlasView focusThingId="t1" />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    await screen.findByRole("group", { name: "Zoom to" });
+    const graph = latestGraph();
+    const at = (id: string) => [graph.getNodeAttribute(id, "x") as number, graph.getNodeAttribute(id, "y") as number];
+    const apart = (a: string, b: string) => Math.hypot(at(a)[0] - at(b)[0], at(a)[1] - at(b)[1]);
+    const linked = graph.nodes().find((id: string) => graph.getNodeAttribute(id, "night") === true && graph.hasEdge(id, "e1"))!;
+    const loose = graph.nodes().find((id: string) => graph.getNodeAttribute(id, "night") === true && id !== linked)!;
+    // The linked point sits right by Alice, nearer her than its thing.
+    await waitFor(() => expect(graph.getNodeAttribute(linked, "fly")).toBe(1));
+    expect(apart(linked, "e1")).toBeLessThan(apart("thing:t1", "e1") / 2);
+    expect(apart(linked, "e1")).toBeLessThan(20);
+    // The point with no topic stays in the thing's frame.
+    expect(graph.getNodeAttribute(loose, "fly")).toBeUndefined();
+    expect(apart(loose, "thing:t1")).toBeLessThan(apart(loose, "e1"));
   });
 
   it("gives a picked thing's points no forced labels at 全部 (UX-CHAT-5)", async () => {

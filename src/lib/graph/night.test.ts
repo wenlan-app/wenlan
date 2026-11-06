@@ -6,12 +6,17 @@ import {
   buildAtlasGraph,
   createAtlasSimulation,
   edgeDisplay,
+  NEIGHBOR_LABEL_MAX,
   lodFor,
   nodeDisplay,
+  OPENING_LOD,
   nodeSizeCapPx,
   runAtlasLayout,
   satelliteAnchor,
   satellitePlan,
+  labelSideFor,
+  setThingFlight,
+  thingFlightTargets,
 } from "./atlas";
 import { attachThingPoints, buildKnowledgeGraphModel, DEFAULT_LAYERS, drawableModel, MEMORY_NODE_TYPE, thingTitle } from "./model";
 import {
@@ -28,11 +33,18 @@ import {
   nightMarks,
   nightOffsetsOf,
   nightPointIds,
+  labelYieldsToFrames,
   placeFrameTitles,
   SENTENCE_LINE,
   STEEPING_SECS,
   SENTENCE_MAX_PX,
   thingFocusState,
+  thingPointIds,
+  arrowToward,
+  EDGE_SIGN_INSETS,
+  edgeSignAt,
+  nearLinkedBodies,
+  placeEdgeSigns,
   thingStopNodeIds,
   thingStopsFor,
   uncrowdedSentences,
@@ -310,6 +322,64 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     expect(edgeDisplay(rest, "e", "thing:t1", "mem:n2", attrs, PALETTE, lodFor(1), { source: thing, target: point }).hidden).toBe(true);
   });
 
+  it("flies a picked thing's linked point out beside its topic and home again, and frames only the points left (Qi-Xuan 11-05)", () => {
+    const map = mapWith(things());
+    runAtlasLayout(map);
+    const sim = createAtlasSimulation(map);
+    const home = { n1: xy(map, "mem:n1"), n2: xy(map, "mem:n2") };
+    const fromHub = (id: string) => Math.hypot(xy(map, id).x - xy(map, "hub").x, xy(map, id).y - xy(map, "hub").y);
+    const before = fromHub("mem:n2");
+    // Only the point that links to a topic flies.
+    expect(setThingFlight(map, "thing:t1", 0.5)).toEqual(["mem:n2"]);
+    sim.placeSatellitesNow();
+    const half = fromHub("mem:n2");
+    expect(half).toBeLessThan(before);
+    setThingFlight(map, "thing:t1", 1);
+    sim.placeSatellitesNow();
+    expect(fromHub("mem:n2")).toBeLessThan(half);
+    // Right beside the hub, on the side facing its thing.
+    const hubR = map.getNodeAttribute("hub", "size") as number;
+    const dot = map.getNodeAttribute("mem:n2", "size") as number;
+    expect(fromHub("mem:n2")).toBeGreaterThan(hubR + dot);
+    expect(fromHub("mem:n2")).toBeLessThan(hubR + 3 * dot + 5);
+    const towardThing = (xy(map, "thing:t1").x - xy(map, "hub").x) * (xy(map, "mem:n2").x - xy(map, "hub").x)
+      + (xy(map, "thing:t1").y - xy(map, "hub").y) * (xy(map, "mem:n2").y - xy(map, "hub").y);
+    expect(towardThing).toBeGreaterThan(0);
+    expect(xy(map, "mem:n1")).toEqual(home.n1);
+    // The frame is round the point left with the thing; the one out by its
+    // topic keeps its sentence there, outside the frame.
+    annotateDust(map, satellitePlan(map));
+    const drawnAt = (id: string) => (id === "mem:n1" ? { x: 100, y: 100, r: 3 } : id === "mem:n2" ? { x: 300, y: 300, r: 3 } : null);
+    const marks = nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, { width: 400, height: 400 }, () => true, "thing:t1");
+    expect(marks.frames[0]!.right).toBeLessThan(200);
+    expect(marks.sentences.find((sentence) => sentence.id === "mem:n2")).toMatchObject({ away: true });
+    // With every point away, a small frame stays on the thing's centre.
+    map.mergeNodeAttributes("mem:n1", { fly: 1, flyTo: { anchor: "hub", dx: 1, dy: 0 } });
+    const centred = nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, { width: 400, height: 400 }, undefined, "thing:t1", undefined, false, () => ({ x: 50, y: 60 }));
+    expect((centred.frames[0]!.left + centred.frames[0]!.right) / 2).toBe(50);
+    expect((centred.frames[0]!.top + centred.frames[0]!.bottom) / 2).toBe(60);
+    // Let go: home exactly where it was.
+    expect(setThingFlight(map, null, 0)).toEqual([]);
+    expect(map.getNodeAttribute("mem:n1", "fly")).toBeUndefined();
+    sim.placeSatellitesNow();
+    expect(map.getNodeAttribute("mem:n2", "fly")).toBeUndefined();
+    expect(xy(map, "mem:n2").x).toBeCloseTo(home.n2.x, 9);
+    expect(xy(map, "mem:n2").y).toBeCloseTo(home.n2.y, 9);
+  });
+
+  it("turns a flown point off a dot already sitting where it would go", () => {
+    const map = mapWith(things());
+    runAtlasLayout(map);
+    createAtlasSimulation(map);
+    const first = thingFlightTargets(map, "thing:t1").get("mem:n2")!;
+    const hub = xy(map, "hub");
+    const spot = { x: hub.x + first.dx, y: hub.y + first.dy };
+    map.addNode("blocker", { x: spot.x, y: spot.y, size: 2, entityType: "concept" });
+    const turned = thingFlightTargets(map, "thing:t1").get("mem:n2")!;
+    const dot = map.getNodeAttribute("mem:n2", "size") as number;
+    expect(Math.hypot(hub.x + turned.dx - spot.x, hub.y + turned.dy - spot.y)).toBeGreaterThan(2 + dot);
+  });
+
   it("keeps a frame visibly a frame when its points are drawn tiny", () => {
     const map = mapWith(things());
     annotateDust(map, satellitePlan(map));
@@ -349,9 +419,42 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t2").frames).toEqual([]);
     // The "Working on" switch draws every active thing, picked or not.
     expect(nightMarks(map, drawnAt, { hovered: null, neighbors: new Set() }, viewport, undefined, null, undefined, true).frames.map((f) => f.thing)).toEqual(["thing:t1"]);
+    // A quiet thing's points with no topic are framed under it when it is
+    // picked; "Working on" is for active things.
+    const quietMap = mapWith([{ ...loose, quiet: true }]);
+    annotateDust(quietMap, satellitePlan(quietMap));
+    const quietAt = (id: string) => (id.startsWith("mem:q") ? { x: 40, y: 50, r: 3 } : null);
+    expect(nightMarks(quietMap, quietAt, { hovered: null, neighbors: new Set() }, viewport).frames).toEqual([]);
+    expect(nightMarks(quietMap, quietAt, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t2").frames.map((f) => f.thing)).toEqual(["thing:t2"]);
+    expect(nightMarks(quietMap, quietAt, { hovered: null, neighbors: new Set() }, viewport, undefined, null, undefined, true).frames).toEqual([]);
     // Nothing drawn, or all off screen: no frame.
     expect(nightMarks(map, () => null, { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1").frames).toEqual([]);
     expect(nightMarks(map, () => ({ x: 900, y: 50, r: 3 }), { hovered: null, neighbors: new Set() }, viewport, undefined, "thing:t1").frames).toEqual([]);
+  });
+
+  it("lights a picked quiet thing's points where they sit, beside their topics, and draws no frame for them", () => {
+    const quiet = things()
+      .map((thing) => ({ ...thing, quiet: true, points: thing.points.filter((point) => point.memory_id === "n2") }))
+      .filter((thing) => thing.points.length > 0);
+    const map = mapWith(quiet);
+    const plan = satellitePlan(map);
+    annotateDust(map, plan);
+    // It rides its topic, not the thing, so picking it moves nothing.
+    const anchor = plan.find((s) => s.id === "mem:n2")!.anchor;
+    expect(anchor).not.toBe("thing:t1");
+    expect(thingPointIds(map, "thing:t1")).toEqual(["mem:n2"]);
+    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual([anchor, "mem:n2"].sort());
+    expect(thingStopsFor(map, "thing:t1")).toContain("nearby");
+    const lit = thingFocusState(map, "thing:t1", "this");
+    expect(lit.neighbors).toContain("mem:n2");
+    expect(lit.neighbors).toContain(anchor);
+    // Folded away as dust at this zoom, but not while its thing is picked.
+    const attrs = { ...map.getNodeAttributes("mem:n2"), dustRank: 99, dustOf: anchor };
+    const lod = { ...OPENING_LOD, dustVisible: 0 };
+    expect(nodeDisplay({ hovered: null, neighbors: new Set() }, "mem:n2", attrs, PALETTE, lod).hidden).toBe(true);
+    expect(nodeDisplay(lit, "mem:n2", attrs, PALETTE, lod).hidden).not.toBe(true);
+    const at = () => ({ x: 40, y: 50, r: 3 });
+    expect(nightMarks(map, at, lit, { width: 400, height: 300 }, undefined, "thing:t1").frames).toEqual([]);
   });
 
   it("ends a thing's name cut short when it was stored at the length cap, at a word, with an ellipsis", () => {
@@ -389,6 +492,48 @@ const LONG = "Pricing page stays open until the owner confirms the annual discou
 const LONG_ZH = "週末重寫了定價頁的文案，年繳方案的折扣還要等財務確認後才能定下來，先不放到首頁上";
 
 describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
+  it("moves a flown column out past a topic's name in its way", () => {
+    const flown = (id: string, x: number, y: number) => ({ ...sentence(id, x, y, `Sentence ${id}`), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 } });
+    const name = { left: 220, right: 280, top: 192, bottom: 208 };
+    const [spot] = layoutNightSentences([flown("a", 216, 200)], measure, [name], { width: 800 }, [{ left: 190, right: 210, top: 190, bottom: 210 }]);
+    expect(spot!.align).toBe("left");
+    expect(spot!.box.left).toBeGreaterThanOrEqual(280);
+    // Never further out than reads as beside its point.
+    const wide = { left: 220, right: 600, top: 192, bottom: 208 };
+    const far = layoutNightSentences([flown("a", 216, 200)], measure, [wide], { width: 800 }, [{ left: 190, right: 210, top: 190, bottom: 210 }]);
+    expect(far.every((placed) => placed.box.left < 400)).toBe(true);
+  });
+
+  it("waits to write a flying point's sentence where its side has no room, and places it once landed", () => {
+    const point = (flying: boolean) => ({ ...sentence("a", 216, 200, "Sentence a"), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 }, landsRight: true, ...(flying ? { flying: true } : {}) });
+    // The right is walled off well past what a column may move.
+    const wall = { left: 220, right: 700, top: 150, bottom: 250 };
+    expect(layoutNightSentences([point(true)], measure, [wall], { width: 800 })).toEqual([]);
+    const [landed] = layoutNightSentences([point(false)], measure, [wall], { width: 800 });
+    expect(landed!.align).toBe("right");
+  });
+
+  it("keeps a flying column on the side its points land on, wherever they are on the way", () => {
+    const flying = (x: number) => ({ ...sentence("a", x, 200, "Sentence a"), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 }, landsRight: true });
+    for (const x of [120, 180, 216]) {
+      const [spot] = layoutNightSentences([flying(x)], measure, [], { width: 800 });
+      expect(spot!.align).toBe("left");
+    }
+  });
+
+  it("writes the sentences of points flown out round one topic as a column on the side away from it, none left out", () => {
+    // Three dots close round the hub's right side, the hub at (200, 200).
+    const flown = (id: string, x: number, y: number) => ({ ...sentence(id, x, y, `Sentence ${id}`), away: true, anchor: "hub", anchorAt: { x: 200, y: 200 } });
+    const hub = { left: 190, right: 210, top: 190, bottom: 210 };
+    const placed = layoutNightSentences([flown("a", 216, 192), flown("b", 218, 200), flown("c", 216, 208)], measure, [], { width: 800 }, [hub]);
+    expect(placed.map(({ id }) => id)).toEqual(["a", "b", "c"]);
+    for (const spot of placed) {
+      expect(spot.align).toBe("left");
+      expect(spot.box.left).toBeGreaterThanOrEqual(218 + 4);
+    }
+    for (let i = 1; i < placed.length; i++) expect(placed[i]!.box.top).toBeGreaterThanOrEqual(placed[i - 1]!.box.bottom);
+  });
+
   it("writes each sentence to the right of its point, or to the left where the right would cut it short", () => {
     const placed = layoutNightSentences([
       sentence("a", 100, 100, "Things are frames, not nodes"),
@@ -570,6 +715,29 @@ describe("a thing's sentences beside its points (UX-CHAT-5)", () => {
     expect(picked[0]!.baseline).toBe(96);
   });
 
+  it("moves a picked thing's title further out rather than cover a linked topic's name", () => {
+    const wide = { thing: "thing:w", title: "Merge queue", left: 0, top: 100, right: 300, bottom: 160, dim: false };
+    // A name across the whole line above the frame and the whole line below.
+    const names = [
+      { left: -10, right: 310, top: 78, bottom: 99 },
+      { left: -10, right: 310, top: 161, bottom: 182 },
+    ];
+    const [title] = placeFrameTitles([wide], measure, [...names], "thing:w");
+    expect(title).toBeDefined();
+    for (const name of names) {
+      const covers = title!.box.left < name.right && name.left < title!.box.right && title!.box.top < name.bottom && name.top < title!.box.bottom;
+      expect(covers).toBe(false);
+    }
+    // Only the picked thing moves away; another thing's title is left out.
+    expect(placeFrameTitles([wide], measure, [...names])).toEqual([]);
+  });
+
+  it("keeps a linked topic's name even where the picked frame already sits", () => {
+    expect(labelYieldsToFrames(false, true)).toBe(false);
+    expect(labelYieldsToFrames(false, false)).toBe(true);
+    expect(labelYieldsToFrames(true, false)).toBe(false);
+  });
+
   it("cuts a crowded frame's title shorter rather than leaving it out", () => {
     const small = { thing: "thing:s", title: "Wenlan PR review and merge queue", left: 100, top: 100, right: 130, bottom: 122, dim: false };
     // Names to the left and right of the frame leave about 100 px above and below it.
@@ -605,16 +773,96 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     expect(thingStopsFor(alone, "thing:t1")).toEqual(["this", "all"]);
   });
 
-  it("frames its points, then what they link to and those bodies' neighbours, then the whole map", () => {
+  it("frames its points and what they link to, then those bodies' neighbours, then the whole map", () => {
     const map = mapWith(things());
     annotateDust(map, satellitePlan(map));
-    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["mem:n1", "mem:n2"]);
+    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["hub", "mem:n1", "mem:n2", "thing:t1"]);
     // n2 links to hub; hub's neighbours are a, b and c. d and e are further.
     expect(thingStopNodeIds(map, "thing:t1", "nearby")).toEqual(["a", "b", "c", "hub", "mem:n1", "mem:n2"]);
     expect(thingStopNodeIds(map, "thing:t1", "all")).toEqual(map.nodes());
   });
 
-  it("lights its points and what they link to, draws those lines, and never its tie to its centre", () => {
+  it("holds a far-flown point's sentence at the screen's edge under its topic, and leads back once the thing is off screen", () => {
+    const map = mapWith(things());
+    annotateDust(map, satellitePlan(map));
+    const hover = { hovered: null, neighbors: new Set<string>() };
+    const viewport = { width: 400, height: 400 };
+    map.mergeNodeAttributes("mem:n2", { fly: 1, flyTo: { anchor: "hub", dx: 1, dy: 0 } });
+    // n2 is out by the hub, past the right edge; n1 is home in view.
+    const out = (id: string) => (id === "mem:n1" ? { x: 100, y: 200, r: 3 } : id === "mem:n2" ? { x: 900, y: 210, r: 3 } : id === "hub" ? { x: 910, y: 200, r: 8 } : null);
+    const marks = nightMarks(map, out, hover, viewport, () => true, "thing:t1");
+    expect(marks.edges).toEqual([expect.objectContaining({ kind: "topic", goTo: "hub", count: 1, text: "Pricing page open", toward: { x: 910, y: 200, r: 8 } })]);
+    expect(marks.sentences.map((sentence) => sentence.id)).toEqual(["mem:n1"]);
+    // Only for the picked thing.
+    expect(nightMarks(map, out, hover, viewport, () => true, null, undefined, true).edges).toEqual([]);
+    // The camera went to the hub: n2 is in view with its sentence, and a
+    // sign points back to the thing.
+    const there = (id: string) => (id === "mem:n1" ? { x: -500, y: 200, r: 3 } : id === "mem:n2" ? { x: 190, y: 210, r: 3 } : id === "hub" ? { x: 200, y: 200, r: 8 } : null);
+    const back = nightMarks(map, there, hover, viewport, () => true, "thing:t1");
+    expect(back.frames).toEqual([]);
+    expect(back.edges).toEqual([expect.objectContaining({ kind: "back", goTo: "thing:t1", title: "Site redesign" })]);
+    expect(back.sentences).toEqual([expect.objectContaining({ id: "mem:n2", away: true })]);
+    // Picked with none of its points drawn: its name still shows, on its centre.
+    const bare = nightMarks(map, () => null, hover, viewport, undefined, "thing:t1", undefined, false, () => ({ x: 50, y: 60 }));
+    expect(bare.frames).toEqual([expect.objectContaining({ thing: "thing:t1", title: "Site redesign" })]);
+    expect(nightMarks(map, () => null, hover, viewport, undefined, null, undefined, true, () => ({ x: 50, y: 60 })).frames).toEqual([]);
+    // A quiet thing lit by its topics has no frame, and its centre, holding
+    // nothing, gets no sign back.
+    map.mergeNodeAttributes("thing:t1", { quiet: true, elsewhere: ["mem:n2"] });
+    const quiet = nightMarks(map, (id) => (id === "mem:n2" ? { x: 300, y: 300, r: 3 } : null), hover, viewport, undefined, "thing:t1", undefined, false, () => ({ x: -900, y: 60 }));
+    expect(quiet.frames).toEqual([]);
+    expect(quiet.edges).toEqual([]);
+  });
+
+  it("puts an edge sign on the edge facing what it points at, its arrow the true way, and slides signs apart", () => {
+    const measure = (text: string) => text.length * 6;
+    const sign = (goTo: string, toward: { x: number; y: number }, count = 1) => ({ kind: "topic" as const, thing: "thing:t1", goTo, title: goTo, count, text: "A sentence", open: false, toward });
+    const viewport = { width: 800, height: 600 };
+    const [left, right] = placeEdgeSigns([sign("memory UX", { x: -900, y: -300 }, 2), sign("spotlight", { x: 2000, y: 1000 })], measure, viewport);
+    expect(left!.header).toBe("↖ memory UX · 2");
+    expect(right!.header).toBe("spotlight ↘");
+    expect(left!.box.left).toBe(EDGE_SIGN_INSETS.left);
+    expect(right!.box.right).toBe(800 - EDGE_SIGN_INSETS.right);
+    expect(right!.line).toBe("A sentence");
+    // Two signs the same way do not overlap.
+    const [a, b] = placeEdgeSigns([sign("a", { x: -900, y: 300 }), sign("b", { x: -900, y: 301 })], measure, viewport);
+    expect(a!.box.bottom <= b!.box.top || b!.box.bottom <= a!.box.top).toBe(true);
+    expect(arrowToward({ x: 0, y: 0 }, { x: 0, y: -5 })).toBe("↑");
+    // A tap on a sign answers with where it goes; frames ignore it.
+    const hits = [{ thing: "thing:t1", goTo: "hub", ...a!.box }];
+    expect(edgeSignAt(hits, a!.box.left + 1, a!.box.top + 1)).toBe("hub");
+    expect(frameAt(hits, a!.box.left + 1, a!.box.top + 1)).toBeNull();
+  });
+
+  it("never lands a flown point on its topic's name", () => {
+    const map = mapWith(things());
+    annotateDust(map, satellitePlan(map));
+    const hub = xy(map, "hub");
+    for (const [tx, ty] of [[hub.x + 50, hub.y], [hub.x - 50, hub.y], [hub.x, hub.y + 50], [hub.x, hub.y - 50]] as const) {
+      map.mergeNodeAttributes("thing:t1", { x: tx, y: ty });
+      const { dx, dy } = thingFlightTargets(map, "thing:t1").get("mem:n2")!;
+      const side = labelSideFor(hub.x, hub.y);
+      const angle = Math.atan2(dy, dx);
+      if (side === "right") expect(Math.cos(angle)).toBeLessThan(Math.cos((Math.PI * 7) / 18));
+      if (side === "left") expect(-Math.cos(angle)).toBeLessThan(Math.cos((Math.PI * 7) / 18));
+      if (side === "above" || side === "below") expect(Math.abs(Math.sin(angle))).toBeLessThan(Math.cos((Math.PI * 5) / 18) + 1e-9);
+    }
+  });
+
+  it("leaves a far topic, and the point flying to it, out of the 這件事 frame", () => {
+    const map = mapWith(things());
+    annotateDust(map, satellitePlan(map));
+    const centre = xy(map, "thing:t1");
+    map.setNodeAttribute("hub", "x", centre.x + 5000);
+    map.setNodeAttribute("hub", "y", centre.y);
+    expect(nearLinkedBodies(map, "thing:t1")).toEqual([]);
+    setThingFlight(map, "thing:t1", 1, thingFlightTargets(map, "thing:t1"));
+    expect(thingStopNodeIds(map, "thing:t1", "this")).toEqual(["mem:n1", "thing:t1"]);
+    // 附近 still reaches it.
+    expect(thingStopNodeIds(map, "thing:t1", "nearby")).toContain("hub");
+  });
+
+  it("lights its points and what they link to, and never draws a line from a point to its topic or its centre", () => {
     const map = mapWith(things());
     annotateDust(map, satellitePlan(map));
     const state = thingFocusState(map, "thing:t1", "this");
@@ -623,9 +871,15 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     const point = { entityType: "memory", night: true, dustRank: 1 };
     const hub = { entityType: "concept" };
     const thing = { entityType: "thing" };
-    const line = edgeDisplay(state, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub });
-    expect(line.hidden).toBeUndefined();
-    expect(line.color).toBe(PALETTE.edgeStrong);
+    // No line to its topic at any stop, whichever way round the edge runs.
+    expect(edgeDisplay(state, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).hidden).toBe(true);
+    expect(edgeDisplay(state, "e", "hub", "mem:n2", attrs, PALETTE, lodFor(1), { source: hub, target: point }).hidden).toBe(true);
+    expect(edgeDisplay(thingFocusState(map, "thing:t1", "nearby"), "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).hidden).toBe(true);
+    expect(edgeDisplay(thingFocusState(map, "thing:t1", "all"), "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).hidden).toBe(true);
+    // Nothing picked: the line stays hidden, the map at rest is unchanged.
+    expect(edgeDisplay({ hovered: null, neighbors: new Set() }, "e", "mem:n2", "hub", attrs, PALETTE, lodFor(1), { source: point, target: hub }).hidden).toBe(true);
+    // Lines among topics are not point links, even at 附近.
+    expect(edgeDisplay(thingFocusState(map, "thing:t1", "nearby"), "e", "hub", "a", attrs, PALETTE, lodFor(1), { source: hub, target: hub }).size).toBe(0.5);
     expect(edgeDisplay(state, "e", "thing:t1", "mem:n2", attrs, PALETTE, lodFor(1), { source: thing, target: point }).hidden).toBe(true);
     // Hub to a is outside the lit set at 這件事, inside it at 附近.
     expect(edgeDisplay(state, "e", "hub", "a", attrs, PALETTE, lodFor(1), { source: hub, target: hub }).hidden).toBe(true);
@@ -634,6 +888,23 @@ describe("a thing's three zoom stops (UX-CHAT-5)", () => {
     // The thing's own node stays hidden, its points lit.
     expect(nodeDisplay(state, "thing:t1", { entityType: "thing", size: 1, label: "Site redesign" }, PALETTE).hidden).toBe(true);
     expect(nodeDisplay(state, "mem:n1", { entityType: "memory", night: true, size: 3, color: "#7a7a7a" }, PALETTE).highlighted).toBe(true);
+  });
+});
+
+describe("a picked thing names what its points link to (UX-CHAT-5)", () => {
+  it("names a linked topic however many points are lit, and not its neighbours at 附近", () => {
+    const state = {
+      hovered: "thing:t1",
+      thing: "thing:t1",
+      neighbors: new Set(["hub", "near", ...Array.from({ length: NEIGHBOR_LABEL_MAX + 1 }, (_, i) => `mem:${i}`)]),
+      linked: new Set(["hub"]),
+    };
+    const topic = { entityType: "concept", size: 3, label: "Topic" };
+    expect(nodeDisplay(state, "hub", topic, PALETTE).forceLabel).toBe(true);
+    expect(nodeDisplay(state, "near", topic, PALETTE).forceLabel).toBeUndefined();
+    expect(nodeDisplay(state, "mem:0", { entityType: "memory", night: true, size: 3 }, PALETTE).forceLabel).toBeUndefined();
+    // Nothing picked: no name is forced.
+    expect(nodeDisplay({ hovered: null, neighbors: new Set() }, "hub", topic, PALETTE).forceLabel).toBeUndefined();
   });
 });
 

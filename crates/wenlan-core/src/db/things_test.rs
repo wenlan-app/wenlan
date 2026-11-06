@@ -737,7 +737,7 @@ async fn ux_thing_3_merging_carries_the_map_and_nights() {
         )
         .await
         .unwrap();
-    db.record_dream(&other, &["mem_1".into()], &[], &changes, &[])
+    db.record_dream(&other, &["mem_1".into()], &[], &changes, &[], &[])
         .await
         .unwrap();
 

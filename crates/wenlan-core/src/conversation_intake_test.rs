@@ -402,7 +402,7 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
   {"text": "", "settled": true, "from": "C0"},
   {"text": "Bad replace.", "settled": true, "from": "C0", "replaces": "P9"}
 ]}"#;
-    let points = parse_dream(answer, 2, 2, 0).unwrap();
+    let points = parse_dream(answer, 2, 2, 0, 0).unwrap();
     assert_eq!(
         points,
         vec![
@@ -412,6 +412,7 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
                 from: 0,
                 replaces: Some(1),
                 map: None,
+                topic: None,
             },
             DreamPoint {
                 text: "Pricing page is open.".into(),
@@ -419,6 +420,7 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
                 from: 1,
                 replaces: None,
                 map: None,
+                topic: None,
             },
             DreamPoint {
                 text: "Bad replace.".into(),
@@ -426,11 +428,12 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
                 from: 0,
                 replaces: None,
                 map: None,
+                topic: None,
             },
         ]
     );
-    assert_eq!(parse_dream(r#"{"points": []}"#, 1, 0, 0), Some(vec![]));
-    assert!(parse_dream("no json", 1, 0, 0).is_none());
+    assert_eq!(parse_dream(r#"{"points": []}"#, 1, 0, 0, 0), Some(vec![]));
+    assert!(parse_dream("no json", 1, 0, 0, 0).is_none());
     let prompt = dream_prompt(
         "Site",
         &[],
@@ -443,6 +446,7 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
             text: "Which tagline?".into(),
             decided: None,
         }],
+        &[],
         "English",
     );
     assert!(prompt.contains("P0 (open): Kept.") && prompt.contains("in English"));
@@ -453,6 +457,11 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
     assert!(prompt.contains("answered or done later in the same conversations is settled"));
     assert!(prompt.contains("at most 15 words"));
     assert!(prompt.contains("where a pull request stands are not decisions"));
+    // No topics to offer: the question is not asked.
+    assert!(
+        !prompt.contains("\"topic\"") && !prompt.contains("big map"),
+        "{prompt}"
+    );
 }
 
 /// UX-CHAT-5: a point can say which point on the thing's map it is, once
@@ -464,9 +473,102 @@ fn ux_chat_5_a_nights_point_names_its_map_point() {
   {"text": "Pricing waits.", "settled": false, "from": "C0", "map": "N1"},
   {"text": "Docs move.", "settled": true, "from": "C0", "map": "N5"}
 ]}"#;
-    let points = parse_dream(answer, 1, 0, 2).unwrap();
+    let points = parse_dream(answer, 1, 0, 2, 0).unwrap();
     assert_eq!(
         points.iter().map(|p| p.map).collect::<Vec<_>>(),
         [Some(1), None, None]
     );
+}
+
+/// UX-CHAT-5: in the one night call, each point names its topic from the list,
+/// or null. A made-up id leaves the point without a topic, never without the point.
+#[test]
+fn ux_chat_5_a_nights_point_names_its_topic_from_the_list() {
+    let prompt = dream_prompt(
+        "Site",
+        &[],
+        &[],
+        &[],
+        &["GitHub".into(), "Pricing".into()],
+        "English",
+    );
+    assert!(prompt.contains("T0: GitHub\nT1: Pricing"), "{prompt}");
+    assert!(prompt.contains("do not make up a topic"));
+    assert!(prompt.contains("\"topic\": \"T0\" or null"));
+    let answer = r#"{"points": [
+  {"text": "Keep the repository private.", "settled": true, "from": "C0", "topic": "T0"},
+  {"text": "Which plan first?", "settled": false, "from": "C0", "topic": null},
+  {"text": "Docs move.", "settled": true, "from": "C0", "topic": "T9"},
+  {"text": "Made up a name.", "settled": true, "from": "C0", "topic": "Billing"},
+  {"text": "Never said.", "settled": true, "from": "C0"}
+]}"#;
+    let points = parse_dream(answer, 1, 0, 0, 2).unwrap();
+    assert_eq!(
+        points.iter().map(|p| p.topic).collect::<Vec<_>>(),
+        [Some(0), None, None, None, None]
+    );
+}
+
+/// UX-CHAT-5: a name is offered because the person typed it only when it is
+/// specific. Product names stay; everyday words and names of code do not.
+#[test]
+fn ux_chat_5_only_specific_names_put_a_topic_on_the_list() {
+    let raw = "push it to GitHub, then the memory and Memory work; memory again. \
+Long-term memory. 夜間整理 is on macOS. ChatGPT too.";
+    let lower = raw.to_lowercase();
+    let hits = |name: &str| specific_name_hits(name, raw, &lower);
+    assert_eq!(hits("GitHub"), Some(1));
+    assert_eq!(hits("macOS"), Some(1));
+    assert_eq!(hits("ChatGPT"), Some(1));
+    assert_eq!(hits("Long-Term Memory"), Some(1), "several words");
+    assert_eq!(hits("Memory"), None, "mostly written without capitals");
+    assert_eq!(hits("memory"), None, "an everyday word");
+    assert_eq!(hits("work"), None);
+    assert_eq!(hits("Mac"), None, "too short to mean anything");
+    assert_eq!(hits("夜間整理"), Some(1));
+    assert_eq!(hits("夜間"), None);
+
+    for name in [
+        "GitHub",
+        "macOS",
+        "ChatGPT",
+        "Claude Code",
+        "夜間整理",
+        "LLM",
+    ] {
+        assert!(topic_name_offered(name), "{name}");
+    }
+    for name in [
+        "EXIT CODE",
+        "dream_with",
+        "src/lib",
+        "main.rs",
+        "foo()",
+        "#1150",
+        "unit test",
+        "--flag",
+        "https://x.y",
+        "  ",
+    ] {
+        assert!(!topic_name_offered(name), "{name}");
+    }
+}
+
+/// UX-CHAT-5: connecting old points asks only for topics, answered by id.
+#[test]
+fn ux_chat_5_old_points_are_connected_by_id_or_left_alone() {
+    let prompt = night_links_prompt("Site", &["Keep it private.".into()], &["GitHub".into()]);
+    assert!(
+        prompt.contains("P0: Keep it private.") && prompt.contains("T0: GitHub"),
+        "{prompt}"
+    );
+    let answer = r#"{"points": [
+  {"point": "P0", "topic": "T0"},
+  {"point": "P0", "topic": "T1"},
+  {"point": "P1", "topic": null},
+  {"point": "P2", "topic": "T9"},
+  {"point": "P7", "topic": "T0"}
+]}"#;
+    assert_eq!(parse_night_links(answer, 3, 2), Some(vec![(0, 0)]));
+    assert_eq!(parse_night_links("no json", 3, 2), None);
 }

@@ -125,12 +125,13 @@ pub use steep_new::{
     SteepOrganizeWork,
 };
 pub use things::{
-    SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingActor, ThingDetailResponse,
-    ThingDream, ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapOp, ThingMapOpsRequest,
-    ThingMapOpsResponse, ThingMapProposal, ThingMapResponse, ThingMapSource, ThingMapState,
-    ThingMergeRequest, ThingMoveRequest, ThingNightPoint, ThingNightPoints,
-    ThingNightPointsResponse, ThingPageEntry, ThingPageVia, ThingRef, ThingRenameRequest,
-    ThingSessionEntry, ThingSummary, ThingsResponse, THING_QUIET_AFTER_SECS,
+    NightLinksBackfill, NightLinksBackfillUndo, SavedIn, SavedInRequest, SavedInResponse,
+    SavedPageChange, ThingActor, ThingDetailResponse, ThingDream, ThingMapAuthor, ThingMapEdge,
+    ThingMapNode, ThingMapOp, ThingMapOpsRequest, ThingMapOpsResponse, ThingMapProposal,
+    ThingMapResponse, ThingMapSource, ThingMapState, ThingMergeRequest, ThingMoveRequest,
+    ThingNightPoint, ThingNightPoints, ThingNightPointsResponse, ThingPageEntry, ThingPageVia,
+    ThingRef, ThingRenameRequest, ThingSessionEntry, ThingSummary, ThingsResponse,
+    THING_QUIET_AFTER_SECS,
 };
 
 use serde::{Deserialize, Serialize};

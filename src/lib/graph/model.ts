@@ -42,6 +42,12 @@ export interface GraphNode {
   updatedAt: number;
   /** A memory a night wrote for a thing (UX-CHAT-5): drawn with the moon. */
   night?: boolean;
+  /** A thing gone quiet, or a point under one (UX-CHAT-5): shown only while
+   *  that thing is picked, never by the "Working on" switch. */
+  quiet?: boolean;
+  /** A quiet thing's points that sit by a topic rather than under it, as node
+   *  ids. They have no line to the thing, so they stay where they are. */
+  elsewhere?: string[];
   /** A night's point that is still open, not yet decided (UX-CHAT-5): its
    *  sentence is written in the muted ink. */
   open?: boolean;
@@ -789,10 +795,11 @@ export function thingIdOf(nodeId: string): string | null {
  * (atlas.ts's satelliteAnchor prefers a thing), so a link arriving later
  * never moves it.
  *
- * A quiet thing has no frame and no centre. Its points that link to a drawn
- * entity stay on the map as ordinary memory dots by that entity; the rest are
- * not drawn. Its centre's kept position is what brings its frame back to the
- * same spot when it is active again (see AtlasView).
+ * A quiet thing keeps a centre, so it can always be picked. Its points that link
+ * to a drawn entity stay on the map as ordinary memory dots by that entity, and
+ * light up there when it is picked (`elsewhere`). The rest have nowhere else to
+ * be, so they stay under the thing, shown only while it is picked: the "Working
+ * on" switch is for active things. With none of those it has no frame.
  *
  * Like attachMemories, nothing already in `base` changes position, degree or
  * edges. `space` narrows to the things whose conversations ran there, as the
@@ -816,14 +823,17 @@ export function attachThingPoints(
     for (const end of [edge.source, edge.target]) if (!baseIds.has(end)) added.add(end);
   };
   const pointIds = new Set<string>();
-  // Quiet things' points: drawn only through an entity link, as plain memories.
+  // Quiet things' points with an entity to sit by: plain memories there.
   const quietPoints = new Map<string, { title: string; createdAt: number; space: string | null }>();
+  const reachesEntity = new Set(memoryLinks.filter((link) => nodes.get(link.entity_id)?.kind === "entity").map((link) => link.memory_id));
   for (const thing of shown) {
+    let under = thing.points;
     if (thing.quiet) {
+      under = thing.points.filter((point) => !reachesEntity.has(point.memory_id));
       for (const point of thing.points) {
+        if (!reachesEntity.has(point.memory_id)) continue;
         quietPoints.set(point.memory_id, { title: point.title, createdAt: point.created_at, space: space ?? thing.spaces[0] ?? null });
       }
-      continue;
     }
     const id = thingNodeId(thing.thing_id);
     if (nodes.has(id)) continue;
@@ -838,13 +848,16 @@ export function attachThingPoints(
       space: space ?? thing.spaces[0] ?? null,
       createdAt: Math.min(...thing.points.map((point) => point.created_at)),
       updatedAt: newest,
+      ...(thing.quiet
+        ? { quiet: true, elsewhere: thing.points.filter((point) => reachesEntity.has(point.memory_id)).map((point) => memoryNodeId(point.memory_id)) }
+        : {}),
     });
     added.add(id);
-    for (const point of thing.points) {
+    for (const point of under) {
       const memoryId = memoryNodeId(point.memory_id);
       const existing = nodes.get(memoryId);
       nodes.set(memoryId, existing
-        ? { ...existing, night: true, open: !point.decided }
+        ? { ...existing, night: true, open: !point.decided, ...(thing.quiet ? { quiet: true } : {}) }
         : {
           id: memoryId,
           kind: "memory",
@@ -857,6 +870,7 @@ export function attachThingPoints(
           updatedAt: point.created_at,
           night: true,
           open: !point.decided,
+          ...(thing.quiet ? { quiet: true } : {}),
         });
       pointIds.add(point.memory_id);
       addEdge({
