@@ -71,7 +71,6 @@ fn dispatch<R: Runtime>(app: &AppHandle<R>, direction: &'static str) {
         }
         return;
     };
-    let target = window.clone();
     let _ = window.with_webview(move |webview| {
         // The focused responder must still be the one observed by the menu.
         // WebKit's content view is a descendant of its WKWebView.
@@ -95,6 +94,15 @@ fn dispatch<R: Runtime>(app: &AppHandle<R>, direction: &'static str) {
         // The fallback executes within the same JS turn, on the same focused
         // DOM element; there is no delayed Cocoa action after this evaluation.
         let script = format!("(()=>{{if(!document.hasFocus())return;if(window.dispatchEvent(new CustomEvent('wenlan-native-history',{{cancelable:true,detail:'{direction}'}}))){{const e=document.activeElement;if(e&&!e.closest('.cm-content')&&(e.isContentEditable||e instanceof HTMLInputElement||e instanceof HTMLTextAreaElement)) document.execCommand('{direction}');}}}})()");
-        let _ = target.eval(script);
+        // Wry holds its dispatcher mutex while running this callback. Invoke
+        // WebKit directly instead of re-entering Tauri's dispatcher.
+        unsafe {
+            let webkit = webview.inner() as *mut objc::runtime::Object;
+            let source: *mut objc::runtime::Object = msg_send![class!(NSString), alloc];
+            let source: *mut objc::runtime::Object = msg_send![source,
+                initWithBytes:script.as_ptr() length:script.len() encoding:4usize];
+            let _: () = msg_send![webkit, evaluateJavaScript:source completionHandler:std::ptr::null::<objc::runtime::Object>()];
+            let _: () = msg_send![source, release];
+        }
     });
 }
