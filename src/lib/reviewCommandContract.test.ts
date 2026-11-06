@@ -37,7 +37,6 @@ const INVOKE_LITERAL = /invoke[A-Za-z]*(?:<[^>]*>)?\(\s*"([a-z0-9_]+)"/g;
 const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "active_theme_image",
   "check_theme_draft",
-  "get_active_theme",
   "get_theme",
   "import_theme_image",
   "list_themes",
