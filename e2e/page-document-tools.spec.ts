@@ -91,7 +91,9 @@ for (const copy of copies) for (const width of [1280, 375]) {
     await expect(reading).toContainText("Saved before the map pane opens.");
     await expect(reading.locator('[contenteditable="true"], textarea')).toHaveCount(0);
     const calls = controller.calls();
-    const writeIndex = calls.findIndex((call) => call.command === "update_page" && call.args.content === draft);
+    const writeIndex = calls.findIndex((call) => call.command === "update_page"
+      && typeof call.args === "object" && call.args !== null
+      && "content" in call.args && call.args.content === draft);
     const mapIndex = calls.findIndex((call, index) => index > writeIndex && call.command === "get_page_map");
     expect(writeIndex).toBeGreaterThanOrEqual(0);
     expect(mapIndex).toBeGreaterThan(writeIndex);
