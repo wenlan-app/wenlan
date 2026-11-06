@@ -81,24 +81,29 @@ const HOME_NIGHT = (() => {
   night.setHours(3, 0, 0, 0);
   return Math.floor(night.getTime() / 1000);
 })();
-/** Two full rows of recently edited pages for `?mode=home`. */
-const homePage = (id: string, title: string, body: string, day: number) => ({
-  ...GRAPH_PAGES[1],
-  id,
-  title,
-  content: `# ${title}\n\n${body}`,
-  entity_id: null,
-  created_at: `2026-07-${day}T09:00:00+00:00`,
-  last_compiled: `2026-07-${day}T09:00:00+00:00`,
-  last_modified: `2026-07-${day}T09:00:00+00:00`,
-});
+/** Recently edited pages for `?mode=home`, dated from today; some yours, some the AI's. */
+const homePage = (id: string, title: string, body: string, daysAgo: number, yours = false) => {
+  const at = new Date(Date.now() - daysAgo * 86_400_000 - 3_600_000).toISOString();
+  return {
+    ...GRAPH_PAGES[1],
+    id,
+    title,
+    content: `# ${title}\n\n${body}`,
+    entity_id: null,
+    created_at: at,
+    last_compiled: at,
+    last_modified: at,
+    ...(yours ? { user_edited: true } : {}),
+  };
+};
 const HOME_PAGES = [
-  ...GRAPH_PAGES,
-  homePage("page-home-ai-memory", "AI memory systems compared: Mem0, Letta and Wenlan", "How each one stores, finds and forgets what an AI tool learned.", 20),
-  homePage("page-home-mcp", "Wenlan MCP setup", "Remote MCP needs its own settings: field defaults, the origin URL, and what happens while the daemon is off.", 19),
-  homePage("page-home-release-notes", "0.21 release notes", "Home shows only what you are working on; overnight steeping; Codex handoff.", 18),
-  homePage("page-home-design-notes", "Home design notes", "One Home button; whole cards, nothing scrolls sideways.", 17),
-  homePage("page-home-positioning", "Wenlan positioning", "Who it is for and the one sentence that says it.", 16),
+  homePage("page-home-ai-memory", "AI memory systems compared: Mem0, Letta and Wenlan", "How each one stores, finds and forgets what an AI tool learned.", 0),
+  homePage("page-home-mcp", "Wenlan MCP setup", "Remote MCP needs its own settings: field defaults, the origin URL, and what happens while the daemon is off.", 0, true),
+  homePage("page-home-release-notes", "0.21 release notes", "Home shows only what you are working on; overnight steeping; Codex handoff.", 1),
+  homePage("page-home-design-notes", "Home design notes", "One Home button; whole cards, nothing scrolls sideways.", 1, true),
+  homePage("page-home-positioning", "Wenlan positioning", "Who it is for and the one sentence that says it.", 2, true),
+  homePage("page-home-remote-office", "Remote Office Setup", "Notes on the remote-office arrangement.", 3, true),
+  homePage("page-home-overview", "Wenlan Project Overview", "Local-first personal memory layer: daemon, desktop shell, and knowledge graph.", 8),
 ];
 
 const HOME_THINGS = [

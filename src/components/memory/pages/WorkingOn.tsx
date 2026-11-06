@@ -14,7 +14,7 @@ export const THINGS_QUERY_KEY = ["things"] as const;
 const RETRY_SOON = { retry: 5, retryDelay: (attempt: number) => Math.min(2_000 * 2 ** attempt, 15_000) } as const;
 
 /** How many lines of work home shows before "See all". */
-export const WORKING_ON_LISTED = 3;
+export const WORKING_ON_LISTED = 6;
 /** Most things the "steeped overnight" line names; the rest are "and more". */
 const STEEPED_NAMED = 2;
 /** Steeping before this local hour happened overnight. */
@@ -196,15 +196,15 @@ export function WorkingOn({
         {thingItems.map((thing, index) => {
           const detail = details[index]?.data;
           const line = whereItStands(t, thing, detail);
-          // The large card says where the thing came from, when, and what is
-          // still open; the others say only the thing and where it stands.
-          const large = index === 0;
-          const openPoint = large ? openPointOf(detail) : null;
+          // The newest thing leads in large type and also says what is still
+          // open; every thing says which tool it was talked through in, and when.
+          const openPoint = index === 0 ? openPointOf(detail) : null;
           // A tool with a mark shows the mark; others keep their name.
           const slugs = [...new Set((detail?.sessions ?? []).map((session) => session.tool).filter((tool): tool is string => !!tool))];
           const marked = slugs.filter(hasToolMark);
           const named = [...new Set(slugs.filter((tool) => !hasToolMark(tool)).map((tool) => agentDisplayName(tool)).filter(Boolean))];
-          const where = [...named, ...thing.spaces].join(" · ");
+          // Home names the tool, not the Space: fewer words (UX-HOME-6).
+          const where = named.join(" · ");
           return (
             <li key={thing.id} data-thing-id={thing.id}>
               <button type="button" className="wiki-working-on-card" data-glow={glowing.includes(thing.id) ? "true" : undefined} onClick={() => onOpenThing?.(thing.id)}>
@@ -216,7 +216,7 @@ export function WorkingOn({
                     {openPoint}
                   </span>
                 ) : null}
-                {large ? <span className="wiki-working-on-foot">
+                <span className="wiki-working-on-foot">
                   <span className="wiki-working-on-meta">
                     {marked.length > 0 ? (
                       <span className="wiki-working-on-tools">
@@ -226,7 +226,7 @@ export function WorkingOn({
                     {where ? <span className="wiki-working-on-where">{where}</span> : null}
                   </span>
                   <span className="wiki-working-on-when">{addedWhen(i18n.language, thing.last_activity_at)}</span>
-                </span> : null}
+                </span>
               </button>
               <button
                 type="button"

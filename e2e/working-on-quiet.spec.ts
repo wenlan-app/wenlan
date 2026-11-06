@@ -78,7 +78,7 @@ for (const cfg of [
     await page.goto("/");
 
     const section = page.getByTestId("wiki-working-on");
-    await expect(section.locator(".wiki-working-on-card")).toHaveCount(3);
+    await expect(section.locator(".wiki-working-on-card")).toHaveCount(6);
     await expect(section).toContainText("New tagline");
     await expect(section.locator(".wiki-working-on-card").first().locator(".tool-mark")).toBeVisible();
     for (const old of ["Trip planning", "Pricing page rewrite", "Summer reading list"]) {
@@ -89,7 +89,7 @@ for (const cfg of [
     await expect(section).not.toContainText(/\d+ (more|件|個)/);
     await page.evaluate(() => document.fonts.ready);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
-    await page.screenshot({ path: info.outputPath("working-on-three.png") });
+    await page.screenshot({ path: info.outputPath("working-on-six.png") });
 
     await all.click();
     await expect(section.locator(".wiki-working-on-card")).toHaveCount(9);
@@ -100,7 +100,7 @@ for (const cfg of [
     await page.screenshot({ path: info.outputPath("working-on-all.png"), fullPage: true });
 
     await section.getByRole("button", { name: t.pages.overview.workingOnFewer, exact: true }).click();
-    await expect(section.locator(".wiki-working-on-card")).toHaveCount(3);
+    await expect(section.locator(".wiki-working-on-card")).toHaveCount(6);
 
     // "Don't show" sits on the card, opens nothing, and takes it off home.
     const first = section.locator("li").first();
@@ -111,7 +111,7 @@ for (const cfg of [
     await page.screenshot({ path: info.outputPath("working-on-hide.png") });
     await hide.click();
     await expect(section).not.toContainText("New tagline");
-    await expect(section.locator(".wiki-working-on-card")).toHaveCount(3);
+    await expect(section.locator(".wiki-working-on-card")).toHaveCount(6);
     expect(hidden).toEqual(["thg_c0"]);
     expect(errors.pageErrors).toEqual([]);
   });

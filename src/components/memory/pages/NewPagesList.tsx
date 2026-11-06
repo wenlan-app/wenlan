@@ -4,12 +4,13 @@ import { CheckCircle } from "@phosphor-icons/react";
 import type { Page } from "../../../lib/tauri";
 import { PageIcon } from "../assets/PageIcon";
 import { askablePages } from "../../onboarding/useGettingStartedState";
+import { addedWhen } from "./WorkingOn";
 
 /** How many of the newest pages the Wiki home lists. */
 export const NEW_PAGES_LISTED = 5;
 /** How many pages Home's "Recently edited" holds: two full rows of four
  *  cards; a narrower window shows fewer whole rows, never a cut card. */
-export const HOME_RECENT_LISTED = 8;
+export const HOME_RECENT_LISTED = 6;
 
 /** The newest pages worth opening: written from the user's material or by
  *  the user, newest first. Copies of brought-in files are not among them. */
@@ -47,6 +48,8 @@ export function pagePreview(page: Pick<Page, "title" | "content" | "summary">): 
 export interface RecentPage {
   readonly page: Page;
   readonly byAi: boolean;
+  /** Unix seconds: when you last edited it, or when the AI wrote it. */
+  readonly at: number;
 }
 
 /**
@@ -63,7 +66,7 @@ export function recentPages(pages: readonly Page[], limit = HOME_RECENT_LISTED):
     })
     .sort((a, b) => b.at - a.at)
     .slice(0, limit)
-    .map(({ page, byAi }) => ({ page, byAi }));
+    .map(({ page, byAi, at }) => ({ page, byAi, at: Math.floor(at / 1000) }));
 }
 
 /**
@@ -86,7 +89,7 @@ export function NewPagesList({
   /** Pages the current run wrote. */
   readonly justWritten?: ReadonlySet<string>;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const rows = recentPages(pages);
   if (rows.length === 0) return null;
   return (
@@ -100,7 +103,7 @@ export function NewPagesList({
         ) : null}
       </header>
       <ul>
-        {rows.map(({ page, byAi }) => {
+        {rows.map(({ page, byAi, at }) => {
           const fresh = justWritten?.has(page.id) === true;
           const preview = pagePreview(page);
           return (
@@ -122,7 +125,12 @@ export function NewPagesList({
                 <span className="wiki-new-pages-preview">{preview}</span>
                 {/* Home counts nothing, sources included (UX-HOME-2). */}
                 {fresh ? <span className="wiki-new-pages-meta">{t("pages.overview.justWritten")}</span>
-                  : byAi ? <span className="wiki-new-pages-by">{t("pages.overview.aiWrote")}</span> : null}
+                  : (
+                    <span className="wiki-new-pages-by">
+                      {byAi ? <>{t("pages.overview.aiWrote")}<span className="wiki-new-pages-dot" aria-hidden="true"> · </span></> : null}
+                      {at > 0 ? addedWhen(i18n.language, at) : null}
+                    </span>
+                  )}
               </button>
             </li>
           );
