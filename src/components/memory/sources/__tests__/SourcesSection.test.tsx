@@ -112,4 +112,16 @@ describe("SourcesSection", () => {
     expect(screen.queryByRole("menuitem", { name: "Reveal in Finder" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Remove source" })).toBeInTheDocument();
   });
+
+  it("offers interrupted Zotero disconnection without pretending to know file counts", async () => {
+    vi.mocked(tauri.listRegisteredSources).mockResolvedValue([{ id:"pending",source_type:"zotero",path:"zotero/private-locator",space:"Research",status:"Active",last_sync:null,file_count:0,memory_count:0,last_sync_error_detail:"zotero_disconnect_pending" }]);
+    vi.mocked(tauri.getZoteroDisconnectPreview).mockResolvedValue({identity:{registration_id:"pending",locator:"zotero/private-locator",server_id:"server",space_id:"space"},identity_digest:"digest",space_name:"Research",revision:1,canonical_item_ids:[],affected_page_ids:[],impact_scope_known:false,pending_disconnect:true,disconnected:false});
+    render(<SourcesSection />, {wrapper});
+    expect(await screen.findByText("Zotero · Research")).toBeInTheDocument();
+    expect(screen.queryByText(/0 files/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", {name:"Sync"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Finish disconnect"}));
+    expect(await screen.findByText(/previous disconnect was interrupted/)).toBeInTheDocument();
+    expect(tauri.getZoteroDisconnectPreview).toHaveBeenCalledWith("pending");
+  });
 });

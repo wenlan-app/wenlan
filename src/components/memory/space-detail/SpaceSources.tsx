@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { listAllTags, listIndexedFiles, type IndexedFileInfo } from "../../../lib/tauri";
+import { listResearchRuns, type OrganizeRun } from "../../../lib/researchApi";
 import type { AssetLens } from "../../../lib/assetLens";
 import { isLibraryDocument } from "../sources/SourceLibrary";
 import SourceDocumentPreview from "../sources/SourceDocumentPreview";
@@ -21,6 +22,7 @@ export function SpaceSources({ spaceId, spaceName, lens, onOpenSource, onRegiste
   const [selectedIds, setSelectedIds] = useState<string[]>(() => readSourceSelection(spaceId));
   const [tagFilter, setTagFilter] = useState("");
   const [action, setAction] = useState<"organize" | "tags" | null>(null);
+  const [resumeRun, setResumeRun] = useState<OrganizeRun | null>(null);
   const [addZotero, setAddZotero] = useState(false);
   const client = useQueryClient();
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -34,6 +36,8 @@ export function SpaceSources({ spaceId, spaceName, lens, onOpenSource, onRegiste
     });
   };
   const query = useQuery({ queryKey: ["space-sources", spaceId, spaceName], queryFn: () => listIndexedFiles(spaceName), retry: false });
+  const runs = useQuery({ queryKey: ["research-runs", spaceName], queryFn: () => listResearchRuns(spaceName), retry: false });
+  const recentRun = (runs.data?.runs ?? []).filter(run => ["prepared", "in_progress", "partial", "awaiting_review", "cancelled"].includes(run.state)).sort((a, b) => b.updated_at - a.updated_at)[0];
   const tagData = useQuery({ queryKey: ["tags"], queryFn: listAllTags, retry: false });
   const documents = (query.data ?? []).filter(isLibraryDocument).sort((a, b) => a.title.localeCompare(b.title));
   useEffect(() => {
@@ -48,6 +52,7 @@ export function SpaceSources({ spaceId, spaceName, lens, onOpenSource, onRegiste
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
   const toggleVisibleSelection = () => setSelectedIds((ids) => allVisibleSelected ? ids.filter((id) => !visibleIds.includes(id)) : [...new Set([...ids, ...visibleIds])].slice(0, 100));
   return <>
+    {recentRun && <div className="mb-2" role="status"><span>{recentRun.state === "awaiting_review" ? t("selectedSources.awaitingReview") : recentRun.state === "cancelled" ? t("selectedSources.runCancelled") : t("selectedSources.runProgress", { complete: recentRun.items.filter(item => item.coverage === "complete").length, failed: recentRun.items.filter(item => item.coverage === "failed" || item.coverage === "unavailable").length, pending: recentRun.items.filter(item => item.coverage === "pending" || item.coverage === "reading").length })}</span> {recentRun.state !== "awaiting_review" && <button type="button" className="page-editor-action" onClick={() => setResumeRun(recentRun)}>{t("selectedSources.resumedRun")}</button>}</div>}
     <div className="flex justify-end gap-2 mb-2"><button type="button" className="page-editor-action" onClick={() => { setSelecting((value) => !value); if (selecting) setSelectedIds([]); }}>{selecting ? t("selectedSources.cancelSelect") : t("selectedSources.select")}</button><button type="button" className="page-editor-action" onClick={() => setAddZotero(true)}>{t("zoteroSource.addToSpace")}</button></div>
     <div className="flex items-center gap-2 mb-2"><label>{t("selectedSources.filterByTag")} <select aria-label={t("selectedSources.filterByTag")} value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="">{t("selectedSources.allTags")}</option>{(tagData.data?.tags ?? []).map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>{selecting ? <button type="button" className="page-editor-action" onClick={toggleVisibleSelection}>{allVisibleSelected ? t("selectedSources.clearVisible") : t("selectedSources.selectVisible")}</button> : null}</div>
     {selecting && chosen.length ? <p role="status">{t("selectedSources.savedSelection", { count: chosen.length, visible: chosen.filter((file) => visibleIds.includes(`${file.source}::${file.source_id}`)).length })}</p> : null}
@@ -71,7 +76,8 @@ export function SpaceSources({ spaceId, spaceName, lens, onOpenSource, onRegiste
     </ul>}
     </>}
     {selected && <SourceDocumentPreview key={`${spaceId}:${spaceName}:${selected.source}:${selected.source_id}`} space={spaceName} file={selected} onClose={closePreview} onRegisterFlush={onRegisterPreviewFlush} onOpenSource={onOpenSource ? () => onOpenSource({ ...selected, space: spaceName }) : undefined} />}
-    {action && chosen.length > 0 && <SelectedSourceActions spaceId={spaceId} spaceName={spaceName} sources={chosen} mode={action} onClose={() => setAction(null)} />}
+    {action && chosen.length > 0 && <SelectedSourceActions spaceId={spaceId} spaceName={spaceName} sources={chosen} previousRuns={runs.data?.runs} mode={action} onClose={() => setAction(null)} />}
+    {resumeRun && <SelectedSourceActions spaceId={spaceId} spaceName={spaceName} sources={resumeRun.items.map(item => documents.find(file => file.source === item.source && file.source_id === item.source_id) ?? { source: item.source, source_id: item.source_id, title: item.title, chunk_count: 0, last_modified: 0 })} mode="organize" currentSelectionCount={chosen.length} resumeRun={resumeRun} onClose={() => setResumeRun(null)} />}
     {addZotero && <ZoteroSourceDialog fixedSpace={spaceName} onClose={() => { setAddZotero(false); void client.invalidateQueries({ queryKey: ["space-sources", spaceId, spaceName] }); }} />}
   </>;
 }

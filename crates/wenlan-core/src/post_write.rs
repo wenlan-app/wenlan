@@ -42,7 +42,7 @@ pub(crate) use self::page_update::PRE_WRITE_GATE;
 pub use self::page_update::{
     machine_write_requires_review, page_is_human_owned, stage_page_revision_card,
     stage_page_revision_card_proposed_by, stage_page_revision_card_with_citation_snapshot,
-    PipelineStage, Writer,
+    stage_page_revision_card_with_citations, PipelineStage, Writer,
 };
 
 /// Rename an active knowledge page using the canonical page-write boundary.

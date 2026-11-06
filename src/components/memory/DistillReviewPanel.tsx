@@ -38,6 +38,7 @@ import {
 import { isActionableReviewItem } from "./reviewDisposition";
 
 interface DistillReviewPanelProps {
+  currentSpace?: string;
   initialReviewItemId?: string;
   onBack: () => void;
   onPageClick: (pageId: string) => void;
@@ -473,6 +474,7 @@ function FilterChipRow({
 }
 
 export default function DistillReviewPanel({
+  currentSpace,
   initialReviewItemId,
   onBack,
   onPageClick,
@@ -494,7 +496,7 @@ export default function DistillReviewPanel({
   // "basis-updates" points at a group, not at one queue item.
   const focusBasisUpdates = initialReviewItemId === BASIS_UPDATES_REVIEW_ID;
   const focusedQueueItemId = focusBasisUpdates ? undefined : initialReviewItemId;
-  const queue = useReviewQueue(true, focusedQueueItemId ? "note-context" : "default");
+  const queue = useReviewQueue(true, focusedQueueItemId ? "note-context" : "default", currentSpace);
   const basisPending = useBasisPending();
   const codeBasisPending = useCodeBasisPending();
   const focusedRequestRef = useRef<string | null>(null);

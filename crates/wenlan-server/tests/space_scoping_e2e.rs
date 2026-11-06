@@ -9,6 +9,11 @@ async fn global_routes_enforce_scope_contracts() {
 }
 
 #[tokio::test]
+async fn refinery_queue_filters_research_payloads_and_preserves_legacy_generic_scope() {
+    space_scoping::record_cases::refinery_queue_research_payloads_are_scoped().await;
+}
+
+#[tokio::test]
 async fn document_tag_patch_enforces_scope_contract() {
     space_scoping::record_cases::document_tag_patch_is_scoped().await;
 }

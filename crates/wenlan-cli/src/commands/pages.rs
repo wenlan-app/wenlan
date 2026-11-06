@@ -694,6 +694,8 @@ mod tests {
                 cited_version: None,
                 cited_digest: None,
                 disproven: false,
+                historical: false,
+                pdf_target: None,
             },
             PageCitation {
                 occurrence: 2,
@@ -706,6 +708,8 @@ mod tests {
                 cited_version: None,
                 cited_digest: None,
                 disproven: false,
+                historical: false,
+                pdf_target: None,
             },
         ];
         let out = render_citations(&cites);

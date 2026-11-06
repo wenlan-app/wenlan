@@ -156,7 +156,7 @@ pub(super) async fn read_on(
             .take(800)
             .collect()
     };
-    let snapshot = CitationSourceSnapshot {
+    let mut snapshot = CitationSourceSnapshot {
         locator: locator.into(),
         source: first.source.clone(),
         source_id: first.source_id.clone(),
@@ -166,6 +166,7 @@ pub(super) async fn read_on(
         fingerprint: format!("{:x}", Sha256::digest(serde_json::to_vec(&chunks)?)),
         text_digest: super::sentence_history::cited_text_digest(&full_text),
     };
+    super::citation_provenance::stamp_snapshot_on(conn, &mut snapshot).await?;
     Ok(Some(CitationSource {
         source_kind: crate::citations::resolve_page_evidence_source_kind(
             &first.source,

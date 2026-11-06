@@ -211,14 +211,14 @@ describe("CitationChip", () => {
       within(popover).getByText(/We decided to keep the daemon/),
     ).toBeInTheDocument();
     await user.click(within(popover).getByRole("button", { name: /^Open →$/ }));
-    expect(onOpenMemory).toHaveBeenCalledWith("mem-1");
+    expect(onOpenMemory).toHaveBeenCalledWith("mem-1", expect.objectContaining({ locator: "mem-1" }));
   });
 
   it("clicking a memory chip opens the memory directly", async () => {
     const user = userEvent.setup();
     const { onOpenMemory } = renderChip();
     await user.click(screen.getByRole("button", { name: /Memory/ }));
-    expect(onOpenMemory).toHaveBeenCalledWith("mem-1");
+    expect(onOpenMemory).toHaveBeenCalledWith("mem-1", expect.objectContaining({ locator: "mem-1" }));
   });
 
   it("labels an indexed Zotero source without changing its stored-source navigation", async () => {
@@ -231,8 +231,29 @@ describe("CitationChip", () => {
     const chip = screen.getByRole("button", { name: /Zotero/ });
     expect(chip).toHaveAttribute("data-reference-kind", "file");
     await user.click(chip);
-    expect(onOpenMemory).toHaveBeenCalledWith(sourceId);
+    expect(onOpenMemory).toHaveBeenCalledWith(sourceId, expect.objectContaining({ locator: sourceId }));
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("open_file", expect.anything());
+  });
+
+  it("passes the full PDF citation through source navigation", async () => {
+    const user = userEvent.setup();
+    const sourceId = "zotero::server::item::space";
+    const citation = cite({ locator: sourceId, pdf_target: { attachment_key: "PDF00001", pdf_digest: "a".repeat(64), page: 4, quote: "actual quote" } });
+    const { onOpenMemory } = renderChip({ citation, sourceMemory: memory({ source_id: sourceId, source_agent: "zotero" }) });
+    await user.click(screen.getByRole("button", { name: /Zotero/ }));
+    expect(onOpenMemory).toHaveBeenCalledWith(sourceId, citation);
+  });
+
+  it("keeps detached historical citations openable while marking them for review", async () => {
+    const user = userEvent.setup();
+    const citation = cite({ locator: "historical-chunk", historical: true, status: "verified" });
+    const { onOpenMemory } = renderChip({ citation, sourceMemory: null, sourcesLoading: false });
+    const chip = screen.getByRole("button", { name: /Memory/ });
+    expect(chip).toHaveAttribute("data-status", "unevaluated");
+    fireEvent.focus(chip);
+    expect(screen.getByText("Historical source; needs review")).toBeInTheDocument();
+    await user.click(chip);
+    expect(onOpenMemory).toHaveBeenCalledWith("historical-chunk", citation);
   });
 
   it("explains a missing source and does not navigate on click", async () => {

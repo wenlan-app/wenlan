@@ -1,0 +1,10 @@
+.research-dispute-review { display: grid; gap: 10px; color: var(--mem-text); font: var(--mem-text-control)/1.5 var(--mem-font-body); }
+.research-dispute-review p { margin: 0; }
+.research-dispute-review ol { margin: 0; padding-inline-start: 24px; }
+.research-dispute-review li { overflow-wrap: anywhere; margin-block: 8px; }
+.research-dispute-review blockquote { margin: 6px 0; padding-inline-start: 10px; border-inline-start: 2px solid var(--mem-border); }
+.research-dispute-review label { display: grid; gap: 5px; }
+.research-dispute-review textarea { min-height: 60px; resize: vertical; }
+.research-dispute-review button { justify-self: start; }
+
+.research-dispute-review select, .research-dispute-review textarea { box-sizing: border-box; width: 100%; padding: 8px; color: var(--mem-text); background: var(--mem-bg); border: 1px solid var(--mem-border); border-radius: var(--mem-radius-md); font: inherit; }

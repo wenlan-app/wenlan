@@ -272,7 +272,8 @@ impl MemoryDB {
             if !current {
                 return Ok::<bool, libsql::Error>(false);
             }
-            let stamped = stamp_cited_versions(&conn, Some(citations_json)).await?;
+            let stamped =
+                stamp_page_citations(&conn, page_id, Some(citations_json), None, None).await?;
             Self::dual_write_page_citations(&conn, page_id, stamped.as_deref()).await?;
             conn.execute(
                 "UPDATE pages SET citations = ?1 WHERE id = ?2 AND version = ?3",
@@ -392,8 +393,20 @@ pub fn cited_text_digest(text: &str) -> String {
 pub(super) async fn stamp_cited_versions(
     conn: &libsql::Connection,
     citations_json: Option<&str>,
+    body: &str,
+    space: Option<&str>,
+    expected_indexed: &[String],
 ) -> Result<Option<String>, libsql::Error> {
-    let Some(json) = citations_json else {
+    let normalized = super::citation_provenance::normalize_on(
+        conn,
+        body,
+        space,
+        citations_json,
+        expected_indexed,
+    )
+    .await
+    .map_err(|e| libsql::Error::Misuse(e.to_string()))?;
+    let Some(json) = normalized.as_deref() else {
         return Ok(None);
     };
     let Ok(mut citations) = serde_json::from_str::<Vec<wenlan_types::pages::PageCitation>>(json)
@@ -406,7 +419,7 @@ pub(super) async fn stamp_cited_versions(
     let mut states: std::collections::HashMap<String, Option<(i64, String)>> =
         std::collections::HashMap::new();
     for citation in &mut citations {
-        if citation.cited_version.is_some() {
+        if citation.cited_version.is_some() || citation.historical {
             continue;
         }
         if !states.contains_key(&citation.locator) {
@@ -423,4 +436,50 @@ pub(super) async fn stamp_cited_versions(
     Ok(Some(
         serde_json::to_string(&citations).unwrap_or_else(|_| json.to_string()),
     ))
+}
+
+/// Existing-page writers share the exact authorized page scope. Content
+/// updates supply their incoming body; map-only setters use the stored body.
+pub(super) async fn stamp_page_citations(
+    conn: &libsql::Connection,
+    page_id: &str,
+    json: Option<&str>,
+    incoming_body: Option<&str>,
+    incoming_indexed: Option<&[&str]>,
+) -> Result<Option<String>, libsql::Error> {
+    if json.is_none() {
+        return Ok(None);
+    }
+    let mut rows=conn.query("SELECT content,NULLIF(space,?2),source_memory_ids,incarnation,(SELECT id FROM spaces WHERE name=NULLIF(p.space,?2)) FROM pages p WHERE id=?1",libsql::params![page_id,super::UNFILED_SPACE_ID]).await?;
+    let Some(row) = rows.next().await? else {
+        return Ok(json.map(str::to_string));
+    };
+    let stored: String = row.get(0)?;
+    let space: Option<String> = row.get(1)?;
+    let selected: String = row.get(2)?;
+    let incarnation: String = row.get(3)?;
+    let space_id: Option<String> = row.get(4)?;
+    drop(rows);
+    let mut expected: Vec<String> = incoming_indexed
+        .map(|ids| ids.iter().map(|id| id.to_string()).collect())
+        .unwrap_or_else(|| serde_json::from_str(&selected).unwrap_or_default());
+    expected.extend(
+        super::citation_provenance::historical_aliases_on(
+            conn,
+            page_id,
+            &incarnation,
+            space_id.as_deref(),
+            space.as_deref(),
+        )
+        .await
+        .map_err(|e| libsql::Error::Misuse(e.to_string()))?,
+    );
+    stamp_cited_versions(
+        conn,
+        json,
+        incoming_body.unwrap_or(&stored),
+        space.as_deref(),
+        &expected,
+    )
+    .await
 }

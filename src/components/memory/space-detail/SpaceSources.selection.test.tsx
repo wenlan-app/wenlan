@@ -4,19 +4,30 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { listAllTags, listIndexedFiles } from "../../../lib/tauri";
+import { listResearchRuns } from "../../../lib/researchApi";
 import { SpaceSources } from "./SpaceSources";
 
+vi.mock("../../../lib/researchApi", () => ({ listResearchRuns: vi.fn().mockResolvedValue({ runs: [] }) }));
 vi.mock("../../../lib/tauri", () => ({ listIndexedFiles: vi.fn(), listAllTags: vi.fn() }));
 vi.mock("../sources/SourceDocumentPreview", () => ({ default: () => null }));
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(listResearchRuns).mockResolvedValue({ runs: [] });
   vi.mocked(listIndexedFiles).mockResolvedValue([{ source: "webpage", source_id: "webpage::one", title: "One article", chunk_count: 1, last_modified: 0 }]);
   vi.mocked(listAllTags).mockResolvedValue({ tags: ["research", "archived"], categories: [], document_categories: {}, document_tags: { "webpage::webpage::one": ["research"] } });
   sessionStorage.clear();
 });
 
 describe("SpaceSources selection", () => {
+  it("shows awaiting review as pending review, not a completed or resumable run", async () => {
+    vi.mocked(listResearchRuns).mockResolvedValue({ runs: [{ id: "run", space_id: "s", revision: 1, rules: { space_id: "s", revision: 0, name: "", instructions: "", content_digest: "digest" }, items: [], target_page_id: "p", target_page_version: 1, result_page_version: null, pending_revision_id: "r", state: "awaiting_review", created_at: 1, updated_at: 1 }] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><SpaceSources spaceId="s" spaceName="Research" lens="rows" /></QueryClientProvider>);
+    expect(await screen.findByText("Organizing results are awaiting review.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continue previous run" })).not.toBeInTheDocument();
+  });
+
   it("starts with no source selected and shows batch actions only after selection", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><SpaceSources spaceId="s" spaceName="Research" lens="rows" /></QueryClientProvider>);

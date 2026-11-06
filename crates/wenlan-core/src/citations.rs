@@ -131,6 +131,51 @@ pub(crate) fn marker_spans(body: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// Exact occurrence groups used by process_citation_output's union check.
+/// An incomplete or mismatched map cannot prove any independent claim safe.
+pub(crate) fn citation_claim_groups(
+    body: &str,
+    citations: &[PageCitation],
+) -> Option<Vec<Vec<u32>>> {
+    let mut bare = String::new();
+    let mut markers = Vec::new();
+    let mut end = 0;
+    for marker in RE_MARKER.captures_iter(body) {
+        let matched = marker.get(0)?;
+        bare.push_str(&body[end..matched.start()]);
+        markers.push((marker[1].parse::<u32>().ok()?, bare.len()));
+        end = matched.end();
+    }
+    bare.push_str(&body[end..]);
+    if markers.len() != citations.len() {
+        return None;
+    }
+    let spans = crate::faithfulness::sentence_spans(&bare);
+    if spans.is_empty() {
+        return None;
+    }
+    let mut groups: Vec<Vec<u32>> = Vec::new();
+    let mut previous = None;
+    for (index, (marker, at)) in markers.into_iter().enumerate() {
+        let occurrence = u32::try_from(index + 1).ok()?;
+        if citations
+            .iter()
+            .filter(|c| c.occurrence == occurrence && c.marker == marker)
+            .count()
+            != 1
+        {
+            return None;
+        }
+        let span = spans.iter().rposition(|s| s.0 <= at).unwrap_or(0);
+        if previous != Some(span) {
+            groups.push(Vec::new());
+            previous = Some(span);
+        }
+        groups.last_mut()?.push(occurrence);
+    }
+    Some(groups)
+}
+
 /// Preserve navigable reference targets after a human edit with the same marker sequence.
 /// This is deliberately not verification: every retained record becomes unevaluated.
 /// Legacy unstamped or incomplete maps fall back to clearing the citation map.
@@ -188,6 +233,9 @@ pub(crate) fn retain_unchanged_manual_references(
         citation.status = "unevaluated".into();
         citation.score = 0.0;
         citation.disproven = false;
+        if old_body != new_body {
+            citation.pdf_target = None;
+        }
     }
     Some(retained)
 }
@@ -493,6 +541,8 @@ pub fn process_citation_output(
                     cited_version: None,
                     cited_digest: None,
                     disproven: false,
+                    historical: false,
+                    pdf_target: None,
                 });
             }
         }
@@ -875,6 +925,16 @@ async fn run_citation_backfill_with_page_limit(
         let Some(page) = db.get_page(&page_id).await? else {
             continue;
         };
+
+        // Source-only invalidation retains the old occurrence map. The queue
+        // restores references without renumbering them against today's sources.
+        if db
+            .restore_citation_provenance(&page_id, page.version, &fence)
+            .await?
+            .is_some()
+        {
+            continue;
+        }
 
         let evidence = db.get_page_evidence(&page_id).await.unwrap_or_default();
         let evidence_sources: Vec<(String, String)> = evidence
@@ -1264,7 +1324,8 @@ pub async fn check_write_citations(
     if let Ok(WriteCitations::Checked {
         citations_json,
         snapshots,
-        ..
+        summary,
+        body,
     }) = &mut checked
     {
         let mut citations: Vec<PageCitation> = serde_json::from_str(citations_json)?;
@@ -1284,6 +1345,19 @@ pub async fn check_write_citations(
             .flatten()
             .map(|source| source.snapshot)
             .collect();
+        let original = citations_json.clone();
+        *citations_json = db
+            .downgrade_inactive_citations(body, citations_json, snapshots)
+            .await?;
+        if *citations_json != original {
+            let current: Vec<PageCitation> = serde_json::from_str(citations_json)?;
+            *summary = format!(
+                "{} verified, {} unverified, {} unevaluated; source lifecycle requires review",
+                current.iter().filter(|c| c.status == "verified").count(),
+                current.iter().filter(|c| c.status == "unverified").count(),
+                current.iter().filter(|c| c.status == "unevaluated").count()
+            );
+        }
     }
     Ok(checked)
 }
@@ -1324,6 +1398,8 @@ mod tests {
                 cited_version: Some(7),
                 cited_digest: Some(format!("historical-digest-{marker}")),
                 disproven: false,
+                historical: false,
+                pdf_target: None,
             })
             .collect();
         (body, citations)
@@ -1333,6 +1409,12 @@ mod tests {
     fn manual_reference_retention_keeps_complete_targets_but_never_verification() {
         let (body, mut citations) = manual_reference_fixture();
         citations[0].disproven = true;
+        citations[0].pdf_target = Some(wenlan_types::pages::PdfCitationTarget {
+            attachment_key: "ATTACH01".into(),
+            pdf_digest: "a".repeat(64),
+            page: 1,
+            quote: "Original evidence".into(),
+        });
         for edited in [
             format!("{body}\n\nA new interview question."),
             body.replace("My interview plan.", "My revised interview plan."),
@@ -1349,6 +1431,10 @@ mod tests {
                 assert_eq!(new.status, "unevaluated");
                 assert_eq!(new.score, 0.0);
                 assert!(!new.disproven);
+                assert!(
+                    new.pdf_target.is_none(),
+                    "edited prose must not inherit a marker-only PDF region"
+                );
             }
         }
     }

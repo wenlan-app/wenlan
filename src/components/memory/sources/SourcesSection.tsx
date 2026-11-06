@@ -11,6 +11,7 @@ import {
 import { folderName } from "../../../lib/dateFormat";
 import AddSourceDialog from "./AddSourceDialog";
 import ZoteroSourceDialog from "./ZoteroSourceDialog";
+import ZoteroDisconnectDialog from "./ZoteroDisconnectDialog";
 import { FolderImportOrganize } from "./FolderImportOrganize";
 import { Button } from "../settings/primitives";
 
@@ -91,7 +92,7 @@ export default function SourcesSection() {
   // own Cancel button, but keyboard dismiss is the expected pattern for
   // modal dialogs across the app.
   useEffect(() => {
-    if (!confirmRemove) return;
+    if (!confirmRemove || confirmRemove.source_type === "zotero") return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setConfirmRemove(null);
     };
@@ -117,8 +118,9 @@ export default function SourcesSection() {
           {sources.map((source) => {
             const isSyncing = syncingId === source.id;
             const justSynced = justSyncedId === source.id;
+            const disconnectPending = source.source_type === "zotero" && source.last_sync_error_detail === "zotero_disconnect_pending";
             const errorCount = source.last_sync_errors ?? 0;
-            const hasErrors = errorCount > 0 && !isSyncing;
+            const hasErrors = errorCount > 0 && !isSyncing && !disconnectPending;
             return (
               <div
                 key={source.id}
@@ -128,7 +130,7 @@ export default function SourcesSection() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-[var(--mem-text)] truncate">
-                        {folderName(source.path)}
+                        {disconnectPending ? t("zoteroDisconnect.pendingRowTitle", {space: source.space || t("zoteroDisconnect.pendingSpace")}) : folderName(source.path)}
                       </span>
                     </div>
                     <p
@@ -139,14 +141,14 @@ export default function SourcesSection() {
                         color: "var(--mem-text-tertiary)",
                       }}
                     >
-                      {isSyncing
+                      {disconnectPending ? t("zoteroDisconnect.pendingRow") : isSyncing
                         ? "Syncing…"
                         : `${source.source_type === "obsidian" ? "Obsidian vault" : source.source_type === "logseq" ? "Logseq graph" : source.source_type === "zotero" ? "Zotero collection" : "Folder"} · ${source.file_count.toLocaleString()} files · ${source.memory_count.toLocaleString()} memories · ${relativeTime(source.last_sync)}`}
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2 ml-3">
-                    <button
+                    {disconnectPending ? <button type="button" className="page-editor-action" onClick={() => setConfirmRemove(source)}>{t("zoteroDisconnect.finish")}</button> : <button
                       onClick={() => syncMutation.mutate(source.id)}
                       disabled={isSyncing}
                       className={`inline-flex items-center gap-1.5 rounded-[var(--mem-radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors ${
@@ -193,7 +195,7 @@ export default function SourcesSection() {
                         : isSyncing
                           ? t("settings.sources.syncing")
                           : t("settings.sources.sync")}
-                    </button>
+                    </button>}
 
                     <div className="relative" data-menu-id={source.id}>
                       <button
@@ -298,7 +300,8 @@ export default function SourcesSection() {
       {zoteroDialogOpen && <ZoteroSourceDialog onClose={() => setZoteroDialogOpen(false)} />}
 
       {/* Remove Confirmation Dialog */}
-      {confirmRemove && (
+      {confirmRemove?.source_type === "zotero" && <ZoteroDisconnectDialog id={confirmRemove.id} onClose={() => setConfirmRemove(null)} />}
+      {confirmRemove && confirmRemove.source_type !== "zotero" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-96 rounded-[var(--mem-radius-lg)] border border-[var(--mem-border)] bg-[var(--mem-surface)] p-6 shadow-[var(--mem-shadow-overlay)]">
             <h3 className="text-sm font-medium text-[var(--mem-text)] mb-2">

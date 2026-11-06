@@ -1,0 +1,3 @@
+.source-lifecycle-control { position: relative; }
+.source-lifecycle-menu { position: absolute; z-index: 10; inset-block-start: 100%; inset-inline-end: 0; padding: 4px; white-space: nowrap; background: var(--mem-surface); border: 1px solid var(--mem-border); border-radius: var(--mem-radius-md); box-shadow: var(--mem-shadow-overlay); }
+.source-lifecycle-notice { padding: 8px 10px; border-inline-start: 3px solid var(--mem-accent-amber); color: var(--mem-text-secondary); background: var(--mem-bg-secondary); }

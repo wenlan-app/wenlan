@@ -35,6 +35,7 @@ vi.mock("pdfjs-dist/legacy/web/pdf_viewer.mjs", () => {
       this.pagesCount = 8;
       this.eventBus.dispatch("pagesinit", {});
     }
+    getPageView() { return undefined; }
     update() { this.updateCount++; }
   }
   return {
@@ -159,6 +160,15 @@ describe("PDF reading session restoration", () => {
     Object.defineProperty(scroll, "clientWidth", { configurable: true, value: 560 });
     harness.resizeCallbacks[0]();
     expect(viewer.currentPageNumber).toBe(4);
+  });
+
+  it("does not clamp an out-of-range citation to a different page", async () => {
+    harness.pending = false;
+    savePdfReadingState("invalid-citation", "invalid-citation-paper", { page: 3, scale: "1", query: "" });
+    render(<PdfReader data={new Uint8Array([1])} documentId="invalid-citation-paper" readingSessionKey="invalid-citation" page={99} />);
+    await waitFor(() => expect(harness.viewers[0].pagesCount).toBe(8));
+    expect(harness.viewers[0].currentPageNumber).toBe(3);
+    expect(screen.getByText("The cited PDF location is unavailable or has changed.")).toBeInTheDocument();
   });
 
   it("uses cached page when there is no explicit citation target", async () => {

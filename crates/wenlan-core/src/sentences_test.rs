@@ -799,6 +799,7 @@ async fn authored_page(db: &MemoryDB, id: &str, actor: &str) -> Page {
         actor,
         None,
         &[],
+        None,
     )
     .await
     .unwrap();

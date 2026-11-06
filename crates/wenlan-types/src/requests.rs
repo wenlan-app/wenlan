@@ -963,6 +963,12 @@ pub struct UpdatePageRequest {
 /// has its own concurrent-read failure mode and lands as a separate route.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RefreshPageRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organize_space: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organize_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub citation_targets: Vec<crate::pages::PdfCitationInput>,
     pub content: String,
     /// May be empty only when the existing page has no sources (an authored
     /// page written from a conversation); a sourced page refuses an empty set.
@@ -1011,6 +1017,10 @@ pub struct ManualPageEditRequest {
 /// Body for `POST /api/pages`: the page itself plus the notes it relies on.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreatePageWithBasisRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organize_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub citation_targets: Vec<crate::pages::PdfCitationInput>,
     #[serde(flatten)]
     pub create: CreateConceptRequest,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -8,6 +8,8 @@ import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./PdfReader.css";
 import { readPdfReadingState, savePdfReadingState } from "./pdfReadingState";
+import type { ZoteroPdfAnnotation } from "../../../lib/tauri";
+import { drawPdfOverlays } from "./pdfOverlays";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const positions = new Map<string, { page: number; scale: string }>();
@@ -33,8 +35,9 @@ function savePosition(documentId: string, viewer: PDFViewer) {
 }
 
 /** Viewing only: no PDF scripts, forms, editing, or automatic external links. */
-export default function PdfReader({ data, documentId, page, readingSessionKey }: {
+export default function PdfReader({ data, documentId, page, readingSessionKey, annotations = [], quote }: {
   data: Uint8Array; documentId: string; page?: number; readingSessionKey?: string;
+  annotations?: ZoteroPdfAnnotation[]; quote?: string;
 }) {
   const { t } = useTranslation();
   const container = useRef<HTMLDivElement>(null);
@@ -52,6 +55,8 @@ export default function PdfReader({ data, documentId, page, readingSessionKey }:
     requestedPage.current = page;
     pendingExplicitPage.current = page;
   }
+  const overlayRef = useRef({ annotations, quote, page });
+  overlayRef.current = { annotations, quote, page };
   const queryRef = useRef(query);
   queryRef.current = query;
   const readingIdentity = JSON.stringify([readingSessionKey ?? null, documentId]);
@@ -96,6 +101,14 @@ export default function PdfReader({ data, documentId, page, readingSessionKey }:
       if (!readingSessionKey) savePosition(documentId, viewer);
       saveSession();
     };
+    const redraw = (pageNumber: number) => {
+      const view = viewer.getPageView(pageNumber - 1);
+      if (!disposed && view?.viewport && view.div) drawPdfOverlays(view, pageNumber - 1, overlayRef.current.annotations, overlayRef.current.page === pageNumber ? overlayRef.current.quote : undefined);
+    };
+    const redrawAll = () => { for (let i = 1; i <= viewer.pagesCount; i++) redraw(i); };
+    events.on("pagerendered", ({ pageNumber }: { pageNumber: number }) => redraw(pageNumber));
+    events.on("textlayerrendered", ({ pageNumber }: { pageNumber: number }) => redraw(pageNumber));
+    events.on("rotationchanging", redrawAll);
     events.on("pagesinit", () => {
       if (disposed) return;
       const sessionState = readPdfReadingState(readingSessionKey, documentId);
@@ -103,7 +116,9 @@ export default function PdfReader({ data, documentId, page, readingSessionKey }:
       // position: the same PDF can be open in multiple Wiki page sessions.
       const saved = readingSessionKey ? undefined : savedPosition(documentId);
       viewer.currentScaleValue = sessionState?.scale || saved?.scale || "page-width";
-      viewer.currentPageNumber = Math.max(1, Math.min(requestedPage.current ?? sessionState?.page ?? saved?.page ?? 1, viewer.pagesCount));
+      const requested = requestedPage.current;
+      const initialPage = requested && requested <= viewer.pagesCount && requested >= 1 ? requested : sessionState?.page ?? saved?.page ?? 1;
+      viewer.currentPageNumber = Math.max(1, Math.min(initialPage, viewer.pagesCount));
       setCurrent(viewer.currentPageNumber); setTotal(viewer.pagesCount);
       // Restore the query in the input only. Replaying `find` here can move
       // PDF.js to a match and override the page the reader just restored.
@@ -115,7 +130,7 @@ export default function PdfReader({ data, documentId, page, readingSessionKey }:
         saveVisiblePosition();
       }
     });
-    events.on("scalechanging", () => { if (!disposed) saveVisiblePosition(); });
+    events.on("scalechanging", () => { if (!disposed) { saveVisiblePosition(); redrawAll(); } });
     events.on("updatefindmatchescount", ({ matchesCount }: { matchesCount: {current: number; total: number} }) => {
       if (!disposed) setMatches(matchesCount);
     });
@@ -135,7 +150,8 @@ export default function PdfReader({ data, documentId, page, readingSessionKey }:
       if (!scrollContainer.isConnected || !scrollContainer.clientWidth || !scrollContainer.clientHeight) return;
       const sessionState = readPdfReadingState(readingSessionKey, documentId);
       const saved = readingSessionKey ? undefined : savedPosition(documentId);
-      const pageToRestore = pendingExplicitPage.current ?? sessionState?.page ?? saved?.page ?? viewer.currentPageNumber;
+      const pending = pendingExplicitPage.current;
+      const pageToRestore = pending && pending >= 1 && pending <= viewer.pagesCount ? pending : sessionState?.page ?? saved?.page ?? viewer.currentPageNumber;
       if (viewer.currentScaleValue === "page-width") viewer.currentScaleValue = "page-width";
       viewer.currentPageNumber = Math.max(1, Math.min(pageToRestore, viewer.pagesCount));
       // A portal can detach and reattach the reader without reloading its PDF.
@@ -154,8 +170,16 @@ export default function PdfReader({ data, documentId, page, readingSessionKey }:
   }, [data, documentId, readingSessionKey, attempt]);
 
   useEffect(() => {
-    if (page && total && engine.current) engine.current.viewer.currentPageNumber = Math.max(1, Math.min(page, total));
+    if (page && page >= 1 && page <= total && engine.current) engine.current.viewer.currentPageNumber = page;
   }, [page, total]);
+  useEffect(() => {
+    const viewer = engine.current?.viewer;
+    if (!viewer) return;
+    for (let i = 0; i < viewer.pagesCount; i++) {
+      const view = viewer.getPageView(i);
+      if (view?.viewport && view.div) drawPdfOverlays(view, i, annotations, page === i + 1 ? quote : undefined);
+    }
+  }, [annotations, page, quote, total]);
   const go = (n: number) => {
     if (Number.isFinite(n) && engine.current && total) engine.current.viewer.currentPageNumber = Math.max(1, Math.min(n, total));
   };
@@ -187,6 +211,7 @@ export default function PdfReader({ data, documentId, page, readingSessionKey }:
       <button type="submit" className="pdf-reader-control" aria-label={t("pdfReader.search")} title={t("pdfReader.search")} disabled={!total || !query.trim()}><MagnifyingGlass size={16} weight="regular" aria-hidden="true" /></button>
       <button type="button" className="pdf-reader-control" aria-label={t("pdfReader.nextMatch")} title={t("pdfReader.nextMatch")} disabled={!total || !query.trim()} onClick={() => search(true)}><ArrowRight size={16} weight="regular" aria-hidden="true" /></button>
     </form>
+    {page && total > 0 && page > total && <p role="status">{t("pdfReader.locationUnavailable")}</p>}
     {failed ? <div role="alert"><p>{t("pdfReader.failed")}</p><button type="button" className="page-editor-action" onClick={() => setAttempt(n => n + 1)}>{t("sourceAccess.retry")}</button></div>
       : !total ? <p role="status">{t("pdfReader.loading")}</p>
       : matches && <p role="status">{t("pdfReader.matches", matches)}</p>}

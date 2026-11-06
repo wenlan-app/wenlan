@@ -819,7 +819,11 @@ impl MemoryDB {
             .await
             .map_err(|error| WenlanError::VectorDb(error.to_string()))?
         {
-            Some(row) => Ok(Some(Self::row_to_page(&row)?)),
+            Some(row) => {
+                let mut page = Self::row_to_page(&row)?;
+                super::citation_provenance::apply_on(&conn, &mut page).await?;
+                Ok(Some(page))
+            }
             None => Ok(None),
         }
     }

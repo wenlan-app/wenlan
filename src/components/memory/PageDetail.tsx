@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
 import { SourceDocumentReader } from "./sources/SourceDocumentReader";
+import { SourceLifecycleControl } from "./sources/SourceLifecycleControl";
+import { resolveSourceReference } from "../../lib/sourceLifecycleApi";
 import { RestorePageDialog } from "./pages/RestorePageDialog";
 import { archiveWikiPage, canArchivePage } from "./pages/archiveWikiPage";
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
@@ -9,6 +11,7 @@ import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/rea
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { createPortal } from "react-dom";
+import { toast } from "sonner";
 import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "./navigation/WorkspacePaneHost";
 import type { NoteInspectorTab } from "./page/NoteInspectorTabs";
 import { usePageInspectorSession } from "./page/usePageInspectorSession";
@@ -46,6 +49,7 @@ import {
   type BasisRef,
   type CodeBasisRef,
   type Page,
+  type PageCitation,
   type PageReviewOutcome,
   type IndexedFileInfo,
   type UpdatePageFailureKind,
@@ -635,8 +639,29 @@ export default function PageDetail({
 
   // Imported source memories can be read alongside this note. Ordinary
   // memories retain their existing detail navigation and editing behavior.
-  const openSourceMemory = (sourceId: string) => {
+  const [pdfCitation, setPdfCitation] = useState<{ pageId: string; sourceId: string; citation: PageCitation } | null>(null);
+  const historicalSourceRequest = useRef(0);
+  useEffect(() => {
+    historicalSourceRequest.current++;
+    return () => { historicalSourceRequest.current++; };
+  }, [pageId]);
+  const openSourceMemory = (sourceId: string, citation?: PageCitation) => {
     if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
+    const requestId = ++historicalSourceRequest.current;
+    if (citation?.historical) {
+      if (!page?.space) { toast.error(t("sourceLifecycle.referenceUnavailable")); return; }
+      void resolveSourceReference(page.space, citation.locator).then(reference => {
+        if (requestId !== historicalSourceRequest.current) return;
+        const file: IndexedFileInfo = { source: reference.source, source_id: reference.source_id, source_agent: reference.source_agent, title: reference.title, chunk_count: 0, last_modified: 0 };
+        if (showCanvas) void requestToggleCanvas();
+        changeCanvasWorkspaceExpanded(false);
+        if (reference.source_agent === "zotero") {
+          setPdfCitation({ pageId, sourceId: file.source_id, citation: { ...citation } });
+          setSourcePreview(null); setInfoOpen(false); setPdfPreview(file); setPdfPreviewOpen(true);
+        } else { setPdfPreviewOpen(false); setSourcePreview(file); }
+      }).catch(() => { if (requestId === historicalSourceRequest.current) toast.error(t("sourceLifecycle.referenceUnavailable")); });
+      return;
+    }
     const memory = pageSources?.find((row) => row.source.memory_source_id === sourceId)?.memory;
     if (memory && ["folder", "obsidian", "logseq", "zotero"].includes(memory.source_agent ?? "")) {
       if (showCanvas) void requestToggleCanvas();
@@ -650,6 +675,7 @@ export default function PageDetail({
         last_modified: memory.last_modified,
       };
       if (memory.source_agent === "zotero") {
+        setPdfCitation(citation ? { pageId, sourceId, citation: { ...citation } } : null);
         setSourcePreview(null);
         setInfoOpen(false);
         setPdfPreview(file);
@@ -3122,8 +3148,8 @@ export default function PageDetail({
                   onReferenceActivate={(target, anchor) => {
                     if (target.kind === "page") { dismissWikiLinkPreview(); onPageClick?.(target.id); }
                     else if (target.kind === "memory") { dismissWikiLinkPreview(); openSourceMemory(target.id); }
-                    else if (target.citation.source_kind === "memory" && target.sourceMemory) {
-                      dismissWikiLinkPreview(); openSourceMemory(target.citation.locator);
+                    else if (target.citation.source_kind === "memory" && (target.sourceMemory || target.citation.historical)) {
+                      dismissWikiLinkPreview(); openSourceMemory(target.citation.locator, target.citation);
                     } else showReferencePreview(target, anchor, false);
                   }}
                   onReferencePreview={showReferencePreview}
@@ -3233,8 +3259,8 @@ export default function PageDetail({
         <div id={`${inspectorId}-panel`} role="region" aria-labelledby={`${inspectorId}-${inspectorTab}`}
           className={`note-inspector-panel${showCanvas ? " note-inspector-panel--canvas" : ""}`}>
           {pdfPreview && <div className="source-document-preview note-inspector-pdf" hidden={!pdfPreviewOpen}>
-            <h3 className="note-info-section-heading" title={pdfPreview.title}>{pdfPreview.title}</h3>
-            <SourceDocumentReader readingSessionKey={readingSessionKey} key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} />
+            <div className="note-inspector-pdf-header"><h3 className="note-info-section-heading" title={pdfPreview.title}>{pdfPreview.title}</h3><SourceLifecycleControl source="file" sourceId={pdfPreview.source_id} space={page.space ?? undefined} /></div>
+            <SourceDocumentReader readingSessionKey={readingSessionKey} key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} citation={pdfCitation?.pageId === pageId && pdfCitation.sourceId === pdfPreview.source_id ? pdfCitation.citation : undefined} />
           </div>}
           {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
             onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} />

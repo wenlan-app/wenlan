@@ -11,10 +11,7 @@ const snapshot: PageExportSnapshot = {
       { occurrence: 3, marker: 3, source_kind: "external_url", locator: "https://example.org/paper", score: 1, status: "verified", scope: "paragraph" },
     ],
   },
-  sources: [{ source: { page_id: "page-1", memory_source_id: "zotero::P1", linked_at: 1 }, memory: {
-    source_id: "zotero::P1", title: "A public paper", content: "", summary: null, memory_type: "research", domain: null,
-    source_agent: "zotero", confidence: 1, confirmed: true, pinned: false, supersedes: null, last_modified: 1, chunk_count: 1,
-  } }],
+  sources: [{ locator: "zotero::P1", source_kind: "file", source_id: "zotero::P1", title: "A public paper", source_agent: "zotero", url: null, text_digest: null, historical: false }],
   zoteroDocuments: [{ sourceId: "zotero::P1", title: "A public paper", bibtex: "@article{paper2024, title={A paper}, url={https://example.org/paper}}" }],
 };
 
@@ -53,9 +50,7 @@ describe("page snapshot serialization", () => {
           { occurrence: 3, marker: 3, source_kind: "external_url", locator: sourceId, score: 1, status: "verified", scope: "sentence" },
         ],
       },
-      sources: [{ source: { page_id: "page-1", memory_source_id: sourceId, linked_at: 1 }, memory: {
-        ...snapshot.sources[0].memory!, source_id: sourceId, title: "A public paper", source_agent: "zotero",
-      } }],
+      sources: [{ ...snapshot.sources[0], locator: sourceId, source_id: sourceId }],
       zoteroDocuments: [{ sourceId, title: "A public paper", bibtex: "@article{paper2024, title={A paper}, url={https://example.org/paper}}" }],
     };
 
@@ -87,5 +82,18 @@ describe("page snapshot serialization", () => {
     expect(output).toContain("[jump](#part)");
     expect(output).not.toContain("javascript:");
     expect(output).not.toContain("docs/a.md");
+  });
+
+  it("keeps public and fragment links while removing private hosts and credentials from Markdown and HTML", () => {
+    const unsafe = ["http://localhost:11434/private", "http://127.0.0.1:11434/x", "http://192.168.1.9/x", "http://172.20.1.2/x", "http://[::1]/x", "http://[fd00::1]/x", "https://user:pass@example.org/x", "https://example.org/x?access_token=secret", "https://example.org/x#signature=secret"];
+    const content = [...unsafe.map((url, index) => `[unsafe${index}](${url})`), "[public](https://example.org/paper?id=123#page=2)", "[jump](#page)", "[mail](mailto:a@example.org)"].join(" ");
+    const input = { ...snapshot, page: { ...snapshot.page, citations: [], content } };
+    const markdown = serializePageExport(input, "markdown");
+    const html = serializePageExport(input, "html");
+    for (const url of unsafe) { expect(markdown).not.toContain(url); expect(html).not.toContain(`href="${url}`); }
+    expect(markdown).toContain("[public](https://example.org/paper?id=123#page=2)");
+    expect(html).toContain('href="https://example.org/paper?id=123#page=2"');
+    expect(html).toContain('href="#page"');
+    expect(html).toContain('href="mailto:a@example.org"');
   });
 });

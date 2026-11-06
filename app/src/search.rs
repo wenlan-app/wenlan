@@ -3569,24 +3569,26 @@ pub async fn list_refinements(
 pub async fn accept_refinement(
     state: tauri::State<'_, State>,
     id: String,
+    space: Option<String>,
 ) -> Result<responses::AcceptRefinementResponse, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
-    client.accept_refinement(&id).await
+    client.accept_refinement(&id, space.as_deref()).await
 }
 
 #[tauri::command]
 pub async fn reject_refinement(
     state: tauri::State<'_, State>,
     id: String,
+    space: Option<String>,
 ) -> Result<responses::RejectRefinementResponse, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
-    client.reject_refinement(&id).await
+    client.reject_refinement(&id, space.as_deref()).await
 }
 
 #[tauri::command]
@@ -6439,10 +6441,22 @@ pub async fn set_source_follow_changes(
 }
 
 #[tauri::command]
+pub async fn get_zotero_disconnect_preview(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::zotero::ZoteroDisconnectPreview, String> {
+    daemon_client(&state)
+        .await
+        .get_zotero_disconnect_preview(&id)
+        .await
+}
+
+#[tauri::command]
 pub async fn remove_source(
     state: tauri::State<'_, State>,
     watcher: tauri::State<'_, WatcherState>,
     id: String,
+    expected_zotero_preview: Option<wenlan_types::zotero::ZoteroDisconnectPreview>,
 ) -> Result<(), String> {
     let local_source = config::load_config()
         .sources
@@ -6452,6 +6466,9 @@ pub async fn remove_source(
 
     if let Some(source) = local_source {
         if source.source_type == crate::sources::SourceType::Directory {
+            if expected_zotero_preview.is_some() {
+                return Err("The source connection changed; reload before disconnecting".into());
+            }
             return remove_directory_source(&state, &watcher, &id, source).await;
         }
     }
@@ -6460,7 +6477,13 @@ pub async fn remove_source(
         let s = state.read().await;
         s.client.clone()
     };
-    client.remove_source(&id).await?;
+    if let Some(preview) = expected_zotero_preview {
+        client
+            .remove_zotero_source_at_preview(&id, &preview)
+            .await?;
+    } else {
+        client.remove_source(&id).await?;
+    }
     if id == "directory-sources" {
         let dir = crate::sources::uploads::sources_dir();
         let _ = std::fs::remove_dir_all(&dir); // managed uploads only, best-effort
@@ -6499,14 +6522,35 @@ pub async fn list_zotero_collections(
 }
 
 #[tauri::command]
+pub async fn list_zotero_items(
+    state: tauri::State<'_, State>,
+    collection_key: String,
+    expected_server_id: String,
+) -> Result<wenlan_types::zotero::ZoteroItemsResponse, String> {
+    daemon_client(&state)
+        .await
+        .list_zotero_items(&collection_key, &expected_server_id)
+        .await
+}
+
+#[tauri::command]
 pub async fn get_zotero_document(
     state: tauri::State<'_, State>,
     source_id: String,
     space: Option<String>,
+    attachment_key: Option<String>,
+    expected_digest: Option<String>,
+    allow_retained: Option<bool>,
 ) -> Result<wenlan_types::zotero::ZoteroDocumentResponse, String> {
     daemon_client(&state)
         .await
-        .zotero_document(&source_id, space.as_deref())
+        .zotero_document(
+            &source_id,
+            space.as_deref(),
+            attachment_key.as_deref(),
+            expected_digest.as_deref(),
+            allow_retained.unwrap_or(false),
+        )
         .await
 }
 
@@ -6516,10 +6560,18 @@ pub async fn read_zotero_pdf(
     source_id: String,
     attachment_key: String,
     space: Option<String>,
+    expected_digest: Option<String>,
+    allow_retained: Option<bool>,
 ) -> Result<tauri::ipc::Response, String> {
     let bytes = daemon_client(&state)
         .await
-        .zotero_pdf(&source_id, &attachment_key, space.as_deref())
+        .zotero_pdf(
+            &source_id,
+            &attachment_key,
+            space.as_deref(),
+            expected_digest.as_deref(),
+            allow_retained.unwrap_or(false),
+        )
         .await?;
     Ok(tauri::ipc::Response::new(bytes))
 }
@@ -6530,10 +6582,12 @@ pub async fn add_zotero_source(
     collection_key: String,
     expected_server_id: Option<String>,
     space: String,
+    item_keys: Option<Vec<String>>,
 ) -> Result<crate::sources::Source, String> {
     let client = daemon_client(&state).await;
     client
         .add_zotero_source(&wenlan_types::zotero::AddZoteroSourceRequest {
+            item_keys,
             collection_key,
             expected_server_id,
             space,

@@ -1,3 +1,6 @@
+import { enZoteroDisconnect, hansZoteroDisconnect, hantZoteroDisconnect } from "../components/memory/sources/zoteroDisconnectCopy";
+import { enResearchDispute, hansResearchDispute, hantResearchDispute } from "../components/memory/researchDisputeCopy";
+import { enSourceLifecycle, hansSourceLifecycle, hantSourceLifecycle } from "../components/memory/sources/sourceLifecycleCopy";
 import { enReviewAdjust, hansReviewAdjust, hantReviewAdjust } from "../components/memory/reviewAdjustCopy";
 import { enSelectedSources, hansSelectedSources, hantSelectedSources } from "../components/memory/sources/selectedSourcesCopy";
 import { enPdfReader, hansPdfReader, hantPdfReader } from "../components/memory/sources/pdfReaderCopy";
@@ -19,9 +22,12 @@ import { enSourceContainer, hansSourceContainer, hantSourceContainer } from "../
 import { enPageExport, hansPageExport, hantPageExport } from "../components/memory/page/pageExportCopy";
 
 const en = {
+  zoteroDisconnect: enZoteroDisconnect,
   selectedSources: enSelectedSources,
   reviewAdjust: enReviewAdjust,
   pdfReader: enPdfReader,
+  sourceLifecycle: enSourceLifecycle,
+  researchDispute: enResearchDispute,
   editorSearch: {"find": "Find", "replace": "Replace", "next": "Next", "previous": "Previous", "selectAll": "Select all", "matchCase": "Match case", "regexp": "Regex", "wholeWord": "Whole word", "replaceAll": "Replace all", "currentMatch": "Current match", "onLine": "on line", "replacedOne": "Replaced the match on line $", "replacedMany": "Replaced $ matches"},
   detailInfo: {"details": "Details", "additional": "Additional information", "relatedMemories": "Related memories", "relatedMemoriesHint": "Search matches that may be related, not confirmed connections."},
   memoryAutosave: {"empty": "Add some text before leaving. Your draft is still here.", "failed": "Changes could not be saved. Your draft is still here.", "conflict": "This memory changed elsewhere. Your draft is still here.", "retry": "Retry saving", "compare": "View current version", "latest": "Current version", "loadLatest": "Use current version", "discard": "Replace your unsaved draft with the current version?", "saving": "Saving…", "deleted": "This memory was deleted elsewhere.", "discardDraft": "Discard draft", "discardDeleted": "Discard this unsaved draft? Copy any text you want to keep first."},
@@ -36,6 +42,7 @@ const en = {
     "sourceConflict": "A source conflict needs attention.",
     "updateBlocked": "The update could not finish; the current page was kept.",
     "sourceUpdated": "A source changed; the current page was kept.",
+    "sourceSelectionChanged": "The Zotero collection or selection changed. Your saved work is retained; review the updated research.",
     "showSources": "View details",
     "checkFailed": "Could not check for pending review items.",
     "retry": "Retry",
@@ -229,7 +236,7 @@ const en = {
   sourceAccess: enSourceAccess,
   sourceContainer: enSourceContainer,
   pageExport: enPageExport,
-  zoteroSource: { title: "Connect Zotero", description: "Choose one local Zotero collection to import into a Space.", connectAction: "Connect Zotero", addToSpace: "Add Zotero collection", checking: "Checking the local Zotero connection…", connected: "Connected to local Zotero", offline: "Local Zotero is unavailable.", collection: "Collection", destination: "Destination Space", spacesFailed: "Could not load Spaces.", noCollections: "No collections are available in the local Zotero library.", import: "Import collection", importing: "Importing…", importAgain: "Retry import", summary: "Imported {{ingested}}; skipped {{skipped}}; errors {{errors}}." },
+  zoteroSource: { importSelected: "Import selected articles", chooseArticles: "Choose articles", useWholeCollection: "Use whole collection", identityUnavailable: "Zotero identity could not be verified. Reconnect and try again.", loadingArticles: "Loading articles…", articlesFailed: "Could not load a complete article list.", selectedCount: "{{count}} selected", noArticles: "No articles are available in this collection.", articlesLabel: "Articles in collection", title: "Connect Zotero", description: "Choose one local Zotero collection to import into a Space.", connectAction: "Connect Zotero", addToSpace: "Add Zotero collection", checking: "Checking the local Zotero connection…", connected: "Connected to local Zotero", offline: "Local Zotero is unavailable.", collection: "Collection", destination: "Destination Space", spacesFailed: "Could not load Spaces.", noCollections: "No collections are available in the local Zotero library.", import: "Import collection", importing: "Importing…", importAgain: "Retry import", summary: "Imported {{ingested}}; skipped {{skipped}}; errors {{errors}}." },
   sourceLibrary: {
     "title": "Sources",
     "description": "The files, links and folders behind your knowledge.",
@@ -2409,6 +2416,7 @@ const en = {
     reasonLocked: "Reason: this page is set to Ask me first",
     reasonBackground: "Reason: Wenlan steeped this automatically",
     reasonOwned: "Reason: the page has your edits",
+    reasonSourceSelectionChanged: "The source selection changed. Check this update before applying it.",
     confidence: "{{percent}}% confidence",
     mergeKeep: "Keeps",
     mergeFoldsIn: "Folds in",
@@ -3251,9 +3259,12 @@ const en = {
 };
 
 const zhHans = {
+  zoteroDisconnect: hansZoteroDisconnect,
   selectedSources: hansSelectedSources,
   reviewAdjust: hansReviewAdjust,
   pdfReader: hansPdfReader,
+  sourceLifecycle: hansSourceLifecycle,
+  researchDispute: hansResearchDispute,
   editorSearch: {"find": "查找", "replace": "替换", "next": "下一个", "previous": "上一个", "selectAll": "全选", "matchCase": "区分大小写", "regexp": "正则表达式", "wholeWord": "全字匹配", "replaceAll": "全部替换", "currentMatch": "当前匹配项", "onLine": "所在行：", "replacedOne": "已替换第 $ 行的匹配项", "replacedMany": "已替换 $ 处匹配项"},
   detailInfo: {"details": "详细信息", "additional": "补充信息", "relatedMemories": "相关记忆", "relatedMemoriesHint": "根据搜索找到的可能相关内容，并非已确认的关联。"},
   memoryAutosave: {"empty": "请填写内容后再离开。草稿仍保留在这里。", "failed": "更改未能保存，草稿仍保留在这里。", "conflict": "这条记忆已在别处更改，草稿仍保留在这里。", "retry": "重试保存", "compare": "查看当前版本", "latest": "当前版本", "loadLatest": "使用当前版本", "discard": "要用当前版本替换尚未保存的草稿吗？", "saving": "正在保存…", "deleted": "这条记忆已在别处删除。", "discardDraft": "舍弃草稿", "discardDeleted": "要舍弃尚未保存的草稿吗？请先复制要保留的文字。"},
@@ -3268,6 +3279,7 @@ const zhHans = {
     "sourceConflict": "来源存在冲突，需要处理。",
     "updateBlocked": "更新未能完成；已保留当前笔记。",
     "sourceUpdated": "来源已更改；已保留当前笔记。",
+    "sourceSelectionChanged": "Zotero 文集或选取范围已更改。已保留你保存的内容，请审阅更新后的研究。",
     "showSources": "查看详情",
     "checkFailed": "无法检查待审阅项目。",
     "retry": "重试",
@@ -3461,7 +3473,7 @@ const zhHans = {
   sourceAccess: hansSourceAccess,
   sourceContainer: hansSourceContainer,
   pageExport: hansPageExport,
-  zoteroSource: { title: "连接 Zotero", description: "选择一个本地 Zotero 文集并导入到空间。", connectAction: "连接 Zotero", addToSpace: "添加 Zotero 文集", checking: "正在检查本地 Zotero 连接…", connected: "已连接本地 Zotero", offline: "本地 Zotero 不可用。", collection: "文集", destination: "目标空间", spacesFailed: "无法载入空间。", noCollections: "本地 Zotero 文库中没有可用文集。", import: "导入文集", importing: "正在导入…", importAgain: "重试导入", summary: "已导入 {{ingested}}；已跳过 {{skipped}}；错误 {{errors}}。" },
+  zoteroSource: { importSelected: "导入所选文章", chooseArticles: "选择文章", useWholeCollection: "选择整个文集", identityUnavailable: "无法验证 Zotero 身份，请重新连接后重试。", loadingArticles: "正在载入文章…", articlesFailed: "无法载入完整的文章列表。", selectedCount: "已选择 {{count}} 篇", noArticles: "此文集中没有可用文章。", articlesLabel: "文集中的文章", title: "连接 Zotero", description: "选择一个本地 Zotero 文集并导入到空间。", connectAction: "连接 Zotero", addToSpace: "添加 Zotero 文集", checking: "正在检查本地 Zotero 连接…", connected: "已连接本地 Zotero", offline: "本地 Zotero 不可用。", collection: "文集", destination: "目标空间", spacesFailed: "无法载入空间。", noCollections: "本地 Zotero 文库中没有可用文集。", import: "导入文集", importing: "正在导入…", importAgain: "重试导入", summary: "已导入 {{ingested}}；已跳过 {{skipped}}；错误 {{errors}}。" },
   sourceLibrary: {
     "title": "来源",
     "description": "浏览知识背后的文件、链接与文件夹。",
@@ -5601,6 +5613,7 @@ const zhHans = {
     reasonLocked: "原因：这篇设成了先问我",
     reasonBackground: "原因：文澜自动沉淀",
     reasonOwned: "原因：笔记有你的修改",
+    reasonSourceSelectionChanged: "来源选择已更改，请先检查此次更新再应用。",
     confidence: "置信度 {{percent}}%",
     mergeKeep: "保留",
     mergeFoldsIn: "并入",
@@ -6422,9 +6435,12 @@ const zhHans = {
 };
 
 const zhHant = {
+  zoteroDisconnect: hantZoteroDisconnect,
   selectedSources: hantSelectedSources,
   reviewAdjust: hantReviewAdjust,
   pdfReader: hantPdfReader,
+  sourceLifecycle: hantSourceLifecycle,
+  researchDispute: hantResearchDispute,
   editorSearch: {"find": "尋找", "replace": "取代", "next": "下一個", "previous": "上一個", "selectAll": "全選", "matchCase": "區分大小寫", "regexp": "正規表示式", "wholeWord": "全字比對", "replaceAll": "全部取代", "currentMatch": "目前相符項目", "onLine": "所在行：", "replacedOne": "已取代第 $ 行的相符項目", "replacedMany": "已取代 $ 個相符項目"},
   detailInfo: {"details": "詳細資訊", "additional": "補充資訊", "relatedMemories": "相關記憶", "relatedMemoriesHint": "依搜尋找到的可能相關內容，並非已確認的關聯。"},
   memoryAutosave: {"empty": "請填寫內容後再離開。草稿仍保留在這裡。", "failed": "更改未能儲存，草稿仍保留在這裡。", "conflict": "這則記憶已在別處更改，草稿仍保留在這裡。", "retry": "重試儲存", "compare": "查看目前版本", "latest": "目前版本", "loadLatest": "使用目前版本", "discard": "要用目前版本取代尚未儲存的草稿嗎？", "saving": "正在儲存…", "deleted": "這則記憶已在別處刪除。", "discardDraft": "捨棄草稿", "discardDeleted": "要捨棄尚未儲存的草稿嗎？請先複製要保留的文字。"},
@@ -6439,6 +6455,7 @@ const zhHant = {
     "sourceConflict": "來源有衝突，需要處理。",
     "updateBlocked": "更新未能完成；已保留目前筆記。",
     "sourceUpdated": "來源已變更；已保留目前筆記。",
+    "sourceSelectionChanged": "Zotero 文集或選取範圍已變更。已保留你儲存的內容，請審閱更新後的研究。",
     "showSources": "查看詳情",
     "checkFailed": "無法檢查待審閱項目。",
     "retry": "重試",
@@ -6632,7 +6649,7 @@ const zhHant = {
   sourceAccess: hantSourceAccess,
   sourceContainer: hantSourceContainer,
   pageExport: hantPageExport,
-  zoteroSource: { title: "連接 Zotero", description: "選擇一個本機 Zotero 文集並匯入到空間。", connectAction: "連接 Zotero", addToSpace: "新增 Zotero 文集", checking: "正在檢查本機 Zotero 連線…", connected: "已連接本機 Zotero", offline: "本機 Zotero 無法使用。", collection: "文集", destination: "目標空間", spacesFailed: "無法載入空間。", noCollections: "本機 Zotero 圖書館中沒有可用文集。", import: "匯入文集", importing: "正在匯入…", importAgain: "重試匯入", summary: "已匯入 {{ingested}}；已略過 {{skipped}}；錯誤 {{errors}}。" },
+  zoteroSource: { importSelected: "匯入所選文章", chooseArticles: "選擇文章", useWholeCollection: "選擇整個文集", identityUnavailable: "無法驗證 Zotero 身分，請重新連線後再試。", loadingArticles: "正在載入文章…", articlesFailed: "無法載入完整的文章清單。", selectedCount: "已選擇 {{count}} 篇", noArticles: "這個文集中沒有可用文章。", articlesLabel: "文集中的文章", title: "連接 Zotero", description: "選擇一個本機 Zotero 文集並匯入到空間。", connectAction: "連接 Zotero", addToSpace: "新增 Zotero 文集", checking: "正在檢查本機 Zotero 連線…", connected: "已連接本機 Zotero", offline: "本機 Zotero 無法使用。", collection: "文集", destination: "目標空間", spacesFailed: "無法載入空間。", noCollections: "本機 Zotero 圖書館中沒有可用文集。", import: "匯入文集", importing: "正在匯入…", importAgain: "重試匯入", summary: "已匯入 {{ingested}}；已略過 {{skipped}}；錯誤 {{errors}}。" },
   sourceLibrary: {
     "title": "來源",
     "description": "瀏覽知識背後的檔案、連結與資料夾。",
@@ -8772,6 +8789,7 @@ const zhHant = {
     reasonLocked: "原因：這篇設成了先問我",
     reasonBackground: "原因：文瀾自動沉澱",
     reasonOwned: "原因：筆記有你的修改",
+    reasonSourceSelectionChanged: "來源選取範圍已變更，請先檢查這次更新再套用。",
     confidence: "信心度 {{percent}}%",
     mergeKeep: "保留",
     mergeFoldsIn: "併入",

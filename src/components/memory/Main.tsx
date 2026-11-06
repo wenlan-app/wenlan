@@ -1808,6 +1808,7 @@ export default function Main({
             </WikiWorkspace>
           ) : view.kind === "distill-review" ? (
             <DistillReviewPanel
+              currentSpace={contextSpace?.spaceName}
               onBack={navigateBack}
               onOpenActivity={() => navigateTo({ kind: "activity" })}
               initialReviewItemId={view.reviewItemId}

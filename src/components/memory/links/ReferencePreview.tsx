@@ -18,7 +18,7 @@ export interface ReferencePreviewProps {
   request: ReferencePreviewRequest | null;
   onDismiss(): void;
   onOpenPage?(pageId: string): void;
-  onOpenMemory?(sourceId: string): void;
+  onOpenMemory?(sourceId: string, citation?: PageCitation): void;
   onOpen?(target: NavigableReferenceTarget): void;
   onOpenCitationTarget?(citation: PageCitation): void;
   onPointerEnter(): void;
@@ -155,13 +155,13 @@ export function ReferencePreview({
   }) : "";
   // The card's header already names the kind, so an external source's title is just its file or host name.
   const citationTitle = citation ? citationExternalDetail(citation) ?? fallbackCitationLabel : "";
-  const memoryCitationGone = citation?.source_kind === "memory" && !memory && !citationTarget?.sourcesLoading;
+  const memoryCitationGone = citation?.source_kind === "memory" && !citation.historical && !memory && !citationTarget?.sourcesLoading;
   const title = page?.title ?? memory?.title ?? (memoryCitationGone ? t("citation.missingTitle") : citation ? citationTitle : anchorLabel);
   const citationLocation = citation?.source_kind === "external_file" ? citationFilePath(citation.locator) : citation?.locator;
   const query = pageId ? pageQuery : memoryId ? memoryQuery : null;
   const content = page?.summary || (page ? page.content : memory?.summary || memory?.content) || "";
   const excerpt = content ? referenceExcerpt(content) : "";
-  const citationMissing = !!citation && citation.source_kind !== "authored" && !memory && !citationTarget?.sourcesLoading;
+  const citationMissing = !!citation && citation.source_kind !== "authored" && !citation.historical && !memory && !citationTarget?.sourcesLoading;
   const loading = !!query?.isPending || !!(citationTarget?.sourcesLoading && !memory);
   const error = !!query?.isError;
   const unavailable = !loading && !error && ((pageId && !page) || (memoryId && !memory) || citationMissing || (!!citation && citation.source_kind !== "authored" && !!memory && !content));
@@ -173,7 +173,7 @@ export function ReferencePreview({
       if (onOpen) onOpen(target); else onOpenMemory?.(target.id);
     } else if (citation?.source_kind === "memory") {
       const memoryTarget = { kind: "memory", id: citation.locator } as const;
-      if (onOpen) onOpen(memoryTarget); else onOpenMemory?.(citation.locator);
+      if (onOpenMemory) onOpenMemory(citation.locator, citation); else onOpen?.(memoryTarget);
     } else if (citation && (citation.source_kind === "external_file" || citation.source_kind === "external_url")) {
       if (onOpenCitationTarget) onOpenCitationTarget(citation);
       else {
@@ -184,7 +184,7 @@ export function ReferencePreview({
       }
     }
   };
-  const canOpen = target?.kind === "page" || target?.kind === "memory" || (citation?.source_kind === "memory" && !!memory) || citation?.source_kind === "external_file" || citation?.source_kind === "external_url";
+  const canOpen = target?.kind === "page" || target?.kind === "memory" || (citation?.source_kind === "memory" && (!!memory || !!citation.historical)) || citation?.source_kind === "external_file" || citation?.source_kind === "external_url";
   const action = citation?.source_kind === "memory"
     ? t("citation.openMemory")
     : target?.kind === "page" || target?.kind === "memory"
@@ -224,8 +224,9 @@ export function ReferencePreview({
         <span>{typeLabel}</span>
       </div>
       <strong style={{ fontSize: "var(--mem-text-sm)", overflowWrap: "anywhere" }}>{title}</strong>
-      {citation?.status === "unverified" && <span style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>{t("citation.unverified")}</span>}
-      {citation?.status === "unevaluated" && <span style={{ color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{t("thisSentence.evidence.unevaluated")}</span>}
+      {citation?.historical && <span style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>{t("sourceLifecycle.historicalCitation")}</span>}
+      {!citation?.historical && citation?.status === "unverified" && <span style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>{t("citation.unverified")}</span>}
+      {!citation?.historical && citation?.status === "unevaluated" && <span style={{ color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{t("thisSentence.evidence.unevaluated")}</span>}
       {citation?.source_kind === "authored" && <p style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{t("citation.authoredDescription")}</p>}
       {(activeOpenFailure || externalOpenFailure) && <div role="alert" style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>
         <p style={{ margin: 0 }}>{t(citation?.source_kind === "external_file" ? "citation.openFileFailed" : "citation.openLinkFailed")}</p>

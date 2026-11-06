@@ -51,6 +51,19 @@ beforeEach(async () => {
 });
 
 describe("Review decision contracts", () => {
+  it("shows a whole classification proposal and sends edited changes on acceptance", async () => {
+    const change = { source: "file", source_id: "zotero::A", title: "Paper A", before_tags: ["human"], source_content_digest: "digest", expected_decision_revision: 2, add_tags: ["method"], remove_tags: ["old"], reason: "Interviews" };
+    const item: ReviewItem = { ...archive, id: "classification", action: "source_classification", sourceIds: ["zotero::A"], payload: { action: "source_classification", run_id: "run", space_id: "space", rules_digest: "rules", changes: [change] } };
+    const { resolve, user } = mount(item);
+    expect(screen.getByText(/Current tags: human/)).toBeVisible();
+    expect(screen.getByText(/Interviews/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Adjust suggested tags" }));
+    const field = screen.getByRole("textbox", { name: "Paper A Add tags" });
+    await user.clear(field); await user.type(field, "interviews");
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(resolve).toHaveBeenCalledWith({ item, approve: true, classification_changes: [{ ...change, add_tags: ["interviews"] }] }));
+  });
+
   it("labels declining a source repair as keeping the source and never approves it", async () => {
     const item: ReviewItem = {
       ...archive, id: "repair-keep", action: "lint_repair_review",

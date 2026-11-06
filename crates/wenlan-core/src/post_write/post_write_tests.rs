@@ -977,6 +977,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await
@@ -1035,6 +1036,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     );
     let observe_projection = async {
@@ -1767,6 +1769,7 @@ async fn create_page_same_title_out_of_scope_creates_in_caller_space() {
             basis_marks: Vec::new(),
             basis_space_guard: Some(crate::read_scope::ReadScope::Space("Home".into())),
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await
@@ -1873,6 +1876,7 @@ async fn automatic_same_title_create_skips_a_review_locked_page_without_a_duplic
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: true,
+            research_write: None,
         },
     )
     .await
@@ -3177,6 +3181,7 @@ async fn seed_source_page(db: &MemoryDB, page_id: &'static str) -> (&'static str
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await
@@ -4303,6 +4308,164 @@ async fn page_write_update_edit_landing_mid_write_is_not_clobbered() {
     assert!(
         machine_result.revision_card_id.is_some(),
         "on reload the page is human-owned, so the machine body is preserved as a card"
+    );
+}
+
+/// Selection loss changes the source fence without changing the Page version.
+/// A machine write already past its ownership gate must still leave the body
+/// alone and stage a review card. The retained evidence remains editable by a human.
+#[tokio::test]
+async fn page_write_update_selection_loss_landing_mid_write_stages_review() {
+    use std::collections::{BTreeMap, BTreeSet};
+    use wenlan_types::zotero::ZoteroRegistrationIdentity;
+
+    let (db, _dir) = test_db().await;
+    let space = db
+        .create_space("Selection Race", None, false)
+        .await
+        .unwrap();
+    let source_id = "paper-selection-race";
+    let body = "The retained paper supports the original conclusion.";
+    db.upsert_documents(vec![crate::sources::RawDocument {
+        source: "file".into(),
+        source_id: source_id.into(),
+        title: "Retained paper".into(),
+        content: body.into(),
+        space: Some("Selection Race".into()),
+        last_modified: chrono::Utc::now().timestamp(),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let page_id = "page_selection_write_race";
+    db.insert_page_with_kind(
+        page_id,
+        "Selection race",
+        None,
+        body,
+        None,
+        Some("Selection Race"),
+        &[source_id],
+        &chrono::Utc::now().to_rfc3339(),
+        "distilled",
+        "confirmed",
+        Some("Selection Race"),
+        None,
+    )
+    .await
+    .unwrap();
+    let identity = ZoteroRegistrationIdentity {
+        registration_id: "selection-write-race".into(),
+        locator: "selection-write-race".into(),
+        server_id: "server-selection-write-race".into(),
+        space_id: space.id,
+    };
+    db.bind_zotero_registration(&identity).await.unwrap();
+    db.observe_zotero_selection(
+        &identity,
+        &BTreeSet::from(["ITEM0001".into()]),
+        &BTreeMap::from([("ITEM0001".into(), source_id.into())]),
+    )
+    .await
+    .unwrap();
+    let before = db.get_page(page_id).await.unwrap().unwrap();
+    let source_revision = db.get_page_source_revision(page_id).await.unwrap();
+    assert!(!before.review_required);
+    assert!(before.refresh_blocked_reason.is_none());
+
+    let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
+    let (go_tx, go_rx) = tokio::sync::oneshot::channel();
+    PRE_WRITE_GATE
+        .lock()
+        .unwrap()
+        .push((page_id.into(), parked_tx, go_rx));
+    let machine_body = "A machine replacement computed before selection loss.";
+    let machine_write = page_write(
+        &db,
+        PageWrite::Update {
+            page_id,
+            req: UpdatePageRequest {
+                content: machine_body.into(),
+                source_memory_ids: vec![source_id.into()],
+                expected_version: Some(before.version),
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "agent_refresh",
+            require_stale: false,
+            knowledge_path: None,
+            citations: None,
+            expected_source_revision: None,
+        },
+    );
+    let lose_selection = async {
+        parked_rx
+            .await
+            .expect("machine must pass the ownership gate");
+        db.observe_zotero_selection(&identity, &BTreeSet::new(), &BTreeMap::new())
+            .await
+            .unwrap();
+        let impacted = db.get_page(page_id).await.unwrap().unwrap();
+        assert_eq!(
+            impacted.version, before.version,
+            "selection loss does not bump the body version"
+        );
+        assert!(db.get_page_source_revision(page_id).await.unwrap() > source_revision);
+        assert!(
+            !impacted.review_required,
+            "the human's Review lock is unchanged"
+        );
+        go_tx.send(()).expect("machine must still be parked");
+    };
+    let (result, ()) = tokio::join!(machine_write, lose_selection);
+    let result = result.unwrap();
+    assert!(!result.wrote, "the in-flight machine body must not land");
+    assert!(result.gated);
+    let card_id = result
+        .revision_card_id
+        .expect("the retry must stage a Review card");
+    let after = db.get_page(page_id).await.unwrap().unwrap();
+    assert_eq!(after.content, body);
+    assert_eq!(after.version, before.version);
+    assert_eq!(db.list_page_history(page_id, 10).await.unwrap().len(), 1);
+    assert!(db
+        .list_pending_revisions(10)
+        .await
+        .unwrap()
+        .iter()
+        .any(|r| r.revision_source_id == card_id));
+
+    let human_body = "The retained paper needs my revised human conclusion.";
+    let human = page_write(
+        &db,
+        PageWrite::Update {
+            page_id,
+            req: UpdatePageRequest {
+                content: human_body.into(),
+                source_memory_ids: vec![source_id.into()],
+                expected_version: Some(before.version),
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "manual_edit",
+            require_stale: false,
+            knowledge_path: None,
+            citations: None,
+            expected_source_revision: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        human.wrote,
+        "the pending selection review must allow a human edit"
+    );
+    let edited = db.get_page(page_id).await.unwrap().unwrap();
+    assert_eq!(edited.content, human_body);
+    assert_eq!(edited.version, before.version + 1);
+    assert_eq!(
+        edited.refresh_blocked_reason.as_deref(),
+        Some(wenlan_types::zotero::ZOTERO_SELECTION_REVIEW_REQUIRED)
     );
 }
 
@@ -7443,13 +7606,16 @@ async fn machine_write_requires_review_matrix() {
     authored.creation_kind = "authored".to_string();
     let mut locked = machine.clone();
     locked.review_required = true;
+    let mut changed_selection = machine.clone();
+    changed_selection.refresh_blocked_reason =
+        Some(wenlan_types::zotero::ZOTERO_SELECTION_REVIEW_REQUIRED.into());
 
     let agent = Writer::classify("agent_refresh");
     let pipeline = Writer::classify("re_distill");
     let human = Writer::classify("manual_edit");
 
     // Human writers are never gated, not even by the lock.
-    for page in [&machine, &edited, &authored, &locked] {
+    for page in [&machine, &edited, &authored, &locked, &changed_selection] {
         assert!(!machine_write_requires_review(human, page, false, false));
         assert!(!machine_write_requires_review(human, page, true, true));
     }
@@ -7492,6 +7658,22 @@ async fn machine_write_requires_review_matrix() {
     ));
     assert!(machine_write_requires_review(
         pipeline, &locked, false, true
+    ));
+    // A changed research selection is a decision, not a text refresh. Even
+    // a version-checked agent must use existing Review; the person's lock
+    // preference remains unchanged.
+    assert!(!changed_selection.review_required);
+    assert!(machine_write_requires_review(
+        agent,
+        &changed_selection,
+        true,
+        false
+    ));
+    assert!(machine_write_requires_review(
+        pipeline,
+        &changed_selection,
+        true,
+        true
     ));
 }
 

@@ -11,7 +11,7 @@ interface CitationPopoverProps {
   sourceMemory: MemoryItem | null;
   sourcesLoading: boolean;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
-  onOpenMemory: (sourceId: string) => void;
+  onOpenMemory: (sourceId: string, citation?: PageCitation) => void;
   /** Why the last attempt to open this citation's file or link was refused. */
   openFailure: string | null;
   onOpenTarget: () => void;

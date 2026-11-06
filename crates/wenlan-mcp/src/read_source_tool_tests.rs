@@ -8,6 +8,9 @@ use wiremock::{
 
 fn params(source_id: &str, space: &str) -> ReadSourceParams {
     ReadSourceParams {
+        organize_run_id: None,
+        attachment_key: None,
+        pdf_page: None,
         source: ReadSourceKind::File,
         source_id: source_id.into(),
         space: space.into(),
@@ -59,6 +62,99 @@ async fn chunks(mock: &MockServer, route: &str, body: Value, space: &str) {
 fn output(result: CallToolResult) -> Value {
     assert_ne!(result.is_error, Some(true), "{result:?}");
     result.structured_content.expect("typed structured output")
+}
+
+fn run_read_response() -> Value {
+    json!({
+        "run_id":"run-a", "run_revision":3, "source":"file", "source_id":"paper",
+        "title":"Research paper", "space":"Research", "text":"文😀",
+        "content_digest":"a".repeat(64), "source_lifecycle":{"state":"active","revision":0,"reason":""},
+        "offset":0, "total_chars":3, "next_offset":2, "complete":false, "served_chars":2
+    })
+}
+
+#[tokio::test]
+async fn read_source_run_bound_read_uses_server_slice_and_preserves_receipt() {
+    let _guard = crate::lock_state::ENV_LOCK.lock().await;
+    unlocked();
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/research/runs/run-a/read-source"))
+        .and(wiremock::matchers::body_json(json!({
+            "space":"Research", "source":"file", "source_id":"paper", "offset":0, "limit":2
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(run_read_response()))
+        .expect(1)
+        .mount(&mock)
+        .await;
+    let mut request = params("paper", "Research");
+    request.organize_run_id = Some("run-a".into());
+    request.limit = Some(2);
+    let result = output(server(&mock.uri()).read_source_impl(request).await.unwrap());
+    assert_eq!(result["text"], "文😀");
+    assert_eq!(result["served_chars"], 2);
+    assert_eq!(result["run_revision"], 3);
+    assert_eq!(result["next_offset"], 2);
+    assert!(result["evidence_notice"]
+        .as_str()
+        .unwrap()
+        .contains("not complete PDF extraction"));
+    assert_eq!(mock.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn read_source_run_bound_read_refuses_mismatched_identity_or_slice() {
+    let _guard = crate::lock_state::ENV_LOCK.lock().await;
+    unlocked();
+    for (field, wrong) in [
+        ("run_id", json!("other-run")),
+        ("space", json!("Other")),
+        ("source_id", json!("other-paper")),
+        ("source", json!("webpage")),
+        ("text", json!("truncated")),
+        ("served_chars", json!(1)),
+        ("next_offset", json!(3)),
+        ("complete", json!(true)),
+    ] {
+        let mock = MockServer::start().await;
+        let mut response = run_read_response();
+        response[field] = wrong;
+        Mock::given(method("POST"))
+            .and(path("/api/research/runs/run-a/read-source"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&mock)
+            .await;
+        let mut request = params("paper", "Research");
+        request.organize_run_id = Some("run-a".into());
+        request.limit = Some(2);
+        let result = server(&mock.uri()).read_source_impl(request).await.unwrap();
+        assert_eq!(result.is_error, Some(true), "{field}");
+        assert!(result.structured_content.is_none(), "{field}");
+    }
+}
+
+#[tokio::test]
+async fn read_source_run_bound_pdf_and_locked_space_do_not_contact_daemon() {
+    let _guard = crate::lock_state::ENV_LOCK.lock().await;
+    unlocked();
+    let mock = MockServer::start().await;
+    let reader = server(&mock.uri());
+    let mut pdf = params("paper", "Research");
+    pdf.organize_run_id = Some("run-a".into());
+    pdf.attachment_key = Some("PDF".into());
+    pdf.pdf_page = Some(1);
+    assert_eq!(
+        reader.read_source_impl(pdf).await.unwrap().is_error,
+        Some(true)
+    );
+    std::env::set_var("WENLAN_SPACE", "Pinned");
+    crate::lock_state::init_from_env();
+    let mut request = params("paper", "Research");
+    request.organize_run_id = Some("run-a".into());
+    let result = reader.read_source_impl(request).await.unwrap();
+    unlocked();
+    assert_eq!(result.is_error, Some(true));
+    assert!(mock.received_requests().await.unwrap().is_empty());
 }
 
 #[test]
@@ -158,6 +254,8 @@ async fn read_source_digest_detects_same_second_same_metadata_content_changes() 
     let first = output(
         reader
             .read_source_impl(ReadSourceParams {
+                attachment_key: None,
+                pdf_page: None,
                 limit: Some(2),
                 ..params("paper", "Research")
             })
@@ -167,6 +265,8 @@ async fn read_source_digest_detects_same_second_same_metadata_content_changes() 
     let second = output(
         reader
             .read_source_impl(ReadSourceParams {
+                attachment_key: None,
+                pdf_page: None,
                 offset: Some(2),
                 limit: Some(2),
                 ..params("paper", "Research")
@@ -281,7 +381,7 @@ async fn read_source_requires_scope_ack_on_inventory_and_chunks_and_final_invent
 async fn read_source_rejects_generation_changes_and_missing_chunks() {
     let _guard = crate::lock_state::ENV_LOCK.lock().await;
     unlocked();
-    for missing in [false, true] {
+    for scenario in ["modified", "missing", "lifecycle"] {
         let mock = MockServer::start().await;
         Mock::given(path("/api/indexed-files"))
             .respond_with(scoped(
@@ -293,14 +393,19 @@ async fn read_source_rejects_generation_changes_and_missing_chunks() {
             .mount(&mock)
             .await;
         let mut changed = file("file", "paper", Some("Research"), 1);
-        changed["last_modified"] = json!(11);
+        if scenario == "lifecycle" {
+            changed["source_lifecycle"] =
+                json!({"state":"retracted","revision":1,"reason":"publisher notice"});
+        } else {
+            changed["last_modified"] = json!(11);
+        }
         Mock::given(path("/api/indexed-files"))
             .respond_with(scoped(json!({"files":[changed]}), "Research"))
             .with_priority(2)
             .mount(&mock)
             .await;
         Mock::given(path("/api/chunks/paper"))
-            .respond_with(if missing {
+            .respond_with(if scenario == "missing" {
                 ResponseTemplate::new(404)
             } else {
                 scoped(json!([chunk("paper", 0, "old text")]), "Research")
@@ -337,10 +442,14 @@ async fn read_source_strict_lock_and_invalid_requests_make_no_http_calls() {
         params("paper", "*"),
         params("", "Research"),
         ReadSourceParams {
+            attachment_key: None,
+            pdf_page: None,
             limit: Some(0),
             ..params("paper", "Research")
         },
         ReadSourceParams {
+            attachment_key: None,
+            pdf_page: None,
             limit: Some(16001),
             ..params("paper", "Research")
         },
@@ -359,12 +468,12 @@ async fn read_source_webpage_uses_exact_kind_route_and_encoded_id() {
     unlocked();
     let mock = MockServer::start().await;
     let id = "https://example.org/a?q=x&lang=zh#part";
+    let mut withdrawn = file("webpage", id, Some("Research"), 1);
+    withdrawn["source_lifecycle"] =
+        json!({"state":"retracted","revision":4,"reason":"publisher notice"});
     inventory(
         &mock,
-        vec![
-            file("webpage", id, Some("Research"), 1),
-            file("file", id, Some("Research"), 1),
-        ],
+        vec![withdrawn, file("file", id, Some("Research"), 1)],
         "Research",
     )
     .await;
@@ -382,6 +491,8 @@ async fn read_source_webpage_uses_exact_kind_route_and_encoded_id() {
     assert_eq!(result["source"], "webpage");
     assert_eq!(result["source_id"], id);
     assert_eq!(result["text"], "Saved webpage text");
+    assert_eq!(result["source_lifecycle"]["state"], "retracted");
+    assert_eq!(result["source_lifecycle"]["revision"], 4);
 }
 
 #[tokio::test]
@@ -512,4 +623,25 @@ async fn read_source_real_scoped_router_returns_named_and_uncategorized_spaces()
     assert!(output(unfiled)["metadata"]["space"].is_null());
     assert_eq!(wrong.is_error, Some(true));
     assert_eq!(output(pinned_unicode)["text"], "完整的中文來源。");
+}
+
+#[tokio::test]
+async fn read_source_pdf_page_uses_scoped_typed_original_page_route() {
+    let _guard = crate::lock_state::ENV_LOCK.lock().await;
+    unlocked();
+    let mock = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/api/zotero/pdf-page"))
+        .and(query_param("source_id","paper")).and(query_param("attachment_key","ATTACH01"))
+        .and(query_param("page","2")).and(query_param("space","Research"))
+        .respond_with(scoped(json!({"source_id":"paper","attachment_key":"ATTACH01","pdf_digest":"a".repeat(64),"page":2,"page_count":4,"text":"Actual original page","extraction_complete":true,"source_lifecycle":{"state":"excluded","revision":2,"reason":"outside scope"}}),"Research"))
+        .expect(1).mount(&mock).await;
+    let mut request = params("paper", "Research");
+    request.attachment_key = Some("ATTACH01".into());
+    request.pdf_page = Some(2);
+    let result = output(server(&mock.uri()).read_source_impl(request).await.unwrap());
+    assert_eq!(result["page"], 2);
+    assert_eq!(result["text"], "Actual original page");
+    assert_eq!(result["source_lifecycle"]["state"], "excluded");
+    assert_eq!(result["source_lifecycle"]["revision"], 2);
+    assert_eq!(result["pdf_digest"], "a".repeat(64));
 }

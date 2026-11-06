@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_types::requests::{
-    CreateConceptRequest, CreatePageDraftRequest, ExportFormat, ExportPagesRequest,
-    MovePageRequest, PageDraftVersionRequest, SearchPagesRequest, UpdatePageDraftRequest,
+    CreatePageDraftRequest, ExportFormat, ExportPagesRequest, MovePageRequest,
+    PageDraftVersionRequest, SearchPagesRequest, UpdatePageDraftRequest,
 };
 use wenlan_types::responses::{
     CreatePageResponse, MovePageResponse, OkfConceptRef, PageDraftResponse, PageInventoryEntry,
@@ -716,11 +716,7 @@ pub async fn handle_create_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(wire): Json<wenlan_types::requests::CreatePageWithBasisRequest>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
-    let wenlan_types::requests::CreatePageWithBasisRequest {
-        create: req,
-        basis,
-        code_basis,
-    } = wire;
+    let req = &wire.create;
     // An omitted creation_kind is resolved by the core writer from the
     // distinct source count against the distillation floor. Classify
     // telemetry with the same resolver so MCP's compact write_page payload is
@@ -741,9 +737,7 @@ pub async fn handle_create_page(
         State(state),
         headers,
         crate::space_header::SpaceHeader(header_space),
-        Json(req),
-        basis,
-        code_basis,
+        Json(wire),
     )
     .await;
     if is_distilled {
@@ -762,10 +756,15 @@ async fn handle_create_page_inner(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
-    Json(mut req): Json<CreateConceptRequest>,
-    basis: Vec<wenlan_types::BasisInput>,
-    code_basis: Vec<wenlan_types::CodeBasisInput>,
+    Json(wire): Json<wenlan_types::requests::CreatePageWithBasisRequest>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
+    let wenlan_types::requests::CreatePageWithBasisRequest {
+        create: mut req,
+        basis,
+        code_basis,
+        citation_targets,
+        organize_run_id,
+    } = wire;
     let agent = extract_agent_name(&headers, None);
     let (db, page_root, page_min_cluster_size, page_match_threshold) = {
         let s = state.read().await;
@@ -822,14 +821,27 @@ async fn handle_create_page_inner(
         .clone()
         .map(wenlan_core::read_scope::ReadScope::Space)
         .unwrap_or(wenlan_core::read_scope::ReadScope::Uncategorized);
-    let (checked, citation_snapshots) =
-        check_write_citations(&db, &req.content, &req.source_memory_ids, &citation_scope).await?;
+    let (checked, citation_snapshots) = check_write_citations(
+        &db,
+        &req.content,
+        &req.source_memory_ids,
+        &citation_scope,
+        &citation_targets,
+    )
+    .await?;
     let (citations_json, citations_summary) = match checked {
         Some((body, json, summary)) => {
             req.content = body;
             (Some(json), Some(summary))
         }
         None => (None, None),
+    };
+    let research_write = match organize_run_id.as_deref() {
+        Some(run) => Some(
+            db.prepare_research_write(run, &citation_scope, None, &req.source_memory_ids)
+                .await?,
+        ),
+        None => None,
     };
     let diagram_content = req.content.clone();
     // The marks are recorded in the create transaction itself, so a mark
@@ -849,6 +861,7 @@ async fn handle_create_page_inner(
             basis_space_guard: (scope != wenlan_core::read_scope::ReadScope::Global)
                 .then(|| scope.clone()),
             skip_protected_title_match: false,
+            research_write,
         },
         &citation_snapshots,
     )
@@ -1761,6 +1774,7 @@ pub async fn handle_update_page(
             edited_by: "manual_edit",
             knowledge_path: page_root.as_deref(),
             basis: wenlan_core::db::BasisWrite {
+                research_write: None,
                 citation_snapshots: Vec::new(),
                 minor: minor.unwrap_or(false),
                 actor: "human".to_string(),
@@ -1913,6 +1927,7 @@ async fn check_write_citations(
     content: &str,
     source_ids: &[String],
     scope: &wenlan_core::read_scope::ReadScope,
+    targets: &[wenlan_types::pages::PdfCitationInput],
 ) -> Result<
     (
         Option<(String, String, String)>,
@@ -1922,13 +1937,25 @@ async fn check_write_citations(
 > {
     use wenlan_core::citations::WriteCitations;
     match wenlan_core::citations::check_write_citations(db, content, source_ids, scope).await? {
-        Ok(WriteCitations::Uncited { snapshots }) => Ok((None, snapshots)),
+        Ok(WriteCitations::Uncited { snapshots }) if targets.is_empty() => Ok((None, snapshots)),
+        Ok(WriteCitations::Uncited { .. }) => Err(ServerError::ValidationError(
+            "PDF targets require citation markers".into(),
+        )),
         Ok(WriteCitations::Checked {
             body,
-            citations_json,
+            mut citations_json,
             summary,
             snapshots,
-        }) => Ok((Some((body, citations_json, summary)), snapshots)),
+        }) => {
+            crate::source_routes::zotero_sync::attach_pdf_targets(
+                &mut citations_json,
+                targets,
+                source_ids,
+                scope,
+            )
+            .await?;
+            Ok((Some((body, citations_json, summary)), snapshots))
+        }
         Err(counts) => Err(ServerError::ValidationError(format!(
             "citations_unsupported: {counts}"
         ))),
@@ -2016,7 +2043,23 @@ async fn handle_refresh_page_inner(
     };
     // A Space-locked caller writes only inside its Space. The app sends no
     // Space header, so its scope is global and it reaches every note.
-    let scope = crate::read_scope::effective_read_scope(&db, None, header_space).await?;
+    if req.organize_run_id.is_some()
+        && req
+            .organize_space
+            .as_deref()
+            .zip(header_space)
+            .is_some_and(|(body, header)| body != header)
+    {
+        return Err(ServerError::BadRequest(
+            "organizing Space conflicts with connection lock".into(),
+        ));
+    }
+    let explicit_organize_space = req
+        .organize_run_id
+        .as_ref()
+        .and(req.organize_space.as_deref());
+    let scope =
+        crate::read_scope::effective_read_scope(&db, explicit_organize_space, header_space).await?;
     // A note id in the source list is a mistake the agent can fix right now:
     // say which field takes notes.
     crate::page_basis_routes::refuse_note_ids_in_sources(&db, &scope, &req.source_memory_ids)
@@ -2099,6 +2142,13 @@ async fn handle_refresh_page_inner(
     // directly. The page prose stays byte-unchanged until the human accepts a
     // card. The core gate re-runs the same rule inside its CAS loop, which
     // still stages a card if the page turns human-owned mid-write.
+    let research_write = match req.organize_run_id.as_deref() {
+        Some(run) => Some(
+            db.prepare_research_write(run, &scope, Some(&id), &req.source_memory_ids)
+                .await?,
+        ),
+        None => None,
+    };
     let requires_review = wenlan_core::post_write::machine_write_requires_review(
         wenlan_core::post_write::Writer::classify("agent_refresh"),
         &existing,
@@ -2122,8 +2172,14 @@ async fn handle_refresh_page_inner(
         .map(|space| wenlan_core::read_scope::ReadScope::Space(space.to_string()))
         .unwrap_or(wenlan_core::read_scope::ReadScope::Uncategorized);
     let space_guard = Some(citation_scope.clone());
-    let (checked_citations, citation_snapshots) =
-        check_write_citations(&db, &req.content, &req.source_memory_ids, &citation_scope).await?;
+    let (checked_citations, citation_snapshots) = check_write_citations(
+        &db,
+        &req.content,
+        &req.source_memory_ids,
+        &citation_scope,
+        &req.citation_targets,
+    )
+    .await?;
     let citations_summary = checked_citations.as_ref().map(|(_, _, s)| s.clone());
     let citations = checked_citations.map(|(body, json, summary)| {
         req.content = body;
@@ -2132,6 +2188,7 @@ async fn handle_refresh_page_inner(
     // A locked page whose write only changes sentences it already has goes
     // to the core gate, which turns each change into a sentence proposal.
     let lock_proposes = citation_snapshots.is_empty()
+        && research_write.is_none()
         && existing.review_required
         && wenlan_core::sentences::locked_write_only_changes_sentences(
             &db,
@@ -2147,7 +2204,7 @@ async fn handle_refresh_page_inner(
             .prepare_staged_basis_marks(&id, &basis_marks)
             .await
             .map_err(crate::page_basis_routes::basis_error)?;
-        let result = wenlan_core::post_write::stage_page_revision_card_with_citation_snapshot(
+        let result = wenlan_core::post_write::stage_page_revision_card_with_citations(
             &db,
             &existing,
             &req.content,
@@ -2159,6 +2216,8 @@ async fn handle_refresh_page_inner(
             &staged_marks,
             space_guard.as_ref(),
             &citation_snapshots,
+            citations.as_ref().map(|(json, _)| json.as_str()),
+            research_write.as_ref(),
         )
         .await;
         let result = match result {
@@ -2196,6 +2255,7 @@ async fn handle_refresh_page_inner(
         &db,
         wenlan_core::post_write::PageWrite::AgentUpdate {
             basis: wenlan_core::db::BasisWrite {
+                research_write: research_write.clone(),
                 citation_snapshots: Vec::new(),
                 minor: req.minor.unwrap_or(false),
                 actor: proposer.unwrap_or("unknown").to_string(),
@@ -2240,6 +2300,12 @@ async fn handle_refresh_page_inner(
             .map(|page| page.version)
             .unwrap_or(existing.version);
         return Err(page_moved_conflict(&id, current_version));
+    }
+    if result.outcome == WriteOutcome::Unchanged {
+        if let Some(fence) = &research_write {
+            db.bind_research_unchanged(fence, &id, &req.source_memory_ids, existing.version)
+                .await?;
+        }
     }
     // Metadata follows the canonical result, never a rejected/staged candidate.
     if matches!(

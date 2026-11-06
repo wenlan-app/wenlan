@@ -274,12 +274,15 @@ fn manifest_counts_match_the_spec() {
     // Then 279 after GET `/api/things/points` (night points for the big map).
     // Then 281 after POST `/api/things/points/connect` and `/connect/undo`
     // (one-time old night-point links; counts only).
+    // Research adds 22 exact HTTP routes (19 source/run/decision readers and
+    // receipts, plus three Page-bearing version-export routes) and five MCP
+    // tools. Declaration/handler inventory tests independently check the set.
     assert_eq!(
         HTTP_READERS.len(),
-        281,
+        303,
         "registered (method, path, handler) triples"
     );
-    assert_eq!(MCP_READERS.len(), 46, "#[tool( declarations");
+    assert_eq!(MCP_READERS.len(), 51, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -287,7 +290,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        293,
+        315,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -295,7 +298,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        276,
+        298,
         "main builder entries"
     );
     assert_eq!(
@@ -313,7 +316,7 @@ fn manifest_counts_match_the_spec() {
         .count();
     // +2: the in-chat check (two routes). +1: GET `/api/things/{id}` (the
     // titles of its conversations' pages).
-    assert_eq!(bearing, 94, "page-bearing HTTP routes");
+    assert_eq!(bearing, 97, "page-bearing HTTP routes");
 }
 
 #[test]

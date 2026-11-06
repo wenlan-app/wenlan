@@ -71,3 +71,7 @@
   .pdf-reader-navigation { overflow-x: auto; scrollbar-width: none; }
   .pdf-reader-navigation::-webkit-scrollbar { display: none; }
 }
+
+.wenlan-pdf-overlays { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.wenlan-pdf-annotation, .wenlan-pdf-quote { position: absolute; opacity: .3; }
+.wenlan-pdf-quote { background: #3498db; }

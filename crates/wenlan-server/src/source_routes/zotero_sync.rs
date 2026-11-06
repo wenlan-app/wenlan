@@ -22,6 +22,9 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::RwLock;
+use wenlan_types::zotero::{ZoteroDisconnectPreview, ZoteroRegistrationIdentity};
+
+pub(super) static ZOTERO_MUTATION_LANE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 use wenlan_core::{
     config,
     sources::{
@@ -34,7 +37,8 @@ use wenlan_core::{
 use wenlan_types::{
     zotero::{
         AddZoteroSourceRequest, ZoteroAttachmentResponse, ZoteroCollectionSummary,
-        ZoteroCollectionsResponse, ZoteroDocumentResponse,
+        ZoteroCollectionsResponse, ZoteroDocumentResponse, ZoteroItemSummary, ZoteroItemsResponse,
+        ZoteroPdfAnnotation, ZoteroPdfPageResponse,
     },
     RawDocument, SourceType, SyncStatus, WriteSpaceTarget,
 };
@@ -115,11 +119,178 @@ pub async fn handle_list_collections(
     }))
 }
 
+const MAX_SELECTED_ITEMS: usize = 1000;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ZoteroItemsQuery {
+    collection_key: String,
+    expected_server_id: String,
+}
+
+pub async fn handle_list_items(
+    client: Option<Extension<ZoteroClient>>,
+    Query(query): Query<ZoteroItemsQuery>,
+) -> Result<Json<ZoteroItemsResponse>, ServerError> {
+    let mut client = match client {
+        Some(Extension(client)) => client,
+        None => ZoteroClient::with_server_id(Some(query.expected_server_id.clone()))
+            .map_err(|e| ServerError::Upstream(e.to_string()))?,
+    };
+    Ok(Json(
+        list_selectable_items(
+            &mut client,
+            &query.collection_key,
+            &query.expected_server_id,
+        )
+        .await?,
+    ))
+}
+
+fn is_selectable_item(item: &ZoteroItem) -> bool {
+    item.data.parent_item.is_none()
+        && !matches!(
+            item.data.item_type.as_str(),
+            "attachment" | "note" | "annotation"
+        )
+}
+
+fn canonical_item_keys(keys: &[String]) -> Result<Vec<String>, ServerError> {
+    if keys.is_empty()
+        || keys.len() > MAX_SELECTED_ITEMS
+        || keys.iter().any(|key| {
+            key.len() != 8
+                || !key
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        })
+    {
+        return Err(ServerError::ValidationError(
+            "Zotero item selection must contain 1..=1000 exact eight-character uppercase item keys"
+                .into(),
+        ));
+    }
+    let mut keys = keys.to_vec();
+    keys.sort();
+    keys.dedup();
+    Ok(keys)
+}
+
+fn validate_listed_item(item: &ZoteroItem, collection_key: &str) -> Result<(), ServerError> {
+    canonical_item_keys(std::slice::from_ref(&item.key))?;
+    if item.data.item_type.trim().is_empty()
+        || item
+            .data
+            .extra
+            .get("key")
+            .is_some_and(|key| key.as_str() != Some(item.key.as_str()))
+    {
+        return Err(ServerError::Upstream(
+            "Zotero item listing contained malformed or conflicting identities".into(),
+        ));
+    }
+    if let Some(collections) = item.data.extra.get("collections") {
+        if collections.as_array().is_none_or(|values| {
+            !values
+                .iter()
+                .any(|value| value.as_str() == Some(collection_key))
+        }) {
+            return Err(ServerError::Upstream(
+                "Zotero item listing contained an item outside the registered collection".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn list_selectable_items<C: ZoteroApi>(
+    client: &mut C,
+    collection_key: &str,
+    expected_server: &str,
+) -> Result<ZoteroItemsResponse, ServerError> {
+    validate_collection_key(collection_key)?;
+    if expected_server.trim().is_empty()
+        || client.server_id().is_some_and(|id| id != expected_server)
+    {
+        return Err(ServerError::Upstream(
+            "Zotero server identity does not match the reviewed connection".into(),
+        ));
+    }
+    let collections = client
+        .list_collections()
+        .await
+        .map_err(|e| ServerError::Upstream(e.to_string()))?;
+    if !collections.complete || !collections.items.iter().any(|c| c.key == collection_key) {
+        return Err(ServerError::Upstream(
+            "Zotero collection is unavailable or listing was incomplete".into(),
+        ));
+    }
+    let page = client
+        .collection_items(collection_key)
+        .await
+        .map_err(|e| ServerError::Upstream(e.to_string()))?;
+    if !page.complete || client.server_id() != Some(expected_server) {
+        return Err(ServerError::Upstream(
+            "Zotero item listing was incomplete or server identity changed".into(),
+        ));
+    }
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    for item in page.items.into_iter().filter(is_selectable_item) {
+        validate_listed_item(&item, collection_key)?;
+        if !seen.insert(item.key.clone()) {
+            return Err(ServerError::Upstream(
+                "Zotero item listing contained duplicate identities".into(),
+            ));
+        }
+        items.push(ZoteroItemSummary {
+            key: item.key,
+            title: item.data.title,
+            item_type: item.data.item_type,
+        });
+    }
+    items.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(ZoteroItemsResponse {
+        server_id: expected_server.to_owned(),
+        collection_key: collection_key.to_owned(),
+        items,
+        complete: true,
+    })
+}
+
+async fn validate_selection<C: ZoteroApi>(
+    client: &mut C,
+    collection: &str,
+    expected_server: &str,
+    keys: &[String],
+) -> Result<Vec<String>, ServerError> {
+    let keys = canonical_item_keys(keys)?;
+    let listed = list_selectable_items(client, collection, expected_server).await?;
+    if keys
+        .iter()
+        .any(|key| !listed.items.iter().any(|item| &item.key == key))
+    {
+        return Err(ServerError::ValidationError("Zotero selection contains an item no longer present in the reviewed collection; reload its article list".into()));
+    }
+    Ok(keys)
+}
+
 pub async fn handle_add_source(
     State(state): State<Arc<RwLock<ServerState>>>,
     Json(body): Json<AddZoteroSourceRequest>,
 ) -> Result<Json<Source>, ServerError> {
     validate_collection_key(&body.collection_key)?;
+    if let Some(keys) = &body.item_keys {
+        canonical_item_keys(keys)?;
+        if body
+            .expected_server_id
+            .as_deref()
+            .is_none_or(|id| id.trim().is_empty())
+        {
+            return Err(ServerError::ValidationError(
+                "A selected article import requires the reviewed Zotero server identity".into(),
+            ));
+        }
+    }
     let requested_space = body.space.trim();
     if requested_space.is_empty() {
         return Err(ServerError::ValidationError(
@@ -166,7 +337,20 @@ pub async fn handle_add_source(
         ServerError::ValidationError("Choose a registered destination Space".into())
     })?;
 
-    let locator = locator(&server_id, &body.collection_key);
+    let item_keys = match body.item_keys.as_deref() {
+        Some(keys) => Some(
+            validate_selection(
+                &mut client,
+                &body.collection_key,
+                server_id.as_deref().expect("checked stable identity"),
+                keys,
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let locator = scoped_locator(&server_id, &body.collection_key, item_keys.as_deref());
+    let _mutation = ZOTERO_MUTATION_LANE.lock().await;
     let snapshot = config::load_config();
     if let Some(existing) = snapshot.sources.iter().find(|source| {
         source.source_type == SourceType::Zotero
@@ -180,17 +364,18 @@ pub async fn handle_add_source(
     hasher.update(space_name.as_bytes());
     let space_hash = format!("{:x}", hasher.finalize());
     let base_id = format!(
-        "zotero-{}-{}",
+        "zotero-{}-{}-{}",
         wenlan_core::export::obsidian::slugify(&collection.data.name),
-        &space_hash[..10]
+        &space_hash[..10],
+        uuid::Uuid::new_v4().simple()
     );
-    let source = config::update_config(|config| {
+    let (source, created) = config::update_config(|config| {
         if let Some(existing) = config.sources.iter().find(|source| {
             source.source_type == SourceType::Zotero
                 && source.path == std::path::Path::new(&locator)
                 && source.space.as_deref() == Some(space_name.as_str())
         }) {
-            return Ok(existing.clone());
+            return Ok((existing.clone(), false));
         }
         let mut id = base_id.clone();
         let mut suffix = 2;
@@ -213,15 +398,27 @@ pub async fn handle_add_source(
             waiting_files: 0,
         };
         config.sources.push(source.clone());
-        Ok(source)
+        Ok((source, true))
     })?;
+    let identity = registration_identity(&db, &source).await?;
+    if created {
+        db.bind_zotero_registration(&identity).await?;
+    } else {
+        db.bind_zotero_registration_baseline(&identity).await?;
+    }
     Ok(Json(source))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub(crate) struct ZoteroDocumentQuery {
     source_id: String,
     space: Option<String>,
+    #[serde(default)]
+    attachment_key: Option<String>,
+    #[serde(default)]
+    expected_digest: Option<String>,
+    #[serde(default)]
+    allow_retained: bool,
 }
 
 pub async fn handle_get_document(
@@ -231,21 +428,35 @@ pub async fn handle_get_document(
 ) -> Result<(HeaderMap, Json<ZoteroDocumentResponse>), ServerError> {
     let (sidecar, selected_space) =
         authorized_document(&state, &query, header_space.as_deref()).await?;
-    let current = sidecar.current.ok_or_else(|| {
-        ServerError::NotFound(format!("Zotero document not found: {}", query.source_id))
-    })?;
-    if current.source_id != query.source_id {
-        return Err(ServerError::NotFound(format!(
-            "Zotero document not found: {}",
-            query.source_id
-        )));
-    }
+    let (current, historical) = selected_pdf_generation(
+        &sidecar,
+        query.attachment_key.as_deref(),
+        query.expected_digest.as_deref(),
+        query.allow_retained,
+    )?;
+    let current = current.clone();
+    let registered_source_id = current.import_registration.as_ref().and_then(|provenance| {
+        config::load_config()
+            .sources
+            .into_iter()
+            .find(|source| {
+                source.id == provenance.id
+                    && source.source_type == SourceType::Zotero
+                    && source.path == std::path::Path::new(&provenance.locator)
+                    && source.space == current.space
+                    && parse_locator(&source.path)
+                        .ok()
+                        .is_some_and(|locator| locator.server_id == current.server_id)
+            })
+            .map(|source| source.id)
+    });
     let attachments = current
         .attachments
         .iter()
         .map(|attachment| ZoteroAttachmentResponse {
             key: attachment.key.clone(),
             title: attachment.title.clone(),
+            pdf_digest: attachment.cached_pdf_hash.clone(),
             available: attachment
                 .cached_pdf_hash
                 .as_deref()
@@ -255,13 +466,153 @@ pub async fn handle_get_document(
     Ok((
         source_scope_headers(&selected_space)?,
         Json(ZoteroDocumentResponse {
+            historical,
             source_id: current.source_id,
             title: current.title,
             attachments,
             bibtex: current.bibtex,
             warnings: current.warnings,
+            annotations: current.annotations,
+            source_url: current
+                .bibliography
+                .get("url")
+                .and_then(|url| safe_public_url(url)),
+            registered_source_id,
         }),
     ))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct PdfPageQuery {
+    source_id: String,
+    attachment_key: String,
+    space: Option<String>,
+    page: u32,
+}
+
+pub async fn handle_get_pdf_page(
+    State(state): State<SharedState>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Query(query): Query<PdfPageQuery>,
+) -> Result<(HeaderMap, Json<ZoteroPdfPageResponse>), ServerError> {
+    let (history, selected_space) = authorized_document(
+        &state,
+        &ZoteroDocumentQuery {
+            source_id: query.source_id.clone(),
+            space: query.space,
+            ..Default::default()
+        },
+        header_space.as_deref(),
+    )
+    .await?;
+    let current = history
+        .current
+        .ok_or_else(|| ServerError::NotFound("Zotero document missing".into()))?;
+    let attachment = current
+        .attachments
+        .iter()
+        .find(|a| a.key == query.attachment_key)
+        .ok_or_else(|| ServerError::NotFound("Zotero attachment missing".into()))?;
+    let hash = attachment
+        .cached_pdf_hash
+        .as_ref()
+        .ok_or_else(|| ServerError::NotFound("Zotero PDF not cached".into()))?;
+    let bytes = read_cached_pdf(hash)
+        .await?
+        .ok_or_else(|| ServerError::NotFound("Zotero PDF not cached".into()))?;
+    let (text, page_count) = tokio::task::spawn_blocking(move || {
+        wenlan_core::sources::directory::extract_pdf_page(&bytes, query.page)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))?
+    .map_err(ServerError::ValidationError)?;
+    // Never return a prefix as a complete page: callers can choose a smaller page or report coverage.
+    if text.chars().count() > 64_000 {
+        return Err(ServerError::ValidationError(
+            "PDF page exceeds 64000 character read bound".into(),
+        ));
+    }
+    Ok((
+        source_scope_headers(&selected_space)?,
+        Json(ZoteroPdfPageResponse {
+            source_lifecycle: {
+                let db = {
+                    state
+                        .read()
+                        .await
+                        .db
+                        .clone()
+                        .ok_or(ServerError::DbNotInitialized)?
+                };
+                db.source_lifecycle_summary(Some(&selected_space), "file", &query.source_id)
+                    .await?
+            },
+            source_id: query.source_id,
+            attachment_key: query.attachment_key,
+            pdf_digest: hash.clone(),
+            page: query.page,
+            page_count,
+            text,
+            extraction_complete: true,
+        }),
+    ))
+}
+
+/// Validate immutable PDF identities before a page or proposal is stored.
+/// A later sync may replace the current attachment; this target still names the exact old bytes.
+pub(crate) async fn attach_pdf_targets(
+    citations_json: &mut String,
+    targets: &[wenlan_types::pages::PdfCitationInput],
+    source_ids: &[String],
+    scope: &wenlan_core::read_scope::ReadScope,
+) -> Result<(), ServerError> {
+    if targets.len() > 256 {
+        return Err(ServerError::ValidationError(
+            "too many PDF citation targets".into(),
+        ));
+    }
+    let mut citations: Vec<wenlan_types::pages::PageCitation> =
+        serde_json::from_str(citations_json).map_err(|e| ServerError::Internal(e.to_string()))?;
+    let mut seen = HashSet::new();
+    for input in targets {
+        let fail = || {
+            ServerError::ValidationError("invalid_pdf_target: occurrence, source, attachment, digest, page or exact quote does not match".into())
+        };
+        if !seen.insert(input.occurrence) {
+            return Err(fail());
+        }
+        let citation = citations
+            .iter_mut()
+            .find(|c| c.occurrence == input.occurrence)
+            .ok_or_else(fail)?;
+        if citation.source_kind != "memory" || !source_ids.contains(&citation.locator) {
+            return Err(fail());
+        }
+        let target = &input.target;
+        if target.quote.trim().is_empty()
+            || target.quote.len() > 16_000
+            || target.pdf_digest.len() != 64
+        {
+            return Err(fail());
+        }
+        let current = read_current_sidecar(&citation.locator)
+            .map_err(|_| fail())?
+            .ok_or_else(fail)?;
+        if !scope_matches_space(scope, current.space.as_deref()) {
+            return Err(fail());
+        }
+        if !current.attachments.iter().any(|a| {
+            a.key == target.attachment_key
+                && a.cached_pdf_hash.as_deref() == Some(&target.pdf_digest)
+        }) {
+            return Err(fail());
+        }
+        citation.pdf_target = Some(target.clone());
+    }
+    wenlan_core::pdf_citations::validate_pdf_targets(&citations, scope).await?;
+    *citations_json =
+        serde_json::to_string(&citations).map_err(|e| ServerError::Internal(e.to_string()))?;
+    Ok(())
 }
 
 pub async fn handle_get_pdf(
@@ -272,15 +623,19 @@ pub async fn handle_get_pdf(
     let document_query = ZoteroDocumentQuery {
         source_id: query.source_id.clone(),
         space: query.space.clone(),
+        ..Default::default()
     };
     let (sidecar, selected_space) =
         authorized_document(&state, &document_query, header_space.as_deref()).await?;
-    let current = sidecar.current.ok_or_else(|| {
-        ServerError::NotFound(format!("Zotero document not found: {}", query.source_id))
-    })?;
-    if current.source_id != query.source_id {
-        return Err(ServerError::NotFound("Zotero document not found".into()));
-    }
+    let (current, historical) = selected_pdf_generation(
+        &sidecar,
+        query
+            .expected_digest
+            .as_ref()
+            .map(|_| query.attachment_key.as_str()),
+        query.expected_digest.as_deref(),
+        query.allow_retained,
+    )?;
     let attachment = current
         .attachments
         .iter()
@@ -301,14 +656,81 @@ pub async fn handle_get_pdf(
         HeaderValue::from_static("application/pdf"),
     );
     headers.insert(header::CONTENT_DISPOSITION, filename);
+    headers.insert(
+        "x-wenlan-pdf-digest",
+        HeaderValue::from_str(hash).map_err(|e| ServerError::Internal(e.to_string()))?,
+    );
+    headers.insert(
+        "x-wenlan-pdf-generation",
+        HeaderValue::from_static(if historical { "retained" } else { "current" }),
+    );
     Ok((headers, bytes))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub(crate) struct PdfQuery {
+    #[serde(default)]
+    allow_retained: bool,
+    #[serde(default)]
+    expected_digest: Option<String>,
     source_id: String,
     attachment_key: String,
     space: Option<String>,
+}
+
+/// Authorization always comes from the live exact source in `authorized_document`.
+/// A hash selects retained bytes only when immutable metadata binds it to that
+/// same source, Space, server, item and attachment; the cache itself grants no access.
+fn selected_pdf_generation<'a>(
+    history: &'a ZoteroSidecarHistory,
+    attachment_key: Option<&str>,
+    expected_digest: Option<&str>,
+    allow_retained: bool,
+) -> Result<(&'a ZoteroDocumentSidecar, bool), ServerError> {
+    let current = history
+        .current
+        .as_ref()
+        .ok_or_else(|| ServerError::NotFound("Zotero document not found".into()))?;
+    if expected_digest.is_none() {
+        if allow_retained || attachment_key.is_some() {
+            return Err(ServerError::BadRequest(
+                "retained PDF selection requires an exact attachment and digest".into(),
+            ));
+        }
+        return Ok((current, false));
+    }
+    let expected = expected_digest.unwrap();
+    let key = attachment_key
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| {
+            ServerError::BadRequest("expected PDF digest requires an attachment key".into())
+        })?;
+    if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(ServerError::BadRequest(
+            "invalid expected PDF digest".into(),
+        ));
+    }
+    let matches = |generation: &ZoteroDocumentSidecar| {
+        generation
+            .attachments
+            .iter()
+            .any(|a| a.key == key && a.cached_pdf_hash.as_deref() == Some(expected))
+    };
+    if matches(current) {
+        return Ok((current, false));
+    }
+    if allow_retained {
+        if let Some(retained) = history.snapshots.iter().rev().find(|old| {
+            old.source_id == current.source_id
+                && old.space == current.space
+                && old.server_id == current.server_id
+                && old.item_key == current.item_key
+                && matches(old)
+        }) {
+            return Ok((retained, true));
+        }
+    }
+    Err(ServerError::Conflict("zotero_pdf_stale: requested PDF generation is not available for this source and attachment; reload or retain the original citation".into()))
 }
 
 async fn authorized_document(
@@ -430,11 +852,165 @@ async fn read_cached_pdf(hash: &str) -> Result<Option<Vec<u8>>, ServerError> {
     Ok(Some(bytes))
 }
 
+fn fence_registration(source: &Source) -> Result<(), ServerError> {
+    config::update_config(|config| {
+        super::require_unambiguous_source(config, &source.id)?;
+        if !config.sources.iter().any(|s| {
+            s.id == source.id
+                && s.path == source.path
+                && s.space == source.space
+                && s.source_type == SourceType::Zotero
+        }) {
+            return Err(wenlan_core::WenlanError::Conflict(
+                "Zotero registration changed; reload Sources".into(),
+            ));
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+async fn registration_identity(
+    db: &wenlan_core::db::MemoryDB,
+    source: &Source,
+) -> Result<ZoteroRegistrationIdentity, ServerError> {
+    let identity = disconnect_identity(db, source).await?;
+    if identity.server_id.is_empty() {
+        return Err(ServerError::ValidationError(
+            "Reconnect this legacy Zotero source to bind a stable server identity before syncing"
+                .into(),
+        ));
+    }
+    Ok(identity)
+}
+
+async fn disconnect_identity(
+    db: &wenlan_core::db::MemoryDB,
+    source: &Source,
+) -> Result<ZoteroRegistrationIdentity, ServerError> {
+    let selected = parse_locator(&source.path)?;
+    let server_id = selected.server_id.unwrap_or_default();
+    let space = source
+        .space
+        .as_deref()
+        .ok_or_else(|| ServerError::ValidationError("Zotero destination Space missing".into()))?;
+    let resolved = db
+        .resolve_write_space(&WriteSpaceTarget::Named(space.to_owned()), None)
+        .await?;
+    Ok(ZoteroRegistrationIdentity {
+        registration_id: source.id.clone(),
+        locator: source
+            .path
+            .to_str()
+            .ok_or_else(|| ServerError::ValidationError("Zotero locator is not UTF-8".into()))?
+            .into(),
+        server_id,
+        space_id: resolved.space_id.ok_or_else(|| {
+            ServerError::ValidationError("Zotero destination Space missing".into())
+        })?,
+    })
+}
+
+pub async fn handle_disconnect_preview(
+    State(state): State<SharedState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<ZoteroDisconnectPreview>, ServerError> {
+    let _lane = ZOTERO_MUTATION_LANE.lock().await;
+    let db = {
+        state
+            .read()
+            .await
+            .db
+            .clone()
+            .ok_or(ServerError::DbNotInitialized)?
+    };
+    let config = config::load_config();
+    super::require_unambiguous_source(&config, &id)?;
+    let identity = if let Some(source) = config
+        .sources
+        .iter()
+        .find(|s| s.id == id && s.source_type == SourceType::Zotero)
+    {
+        disconnect_identity(&db, source).await?
+    } else {
+        db.zotero_retained_registration(&id)
+            .await?
+            .ok_or_else(|| ServerError::NotFound("Zotero registration not found".into()))?
+    };
+    Ok(Json(db.zotero_disconnect_preview(&identity).await?))
+}
+
+pub(super) async fn disconnect_source(
+    db: Arc<wenlan_core::db::MemoryDB>,
+    id: &str,
+    expected: Option<(u64, &str)>,
+) -> Result<(), ServerError> {
+    let _lane = ZOTERO_MUTATION_LANE.lock().await;
+    let config = config::load_config();
+    super::require_unambiguous_source(&config, id)?;
+    let source = config.sources.iter().find(|s| s.id == id).cloned();
+    if source
+        .as_ref()
+        .is_some_and(|s| s.source_type != SourceType::Zotero)
+    {
+        return Err(ServerError::Conflict(
+            "Zotero disconnect cannot remove a registration whose source type changed".into(),
+        ));
+    }
+    let identity = if let Some(source) = &source {
+        disconnect_identity(&db, source).await?
+    } else {
+        db.zotero_retained_registration(id)
+            .await?
+            .ok_or_else(|| ServerError::NotFound("Zotero registration not found".into()))?
+    };
+    if let Some(expected) = expected {
+        let current = db.zotero_disconnect_preview(&identity).await?;
+        if expected.0 != current.revision || expected.1 != current.identity_digest {
+            return Err(ServerError::Conflict(
+                "Zotero disconnect impact changed; reload its preview before disconnecting".into(),
+            ));
+        }
+    }
+    // Legacy/new unsynchronized registrations start with an empty positive-import baseline.
+    // Existing pending intents must remain retryable, so bind only when not pending/done.
+    let prior = db.zotero_disconnect_preview(&identity).await?;
+    if !prior.pending_disconnect && !prior.disconnected {
+        db.bind_zotero_registration_baseline(&identity).await?;
+    }
+    db.begin_zotero_disconnect(&identity).await?;
+    config::update_config(|config| {
+        super::require_unambiguous_source(config, id)?;
+        if let Some(stored) = config.sources.iter().find(|s| s.id == id) {
+            if source.as_ref().is_none_or(|old| {
+                stored.path != old.path
+                    || stored.space != old.space
+                    || stored.source_type != SourceType::Zotero
+            }) {
+                return Err(wenlan_core::WenlanError::Conflict(
+                    "Zotero disconnect pending: registration changed; reload Sources".into(),
+                ));
+            }
+        }
+        config.sources.retain(|s| s.id != id);
+        Ok(())
+    })
+    .map_err(|e| {
+        ServerError::Internal(format!("Zotero disconnect pending; retry disconnect: {e}"))
+    })?;
+    db.finish_zotero_disconnect(&identity).await.map_err(|e| {
+        ServerError::Internal(format!(
+            "Zotero sync disabled; impact finalization pending; retry disconnect: {e}"
+        ))
+    })?;
+    Ok(())
+}
+
 pub(crate) async fn sync_source(
     db: Arc<wenlan_core::db::MemoryDB>,
     source: &Source,
 ) -> Result<SyncStatsResponse, ServerError> {
-    let (expected_server_id, _) = parse_locator(&source.path)?;
+    let expected_server_id = parse_locator(&source.path)?.server_id;
     let mut client = ZoteroClient::with_server_id(expected_server_id)
         .map_err(|e| ServerError::Upstream(e.to_string()))?;
     sync_source_with_client(db, source, &mut client).await
@@ -445,12 +1021,13 @@ async fn sync_source_with_client<C: ZoteroApi>(
     source: &Source,
     client: &mut C,
 ) -> Result<SyncStatsResponse, ServerError> {
-    static SYNC_LANE: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    let _sync_guard = SYNC_LANE
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await;
-    let (expected_server_id, collection_key) = parse_locator(&source.path)?;
+    let _sync_guard = ZOTERO_MUTATION_LANE.lock().await;
+    fence_registration(source)?;
+    let identity = registration_identity(&db, source).await?;
+    db.bind_zotero_registration_baseline(&identity).await?;
+    let selection = parse_locator(&source.path)?;
+    let expected_server_id = selection.server_id;
+    let collection_key = selection.collection_key;
     if expected_server_id
         .as_deref()
         .is_some_and(|expected| client.server_id() != Some(expected))
@@ -484,22 +1061,67 @@ async fn sync_source_with_client<C: ZoteroApi>(
             "Zotero collection {collection_key} is unavailable or the listing was incomplete"
         )));
     }
-    let item_page = client
+    let mut item_page = client
         .collection_items(&collection_key)
         .await
         .map_err(|e| ServerError::Upstream(e.to_string()))?;
-    if !item_page.complete {
+    if !item_page.complete
+        || expected_server_id
+            .as_deref()
+            .is_some_and(|id| client.server_id() != Some(id))
+    {
         return Err(ServerError::Upstream(
             "Zotero item listing was incomplete; no documents were changed".into(),
         ));
     }
 
+    let mut listed = std::collections::BTreeSet::new();
+    for item in item_page
+        .items
+        .iter()
+        .filter(|item| is_selectable_item(item))
+    {
+        validate_listed_item(item, &collection_key)?;
+        if !listed.insert(item.key.clone()) {
+            return Err(ServerError::Upstream(
+                "Zotero item listing contained duplicate identities".into(),
+            ));
+        }
+    }
+    fence_registration(source)?;
+    db.observe_zotero_selection(&identity, &listed, &std::collections::BTreeMap::new())
+        .await?;
+
+    let missing_selected: Vec<String> = selection
+        .item_keys
+        .as_ref()
+        .map(|keys| {
+            keys.iter()
+                .filter(|key| {
+                    !item_page
+                        .items
+                        .iter()
+                        .any(|item| &item.key == *key && is_selectable_item(item))
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(keys) = &selection.item_keys {
+        item_page
+            .items
+            .retain(|item| keys.binary_search(&item.key).is_ok() && is_selectable_item(item));
+    }
     let mut documents = Vec::new();
     let mut sync_receipts = Vec::new();
     let mut sidecars = Vec::new();
     let mut skipped_files = Vec::new();
     let mut errors = 0usize;
     let mut seen = HashSet::new();
+    for key in &missing_selected {
+        errors += 1;
+        add_skipped(&mut skipped_files,key,key,"Selected Zotero item is missing from the collection; kept any prior document and human classification");
+    }
     let write_scope = wenlan_core::read_scope::ReadScope::Space(
         write_space
             .space_name
@@ -510,6 +1132,17 @@ async fn sync_source_with_client<C: ZoteroApi>(
     // this collection in its destination Space. Two collection sources can
     // share the same canonical item ID without double-counting that item here.
     let mut indexed_source_ids = HashSet::new();
+    for key in &missing_selected {
+        let source_id =
+            canonical_source_id(client.server_id(), key, write_space.space_id.as_deref());
+        if db
+            .get_chunks_scoped(&source_id, &write_scope)
+            .await?
+            .is_some_and(|chunks| !chunks.is_empty())
+        {
+            indexed_source_ids.insert(source_id);
+        }
+    }
     for item in item_page
         .items
         .iter()
@@ -536,6 +1169,7 @@ async fn sync_source_with_client<C: ZoteroApi>(
             Ok(prepared) => {
                 let transient_fulltext_error = prepared.transient_fulltext_error;
                 let mut attachment_metadata = prepared.attachment_metadata;
+                let prepared_annotations = prepared.annotations;
                 let prepared_attachments = prepared.attachments;
                 let prepared = prepared.document;
                 if !seen.insert(prepared.key.clone()) {
@@ -578,8 +1212,17 @@ async fn sync_source_with_client<C: ZoteroApi>(
                     write_space.space_name.as_deref(),
                     item,
                 );
+                research.import_registration = Some(ZoteroImportRegistration {
+                    id: source.id.clone(),
+                    locator: source.path.to_string_lossy().into_owned(),
+                });
+                research.annotations = prepared_annotations;
                 let mut cached_pdfs = Vec::new();
+                let mut fresh_pdf_keys = HashSet::new();
                 for attachment in prepared_attachments {
+                    if attachment.pdf_bytes.is_some() {
+                        fresh_pdf_keys.insert(attachment.key.clone());
+                    }
                     let cached_pdf_hash = attachment.pdf_bytes.as_deref().map(sha256_hex);
                     research.attachments.push(ZoteroAttachmentSidecar {
                         key: attachment.key.clone(),
@@ -591,7 +1234,25 @@ async fn sync_source_with_client<C: ZoteroApi>(
                         cached_pdfs.push((hash, bytes));
                     }
                 }
+                research
+                    .annotations
+                    .retain(|annotation| fresh_pdf_keys.contains(&annotation.attachment_key));
                 if let Some(previous) = previous {
+                    // Failed PDF retrieval retains its exact old bytes and old annotations together.
+                    // New annotation coordinates must never be drawn over an unknown older PDF.
+                    research.annotations.extend(
+                        previous
+                            .annotations
+                            .iter()
+                            .filter(|annotation| {
+                                !fresh_pdf_keys.contains(&annotation.attachment_key)
+                                    && research
+                                        .attachments
+                                        .iter()
+                                        .any(|a| a.key == annotation.attachment_key)
+                            })
+                            .cloned(),
+                    );
                     for attachment in &mut research.attachments {
                         if attachment.cached_pdf_hash.is_none() {
                             attachment.cached_pdf_hash = previous
@@ -614,7 +1275,8 @@ async fn sync_source_with_client<C: ZoteroApi>(
                 let hash = prepared_hash(&prepared, &attachment_metadata, item);
                 match db.get_sync_state(&source.id, &prepared.key).await {
                     Ok(Some(old)) if old.content_hash == hash && existing_document => {
-                        sidecars.push((source_id, research, cached_pdfs));
+                        sidecars.push((source_id, research, cached_pdfs, hash.clone()));
+                        sync_receipts.push((prepared.key.clone(), hash.clone()));
                         continue;
                     }
                     Ok(_) => {}
@@ -629,7 +1291,7 @@ async fn sync_source_with_client<C: ZoteroApi>(
                         continue;
                     }
                 }
-                sidecars.push((source_id.clone(), research, cached_pdfs));
+                sidecars.push((source_id.clone(), research, cached_pdfs, hash.clone()));
                 let mut metadata = prepared.metadata;
                 metadata.insert("zotero_item_key".into(), prepared.key.clone());
                 for (key, value) in &item.data.extra {
@@ -674,16 +1336,31 @@ async fn sync_source_with_client<C: ZoteroApi>(
             }
         }
     }
-    let files_found = item_page
-        .items
-        .iter()
-        .filter(|item| item.data.item_type != "attachment" || item.data.parent_item.is_none())
-        .count();
+    let files_found = selection.item_keys.as_ref().map_or_else(
+        || {
+            item_page
+                .items
+                .iter()
+                .filter(|item| {
+                    item.data.item_type != "attachment" || item.data.parent_item.is_none()
+                })
+                .count()
+        },
+        Vec::len,
+    );
     let changed_count = documents.len();
     let changed_source_ids = documents
         .iter()
         .map(|(document, _)| document.source_id.clone())
         .collect::<Vec<_>>();
+    fence_registration(source)?;
+    if registration_identity(&db, source).await? != identity
+        || client.server_id() != Some(identity.server_id.as_str())
+    {
+        return Err(ServerError::ValidationError(
+            "Zotero registration/server/Space changed during sync".into(),
+        ));
+    }
     if changed_count > 0 {
         db.upsert_documents_with_write_spaces(documents).await?;
         indexed_source_ids.extend(changed_source_ids);
@@ -691,7 +1368,17 @@ async fn sync_source_with_client<C: ZoteroApi>(
     let ingested = changed_count;
     // Record only successfully persisted documents. An interrupted or failed
     // fetch never marks an item as complete, so the next manual sync retries.
-    for (source_id, sidecar, cached_pdfs) in sidecars {
+    for (source_id, sidecar, cached_pdfs, import_content_hash) in sidecars {
+        let bibliography = write_space.space_id.clone().map(|space_id| {
+            wenlan_types::page_export::PublishExportBibliography {
+                space_id,
+                source_id: source_id.clone(),
+                import_content_hash,
+                title: sidecar.title.clone(),
+                bibtex: sidecar.bibtex.clone(),
+                url: sidecar.bibliography.get("url").cloned(),
+            }
+        });
         let item_key = sidecar.item_key.clone();
         let item_title = sidecar.title.clone();
         if let Err(error) = write_research_metadata(&source_id, sidecar, cached_pdfs) {
@@ -702,15 +1389,33 @@ async fn sync_source_with_client<C: ZoteroApi>(
                 &item_key,
                 &error.to_string(),
             );
+        } else if let Some(bibliography) = bibliography {
+            if let Err(error) = db.publish_export_bibliography(bibliography).await {
+                errors += 1;
+                add_skipped(
+                    &mut skipped_files,
+                    &item_title,
+                    &item_key,
+                    &error.to_string(),
+                );
+            }
         }
     }
+    let mut imported = std::collections::BTreeMap::new();
     for (key, hash) in sync_receipts {
         db.upsert_sync_state(&source.id, &key, 0, &hash).await?;
+        imported.insert(
+            key.clone(),
+            canonical_source_id(Some(&identity.server_id), &key, Some(&identity.space_id)),
+        );
     }
+    fence_registration(source)?;
+    db.observe_zotero_selection(&identity, &listed, &imported)
+        .await?;
 
     let skipped = files_found.saturating_sub(ingested);
     let detail = (errors > 0).then(|| "zotero_item_errors".to_string());
-    let _ = config::update_config(|config| {
+    config::update_config(|config| {
         if let Some(stored) = config
             .sources
             .iter_mut()
@@ -724,7 +1429,7 @@ async fn sync_source_with_client<C: ZoteroApi>(
             stored.status = SyncStatus::Paused;
         }
         Ok(())
-    });
+    })?;
     Ok(SyncStatsResponse {
         files_found,
         ingested,
@@ -831,8 +1536,17 @@ async fn prepare_item<C: ZoteroApi>(
             all_children.extend(nested.items);
         }
     }
+    let annotations = read_annotations(&all_children, &attachments);
     let fulltext = combine_fulltexts(fulltexts);
     let mut prepared = zotero::prepare_document(item, &all_children, &fulltext);
+    if all_children
+        .iter()
+        .filter(|item| item.data.item_type == "annotation")
+        .count()
+        > annotations.len()
+    {
+        prepared.warnings.push("Some Zotero annotations have unsupported or invalid shapes and are not displayed on the PDF".into());
+    }
     prepared.warnings.extend(pdf_warnings);
     let mut attachment_metadata = HashMap::new();
     if !attachment_keys.is_empty() {
@@ -850,6 +1564,7 @@ async fn prepare_item<C: ZoteroApi>(
         attachment_metadata,
         attachments,
         transient_fulltext_error,
+        annotations,
     })
 }
 
@@ -858,6 +1573,7 @@ struct PreparedZoteroDocument {
     attachment_metadata: std::collections::HashMap<String, String>,
     attachments: Vec<PreparedAttachment>,
     transient_fulltext_error: bool,
+    annotations: Vec<ZoteroPdfAnnotation>,
 }
 
 struct PreparedAttachment {
@@ -867,7 +1583,7 @@ struct PreparedAttachment {
     pdf_bytes: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct ZoteroDocumentSidecar {
     source_id: String,
     space: Option<String>,
@@ -877,8 +1593,18 @@ struct ZoteroDocumentSidecar {
     rendered_content: String,
     bibliography: HashMap<String, String>,
     attachments: Vec<ZoteroAttachmentSidecar>,
+    #[serde(default)]
+    annotations: Vec<ZoteroPdfAnnotation>,
+    #[serde(default)]
+    import_registration: Option<ZoteroImportRegistration>,
     bibtex: String,
     warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ZoteroImportRegistration {
+    id: String,
+    locator: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -894,6 +1620,169 @@ struct ZoteroSidecarHistory {
     current: Option<ZoteroDocumentSidecar>,
     #[serde(default)]
     snapshots: Vec<ZoteroDocumentSidecar>,
+}
+
+fn safe_public_url(value: &str) -> Option<String> {
+    let url = reqwest::Url::parse(value).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return None;
+    }
+    match url.host()? {
+        url::Host::Domain(host) => {
+            let host = host.trim_end_matches('.').to_ascii_lowercase();
+            if !host.contains('.')
+                || [
+                    ".localhost",
+                    ".local",
+                    ".internal",
+                    ".lan",
+                    ".home",
+                    ".test",
+                    ".invalid",
+                ]
+                .iter()
+                .any(|suffix| host.ends_with(suffix))
+            {
+                return None;
+            }
+        }
+        url::Host::Ipv4(ip) => {
+            let o = ip.octets();
+            if ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+                || ip.is_multicast()
+                || o[0] == 0
+                || o[0] >= 240
+                || (o[0] == 100 && (64..=127).contains(&o[1]))
+            {
+                return None;
+            }
+        }
+        url::Host::Ipv6(ip) => {
+            let o = ip.octets();
+            if ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || (o[0] & 0xfe == 0xfc)
+                || (o[0] == 0xfe && o[1] & 0xc0 == 0x80)
+                || ip.to_ipv4_mapped().is_some()
+            {
+                return None;
+            }
+        }
+    }
+    let sensitive = |key: &str| {
+        let key = key.to_ascii_lowercase().replace('-', "_");
+        matches!(
+            key.as_str(),
+            "auth"
+                | "authorization"
+                | "password"
+                | "passwd"
+                | "secret"
+                | "api_key"
+                | "apikey"
+                | "sig"
+                | "signature"
+                | "x_amz_credential"
+                | "x_goog_credential"
+                | "x_amz_signature"
+                | "x_goog_signature"
+        ) || key == "token"
+            || key.ends_with("_token")
+    };
+    if url.query_pairs().any(|(key, _)| sensitive(&key))
+        || url.fragment().is_some_and(|fragment| {
+            url::form_urlencoded::parse(fragment.as_bytes()).any(|(key, _)| sensitive(&key))
+        })
+    {
+        return None;
+    }
+    Some(url.to_string())
+}
+
+fn read_annotations(
+    children: &[ZoteroItem],
+    attachments: &[PreparedAttachment],
+) -> Vec<ZoteroPdfAnnotation> {
+    children
+        .iter()
+        .filter_map(|item| {
+            let data = &item.data;
+            if data.item_type != "annotation"
+                || data.extra.get("annotationType")?.as_str()? != "highlight"
+            {
+                return None;
+            }
+            let parent = data.parent_item.as_ref()?;
+            if !attachments
+                .iter()
+                .any(|a| &a.key == parent && a.content_type.as_deref() == Some("application/pdf"))
+            {
+                return None;
+            }
+            if item.key.len() != 8
+                || !item
+                    .key
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            {
+                return None;
+            }
+            let position = data.annotation_position.as_ref()?;
+            let page_index = u32::try_from(position.get("pageIndex")?.as_u64()?).ok()?;
+            let raw = position.get("rects")?.as_array()?;
+            if raw.is_empty() || raw.len() > 256 {
+                return None;
+            }
+            let mut rects = Vec::new();
+            for rect in raw {
+                let values = rect.as_array()?;
+                if values.len() != 4 {
+                    return None;
+                }
+                let rect = [
+                    values[0].as_f64()?,
+                    values[1].as_f64()?,
+                    values[2].as_f64()?,
+                    values[3].as_f64()?,
+                ];
+                if !rect.iter().all(|n| n.is_finite() && n.abs() <= 1_000_000.0)
+                    || rect[0] >= rect[2]
+                    || rect[1] >= rect[3]
+                {
+                    return None;
+                }
+                rects.push(rect);
+            }
+            let color = data.extra.get("annotationColor")?.as_str()?;
+            if color.len() != 7
+                || !color.starts_with('#')
+                || !color[1..].bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                return None;
+            }
+            if data.annotation_text.len() > 64_000 || data.annotation_comment.len() > 64_000 {
+                return None;
+            }
+            Some(ZoteroPdfAnnotation {
+                key: item.key.clone(),
+                attachment_key: parent.clone(),
+                page_index,
+                rects,
+                text: data.annotation_text.clone(),
+                comment: data.annotation_comment.clone(),
+                color: color.to_owned(),
+            })
+        })
+        .take(5000)
+        .collect()
 }
 
 fn combine_fulltexts(texts: Vec<ZoteroFulltext>) -> ZoteroFulltext {
@@ -950,6 +1839,11 @@ fn prepared_hash(
     item: &ZoteroItem,
 ) -> String {
     let mut hasher = Sha256::new();
+    let bibliography = research_metadata("", document, extra_metadata.clone(), None, None, item);
+    hasher.update(bibliography.title.as_bytes());
+    hasher.update([0xfb]);
+    hasher.update(bibliography.bibtex.as_bytes());
+    hasher.update([0xfc]);
     hasher.update(document.content.as_bytes());
     hasher.update(document.url.as_deref().unwrap_or_default().as_bytes());
     let mut metadata: Vec<_> = document.metadata.iter().collect();
@@ -1000,6 +1894,9 @@ fn research_metadata(
         }
     }
     bibliography.extend(extra_metadata);
+    if !item.data.url.is_empty() {
+        bibliography.insert("url".into(), item.data.url.clone());
+    }
     ZoteroDocumentSidecar {
         source_id: source_id.to_owned(),
         space: space.map(str::to_owned),
@@ -1010,6 +1907,8 @@ fn research_metadata(
         bibtex: bibliography_bibtex(item, &bibliography),
         bibliography,
         attachments: Vec::new(),
+        annotations: Vec::new(),
+        import_registration: None,
         warnings: document.warnings.clone(),
     }
 }
@@ -1268,12 +2167,31 @@ fn locator(server_id: &Option<String>, collection_key: &str) -> String {
     format!("{LOCATOR_PREFIX}/{identity}/users/0/collections/{collection_key}")
 }
 
-fn parse_locator(path: &std::path::Path) -> Result<(Option<String>, String), ServerError> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScopedZoteroLocator {
+    server_id: Option<String>,
+    collection_key: String,
+    item_keys: Option<Vec<String>>,
+}
+
+fn scoped_locator(
+    server_id: &Option<String>,
+    collection_key: &str,
+    keys: Option<&[String]>,
+) -> String {
+    let base = locator(server_id, collection_key);
+    match keys {
+        Some(keys) => format!("{base}/items/{}", keys.join(",")),
+        None => base,
+    }
+}
+
+fn parse_locator(path: &std::path::Path) -> Result<ScopedZoteroLocator, ServerError> {
     let text = path
         .to_str()
         .ok_or_else(|| ServerError::ValidationError("Zotero source locator is not UTF-8".into()))?;
     let parts: Vec<_> = text.split('/').collect();
-    if parts.len() != 6
+    if !matches!(parts.len(), 6 | 8)
         || parts[0] != LOCATOR_PREFIX
         || parts[2] != "users"
         || parts[3] != "0"
@@ -1287,11 +2205,32 @@ fn parse_locator(path: &std::path::Path) -> Result<(Option<String>, String), Ser
     let server_id = if parts[1] == "legacy" {
         None
     } else {
-        Some(unhex(parts[1]).ok_or_else(|| {
+        Some(unhex(parts[1]).filter(|id| !id.is_empty()).ok_or_else(|| {
             ServerError::ValidationError("Zotero source identity is malformed".into())
         })?)
     };
-    Ok((server_id, parts[5].to_owned()))
+    let item_keys = if parts.len() == 8 {
+        if parts[6] != "items" {
+            return Err(ServerError::ValidationError(
+                "Zotero source selection is malformed".into(),
+            ));
+        }
+        let raw: Vec<String> = parts[7].split(',').map(str::to_owned).collect();
+        let canonical = canonical_item_keys(&raw)?;
+        if canonical != raw {
+            return Err(ServerError::ValidationError(
+                "Zotero source selection is not canonical sorted unique keys".into(),
+            ));
+        }
+        Some(canonical)
+    } else {
+        None
+    };
+    Ok(ScopedZoteroLocator {
+        server_id,
+        collection_key: parts[5].to_owned(),
+        item_keys,
+    })
 }
 
 fn summary(collection: ZoteroCollection) -> Result<ZoteroCollectionSummary, ServerError> {
@@ -1362,6 +2301,7 @@ mod tests {
         collection: ZoteroCollection,
         items: Vec<ZoteroItem>,
         fail_children_for: HashSet<String>,
+        incomplete_items: bool,
     }
 
     impl ZoteroApi for FakeZotero {
@@ -1384,11 +2324,14 @@ mod tests {
         {
             let valid = key == self.collection.key;
             let items = self.items.clone();
+            let incomplete = self.incomplete_items;
             async move {
                 if !valid {
                     anyhow::bail!("unexpected collection key")
                 }
-                Ok(page(items))
+                let mut listed = page(items);
+                listed.complete = !incomplete;
+                Ok(listed)
             }
         }
 
@@ -1457,6 +2400,7 @@ mod tests {
     fn fake(items: Vec<ZoteroItem>, fail_children_for: &[&str]) -> FakeZotero {
         FakeZotero {
             identity: Some("test-server".into()),
+            incomplete_items: false,
             collection: ZoteroCollection {
                 key: "COLLECT1".into(),
                 version: Some(1),
@@ -1498,15 +2442,288 @@ mod tests {
     }
 
     #[test]
+    fn public_source_url_preserves_identifiers_but_rejects_local_and_credentials() {
+        assert_eq!(
+            safe_public_url("https://arxiv.org/pdf?id=1234#page=2"),
+            Some("https://arxiv.org/pdf?id=1234#page=2".into())
+        );
+        for value in [
+            "file:///tmp/paper.pdf",
+            "http://127.0.0.1:17889/api/zotero/pdf",
+            "http://[::1]/paper",
+            "https://user:pass@example.org/paper",
+            "https://host.local/paper",
+            "https://example.org/paper?access_token=x",
+            "https://example.org/paper#access_token=x",
+            "https://example.org/paper?X-Amz-Signature=x",
+        ] {
+            assert!(safe_public_url(value).is_none(), "{value}");
+        }
+    }
+
+    #[test]
+    fn annotation_rectangles_come_only_from_authoritative_supported_metadata() {
+        let attachment = PreparedAttachment {
+            key: "ATTACH01".into(),
+            title: "Paper".into(),
+            content_type: Some("application/pdf".into()),
+            pdf_bytes: None,
+        };
+        let raw = serde_json::json!({"key":"ANN00001","version":1,"data":{
+            "itemType":"annotation","parentItem":"ATTACH01","annotationType":"highlight",
+            "annotationText":"Original text","annotationComment":"Human comment","annotationColor":"#ffdd00",
+            "annotationPosition":{"pageIndex":2,"rects":[[10,20,100,40]]}
+        }});
+        let item: ZoteroItem = serde_json::from_value(raw.clone()).unwrap();
+        let annotations = read_annotations(&[item], &[attachment]);
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].page_index, 2);
+        assert_eq!(annotations[0].rects, vec![[10.0, 20.0, 100.0, 40.0]]);
+        for (field, value) in [
+            ("parentItem", serde_json::json!("FOREIGN1")),
+            ("annotationType", serde_json::json!("ink")),
+            ("annotationColor", serde_json::json!("red")),
+            (
+                "annotationPosition",
+                serde_json::json!({"pageIndex":2,"rects":[[10,20,10,40]]}),
+            ),
+        ] {
+            let mut bad = raw.clone();
+            bad["data"][field] = value;
+            let attachment = PreparedAttachment {
+                key: "ATTACH01".into(),
+                title: String::new(),
+                content_type: Some("application/pdf".into()),
+                pdf_bytes: None,
+            };
+            assert!(
+                read_annotations(&[serde_json::from_value(bad).unwrap()], &[attachment]).is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn selected_locator_is_strict_canonical_and_legacy_compatible() {
+        let keys = vec!["ITEM0001".into(), "ITEM0003".into()];
+        let path = scoped_locator(&Some("server/identity".into()), "COLLECT1", Some(&keys));
+        let parsed = parse_locator(std::path::Path::new(&path)).unwrap();
+        assert_eq!(parsed.server_id, Some("server/identity".into()));
+        assert_eq!(parsed.item_keys, Some(keys.clone()));
+        assert!(
+            parse_locator(std::path::Path::new(&locator(&None, "COLLECT1")))
+                .unwrap()
+                .item_keys
+                .is_none()
+        );
+        for suffix in [
+            "/items/",
+            "/items/ITEM0001,ITEM0001",
+            "/items/ITEM0003,ITEM0001",
+            "/items/item0001",
+            "/items/../ITEM0001",
+            "/other/ITEM0001",
+            "/items/ITEM0001/",
+        ] {
+            assert!(
+                parse_locator(std::path::Path::new(&format!(
+                    "{}{suffix}",
+                    locator(&None, "COLLECT1")
+                )))
+                .is_err(),
+                "{suffix}"
+            );
+        }
+        assert_eq!(
+            canonical_item_keys(&["ITEM0003".into(), "ITEM0001".into(), "ITEM0003".into()])
+                .unwrap(),
+            keys
+        );
+        assert!(canonical_item_keys(&[]).is_err());
+        let legacy: AddZoteroSourceRequest = serde_json::from_value(serde_json::json!({"collection_key":"COLLECT1","expected_server_id":"server","space":"Research"})).unwrap();
+        assert!(legacy.item_keys.is_none());
+    }
+
+    #[tokio::test]
+    async fn article_listing_and_registration_selection_reject_foreign_partial_and_changed_server()
+    {
+        let mut nested = article("ITEM0003", "Child", "Text");
+        nested.data.parent_item = Some("ITEM0001".into());
+        let mut note = article("ITEM0004", "Note", "Text");
+        note.data.item_type = "note".into();
+        let mut client = fake(
+            vec![
+                article("ITEM0002", "Second", "Text"),
+                article("ITEM0001", "First", "Text"),
+                nested,
+                note,
+            ],
+            &[],
+        );
+        let listed = list_selectable_items(&mut client, "COLLECT1", "test-server")
+            .await
+            .unwrap();
+        assert!(listed.complete);
+        assert_eq!(
+            listed
+                .items
+                .iter()
+                .map(|i| i.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ITEM0001", "ITEM0002"]
+        );
+        assert!(
+            validate_selection(&mut client, "COLLECT1", "test-server", &["FOREIGN1".into()])
+                .await
+                .is_err()
+        );
+        assert!(
+            list_selectable_items(&mut client, "FOREIGN1", "test-server")
+                .await
+                .is_err()
+        );
+        assert!(
+            list_selectable_items(&mut client, "COLLECT1", "other-server")
+                .await
+                .is_err()
+        );
+        client.incomplete_items = true;
+        assert!(
+            list_selectable_items(&mut client, "COLLECT1", "test-server")
+                .await
+                .is_err()
+        );
+        assert!(
+            validate_selection(&mut client, "COLLECT1", "test-server", &["ITEM0001".into()])
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn selected_sync_filters_preserves_missing_human_tags_and_overlaps_without_duplicate_identity(
+    ) {
+        let _lock = data_dir_lock().await;
+        let _data_root = super::super::tests::DataDirGuard::new();
+        let (db, _db_dir) = super::super::tests::new_test_db().await;
+        db.create_space("Research", None, false).await.unwrap();
+        let mut first = source();
+        first.path = PathBuf::from(scoped_locator(
+            &Some("test-server".into()),
+            "COLLECT1",
+            Some(&["ITEM0001".into()]),
+        ));
+        config::save_config(&config::Config {
+            sources: vec![first.clone()],
+            ..config::Config::default()
+        })
+        .unwrap();
+        let mut client = fake(
+            vec![
+                article("ITEM0001", "First paper", "Original abstract"),
+                article("ITEM0002", "Second paper", "Second abstract"),
+            ],
+            &[],
+        );
+        let result = sync_source_with_client(db.clone(), &first, &mut client)
+            .await
+            .unwrap();
+        assert_eq!(
+            (result.files_found, result.ingested, result.errors),
+            (1, 1, 0)
+        );
+        let space_id = db.get_space("Research").await.unwrap().unwrap().id;
+        let first_id = canonical_source_id(Some("test-server"), "ITEM0001", Some(&space_id));
+        let second_id = canonical_source_id(Some("test-server"), "ITEM0002", Some(&space_id));
+        let scope = ReadScope::Space("Research".into());
+        assert!(db
+            .get_chunks_scoped(&second_id, &scope)
+            .await
+            .unwrap()
+            .is_none());
+        let original = db
+            .get_chunks_scoped(&first_id, &scope)
+            .await
+            .unwrap()
+            .unwrap();
+        db.set_document_tags("file", &first_id, vec!["Human choice".into()])
+            .await
+            .unwrap();
+        client.items.retain(|item| item.key != "ITEM0001");
+        let missing = sync_source_with_client(db.clone(), &first, &mut client)
+            .await
+            .unwrap();
+        assert_eq!(
+            (missing.files_found, missing.ingested, missing.errors),
+            (1, 0, 1)
+        );
+        assert!(missing
+            .skipped_files
+            .iter()
+            .any(|item| item.reason.contains("Selected Zotero item is missing")));
+        assert_eq!(config::load_config().sources[0].memory_count, 1);
+        assert_eq!(
+            db.get_document_tags("file", &first_id).await.unwrap(),
+            vec!["Human choice"]
+        );
+        assert_eq!(
+            db.get_chunks_scoped(&first_id, &scope)
+                .await
+                .unwrap()
+                .unwrap()[0]
+                .content,
+            original[0].content
+        );
+        client
+            .items
+            .push(article("ITEM0001", "First paper", "Original abstract"));
+        let mut overlapping = first.clone();
+        overlapping.id = "second-selection".into();
+        overlapping.path = PathBuf::from(scoped_locator(
+            &Some("test-server".into()),
+            "COLLECT1",
+            Some(&["ITEM0001".into(), "ITEM0002".into()]),
+        ));
+        let overlap = sync_source_with_client(db.clone(), &overlapping, &mut client)
+            .await
+            .unwrap();
+        assert_eq!(overlap.files_found, 2);
+        assert!(db
+            .get_chunks_scoped(&second_id, &scope)
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            db.get_chunks_scoped(&first_id, &scope)
+                .await
+                .unwrap()
+                .unwrap()
+                .len(),
+            original.len()
+        );
+        assert_eq!(
+            db.get_document_tags("file", &first_id).await.unwrap(),
+            vec!["Human choice"]
+        );
+    }
+
+    #[test]
     fn locator_round_trips_server_identity_and_legacy_source() {
         let path = PathBuf::from(locator(&Some("Zotero/7.0".into()), "AB12CD34"));
         assert_eq!(
             parse_locator(&path).unwrap(),
-            (Some("Zotero/7.0".into()), "AB12CD34".into())
+            ScopedZoteroLocator {
+                server_id: Some("Zotero/7.0".into()),
+                collection_key: "AB12CD34".into(),
+                item_keys: None
+            }
         );
         assert_eq!(
             parse_locator(&PathBuf::from(locator(&None, "AB12CD34"))).unwrap(),
-            (None, "AB12CD34".into())
+            ScopedZoteroLocator {
+                server_id: None,
+                collection_key: "AB12CD34".into(),
+                item_keys: None
+            }
         );
         assert!(parse_locator(&PathBuf::from("/tmp/users/0/collections/AB12CD34")).is_err());
     }
@@ -1603,7 +2820,7 @@ mod tests {
             ..RawDocument::default()
         };
         db.upsert_documents(vec![document.clone()]).await.unwrap();
-        let pdf = b"%PDF-1.7\nfixture".to_vec();
+        let pdf = include_bytes!("../../../wenlan-core/tests/fixtures/folder/paper.pdf").to_vec();
         let hash = sha256_hex(&pdf);
         write_research_metadata(
             &source_id,
@@ -1617,6 +2834,8 @@ mod tests {
                 bibliography: HashMap::new(),
                 bibtex: String::new(),
                 warnings: vec![],
+                annotations: vec![],
+                import_registration: None,
                 attachments: vec![ZoteroAttachmentSidecar {
                     key: "ATTACH01".into(),
                     title: "paper.pdf".into(),
@@ -1624,7 +2843,7 @@ mod tests {
                     cached_pdf_hash: Some(hash.clone()),
                 }],
             },
-            vec![(hash, pdf)],
+            vec![(hash.clone(), pdf)],
         )
         .unwrap();
         let state = Arc::new(RwLock::new(ServerState {
@@ -1634,19 +2853,158 @@ mod tests {
         let doc_query = ZoteroDocumentQuery {
             source_id: source_id.clone(),
             space: Some("Research".into()),
+            ..Default::default()
         };
         assert!(authorized_document(&state, &doc_query, None).await.is_ok());
         assert!(handle_get_pdf(
             State(state.clone()),
             crate::space_header::SpaceHeader(None),
             Query(PdfQuery {
+                expected_digest: None,
                 source_id: source_id.clone(),
                 attachment_key: "ATTACH01".into(),
-                space: Some("Research".into())
+                space: Some("Research".into()),
+                ..Default::default()
             })
         )
         .await
         .is_ok());
+        let (_, Json(page)) = handle_get_pdf_page(
+            State(state.clone()),
+            crate::space_header::SpaceHeader(None),
+            Query(PdfPageQuery {
+                source_id: source_id.clone(),
+                attachment_key: "ATTACH01".into(),
+                space: Some("Research".into()),
+                page: 1,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.pdf_digest, hash);
+        assert_eq!(page.page, 1);
+        assert_eq!(page.page_count, 1);
+        assert!(page.extraction_complete && !page.text.trim().is_empty());
+        let mut json = serde_json::json!([{"occurrence":1,"marker":1,"source_kind":"memory","locator":source_id,"score":0.0,"status":"unevaluated","scope":"sentence"}]).to_string();
+        let input = wenlan_types::pages::PdfCitationInput {
+            occurrence: 1,
+            target: wenlan_types::pages::PdfCitationTarget {
+                attachment_key: "ATTACH01".into(),
+                pdf_digest: hash.clone(),
+                page: 1,
+                quote: page.text.trim().into(),
+            },
+        };
+        let scope = ReadScope::Space("Research".into());
+        attach_pdf_targets(
+            &mut json,
+            std::slice::from_ref(&input),
+            std::slice::from_ref(&source_id),
+            &scope,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()[0]["pdf_target"]["page"],
+            1
+        );
+        let original = json.clone();
+        assert!(attach_pdf_targets(
+            &mut json,
+            &[input.clone(), input],
+            std::slice::from_ref(&source_id),
+            &scope
+        )
+        .await
+        .is_err());
+        assert_eq!(
+            json, original,
+            "failed validation must not partially replace citation JSON"
+        );
+        let mut replaced = read_current_sidecar(&source_id).unwrap().unwrap();
+        let replacement = b"%PDF-1.7 replacement bytes".to_vec();
+        let replacement_hash = sha256_hex(&replacement);
+        replaced.attachments[0].cached_pdf_hash = Some(replacement_hash.clone());
+        write_research_metadata(
+            &source_id,
+            replaced,
+            vec![(replacement_hash.clone(), replacement)],
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                handle_get_pdf(
+                    State(state.clone()),
+                    crate::space_header::SpaceHeader(None),
+                    Query(PdfQuery {
+                        source_id: source_id.clone(),
+                        attachment_key: "ATTACH01".into(),
+                        space: Some("Research".into()),
+                        expected_digest: Some(hash.clone()),
+                        ..Default::default()
+                    })
+                )
+                .await,
+                Err(ServerError::Conflict(_))
+            ),
+            "same attachment replaced after metadata read must refuse old expected hash"
+        );
+        let retained=handle_get_pdf(State(state.clone()),crate::space_header::SpaceHeader(None),Query(serde_json::from_value::<PdfQuery>(serde_json::json!({"source_id":source_id,"attachment_key":"ATTACH01","space":"Research","expected_digest":hash,"allow_retained":true})).unwrap())).await.expect("exact authorized retained PDF generation must remain readable").into_response();
+        assert_eq!(
+            retained.headers().get("x-wenlan-pdf-generation").unwrap(),
+            "retained"
+        );
+        let retained_bytes = axum::body::to_bytes(retained.into_body(), 64 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(sha256_hex(&retained_bytes), hash);
+        let (_,Json(retained_document))=handle_get_document(State(state.clone()),crate::space_header::SpaceHeader(None),Query(serde_json::from_value::<ZoteroDocumentQuery>(serde_json::json!({"source_id":source_id,"space":"Research","attachment_key":"ATTACH01","expected_digest":hash,"allow_retained":true})).unwrap())).await.unwrap();
+        let retained_document = serde_json::to_value(retained_document).unwrap();
+        assert_eq!(retained_document["historical"], true);
+        assert_eq!(retained_document["attachments"][0]["pdf_digest"], hash);
+        db.create_space("Other", None, false).await.unwrap();
+        for (space, key, digest, expected_not_found) in [
+            ("Other", "ATTACH01", hash.clone(), true),
+            ("Research", "WRONGKEY", hash.clone(), false),
+        ] {
+            let result=handle_get_pdf(State(state.clone()),crate::space_header::SpaceHeader(None),Query(serde_json::from_value::<PdfQuery>(serde_json::json!({"source_id":source_id,"attachment_key":key,"space":space,"expected_digest":digest,"allow_retained":true})).unwrap())).await;
+            assert!(
+                if expected_not_found {
+                    matches!(result, Err(ServerError::NotFound(_)))
+                } else {
+                    matches!(result, Err(ServerError::Conflict(_)))
+                },
+                "retained bytes require exact Space and attachment authorization"
+            );
+        }
+        let unrelated = b"%PDF-1.7 unrelated cached bytes";
+        let unrelated_hash = sha256_hex(unrelated);
+        write_cached_pdf(&unrelated_hash, unrelated).unwrap();
+        assert!(matches!(handle_get_pdf(State(state.clone()),crate::space_header::SpaceHeader(None),Query(serde_json::from_value::<PdfQuery>(serde_json::json!({"source_id":source_id,"attachment_key":"ATTACH01","space":"Research","expected_digest":unrelated_hash,"allow_retained":true})).unwrap())).await,Err(ServerError::Conflict(_))), "an existing cache blob is not proof that a source owns it");
+        std::fs::remove_file(pdf_cache_path(&hash).unwrap()).unwrap();
+        assert!(matches!(handle_get_pdf(State(state.clone()),crate::space_header::SpaceHeader(None),Query(serde_json::from_value::<PdfQuery>(serde_json::json!({"source_id":source_id,"attachment_key":"ATTACH01","space":"Research","expected_digest":hash,"allow_retained":true})).unwrap())).await,Err(ServerError::NotFound(_))), "missing original bytes must never fall back to the replacement PDF");
+        let response = handle_get_pdf(
+            State(state.clone()),
+            crate::space_header::SpaceHeader(None),
+            Query(PdfQuery {
+                source_id: source_id.clone(),
+                attachment_key: "ATTACH01".into(),
+                space: Some("Research".into()),
+                expected_digest: Some(replacement_hash.clone()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .unwrap()
+        .into_response();
+        let returned = axum::body::to_bytes(response.into_body(), 64 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            sha256_hex(&returned),
+            replacement_hash,
+            "new metadata must read exactly its addressed immutable bytes"
+        );
         let fixture = libsql::Builder::new_local(db_dir.path().join("origin_memory.db"))
             .build()
             .await
@@ -1675,9 +3033,11 @@ mod tests {
                     State(state.clone()),
                     crate::space_header::SpaceHeader(None),
                     Query(PdfQuery {
+                        expected_digest: None,
                         source_id: source_id.clone(),
                         attachment_key: "ATTACH01".into(),
-                        space: Some("Research".into())
+                        space: Some("Research".into()),
+                        ..Default::default()
                     })
                 )
                 .await,
@@ -1695,6 +3055,539 @@ mod tests {
             authorized_document(&state, &doc_query, None).await,
             Err(ServerError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn zotero_pending_disconnect_is_discoverable_after_config_removal() {
+        use axum::{
+            body::Body,
+            http::{Request, StatusCode},
+        };
+        use tower::ServiceExt;
+        let _lock = data_dir_lock().await;
+        let _root = super::super::tests::DataDirGuard::new();
+        let (db, _db_dir) = super::super::tests::new_test_db().await;
+        db.create_space("Research", None, false).await.unwrap();
+        let source = source();
+        config::save_config(&config::Config {
+            sources: vec![source.clone()],
+            ..Default::default()
+        })
+        .unwrap();
+        let identity = registration_identity(&db, &source).await.unwrap();
+        db.bind_zotero_registration(&identity).await.unwrap();
+        let canonical = canonical_source_id(
+            Some(&identity.server_id),
+            "ITEM0001",
+            Some(&identity.space_id),
+        );
+        db.upsert_documents(vec![RawDocument {
+            source: "file".into(),
+            source_id: canonical.clone(),
+            source_agent: Some("zotero".into()),
+            title: "Retained paper".into(),
+            content: "Human retained evidence.".into(),
+            space: Some("Research".into()),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+        db.upsert_sync_state(&source.id, "ITEM0001", 0, "retained-hash")
+            .await
+            .unwrap();
+        db.observe_zotero_selection(
+            &identity,
+            &std::collections::BTreeSet::from(["ITEM0001".into()]),
+            &std::collections::BTreeMap::from([("ITEM0001".into(), canonical.clone())]),
+        )
+        .await
+        .unwrap();
+        db.begin_zotero_disconnect(&identity).await.unwrap();
+        let state = Arc::new(RwLock::new(ServerState {
+            db: Some(db.clone()),
+            ..Default::default()
+        }));
+        state.read().await.maintenance_coordinator.finish_recovery();
+        let router = crate::router::build_router(state);
+        async fn listed(router: &crate::router::AppRouter) -> (StatusCode, Vec<Source>) {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/sources")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            (
+                status,
+                if status.is_success() {
+                    serde_json::from_slice(&bytes).unwrap()
+                } else {
+                    vec![]
+                },
+            )
+        }
+        let lane = ZOTERO_MUTATION_LANE.lock().await;
+        let (status, rows) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), listed(&router))
+                .await
+                .expect("Sources list must remain readable during remote Zotero sync");
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(rows[0].id, source.id);
+        drop(lane);
+        let (status, rows) = listed(&router).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            rows[0].last_sync_error_detail.as_deref(),
+            Some("zotero_disconnect_pending")
+        );
+        // A reused ID cannot mix a new source with the retained intention.
+        config::update_config(|c| {
+            c.sources[0].source_type = SourceType::Directory;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(listed(&router).await.0, StatusCode::CONFLICT);
+        config::update_config(|c| {
+            c.sources.clear();
+            Ok(())
+        })
+        .unwrap();
+        let before = std::fs::read(config::data_root().join("config.json")).unwrap();
+        let (status, rows) = listed(&router).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, source.id);
+        assert_eq!(rows[0].path, source.path);
+        assert_eq!(rows[0].space.as_deref(), Some("Research"));
+        assert_eq!(
+            rows[0].last_sync_error_detail.as_deref(),
+            Some("zotero_disconnect_pending")
+        );
+        assert_eq!(
+            std::fs::read(config::data_root().join("config.json")).unwrap(),
+            before
+        );
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/zotero/sources/{}/disconnect-preview",
+                        source.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let preview: ZoteroDisconnectPreview = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(preview.pending_disconnect);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!(
+                        "/api/sources/{}?expected_revision={}&expected_identity={}",
+                        source.id, preview.revision, preview.identity_digest
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(listed(&router).await.1.is_empty());
+        assert_eq!(
+            db.get_sync_state(&source.id, "ITEM0001")
+                .await
+                .unwrap()
+                .unwrap()
+                .content_hash,
+            "retained-hash"
+        );
+        assert!(db
+            .get_chunks_scoped(&canonical, &ReadScope::Space("Research".into()))
+            .await
+            .unwrap()
+            .unwrap()
+            .iter()
+            .any(|chunk| chunk.content.contains("Human retained evidence.")));
+    }
+
+    #[tokio::test]
+    async fn zotero_repair_fence_blocks_both_disconnect_paths_and_sync_without_mutation() {
+        use axum::{
+            body::Body,
+            http::{Request, StatusCode},
+        };
+        use tower::ServiceExt;
+        let _lock = data_dir_lock().await;
+        let _root = super::super::tests::DataDirGuard::new();
+        let (db, _db_dir) = super::super::tests::new_test_db().await;
+        db.create_space("Research", None, false).await.unwrap();
+        let source = source();
+        config::save_config(&config::Config {
+            sources: vec![source.clone()],
+            ..Default::default()
+        })
+        .unwrap();
+        let identity = registration_identity(&db, &source).await.unwrap();
+        db.bind_zotero_registration(&identity).await.unwrap();
+        let canonical = canonical_source_id(
+            Some(&identity.server_id),
+            "ITEM0001",
+            Some(&identity.space_id),
+        );
+        db.upsert_documents(vec![RawDocument {
+            source: "file".into(),
+            source_id: canonical.clone(),
+            source_agent: Some("zotero".into()),
+            title: "Retained paper".into(),
+            content: "Original retained evidence.".into(),
+            space: Some("Research".into()),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+        db.upsert_sync_state(&source.id, "ITEM0001", 0, "retained-hash")
+            .await
+            .unwrap();
+        db.observe_zotero_selection(
+            &identity,
+            &std::collections::BTreeSet::from(["ITEM0001".into()]),
+            &std::collections::BTreeMap::from([("ITEM0001".into(), canonical.clone())]),
+        )
+        .await
+        .unwrap();
+        let fixture = libsql::Builder::new_local(_db_dir.path().join("origin_memory.db"))
+            .build()
+            .await
+            .unwrap();
+        let conn = fixture.connect().unwrap();
+        conn.execute("INSERT INTO pages(id,title,content,source_memory_ids,created_at,last_compiled,last_modified,space,workspace,kind,creation_kind,review_status,incarnation) VALUES('fenced-review','Human review','Human research conclusion.',?1,'2026-11-06','2026-11-06','2026-11-06','Research','Research','authored','authored','confirmed','zotero-fence-fixture')",[serde_json::to_string(&vec![canonical.clone()]).unwrap()]).await.unwrap();
+        let preview = db.zotero_disconnect_preview(&identity).await.unwrap();
+        assert_eq!(preview.affected_page_ids, vec!["fenced-review"]);
+        let config_before = std::fs::read(config::data_root().join("config.json")).unwrap();
+        let page_before =
+            serde_json::to_value(db.get_page("fenced-review").await.unwrap().unwrap()).unwrap();
+        let state = Arc::new(RwLock::new(ServerState {
+            db: Some(db.clone()),
+            ..Default::default()
+        }));
+        let router = crate::router::build_router(state.clone());
+        let ordinary = format!("/api/sources/{}", source.id);
+        let fenced = format!(
+            "{ordinary}?expected_revision={}&expected_identity={}",
+            preview.revision, preview.identity_digest
+        );
+        let sync = format!("{ordinary}/sync");
+        for (method, uri) in [("DELETE", ordinary.as_str()), ("DELETE", fenced.as_str())] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(),StatusCode::CONFLICT,"sealed repair fence must reject {method} {uri} before mutation or remote Zotero fetch");
+            let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            assert!(String::from_utf8(bytes.to_vec())
+                .unwrap()
+                .contains("repair_write_fence_conflict"));
+        }
+        assert_eq!(
+            std::fs::read(config::data_root().join("config.json")).unwrap(),
+            config_before
+        );
+        // An invalid fixture locator ensures even an unfenced sync cannot
+        // accidentally contact a real local Zotero while proving early rejection.
+        let mut malformed = source.clone();
+        malformed.path = PathBuf::from("invalid-zotero-fixture-locator");
+        config::save_config(&config::Config {
+            sources: vec![malformed],
+            ..Default::default()
+        })
+        .unwrap();
+        let malformed_config = std::fs::read(config::data_root().join("config.json")).unwrap();
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&sync)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "sealed sync must reject before parsing or remote I/O"
+        );
+        assert_eq!(
+            std::fs::read(config::data_root().join("config.json")).unwrap(),
+            malformed_config
+        );
+        std::fs::write(config::data_root().join("config.json"), &config_before).unwrap();
+        assert_eq!(
+            db.zotero_disconnect_preview(&identity).await.unwrap(),
+            preview
+        );
+        assert_eq!(
+            serde_json::to_value(db.get_page("fenced-review").await.unwrap().unwrap()).unwrap(),
+            page_before
+        );
+        assert_eq!(
+            db.get_sync_state(&source.id, "ITEM0001")
+                .await
+                .unwrap()
+                .unwrap()
+                .content_hash,
+            "retained-hash"
+        );
+        // The normal ready daemon path must still complete and retain data.
+        state.read().await.maintenance_coordinator.finish_recovery();
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(&fenced)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(
+            db.zotero_disconnect_preview(&identity)
+                .await
+                .unwrap()
+                .disconnected
+        );
+        assert_eq!(
+            db.get_page("fenced-review").await.unwrap().unwrap().content,
+            "Human research conclusion."
+        );
+    }
+
+    #[tokio::test]
+    async fn zotero_legacy_offline_disconnect_reports_unknown_impact_and_retains_receipts() {
+        let _lock = data_dir_lock().await;
+        let _root = super::super::tests::DataDirGuard::new();
+        let (db, _db_dir) = super::super::tests::new_test_db().await;
+        db.create_space("Research", None, false).await.unwrap();
+        let mut source = source();
+        source.path = PathBuf::from(locator(&None, "COLLECT1"));
+        config::save_config(&config::Config {
+            sources: vec![source.clone()],
+            ..Default::default()
+        })
+        .unwrap();
+        db.upsert_sync_state(&source.id, "ITEM0001", 0, "old-content")
+            .await
+            .unwrap();
+        assert!(registration_identity(&db, &source).await.is_err());
+        let identity = disconnect_identity(&db, &source).await.unwrap();
+        assert!(identity.server_id.is_empty());
+        let preview = db.zotero_disconnect_preview(&identity).await.unwrap();
+        assert!(!preview.impact_scope_known);
+        assert!(preview.canonical_item_ids.is_empty());
+        disconnect_source(
+            db.clone(),
+            &source.id,
+            Some((preview.revision, &preview.identity_digest)),
+        )
+        .await
+        .unwrap();
+        assert!(config::load_config().sources.is_empty());
+        assert!(db
+            .get_sync_state(&source.id, "ITEM0001")
+            .await
+            .unwrap()
+            .is_some());
+        assert!(
+            !db.zotero_disconnect_preview(&identity)
+                .await
+                .unwrap()
+                .impact_scope_known
+        );
+        assert!(db
+            .observe_zotero_selection(
+                &identity,
+                &std::collections::BTreeSet::new(),
+                &std::collections::BTreeMap::new()
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn zotero_membership_rejects_incomplete_malformed_and_changed_registration_and_retains_pending_disconnect(
+    ) {
+        let _lock = data_dir_lock().await;
+        let _root = super::super::tests::DataDirGuard::new();
+        let (db, _db_dir) = super::super::tests::new_test_db().await;
+        db.create_space("Research", None, false).await.unwrap();
+        let source = source();
+        config::save_config(&config::Config {
+            sources: vec![source.clone()],
+            ..Default::default()
+        })
+        .unwrap();
+        let mut client = fake(vec![article("ITEM0001", "Paper", "Evidence")], &[]);
+        sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .unwrap();
+        let identity = registration_identity(&db, &source).await.unwrap();
+        let before = db.zotero_disconnect_preview(&identity).await.unwrap();
+        client.incomplete_items = true;
+        client.items.clear();
+        assert!(sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .is_err());
+        assert_eq!(
+            before,
+            db.zotero_disconnect_preview(&identity).await.unwrap()
+        );
+        client.incomplete_items = false;
+        client.items = vec![article("bad", "Malformed", "Evidence")];
+        assert!(sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .is_err());
+        assert_eq!(
+            before,
+            db.zotero_disconnect_preview(&identity).await.unwrap()
+        );
+        client.items = vec![
+            article("ITEM0001", "Paper", "Evidence"),
+            article("ITEM0001", "Duplicate", "Evidence"),
+        ];
+        assert!(sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .is_err());
+        assert_eq!(
+            before,
+            db.zotero_disconnect_preview(&identity).await.unwrap()
+        );
+        // A listed item whose content fails remains present, never an absence.
+        client.items.truncate(1);
+        client.items[0]
+            .data
+            .extra
+            .insert("collections".into(), serde_json::json!(["FOREIGN1"]));
+        assert!(sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .is_err());
+        assert_eq!(
+            before,
+            db.zotero_disconnect_preview(&identity).await.unwrap()
+        );
+        client.items[0].data.extra.remove("collections");
+        client.fail_children_for.insert("ITEM0001".into());
+        sync_source_with_client(db.clone(), &source, &mut client)
+            .await
+            .unwrap();
+        assert_eq!(
+            before,
+            db.zotero_disconnect_preview(&identity).await.unwrap()
+        );
+        // A stale preview and a reused mutable config ID/type cannot authorize removal.
+        db.observe_zotero_selection(
+            &identity,
+            &std::collections::BTreeSet::new(),
+            &std::collections::BTreeMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            disconnect_source(
+                db.clone(),
+                &source.id,
+                Some((before.revision, &before.identity_digest))
+            )
+            .await,
+            Err(ServerError::Conflict(_))
+        ));
+        let mut reused = source.clone();
+        reused.source_type = SourceType::Directory;
+        config::save_config(&config::Config {
+            sources: vec![reused],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(matches!(
+            disconnect_source(db.clone(), &source.id, None).await,
+            Err(ServerError::Conflict(_))
+        ));
+        assert_eq!(config::load_config().sources.len(), 1);
+        config::save_config(&config::Config {
+            sources: vec![source.clone()],
+            ..Default::default()
+        })
+        .unwrap();
+        db.begin_zotero_disconnect(&identity).await.unwrap();
+        std::fs::write(config::data_root().join("config.json"), "not valid JSON").unwrap();
+        assert!(disconnect_source(db.clone(), &source.id, None)
+            .await
+            .is_err());
+        assert!(
+            db.zotero_disconnect_preview(&identity)
+                .await
+                .unwrap()
+                .pending_disconnect
+        );
+        assert!(db
+            .get_sync_state(&source.id, "ITEM0001")
+            .await
+            .unwrap()
+            .is_some());
+        std::fs::write(
+            config::data_root().join("config.json"),
+            serde_json::to_vec(&config::Config {
+                sources: vec![source.clone()],
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        disconnect_source(db.clone(), &source.id, None)
+            .await
+            .unwrap();
+        disconnect_source(db.clone(), &source.id, None)
+            .await
+            .unwrap();
+        assert!(
+            db.zotero_disconnect_preview(&identity)
+                .await
+                .unwrap()
+                .disconnected
+        );
+        assert!(db
+            .get_sync_state(&source.id, "ITEM0001")
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
@@ -1842,12 +3735,14 @@ mod tests {
             db: Some(db.clone()),
             ..ServerState::default()
         }));
+        state.read().await.maintenance_coordinator.finish_recovery();
         let response = handle_get_document(
             State(state.clone()),
             crate::space_header::SpaceHeader(None),
             Query(ZoteroDocumentQuery {
                 source_id: canonical.clone(),
                 space: Some("Research".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -1872,6 +3767,7 @@ mod tests {
             Query(ZoteroDocumentQuery {
                 source_id: canonical.clone(),
                 space: Some("Research".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -1884,9 +3780,11 @@ mod tests {
             State(state.clone()),
             crate::space_header::SpaceHeader(None),
             Query(PdfQuery {
+                expected_digest: None,
                 source_id: canonical.clone(),
                 attachment_key: "ATTACH01".into(),
                 space: Some("Research".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -1911,6 +3809,7 @@ mod tests {
             Query(ZoteroDocumentQuery {
                 source_id: canonical.clone(),
                 space: Some("Other".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -1922,6 +3821,7 @@ mod tests {
                 Query(ZoteroDocumentQuery {
                     source_id: canonical.clone(),
                     space: Some("Other".into()),
+                    ..Default::default()
                 }),
             )
             .await,
@@ -1932,9 +3832,11 @@ mod tests {
                 State(state.clone()),
                 crate::space_header::SpaceHeader(Some("Research".into())),
                 Query(PdfQuery {
+                    expected_digest: None,
                     source_id: canonical.clone(),
                     attachment_key: "ATTACH01".into(),
                     space: Some("Other".into()),
+                    ..Default::default()
                 }),
             )
             .await,
@@ -1991,5 +3893,79 @@ mod tests {
             .unwrap()
             .unwrap()
             .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod retained_pdf_generation_tests {
+    use super::*;
+
+    #[test]
+    fn retained_generation_requires_exact_source_space_server_item_attachment_and_digest() {
+        let old_hash = "a".repeat(64);
+        let current = ZoteroDocumentSidecar {
+            source_id: "exact-source".into(),
+            space: Some("Research".into()),
+            server_id: Some("server-a".into()),
+            item_key: "ITEM0001".into(),
+            title: "Current".into(),
+            rendered_content: String::new(),
+            bibliography: HashMap::new(),
+            bibtex: String::new(),
+            warnings: vec![],
+            annotations: vec![],
+            import_registration: None,
+            attachments: vec![ZoteroAttachmentSidecar {
+                key: "ATTACH01".into(),
+                title: "paper.pdf".into(),
+                content_type: Some("application/pdf".into()),
+                cached_pdf_hash: Some("b".repeat(64)),
+            }],
+        };
+        let mut old = current.clone();
+        old.title = "Original".into();
+        old.attachments[0].cached_pdf_hash = Some(old_hash.clone());
+        let mut history = ZoteroSidecarHistory {
+            current: Some(current),
+            snapshots: vec![old.clone()],
+        };
+        assert!(matches!(
+            selected_pdf_generation(&history, Some("ATTACH01"), Some(&old_hash), false),
+            Err(ServerError::Conflict(_))
+        ));
+        let (selected, historical) =
+            selected_pdf_generation(&history, Some("ATTACH01"), Some(&old_hash), true).unwrap();
+        assert!(historical);
+        assert_eq!(selected.title, "Original");
+        history.current.as_mut().unwrap().attachments.clear();
+        assert!(
+            selected_pdf_generation(&history, Some("ATTACH01"), Some(&old_hash), true)
+                .unwrap()
+                .1,
+            "a retired attachment still has its proven retained generation"
+        );
+        for dimension in ["source", "space", "server", "item", "attachment", "digest"] {
+            let mut forged = old.clone();
+            match dimension {
+                "source" => forged.source_id = "another-source".into(),
+                "space" => forged.space = Some("Other".into()),
+                "server" => forged.server_id = Some("server-b".into()),
+                "item" => forged.item_key = "ITEM0002".into(),
+                "attachment" => forged.attachments[0].key = "ATTACH02".into(),
+                _ => forged.attachments[0].cached_pdf_hash = Some("c".repeat(64)),
+            }
+            history.snapshots = vec![forged];
+            assert!(
+                matches!(
+                    selected_pdf_generation(&history, Some("ATTACH01"), Some(&old_hash), true),
+                    Err(ServerError::Conflict(_))
+                ),
+                "{dimension} cannot authorize a retained generation"
+            );
+        }
+        assert!(matches!(
+            selected_pdf_generation(&history, None, None, true),
+            Err(ServerError::BadRequest(_))
+        ));
     }
 }

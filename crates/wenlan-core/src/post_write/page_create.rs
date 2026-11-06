@@ -323,6 +323,7 @@ pub(super) struct CreatePageInput<'a> {
     pub(super) basis_marks: &'a [(String, i64)],
     pub(super) basis_space_guard: Option<&'a crate::read_scope::ReadScope>,
     pub(super) skip_protected_title_match: bool,
+    pub(super) research_write: Option<crate::db::research_write::ResearchWriteFence>,
 }
 
 pub(super) async fn create_page_impl(
@@ -341,6 +342,7 @@ pub(super) async fn create_page_impl(
         basis_marks,
         basis_space_guard,
         skip_protected_title_match,
+        research_write,
     } = input;
 
     // Pre-write validation
@@ -416,6 +418,12 @@ pub(super) async fn create_page_impl(
         )
         .await?
         {
+            if research_write.is_some() {
+                return Err(WenlanError::Conflict(format!(
+                    "organizing topic already exists: {}; read it and write_page with its page_id",
+                    existing.page_id
+                )));
+            }
             if skip_protected_title_match && existing.protected {
                 return Ok(WriteResult {
                     basis_confirm: None,
@@ -504,6 +512,12 @@ pub(super) async fn create_page_impl(
                 )
                 .await?
             {
+                if research_write.is_some() {
+                    return Err(WenlanError::Conflict(format!(
+                        "organizing topic matches {}; read it and write_page with its page_id",
+                        matched.id
+                    )));
+                }
                 let matched_id = matched.id;
                 return attach_page_sources_checked(
                     db,
@@ -594,6 +608,7 @@ pub(super) async fn create_page_impl(
             agent,
             basis_space_guard,
             citation_snapshots,
+            research_write.as_ref(),
         )
         .await
     {

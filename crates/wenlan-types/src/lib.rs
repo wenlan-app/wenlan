@@ -26,6 +26,7 @@ pub mod onboarding;
 pub mod originals;
 pub mod outbox;
 pub mod page_basis;
+pub mod page_export;
 pub mod page_map;
 pub mod pages;
 pub mod palace;
@@ -348,3 +349,8 @@ mod retrieval_event_tests {
         assert_eq!(back.change_kind, PageChangeKind::Revised);
     }
 }
+
+pub mod research;
+pub mod research_disputes;
+
+pub mod source_lifecycle;

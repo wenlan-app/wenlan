@@ -1407,6 +1407,8 @@ pub struct AcceptNoteProposalResponse {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProposalAction {
+    ResearchDispute,
+    SourceClassification,
     EntityMerge,
     RelationConflict,
     DetectContradiction,
@@ -1441,6 +1443,18 @@ pub enum RefinementCardAction {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum RefinementPayload {
+    ResearchDispute {
+        dispute: crate::research_disputes::ResearchDispute,
+        payload_digest: String,
+        #[serde(default)]
+        space: String,
+    },
+    SourceClassification {
+        run_id: String,
+        space_id: String,
+        rules_digest: String,
+        changes: Vec<crate::research::SourceClassificationChange>,
+    },
     EntityMerge {
         existing_id: String,
         new_id: String,

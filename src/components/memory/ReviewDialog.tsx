@@ -16,6 +16,10 @@ import {
   getPageSources,
   search,
 } from "../../lib/tauri";
+import type { ClassificationChange } from "../../lib/researchApi";
+import { SourceClassificationReview } from "./SourceClassificationReview";
+import { ResearchDisputeReview } from "./ResearchDisputeReview";
+import { isResearchDisputePayload } from "../../lib/disputeApi";
 import { diffWords, diffWordCounts, type DiffSegment } from "../../lib/wordDiff";
 import { isExampleReviewItem } from "./reviewExamples";
 import { reviewItemId, type ReviewItem } from "./useReviewQueue";
@@ -41,6 +45,8 @@ export function reviewKindLabel(t: TFunction, item: ReviewItem): string {
   if (item.kind === "page_candidate") return t("review.kindPageCandidate");
   if (item.kind === "topic") return t("review.kindTopic");
   switch (item.action) {
+    case "source_classification": return t("selectedSources.classificationTitle");
+    case "research_dispute": return t("researchDispute.title");
     case "entity_merge":
       return t("review.kindEntityMerge");
     case "detect_contradiction":
@@ -97,6 +103,8 @@ export function reviewApproveBlocked(item: ReviewItem): boolean {
   const pair = nonempty(first) && nonempty(second) && first !== second;
   const payload = item.payload;
   switch (item.action) {
+    case "source_classification":
+      return payload?.action !== "source_classification" || !nonempty(payload.run_id) || !nonempty(payload.space_id) || !nonempty(payload.rules_digest) || !Array.isArray(payload.changes) || payload.changes.length === 0 || payload.changes.some(change => !nonempty(change.source) || !nonempty(change.source_id) || !nonempty(change.source_content_digest) || !Array.isArray(change.before_tags) || !Array.isArray(change.add_tags) || !Array.isArray(change.remove_tags));
     case "page_keep_or_archive":
       return pageKeepOrArchiveId(item) === null ||
         pageKeepOrArchiveId(item) !== first ||
@@ -126,6 +134,7 @@ export function reviewApproveBlocked(item: ReviewItem): boolean {
  * stale-page refreshes hide locally (see DistillReviewPanel's resolveItem
  * wrapper) rather than calling a daemon dismiss verb. */
 export function reviewDismissBlocked(item: ReviewItem): boolean {
+  if (item.kind === "refinement" && item.action === "research_dispute") return true;
   return item.kind === "refinement" && item.payload?.action === "page_keep_or_archive" &&
     item.payload.allowed_actions != null && !item.payload.allowed_actions.includes("dismiss");
 }
@@ -197,6 +206,7 @@ function revisionReasonText(t: TFunction, reason: string | null | undefined): st
     case "locked": return t("review.reasonLocked");
     case "background": return t("review.reasonBackground");
     case "owned": return t("review.reasonOwned");
+    case "source_selection_changed": return t("review.reasonSourceSelectionChanged");
     default: return null;
   }
 }
@@ -375,6 +385,10 @@ export function useReviewItemSummary(item: ReviewItem | null): {
     });
     reason = confidence;
     switch (item.action) {
+      case "research_dispute":
+        title = t("researchDispute.title");
+        reason = t("researchDispute.reviewHint");
+        break;
       case "lint_repair_review":
         title = short(a.data?.name, 96);
         reason = sourceRepairHint(t, item);
@@ -619,7 +633,7 @@ interface ReviewDialogProps {
   items: ReviewItem[];
   openId: string | null;
   onOpenChange: (id: string | null) => void;
-  onResolve: (args: { item: ReviewItem; approve: boolean; edited_content?: string }) => Promise<unknown>;
+  onResolve: (args: { item: ReviewItem; approve: boolean; edited_content?: string; classification_changes?: ClassificationChange[] }) => Promise<unknown>;
   isResolving: boolean;
   onOpenMemory?: (sourceId: string) => void;
   onOpenPage?: (pageId: string) => void;
@@ -640,6 +654,7 @@ export default function ReviewDialog({
   const [sideBySide, setSideBySide] = useState(false);
   // Keep both the draft and the proposal it was based on, by exact card id.
   // Closing or navigating does not save or discard a human's adjustment.
+  const [classificationDrafts, setClassificationDrafts] = useState<Record<string, ClassificationChange[]>>({});
   const [revisionDrafts, setRevisionDrafts] = useState<Record<string, { content: string; expectedContent: string }>>({});
   const [flash, setFlash] = useState<string | null>(null);
   // A notice flash explains an outcome the human did not choose (a card the
@@ -679,6 +694,8 @@ export default function ReviewDialog({
   const item = repairBusy && retainedRepairItemRef.current
     ? retainedRepairItemRef.current
     : showDone ? null : index >= 0 ? items[index] : null;
+  const classification = item?.kind === "refinement" && item.action === "source_classification" && item.payload?.action === "source_classification" ? item.payload : null;
+  const classificationDraft = item ? classificationDrafts[item.id] : undefined;
   const revisionDraft = item?.kind === "revision" ? revisionDrafts[item.revisionSourceId] : undefined;
   const clearRevisionDraft = (id: string) => setRevisionDrafts((drafts) => {
     const next = { ...drafts };
@@ -896,7 +913,7 @@ export default function ReviewDialog({
     try {
       await onResolve(approve && item.kind === "revision" && revisionDraft
         ? { item: { ...item, content: revisionDraft.expectedContent }, approve, edited_content: revisionDraft.content }
-        : { item, approve });
+        : approve && classificationDraft ? { item, approve, classification_changes: classificationDraft } : { item, approve });
       if (item.kind === "revision") clearRevisionDraft(item.revisionSourceId);
     } catch (error) {
       if (error instanceof SteepNeedsAiToolError && item.kind === "stale_page") {
@@ -1288,6 +1305,8 @@ export default function ReviewDialog({
                                   count: item.sourcesUpdated,
                                 })
                               : "")
+                        : item.action === "research_dispute"
+                          ? t("researchDispute.reviewHint")
                         : isContradiction
                           ? t("review.contradictionHint")
                       : item.action === "lint_repair_review"
@@ -1317,7 +1336,7 @@ export default function ReviewDialog({
               </p>
 
               {contractBlocked && !reviewReadOnly(item) && !isExampleReviewItem(item) &&
-                !(item.kind === "refinement" && item.action === "lint_repair_review" && item.payload?.action === "lint_repair_review") && (
+                !(item.kind === "refinement" && (item.action === "research_dispute" || (item.action === "lint_repair_review" && item.payload?.action === "lint_repair_review"))) && (
                 <p role="status" style={paneStyle}>{t("review.approvalUnavailable")}</p>
               )}
               {!contractBlocked && (evidenceLoading || evidenceUnavailable) && (
@@ -1595,6 +1614,8 @@ export default function ReviewDialog({
                 </div>
               )}
 
+              {item.kind === "refinement" && item.action === "research_dispute" && <ResearchDisputeReview id={item.id} space={isResearchDisputePayload(item.payload) ? item.payload.space : ""} payload={isResearchDisputePayload(item.payload) ? item.payload : null} />}
+              {classification && <SourceClassificationReview changes={classificationDraft ?? classification.changes} editing={!!classificationDraft} onChange={changes => setClassificationDrafts(drafts => ({ ...drafts, [item.id]: changes }))} />}
               {item.kind === "refinement" &&
                 item.action === "entity_merge" && (
                   <div style={{ display: "grid", gap: 12 }}>
@@ -1917,6 +1938,7 @@ export default function ReviewDialog({
                     {t("review.openMemory")}
                   </button>
                 )}
+              {classification && <button type="button" disabled={resolving} style={actionButtonStyle} onClick={() => setClassificationDrafts(drafts => { const next = { ...drafts }; if (classificationDraft) delete next[item.id]; else next[item.id] = classification.changes.map(change => ({ ...change })); return next; })}>{t(classificationDraft ? "reviewAdjust.cancel" : "selectedSources.classificationEdit")}</button>}
               {item.kind === "revision" && !isExampleReviewItem(item) && (
                 <button type="button" disabled={resolving} style={actionButtonStyle}
                   onClick={() => {

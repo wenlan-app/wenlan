@@ -1,119 +1,47 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { getPage, getPageSources, getZoteroDocument, type Page } from "../../../lib/tauri";
+import { capturePageExport, getPageExportBundle, listPageExportVersions, type PageExportBundle, type PageExportVersion } from "../../../lib/pageExportApi";
 import PageExportDialog from "./PageExportDialog";
-
-vi.mock("../../../lib/tauri");
-
-const page: Page = {
-  id: "page-1", title: "Research Notes", content: "Saved text [1]", summary: "Summary", domain: "Research", space: "Research",
-  entity_id: null, version: 4, status: "active", created_at: "2026-11-02T10:00:00Z", last_compiled: "2026-11-02T10:00:00Z",
-  last_modified: "2026-11-03T12:00:00Z", source_memory_ids: [],
-  citations: [{ occurrence: 1, marker: 1, source_kind: "memory", locator: "zotero::ITEM1", score: 1, status: "verified", scope: "sentence" }],
-};
-const source = {
-  source: { page_id: page.id, memory_source_id: "zotero::ITEM1", linked_at: 1 },
-  memory: { source_id: "zotero::ITEM1", title: "Paper title", content: "source", summary: null, memory_type: "research", domain: "Research", space: "Research", source_agent: "zotero", confidence: 1, confirmed: true, pinned: false, supersedes: null, last_modified: 1, chunk_count: 1 },
-};
-
-function wrap() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><PageExportDialog pageId={page.id} onClose={vi.fn()} /></QueryClientProvider>);
-}
-
-beforeEach(() => {
-  vi.resetAllMocks();
-  vi.mocked(getPage).mockResolvedValue(page);
-  vi.mocked(getPageSources).mockResolvedValue([source]);
-  vi.mocked(getZoteroDocument).mockResolvedValue({ source_id: "zotero::ITEM1", title: "Paper title", attachments: [], bibtex: "@article{item1, title={Paper title}}", warnings: [] });
-});
-
-describe("PageExportDialog", () => {
-  it("saves the freshly fetched saved version through the chosen path", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    vi.mocked(save).mockResolvedValue("/tmp/Research-Notes.md");
-    wrap();
-    expect(await screen.findByText(/Saved version 4 ·/)).toBeInTheDocument();
-    expect(getPage).toHaveBeenCalledWith(page.id);
-    expect(getPageSources).toHaveBeenCalledWith(page.id);
-    await waitFor(() => expect(getZoteroDocument).toHaveBeenCalledWith("zotero::ITEM1", "Research"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Export" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    await waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "Research-Notes.md" }));
-    expect(writeTextFile).toHaveBeenCalledWith("/tmp/Research-Notes.md", expect.stringContaining("Saved text"));
-    expect(writeTextFile).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("unsaved"));
-    expect(screen.getByText("Page exported.")).toBeInTheDocument();
+vi.mock("../../../lib/pageExportApi");
+const base: PageExportBundle = { id: "current", digest: "current-digest", kind: "saved", page_id: "page-1", page_incarnation: "inc", space_id: "space", version: 4, export_revision: 2, source_revision: 1, title: "Current title", content: "Current text", last_modified: "2026-11-03T12:00:00Z", captured_at: 1793707200000, citations: [], sources: [], bibliography: [], references_available: true, pending_revision_id: null };
+const old: PageExportBundle = { ...base, id: "old", digest: "old-digest", version: 2, title: "Old title", content: "Old claim [1]", citations: [{ occurrence: 1, marker: 1, source_kind: "memory", locator: "old-locator", score: 1, status: "verified", scope: "sentence" }], sources: [{locator:"old-locator",source_kind:"file",source_id:"paper",title:"Old paper",source_agent:"zotero",url:null,text_digest:null,historical:false}], bibliography: [{source_id:"paper",title:"Old paper",bibtex:"@article{old, title={Old paper}}",availability:"available"}] };
+const pending: PageExportBundle = { ...old, id: "pending", digest: "pending-digest", kind: "pending_draft", pending_revision_id: "revision", content: "Pending text" };
+const version = (bundle: PageExportBundle): PageExportVersion => ({bundle_id:bundle.id,kind:bundle.kind,version:bundle.version,export_revision:bundle.export_revision,title:bundle.title,saved_at:bundle.last_modified,captured_at:bundle.captured_at,references_available:true,bibliography_available:true,unavailable_reason:null});
+function wrap() { return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><PageExportDialog pageId="page-1" onClose={vi.fn()} /></QueryClientProvider>); }
+beforeEach(() => { vi.resetAllMocks(); vi.mocked(capturePageExport).mockResolvedValue(base); vi.mocked(listPageExportVersions).mockResolvedValue({versions:[version(base),version(old),version(pending),{...version(old),bundle_id:null,kind:"legacy_unavailable",references_available:false}]}); vi.mocked(getPageExportBundle).mockImplementation(async (_page,id) => id === "old" ? old : id === "pending" ? pending : base); });
+describe("immutable page export", () => {
+  it("defaults to current saved, exports an old bundle with its own references, and disables legacy", async () => {
+    const {save} = await import("@tauri-apps/plugin-dialog"); const {writeTextFile} = await import("@tauri-apps/plugin-fs"); vi.mocked(save).mockResolvedValue("/tmp/old.md"); wrap();
+    const select = await screen.findByLabelText("Version"); expect(select).toHaveValue("current");
+    expect(screen.getByRole("option",{name:/References were not retained/})).toBeDisabled();
+    fireEvent.change(select,{target:{value:"old"}}); await waitFor(() => expect(screen.getByRole("button",{name:"Export"})).toBeEnabled()); fireEvent.click(screen.getByRole("button",{name:"Export"}));
+    await waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce()); const text = vi.mocked(writeTextFile).mock.calls[0][1]; expect(text).toContain("Old claim"); expect(text).toContain("Old paper"); expect(text).not.toContain("Current text"); expect(getPageExportBundle).toHaveBeenCalledWith("page-1","old");
   });
-
-  it("keeps Markdown and HTML available while blocking incomplete BibTeX", async () => {
-    vi.mocked(getZoteroDocument).mockRejectedValue(new Error("source offline"));
-    wrap();
-    expect(await screen.findByText("Some Zotero bibliography entries are unavailable. Markdown and HTML can still export; BibTeX needs every entry. Retry to load them.")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "BibTeX" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+  it("labels pending text as not adopted", async () => { const {save} = await import("@tauri-apps/plugin-dialog"); const {writeTextFile} = await import("@tauri-apps/plugin-fs"); vi.mocked(save).mockResolvedValue("/tmp/pending.md"); wrap(); fireEvent.change(await screen.findByLabelText("Version"),{target:{value:"pending"}}); await waitFor(() => expect(screen.getByRole("button",{name:"Export"})).toBeEnabled()); fireEvent.click(screen.getByRole("button",{name:"Export"})); await waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce()); expect(vi.mocked(writeTextFile).mock.calls[0][1]).toContain("not adopted"); });
+  it("does not write if bundle reauthorization fails or changes", async () => { const {save} = await import("@tauri-apps/plugin-dialog"); const {writeTextFile} = await import("@tauri-apps/plugin-fs"); vi.mocked(save).mockImplementation(async () => { vi.mocked(getPageExportBundle).mockRejectedValue(new Error("access revoked")); return "/tmp/page.md"; }); wrap(); await waitFor(() => expect(screen.getByRole("button",{name:"Export"})).toBeEnabled()); fireEvent.click(screen.getByRole("button",{name:"Export"})); expect(await screen.findByRole("alert")).toHaveTextContent("access revoked"); expect(writeTextFile).not.toHaveBeenCalled(); });
+  it("waits for a new capture and its own version list when reopened", async () => {
+    const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
+    const element = <QueryClientProvider client={client}><PageExportDialog pageId="page-1" onClose={vi.fn()} /></QueryClientProvider>;
+    const view = render(element); await waitFor(() => expect(screen.getByRole("button", {name:"Export"})).toBeEnabled()); view.unmount();
+    let finish!: (value: PageExportBundle) => void;
+    const updated = {...base,id:"updated",digest:"updated-digest",version:5,content:"Changed current"};
+    vi.mocked(capturePageExport).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    vi.mocked(listPageExportVersions).mockResolvedValue({versions:[version(updated),version(old)]});
+    vi.mocked(getPageExportBundle).mockImplementation(async (_page,id) => id === "updated" ? updated : old);
+    const previousLists = vi.mocked(listPageExportVersions).mock.calls.length;
+    render(element); expect(screen.getByRole("button",{name:"Export"})).toBeDisabled(); expect(vi.mocked(listPageExportVersions)).toHaveBeenCalledTimes(previousLists);
+    finish(updated);
+    await waitFor(() => expect(screen.getByLabelText("Version")).toHaveValue("updated"));
+    await waitFor(() => expect(screen.getByRole("button",{name:"Export"})).toBeEnabled());
+    expect(vi.mocked(listPageExportVersions)).toHaveBeenCalledTimes(previousLists + 1);
   });
-
-  it.each([
-    ["Markdown", "Saved text", "Paper title"],
-    ["HTML", "Saved text", "Paper title"],
-  ])("exports %s from saved page/source metadata if a Zotero bibliography request fails", async (format, body, title) => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    vi.mocked(save).mockResolvedValue(`/tmp/Research-Notes.${format === "HTML" ? "html" : "md"}`);
-    vi.mocked(getZoteroDocument).mockRejectedValue(new Error("source offline"));
-    wrap();
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("BibTeX needs every entry");
-    fireEvent.click(screen.getByRole("radio", { name: format }));
-    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-
-    await waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
-    expect(writeTextFile).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(body));
-    expect(writeTextFile).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(title));
-    expect(screen.getByRole("alert")).toHaveTextContent("BibTeX needs every entry");
-    expect(screen.getByText("Page exported.")).toBeInTheDocument();
-  });
-
-  it("still refuses an export if the linked source list changes while the save dialog is open", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    vi.mocked(save).mockImplementation(async () => {
-      vi.mocked(getPageSources).mockResolvedValue([]);
-      return "/tmp/Research-Notes.md";
-    });
-    vi.mocked(getZoteroDocument).mockRejectedValue(new Error("source offline"));
-    wrap();
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("BibTeX needs every entry");
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("The page or its sources changed"));
-    expect(writeTextFile).not.toHaveBeenCalled();
-  });
-
-  it("refuses to save when the page changes while the native save dialog is open", async () => {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    vi.mocked(save).mockImplementation(async () => {
-      vi.mocked(getPage).mockResolvedValue({ ...page, version: 5, content: "New body" });
-      return "/tmp/Research-Notes.md";
-    });
-    wrap();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Export" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The page or its sources changed");
-    expect(writeTextFile).not.toHaveBeenCalled();
-  });
-
-  it("does not expose BibTeX when the page has no bibliography", async () => {
-    vi.mocked(getPageSources).mockResolvedValue([]);
-    wrap();
-    expect(await screen.findByText("BibTeX is unavailable because this page has no Zotero bibliography entries.")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "BibTeX" })).toBeDisabled();
-    expect(getZoteroDocument).not.toHaveBeenCalled();
+  it("disables cached bundle data when its fresh authorization fails", async () => {
+    const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
+    const element = <QueryClientProvider client={client}><PageExportDialog pageId="page-1" onClose={vi.fn()} /></QueryClientProvider>;
+    const view = render(element); await waitFor(() => expect(screen.getByRole("button",{name:"Export"})).toBeEnabled()); view.unmount();
+    vi.mocked(getPageExportBundle).mockRejectedValue(new Error("access revoked"));
+    render(element); expect(await screen.findByRole("alert")).toHaveTextContent("Could not load");
+    expect(screen.getByRole("button",{name:"Export"})).toBeDisabled();
   });
 });

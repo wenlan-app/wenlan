@@ -1314,6 +1314,25 @@ pub async fn recheck_sentence(
         .collect();
     if !targets.is_empty() {
         let (states, snapshots) = source_states(db, &citations, &page).await?;
+        if targets.iter().any(|&index| {
+            states
+                .get(&citations[index].locator)
+                .and_then(Option::as_ref)
+                .is_none()
+        }) {
+            return Err(WenlanError::Validation("source_requires_review: cited source missing or outside this Space; no claim was reverified".into()));
+        }
+        let checked_snapshots = snapshots
+            .iter()
+            .filter(|snapshot| {
+                targets
+                    .iter()
+                    .any(|&i| citations[i].locator == snapshot.locator)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        db.ensure_citation_sources_active(&checked_snapshots)
+            .await?;
         let texts = targets
             .iter()
             .enumerate()
@@ -1345,6 +1364,7 @@ pub async fn recheck_sentence(
             let was_verified = citation.status == "verified" && !citation.disproven;
             citation.disproven = !verified && was_verified;
             citation.status = if verified { "verified" } else { "unverified" }.to_string();
+            citation.historical = false;
             citation.scope = scope.to_string();
             citation.score = scores.get(k).copied().unwrap_or(0.0);
             if matches!(

@@ -14,6 +14,9 @@ use super::{
 
 #[rustfmt::skip]
 pub(super) const ROUTES: &[SensitiveReadRoute] = &[
+    row!(Get,"/api/research/source-lifecycle","source_lifecycle",QueryThenHeader,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
+    row!(Post,"/api/research/source-lifecycle","source_lifecycle",BodyThenHeader,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
+    row!(Get,"/api/research/source-lifecycle/reference","source_reference_identity",QueryThenHeader,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/import/state","import_state",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/import/batches/active","import_batches_active",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/import/batches/{batch_id}/status","import_batch_status",NoSelector,UnauthenticatedLocal,Global,SingleId404,NotApplicable,GlobalRead),
@@ -21,11 +24,12 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Get,"/api/memory/{source_id}/enrichment-status","memory_detail",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/memory/{id}/revisions","memory_revisions",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/memory/rejections","memory_rejections",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
-    row!(Get,"/api/refinery/queue","refinement_queue",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
+    row!(Get,"/api/refinery/queue","refinement_queue",QueryThenHeader,UnauthenticatedLocal,MemorySpace,BatchFiltered,Rejected,MixedRowsAndAggregates),
     row!(Get,"/api/indexed-files","indexed_files",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/chunks/{source_id}","document_chunks",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/zotero/documents","zotero_document_metadata",QueryThenHeader,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/zotero/pdf","zotero_pdf_attachment",QueryThenHeader,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
+    row!(Get,"/api/zotero/pdf-page","zotero_pdf_page",QueryThenHeader,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/webpage-chunks/{source_id}","webpage_chunks",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/activities","agent_activity",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/tags","document_tag_map",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),

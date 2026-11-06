@@ -1,15 +1,19 @@
+import { safePublicSourceUrl } from "./publicSourceUrl";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { processCitations, citationSourceKey, type ProcessedCitations } from "./pageCitations";
-import type { Page, PageCitation, PageSourceWithMemory } from "./tauri";
+import type { Page, PageCitation } from "./tauri";
+import type { PageExportSource } from "./pageExportApi";
 
 export type PageExportFormat = "markdown" | "html" | "bibtex";
 export interface ZoteroBibRecord { sourceId: string; title: string; bibtex: string }
 export interface PageExportSnapshot {
   page: Pick<Page, "id" | "title" | "content" | "version" | "last_modified" | "citations">;
-  sources: PageSourceWithMemory[];
+  sources: PageExportSource[];
+  kind?: "saved" | "pending_draft";
+  bibliographyIncomplete?: boolean;
   zoteroDocuments: ZoteroBibRecord[];
 }
 
@@ -34,7 +38,7 @@ export function safeExportUrl(value: string): string {
     const parsed = new URL(candidate);
     if (parsed.username || parsed.password) return "";
     if (parsed.protocol === "mailto:") return parsed.href;
-    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : "";
+    return safePublicSourceUrl(candidate) ?? "";
   } catch { return ""; }
 }
 
@@ -52,8 +56,8 @@ export function removeUnsafeMarkdownTargets(markdown: string): string {
     .replace(/<((?:file:|\/Users\/|\/home\/|[A-Za-z]:[\\/]|\\\\)[^>]+)>/giu, "");
 }
 
-function sourceForLocator(snapshot: PageExportSnapshot, citation: PageCitation): PageSourceWithMemory["memory"] {
-  return snapshot.sources.find((row) => row.source.memory_source_id === citation.locator || row.memory?.source_id === citation.locator)?.memory ?? null;
+function sourceForLocator(snapshot: PageExportSnapshot, citation: PageCitation): PageExportSource | null {
+  return snapshot.sources.find((source) => source.locator === citation.locator) ?? null;
 }
 
 function zoteroRecord(snapshot: PageExportSnapshot, sourceId: string | null | undefined): ZoteroBibRecord | undefined {
@@ -91,17 +95,16 @@ function references(snapshot: PageExportSnapshot, processed: ProcessedCitations)
     }
     const zotero = indexedZoteroSource ? zoteroRecord(snapshot, indexedZoteroSource.source_id) : undefined;
     const url = indexedZoteroSource
-      ? bibtexUrl(snapshot, indexedZoteroSource.source_id)
+      ? safeExportUrl(indexedZoteroSource.url ?? "") || bibtexUrl(snapshot, indexedZoteroSource.source_id)
       : citation.source_kind === "external_url" ? safeExportUrl(citation.locator) || null : bibtexUrl(snapshot, memory?.source_id ?? citation.locator);
     byKey.set(key, { key, number, title: zotero?.title || memory?.title || (citation.source_kind === "external_url" ? safeExportUrl(citation.locator) || "Saved webpage" : "Saved source"), url, localFile: false });
     numberByOccurrence.set(occurrence, number);
   }
   for (const row of snapshot.sources) {
-    if (!row.memory) continue;
-    const key = `memory\u0000${row.memory.source_id}`;
+    const key = `memory\u0000${row.source_id}`;
     if (byKey.has(key)) continue;
-    const zotero = zoteroRecord(snapshot, row.memory.source_id);
-    byKey.set(key, { key, title: zotero?.title || row.memory.title || "Saved source", url: bibtexUrl(snapshot, row.memory.source_id), localFile: false });
+    const zotero = zoteroRecord(snapshot, row.source_id);
+    byKey.set(key, { key, title: zotero?.title || row.title || "Saved source", url: safeExportUrl(row.url ?? "") || bibtexUrl(snapshot, row.source_id), localFile: false });
   }
   return { items: [...byKey.values()].sort((a, b) => (a.number ?? Number.MAX_SAFE_INTEGER) - (b.number ?? Number.MAX_SAFE_INTEGER) || a.title.localeCompare(b.title)), numberByOccurrence };
 }
@@ -131,9 +134,10 @@ function serializeMarkdown(snapshot: PageExportSnapshot): string {
   const date = snapshot.page.last_modified || "Unknown date";
   const sections = [
     `# ${snapshot.page.title}`,
-    `> Exported from saved version ${snapshot.page.version} · ${date}`,
+    snapshot.kind === "pending_draft" ? `> Pending draft based on saved version ${snapshot.page.version} — not adopted · ${date}` : `> Exported from saved version ${snapshot.page.version} · ${date}`,
     bodyWithMarkdownFootnotes({ ...processed, content: omitLeadingTitle(processed.content, snapshot.page.title) }, refs, numberByOccurrence),
   ];
+  if (snapshot.bibliographyIncomplete) sections.push("> Some bibliography entries were unavailable when this version was captured.");
   if (refs.length) sections.push(`## Sources\n\n${refs.map(ref => ref.number
     ? `[^wenlan-source-${ref.number}]: ${markdownReference(ref)}`
     : `- ${markdownReference(ref)}`).join("\n")}`);
@@ -169,7 +173,9 @@ function serializeHtml(snapshot: PageExportSnapshot): string {
     return `<li${ref.number ? ` id="citation-${ref.number}"` : ""}>${target}</li>`;
   }).join("")}</ol></section>` : "";
   const date = escapeHtml(snapshot.page.last_modified || "Unknown date");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(snapshot.page.title)}</title></head><body><main><header><h1>${escapeHtml(snapshot.page.title)}</h1><p>Exported from saved version ${snapshot.page.version} · ${date}</p></header><article>${body}</article>${sourceList}</main></body></html>\n`;
+  const bibliographyNotice = snapshot.bibliographyIncomplete ? "<p>Some bibliography entries were unavailable when this version was captured.</p>" : "";
+  const provenance = snapshot.kind === "pending_draft" ? `Pending draft based on saved version ${snapshot.page.version} — not adopted` : `Exported from saved version ${snapshot.page.version}`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(snapshot.page.title)}</title></head><body><main><header><h1>${escapeHtml(snapshot.page.title)}</h1><p>${provenance} · ${date}</p></header><article>${body}</article>${bibliographyNotice}${sourceList}</main></body></html>\n`;
 }
 
 function stripLocalBibFields(value: string): string {
@@ -186,7 +192,7 @@ function serializeBibTeX(snapshot: PageExportSnapshot): string {
   const entries = snapshot.zoteroDocuments.map(record => stripLocalBibFields(record.bibtex)).filter(entry => /@\w+\s*\{/u.test(entry));
   const unique = [...new Set(entries)];
   if (!unique.length) throw new Error("This page has no Zotero bibliography entries to export.");
-  return `${unique.join("\n\n")}\n`;
+  return `${snapshot.kind === "pending_draft" ? `% Pending draft based on saved version ${snapshot.page.version} — not adopted\n\n` : ""}${unique.join("\n\n")}\n`;
 }
 
 export function serializePageExport(snapshot: PageExportSnapshot, format: PageExportFormat): string {

@@ -144,6 +144,8 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
   const refreshBlocked = isBlockingRefreshReason(page.refresh_blocked_reason);
   const staleMessage = page.stale_reason === "source_conflict"
     ? "sourceConflict"
+    : page.refresh_blocked_reason === "zotero_selection_changed"
+      ? "sourceSelectionChanged"
     : refreshBlocked
       ? "updateBlocked"
       : page.stale_reason === "source_updated" && !pageRevisionPending

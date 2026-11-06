@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 export const enPageExport = {
+  chooseVersion: "Version", noVersion: "No retained version", pendingVersion: "Pending draft based on version {{version}} — not adopted · {{date}}", legacyVersion: "Saved version {{version}} · {{date}}", referencesUnavailable: "References were not retained for this version", partialBibliography: "Some bibliography was unavailable when this version was captured. Markdown and HTML remain available; BibTeX requires every entry.", capturedNow: "The current saved version is captured when this dialog opens.",
   title: "Export page",
   menuAction: "Export…",
-  description: "Export the saved version of this page. Later edits will not change the exported file.",
+  description: "Choose a retained version of this page. Later edits will not change the exported file.",
   version: "Saved version {{version}} · {{date}}",
   format: "Format",
   markdown: "Markdown",
@@ -22,9 +23,10 @@ export const enPageExport = {
   cancel: "Cancel",
 };
 export const hansPageExport = {
+  chooseVersion: "版本", noVersion: "没有保留的版本", pendingVersion: "基于版本 {{version}} 的待审草稿，尚未采用 · {{date}}", legacyVersion: "已保存版本 {{version}} · {{date}}", referencesUnavailable: "此版本的参考资料未保留", partialBibliography: "此版本记录时部分书目不可用。仍可导出 Markdown 和 HTML；BibTeX 需要完整书目。", capturedNow: "打开此对话框时记录当前已保存版本。",
   title: "导出页面",
   menuAction: "导出…",
-  description: "导出此页面已保存的版本。后续编辑不会更改导出的文件。",
+  description: "选择此页面保留的版本。后续编辑不会更改导出的文件。",
   version: "已保存版本 {{version}} · {{date}}",
   format: "格式",
   markdown: "Markdown",
@@ -44,9 +46,10 @@ export const hansPageExport = {
   cancel: "取消",
 };
 export const hantPageExport = {
+  chooseVersion: "版本", noVersion: "沒有保留的版本", pendingVersion: "基於版本 {{version}} 的待審草稿，尚未採用 · {{date}}", legacyVersion: "已儲存版本 {{version}} · {{date}}", referencesUnavailable: "此版本的參考資料未保留", partialBibliography: "此版本記錄時部分書目無法取得。仍可匯出 Markdown 和 HTML；BibTeX 需要完整書目。", capturedNow: "開啟此對話框時記錄目前已儲存版本。",
   title: "匯出頁面",
   menuAction: "匯出…",
-  description: "匯出此頁面已儲存的版本。之後的編輯不會改變匯出的檔案。",
+  description: "選擇此頁面保留的版本。之後的編輯不會改變匯出的檔案。",
   version: "已儲存版本 {{version}} · {{date}}",
   format: "格式",
   markdown: "Markdown",

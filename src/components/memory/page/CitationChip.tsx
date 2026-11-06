@@ -18,7 +18,7 @@ interface CitationChipProps {
   citation: PageCitation;
   sourceMemory: MemoryItem | null;
   sourcesLoading: boolean;
-  onOpenMemory: (sourceId: string) => void;
+  onOpenMemory: (sourceId: string, citation?: PageCitation) => void;
 }
 
 const HOVER_OPEN_DELAY_MS = 150;
@@ -117,11 +117,11 @@ export default function CitationChip({
     if (citation.source_kind === "memory") {
       // A deleted/merged source has no detail view to land on — explain in
       // the popover instead of navigating to a blank page.
-      if (!sourceMemory && !sourcesLoading) {
+      if (!sourceMemory && !sourcesLoading && !citation.historical) {
         setOpen((v) => !v);
         return;
       }
-      onOpenMemory(citation.locator);
+      onOpenMemory(citation.locator, citation);
     } else if (citation.source_kind === "external_url") {
       void openTarget();
     } else {
@@ -129,7 +129,7 @@ export default function CitationChip({
     }
   };
 
-  const unverified = citation.status === "unverified";
+  const unverified = citation.status === "unverified" || !!citation.historical;
 
   return (
     <span
@@ -158,14 +158,14 @@ export default function CitationChip({
       <button
         ref={chipRef}
         type="button"
-        data-status={citation.status}
+        data-status={citation.historical ? "unevaluated" : citation.status}
         data-reference-kind={referenceKind}
         aria-describedby={open ? popoverId : undefined}
         onPointerDown={(e) => {
           lastPointerType.current = e.pointerType;
         }}
         onClick={activate}
-        className={`reference-link reference-link--source citation-chip focus-visible:outline-2 focus-visible:outline-[var(--mem-accent-indigo)]${citation.status === "unevaluated" ? " citation-chip--unevaluated" : ""}`}
+        className={`reference-link reference-link--source citation-chip focus-visible:outline-2 focus-visible:outline-[var(--mem-accent-indigo)]${(citation.historical || citation.status === "unevaluated") ? " citation-chip--unevaluated" : ""}`}
         style={{
           fontFamily: "var(--mem-font-body)",
           // A footnote step below the reading size: 12px beside 15px body text.

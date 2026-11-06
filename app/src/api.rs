@@ -1523,12 +1523,41 @@ impl WenlanClient {
         self.get_json("/api/zotero/collections").await
     }
 
+    pub async fn list_zotero_items(
+        &self,
+        collection_key: &str,
+        expected_server_id: &str,
+    ) -> Result<wenlan_types::zotero::ZoteroItemsResponse, String> {
+        self.get_json_scoped_with_query(
+            "/api/zotero/items",
+            &[
+                ("collection_key", collection_key),
+                ("expected_server_id", expected_server_id),
+            ],
+            None,
+        )
+        .await
+    }
+
     pub async fn zotero_document(
         &self,
         source_id: &str,
         space: Option<&str>,
+        attachment_key: Option<&str>,
+        expected_digest: Option<&str>,
+        allow_retained: bool,
     ) -> Result<wenlan_types::zotero::ZoteroDocumentResponse, String> {
-        self.get_json_scoped_with_query("/api/zotero/documents", &[("source_id", source_id)], space)
+        let mut query = vec![("source_id", source_id)];
+        if let Some(key) = attachment_key {
+            query.push(("attachment_key", key));
+        }
+        if let Some(digest) = expected_digest {
+            query.push(("expected_digest", digest));
+        }
+        if allow_retained {
+            query.push(("allow_retained", "true"));
+        }
+        self.get_json_scoped_with_query("/api/zotero/documents", &query, space)
             .await
     }
 
@@ -1537,11 +1566,25 @@ impl WenlanClient {
         source_id: &str,
         attachment_key: &str,
         space: Option<&str>,
+        expected_digest: Option<&str>,
+        allow_retained: bool,
     ) -> Result<Vec<u8>, String> {
         let mut request = self
             .client
             .get(self.url("/api/zotero/pdf"))
             .query(&[("source_id", source_id), ("attachment_key", attachment_key)]);
+        if allow_retained {
+            if expected_digest.is_none() {
+                return Err("Retained PDF selection requires an expected digest".into());
+            }
+            request = request.query(&[("allow_retained", "true")]);
+        }
+        if let Some(digest) = expected_digest {
+            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err("Invalid expected PDF digest".into());
+            }
+            request = request.query(&[("expected_digest", digest)]);
+        }
         if let Some(space) = space {
             if space.trim().is_empty() {
                 return Err("Space must not be empty".into());
@@ -1549,6 +1592,9 @@ impl WenlanClient {
             request = request.query(&[("space", space)]);
         }
         let mut response = request.send().await.map_err(|e| e.to_string())?;
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            return Err("zotero_pdf_stale: attachment changed; reload the document".into());
+        }
         if !response.status().is_success() {
             return Err(format!(
                 "Could not read saved Zotero PDF: {}",
@@ -1571,6 +1617,14 @@ impl WenlanClient {
         }
         if !bytes.starts_with(b"%PDF-") {
             return Err("Saved attachment is not a PDF".into());
+        }
+        if let Some(expected) = expected_digest {
+            use sha2::{Digest, Sha256};
+            if format!("{:x}", Sha256::digest(&bytes)) != expected {
+                return Err(
+                    "zotero_pdf_stale: PDF bytes do not match the requested snapshot".into(),
+                );
+            }
         }
         Ok(bytes)
     }
@@ -1613,6 +1667,40 @@ impl WenlanClient {
     pub async fn remove_source(&self, id: &str) -> Result<(), String> {
         let path = format!("/api/sources/{}", percent_encode_path_segment(id));
         self.delete_empty(&path).await
+    }
+
+    pub async fn get_zotero_disconnect_preview(
+        &self,
+        id: &str,
+    ) -> Result<wenlan_types::zotero::ZoteroDisconnectPreview, String> {
+        self.get_json(&format!(
+            "/api/zotero/sources/{}/disconnect-preview",
+            percent_encode_path_segment(id)
+        ))
+        .await
+    }
+
+    pub async fn remove_zotero_source_at_preview(
+        &self,
+        id: &str,
+        preview: &wenlan_types::zotero::ZoteroDisconnectPreview,
+    ) -> Result<(), String> {
+        if preview.identity.registration_id != id
+            || preview.identity_digest.len() != 64
+            || !preview
+                .identity_digest
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit())
+        {
+            return Err("Zotero disconnect preview does not match this connection".into());
+        }
+        self.delete_empty(&format!(
+            "/api/sources/{}?expected_revision={}&expected_identity={}",
+            percent_encode_path_segment(id),
+            preview.revision,
+            percent_encode_path_segment(&preview.identity_digest)
+        ))
+        .await
     }
 
     pub async fn sync_source(
@@ -2319,23 +2407,31 @@ impl WenlanClient {
     pub async fn accept_refinement(
         &self,
         id: &str,
+        space: Option<&str>,
     ) -> Result<wenlan_types::responses::AcceptRefinementResponse, String> {
-        self.post_empty(&format!(
+        let mut path = format!(
             "/api/refinery/queue/{}/accept",
             percent_encode_path_segment(id)
-        ))
-        .await
+        );
+        if let Some(space) = space {
+            path.push_str(&format!("?space={}", percent_encode_path_segment(space)));
+        }
+        self.post_empty(&path).await
     }
 
     pub async fn reject_refinement(
         &self,
         id: &str,
+        space: Option<&str>,
     ) -> Result<wenlan_types::responses::RejectRefinementResponse, String> {
-        self.post_empty(&format!(
+        let mut path = format!(
             "/api/refinery/queue/{}/reject",
             percent_encode_path_segment(id)
-        ))
-        .await
+        );
+        if let Some(space) = space {
+            path.push_str(&format!("?space={}", percent_encode_path_segment(space)));
+        }
+        self.post_empty(&path).await
     }
 
     // ── Config ─────────────────────────────────────────────────────────────
@@ -2732,6 +2828,57 @@ mod tests {
             request
         });
         (format!("http://{}", addr), handle)
+    }
+
+    #[tokio::test]
+    async fn zotero_disconnect_carries_preview_fences_and_preserves_conflict() {
+        let (base_url, request) = serve_response_once("409 Conflict", "preview changed").await;
+        let client = WenlanClient {
+            client: reqwest::Client::new(),
+            base_url,
+        };
+        let mut preview = wenlan_types::zotero::ZoteroDisconnectPreview {
+            impact_scope_known: true,
+            identity_digest: "a".repeat(64),
+            space_name: "Research".into(),
+            identity: wenlan_types::zotero::ZoteroRegistrationIdentity {
+                registration_id: "zotero-a".into(),
+                locator: "zotero://selection".into(),
+                server_id: "server-a".into(),
+                space_id: "space-a".into(),
+            },
+            revision: 42,
+            canonical_item_ids: vec![],
+            affected_page_ids: vec![],
+            pending_disconnect: false,
+            disconnected: false,
+        };
+        // A different connection must fail before any request is sent.
+        assert!(client
+            .remove_zotero_source_at_preview("other", &preview)
+            .await
+            .unwrap_err()
+            .contains("does not match"));
+        preview.identity_digest = "not-a-digest".into();
+        assert!(client
+            .remove_zotero_source_at_preview("zotero-a", &preview)
+            .await
+            .unwrap_err()
+            .contains("does not match"));
+        preview.identity_digest = "a".repeat(64);
+        let error = client
+            .remove_zotero_source_at_preview("zotero-a", &preview)
+            .await
+            .unwrap_err();
+        assert!(error.contains("409") && error.contains("preview changed"));
+        let request = request.await.unwrap();
+        assert_eq!(
+            request.lines().next().unwrap(),
+            format!(
+                "DELETE /api/sources/zotero-a?expected_revision=42&expected_identity={} HTTP/1.1",
+                "a".repeat(64)
+            )
+        );
     }
 
     #[tokio::test]

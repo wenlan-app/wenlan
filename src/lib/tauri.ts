@@ -24,6 +24,8 @@ function invoke<T>(...call: Parameters<typeof tauriInvoke>): Promise<T> {
   return tauriInvoke<T>(...call);
 }
 
+export { invoke as invokeDaemonCommand };
+
 export async function repairLint(query: RepairLintQuery): Promise<RepairLintReport> {
   return invoke("repair_lint", { query });
 }
@@ -291,8 +293,15 @@ export function sourceFollowsChanges(source: Pick<RegisteredSource, "status">): 
   return source.status !== "Paused";
 }
 
-export async function removeSource(id: string): Promise<void> {
-  return invoke("remove_source", { id });
+export interface ZoteroDisconnectPreview {
+  identity: { registration_id: string; locator: string; server_id: string; space_id: string };
+  identity_digest: string; space_name: string; revision: number; canonical_item_ids: string[]; affected_page_ids: string[]; impact_scope_known: boolean; pending_disconnect: boolean; disconnected: boolean;
+}
+export async function getZoteroDisconnectPreview(id: string): Promise<ZoteroDisconnectPreview> {
+  return invoke("get_zotero_disconnect_preview", { id });
+}
+export async function removeSource(id: string, expectedZoteroPreview?: ZoteroDisconnectPreview): Promise<void> {
+  return invoke("remove_source", expectedZoteroPreview ? { id, expectedZoteroPreview } : { id });
 }
 
 export async function syncRegisteredSource(id: string): Promise<SyncStats> {
@@ -314,12 +323,28 @@ export async function listZoteroCollections(): Promise<ZoteroCollectionsResult> 
   return invoke("list_zotero_collections");
 }
 
+export interface ZoteroItemSummary {
+  key: string;
+  title: string;
+  item_type: string;
+}
+export interface ZoteroItemsResult {
+  server_id: string;
+  collection_key: string;
+  items: ZoteroItemSummary[];
+  complete: boolean;
+}
+export async function listZoteroItems(collectionKey: string, expectedServerId: string): Promise<ZoteroItemsResult> {
+  return invoke("list_zotero_items", { collectionKey, expectedServerId });
+}
+
 export async function addZoteroSource(
   collectionKey: string,
   expectedServerId: string | null,
   space: string,
+  itemKeys?: string[],
 ): Promise<RegisteredSource> {
-  return invoke("add_zotero_source", { collectionKey, expectedServerId, space });
+  return invoke("add_zotero_source", { collectionKey, expectedServerId, space, itemKeys });
 }
 
 /** Read the running daemon's version string from GET /api/health. */
@@ -1900,7 +1925,16 @@ export interface MemoryStats {
 
 // ── Pages ───────────────────────────────────────────────────────────
 
+export interface PdfCitationTarget {
+  attachment_key: string;
+  pdf_digest: string;
+  page: number;
+  quote: string;
+}
+
 export interface PageCitation {
+  historical?: boolean;
+  pdf_target?: PdfCitationTarget;
   occurrence: number;
   marker: number;
   source_kind: "memory" | "external_url" | "external_file" | "authored";
@@ -3278,6 +3312,7 @@ export async function getPendingRevision(sourceId: string): Promise<PendingRevis
 // ===== Refinery Queue =====
 
 export type ProposalAction =
+  | "research_dispute"
   | "entity_merge"
   | "relation_conflict"
   | "detect_contradiction"
@@ -3291,6 +3326,7 @@ export type ProposalAction =
   | "unknown";
 
 export type RefinementPayload =
+  | { action: "research_dispute"; dispute: ResearchDispute; payload_digest: string; space: string }
   | {
       action: "entity_merge";
       existing_id: string;
@@ -3364,12 +3400,12 @@ export async function listRefinements(limit?: number): Promise<ListRefinementsRe
   return invoke("list_refinements", { limit: limit ?? null });
 }
 
-export async function acceptRefinement(id: string): Promise<AcceptRefinementResponse> {
-  return invoke("accept_refinement", { id });
+export async function acceptRefinement(id: string, space?: string): Promise<AcceptRefinementResponse> {
+  return invoke("accept_refinement", { id, space });
 }
 
-export async function rejectRefinement(id: string): Promise<RejectRefinementResponse> {
-  return invoke("reject_refinement", { id });
+export async function rejectRefinement(id: string, space?: string): Promise<RejectRefinementResponse> {
+  return invoke("reject_refinement", { id, space });
 }
 
 // ===== Pages =====
@@ -5048,19 +5084,43 @@ export async function listCommunityMembers(
 }
 
 // Original Zotero attachments are read through the daemon's scoped cache.
+export interface ZoteroPdfAnnotation {
+  key: string;
+  attachment_key: string;
+  page_index: number;
+  rects: [number, number, number, number][];
+  text: string;
+  comment: string;
+  color: string;
+}
+
 export interface ZoteroDocument {
+  historical?: boolean;
+  annotations?: ZoteroPdfAnnotation[];
+  source_url?: string;
+  registered_source_id?: string;
   source_id: string;
   title: string;
-  attachments: { key: string; title: string; available: boolean }[];
+  attachments: { key: string; title: string; available: boolean; pdf_digest?: string }[];
   bibtex: string;
   warnings: string[];
 }
 
-export function getZoteroDocument(sourceId: string, space?: string): Promise<ZoteroDocument> {
-  return invoke("get_zotero_document", { sourceId, space });
+export function getZoteroDocument(sourceId: string, space?: string, attachmentKey?: string, expectedDigest?: string, allowRetained?: boolean): Promise<ZoteroDocument> {
+  return invoke("get_zotero_document", { sourceId, space, attachmentKey, expectedDigest, allowRetained });
 }
 
-export async function readZoteroPdf(sourceId: string, attachmentKey: string, space?: string): Promise<Uint8Array> {
-  const bytes = await invoke<ArrayBuffer | number[]>("read_zotero_pdf", { sourceId, attachmentKey, space });
+export async function readZoteroPdf(sourceId: string, attachmentKey: string, space?: string, expectedDigest?: string, allowRetained?: boolean): Promise<Uint8Array> {
+  const bytes = await invoke<ArrayBuffer | number[]>("read_zotero_pdf", { sourceId, attachmentKey, space, expectedDigest, allowRetained });
   return new Uint8Array(bytes);
 }
+
+export type ResearchDisputeKind = "opposing_claims" | "incomparable_conditions" | "different_definitions" | "insufficient_evidence";
+export type ResearchDisputeDecision = "confirm_difference" | "not_comparable" | "correct_interpretation" | "defer" | "close";
+export interface ResearchDisputeEvidence { source: string; source_id: string; source_digest: string; quote: string; pdf_target?: PdfCitationTarget | null }
+export interface ResearchDispute { space_id: string; kind: ResearchDisputeKind; conditions: string; reason: string; evidence: ResearchDisputeEvidence[] }
+export interface ResearchDisputeSourceState { source: string; source_id: string; expected_digest: string; current_digest: string | null; expected_pdf_digest: string | null; current_pdf_digest: string | null; state: "unchanged" | "changed" | "unavailable" }
+export interface ResearchDisputeDecisionEvent { decision: ResearchDisputeDecision; reason: string; actor: string; decided_at: number; source_states: ResearchDisputeSourceState[] }
+export interface ResearchDisputeView { space: string; id: string; status: string; dispute: ResearchDispute; payload_digest: string; source_states: ResearchDisputeSourceState[]; decisions: ResearchDisputeDecisionEvent[] }
+export async function getResearchDispute(space: string,id: string): Promise<ResearchDisputeView> { return invoke("get_research_dispute",{space,id}); }
+export async function decideResearchDispute(space: string,id: string,expectedPayloadDigest: string,decision: ResearchDisputeDecision,reason: string): Promise<ResearchDisputeView> { return invoke("decide_research_dispute",{space,id,expectedPayloadDigest,decision,reason}); }

@@ -254,6 +254,13 @@ describe("ReviewDialog local adjustments", () => {
     vi.mocked(getPageSources).mockResolvedValue([]);
   });
 
+  it("explains that a source selection change requires review", async () => {
+    const user = userEvent.setup();
+    render(<ReviewHarness item={{...adjustableRevision, reviewReason:"source_selection_changed"}} onResolve={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Open review" }));
+    expect(await screen.findByText("The source selection changed. Check this update before applying it.")).toBeVisible();
+  });
+
   it("edits locally, cancels back to the proposal, and adopts through the existing action", async () => {
     const user = userEvent.setup();
     const onResolve = vi.fn().mockResolvedValue(undefined);

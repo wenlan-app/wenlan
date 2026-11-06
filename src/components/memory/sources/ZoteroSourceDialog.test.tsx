@@ -18,6 +18,9 @@ beforeEach(() => {
   vi.mocked(tauri.listZoteroCollections).mockResolvedValue({ server_id: "local-1", collections: [
     { key: "A1", name: "Articles", item_count: 8 }, { key: "B2", name: "Books", item_count: 3 },
   ] });
+  vi.mocked(tauri.listZoteroItems).mockImplementation(async (collectionKey, serverId) => ({ server_id: serverId, collection_key: collectionKey, complete: true, items: collectionKey === "A1" ? [
+    { key: "PAPER001", title: "First paper", item_type: "journalArticle" }, { key: "PAPER002", title: "Second paper", item_type: "journalArticle" },
+  ] : [{ key: "PAPER003", title: "Third paper", item_type: "book" }] }));
   vi.mocked(tauri.listSpaces).mockResolvedValue([
     { id: "space-1", name: "Research", description: null, suggested: false, starred: false, sort_order: 0, memory_count: 0, entity_count: 0, created_at: 0, updated_at: 0 },
     { id: "space-2", name: "Reading", description: null, suggested: false, starred: false, sort_order: 1, memory_count: 0, entity_count: 0, created_at: 0, updated_at: 0 },
@@ -67,6 +70,74 @@ describe("ZoteroSourceDialog", () => {
     const dialog = within(screen.getByRole("dialog"));
     const closeButtons = dialog.getAllByRole("button", { name: "Close" });
     expect(closeButtons[closeButtons.length - 1]).toBeEnabled();
+  });
+
+  it("imports only selected articles with the reviewed Zotero identity", async () => {
+    renderDialog("Research");
+    await screen.findByText("Connected to local Zotero");
+    expect(tauri.listZoteroItems).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Choose articles" }));
+    const first = await screen.findByRole("checkbox", { name: "First paper" });
+    expect(tauri.listZoteroItems).toHaveBeenCalledExactlyOnceWith("A1", "local-1");
+    expect(screen.getByRole("button", { name: "Import selected articles" })).toBeDisabled();
+    fireEvent.click(first);
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Import selected articles" }));
+    await screen.findByText("Imported 2; skipped 1; errors 0.");
+    expect(tauri.addZoteroSource).toHaveBeenCalledExactlyOnceWith("A1", "local-1", "Research", ["PAPER001"]);
+  });
+
+  it("clears selected articles when the collection changes", async () => {
+    renderDialog("Research");
+    await screen.findByText("Connected to local Zotero");
+    fireEvent.click(screen.getByRole("button", { name: "Choose articles" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "First paper" }));
+    fireEvent.change(screen.getByLabelText("Collection"), { target: { value: "B2" } });
+    expect(await screen.findByRole("checkbox", { name: "Third paper" })).not.toBeChecked();
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import selected articles" })).toBeDisabled();
+  });
+
+  it("never expands a failed or incomplete article list into a collection import", async () => {
+    vi.mocked(tauri.listZoteroItems).mockRejectedValueOnce(new Error("listing incomplete"));
+    renderDialog("Research");
+    await screen.findByText("Connected to local Zotero");
+    fireEvent.click(screen.getByRole("button", { name: "Choose articles" }));
+    expect(await screen.findByText("Could not load a complete article list.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import selected articles" })).toBeDisabled();
+    expect(tauri.addZoteroSource).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("checkbox", { name: "First paper" })).toBeInTheDocument();
+  });
+
+  it("rejects a complete-looking list from a different Zotero identity", async () => {
+    vi.mocked(tauri.listZoteroItems).mockResolvedValue({ server_id: "other", collection_key: "A1", complete: true, items: [{ key: "PAPER001", title: "Wrong instance", item_type: "journalArticle" }] });
+    renderDialog("Research");
+    await screen.findByText("Connected to local Zotero");
+    fireEvent.click(screen.getByRole("button", { name: "Choose articles" }));
+    expect(await screen.findByText("Could not load a complete article list.")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Wrong instance" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import selected articles" })).toBeDisabled();
+  });
+
+  it("does not enable selected import for an incomplete response", async () => {
+    vi.mocked(tauri.listZoteroItems).mockResolvedValue({ server_id: "local-1", collection_key: "A1", complete: false, items: [{ key: "PAPER001", title: "Partial paper", item_type: "journalArticle" }] });
+    renderDialog("Research");
+    await screen.findByText("Connected to local Zotero");
+    fireEvent.click(screen.getByRole("button", { name: "Choose articles" }));
+    expect(await screen.findByText("Could not load a complete article list.")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Partial paper" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import selected articles" })).toBeDisabled();
+  });
+
+  it("does not list articles without a verified Zotero identity", async () => {
+    vi.mocked(tauri.listZoteroCollections).mockResolvedValue({ server_id: null, collections: [{ key: "A1", name: "Articles", item_count: 1 }] });
+    renderDialog("Research");
+    await screen.findByText("Connected to local Zotero");
+    fireEvent.click(screen.getByRole("button", { name: "Choose articles" }));
+    expect(screen.getByText("Zotero identity could not be verified. Reconnect and try again.")).toBeInTheDocument();
+    expect(tauri.listZoteroItems).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Import selected articles" })).toBeDisabled();
   });
 
   it("shows local Zotero offline and retries collection discovery", async () => {

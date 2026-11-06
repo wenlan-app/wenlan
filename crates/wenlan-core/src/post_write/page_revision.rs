@@ -26,6 +26,9 @@ pub(super) struct PageRevisionCard {
     /// other card.
     basis_marks: Vec<crate::db::StagedBasisMark>,
     citation_snapshots: Vec<crate::db::CitationSourceSnapshot>,
+    citations: Vec<wenlan_types::pages::PageCitation>,
+    citation_body_digest: Option<String>,
+    research_write: Option<crate::db::research_write::ResearchWriteFence>,
 }
 
 pub(super) async fn resolve_page_revision_card(
@@ -119,6 +122,20 @@ pub(super) async fn resolve_page_revision_card(
         basis_snapshot,
         basis_marks,
         citation_snapshots,
+        research_write: structured
+            .get("research_write")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()?,
+        citation_body_digest: structured
+            .get("citation_body_digest")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
+        citations: structured
+            .get("citations")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()?
+            .unwrap_or_default(),
     }))
 }
 
@@ -212,10 +229,32 @@ pub(super) async fn accept_page_revision_card_with_edit(
         {
             Ok(crate::citations::WriteCitations::Checked {
                 body,
-                citations_json,
+                mut citations_json,
                 snapshots,
                 ..
             }) => {
+                // The target was checked before staging and identifies immutable original bytes.
+                // Only an unchanged proposal may inherit occurrence-specific positions.
+                if edit.is_none()
+                    && body == card.content
+                    && card.citation_body_digest.as_deref()
+                        == Some(crate::pdf_citations::body_digest(&body).as_str())
+                {
+                    let mut checked: Vec<wenlan_types::pages::PageCitation> =
+                        serde_json::from_str(&citations_json)?;
+                    for citation in &mut checked {
+                        if let Some(old) = card.citations.iter().find(|old| {
+                            old.occurrence == citation.occurrence
+                                && old.marker == citation.marker
+                                && old.locator == citation.locator
+                                && old.source_kind == citation.source_kind
+                        }) {
+                            citation.pdf_target = old.pdf_target.clone();
+                        }
+                    }
+                    crate::pdf_citations::validate_pdf_targets(&checked, &citation_scope).await?;
+                    citations_json = serde_json::to_string(&checked)?;
+                }
                 citation_snapshots.extend(snapshots);
                 // Adopt preserves the exact human choice. Marker cleanup must not
                 // attach occurrence indexes computed for a different body.
@@ -289,6 +328,7 @@ pub(super) async fn accept_page_revision_card_with_edit(
             edit.map(|edit| edit.expected_content.as_str()),
             &crate::db::BasisWrite {
                 actor: actor.to_string(),
+                research_write: card.research_write.clone(),
                 citation_snapshots,
                 space_guard: (!card.citation_snapshots.is_empty()).then_some(citation_scope),
                 confirm_snapshot: card.basis_snapshot.clone(),
