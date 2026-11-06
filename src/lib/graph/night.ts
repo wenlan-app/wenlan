@@ -175,7 +175,22 @@ export function nightMarks(
       bottom = Math.max(bottom, at.y + at.r);
       points.push(sentence);
     });
+    // A picked quiet thing's points by their topics (`elsewhere`): lit where
+    // they sit, and at its own stop each says its sentence there, as an
+    // active thing's do. A lone lit dot in a big topic's crowd was all it
+    // showed, which read as nothing at all (Qi-Xuan's data, 11-06).
+    const quietHere: NightSentence[] = [];
+    if (thing === picked && attrs.quiet === true) {
+      for (const id of (attrs.elsewhere as string[] | undefined) ?? []) {
+        if (!graph.hasNode(id) || !lit(id)) continue;
+        const at = drawnAt(id);
+        if (!at || !onScreen(at)) continue;
+        const text = String(graph.getNodeAttribute(id, "label") ?? "");
+        if (text && sentencesFor(thing, id)) quietHere.push({ ...at, dim: false, id, text, open: false, thing });
+      }
+    }
     if (points.length === 0) {
+      sentences.push(...quietHere.splice(0));
       // Every point is out by its topic: the frame stays, small, on the
       // thing's centre, so its name still says where the thing is.
       // So does a picked thing with nothing drawn, so you see what you picked,
@@ -211,10 +226,11 @@ export function nightMarks(
         edges.push({ kind: "back", thing, goTo: thing, title: frame.title, count: 0, text: "", open: false, toward: { x: (frame.left + frame.right) / 2, y: (frame.top + frame.bottom) / 2 } });
         sentences.push(...awayPoints.filter((point) => point.text && sentencesFor(thing, point.id)));
       }
+      sentences.push(...quietHere);
       return;
     }
     frames.push(frame);
-    sentences.push(...[...points, ...awayPoints].filter((point) => point.text && sentencesFor(thing, point.id)));
+    sentences.push(...[...points, ...awayPoints].filter((point) => point.text && sentencesFor(thing, point.id)), ...quietHere);
   });
   return { frames, sentences, edges };
 }

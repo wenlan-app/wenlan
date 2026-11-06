@@ -58,7 +58,6 @@ import SpaceDetail from "./SpaceDetail";
 import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
-import { BASIS_UPDATES_REVIEW_ID } from "./page/useBasisActions";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
 import { useLibraryInventory } from "./pages/useLibraryInventory";
 import { SecondaryNoteGroup, type SecondaryNoteGroupHandle } from "./pages/SecondaryNoteGroup";
@@ -194,6 +193,11 @@ const INTRO_TABS: Partial<Record<View["kind"], IntroTab>> = {
   spaces: "spaces",
   activity: "activity",
 };
+
+/** The sidebar button, its gap and the back and forward buttons at the
+ *  header's start: the home's tab strip begins after them, never under them,
+ *  when the sidebar is narrower than they are. */
+const HEADER_TOOLS_WIDTH = 32 + 12 + 66;
 
 export default function Main({
   initialView,
@@ -1438,7 +1442,7 @@ export default function Main({
       data-sidebar-auto-transition={autoSidebar.transitioning || undefined}
       data-note-workspace={isWikiWorkspaceView || undefined}
       inert={mobileSearchOpen || movingNote}
-      style={{ backgroundColor: "var(--mem-bg)", color: "var(--mem-text)", "--workspace-labels-width": `${effectiveSidebar.width ?? 240}px` } as CSSProperties}
+      style={{ backgroundColor: "var(--mem-bg)", color: "var(--mem-text)", "--workspace-labels-width": `${effectiveSidebar.width ?? 240}px`, "--workspace-header-tools-end": `${topBarLeftInset() + HEADER_TOOLS_WIDTH}px` } as CSSProperties}
     >
       {/* Header follows the width of the primary workspace. */}
       <header
@@ -1630,7 +1634,6 @@ export default function Main({
                 onSeeExample={() => switchExampleWiki(true)}
                 onImportChatsQuick={() => navigateTo({ kind: "import", fromHome: true })}
                 onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
-                onOpenBasisUpdates={() => navigateTo({ kind: "distill-review", reviewItemId: BASIS_UPDATES_REVIEW_ID })}
                 onOpenNoteSuggestion={(container) => {
                   setSourceLibraryState({ search: "", filter: "all", container });
                   navigateTo({ kind: "sources" });

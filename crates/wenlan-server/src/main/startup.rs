@@ -126,7 +126,8 @@ pub(super) async fn prepare_startup_state(
     }
     // Repair mode refuses schema drift and skips every ordinary constructor
     // side effect (schema/migrations/profile bootstrap/embedder load). Normal
-    // startup retains the existing fully initialized path.
+    // startup completes database initialization before serving; model loading
+    // and embedding recovery happen in the runtime worker.
     let db = if repair_recovery_pending {
         tracing::warn!("Opening current database in side-effect-free repair mode");
         wenlan_core::db::MemoryDB::open_for_repair(&data_dir).await?
@@ -136,9 +137,9 @@ pub(super) async fn prepare_startup_state(
         let emitter: Arc<dyn wenlan_core::events::EventEmitter> =
             Arc::new(wenlan_core::NoopEmitter);
         tracing::info!("Initializing MemoryDB at {}", data_dir.display());
-        // Memory rows with no embedding are recovered in the background after
-        // the daemon serves (runtime.rs); a large backlog recovered here held
-        // the health check shut for many minutes, past the app's startup wait.
+        // Model loading and missing embeddings are handled after the daemon
+        // serves (runtime.rs). A first download or a large backlog must not
+        // hold health and basic storage behind the app's startup deadline.
         let db = wenlan_core::db::MemoryDB::new_with_embedding_recovery(
             &data_dir,
             emitter,

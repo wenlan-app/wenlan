@@ -570,7 +570,9 @@ pub const MAX_ABOUT_CHARS: usize = 200;
 pub const MAX_STATUS_CHARS: usize = 120;
 
 const KEEP_NAMES: &str = "Keep product and project names exactly as written in the \
-conversation (for example Wenlan, Heptabase); do not translate or transliterate them.";
+conversation (for example Wenlan, Heptabase); do not translate or transliterate them. \
+Write for the person, in plain words: no pull request or issue numbers, commit hashes, \
+version-control branch names, file paths, ids or dates.";
 
 /// The language every title and line is written in.
 pub fn language_name(locale: Option<&str>) -> &'static str {

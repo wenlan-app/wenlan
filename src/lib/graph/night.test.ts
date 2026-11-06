@@ -455,6 +455,15 @@ describe("a thing and its night's points on the big map (UX-CHAT-5)", () => {
     expect(nodeDisplay(lit, "mem:n2", attrs, PALETTE, lod).hidden).not.toBe(true);
     const at = () => ({ x: 40, y: 50, r: 3 });
     expect(nightMarks(map, at, lit, { width: 400, height: 300 }, undefined, "thing:t1").frames).toEqual([]);
+    // At its own stop each point says its sentence where it sits: a lone lit
+    // dot in a big topic's crowd read as nothing lit at all.
+    const said = nightMarks(map, at, lit, { width: 400, height: 300 }, () => true, "thing:t1");
+    expect(said.sentences).toEqual([expect.objectContaining({ id: "mem:n2", text: map.getNodeAttribute("mem:n2", "label"), thing: "thing:t1", dim: false })]);
+    expect(said.frames).toEqual([]);
+    // Not before the camera is there, not off screen, and not for a thing not picked.
+    expect(nightMarks(map, at, lit, { width: 400, height: 300 }, () => false, "thing:t1").sentences).toEqual([]);
+    expect(nightMarks(map, () => ({ x: 900, y: 50, r: 3 }), lit, { width: 400, height: 300 }, () => true, "thing:t1").sentences).toEqual([]);
+    expect(nightMarks(map, at, lit, { width: 400, height: 300 }, () => true, null).sentences).toEqual([]);
   });
 
   it("ends a thing's name cut short when it was stored at the length cap, at a word, with an ellipsis", () => {

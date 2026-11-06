@@ -71,26 +71,27 @@
 .wiki-projection-notice button { border:0;background:none;color:var(--mem-text);cursor:pointer;padding:3px 0;white-space:nowrap; }
 .wiki-projection-notice button:disabled { opacity:.4;cursor:default; }
 
-/* What you're working on (UX-HOME-1): the home's first section, in the same
-   column as the newest pages. Cards are told apart by their surface and the
-   space between them, not by lines. */
-/* Home: white cards. What you're working on is
-   a grid of cards; the pages edited last are one row of preview cards that
-   scrolls sideways, so neither section pushes the other down. */
-.home-columns { display:flex;flex-direction:column;gap:32px;width:100%;max-width:min(100%,var(--reading-measure,730px));margin:8px auto 0;min-width:0; }
+/* Home (UX-HOME-1, UX-HOME-3): one 960px column, nothing scrolls sideways.
+   What you're working on is set in type, not boxes: the newest thing is a
+   headline, the rest are text in three columns, told apart by space alone.
+   Recently edited, well below, is the only part in cards, so the two
+   sections never weigh the same. */
+.home-columns { display:flex;flex-direction:column;gap:72px;width:100%;max-width:min(100%,960px);margin:8px auto 0;min-width:0; }
 .home-columns:empty { display:none; }
 .home-columns > .wiki-working-on, .home-columns > .wiki-new-pages { max-width:none;margin:0; }
 .wiki-working-on h2, .wiki-new-pages-header h2 { color:var(--mem-text-secondary);font:600 13px/1.4 var(--mem-font-body);letter-spacing:.02em;margin:0; }
+.home-columns .wiki-working-on h2, .home-columns .wiki-new-pages-header h2 { color:var(--mem-text);font-size:14px;letter-spacing:0; }
 .wiki-working-on-header { margin:0 0 12px;flex-wrap:wrap;row-gap:4px; }
 /* What was steeped overnight (UX-CHAT-5): a whisper beside the heading, no
    box and no bar; "See all" keeps the far end. */
 .wiki-working-on-steeped { margin:0 auto 0 0;min-width:0;display:inline-flex;align-items:baseline;gap:6px;color:var(--mem-text-tertiary);font:12.5px/1.4 var(--mem-font-body); }
 .wiki-working-on-steeped .steep-moon { flex:none;align-self:center;color:var(--mem-accent-page); }
 .wiki-working-on-steeped-label { white-space:nowrap; }
-.wiki-working-on-steeped-names { min-width:0;display:inline-flex;align-items:baseline;overflow:hidden;white-space:nowrap; }
-.wiki-working-on-steeped-names button { min-width:0;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;padding:0;border:0;background:none;color:var(--mem-text-secondary);font:inherit;cursor:pointer;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--mem-text) 18%,transparent);text-underline-offset:3px; }
+/* Names are written out whole; a long pair wraps instead of being cut. */
+.wiki-working-on-steeped-names { min-width:0;display:inline;overflow-wrap:anywhere; }
+.wiki-working-on-steeped-names button { display:inline;min-width:0;text-align:left;padding:0;border:0;background:none;color:var(--mem-text-secondary);font:inherit;cursor:pointer;text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--mem-text) 18%,transparent);text-underline-offset:3px; }
 .wiki-working-on-steeped-sep { white-space:pre; }
-.wiki-working-on-steeped-names .wiki-working-on-steeped-more { flex:none;max-width:none;margin-left:.3em; }
+.wiki-working-on-steeped-names .wiki-working-on-steeped-more { margin-left:.3em; }
 .wiki-working-on-steeped-more[data-narrow-only] { display:none; }
 /* Narrow: the line takes its own row under the heading; "See all" stays up. */
 @media (max-width: 640px) {
@@ -101,52 +102,72 @@
 }
 .wiki-working-on-steeped-names button:hover { color:var(--mem-text); }
 .wiki-working-on-steeped-names button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
-.wiki-working-on-card[data-glow] { border-color:color-mix(in srgb,var(--mem-accent-page) 45%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--mem-accent-page) 16%,transparent);transition:box-shadow .6s ease,border-color .6s ease; }
-/* "See all": every current thing, wrapping instead of scrolling sideways. */
-.wiki-working-on[data-expanded] ul { grid-auto-flow:row;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));grid-auto-columns:auto;overflow-x:visible; }
-/* One row, like the pages under it: more things scroll sideways instead of
-   stacking rows that push everything else down. */
-.wiki-working-on ul { list-style:none;display:grid;grid-auto-flow:column;grid-auto-columns:max(190px,calc((100% - 3 * 14px) / 3.25));gap:14px;overflow-x:auto;padding:2px 2px 10px;margin:0 -2px;scroll-snap-type:x proximity; }
-.wiki-working-on li { position:relative;display:flex;min-width:0;scroll-snap-align:start; }
-/* "Don't show": quiet until the card is hovered or focused; always there on touch screens. */
-.wiki-working-on-hide { position:absolute;top:8px;right:8px;display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--mem-text-tertiary);cursor:pointer;opacity:0;transition:opacity .12s ease; }
+.wiki-working-on { container:working-on / inline-size; }
+.wiki-working-on ul { list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px 40px;padding:0;margin:0; }
+.wiki-working-on li { position:relative;display:flex;min-width:0; }
+.wiki-working-on li:first-child { grid-column:1 / -1;margin:22px 0 16px; }
+@container working-on (max-width: 720px) {
+  .wiki-working-on ul { grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 28px; }
+}
+@container working-on (max-width: 440px) {
+  .wiki-working-on ul { grid-template-columns:minmax(0,1fr); }
+}
+/* Each thing is a quiet press target: no box until the pointer is on it. */
+.wiki-working-on-card { display:flex;flex-direction:column;gap:3px;width:calc(100% + 24px);min-width:0;margin:-10px -12px;padding:10px 12px;border:0;border-radius:12px;background:none;color:var(--mem-text);text-align:left;cursor:pointer;transition:background-color .15s ease; }
+.wiki-working-on-card:hover { background:var(--mem-hover); }
+.wiki-working-on-card:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.wiki-working-on-card[data-glow] { background:color-mix(in srgb,var(--mem-accent-page) 14%,transparent);transition:background-color .6s ease; }
+.wiki-working-on-title { overflow-wrap:anywhere;font:600 14.5px/1.4 var(--mem-font-body); }
+.wiki-working-on-text { overflow-wrap:anywhere;color:var(--mem-text-tertiary);font:400 13.5px/1.55 var(--mem-font-body); }
+.wiki-working-on-foot { display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-width:0;margin-top:4px; }
+.wiki-working-on-meta { display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:100%;color:var(--mem-text-tertiary);font:12.5px/1.4 var(--mem-font-body); }
+.wiki-working-on-meta:empty { display:none; }
+.wiki-working-on-tools { flex:none;display:inline-flex;align-items:center;gap:6px; }
+.wiki-working-on-tools .tool-mark { display:block;flex:none; }
+.wiki-working-on-where { min-width:0;overflow-wrap:anywhere; }
+.wiki-working-on-when { flex:none;color:var(--mem-text-tertiary);font:12.5px/1.4 var(--mem-font-body);font-variant-numeric:tabular-nums; }
+/* The newest thing leads: a headline in the page-title serif, where it
+   stands, and the point still open, which is what to pick up next. */
+.wiki-working-on li:first-child .wiki-working-on-card { gap:12px; }
+.wiki-working-on li:first-child .wiki-working-on-title { max-width:640px;font:500 34px/1.18 var(--mem-font-heading);letter-spacing:-.01em; }
+.wiki-working-on li:first-child .wiki-working-on-text { max-width:760px;color:var(--mem-text-secondary);font-size:17px;line-height:1.5; }
+.wiki-working-on-open { max-width:760px;margin-top:2px;color:var(--mem-text-secondary);font:400 15px/1.5 var(--mem-font-body);overflow-wrap:anywhere; }
+.wiki-working-on-open-label { margin-right:.15em;color:var(--mem-text-tertiary); }
+.wiki-working-on li:first-child .wiki-working-on-foot { margin-top:6px; }
+@container working-on (max-width: 720px) {
+  .wiki-working-on li:first-child .wiki-working-on-title { font-size:28px; }
+  .wiki-working-on li:first-child .wiki-working-on-text { font-size:16px; }
+}
+/* "Don't show": quiet until the thing is hovered or focused; always there on touch screens. */
+.wiki-working-on-hide { position:absolute;top:-4px;right:-6px;display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--mem-text-tertiary);cursor:pointer;opacity:0;transition:opacity .12s ease; }
 .wiki-working-on li:hover .wiki-working-on-hide, .wiki-working-on-hide:focus-visible { opacity:1; }
 .wiki-working-on-hide:hover { background:color-mix(in srgb,var(--mem-text) 8%,transparent);color:var(--mem-text); }
 .wiki-working-on-hide:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:1px; }
 @media (hover:none) { .wiki-working-on-hide { opacity:.7; } }
 .wiki-working-on li:has(.wiki-working-on-hide) .wiki-working-on-title { padding-right:22px; }
-.wiki-working-on-card, .wiki-new-pages-row {
-  border:1px solid color-mix(in srgb,var(--mem-text) 8%,transparent);border-radius:16px;
-  background:var(--mem-surface);color:var(--mem-text);text-align:left;cursor:pointer;
-  box-shadow:0 1px 2px color-mix(in srgb,#141820 4%,transparent);
-  transition:box-shadow .15s ease,border-color .15s ease;
+/* Recently edited: six calm cards, three across, each saying what the page
+   is about; a row's cards are the same height. A narrower window lists
+   fewer instead of cutting one. */
+.home-columns .wiki-new-pages { container:recent-pages / inline-size; }
+.home-columns .wiki-new-pages-header { margin-bottom:16px; }
+.home-columns .wiki-new-pages ul { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;padding:0;margin:0; }
+.home-columns .wiki-new-pages li { display:flex;min-width:0; }
+@container recent-pages (max-width: 720px) {
+  .home-columns .wiki-new-pages ul { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .home-columns .wiki-new-pages li:nth-child(n+5) { display:none; }
 }
-.wiki-working-on-card:hover, .wiki-new-pages-row:hover { border-color:color-mix(in srgb,var(--mem-text) 16%,transparent);box-shadow:0 2px 8px color-mix(in srgb,#141820 6%,transparent); }
-.wiki-working-on-card:focus-visible, .wiki-new-pages-row:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
-.wiki-working-on-card { display:flex;flex-direction:column;gap:4px;width:100%;min-width:0;padding:12px 16px; }
-.wiki-working-on-title { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 15px/1.4 var(--mem-font-body); }
-.wiki-working-on-text { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;color:var(--mem-text-secondary);font:400 13.5px/1.55 var(--mem-font-body); }
-.wiki-working-on-foot { display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;margin-top:auto;padding-top:4px; }
-.wiki-working-on-meta { flex:1;min-width:0;display:flex;align-items:center;gap:8px;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body); }
-.wiki-working-on-tools { flex:none;display:inline-flex;align-items:center;gap:6px; }
-.wiki-working-on-tools .tool-mark { display:block;flex:none; }
-.wiki-working-on-where { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.wiki-working-on-when { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body);font-variant-numeric:tabular-nums; }
-.home-columns .wiki-new-pages ul { display:grid;grid-auto-flow:column;grid-auto-columns:max(190px,calc((100% - 3 * 14px) / 3.25));gap:14px;overflow-x:auto;padding:2px 2px 10px;margin:0 -2px;scroll-snap-type:x proximity; }
-.home-columns .wiki-new-pages li { display:flex;min-width:0;scroll-snap-align:start; }
-/* The rows on home scroll sideways; the half-shown last card says so. The thin
-   bar shows only while the pointer is over the row. Chromium (Windows) reads
-   scrollbar-color; WebKit (macOS) reads the -webkit- thumb. */
-.wiki-working-on ul, .home-columns .wiki-new-pages ul { scrollbar-width:thin;scrollbar-color:transparent transparent; }
-.wiki-working-on ul:hover, .home-columns .wiki-new-pages ul:hover { scrollbar-color:var(--separator) transparent; }
-.wiki-working-on ul::-webkit-scrollbar-thumb, .home-columns .wiki-new-pages ul::-webkit-scrollbar-thumb { background:transparent; }
-.wiki-working-on ul:hover::-webkit-scrollbar-thumb, .home-columns .wiki-new-pages ul:hover::-webkit-scrollbar-thumb { background:var(--separator); }
-.home-columns .wiki-new-pages-row { display:flex;flex-direction:column;align-items:stretch;gap:6px;width:100%;margin:0;padding:12px 16px;min-height:112px; }
-.home-columns .wiki-new-pages-row:hover { background:var(--mem-surface); }
-.wiki-new-pages-head { display:flex;align-items:center;gap:8px;min-width:0; }
-.home-columns .wiki-new-pages-title { font:600 14px/1.4 var(--mem-font-body); }
+@container recent-pages (max-width: 440px) {
+  .home-columns .wiki-new-pages ul { grid-template-columns:minmax(0,1fr); }
+}
+.home-columns .wiki-new-pages-row { display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%;margin:0;padding:18px 20px 16px;border:0;border-radius:12px;background:var(--mem-surface);color:var(--mem-text);text-align:left;cursor:pointer;box-shadow:none;transition:background-color .15s ease; }
+.home-columns .wiki-new-pages-row:hover { background:color-mix(in srgb,var(--mem-surface) 92%,var(--mem-text)); }
+.home-columns .wiki-new-pages-row:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.wiki-new-pages-head { display:flex;align-items:flex-start;gap:9px;min-width:0; }
+.home-columns .wiki-new-pages-icon { margin-top:2px;color:var(--mem-page-icon); }
+.home-columns .wiki-new-pages-title { white-space:normal;overflow:visible;overflow-wrap:anywhere;font:600 15px/1.4 var(--mem-font-body); }
 .wiki-new-pages-preview { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;color:var(--mem-text-secondary);font:400 12.5px/1.55 var(--mem-font-body); }
-.home-columns .wiki-new-pages-by, .home-columns .wiki-new-pages-meta { margin-top:auto; }
+.home-columns .wiki-new-pages-preview { font-size:13.5px;opacity:.85; }
+.home-columns .wiki-new-pages-by, .home-columns .wiki-new-pages-meta { margin-top:auto;padding-top:8px;color:var(--mem-text-tertiary);font-size:12px; }
 .home-columns ~ .getting-started-reopen { margin-top:28px; }
 .home-connect-line { display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:-12px 0 0;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body); }
 .home-connect-line button { padding:0;border:0;background:none;color:var(--mem-accent-page);font:inherit;font-weight:600;cursor:pointer; }

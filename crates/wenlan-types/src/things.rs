@@ -23,8 +23,9 @@ pub struct ThingSummary {
     /// `None` until the AI has a name for it.
     pub title: Option<String>,
     pub title_by: ThingActor,
-    /// Where it stands: the newest Brief handoff summary one of its
-    /// conversations wrote, else the text of the Brief item it came from.
+    /// Where it stands: the grouping model's line for the whole thing, else
+    /// its newest read conversation's, else the text of the Brief item it
+    /// came from. Never a handoff's Brief summary, which speaks for a Space.
     pub status_line: Option<String>,
     /// The Spaces its conversations ran in, and its Brief item's Space.
     pub spaces: Vec<String>,
@@ -34,7 +35,9 @@ pub struct ThingSummary {
     /// Nothing happened in it for [`THING_QUIET_AFTER_SECS`], or the person
     /// hid it from home since its last activity: it leaves "what you're
     /// working on" but is not deleted, stays findable, and comes back on its
-    /// own with the next conversation (UX-HOME-5).
+    /// own with the next conversation (UX-HOME-5). A thing that started as a
+    /// Space Brief item is always quiet: the item is a line an AI tool wrote,
+    /// not the person's own work (UX-HOME-6).
     #[serde(default)]
     pub quiet: bool,
     /// Unix seconds: the newest night that steeped what it settled into

@@ -368,6 +368,9 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
   /* The titlebar reserves the directory's width so it never covers the tab strip.
      A workspace without a directory, so the tabs start at the sidebar edge. */
   .memory-shell[data-note-workspace]:has(.wiki-workspace[data-directory-hidden="true"]) .memory-workspace-header { width:var(--workspace-sidebar-width); }
+  /* A sidebar narrower than the header's own buttons (icons only, or hidden)
+     would put Home and + under them: the strip starts after them instead. */
+  .memory-shell[data-note-workspace]:has(.wiki-workspace[data-directory-hidden="true"]) .note-tabs { padding-left:max(20px, calc(var(--workspace-header-tools-end, 0px) - var(--workspace-sidebar-width) + 16px)); }
 }
 
 .note-owner-notice { position:absolute; z-index:1200; bottom:24px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:12px; max-width:calc(100% - 32px); padding:10px 12px; border:1px solid var(--mem-border); border-radius:8px; background:var(--mem-surface); color:var(--mem-text); box-shadow:var(--mem-shadow-overlay); font:13px/1.5 var(--mem-font-body); }

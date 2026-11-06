@@ -300,6 +300,7 @@ const en = {
     welcomeTitle: "Welcome to Wenlan",
     notesFirst: {
       openFailed: "Could not open your pages. Please try again.",
+      finishFailed: "Could not save setup. You can keep using Wenlan and retry.",
       checkConnection: "Check connection",
       intro: "A personal Wiki you and your AI tools build together. Your files and chats become pages they can recall.",
       start: "Get started",
@@ -357,6 +358,11 @@ const en = {
     },
     settingUp: {
       title: "Setting up",
+      pausedTitle: "Setup needs another try",
+      pausedBody: "You can open Wenlan now. Your notes will be available once the background service is working again.",
+      openAnyway: "Open Wenlan for now",
+      errorDetails: "View error details",
+      retryConnection: "Retry connection",
       description:
         "Wenlan is connecting the tools you picked. Nothing here blocks you, so you can continue at any time.",
       statusPending: "Waiting",
@@ -648,6 +654,7 @@ const en = {
       steepedMore: "and more",
       workingOnHide: "Don't show {{title}}",
       workingOnHideHint: "Don't show",
+      workingOnStillOpen: "Still open:",
       workingOnConnect: "Connect an AI tool, and what you work on with it shows up here.",
       workingOnConnectAction: "Connect",
       workingOnWrote: "Wrote “{{title}}”",
@@ -3536,6 +3543,7 @@ const zhHans = {
     welcomeTitle: "欢迎使用文澜",
     notesFirst: {
       openFailed: "暂时无法打开笔记，请再试一次。",
+      finishFailed: "未能保存设置。你可以继续使用文澜，稍后重试。",
       checkConnection: "检查连接",
       intro: "你和 AI 工具一起搭建的个人 Wiki。文件和对话会变成它们记得住的笔记。",
       start: "开始使用",
@@ -3590,6 +3598,11 @@ const zhHans = {
     },
     settingUp: {
       title: "正在设置",
+      pausedTitle: "暂时无法完成设置",
+      pausedBody: "你可以先打开文澜。背景服务恢复后，就能继续使用笔记。",
+      openAnyway: "先打开文澜",
+      errorDetails: "查看错误信息",
+      retryConnection: "重试连接",
       description: "文澜正在接入你选择的工具。这里不会拦住你，你随时可以继续。",
       statusPending: "等待中",
       statusRunning: "正在设置…",
@@ -3868,6 +3881,7 @@ const zhHans = {
       steepedMore: "等",
       workingOnHide: "不用显示「{{title}}」",
       workingOnHideHint: "不用显示",
+      workingOnStillOpen: "还没定：",
       workingOnConnect: "接上 AI 工具，你和它一起做的事会出现在这里。",
       workingOnConnectAction: "连接",
       workingOnWrote: "写了《{{title}}》",
@@ -6712,6 +6726,7 @@ const zhHant = {
     welcomeTitle: "歡迎使用文瀾",
     notesFirst: {
       openFailed: "暫時無法開啟筆記，請再試一次。",
+      finishFailed: "未能儲存設定。你可以繼續使用文瀾，稍後重試。",
       checkConnection: "檢查連線",
       intro: "你和 AI 工具一起搭建的個人 Wiki。文字、檔案和對話會變成它們記得住的筆記。",
       start: "開始使用",
@@ -6766,6 +6781,11 @@ const zhHant = {
     },
     settingUp: {
       title: "正在設定",
+      pausedTitle: "暫時無法完成設定",
+      pausedBody: "你可以先開啟文瀾。背景服務恢復後，就能繼續使用筆記。",
+      openAnyway: "先開啟文瀾",
+      errorDetails: "查看錯誤資訊",
+      retryConnection: "重試連線",
       description: "文瀾正在接入你選擇的工具。這裡不會擋住你，你隨時可以繼續。",
       statusPending: "等待中",
       statusRunning: "正在設定…",
@@ -7044,6 +7064,7 @@ const zhHant = {
       steepedMore: "等",
       workingOnHide: "不用顯示「{{title}}」",
       workingOnHideHint: "不用顯示",
+      workingOnStillOpen: "還沒定：",
       workingOnConnect: "接上 AI 工具，你和它一起做的事會出現在這裡。",
       workingOnConnectAction: "連接",
       workingOnWrote: "寫了《{{title}}》",

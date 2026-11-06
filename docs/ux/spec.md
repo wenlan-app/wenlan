@@ -58,8 +58,9 @@ and wait for evidence that people need them.
 - **A thing (一件事)**: one line of work, such as "the new tagline" or "the
   Product Hunt launch". It is smaller than a Space: a Space is a project and
   follows a folder or repository, and one Space holds several things. A thing
-  can span Spaces. Until things have their own record, each active item of a
-  Space Brief stands for one thing.
+  can span Spaces. Things come from your conversations; a Space Brief item is
+  what an AI tool leaves the next one in its handoff, and it is not a thing
+  (UX-HOME-6).
 - **Original (原文)**: text that came in from outside, such as an imported
   chat, a web page or a PDF. It is an ordinary page whose author is 原文. The
   AI can't edit it, and it is not yours, so it never counts as decided.
@@ -96,7 +97,7 @@ and wait for evidence that people need them.
   record, but show it only once it has a name a person can recognize; do not
   replace it with an older Brief or ask the person to dismiss a placeholder.
   原文（2026-10-31 選擇卡）：正在做的事 + 最近編輯，不放小圖。選擇卡「你改的 + AI 新写的」（2026-10-31 17:16）
-- **UX-HOME-4** `planned` Check results and source updates are not on home.
+- **UX-HOME-4** `shipped` Check results and source updates are not on home.
   原文：檢查結果和來源更新不放首頁。
 - **UX-HOME-5** `shipped` A thing with no new conversation and no Brief change
   for a week leaves "what you're working on". Wenlan does not guess whether a
@@ -105,6 +106,14 @@ and wait for evidence that people need them.
   conversation brings it back. There is no cap: home lists six, and "See all"
   opens the rest in place, without a count.
   原文：選擇卡「显示，安静 2 周后离开」（2026-11-02 23:40）；「我很担心我设上限会出现什么问题」（2026-11-02 21:53）；選擇卡「安静 1 周 +「不用显示」」（2026-11-03 02:46）；「我有点担心会 over engineering…第一性原理就是UI UX」（2026-11-03 02:39）。
+- **UX-HOME-6** `shipped` "What you're working on" holds only your own work,
+  read from your conversations, in plain words. A Space Brief item an AI tool
+  wrote in its handoff stays on that Space's Brief and in search, not on home,
+  and a handoff's summary of a whole Space is never one thing's line. Titles
+  and lines carry no pull request numbers, commit hashes or dates. A title or
+  steeped name is written out whole: only the window's width cuts it, and a
+  card title takes two lines before it is cut.
+  原文：選擇卡「只放对话来的事」（2026-11-06 04:08，問：首页「正在做」还要不要放 Space Brief 里的条目）；「我以為 brief 一直沒有和正在做的事給討論好邊界」（2026-11-06 04:09）；「可以啊，總之這三點都要修掉，還有左上的 icon 都卡在一起」（2026-11-06 03:47，回覆：首頁「正在做」被 AI 的工作紀錄填滿、帶 PR 號和 commit、標題和「今天沉澱」被截斷）
 
 ## Sorting conversations into things
 
@@ -283,6 +292,23 @@ and wait for evidence that people need them.
 - **UX-GRAPH-4** `planned` Lasso three points and press "take to chat": the AI
   tool receives a summary with sources, including the lines you drew.
   原文：圈 3 個點按「帶去對話」，AI 工具收到摘要和出處，連你連的線一起帶上。
+- **UX-GRAPH-5** `planned` The morning after a night changed something, the
+  big map shows one line in its bottom-left corner: what last night did, with
+  "Replay" and "Undo". It counts only the current Space, shows only that day,
+  and is gone after Undo. Undo takes back the whole night for every thing;
+  one thing's own page still undoes just that thing. Home keeps its names line
+  and adds only "Replay": no counts (UX-HOME-2) and no Undo.
+  原文：☾ 昨晚：寫了 8 個重點，接上 5 個 · 看回放 · 還原。首頁只多「看回放」，不放數字、不放還原（2026-11-06「照建議」）。
+- **UX-GRAPH-6** `planned` "Replay" plays last night on the big map: new
+  points grow out of their thing, then points fly to sit beside their topics,
+  with no lines, in at most five camera stops, then everything goes home.
+  Skip, Esc or touching the map ends it at once. It only ever starts when you
+  press it. With reduced motion the changes are marked at once instead.
+  原文：看回放：新的點從那件事長出來，再飛到主題旁邊，不畫線，最多停五次；永遠是你按了才播（2026-11-06「照建議」）。
+- **UX-GRAPH-7** `planned` The AI merges, replaces and updates on its own at
+  night, and each one is shown on the big map and can be undone. How it looks
+  is designed as a whole and agreed before it is built.
+  原文：合併、取代、更新由 AI 自己做，可以還原，在大圖上看得到（2026-11-05「可以的，以上」）。
 
 ## Finding things
 

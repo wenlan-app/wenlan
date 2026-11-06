@@ -222,3 +222,73 @@ The copied Microsoft DLLs remain unmodified; each local Tauri build re-verifies 
 staged copies as described above. Installer/ZIP inventory checks require the DLLs and
 notices, and `scripts/release_targets.py` is the single list of the Windows release
 payload that the bundle, workflows and tests are checked against.
+
+### Setup when the daemon is unavailable
+
+An unsuccessful daemon connection must not trap the user in setup. The failed
+connection step and startup preflight expose an action to open the workspace;
+the welcome and completion steps expose the same escape after a save fails.
+This is session-local navigation, not `set_setup_completed`: the workspace keeps
+its service warning and retries health, and recovery does not reopen the wizard.
+The footer stays visible in short windows while the setup content scrolls.
+
+The app retains a sidecar's exit status and bounded stderr after reaping it and
+includes them in a failed wire-state health check. A new launch clears that
+diagnostic, and a late exit from an older launch cannot overwrite the new one.
+Windows loader status codes can therefore distinguish missing DLLs, invalid
+images and unsupported instructions instead of reporting only an HTTP failure.
+Managed-service failures without an app-owned child still need the service log.
+
+The published v0.20.7 Windows NSIS payload was checked on Windows on 2026-11-05:
+its SHA-256 matched the release checksum, all ten CRT/OpenMP DLLs were present,
+and its extracted daemon reached health with a fresh isolated data/pages root.
+The process loaded CRT/OpenMP and ONNX from the extracted payload. It also kept
+serving when the embedding model failed to load. This does not reproduce the
+reported failure on another PC or replace a clean-machine installer test; the
+reported screenshot alone establishes an unreachable service, not its cause.
+
+Regression coverage: `src/App.test.tsx`, `src/components/SetupWizard.test.tsx`,
+`e2e/setup-offline.spec.ts`, and the `daemon_launch_failure` module in
+`scripts/platform-contracts`.
+
+## First-launch readiness and desktop-only Codex
+
+The daemon opens its database with `MemoryEmbeddingRecovery::Deferred`: schema,
+migrations and profile bootstrap finish before serving, but the first embedding
+model download/load runs in the existing runtime worker. Its first attempt is
+immediate; failures back off from 30 seconds to 15 minutes. Until the model is
+ready, the existing keyword search and vector-free writes remain available.
+`first_daemon_open_serves_storage_without_loading_a_model` exercises the real fresh
+constructor, storage, keyword retrieval and reopening without a shared model.
+The prior failure fallback still awaited the initial download before serving,
+which could exceed first-launch health deadlines even when the download succeeded.
+This explains a reproducible startup dependency, not the unidentified cause on
+any particular machine for which no log was captured.
+
+The frontend chooses welcome/workspace from local setup state while the daemon
+starts. A first-run choice can open the workspace immediately; its completion
+write waits for readiness. A failed completion write leaves the workspace open
+and offers Retry. `first-run-background.spec.ts` covers each platform's frontend
+branch with a delayed daemon; these browser simulations do not replace native OS
+or clean-installer verification.
+
+Codex plugin lookup retains PATH and normal install-folder priority. Its desktop
+fallback covers macOS ChatGPT bundles and Windows Codex MSIX registration in the
+current user's AppModel repository, plus the per-user Codex install folders. It
+checks the bundled CLI under `app/resources`, never the GUI executable, and does
+not enumerate the protected WindowsApps directory or guess a package version.
+The Windows child PATH also appends Git from the registered Codex primary
+runtime when present; the user's existing tools keep priority and the global
+PATH is untouched. Without this, a desktop-only machine gets past CLI lookup
+but fails `plugin marketplace add` at `git clone` with `program not found`.
+Linux keeps its PATH/version-manager lookup. The candidate module is imported by
+the native Windows/macOS/Linux contract suite; the full app tests also exercise
+the resolver priority. A Windows host probe resolved the registered bundled CLI
+without PATH or npm and completed marketplace registration and plugin installation
+with scratch Codex state and desktop-bundled Git. The full App crate's 49 plugin
+tests also passed natively on Windows. PATH fixtures use native absolute temporary
+paths: Unix-rooted `/on/path` is not absolute on Windows. The raw Tauri lib-test
+executable needs the same common-controls v6 manifest as the shipped App to load
+`TaskDialogIndirect`; the verification used a test copy with the released App's
+manifest. This is not an installer receipt. A clean Windows installer run remains
+a separate release gate.

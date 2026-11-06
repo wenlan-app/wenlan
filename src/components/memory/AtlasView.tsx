@@ -1202,6 +1202,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         // Its sentence is painted by the overlay, wrapped beside its point;
         // zoomed out, a point carries no words at all.
         if (nightPoint && sentencesFor(nodeAttrs.dustOf, data.key)) return;
+        // So is a picked quiet thing's at its own stop (night.ts).
+        const picked = selectedRef.current;
+        if (litPoint && picked && graph.hasNode(picked) && ((graph.getNodeAttribute(picked, "elsewhere") as string[] | undefined) ?? []).includes(data.key) && sentencesFor(picked, data.key)) return;
         if (lodRef.current.phase === "overview") return;
         ctx.font = NODE_LABEL_FONT;
         const title = truncateOverviewLabel(ctx, String(data.label ?? ""), POINT_TITLE_PX);

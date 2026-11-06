@@ -5,13 +5,12 @@ use super::*;
 /// Re-embed memory rows that have no embedding: once at boot, and again each
 /// time a big import stored rows without a vector
 /// ([`wenlan_server::embedding_backfill::request`]), until shutdown.
-/// First wait before retrying an embedding-model load the open could not do.
+/// First wait after a failed background embedding-model load.
 const EMBEDDING_MODEL_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(30);
 /// Longest wait between retries.
 const EMBEDDING_MODEL_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
-/// Load the embedding model the database open could not (first start offline,
-/// or huggingface.co unreachable), retrying with backoff until it loads. The
+/// Load the embedding model after database open, retrying failures with backoff. The
 /// daemon serves meanwhile: pages are written without a vector and searches
 /// use their keyword channel. Once loaded, pages get their vectors here and
 /// the memory worker is woken for the rest.
@@ -24,7 +23,7 @@ async fn load_embedding_model_in_background(
     tracing::warn!(
         "[memory_db] serving without the embedding model; search is keyword-only until it loads"
     );
-    let mut delay = EMBEDDING_MODEL_RETRY_FIRST;
+    let mut delay = std::time::Duration::ZERO;
     loop {
         if lifecycle::sleep_or_shutdown(&mut shutdown, delay).await {
             return;
@@ -37,7 +36,11 @@ async fn load_embedding_model_in_background(
         match loaded {
             Ok(_) => break,
             Err(error) => {
-                delay = (delay * 2).min(EMBEDDING_MODEL_RETRY_MAX);
+                delay = if delay.is_zero() {
+                    EMBEDDING_MODEL_RETRY_FIRST
+                } else {
+                    (delay * 2).min(EMBEDDING_MODEL_RETRY_MAX)
+                };
                 tracing::warn!(
                     "[memory_db] embedding model still unavailable, retrying in {}s: {error}",
                     delay.as_secs()

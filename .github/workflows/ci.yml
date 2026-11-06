@@ -214,6 +214,7 @@ jobs:
               - 'app/src/search.rs'
               - 'app/src/remote_access.rs'
               - 'app/src/plugin_install.rs'
+              - 'app/src/desktop_codex.rs'
               - 'app/src/sources/obsidian.rs'
               - 'app/src/config.rs'
               - 'app/src/error.rs'

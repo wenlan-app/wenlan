@@ -80,9 +80,6 @@ vi.mock("./lib/bootRetryPolicy", async (importOriginal) => {
     ATTEMPT_TIMEOUT_MS: 5000,
     RUST_HEALTH_LOOP_BUDGET_MS: 152_200,
     BOOT_QUERY_RETRY: 1,
-    // Shrunk with the rest of the ladder: the production 15s would outlast the
-    // two-attempt policy above, so the notice could never render here.
-    BOOT_SLOW_NOTICE_MS: 20,
     FAILED_GATE_RECHECK_MS: 10,
     bootQueryRetryDelay: () => 10,
     bootQueryBudgetMs: () => 10_010,
@@ -110,6 +107,7 @@ vi.mock("./components/SetupWizard", () => ({
   // wizard on a rejection (the real step shows an inline alert).
   default: (props: {
     onComplete: () => void | Promise<void>;
+    onContinueWithoutDaemon?: () => void;
     daemonGateErrored?: boolean;
     startupPreflightFailed?: boolean;
     initialStep?: string;
@@ -121,6 +119,7 @@ vi.mock("./components/SetupWizard", () => ({
       data-initial-step={props.initialStep}
     >
       wizard
+      <button onClick={props.onContinueWithoutDaemon}>Open without service</button>
       <button
         type="button"
         onClick={() => {
@@ -163,7 +162,6 @@ import { resources } from "./i18n/resources";
 import { getServiceNotices, setServiceFallback } from "./lib/serviceNotices";
 
 const STARTING_RUNTIME = resources.en.translation.common.startingRuntime;
-const BOOT = resources.en.translation.boot;
 
 beforeEach(() => {
   getStartupPreflightStatusMock.mockReset().mockResolvedValue("ready");
@@ -254,45 +252,42 @@ describe("App - first-run wizard gate", () => {
     }
   });
 
-  // A cold start can leave the window with nothing to show for seconds. The
-  // gate must say what it is waiting for rather than holding an empty window,
-  // and it must not pre-empt that wait with the first-run wizard.
-  it("shows the starting-runtime status while the wizard query is pending", async () => {
+  it("opens first-run choices immediately while the daemon is still starting", async () => {
     let resolveWizard!: (showWizard: boolean) => void;
-    vi.mocked(shouldShowWizard).mockReturnValue(
-      new Promise<boolean>((resolve) => {
-        resolveWizard = resolve;
-      }),
-    );
+    vi.mocked(shouldShowWizard).mockReturnValue(new Promise<boolean>((resolve) => { resolveWizard = resolve; }));
     renderApp();
-
-    const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent(STARTING_RUNTIME);
-    expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("home-main")).not.toBeInTheDocument();
-
-    // The panel sizes itself to the whole window and centres its own content,
-    // so it reads correctly only while it keeps those classes. The guard above
-    // — Home is not mounted — is what keeps it out of the app shell; this
-    // asserts the sizing half. Where it actually lands on screen is geometry
-    // jsdom cannot measure: e2e/home-default-window.spec.ts owns that.
-    expect(status).toHaveClass(
-      "w-screen",
-      "h-screen",
-      "items-center",
-      "justify-center",
-    );
-    expect(screen.getByTestId("runtime-overlays")).toHaveAttribute(
-      "data-variant",
-      "updater-only",
-    );
-
-    // …and it is a waiting state, not a terminal one.
-    await act(async () => {
-      resolveWizard(false);
-    });
-    expect(await screen.findByTestId("home-main")).toBeInTheDocument();
+    expect(await screen.findByTestId("setup-wizard")).toBeInTheDocument();
     expect(screen.queryByText(STARTING_RUNTIME)).not.toBeInTheDocument();
+    expect(getDaemonStartupPhase()).toBe("starting");
+    await act(async () => { resolveWizard(true); });
+    expect(screen.getByTestId("setup-wizard")).toBeInTheDocument();
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
+  });
+
+  it("opens the workspace on a first-run choice while saving completion waits for the daemon", async () => {
+    vi.mocked(shouldShowWizard).mockReturnValue(new Promise<boolean>(() => {}));
+    let save!: () => void;
+    vi.mocked(setSetupCompleted).mockReturnValueOnce(new Promise<void>((resolve) => { save = resolve; }));
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Finish setup" }));
+    expect(await screen.findByTestId("home-main")).toBeInTheDocument();
+    expect(getDaemonStartupPhase()).toBe("starting");
+    expect(setSetupCompleted).toHaveBeenCalledWith(true);
+    await act(async () => { save(); });
+    expect(screen.getByTestId("home-main")).toBeInTheDocument();
+  });
+
+  it("keeps the chosen workspace open if its deferred completion write fails", async () => {
+    vi.mocked(shouldShowWizard).mockReturnValue(new Promise<boolean>(() => {}));
+    let fail!: (error: Error) => void;
+    vi.mocked(setSetupCompleted).mockReturnValueOnce(new Promise<void>((_, reject) => { fail = reject; }));
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Finish setup" }));
+    const home = await screen.findByTestId("home-main");
+    await act(async () => { fail(new Error("connection refused")); });
+    expect(screen.getByTestId("home-main")).toBe(home);
+    expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
+    expect(await screen.findByText(resources.en.translation.setup.notesFirst.finishFailed)).toBeInTheDocument();
   });
 
   it("shows the preflight repair screen immediately without waiting for the wizard gate", async () => {
@@ -309,15 +304,15 @@ describe("App - first-run wizard gate", () => {
     expect(screen.queryByTestId("home-main")).not.toBeInTheDocument();
   });
 
-  it("keeps the ordinary cold-start screen while preflight is pending", async () => {
+  it("keeps first-run choices usable while preflight is pending", async () => {
     vi.mocked(localSetupCompleted).mockResolvedValue(false);
     vi.mocked(getStartupPreflightStatus).mockResolvedValue("pending");
     vi.mocked(shouldShowWizard).mockReturnValue(new Promise<boolean>(() => {}));
 
     renderApp();
 
-    expect(await screen.findByRole("status")).toHaveTextContent(STARTING_RUNTIME);
-    expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("setup-wizard")).toBeInTheDocument();
+    expect(screen.queryByText(STARTING_RUNTIME)).not.toBeInTheDocument();
   });
 
   it("shows the app-restart repair screen for a configured user with a preflight failure", async () => {
@@ -344,7 +339,7 @@ describe("App - first-run wizard gate", () => {
     expect(await screen.findByTestId("setup-wizard")).toBeInTheDocument();
     expect(screen.queryByTestId("home-main")).not.toBeInTheDocument();
     // Proves retries actually happened, not just a single failed attempt.
-    expect(vi.mocked(shouldShowWizard).mock.calls.length).toBeGreaterThan(1);
+    await waitFor(() => expect(vi.mocked(shouldShowWizard).mock.calls.length).toBeGreaterThan(1));
   });
 
   // The gate answering "show the wizard" is a fact about setup. The gate
@@ -355,7 +350,7 @@ describe("App - first-run wizard gate", () => {
     renderApp();
 
     const wizard = await screen.findByTestId("setup-wizard");
-    expect(wizard).toHaveAttribute("data-gate-errored", "true");
+    await waitFor(() => expect(wizard).toHaveAttribute("data-gate-errored", "true"));
   });
 
   it("does not claim a connection problem when the gate simply says first run", async () => {
@@ -366,47 +361,18 @@ describe("App - first-run wizard gate", () => {
     expect(wizard).toHaveAttribute("data-gate-errored", "false");
   });
 
-  // "Starting Wenlan" can hold for the better part of three minutes. For all
-  // of it the screen used to say one sentence that named nothing.
-  it("names what it is waiting for once the boot wait runs long", async () => {
+  it("never replaces first-run choices with a starting screen during a long boot", async () => {
     vi.useFakeTimers();
     try {
       vi.mocked(shouldShowWizard).mockReturnValue(new Promise<boolean>(() => {}));
       renderApp();
-      // The local setup read answers first; until it does the window is blank.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(0);
-      });
-
-      expect(screen.getByRole("status")).toBeInTheDocument();
-      expect(screen.queryByTestId("boot-slow-notice")).not.toBeInTheDocument();
-      // The mocked policy above shrinks the 15s threshold to 20ms.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(20);
-      });
-      expect(screen.getByTestId("boot-slow-notice")).toHaveTextContent(
-        BOOT.stillWaiting,
-      );
-
-      // A hung IPC call must fail the gate instead of pending forever: each
-      // attempt times out, so past the whole budget the gate errors and fails
-      // closed to the wizard. Advance in steps so the gate's retry-delay
-      // timers fire between attempts.
-      await act(async () => {
-        const budget = bootQueryBudgetMs();
-        let elapsed = 0;
-        while (elapsed < budget + 1_000) {
-          await vi.advanceTimersByTimeAsync(1_000);
-          elapsed += 1_000;
-        }
-      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       const wizard = screen.getByTestId("setup-wizard");
-      expect(wizard).toBeInTheDocument();
-      expect(wizard).toHaveAttribute("data-gate-errored", "true");
-      expect(screen.queryByTestId("home-main")).not.toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+      await act(async () => { await vi.advanceTimersByTimeAsync(bootQueryBudgetMs() + 1000); });
+      expect(screen.getByTestId("setup-wizard")).toBe(wizard);
+      expect(screen.queryByText(STARTING_RUNTIME)).not.toBeInTheDocument();
+      expect(getDaemonStartupPhase()).toBe("failed");
+    } finally { vi.useRealTimers(); }
   });
 
   // React Query pauses its own retries while document.visibilityState is
@@ -498,11 +464,12 @@ describe("App - first-run wizard gate", () => {
   it("a failed completion keeps the fail-closed wizard mounted and does not re-check the gate", async () => {
     vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
     vi.mocked(setSetupCompleted).mockReset().mockRejectedValue(new Error("connection refused"));
-    renderApp();
+    const { queryClient } = renderAppWithClient();
 
     const finish = await screen.findByRole("button", { name: "Finish setup" });
     const wizard = screen.getByTestId("setup-wizard");
-    const gateChecks = vi.mocked(shouldShowWizard).mock.calls.length;
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("failed"));
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     fireEvent.click(finish);
     await waitFor(() => expect(setSetupCompleted).toHaveBeenCalledWith(true));
     await act(async () => {
@@ -512,8 +479,24 @@ describe("App - first-run wizard gate", () => {
     // The same node, not a remount: a remount would reset every wizard pick.
     expect(screen.getByTestId("setup-wizard")).toBe(wizard);
     expect(screen.queryByText(STARTING_RUNTIME)).not.toBeInTheDocument();
-    expect(vi.mocked(shouldShowWizard).mock.calls.length).toBe(gateChecks);
+    expect(invalidate).not.toHaveBeenCalled();
     vi.mocked(setSetupCompleted).mockReset().mockResolvedValue(undefined);
+  });
+
+  it("lets a failed first run open the workspace without saving completion, then recovers in place", async () => {
+    vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
+    vi.mocked(setSetupCompleted).mockReset();
+    renderApp();
+    fireEvent.click(await screen.findByRole("button", { name: "Open without service" }));
+    expect(await screen.findByTestId("home-main")).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
+    expect(setSetupCompleted).not.toHaveBeenCalled();
+    expect(getDaemonStartupPhase()).toBe("failed");
+    vi.mocked(shouldShowWizard).mockResolvedValue(true);
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
+    expect(screen.getByTestId("home-main")).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
+    expect(setSetupCompleted).not.toHaveBeenCalled();
   });
 
   it("a completion that fails once and then saves opens Home", async () => {

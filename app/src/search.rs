@@ -293,7 +293,7 @@ pub async fn set_setup_completed(
 /// screen uses it to open a configured user's workspace at once and let the
 /// daemon finish starting behind it; `should_show_wizard` still runs and has
 /// the final say. A missing or unreadable file reads as not completed, which
-/// keeps a new user on the daemon-backed gate.
+/// opens the first-run choices while the daemon starts in the background.
 #[tauri::command]
 pub fn local_setup_completed() -> bool {
     crate::config::load_config().setup_completed
