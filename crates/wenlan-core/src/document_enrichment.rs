@@ -1417,7 +1417,7 @@ mod tests {
         ) {
             let error = db
                 .citation_sources(
-                    &[first.doc_source_id.clone()],
+                    std::slice::from_ref(&first.doc_source_id),
                     &crate::read_scope::ReadScope::Global,
                 )
                 .await
