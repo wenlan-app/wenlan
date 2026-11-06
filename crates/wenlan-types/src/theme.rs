@@ -146,6 +146,10 @@ pub struct ThemeSummary {
     /// Empty when the theme passes every check.
     #[serde(default)]
     pub problems: Vec<ThemeProblem>,
+    /// A few resolved `#RRGGBB` colors (`background`, `sidebar`, `text`,
+    /// `accent`) for the app's theme card thumbnail.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub swatch: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -156,6 +160,9 @@ pub struct ThemeListResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<String>,
     pub themes: Vec<ThemeSummary>,
+    /// Font names a theme may use, for the app's font pickers.
+    #[serde(default)]
+    pub allowed_fonts: Vec<String>,
 }
 
 /// An image the app may show, already checked by the daemon.

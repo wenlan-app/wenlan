@@ -35,6 +35,14 @@ const INVOKE_LITERAL = /invoke[A-Za-z]*(?:<[^>]*>)?\(\s*"([a-z0-9_]+)"/g;
  * Adding to it is a deliberate act, and reviewable as one.
  */
 const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
+  "active_theme_image",
+  "check_theme_draft",
+  "get_active_theme",
+  "get_theme",
+  "import_theme_image",
+  "list_themes",
+  "open_themes_folder",
+  "theme_image",
   "accept_pending_revision",
   "accept_note_proposal",
   "acknowledge_guarded_quit_request",

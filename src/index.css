@@ -4170,3 +4170,39 @@ p.entity-error {
 }
 .quick-capture-alert p { margin: 0; }
 .quick-capture-alert .quick-capture-alert-note { color: var(--mem-text-secondary); }
+
+/* Fixed swatch colors for the built-in theme cards in Settings > Appearance.
+   They show what Light and Dark look like, so a custom theme never repaints
+   them. */
+:root {
+  --theme-swatch-dark-bg: #191C24;
+  --theme-swatch-light-bg: #FCFCFB;
+  --theme-swatch-line: #969BAD;
+}
+
+/* ── Custom theme decoration ──────────────────────────────────────────
+   ThemeDecor (src/components/ThemeDecor.tsx) sets data-theme-bg and the two
+   variables below from the daemon-checked active theme. "sidebar" paints the
+   image behind the sidebar's content; "window" lays a faint copy over the
+   whole window that never takes clicks. */
+html[data-theme-bg="sidebar"] :is(.memory-sidebar, .settings-sidebar) {
+  isolation: isolate;
+}
+html[data-theme-bg="sidebar"] :is(.memory-sidebar, .settings-sidebar)::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--wenlan-theme-bg-image) center / cover no-repeat;
+  opacity: var(--wenlan-theme-bg-opacity, 0.35);
+  content: "";
+  pointer-events: none;
+}
+html[data-theme-bg="window"] body::after {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  background: var(--wenlan-theme-bg-image) center / cover no-repeat;
+  opacity: var(--wenlan-theme-bg-opacity, 0.35);
+  content: "";
+  pointer-events: none;
+}

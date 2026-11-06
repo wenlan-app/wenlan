@@ -53,6 +53,7 @@ pub mod system_info;
 pub mod telemetry;
 #[cfg(test)]
 mod test_env;
+pub mod themes;
 // Public surface consumed by tray_menu (Task 15); suppress dead_code until then.
 #[allow(dead_code)]
 pub(crate) mod tray_health;
@@ -1892,6 +1893,17 @@ pub fn run() {
             search::get_truth_status,
             telemetry::get_telemetry_status,
             telemetry::set_telemetry_enabled,
+            themes::list_themes,
+            themes::get_active_theme,
+            themes::get_theme,
+            themes::create_theme,
+            themes::save_theme,
+            themes::check_theme_draft,
+            themes::set_active_theme,
+            themes::active_theme_image,
+            themes::import_theme_image,
+            themes::theme_image,
+            themes::open_themes_folder,
             // Page review (M5 D7). Mints and submits in one backend call so no
             // capability ever crosses into JavaScript.
             page_review::review_page,

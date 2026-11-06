@@ -659,6 +659,17 @@ pub fn set_active_id(root: &Path, id: Option<&str>) -> Result<(), Vec<ThemeProbl
         })
 }
 
+/// Resolved colors for a theme card thumbnail.
+fn swatch(theme: &ThemeFile) -> BTreeMap<String, String> {
+    ["background", "sidebar", "text", "accent"]
+        .into_iter()
+        .filter_map(|name| {
+            let Rgb(r, g, b) = effective_slot(theme, slot(name)?)?;
+            Some((name.to_string(), format!("#{r:02X}{g:02X}{b:02X}")))
+        })
+        .collect()
+}
+
 /// Every theme folder under `root`, with its check result.
 pub fn list_themes(root: &Path) -> ThemeListResponse {
     let mut themes = Vec::new();
@@ -677,6 +688,7 @@ pub fn list_themes(root: &Path) -> ThemeListResponse {
             themes.push(match read_theme_file(&dir) {
                 Ok((theme, _)) => ThemeSummary {
                     problems: check_theme(&theme, &dir),
+                    swatch: swatch(&theme),
                     id,
                     name: Some(theme.name),
                     base: Some(theme.base),
@@ -688,6 +700,7 @@ pub fn list_themes(root: &Path) -> ThemeListResponse {
                     base: None,
                     author: None,
                     problems: vec![problem],
+                    swatch: BTreeMap::new(),
                 },
             });
         }
@@ -697,6 +710,7 @@ pub fn list_themes(root: &Path) -> ThemeListResponse {
         themes_dir: root.display().to_string(),
         active: read_active_id(root),
         themes,
+        allowed_fonts: ALLOWED_FONTS.iter().map(|f| (*f).to_string()).collect(),
     }
 }
 

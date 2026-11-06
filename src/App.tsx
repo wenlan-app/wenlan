@@ -27,6 +27,7 @@ import Main from "./components/memory/Main";
 import SetupWizard from "./components/SetupWizard";
 import { RuntimeOverlays } from "./components/RuntimeOverlays";
 import { AppToaster } from "./components/AppToaster";
+import ThemeDecor from "./components/ThemeDecor";
 import { setDaemonStartupPhase, type DaemonStartupPhase } from "./lib/daemonStartup";
 import { setServiceFallback } from "./lib/serviceNotices";
 import { commitInputComposition, isInputCompositionActive } from "./lib/inputComposition";
@@ -465,6 +466,7 @@ export default function App() {
   return (
     <>
       {body}
+      {showsMain && <ThemeDecor />}
       <AppToaster />
       <RuntimeOverlays
         variant={showsMain ? "main" : "updater-only"}

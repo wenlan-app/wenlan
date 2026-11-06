@@ -274,6 +274,14 @@ fn new_themes_start_from_built_in_colors_and_get_free_folder_names() {
     assert_eq!(unnamed_ascii.id, "theme");
     assert_eq!(unnamed_ascii.theme.name, "夜晚兔子");
     assert!(create_theme(root, "  ", ThemeBase::Dark).is_err());
+    let listed = list_themes(root);
+    let card = listed
+        .themes
+        .iter()
+        .find(|t| t.id == "night-bunny")
+        .unwrap();
+    assert_eq!(card.swatch["background"], "#191C24");
+    assert_eq!(card.swatch.len(), 4);
     let read = read_theme(root, "night-bunny").unwrap();
     assert_eq!(read.theme, first.theme);
 }

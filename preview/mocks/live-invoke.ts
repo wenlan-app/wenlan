@@ -72,6 +72,34 @@ const EXPLICIT_BROWSE_HEADERS = {
 };
 
 const enc = encodeURIComponent;
+
+// app/src/themes.rs folds a 422 refusal into `{ status: "refused", problems }`.
+async function themeWrite(call: () => Promise<any>): Promise<any> {
+  try {
+    return { status: "ok", value: await call() };
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 422) {
+      try {
+        return { status: "refused", problems: JSON.parse(error.body).problems ?? [] };
+      } catch {
+        // fall through
+      }
+    }
+    throw error;
+  }
+}
+
+async function fileDataUrl(path: string): Promise<string | null> {
+  const res = await fetch(`/@fs${path}`);
+  if (!res.ok) return null;
+  const blob = await res.blob();
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(blob);
+  });
+}
 const pageUpdateErrorMessage = (
   error: HttpError,
   fallback: string,
@@ -1002,6 +1030,30 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   },
   get_note_ai_changes: (a) =>
     get(`/api/sources/${enc(a.sourceId)}/ai-changes?path=${enc(a.path)}`),
+  // --- custom themes (mirrors app/src/themes.rs) ---
+  list_themes: () => get("/api/themes"),
+  get_active_theme: () => get("/api/themes/active"),
+  get_theme: (a) => get(`/api/themes/${enc(String(a.id))}`),
+  create_theme: (a) => themeWrite(() => post("/api/themes", { name: a.name, base: a.base })),
+  save_theme: (a) => themeWrite(() => put(`/api/themes/${enc(String(a.id))}`, a.theme)),
+  check_theme_draft: (a) => post("/api/themes/check", { id: a.id, theme: a.theme }),
+  set_active_theme: (a) => themeWrite(() => put("/api/themes/active", { id: a.id ?? null })),
+  // The browser cannot read files; Vite serves the scratch data folder under
+  // /@fs when it sits inside the workspace, which is how preview shows images.
+  active_theme_image: async (a) => {
+    const active = await get("/api/themes/active");
+    const path = a.kind === "background" ? active.background?.path : active.sticker?.path;
+    return path ? fileDataUrl(path) : null;
+  },
+  theme_image: async (a) => {
+    const list = await get("/api/themes");
+    return fileDataUrl(`${list.themes_dir}/${String(a.id)}/${String(a.file)}`);
+  },
+  // No file picker or Finder in a browser preview.
+  import_theme_image: async () => {
+    throw new Error("not_an_image");
+  },
+  open_themes_folder: null,
   set_note_ai_changes: (a) =>
     put(`/api/sources/${enc(a.sourceId)}/ai-changes`, { path: a.path, value: a.value ?? null }),
   list_note_proposals: async (a) =>
