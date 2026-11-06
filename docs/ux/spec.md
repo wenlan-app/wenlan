@@ -277,6 +277,23 @@ and wait for evidence that people need them.
 - **UX-GRAPH-4** `planned` Lasso three points and press "take to chat": the AI
   tool receives a summary with sources, including the lines you drew.
   原文：圈 3 個點按「帶去對話」，AI 工具收到摘要和出處，連你連的線一起帶上。
+- **UX-GRAPH-5** `planned` The morning after a night changed something, the
+  big map shows one line in its bottom-left corner: what last night did, with
+  "Replay" and "Undo". It counts only the current Space, shows only that day,
+  and is gone after Undo. Undo takes back the whole night for every thing;
+  one thing's own page still undoes just that thing. Home keeps its names line
+  and adds only "Replay": no counts (UX-HOME-2) and no Undo.
+  原文：☾ 昨晚：寫了 8 個重點，接上 5 個 · 看回放 · 還原。首頁只多「看回放」，不放數字、不放還原（2026-11-06「照建議」）。
+- **UX-GRAPH-6** `planned` "Replay" plays last night on the big map: new
+  points grow out of their thing, then points fly to sit beside their topics,
+  with no lines, in at most five camera stops, then everything goes home.
+  Skip, Esc or touching the map ends it at once. It only ever starts when you
+  press it. With reduced motion the changes are marked at once instead.
+  原文：看回放：新的點從那件事長出來，再飛到主題旁邊，不畫線，最多停五次；永遠是你按了才播（2026-11-06「照建議」）。
+- **UX-GRAPH-7** `planned` The AI merges, replaces and updates on its own at
+  night, and each one is shown on the big map and can be undone. How it looks
+  is designed as a whole and agreed before it is built.
+  原文：合併、取代、更新由 AI 自己做，可以還原，在大圖上看得到（2026-11-05「可以的，以上」）。
 
 ## Finding things
 
