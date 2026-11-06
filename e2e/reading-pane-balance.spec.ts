@@ -122,7 +122,7 @@ for (const cfg of [
       await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);
       await readable(".page-detail-document", ".note-group-content");
     }
-    await pane.locator(".page-info-drawer-close").click();
+    await page.getByRole("button", { name: t.pageInspector.info, exact: true }).click();
     await expect(pane).toHaveCount(0);
     await expect(shell).toHaveAttribute("data-sidebar-layout", cfg.mode);
     await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);

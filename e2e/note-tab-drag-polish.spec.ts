@@ -66,8 +66,8 @@ test('reorder marker is short and neutral; release, Escape and blur clean pointe
 
 test('body transfer obeys save protection',async({page},info)=>{
  const {errors,runtime}=await start(page,2560);await menu(page,3);
- await group(page,'secondary').getByRole('button',{name:'Info',exact:true}).click();
- const inspector=group(page,'secondary').locator('.page-info-drawer-group-overlay-panel');await expect(inspector).toBeVisible();
+ await page.getByRole('button',{name:'Info',exact:true}).click();
+ const inspector=page.locator('.page-info-drawer-group-overlay-panel');await expect(inspector).toBeVisible();
  const editor=group(page).getByRole('textbox',{name:'Page editor',exact:true});runtime.failNext('update_page','save refused',3);
  await editor.evaluate(el=>{const v=(el as any).cmTile.root.view;v.dispatch({selection:{anchor:v.state.doc.length}});v.focus();});await page.keyboard.insertText(' Unsaved stays.');
  const body=(await group(page,'secondary').locator('.note-group-content').boundingBox())!;

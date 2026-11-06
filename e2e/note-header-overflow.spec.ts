@@ -16,17 +16,24 @@ const frame = (page: Page, id = "primary") => page.locator(`[data-note-group-id=
 
 async function geometry(group: Locator) {
   return group.evaluate(el => {
-    const rect = (selector: string) => {
-      const r = el.querySelector(selector)!.getBoundingClientRect();
+    const rect = (root: ParentNode, selector: string) => {
+      const r = root.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
       return { x: r.x, right: r.right, y: r.y, width: r.width, height: r.height };
     };
-    const header = rect(".note-group-header"), list = rect(".note-tabs-list");
-    const add = rect(".note-tab-create"), toggle = rect(".note-mind-map-toggle");
-    return { header, list, add, toggle, gap: add.x - list.right,
-      inset: header.right - toggle.right,
+    const reading = document.querySelector<HTMLElement>(".wiki-workspace-reading")!;
+    const rail = document.querySelector<HTMLElement>(".wiki-shared-tools-rail")!;
+    const header = rect(el, ".note-group-header"), list = rect(el, ".note-tabs-list");
+    const add = rect(el, ".note-tab-create"), toggle = rect(rail, ".note-mind-map-toggle");
+    const toolbar = rect(rail, ".wiki-shared-document-tools");
+    const addElement = el.querySelector<HTMLElement>(".note-tab-create")!;
+    const toolbarOverlap = add.x < toolbar.right && add.right > toolbar.x
+      && add.y < toolbar.y + toolbar.height && add.y + add.height > toolbar.y;
+    return { header, list, add, toggle, toolbar, toolbarOverlap, gap: add.x - list.right,
+      inset: reading.getBoundingClientRect().right - toggle.right,
       scroll: el.querySelector(".note-tabs-list")!.scrollWidth > list.width,
       documentOverflow: document.documentElement.scrollWidth > innerWidth,
-      visibleAtToggle: el.querySelector(".note-mind-map-toggle")!.contains(document.elementFromPoint(toggle.x + toggle.width / 2, toggle.y + toggle.height / 2)) };
+      visibleAtAdd: addElement.contains(document.elementFromPoint(add.x + add.width / 2, add.y + add.height / 2)),
+      visibleAtToggle: rail.querySelector(".note-mind-map-toggle")!.contains(document.elementFromPoint(toggle.x + toggle.width / 2, toggle.y + toggle.height / 2)) };
   });
 }
 async function assertGeometry(group: Locator) {
@@ -35,7 +42,8 @@ async function assertGeometry(group: Locator) {
   expect(g.gap).toBeLessThanOrEqual(5);
   expect(g.inset).toBeGreaterThanOrEqual(10);
   expect(g.inset).toBeLessThanOrEqual(16);
-  expect(g.add.right).toBeLessThanOrEqual(g.toggle.x);
+  expect(g.toolbarOverlap).toBe(false);
+  expect(g.visibleAtAdd).toBe(true);
   expect(g.visibleAtToggle).toBe(true);
   expect(g.documentOverflow).toBe(false);
 }

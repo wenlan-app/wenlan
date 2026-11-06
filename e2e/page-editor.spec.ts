@@ -690,9 +690,10 @@ test("renders a borderless dark editor while page-actions focus stays visible", 
   }
 
   const actions = page.getByRole("button", { name: "Page actions", exact: true });
-  await actions.focus();
+  // The shared tools follow the editor in DOM order; use the adjacent Info
+  // control to enter Page actions by keyboard without tabbing into CodeMirror.
+  await page.getByRole("button", { name: "Info", exact: true }).focus();
   await page.keyboard.press("Shift+Tab");
-  await page.keyboard.press("Tab");
   await expect(actions).toBeFocused();
   expect(await actions.evaluate((element) => {
     const style = window.getComputedStyle(element);
