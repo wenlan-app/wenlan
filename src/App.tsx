@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useState, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -17,7 +18,6 @@ import {
 import {
   ATTEMPT_TIMEOUT_MS,
   BOOT_QUERY_RETRY,
-  BOOT_SLOW_NOTICE_MS,
   FAILED_GATE_RECHECK_MS,
   bootQueryRetryDelay,
   runBootGate,
@@ -65,13 +65,8 @@ export default function App() {
     networkMode: "always",
   });
 
-  // This machine's own config file, read without the daemon. When it says
-  // setup is done the workspace opens at once and the daemon gate above keeps
-  // running behind it: the daemon can take from seconds (a running one) to
-  // the better part of a minute (a cold boot, or a restart after an update
-  // that backs up the database first) to answer. A false or failed read
-  // leaves the gate in charge, as before, so a new user still gets the
-  // wizard only after the daemon has said so.
+  // Local setup state chooses the first screen without waiting for the
+  // daemon: welcome on first launch, workspace on subsequent launches.
   const { data: localSetupDone, isPending: localSetupPending } = useQuery({
     queryKey: ["localSetupCompleted"],
     queryFn: () => localSetupCompleted().catch(() => false),
@@ -105,13 +100,11 @@ export default function App() {
   const startupPreflightFailed = localSetupDone !== undefined && startupPreflightStatus === "failed";
   const daemonStartupPhase: DaemonStartupPhase = offlineEntry
     ? "failed"
-    : !openedEarly
-      ? "ready"
-      : wizardPending
-        ? "starting"
-        : wizardError
-          ? "failed"
-          : "ready";
+    : wizardPending
+      ? "starting"
+      : wizardError
+        ? "failed"
+        : "ready";
   // A layout effect, so daemon calls are held before any child's passive
   // effect (where queries start fetching) can send one.
   const startupFailedOnce = useRef(false);
@@ -158,21 +151,35 @@ export default function App() {
     };
   }, [daemonStartupPhase, queryClient]);
 
-  // A rejection propagates to the wizard's Done step, which stays put with an
-  // inline alert. Invalidate the gate only after the save lands: refetching a
-  // gate that has no data (the fail-closed error branch below) puts the query
-  // back to pending, which swaps the wizard for the starting-runtime screen and
-  // drops every pick the user made.
-  async function handleWizardComplete() {
+  async function persistSetupCompletion() {
     await setSetupCompleted(true);
+    queryClient.setQueryData(["localSetupCompleted"], true);
     queryClient.invalidateQueries({ queryKey: ["shouldShowWizard"] });
   }
 
+  function completeSetupInBackground() {
+    void persistSetupCompletion().catch(() => {
+      // Never tear down a workspace the user has already entered. A failed
+      // completion write stays unsaved and offers a retry in that workspace.
+      toast.error(t("setup.notesFirst.finishFailed"), {
+        id: "setup-completion",
+        action: { label: t("setup.settingUp.retry"), onClick: completeSetupInBackground },
+      });
+    });
+  }
+
+  async function handleWizardComplete() {
+    if (wizardPending) {
+      // The IPC wrapper holds this one write until the daemon can accept it.
+      // Navigation and the user's chosen action do not wait for that write.
+      setSetupDeferred(true);
+      completeSetupInBackground();
+      return;
+    }
+    await persistSetupCompletion();
+  }
+
   const [migration, setMigration] = useState<{ current: number; total: number; phase: string } | null>(null);
-  // How long the gate has been holding the "Starting Wenlan" screen. The gate
-  // itself is allowed the better part of three minutes (bootRetryPolicy), and
-  // for all of it the screen said one thing and named nothing.
-  const [bootSlow, setBootSlow] = useState(false);
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const quitGuardRef = useRef<(() => Promise<boolean>) | null>(null);
@@ -297,15 +304,6 @@ export default function App() {
     return () => { unlisten.then((f) => f()); };
   }, []);
 
-  useEffect(() => {
-    if (!wizardPending || openedEarly) {
-      setBootSlow(false);
-      return;
-    }
-    const id = setTimeout(() => setBootSlow(true), BOOT_SLOW_NOTICE_MS);
-    return () => clearTimeout(id);
-  }, [wizardPending, openedEarly]);
-
   // Embedding migration progress overlay
   useEffect(() => {
     const unlisten1 = listen<{ current: number; total: number; phase: string }>(
@@ -402,34 +400,9 @@ export default function App() {
         startupPreflightFailed
       />
     );
-  } else if (wizardPending && !openedEarly) {
-    // The daemon can take seconds to answer on a cold start. Say so, instead
-    // of holding an empty window. --bg-primary is what index.html paints
-    // before React mounts (src/__tests__/firstPaint.test.ts pins the two to
-    // the same hex), so this panel takes over that background without a flash.
-    body = (
-      <div
-        className="flex flex-col items-center justify-center w-screen h-screen bg-[var(--bg-primary)] text-[var(--text-secondary)]"
-        role="status"
-        aria-live="polite"
-      >
-        <p className="text-lg">{t("common.startingRuntime")}</p>
-        {bootSlow && (
-          <p className="text-sm mt-2" data-testid="boot-slow-notice">
-            {t("boot.stillWaiting")}
-          </p>
-        )}
-      </div>
-    );
-  } else if (!setupDeferred && (showWizard || (wizardError && !openedEarly))) {
-    // ponytail: fail CLOSED. If the daemon is still unreachable after retries,
-    // show the wizard rather than silently falling through to Home — an
-    // existing user whose daemon is dead for 15s+ sees the wizard too, but its
-    // step-5 task thread already surfaces "daemon isn't reachable" + Retry,
-    // which is the intended repair surface for that tradeoff.
-    // `wizardError` is not "this user is new", it is "we never got an
-    // answer". The wizard says which of the two it is instead of opening on
-    // welcome copy that reads as a wiped install.
+  } else if (!setupDeferred && (showWizard || (!openedEarly && (wizardPending || wizardError)))) {
+    // First-run onboarding is usable while the daemon prepares in the
+    // background. A terminal failure retains the existing recovery route.
     body = (
       <SetupWizard
         onComplete={handleWizardComplete}

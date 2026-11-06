@@ -12,7 +12,7 @@
 //! Windows), then the conventional install dirs a GUI-launched app's minimal
 //! PATH misses (`~/.local/bin`, Homebrew, npm/volta/bun/pnpm globals, every
 //! `~/.nvm/versions/node/*/bin`, `%APPDATA%\npm` on Windows), then the Codex
-//! CLI bundled with ChatGPT Desktop on macOS, and only then asks the user's
+//! CLI bundled with the desktop app on Windows and macOS, and only then asks the user's
 //! own login shell (`$SHELL -l -i -c 'command -v <bin>'`, Unix only) under a
 //! hard 3 s bound. Both CLIs are commonly installed via
 //! `npm i -g` under a version manager whose bin dir only the user's rc
@@ -77,6 +77,7 @@ struct LookupEnv {
     macos: bool,
     appdata: Option<PathBuf>,
     local_appdata: Option<PathBuf>,
+    desktop_roots: Vec<PathBuf>,
 }
 
 impl LookupEnv {
@@ -93,6 +94,7 @@ impl LookupEnv {
             macos: std::env::consts::OS == "macos",
             appdata: nonempty("APPDATA"),
             local_appdata: nonempty("LOCALAPPDATA"),
+            desktop_roots: crate::desktop_codex::registered_windows_roots(),
         }
     }
 }
@@ -198,21 +200,18 @@ fn known_candidates(
         .collect()
 }
 
-/// Codex is bundled inside ChatGPT Desktop on macOS. Desktop-only users have
-/// no standalone `codex` on PATH, so plugin setup must be able to invoke the
-/// copy shipped with the detected app. Keep this lookup macOS-only and scoped
-/// to Codex; the app's bundled CLI is an implementation detail of that bundle.
+/// Use the desktop-bundled CLI when no standalone installation exists.
 fn bundled_codex_candidates(env: &LookupEnv, binary_name: &str) -> Vec<PathBuf> {
-    if !env.macos || binary_name != "codex" {
+    if binary_name != "codex" {
         return Vec::new();
     }
-    let mut apps = vec![PathBuf::from("/Applications/ChatGPT.app")];
-    if let Some(home) = &env.home {
-        apps.push(home.join("Applications/ChatGPT.app"));
-    }
-    apps.into_iter()
-        .map(|app| app.join("Contents/Resources/codex-cli/bin/codex"))
-        .collect()
+    crate::desktop_codex::candidates(
+        env.windows,
+        env.macos,
+        env.home.as_deref(),
+        env.local_appdata.as_deref(),
+        &env.desktop_roots,
+    )
 }
 
 fn first_existing(candidates: &[PathBuf], exists: &impl Fn(&Path) -> bool) -> Option<PathBuf> {
@@ -445,7 +444,8 @@ fn client_command(bin: &Path) -> Command {
 }
 
 fn codex_command(bin: &Path, codex_home: &Path) -> Command {
-    codex_command_with_path(bin, std::env::var_os("PATH"), codex_home)
+    let path = crate::desktop_codex::path_with_bundled_git(std::env::var_os("PATH"));
+    codex_command_with_path(bin, path, codex_home)
 }
 
 fn codex_command_with_path(
@@ -694,6 +694,7 @@ mod tests {
             macos: false,
             appdata: None,
             local_appdata: None,
+            desktop_roots: Vec::new(),
         }
     }
 
@@ -705,6 +706,7 @@ mod tests {
             macos: false,
             appdata: Some(PathBuf::from("/users/u/AppData/Roaming")),
             local_appdata: Some(PathBuf::from("/users/u/AppData/Local")),
+            desktop_roots: Vec::new(),
         }
     }
 
@@ -716,6 +718,7 @@ mod tests {
             macos: true,
             appdata: None,
             local_appdata: None,
+            desktop_roots: Vec::new(),
         }
     }
 
@@ -961,6 +964,42 @@ mod tests {
     }
 
     #[test]
+    fn windows_desktop_only_resolves_registered_cli_and_preserves_path_priority() {
+        let mut env = windows_env();
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("OpenAI.Codex_26_x64__2p2nqsd0c76g0");
+        let tools = temp.path().join("tools");
+        env.path_var = Some(std::env::join_paths([&tools]).unwrap());
+        env.desktop_roots = vec![root.clone()];
+        let bundled = root.join("app/resources/codex.exe");
+        assert_eq!(
+            resolve_binary_with(
+                "codex",
+                &env,
+                |p| p == bundled,
+                no_dirs,
+                |_| panic!("a desktop hit must not launch a shell")
+            ),
+            Some(bundled.clone())
+        );
+        let standalone = tools.join("codex.exe");
+        assert_eq!(
+            resolve_binary_with(
+                "codex",
+                &env,
+                |p| p == bundled || p == standalone,
+                no_dirs,
+                |_| None
+            ),
+            Some(standalone)
+        );
+        assert_eq!(
+            resolve_binary_with("codex", &env, |_| false, no_dirs, |_| None),
+            None
+        );
+    }
+
+    #[test]
     fn codex_bundle_search_includes_user_applications() {
         let env = macos_env("/Users/u", &[]);
         let system =
@@ -987,7 +1026,7 @@ mod tests {
     #[test]
     fn bundled_codex_is_excluded_for_other_platforms_and_binaries() {
         assert!(bundled_codex_candidates(&unix_env("/Users/u", &[]), "codex").is_empty());
-        assert!(bundled_codex_candidates(&windows_env(), "codex").is_empty());
+        assert!(bundled_codex_candidates(&windows_env(), "claude").is_empty());
         assert!(bundled_codex_candidates(&macos_env("/Users/u", &[]), "claude").is_empty());
     }
 

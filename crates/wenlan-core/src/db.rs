@@ -1941,7 +1941,7 @@ pub enum MemoryEmbeddingRecovery {
     AtOpen,
     /// Left to the caller, which runs
     /// [`MemoryDB::recover_null_memory_embeddings_batch`] itself. The daemon
-    /// uses this so a backlog is recovered after it serves, not before.
+    /// uses this so model loading and backlog recovery happen after it serves.
     Deferred,
 }
 
@@ -5292,7 +5292,8 @@ impl MemoryDB {
     /// are re-embedded. The daemon passes [`MemoryEmbeddingRecovery::Deferred`]
     /// so a large backlog cannot hold its health check shut; it then drives
     /// [`Self::recover_null_memory_embeddings_batch`] itself after it serves.
-    /// Every other open effect is identical.
+    /// Model loading is also left to [`Self::load_embedder`]. Database schema,
+    /// migrations and profile bootstrap still complete before returning.
     pub async fn new_with_embedding_recovery(
         db_path: &Path,
         emitter: Arc<dyn EventEmitter>,
@@ -5464,17 +5465,12 @@ impl MemoryDB {
         // model_optimized.onnx" (first-run gauntlet finding F4).
         // fastembed treats an empty HF_HOME as set and resolves it against the
         // working directory, which is exactly the launchd failure above.
-        let (embedder, embedder_load_error) = match load_daemon_text_embedding(db_path).await {
-            Ok(embedder) => (Some(embedder), None),
-            // The daemon (`Deferred`) serves without the model: pages stay
-            // readable and writable, and it retries the load itself through
-            // `MemoryDB::install_embedder`. Every other caller still needs a
-            // complete vector index before it returns, so the error stands.
-            Err(error) if recovery == MemoryEmbeddingRecovery::Deferred => {
-                log::warn!("[memory_db] opening without the embedding model: {error}");
-                (None, Some(error.to_string()))
-            }
-            Err(error) => return Err(error),
+        let embedder = match recovery {
+            // Even a successful first download can outlast the app's startup
+            // deadline. Do not attempt it before serving, including with a
+            // warm cache: the runtime worker owns every load and retry.
+            MemoryEmbeddingRecovery::Deferred => None,
+            MemoryEmbeddingRecovery::AtOpen => Some(load_daemon_text_embedding(db_path).await?),
         };
 
         log::info!("[memory_db] initialized at {}", db_file.display());
@@ -5498,7 +5494,7 @@ impl MemoryDB {
                 }
                 None => std::sync::OnceLock::new(),
             },
-            embedder_load_error: std::sync::Mutex::new(embedder_load_error),
+            embedder_load_error: std::sync::Mutex::new(None),
             chunker: build_chunker(db_path),
             embedding_cache: std::sync::Mutex::new(EmbeddingCache::new(200)),
             community_dirty_nodes: std::sync::Mutex::new(BTreeMap::new()),

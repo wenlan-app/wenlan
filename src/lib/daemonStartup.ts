@@ -2,7 +2,7 @@
 /**
  * Whether the daemon has answered yet, for a window that opened before it did.
  *
- * A configured user's workspace opens at launch instead of waiting behind a
+ * First-run choices and the configured workspace open without waiting behind a
  * full-screen "starting" panel (`src/App.tsx`). Until the daemon answers the
  * first-run gate, every IPC call that goes to the daemon waits here rather
  * than failing on a connection the daemon has not opened yet. A waiting call
