@@ -284,5 +284,11 @@ but fails `plugin marketplace add` at `git clone` with `program not found`.
 Linux keeps its PATH/version-manager lookup. The candidate module is imported by
 the native Windows/macOS/Linux contract suite; the full app tests also exercise
 the resolver priority. A Windows host probe resolved the registered bundled CLI
-without PATH or npm and successfully ran `--version` (0.167.0-alpha.3.2) with
-scratch Codex state. A clean Windows installer run remains a separate release gate.
+without PATH or npm and completed marketplace registration and plugin installation
+with scratch Codex state and desktop-bundled Git. The full App crate's 49 plugin
+tests also passed natively on Windows. PATH fixtures use native absolute temporary
+paths: Unix-rooted `/on/path` is not absolute on Windows. The raw Tauri lib-test
+executable needs the same common-controls v6 manifest as the shipped App to load
+`TaskDialogIndirect`; the verification used a test copy with the released App's
+manifest. This is not an installer receipt. A clean Windows installer run remains
+a separate release gate.

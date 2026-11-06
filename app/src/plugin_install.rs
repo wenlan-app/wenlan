@@ -826,25 +826,31 @@ mod tests {
 
     #[test]
     fn path_candidates_follow_path_order_with_bare_name_on_unix() {
-        let env = unix_env("/home/u", &["/a/bin", "/b/bin"]);
+        let root = tempfile::tempdir().unwrap();
+        let dirs = [root.path().join("a/bin"), root.path().join("b/bin")];
+        let mut env = unix_env("/home/u", &[]);
+        env.path_var = Some(std::env::join_paths(&dirs).unwrap());
         assert_eq!(
             path_candidates(&env, "codex"),
-            vec![PathBuf::from("/a/bin/codex"), PathBuf::from("/b/bin/codex")]
+            vec![dirs[0].join("codex"), dirs[1].join("codex")]
         );
     }
 
     #[test]
     fn path_candidates_try_exe_cmd_bat_per_dir_on_windows() {
-        let env = windows_env();
+        let root = tempfile::tempdir().unwrap();
+        let dirs = [root.path().join("tools/bin"), root.path().join("more/bin")];
+        let mut env = windows_env();
+        env.path_var = Some(std::env::join_paths(&dirs).unwrap());
         assert_eq!(
             path_candidates(&env, "claude"),
             vec![
-                PathBuf::from("/tools/bin/claude.exe"),
-                PathBuf::from("/tools/bin/claude.cmd"),
-                PathBuf::from("/tools/bin/claude.bat"),
-                PathBuf::from("/more/bin/claude.exe"),
-                PathBuf::from("/more/bin/claude.cmd"),
-                PathBuf::from("/more/bin/claude.bat"),
+                dirs[0].join("claude.exe"),
+                dirs[0].join("claude.cmd"),
+                dirs[0].join("claude.bat"),
+                dirs[1].join("claude.exe"),
+                dirs[1].join("claude.cmd"),
+                dirs[1].join("claude.bat"),
             ]
         );
     }
@@ -852,11 +858,14 @@ mod tests {
     #[test]
     fn path_candidates_skip_relative_and_empty_entries() {
         // A relative PATH entry resolves against the GUI app's arbitrary cwd.
-        let env = unix_env("/home/u", &["", ".", "bin", "/abs/bin"]);
-        assert_eq!(
-            path_candidates(&env, "codex"),
-            vec![PathBuf::from("/abs/bin/codex")]
+        let root = tempfile::tempdir().unwrap();
+        let absolute = root.path().join("abs/bin");
+        let mut env = unix_env("/home/u", &[]);
+        env.path_var = Some(
+            std::env::join_paths([Path::new(""), Path::new("."), Path::new("bin"), &absolute])
+                .unwrap(),
         );
+        assert_eq!(path_candidates(&env, "codex"), vec![absolute.join("codex")]);
     }
 
     #[test]
@@ -1032,8 +1041,10 @@ mod tests {
 
     #[test]
     fn codex_bundle_does_not_override_path_or_standard_install_dirs() {
-        let env = macos_env("/Users/u", &["/on/path"]);
-        let path_cli = Path::new("/on/path/codex");
+        let root = tempfile::tempdir().unwrap();
+        let mut env = macos_env("/Users/u", &[]);
+        env.path_var = Some(std::env::join_paths([root.path()]).unwrap());
+        let path_cli = root.path().join("codex");
         let standard_cli = Path::new("/Users/u/.local/bin/codex");
         let bundled_cli =
             Path::new("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex");
@@ -1042,7 +1053,7 @@ mod tests {
         };
         assert_eq!(
             resolve_binary_with("codex", &env, exists, no_dirs, |_| None),
-            Some(path_cli.to_path_buf())
+            Some(path_cli)
         );
 
         let exists = |candidate: &Path| candidate == standard_cli || candidate == bundled_cli;
@@ -1065,14 +1076,15 @@ mod tests {
 
     #[test]
     fn resolve_binary_prefers_path_over_known_dir_over_shell() {
-        let env = unix_env("/home/u", &["/on/path"]);
-        let exists = |p: &Path| {
-            p == Path::new("/on/path/codex") || p == Path::new("/home/u/.local/bin/codex")
-        };
+        let root = tempfile::tempdir().unwrap();
+        let mut env = unix_env("/home/u", &[]);
+        env.path_var = Some(std::env::join_paths([root.path()]).unwrap());
+        let path_cli = root.path().join("codex");
+        let exists = |p: &Path| p == path_cli || p == Path::new("/home/u/.local/bin/codex");
         let shell = |_: &str| Some(PathBuf::from("/from/shell/codex"));
         assert_eq!(
             resolve_binary_with("codex", &env, exists, no_dirs, shell),
-            Some(PathBuf::from("/on/path/codex"))
+            Some(path_cli)
         );
 
         let exists = |p: &Path| p == Path::new("/home/u/.local/bin/codex");
