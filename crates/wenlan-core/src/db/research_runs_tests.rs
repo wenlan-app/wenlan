@@ -20,11 +20,11 @@ fn create(space: &str, ids: &[&str]) -> CreateOrganizeRunRequest {
         target_page_id: None,
     }
 }
-async fn complete(db: &MemoryDB, space: &str, mut value: OrganizeRun) -> OrganizeRun {
+async fn complete(db: &MemoryDB, space_id: &str, mut value: OrganizeRun) -> OrganizeRun {
     for item in value.items.clone() {
         let read = db
             .read_organize_source(
-                space,
+                space_id,
                 &value.id,
                 ReadOrganizeSourceRequest {
                     space: "Research".into(),
@@ -40,10 +40,10 @@ async fn complete(db: &MemoryDB, space: &str, mut value: OrganizeRun) -> Organiz
         value.revision = read.run_revision;
         value = db
             .update_research_run(
-                space,
+                space_id,
                 &value.id,
                 UpdateOrganizeRunRequest {
-                    space: space.into(),
+                    space: "Research".into(),
                     expected_revision: value.revision,
                     source: Some(item.source_ref.source),
                     source_id: Some(item.source_ref.source_id),
