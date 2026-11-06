@@ -14,7 +14,7 @@ export const THINGS_QUERY_KEY = ["things"] as const;
 const RETRY_SOON = { retry: 5, retryDelay: (attempt: number) => Math.min(2_000 * 2 ** attempt, 15_000) } as const;
 
 /** How many lines of work home shows before "See all". */
-export const WORKING_ON_LISTED = 6;
+export const WORKING_ON_LISTED = 3;
 /** Most things the "steeped overnight" line names; the rest are "and more". */
 const STEEPED_NAMED = 2;
 /** Steeping before this local hour happened overnight. */

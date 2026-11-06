@@ -75,7 +75,7 @@
    column as the newest pages. Cards are told apart by their surface and the
    space between them, not by lines. */
 /* Home: whole cards in a 960px column; nothing scrolls sideways. */
-.home-columns { display:flex;flex-direction:column;gap:32px;width:100%;max-width:min(100%,960px);margin:8px auto 0;min-width:0; }
+.home-columns { display:flex;flex-direction:column;gap:40px;width:100%;max-width:min(100%,960px);margin:8px auto 0;min-width:0; }
 .home-columns:empty { display:none; }
 .home-columns > .wiki-working-on, .home-columns > .wiki-new-pages { max-width:none;margin:0; }
 .wiki-working-on h2, .wiki-new-pages-header h2 { color:var(--mem-text-secondary);font:600 13px/1.4 var(--mem-font-body);letter-spacing:.02em;margin:0; }
@@ -101,13 +101,12 @@
 .wiki-working-on-steeped-names button:hover { color:var(--mem-text); }
 .wiki-working-on-steeped-names button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
 .wiki-working-on-card[data-glow] { border-color:color-mix(in srgb,var(--mem-accent-page) 45%,transparent);box-shadow:0 0 0 4px color-mix(in srgb,var(--mem-accent-page) 16%,transparent);transition:box-shadow .6s ease,border-color .6s ease; }
-/* The thing you were on last is one large card on the left; the next five
-   are whole cards to its right, two over three. Ten columns: the large card
-   takes four, the top two take three each, the bottom three take two each.
-   Fewer things close up the empty places; "See all" adds rows of five.
-   Nothing scrolls sideways, no card is cut at the edge, and every line is
-   written out in full. A narrower window puts the large card across the top
-   and the rest two by two, an odd last card taking the whole row. */
+/* Three cards, so home is not a wall of boxes: the thing you were on last is
+   one large card on the left, the next two stack to its right. "See all"
+   adds rows of three under them. Nothing scrolls sideways, no card is cut at
+   the edge, and every line is written out in full. A narrower window puts
+   the large card on top and the rest two by two, an odd last card taking
+   the whole row. */
 .wiki-working-on { container:working-on / inline-size; }
 .wiki-working-on ul { list-style:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:2px;margin:0 -2px; }
 @container working-on (max-width: 820px) {
@@ -117,30 +116,23 @@
   .wiki-working-on li { grid-column:1 / -1; }
 }
 @container working-on (min-width: 821px) {
-  .wiki-working-on ul { grid-template-columns:repeat(10,minmax(0,1fr)); }
-  .wiki-working-on li { grid-column:span 2; }
-  .wiki-working-on li:first-child { grid-column:1 / 5;grid-row:1; }
+  .wiki-working-on ul { grid-template-columns:repeat(15,minmax(0,1fr)); }
+  .wiki-working-on li { grid-column:span 5; }
+  .wiki-working-on li:first-child { grid-column:1 / 10;grid-row:1; }
   .wiki-working-on li:first-child:only-child { grid-column:1 / -1; }
-  .wiki-working-on ul:has(> li:nth-child(4)) > li:first-child { grid-row:1 / span 2; }
-  .wiki-working-on li:nth-child(2) { grid-column:5 / 8;grid-row:1; }
-  .wiki-working-on li:nth-child(3) { grid-column:8 / 11;grid-row:1; }
-  .wiki-working-on li:nth-child(2):last-child { grid-column:5 / -1; }
-  .wiki-working-on li:nth-child(4) { grid-column:5 / 7;grid-row:2; }
-  .wiki-working-on li:nth-child(5) { grid-column:7 / 9;grid-row:2; }
-  .wiki-working-on li:nth-child(6) { grid-column:9 / 11;grid-row:2; }
-  .wiki-working-on li:nth-child(4):last-child { grid-column:5 / -1; }
-  .wiki-working-on li:nth-child(4):nth-last-child(2) { grid-column:5 / 8; }
-  .wiki-working-on li:nth-child(5):last-child { grid-column:8 / -1; }
+  .wiki-working-on ul:has(> li:nth-child(3)) > li:first-child { grid-row:1 / span 2; }
+  .wiki-working-on li:nth-child(2) { grid-column:10 / -1;grid-row:1; }
+  .wiki-working-on li:nth-child(3) { grid-column:10 / -1;grid-row:2; }
 }
-.wiki-working-on li:first-child .wiki-working-on-card { gap:6px;padding:16px 40px 14px 20px; }
+.wiki-working-on li:first-child .wiki-working-on-card { gap:8px;padding:18px 40px 16px 22px; }
 .wiki-working-on li:first-child .wiki-working-on-title { font-size:18px;line-height:1.35; }
 .wiki-working-on li:first-child .wiki-working-on-text { font-size:14px;line-height:1.6; }
 /* The large card's open point: what to pick up in the next chat, whole. */
 .wiki-working-on-open { color:var(--mem-text-secondary);font:400 13.5px/1.55 var(--mem-font-body);overflow-wrap:anywhere; }
 .wiki-working-on-open-label { margin-right:.2em;color:var(--mem-text-tertiary); }
-.wiki-working-on li:not(:first-child) .wiki-working-on-card { gap:3px;padding:11px 14px 12px; }
+.wiki-working-on li:not(:first-child) .wiki-working-on-card { gap:4px;padding:14px 16px; }
 .wiki-working-on li:not(:first-child) .wiki-working-on-title { font-size:14px; }
-.wiki-working-on li:not(:first-child) .wiki-working-on-text { font-size:13px;line-height:1.5; }
+.wiki-working-on li:not(:first-child) .wiki-working-on-text { font-size:13px;line-height:1.6; }
 .wiki-working-on li { position:relative;display:flex;min-width:0; }
 /* "Don't show": quiet until the card is hovered or focused; always there on touch screens. */
 .wiki-working-on-hide { position:absolute;top:8px;right:8px;display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--mem-text-tertiary);cursor:pointer;opacity:0;transition:opacity .12s ease; }
@@ -167,9 +159,11 @@
 .wiki-working-on-where { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .wiki-working-on-when { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body);font-variant-numeric:tabular-nums; }
 .home-columns .wiki-new-pages { container:recent-pages / inline-size; }
-/* Whole cards in at most two rows: four across, three or two in a narrower
-   window, which then lists fewer pages instead of cutting one. */
-.home-columns .wiki-new-pages ul { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;padding:2px;margin:0 -2px; }
+/* Recently edited is quieter than what you're working on, so the eye lands
+   on the cards above first: no box, no preview, only each page's name, four
+   across in at most two rows. A narrower window lists fewer instead of
+   cutting one. */
+.home-columns .wiki-new-pages ul { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px 16px;padding:0;margin:0 -10px; }
 .home-columns .wiki-new-pages li { display:flex;min-width:0; }
 @container recent-pages (max-width: 820px) {
   .home-columns .wiki-new-pages ul { grid-template-columns:repeat(3,minmax(0,1fr)); }
@@ -179,13 +173,15 @@
   .home-columns .wiki-new-pages ul { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .home-columns .wiki-new-pages li:nth-child(n+5) { display:none; }
 }
-.home-columns .wiki-new-pages-row { display:flex;flex-direction:column;align-items:stretch;gap:6px;width:100%;margin:0;padding:12px 16px;min-height:112px; }
-.home-columns .wiki-new-pages-row:hover { background:var(--mem-surface); }
+.home-columns .wiki-new-pages-row { display:flex;flex-direction:column;align-items:stretch;gap:2px;width:100%;margin:0;padding:8px 10px;border:0;border-radius:10px;background:none;box-shadow:none; }
+.home-columns .wiki-new-pages-row:hover { border-color:transparent;background:var(--mem-hover);box-shadow:none; }
 .wiki-new-pages-head { display:flex;align-items:flex-start;gap:8px;min-width:0; }
-.home-columns .wiki-new-pages-icon { margin-top:2px; }
-.home-columns .wiki-new-pages-title { white-space:normal;overflow:visible;overflow-wrap:anywhere;font:600 14px/1.4 var(--mem-font-body); }
+.home-columns .wiki-new-pages-icon { margin-top:1px; }
+.home-columns .wiki-new-pages-title { white-space:normal;overflow:visible;overflow-wrap:anywhere;font:500 13.5px/1.4 var(--mem-font-body);color:var(--mem-text-secondary); }
+.home-columns .wiki-new-pages-row:hover .wiki-new-pages-title { color:var(--mem-text); }
 .wiki-new-pages-preview { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;color:var(--mem-text-secondary);font:400 12.5px/1.55 var(--mem-font-body); }
-.home-columns .wiki-new-pages-by, .home-columns .wiki-new-pages-meta { margin-top:auto; }
+.home-columns .wiki-new-pages-preview { display:none; }
+.home-columns .wiki-new-pages-by, .home-columns .wiki-new-pages-meta { padding-left:24px;font-size:11.5px; }
 .home-columns ~ .getting-started-reopen { margin-top:28px; }
 .home-connect-line { display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:-12px 0 0;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body); }
 .home-connect-line button { padding:0;border:0;background:none;color:var(--mem-accent-page);font:inherit;font-weight:600;cursor:pointer; }

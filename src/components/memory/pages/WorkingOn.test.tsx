@@ -146,13 +146,13 @@ describe("WorkingOn", () => {
     expect(listWorkingOn).not.toHaveBeenCalled();
   });
 
-  it("UX-HOME-5: no cap: past six, See all opens the rest in place, with no count", async () => {
+  it("UX-HOME-5: no cap: past three, See all opens the rest in place, with no count", async () => {
     vi.mocked(listThings).mockResolvedValue(
       Array.from({ length: 9 }, (_, i) => thing({ id: `thg_${i}`, title: `Work ${i}` })),
     );
     renderWorkingOn();
     const section = await screen.findByTestId("wiki-working-on");
-    expect(section.querySelectorAll(".wiki-working-on-card")).toHaveLength(6);
+    expect(section.querySelectorAll(".wiki-working-on-card")).toHaveLength(3);
     const all = screen.getByRole("button", { name: "See all" });
     expect(all).toHaveAttribute("aria-expanded", "false");
     expect(section.textContent).not.toMatch(/\d+ more/);
@@ -160,7 +160,7 @@ describe("WorkingOn", () => {
     expect(section.querySelectorAll(".wiki-working-on-card")).toHaveLength(9);
     expect(section).toHaveAttribute("data-expanded", "true");
     fireEvent.click(screen.getByRole("button", { name: "Show fewer" }));
-    expect(section.querySelectorAll(".wiki-working-on-card")).toHaveLength(6);
+    expect(section.querySelectorAll(".wiki-working-on-card")).toHaveLength(3);
   });
 
   it("UX-HOME-5: Don't show takes a thing off home at once, without opening it", async () => {
