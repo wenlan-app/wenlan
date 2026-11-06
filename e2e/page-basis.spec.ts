@@ -296,7 +296,7 @@ for (const locale of LOCALES) {
       expect(errors.consoleErrors).toEqual([]);
     });
 
-    test("home shows one line for a source note that twenty notes rely on", async ({ page }, testInfo) => {
+    test("home says nothing about a source note that twenty notes rely on (UX-HOME-4)", async ({ page }, testInfo) => {
       const errors = collectBrowserErrors(page);
       const plans = Array.from({ length: 20 }, (_, index) => ({
         id: `plan-${String(index + 1).padStart(2, "0")}`,
@@ -308,24 +308,11 @@ for (const locale of LOCALES) {
       });
       await page.goto("/");
 
-      const summary = page.getByRole("list", { name: t("noteBasis.review.group") });
-      await expect(summary.getByRole("listitem")).toHaveCount(1);
-      await expect(summary).toContainText(t("noteBasis.review.summary_other", { title: BASIS_TITLE, count: 20 }));
-      // A visible action, in a compact notice at the top of the pane.
-      const line = summary.getByRole("button", { name: t("noteBasis.review.action"), exact: true });
-      await expect(line).toBeVisible();
-      await expect(line).toHaveCount(1);
-      const noticeBox = await summary.boundingBox();
-      const headingBox = await page.getByRole("heading", { level: 1 }).first().boundingBox();
-      expect(noticeBox!.y).toBeLessThan(headingBox!.y);
+      // A changed source is told on the notes that rely on it, never on Home.
+      await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+      await expect(page.getByRole("list", { name: t("noteBasis.review.group") })).toHaveCount(0);
+      await expect(page.locator(".note-review-notice")).toHaveCount(0);
       await page.screenshot({ path: testInfo.outputPath(`home-summary-${locale}.png`) });
-
-      await line.click();
-      const group = page.getByRole("region", { name: t("noteBasis.review.group") });
-      await expect(group).toBeVisible();
-      await group.getByRole("button", { name: t("noteBasis.review.expand"), exact: true }).click();
-      await expect(group.getByRole("button", { name: t("noteBasis.confirmNoImpact"), exact: true })).toHaveCount(20);
-      await page.screenshot({ path: testInfo.outputPath(`review-group-${locale}.png`) });
       expect(errors.pageErrors).toEqual([]);
       expect(errors.consoleErrors).toEqual([]);
     });

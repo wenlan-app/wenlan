@@ -411,46 +411,18 @@ for (const locale of LOCALES) {
       expect(errors.consoleErrors).toEqual([]);
     });
 
-    test("home shows one line for the notes whose code changed, and the review has a group for them", async ({ page }, testInfo) => {
+    test("home says nothing about code that changed: the note that relies on it does (UX-HOME-4)", async ({ page }, testInfo) => {
       const errors = collectBrowserErrors(page);
-      const notes = [
-        { id: "plan-01", title: "Plan 01" },
-        { id: "plan-02", title: "Plan 02" },
-      ] as unknown as KnowledgePage[];
-      const controller = await install(page, locale, {
-        pages: notes,
-        codeBasis: withFile([
-          row("plan-01"),
-          row("plan-01", { path: "src/gone.rs", state: "unavailable", reason: "repo_missing", lineStart: 1, lineEnd: 2 }),
-          row("plan-02"),
-        ]),
-      });
+      await install(page, locale, { codeBasis: withFile([row("page-architecture")]) });
       await page.goto("/");
 
-      const summary = page.getByRole("list", { name: t("codeBasis.review.group") });
-      await expect(summary.getByRole("listitem")).toHaveCount(1);
-      await expect(summary).toContainText(t("codeBasis.review.summary_other", { count: 2 }));
-      const open = summary.getByRole("button", { name: t("codeBasis.review.action"), exact: true });
-      await expect(open).toBeVisible();
-      const noticeBox = await summary.boundingBox();
-      const headingBox = await page.getByRole("heading", { level: 1 }).first().boundingBox();
-      expect(noticeBox!.y).toBeLessThan(headingBox!.y);
+      await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+      await expect(page.getByRole("list", { name: t("codeBasis.review.group") })).toHaveCount(0);
+      await expect(page.locator(".note-review-notice")).toHaveCount(0);
       await page.screenshot({ path: testInfo.outputPath(`code-home-${locale}.png`) });
 
-      await open.click();
-      const group = page.getByRole("region", { name: t("codeBasis.review.group") });
-      await expect(group).toBeVisible();
-      await expect(group.getByRole("button", { name: "Plan 01", exact: true })).toBeVisible();
-      await group.getByRole("button", { name: "Plan 01", exact: true }).click();
-      await expect(group.getByText(t("codeBasis.changedLine", span), { exact: true })).toBeVisible();
-      await expect(group.getByText(t("codeBasis.missingRepo", { file: "src/gone.rs" }), { exact: true })).toBeVisible();
-      await page.screenshot({ path: testInfo.outputPath(`code-review-${locale}.png`) });
-
-      await group.getByRole("button", { name: t("codeBasis.confirmNoImpact"), exact: true }).click();
-      await expect(group.getByText(t("codeBasis.changedLine", span), { exact: true })).toHaveCount(0);
-      expect(callsOf(controller, "confirm_page_code_basis")).toEqual([
-        { pageId: "plan-01", locator: locatorOf() },
-      ]);
+      await openWikiNote(page, NOTE);
+      await expect(page.getByText(t("codeBasis.notice.changedOne", { file: FILE }), { exact: true })).toBeVisible();
       expect(errors.pageErrors).toEqual([]);
       expect(errors.consoleErrors).toEqual([]);
     });
