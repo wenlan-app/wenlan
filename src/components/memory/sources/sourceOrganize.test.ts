@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { documentTagKey, promptFingerprint, selectedSourcePrompt } from "./sourceOrganize";
+import { documentTagKey, persistedOrganizePrompt, promptFingerprint, selectedSourcePrompt } from "./sourceOrganize";
 
 describe("selected source actions", () => {
   it("keeps the exact space and selected source identities in the external prompt", () => {
@@ -22,6 +22,14 @@ describe("selected source actions", () => {
     expect(prompt).toContain("Prompt revision: ");
     expect(promptFingerprint("same")).toBe(promptFingerprint("same"));
     expect(promptFingerprint("same")).not.toBe(promptFingerprint("different"));
+  });
+
+  it("uses the frozen research description as context without treating hypotheses as facts", () => {
+    const prompt = persistedOrganizePrompt("Research", "run-1", null);
+    expect(prompt).toContain("research_description");
+    expect(prompt).toContain("hypotheses");
+    expect(prompt).toContain("legacy");
+    expect(prompt).toContain("selected sources");
   });
 
   it("uses the canonical source::source_id tag key and preserves unrelated tags", () => {

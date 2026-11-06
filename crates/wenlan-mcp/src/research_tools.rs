@@ -210,6 +210,7 @@ mod tests {
                 instructions: "Compare methods".into(),
                 content_digest: "digest".into(),
             },
+            research_description: Some("Compare retrieval methods".into()),
             items: vec![],
             target_page_id: Some("existing-topic".into()),
             target_page_version: Some(4),

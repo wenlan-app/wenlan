@@ -67,6 +67,10 @@ pub struct OrganizeRun {
     pub space_id: String,
     pub revision: u64,
     pub rules: OrganizeRules,
+    /// Space description frozen at run creation; None means a legacy run,
+    /// while Some("") records an empty description.
+    #[serde(default)]
+    pub research_description: Option<String>,
     pub items: Vec<OrganizeRunItem>,
     pub target_page_id: Option<String>,
     pub target_page_version: Option<i64>,

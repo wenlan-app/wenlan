@@ -117,7 +117,7 @@ async fn list_runs(
     Query(q): Query<ResearchQuery>,
 ) -> Result<Json<ResearchRunsResponse>, ServerError> {
     let (db, id) = scoped(&state, &q.space, header.as_deref()).await?;
-    Ok(Json(db.research_runs(&id).await?))
+    Ok(Json(db.research_runs_scoped(&id, &q.space).await?))
 }
 async fn create_run(
     State(state): State<SharedState>,
@@ -134,7 +134,7 @@ async fn get_run(
     Query(q): Query<ResearchQuery>,
 ) -> Result<Json<OrganizeRun>, ServerError> {
     let (db, id) = scoped(&state, &q.space, header.as_deref()).await?;
-    Ok(Json(db.research_run(&id, &run).await?))
+    Ok(Json(db.research_run_scoped(&id, &q.space, &run).await?))
 }
 async fn read_source(
     State(state): State<SharedState>,

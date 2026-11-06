@@ -1019,3 +1019,252 @@ async fn research_classification_snapshots_current_title_without_rewriting_exist
     assert_eq!(saved.status, "dismissed");
     assert_eq!(saved.payload, original.payload);
 }
+
+#[tokio::test]
+async fn research_run_snapshots_space_description_at_creation() {
+    let (db, _temp) = test_db().await;
+    let space = db.create_space("Research", None, false).await.unwrap();
+    seed(&db, "Research", "paper").await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE spaces SET description=?1 WHERE id=?2",
+            libsql::params!["Compare retrieval methods", space.id.as_str()],
+        )
+        .await
+        .unwrap();
+    }
+    let first = db
+        .create_research_run(&space.id, create("Research", &["paper"]))
+        .await
+        .unwrap();
+    let second = db
+        .create_research_run(&space.id, create("Research", &["paper"]))
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&first).unwrap()["research_description"],
+        "Compare retrieval methods"
+    );
+    assert_eq!(
+        serde_json::to_value(&second).unwrap()["research_description"],
+        "Compare retrieval methods"
+    );
+    let saved = db
+        .save_research_rules(
+            &space.id,
+            SaveOrganizeRulesRequest {
+                space: "Research".into(),
+                expected_revision: 0,
+                name: "Rules".into(),
+                instructions: "Use citations".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let rules_run = db
+        .create_research_run(&space.id, create("Research", &["paper"]))
+        .await
+        .unwrap();
+    assert_eq!(rules_run.rules, saved);
+    assert_eq!(
+        serde_json::to_value(&rules_run).unwrap()["research_description"],
+        "Compare retrieval methods"
+    );
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE spaces SET description=?1 WHERE id=?2",
+            libsql::params!["New research question", space.id.as_str()],
+        )
+        .await
+        .unwrap();
+    }
+    let later = db
+        .create_research_run(&space.id, create("Research", &["paper"]))
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&later).unwrap()["research_description"],
+        "New research question"
+    );
+    assert_eq!(
+        serde_json::to_value(db.research_run(&space.id, &first.id).await.unwrap()).unwrap()
+            ["research_description"],
+        "Compare retrieval methods"
+    );
+    let cancelled = db
+        .update_research_run(
+            &space.id,
+            &first.id,
+            UpdateOrganizeRunRequest {
+                space: "Research".into(),
+                expected_revision: first.revision,
+                source: None,
+                source_id: None,
+                coverage: None,
+                content_digest: None,
+                next_offset: None,
+                error: None,
+                cancel: true,
+                resume: false,
+            },
+        )
+        .await
+        .unwrap();
+    let resumed = db
+        .update_research_run(
+            &space.id,
+            &first.id,
+            UpdateOrganizeRunRequest {
+                space: "Research".into(),
+                expected_revision: cancelled.revision,
+                source: None,
+                source_id: None,
+                coverage: None,
+                content_digest: None,
+                next_offset: None,
+                error: None,
+                cancel: false,
+                resume: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resumed.research_description.as_deref(),
+        Some("Compare retrieval methods")
+    );
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE spaces SET description=NULL WHERE id=?1",
+            [space.id.as_str()],
+        )
+        .await
+        .unwrap();
+    }
+    let empty = db
+        .create_research_run(&space.id, create("Research", &["paper"]))
+        .await
+        .unwrap();
+    assert_eq!(empty.research_description.as_deref(), Some(""));
+    let mut legacy = serde_json::to_value(&first).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("research_description");
+    let legacy_run: OrganizeRun = serde_json::from_value(legacy).unwrap();
+    assert!(serde_json::to_value(legacy_run).unwrap()["research_description"].is_null());
+}
+
+#[tokio::test]
+async fn research_run_create_refuses_stale_space_name_after_rename() {
+    let (db, _temp) = test_db().await;
+    let space = db.create_space("Research", None, false).await.unwrap();
+    seed(&db, "Research", "paper").await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE spaces SET name=?1 WHERE id=?2",
+            libsql::params!["Renamed", space.id.as_str()],
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "UPDATE memories SET space=?1 WHERE id=?2",
+            libsql::params!["Renamed", "paper"],
+        )
+        .await
+        .unwrap();
+    }
+    assert!(db
+        .create_research_run(&space.id, create("Research", &["paper"]))
+        .await
+        .is_err());
+    assert!(db.research_runs(&space.id).await.unwrap().runs.is_empty());
+    let current = db
+        .create_research_run(&space.id, create("Renamed", &["paper"]))
+        .await
+        .unwrap();
+    let stale_cancel = UpdateOrganizeRunRequest {
+        space: "Research".into(),
+        expected_revision: current.revision,
+        source: None,
+        source_id: None,
+        coverage: None,
+        content_digest: None,
+        next_offset: None,
+        error: None,
+        cancel: true,
+        resume: false,
+    };
+    assert!(db
+        .update_research_run(&space.id, &current.id, stale_cancel)
+        .await
+        .is_err());
+    assert_eq!(
+        db.research_run(&space.id, &current.id)
+            .await
+            .unwrap()
+            .revision,
+        current.revision
+    );
+    assert!(db
+        .research_run_scoped(&space.id, "Research", &current.id)
+        .await
+        .is_err());
+    assert!(db
+        .research_runs_scoped(&space.id, "Research")
+        .await
+        .is_err());
+    assert_eq!(
+        db.research_run_scoped(&space.id, "Renamed", &current.id)
+            .await
+            .unwrap(),
+        current
+    );
+    let cancel = UpdateOrganizeRunRequest {
+        space: "Renamed".into(),
+        expected_revision: current.revision,
+        source: None,
+        source_id: None,
+        coverage: None,
+        content_digest: None,
+        next_offset: None,
+        error: None,
+        cancel: true,
+        resume: false,
+    };
+    let cancelled = db
+        .update_research_run(&space.id, &current.id, cancel)
+        .await
+        .unwrap();
+    let stale_resume = UpdateOrganizeRunRequest {
+        space: "Research".into(),
+        expected_revision: cancelled.revision,
+        source: None,
+        source_id: None,
+        coverage: None,
+        content_digest: None,
+        next_offset: None,
+        error: None,
+        cancel: false,
+        resume: true,
+    };
+    assert!(db
+        .update_research_run(&space.id, &current.id, stale_resume)
+        .await
+        .is_err());
+    assert_eq!(
+        db.research_run(&space.id, &current.id).await.unwrap(),
+        cancelled
+    );
+    assert_eq!(
+        db.research_runs_scoped(&space.id, "Renamed")
+            .await
+            .unwrap()
+            .runs,
+        vec![cancelled]
+    );
+}

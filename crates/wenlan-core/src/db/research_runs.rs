@@ -221,6 +221,30 @@ pub(super) async fn run(
         .ok_or_else(|| WenlanError::NotFound("organizing run not found in this Space".into()))
 }
 
+async fn list_runs_on(
+    conn: &libsql::Connection,
+    space_id: &str,
+) -> Result<ResearchRunsResponse, WenlanError> {
+    space_name(conn, space_id).await?;
+    let mut rows = conn
+            .query(
+                "SELECT value FROM app_metadata WHERE key LIKE ?1 ORDER BY json_extract(value,'$.updated_at') DESC,key LIMIT 100",
+                [format!("research_v1:run:{}:%",digest(space_id))],
+            )
+            .await
+            .map_err(sql)?;
+    let mut runs = Vec::new();
+    while let Some(row) = rows.next().await.map_err(sql)? {
+        let value: OrganizeRun = serde_json::from_str(&row.get::<String>(0).map_err(sql)?)?;
+        if value.space_id == space_id {
+            runs.push(value);
+        }
+    }
+    runs.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
+    runs.truncate(100);
+    Ok(ResearchRunsResponse { runs })
+}
+
 impl MemoryDB {
     pub async fn merge_research_tags(
         &self,
@@ -342,6 +366,13 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         conn.execute("BEGIN", ()).await.map_err(sql)?;
         let result = async {
+            if space_name(&conn, space_id).await? != request.space {
+                return Err(validation("Space name changed; retry in the current Space"));
+            }
+            let mut rows = conn.query("SELECT COALESCE(description, '') FROM spaces WHERE id=?1", [space_id]).await.map_err(sql)?;
+            let description = rows.next().await.map_err(sql)?
+                .ok_or_else(|| validation("Space not found"))?
+                .get::<String>(0).map_err(sql)?;
             let mut selected = BTreeSet::new();
             let mut items = Vec::new();
             for source in request.sources {
@@ -395,6 +426,7 @@ impl MemoryDB {
                 space_id: space_id.into(),
                 revision: 1,
                 rules,
+                research_description: Some(description),
                 items,
                 target_page_id: request.target_page_id,
                 target_page_version,
@@ -415,26 +447,32 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         run(&conn, space_id, id).await
     }
+    pub async fn research_run_scoped(
+        &self,
+        space_id: &str,
+        name: &str,
+        id: &str,
+    ) -> Result<OrganizeRun, WenlanError> {
+        let conn = self.conn.lock().await;
+        if space_name(&conn, space_id).await? != name {
+            return Err(validation("Space name changed"));
+        }
+        run(&conn, space_id, id).await
+    }
     pub async fn research_runs(&self, space_id: &str) -> Result<ResearchRunsResponse, WenlanError> {
         let conn = self.conn.lock().await;
-        space_name(&conn, space_id).await?;
-        let mut rows = conn
-            .query(
-                "SELECT value FROM app_metadata WHERE key LIKE ?1 ORDER BY json_extract(value,'$.updated_at') DESC,key LIMIT 100",
-                [format!("research_v1:run:{}:%",digest(space_id))],
-            )
-            .await
-            .map_err(sql)?;
-        let mut runs = Vec::new();
-        while let Some(row) = rows.next().await.map_err(sql)? {
-            let value: OrganizeRun = serde_json::from_str(&row.get::<String>(0).map_err(sql)?)?;
-            if value.space_id == space_id {
-                runs.push(value);
-            }
+        list_runs_on(&conn, space_id).await
+    }
+    pub async fn research_runs_scoped(
+        &self,
+        space_id: &str,
+        name: &str,
+    ) -> Result<ResearchRunsResponse, WenlanError> {
+        let conn = self.conn.lock().await;
+        if space_name(&conn, space_id).await? != name {
+            return Err(validation("Space name changed"));
         }
-        runs.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
-        runs.truncate(100);
-        Ok(ResearchRunsResponse { runs })
+        list_runs_on(&conn, space_id).await
     }
     /// Return an exact Unicode slice and persist only its contiguous served prefix.
     pub async fn read_organize_source(
@@ -580,6 +618,9 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         conn.execute("BEGIN", ()).await.map_err(sql)?;
         let result = async {
+            if space_name(&conn, space_id).await? != request.space {
+                return Err(validation("Space name changed; retry in the current Space"));
+            }
             let mut value = run(&conn, space_id, id).await?;
             if value.revision != request.expected_revision {
                 return Err(WenlanError::Conflict(

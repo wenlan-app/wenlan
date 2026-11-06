@@ -27,9 +27,13 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
    External opening and an explicit missing-cache retry remain optional.
 3. Select sources to prepare a summary and classification suggestions in an
    external AI tool. Default instructions are included; custom instructions are
-   optional. A durable run records the exact sources, rule revision, reading
-   coverage and destination page. The dialog can continue an existing research
-   page and show source additions/removals relative to its previous run. Cancelled
+   optional. A durable run records the exact sources, the Space description as
+   research-purpose context, rule revision, reading coverage and destination
+   page. Purpose and organizing rules remain separate: editing either applies
+   to a new run; resuming retains the original snapshot. Legacy runs without a
+   purpose snapshot do not borrow today's description. Hypotheses in the
+   description remain questions to test, not evidence. The dialog can continue
+   an existing research page and show source additions/removals relative to its previous run. Cancelled
    or partial runs retain progress and require an explicit continuation action.
 4. The local MCP `read_source` tool reads each selected document in bounded
    Unicode-character pages. Every response carries a whole-text digest; callers
@@ -115,9 +119,10 @@ queue. It does not introduce a research workspace, chat sidebar or Query screen.
   monitoring of worldwide retraction notices.
 - No model/API key is needed to import, read, edit or classify manually. Automatic
   summaries require an external AI tool configured by the person.
-- Manual edits retain existing, fully mapped citation targets when the numbered
-  marker sequence is unchanged. Retained references become unevaluated (source
-  not checked yet), with old source stamps kept as history. This neutral state
+- Manual edits retain identifiable citation references after known markers are
+  deleted or reordered. Exact PDF regions survive only for unambiguous unchanged
+  paragraphs; ambiguous new associations fail closed. Retained references become
+  unevaluated (source not checked yet), with old source stamps kept as history. This neutral state
   neither inherits support for a rewritten claim nor claims the source failed
   a check. A subsequent source check can verify or reject the claim.
   An agent refresh that leaves the page unchanged reports that outcome and emits
@@ -138,9 +143,9 @@ acceptance checklist.
   fixtures do not by themselves prove real Zotero acquisition.
 - Old history cannot retroactively recover references or bibliography that were
   never retained. Current capture is labeled with its actual capture time.
-- Adding, removing or reordering citation markers, or editing a legacy page with
-  an incomplete map, can require rebuilding the map. This is not a general
-  citation-marker editor.
+- Unknown or malformed citation markers, ambiguous new associations, or a legacy
+  page with an incomplete map can require rebuilding the map. This is not a
+  general citation-marker editor.
 - No Zotero writes, annotation editing, automatic polling or cloud OAuth are
   introduced. Selection-loss checks occur during explicit synchronization;
   they are distinct from manually excluding or retracting a source.
