@@ -7982,7 +7982,7 @@ mod tests {
             .description
             .as_deref()
             .unwrap()
-            .contains("Refresh is not available over remote HTTP MCP transport"));
+            .contains("Refresh is local stdio only, never remote HTTP."));
     }
 
     #[test]

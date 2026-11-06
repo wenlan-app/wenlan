@@ -856,11 +856,27 @@ async fn manual_reference_retention_page_write_preserves_three_targets_unevaluat
                 0
             );
         } else {
-            assert!(after.citations.is_empty());
+            let expected: &[u32] = match variant {
+                "marker" => &[2, 2, 3],
+                "add" => &[1, 2, 3, 1],
+                "remove" => &[2, 3],
+                "reorder" => &[2, 1, 3],
+                _ => unreachable!(),
+            };
+            assert_eq!(after.citations.len(), expected.len());
+            for (index, (citation, marker)) in after.citations.iter().zip(expected).enumerate() {
+                let original = &before.citations[*marker as usize - 1];
+                assert_eq!(citation.occurrence, index as u32 + 1);
+                assert_eq!(citation.marker, *marker);
+                assert_eq!(citation.locator, original.locator);
+                assert_eq!(citation.cited_digest, original.cited_digest);
+                assert_eq!(citation.status, "unevaluated");
+                assert_eq!(citation.score, 0.0);
+            }
             assert_eq!(
                 db.scalar_for_test("SELECT citations IS NULL FROM pages WHERE id='manual-ref'")
                     .await,
-                1
+                0
             );
         }
     }

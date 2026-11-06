@@ -176,24 +176,29 @@ pub(crate) fn citation_claim_groups(
     Some(groups)
 }
 
-/// Preserve navigable reference targets after a human edit with the same marker sequence.
-/// This is deliberately not verification: every retained record becomes unevaluated.
-/// Legacy unstamped or incomplete maps fall back to clearing the citation map.
+/// Preserve unambiguous navigable references after a human edit, without
+/// treating the edited text as verified. Unknown markers fail closed.
 pub(crate) fn retain_unchanged_manual_references(
     old_body: &str,
     new_body: &str,
     old_citations: &[PageCitation],
 ) -> Option<Vec<PageCitation>> {
-    let old_markers: Vec<_> = RE_MARKER.find_iter(old_body).map(|m| m.as_str()).collect();
-    let new_markers: Vec<_> = RE_MARKER.find_iter(new_body).map(|m| m.as_str()).collect();
-    if old_markers.is_empty()
-        || old_markers != new_markers
-        || old_markers.len() != old_citations.len()
-    {
+    use std::collections::HashMap;
+
+    fn marker(raw: &str) -> Option<u32> {
+        let n = raw
+            .strip_prefix('[')?
+            .strip_suffix(']')?
+            .parse::<u32>()
+            .ok()?;
+        (n != 0 && raw == format!("[{n}]")).then_some(n)
+    }
+    let old_markers: Vec<_> = RE_MARKER.find_iter(old_body).collect();
+    if old_markers.is_empty() || old_markers.len() != old_citations.len() {
         return None;
     }
-    let mut occurrences = std::collections::HashMap::new();
-    let mut targets = std::collections::HashMap::new();
+    let mut occurrences = HashMap::new();
+    let mut targets: HashMap<u32, Option<&PageCitation>> = HashMap::new();
     for citation in old_citations {
         if citation.locator.trim().is_empty()
             || !matches!(
@@ -209,35 +214,71 @@ pub(crate) fn retain_unchanged_manual_references(
         {
             return None;
         }
-        let target = (&citation.source_kind, &citation.locator);
-        if targets
-            .insert(citation.marker, target)
-            .is_some_and(|previous| previous != target)
-        {
+        let target = targets.entry(citation.marker).or_insert(Some(citation));
+        if let Some(previous) = *target {
+            if (
+                previous.source_kind.as_str(),
+                previous.locator.as_str(),
+                previous.cited_version,
+                &previous.cited_digest,
+                previous.historical,
+            ) != (
+                citation.source_kind.as_str(),
+                citation.locator.as_str(),
+                citation.cited_version,
+                &citation.cited_digest,
+                citation.historical,
+            ) {
+                *target = None;
+            }
+        }
+    }
+    for (index, found) in old_markers.iter().enumerate() {
+        let citation = occurrences.get(&u32::try_from(index + 1).ok()?)?;
+        if marker(found.as_str())? != citation.marker {
             return None;
         }
     }
-    for (index, marker) in old_markers.iter().enumerate() {
-        let occurrence = u32::try_from(index + 1).ok()?;
-        let marker = marker
-            .strip_prefix('[')?
-            .strip_suffix(']')?
-            .parse::<u32>()
-            .ok()?;
-        if marker == 0 || occurrences.get(&occurrence)?.marker != marker {
-            return None;
+
+    // Exact unique paragraphs are the only safe basis for carrying a PDF region.
+    let mut old_paragraphs: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut offset = 0usize;
+    for paragraph in RE_PARAGRAPH_BREAK.split(old_body) {
+        old_paragraphs.entry(paragraph).or_default().push(offset);
+        offset += RE_MARKER.find_iter(paragraph).count();
+    }
+    let mut new_counts = HashMap::new();
+    for paragraph in RE_PARAGRAPH_BREAK.split(new_body) {
+        *new_counts.entry(paragraph).or_insert(0usize) += 1;
+    }
+    let mut retained = Vec::new();
+    for paragraph in RE_PARAGRAPH_BREAK.split(new_body) {
+        let exact = old_paragraphs
+            .get(paragraph)
+            .filter(|v| v.len() == 1 && new_counts[paragraph] == 1)
+            .map(|v| v[0]);
+        for (local, found) in RE_MARKER.find_iter(paragraph).enumerate() {
+            let number = marker(found.as_str())?;
+            let original = exact.and_then(|start| {
+                occurrences
+                    .get(&u32::try_from(start + local + 1).ok()?)
+                    .copied()
+            });
+            let mut citation = match original {
+                Some(citation) => citation.clone(),
+                None => (*targets.get(&number)?.as_ref()?).clone(),
+            };
+            if original.is_none() {
+                citation.pdf_target = None;
+            }
+            citation.occurrence = u32::try_from(retained.len() + 1).ok()?;
+            citation.status = "unevaluated".into();
+            citation.score = 0.0;
+            citation.disproven = false;
+            retained.push(citation);
         }
     }
-    let mut retained = old_citations.to_vec();
-    for citation in &mut retained {
-        citation.status = "unevaluated".into();
-        citation.score = 0.0;
-        citation.disproven = false;
-        if old_body != new_body {
-            citation.pdf_target = None;
-        }
-    }
-    Some(retained)
+    (!retained.is_empty()).then_some(retained)
 }
 
 /// Remove every `[N]` marker from body prose, collapsing the resulting
@@ -1406,6 +1447,63 @@ mod tests {
     }
 
     #[test]
+    fn manual_edit_with_deleted_marker_keeps_other_41_reference_targets() {
+        // Marker order from the saved native v8 page, including repetitions.
+        let markers = [
+            1, 2, 3, 4, 5, 6, 8, 7, 9, 13, 17, 18, 10, 12, 14, 16, 19, 21, 11, 15, 20, 2, 5, 10, 4,
+            11, 21, 16, 19, 20, 10, 21, 21, 4, 11, 10, 21, 10, 21, 4, 12, 11,
+        ];
+        let body = markers
+            .iter()
+            .enumerate()
+            .map(|(i, marker)| format!("Study paragraph {i} has a claim [{marker}]."))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let citations = markers
+            .iter()
+            .enumerate()
+            .map(|(i, marker)| PageCitation {
+                occurrence: i as u32 + 1,
+                marker: *marker,
+                source_kind: "memory".into(),
+                locator: format!("paper-{marker}"),
+                score: 0.8,
+                status: "verified".into(),
+                scope: "sentence".into(),
+                cited_version: Some(7),
+                cited_digest: Some(format!("digest-{marker}")),
+                disproven: false,
+                historical: false,
+                pdf_target: Some(wenlan_types::pages::PdfCitationTarget {
+                    attachment_key: "ATTACH01".into(),
+                    pdf_digest: "a".repeat(64),
+                    page: i as u32 + 1,
+                    quote: format!("quote {i}"),
+                }),
+            })
+            .collect::<Vec<_>>();
+        let edited = body
+            .replace(
+                "Study paragraph 8 has a claim [9].",
+                "Study paragraph 8 was revised.",
+            )
+            .replace(
+                "Study paragraph 9 has a claim [13].",
+                "Study paragraph 9 now says something different [13].",
+            );
+        let retained = retain_unchanged_manual_references(&body, &edited, &citations)
+            .expect("remaining citations should stay navigable");
+        assert_eq!(retained.len(), 41);
+        assert_eq!((retained[8].occurrence, retained[8].marker), (9, 13));
+        assert_eq!(retained[8].locator, "paper-13");
+        assert!(retained[8].pdf_target.is_none());
+        assert_eq!(retained[9].pdf_target, citations[10].pdf_target);
+        assert!(retained
+            .iter()
+            .all(|c| c.status == "unevaluated" && c.score == 0.0));
+    }
+
+    #[test]
     fn manual_reference_retention_keeps_complete_targets_but_never_verification() {
         let (body, mut citations) = manual_reference_fixture();
         citations[0].disproven = true;
@@ -1415,11 +1513,14 @@ mod tests {
             page: 1,
             quote: "Original evidence".into(),
         });
-        for edited in [
+        for (case, edited) in [
             format!("{body}\n\nA new interview question."),
             body.replace("My interview plan.", "My revised interview plan."),
             body.replace("improves", "harms"),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let retained = retain_unchanged_manual_references(body, &edited, &citations).unwrap();
             assert_eq!(retained.len(), 2);
             for (old, new) in citations.iter().zip(retained) {
@@ -1431,10 +1532,11 @@ mod tests {
                 assert_eq!(new.status, "unevaluated");
                 assert_eq!(new.score, 0.0);
                 assert!(!new.disproven);
-                assert!(
-                    new.pdf_target.is_none(),
-                    "edited prose must not inherit a marker-only PDF region"
-                );
+                if old.occurrence == 1 && case < 2 {
+                    assert_eq!(new.pdf_target, old.pdf_target);
+                } else {
+                    assert!(new.pdf_target.is_none());
+                }
             }
         }
     }
@@ -1442,19 +1544,15 @@ mod tests {
     #[test]
     fn manual_reference_retention_refuses_changed_markers_and_ambiguous_maps() {
         let (body, citations) = manual_reference_fixture();
+        for edited in [body.replace("[1]", "[01]"), body.replace("[1]", "[3]")] {
+            assert!(retain_unchanged_manual_references(body, &edited, &citations).is_none());
+        }
         for edited in [
             body.replace("[1]", "[2]"),
             body.replace("[1]", ""),
             format!("{body}\n\nNew claim [1]."),
-            body.replace("[1]", "[01]"),
-            body.replace("[1]", "[3]")
-                .replace("[2]", "[1]")
-                .replace("[3]", "[2]"),
         ] {
-            assert!(
-                retain_unchanged_manual_references(body, &edited, &citations).is_none(),
-                "{edited}"
-            );
+            assert!(retain_unchanged_manual_references(body, &edited, &citations).is_some());
         }
         for variant in 0..5 {
             let mut invalid = citations.clone();
@@ -1474,6 +1572,64 @@ mod tests {
             )
             .is_none());
         }
+    }
+
+    #[test]
+    fn manual_reference_retention_fails_closed_for_duplicate_paragraphs_and_generation_conflicts() {
+        let (body, mut citations) = manual_reference_fixture();
+        citations[0].pdf_target = Some(wenlan_types::pages::PdfCitationTarget {
+            attachment_key: "ATTACH01".into(),
+            pdf_digest: "a".repeat(64),
+            page: 1,
+            quote: "evidence".into(),
+        });
+        let duplicate = format!("{body}\n\n{body}");
+        let mut doubled = citations.clone();
+        doubled.extend(citations.iter().cloned().map(|mut c| {
+            c.occurrence += 2;
+            c
+        }));
+        let retained =
+            retain_unchanged_manual_references(&duplicate, &duplicate, &doubled).unwrap();
+        assert!(retained
+            .iter()
+            .all(|c| c.pdf_target.is_none() && c.status == "unevaluated"));
+        doubled[2].cited_digest = Some("different-generation".into());
+        assert!(retain_unchanged_manual_references(&duplicate, &duplicate, &doubled).is_none());
+    }
+
+    #[test]
+    fn manual_reference_retention_preserves_exact_mixed_generations_only() {
+        let (body, citations) = manual_reference_fixture();
+        let second = body.replace("[1]", "[2]");
+        let original = format!("{body}\n\n{second}");
+        let mut records = citations.clone();
+        records.extend(citations.iter().cloned().map(|mut c| {
+            c.occurrence += 2;
+            c.marker = 2;
+            c.locator = citations[1].locator.clone();
+            c.cited_digest = Some("older-generation".into());
+            c
+        }));
+        // The two original [2] records have different generations but each
+        // belongs to an exact unique paragraph in the updated body.
+        let retained = retain_unchanged_manual_references(
+            &original,
+            &format!("{original}\n\nA note."),
+            &records,
+        )
+        .unwrap();
+        assert_eq!(
+            retained.iter().map(|c| &c.cited_digest).collect::<Vec<_>>(),
+            records.iter().map(|c| &c.cited_digest).collect::<Vec<_>>()
+        );
+        assert!(retained.iter().all(|c| c.status == "unevaluated"));
+        assert!(retain_unchanged_manual_references(
+            &original,
+            &format!("{original}\n\nNew claim [2]."),
+            &records
+        )
+        .is_none());
     }
 
     fn srcs() -> Vec<NumberedSource> {
