@@ -73,11 +73,10 @@ fn require_person(headers: &HeaderMap) -> Result<(), ServerError> {
 /// is the daemon's own upkeep and never holds up a request.
 pub async fn sort_once(db: &MemoryDB) {
     match db.sort_sessions_into_things().await {
-        Ok(report) if !report.sorted.is_empty() || report.brief_things > 0 || report.named > 0 => {
+        Ok(report) if !report.sorted.is_empty() || report.named > 0 => {
             tracing::info!(
-                "[things] sorted {} conversation(s), {} Brief thing(s), named {}",
+                "[things] sorted {} conversation(s), named {}",
                 report.sorted.len(),
-                report.brief_things,
                 report.named
             );
         }
