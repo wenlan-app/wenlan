@@ -17,6 +17,7 @@
 //! was last read for points, so a conversation is read again only once it
 //! went on.
 
+use super::night_links::{remove_night_links, NightChange, NightLink};
 use super::thing_map::DreamMapChanges;
 use super::things::history;
 use super::MemoryDB;
@@ -80,6 +81,13 @@ struct DreamEntry {
     /// What it changed on the thing's map.
     #[serde(default)]
     map: DreamMapChanges,
+    /// Everything it changed on the big map. Older entries have none.
+    #[serde(default)]
+    changes: Vec<NightChange>,
+    /// Old points connected once by hand, not a night: it wrote no point and
+    /// has its own undo (see `night_links`).
+    #[serde(default)]
+    backfill: bool,
 }
 
 impl MemoryDB {
@@ -342,7 +350,7 @@ impl MemoryDB {
         Ok(nights
             .into_iter()
             .rev()
-            .find(|(_, undone, _)| !undone)
+            .find(|(_, undone, night)| !undone && !night.entry.backfill)
             .map(|(_, _, night)| ThingDream {
                 at: night.at,
                 decided: night.entry.decided.len(),
@@ -358,17 +366,26 @@ impl MemoryDB {
     }
 
     /// Record a night's reading of a thing: the memories it wrote, settled
-    /// and open, what that changed on its map, and that its conversations
-    /// were read up to their last line. A night that found nothing new
-    /// records only the reading.
+    /// and open, what that changed on its map, the topics it connected them
+    /// to, and that its conversations were read up to their last line. A
+    /// night that found nothing new records only the reading.
     pub async fn record_dream(
         &self,
         thing_id: &str,
         decided: &[String],
         open: &[String],
         map: &DreamMapChanges,
+        links: &[NightLink],
         conversations: &[DueConversation],
     ) -> Result<(), WenlanError> {
+        let changes: Vec<NightChange> = decided
+            .iter()
+            .chain(open)
+            .map(|memory| NightChange::New {
+                memory: memory.clone(),
+            })
+            .chain(links.iter().map(NightChange::from))
+            .collect();
         let now = chrono::Utc::now().timestamp();
         let conn = self.conn.lock().await;
         let tx = conn
@@ -383,7 +400,7 @@ impl MemoryDB {
                 "thing.dream",
                 thing_id,
                 None,
-                serde_json::json!({ "decided": decided, "open": open, "map": map }),
+                serde_json::json!({ "decided": decided, "open": open, "map": map, "changes": changes }),
             )
             .await?;
         }
@@ -419,13 +436,17 @@ impl MemoryDB {
     }
 
     /// The person takes back the newest night of a thing that was not taken
-    /// back yet, and what it changed on the thing's map. Returns the
-    /// memories it wrote, for the caller to forget; empty when there is
-    /// nothing to take back. Its conversations are not read again for the
+    /// back yet, what it changed on the thing's map, and the topics it
+    /// connected its points to. Returns the memories it wrote, for the caller
+    /// to forget; empty when there is nothing to take back. Its conversations are not read again for the
     /// same lines.
     pub async fn undo_thing_dream(&self, thing_id: &str) -> Result<Vec<String>, WenlanError> {
         let nights = self.dream_nights(thing_id).await?;
-        let Some((seq, _, night)) = nights.into_iter().rev().find(|(_, undone, _)| !undone) else {
+        let Some((seq, _, night)) = nights
+            .into_iter()
+            .rev()
+            .find(|(_, undone, night)| !undone && !night.entry.backfill)
+        else {
             return Ok(Vec::new());
         };
         let now = chrono::Utc::now().timestamp();
@@ -444,6 +465,7 @@ impl MemoryDB {
             serde_json::json!({ "seq": seq }),
         )
         .await?;
+        remove_night_links(&tx, &night.entry.changes).await?;
         tx.commit().await.map_err(db_err("undo dream commit"))?;
         drop(conn);
         self.undo_dream_map(thing_id, &night.entry.map).await?;

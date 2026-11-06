@@ -154,6 +154,28 @@ pub struct ThingNightPointsResponse {
     pub things: Vec<ThingNightPoints>,
 }
 
+/// `POST /api/things/points/connect`: connecting the night points kept before
+/// nights named their topics, once.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NightLinksBackfill {
+    /// It had already run; nothing was done.
+    pub already_done: bool,
+    /// Things with points that connect to nothing.
+    pub things: usize,
+    /// Those points.
+    pub points: usize,
+    /// Links made. The other points stay under their thing.
+    pub linked: usize,
+    /// Things whose model call failed; start it again for those.
+    pub failed: usize,
+}
+
+/// `POST /api/things/points/connect/undo`: the links taken back.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NightLinksBackfillUndo {
+    pub removed: usize,
+}
+
 /// `POST /api/things/{id}/merge` and `POST /api/things/{id}/keep-apart`: the
 /// person answers a merge proposal. Merging folds `other_thing_id` into `{id}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

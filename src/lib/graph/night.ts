@@ -50,6 +50,41 @@ export interface NightSentence extends NightSpot {
   open: boolean;
   /** Its thing's node id: the frame it belongs inside. */
   thing: string;
+  /** Out beside its topic while its thing is picked (atlas.ts's
+   *  setThingFlight): its sentence is not wrapped into the thing's frame. */
+  away?: boolean;
+  /** The topic it flew to, and where that topic is drawn: its sentence is
+   *  written on the side away from it, in a column with the others there. */
+  anchor?: string;
+  anchorAt?: { x: number; y: number };
+  /** Lands to the right of its topic on screen (from its flight's offset). */
+  landsRight?: boolean;
+  /** Still on its way out (its flight not yet landed). */
+  flying?: boolean;
+}
+
+/**
+ * A sign held at the screen's edge for what the picked thing reaches that is
+ * off screen (Fable's design, Qi-Xuan 11-05): its points that flew out to a
+ * far topic, one sign per topic ("↖ memory UX · 2" over the first point's
+ * sentence), or, once the camera has gone to such a topic, the thing itself
+ * ("back"). A tap moves the camera to `goTo`.
+ */
+export interface EdgeSign {
+  kind: "topic" | "back";
+  /** The picked thing's node id. */
+  thing: string;
+  /** Where a tap takes the camera: the topic, or the thing. */
+  goTo: string;
+  /** The topic's name, or the thing's title. */
+  title: string;
+  /** Points of the thing out by that topic (0 for "back"). */
+  count: number;
+  /** The first of those points' sentences ("" for "back"). */
+  text: string;
+  open: boolean;
+  /** Where `goTo` is drawn, viewport CSS px: the sign points that way. */
+  toward: { x: number; y: number };
 }
 
 /** Where a node is drawn this frame, in viewport CSS px, or null when sigma
@@ -85,13 +120,18 @@ export function nightMarks(
   /** The map's "Working on" switch: every active thing's frame is drawn,
    *  not only the picked one's. */
   showAll = false,
-): { frames: ThingFrame[]; sentences: NightSentence[] } {
+  /** Where a thing's centre is drawn, viewport CSS px: the frame's spot
+   *  when every one of its points is out beside its topic. */
+  centreAt: (thing: string) => { x: number; y: number } | null = () => null,
+): { frames: ThingFrame[]; sentences: NightSentence[]; edges: EdgeSign[] } {
   const frames: ThingFrame[] = [];
   const sentences: NightSentence[] = [];
+  const edges: EdgeSign[] = [];
+  const onScreen = (at: { x: number; y: number }) => at.x >= 0 && at.y >= 0 && at.x <= viewport.width && at.y <= viewport.height;
   const lit = (id: string) => hover.hovered === null || hover.hovered === id || hover.neighbors.has(id);
   graph.forEachNode((thing, attrs) => {
     if (attrs.entityType !== THING_NODE_TYPE) return;
-    if (!showAll && thing !== picked) return;
+    if (thing !== picked && (!showAll || attrs.quiet === true)) return;
     let left = Infinity;
     let top = Infinity;
     let right = -Infinity;
@@ -99,20 +139,54 @@ export function nightMarks(
     let anyLit = lit(thing);
     let steeping = false;
     const points: NightSentence[] = [];
+    const awayPoints: NightSentence[] = [];
     graph.forEachNeighbor(thing, (point, pointAttrs) => {
       if (pointAttrs.night !== true || pointAttrs.dustOf !== thing) return;
       const at = drawnAt(point);
       if (!at) return;
+      const made = pointAttrs.createdAt;
+      if (typeof made === "number" && now - made < STEEPING_SECS) steeping = true;
+      if (lit(point)) anyLit = true;
+      const sentence = { ...at, dim: !lit(point), id: point, text: String(pointAttrs.label ?? ""), open: pointAttrs.open === true, thing };
+      // Out beside its topic: on the map there, not in the frame.
+      if (typeof pointAttrs.fly === "number" && pointAttrs.fly > 0) {
+        // Flown off screen: its sentence waits at the edge, under its topic.
+        const anchor = (pointAttrs.flyTo as { anchor?: string } | undefined)?.anchor;
+        if (thing === picked && anchor && graph.hasNode(anchor) && !onScreen(at)) {
+          const sign = edges.find((edge) => edge.kind === "topic" && edge.goTo === anchor);
+          if (sign) sign.count += 1;
+          else edges.push({ kind: "topic", thing, goTo: anchor, title: String(graph.getNodeAttribute(anchor, "label") ?? ""), count: 1, text: sentence.text, open: sentence.open, toward: drawnAt(anchor) ?? at });
+          return;
+        }
+        const anchorAt = anchor ? drawnAt(anchor) : null;
+        const dx = (pointAttrs.flyTo as { dx?: number } | undefined)?.dx;
+        awayPoints.push({
+          ...sentence,
+          away: true,
+          ...(anchor && anchorAt ? { anchor, anchorAt: { x: anchorAt.x, y: anchorAt.y } } : {}),
+          ...(typeof dx === "number" && dx !== 0 ? { landsRight: dx > 0 } : {}),
+          ...(pointAttrs.fly < 1 ? { flying: true } : {}),
+        });
+        return;
+      }
       left = Math.min(left, at.x - at.r);
       right = Math.max(right, at.x + at.r);
       top = Math.min(top, at.y - at.r);
       bottom = Math.max(bottom, at.y + at.r);
-      if (lit(point)) anyLit = true;
-      const made = pointAttrs.createdAt;
-      if (typeof made === "number" && now - made < STEEPING_SECS) steeping = true;
-      points.push({ ...at, dim: !lit(point), id: point, text: String(pointAttrs.label ?? ""), open: pointAttrs.open === true, thing });
+      points.push(sentence);
     });
-    if (points.length === 0) return;
+    if (points.length === 0) {
+      // Every point is out by its topic: the frame stays, small, on the
+      // thing's centre, so its name still says where the thing is.
+      // So does a picked thing with nothing drawn, so you see what you picked,
+      // unless it is quiet with its points lit by their topics: that is its
+      // whole picture (no frame for them, Fable's design).
+      const litElsewhere = attrs.quiet === true && ((attrs.elsewhere as string[] | undefined) ?? []).some((id) => graph.hasNode(id));
+      const centre = awayPoints.length > 0 || (thing === picked && !litElsewhere) ? centreAt(thing) : null;
+      if (!centre) return;
+      left = right = centre.x;
+      top = bottom = centre.y;
+    }
     const grow = (low: number, high: number, least: number) => {
       const short = Math.max(0, least - (high - low)) / 2;
       return [low - short, high + short] as const;
@@ -130,11 +204,19 @@ export function nightMarks(
       steeping,
       spots: points.map(({ x, y, r }) => ({ x, y, r })),
     };
-    if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) return;
+    if (frame.right < -CULL_PAD || frame.bottom < -CULL_PAD || frame.left > viewport.width + CULL_PAD || frame.top > viewport.height + CULL_PAD) {
+      // The camera went to a far topic: a sign leads back to the thing. A
+      // quiet thing's centre holds nothing to go back to.
+      if (thing === picked && attrs.quiet !== true) {
+        edges.push({ kind: "back", thing, goTo: thing, title: frame.title, count: 0, text: "", open: false, toward: { x: (frame.left + frame.right) / 2, y: (frame.top + frame.bottom) / 2 } });
+        sentences.push(...awayPoints.filter((point) => point.text && sentencesFor(thing, point.id)));
+      }
+      return;
+    }
     frames.push(frame);
-    sentences.push(...points.filter((point) => point.text && sentencesFor(thing, point.id)));
+    sentences.push(...[...points, ...awayPoints].filter((point) => point.text && sentencesFor(thing, point.id)));
   });
-  return { frames, sentences };
+  return { frames, sentences, edges };
 }
 
 /** The crescent of ThingSteeped's SteepMoon, on its 16-unit box. */
@@ -168,6 +250,8 @@ const TITLE_MAX_PX = 240;
 const TITLE_SHORTER_PX = [140, 80] as const;
 /** A title's line, CSS px: the 12px face's ascent and descent with room. */
 const TITLE_LINE = 17;
+/** How many lines further out a picked thing's title may go in a crowd. */
+const TITLE_FURTHER_LINES = [1, 2, 3] as const;
 const SENTENCE_FONT = '12px "Instrument Sans", -apple-system, sans-serif';
 /** A sentence wraps at this width, CSS px. */
 export const SENTENCE_MAX_PX = 320;
@@ -263,6 +347,7 @@ export interface PlacedSentence {
   open: boolean;
   dim: boolean;
   box: Box;
+  away?: boolean;
 }
 
 const shown = (lines: readonly string[]) => lines.join(" ").replace(/…$/u, "").length;
@@ -289,27 +374,72 @@ export function layoutNightSentences(
   const ordered = [...sentences].sort((a, b) => a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : 1));
   const discs = sentences.map((point) => ({ id: point.id, left: point.x - point.r, right: point.x + point.r, top: point.y - point.r, bottom: point.y + point.r }));
   const placed: PlacedSentence[] = [];
+  // Points flown out beside a topic sit close round it, so a sentence beside
+  // each would run over its neighbours. They are written as one column on the
+  // side away from the topic, clear of all of them, each level with its
+  // point where it can be, else just under the one above.
+  const columns = new Map<string, NightSentence[]>();
   for (const point of ordered) {
+    if (!point.away || !point.anchor || !point.anchorAt) continue;
+    const column = columns.get(point.anchor) ?? [];
+    column.push(point);
+    columns.set(point.anchor, column);
+  }
+  const inColumn = new Set<string>();
+  for (const anchor of [...columns.keys()].sort()) {
+    const members = columns.get(anchor)!;
+    const ids = new Set(members.map((member) => member.id));
+    // The side they land on, not where they are this frame, so the column
+    // stays on one side all through the flight.
+    const landing = members.reduce((sum, member) => sum + (member.landsRight === undefined ? member.x - member.anchorAt!.x : member.landsRight ? 1 : -1), 0);
+    const outward: "left" | "right" = landing >= 0 ? "left" : "right";
+    // While flying, only that side, so nothing switches sides on the way; a
+    // sentence with no room there waits for the landing.
+    const flying = members.some((member) => member.flying === true);
+    const sides = flying ? [outward] : [outward, outward === "left" ? "right" as const : "left" as const];
+    for (const align of sides) {
+      const waiting = members.filter((member) => !inColumn.has(member.id));
+      if (waiting.length === 0) break;
+      const start = align === "left"
+        ? Math.max(...members.map((member) => member.x + member.r)) + SENTENCE_GAP
+        : Math.min(...members.map((member) => member.x - member.r)) - SENTENCE_GAP;
+      let floor = -Infinity;
+      for (const point of waiting) {
+        const blockers: Box[] = [...discs.filter((disc) => !ids.has(disc.id)), ...bodies, ...occupied];
+        const y = Math.max(point.y, floor);
+        // Where a name or a body is in the way, the column moves out past it.
+        let from = start;
+        let spot = besideAt(point, align, from, y, measure, blockers, viewport);
+        for (let tries = 0; !spot && tries < 3; tries += 1) {
+          // The narrowest block it could take, wrapped as it would be: the
+          // least it needs clear.
+          const least = SENTENCE_WIDTHS[SENTENCE_WIDTHS.length - 1]!;
+          const top = y - SENTENCE_LINE / 2;
+          const tall = Math.max(1, wrapText(measure, point.text, least).length) * SENTENCE_LINE;
+          const reach = align === "left" ? { left: from - 2, right: from + least + 2, top, bottom: top + tall } : { left: from - least - 2, right: from + 2, top, bottom: top + tall };
+          const inWay = blockers.filter((other) => overlapping(other, reach));
+          if (inWay.length === 0) break;
+          from = align === "left" ? Math.max(...inWay.map((other) => other.right)) + SENTENCE_GAP : Math.min(...inWay.map((other) => other.left)) - SENTENCE_GAP;
+          if (Math.abs(from - start) > COLUMN_SHIFT_MAX) break;
+          spot = besideAt(point, align, from, y, measure, blockers, viewport);
+        }
+        if (!spot) continue;
+        inColumn.add(point.id);
+        occupied.push(spot.box);
+        placed.push(spot);
+        floor = spot.box.bottom + SENTENCE_LINE / 2 + 2;
+      }
+    }
+    // Landed with no room in the column: placed on its own below, like any
+    // other sentence. Still flying: it waits.
+    if (flying) for (const member of members) inColumn.add(member.id);
+  }
+  for (const point of ordered) {
+    if (inColumn.has(point.id)) continue;
     const blockers: Box[] = [...discs.filter((disc) => disc.id !== point.id), ...bodies, ...occupied];
     // `align` is the text's anchor, so "left" writes to the right of the point.
-    const trySide = (align: "left" | "right"): PlacedSentence | null => {
-      const start = align === "left" ? point.x + point.r + SENTENCE_GAP : point.x - point.r - SENTENCE_GAP;
-      const edge = viewport ? (align === "left" ? viewport.width - SENTENCE_GAP - start : start - SENTENCE_GAP) : Infinity;
-      for (const widest of SENTENCE_WIDTHS) {
-        const width = Math.min(widest, edge);
-        if (width < SENTENCE_WIDTHS[SENTENCE_WIDTHS.length - 1]!) return null;
-        const lines = wrapText(measure, point.text, width);
-        if (lines.length === 0) return null;
-        const inked = Math.max(...lines.map(measure));
-        const top = point.y - SENTENCE_LINE / 2;
-        const box = align === "left"
-          ? { left: start - 2, right: start + inked + 2, top, bottom: top + lines.length * SENTENCE_LINE }
-          : { left: start - inked - 2, right: start + 2, top, bottom: top + lines.length * SENTENCE_LINE };
-        if (blockers.some((other) => overlapping(other, box))) continue;
-        return { id: point.id, thing: point.thing, lines, x: start, y: point.y, align, open: point.open, dim: point.dim, box };
-      }
-      return null;
-    };
+    const trySide = (align: "left" | "right"): PlacedSentence | null =>
+      besideAt(point, align, align === "left" ? point.x + point.r + SENTENCE_GAP : point.x - point.r - SENTENCE_GAP, point.y, measure, blockers, viewport);
     const after = trySide("left");
     const whole = (spot: PlacedSentence | null) => spot !== null && !spot.lines[spot.lines.length - 1]!.endsWith("…");
     const before = whole(after) ? null : trySide("right");
@@ -321,10 +451,130 @@ export function layoutNightSentences(
   return placed;
 }
 
+/** How far a flown column may move out past what is in its way, CSS px:
+ *  further, and it no longer reads as beside its points. */
+const COLUMN_SHIFT_MAX = 96;
+
+/** A sentence written from `start` (its anchor, per `align`), its first line
+ *  centred on `y`, at the widest of SENTENCE_WIDTHS that covers nothing in
+ *  `blockers` and stays inside the viewport; null when none does. */
+function besideAt(
+  point: NightSentence,
+  align: "left" | "right",
+  start: number,
+  y: number,
+  measure: Measure,
+  blockers: readonly Box[],
+  viewport?: { width: number },
+): PlacedSentence | null {
+  const edge = viewport ? (align === "left" ? viewport.width - SENTENCE_GAP - start : start - SENTENCE_GAP) : Infinity;
+  for (const widest of SENTENCE_WIDTHS) {
+    const width = Math.min(widest, edge);
+    if (width < SENTENCE_WIDTHS[SENTENCE_WIDTHS.length - 1]!) return null;
+    const lines = wrapText(measure, point.text, width);
+    if (lines.length === 0) return null;
+    const inked = Math.max(...lines.map(measure));
+    const top = y - SENTENCE_LINE / 2;
+    const box = align === "left"
+      ? { left: start - 2, right: start + inked + 2, top, bottom: top + lines.length * SENTENCE_LINE }
+      : { left: start - inked - 2, right: start + 2, top, bottom: top + lines.length * SENTENCE_LINE };
+    if (blockers.some((other) => overlapping(other, box))) continue;
+    return { id: point.id, thing: point.thing, lines, x: start, y, align, open: point.open, dim: point.dim, box, ...(point.away ? { away: true } : {}) };
+  }
+  return null;
+}
+
 /** The part of the overlay a click on a frame answers to: the frame itself
  *  and its title. */
 export interface FrameHit extends Box {
   thing: string;
+  /** An edge sign: where a tap on it takes the camera (EdgeSign.goTo). */
+  goTo?: string;
+}
+
+/** Where a tap on an edge sign takes the camera, or null off every sign. */
+export function edgeSignAt(hits: readonly FrameHit[], x: number, y: number): string | null {
+  for (const hit of hits) {
+    if (hit.goTo && x >= hit.left && x <= hit.right && y >= hit.top && y <= hit.bottom) return hit.goTo;
+  }
+  return null;
+}
+
+/** Room kept clear at the screen's edges for the map's own controls, CSS px. */
+export const EDGE_SIGN_INSETS = { top: 84, right: 16, bottom: 60, left: 16 } as const;
+const EDGE_SIGN_MAX_PX = 220;
+const EDGE_SIGN_PAD = 8;
+const EDGE_SIGN_GAP = 6;
+const EDGE_HEADER_LINE = 16;
+const ARROWS = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"] as const;
+
+/** The arrow pointing from (x, y) toward `to`, screen y running down. */
+export function arrowToward(from: { x: number; y: number }, to: { x: number; y: number }): string {
+  const sector = Math.round(Math.atan2(to.y - from.y, to.x - from.x) / (Math.PI / 4));
+  return ARROWS[((sector % 8) + 8) % 8]!;
+}
+
+/** An edge sign as it will be painted. */
+export interface PlacedEdgeSign {
+  sign: EdgeSign;
+  header: string;
+  /** The sentence line, cut to fit ("" for a back sign). */
+  line: string;
+  box: Box;
+}
+
+/**
+ * Where each edge sign goes: on the line from the screen's centre toward
+ * what it points at, pushed out to the edge (inside EDGE_SIGN_INSETS), so its
+ * arrow tells the true way. Signs that would overlap slide along the edge;
+ * one with no room left is left out.
+ */
+export function placeEdgeSigns(
+  signs: readonly EdgeSign[],
+  measure: Measure,
+  viewport: { width: number; height: number },
+  insets: { top: number; right: number; bottom: number; left: number } = EDGE_SIGN_INSETS,
+): PlacedEdgeSign[] {
+  const centre = { x: viewport.width / 2, y: viewport.height / 2 };
+  const placed: PlacedEdgeSign[] = [];
+  for (const sign of signs) {
+    const dx = sign.toward.x - centre.x;
+    const dy = sign.toward.y - centre.y;
+    if (Math.hypot(dx, dy) < 1) continue;
+    const arrow = arrowToward(centre, sign.toward);
+    const room = EDGE_SIGN_MAX_PX - measure(`${arrow} · ${sign.count}  `);
+    const name = cutToFit(measure, sign.title, Math.max(40, room));
+    const count = sign.count > 1 ? ` · ${sign.count}` : "";
+    const header = dx < 0 ? `${arrow} ${name}${count}` : `${name}${count} ${arrow}`;
+    const line = sign.text ? cutToFit(measure, sign.text, EDGE_SIGN_MAX_PX) : "";
+    const width = Math.min(EDGE_SIGN_MAX_PX, Math.max(measure(header), line ? measure(line) : 0)) + 2 * EDGE_SIGN_PAD;
+    const height = EDGE_HEADER_LINE + (line ? SENTENCE_LINE : 0) + EDGE_SIGN_PAD;
+    const lowX = insets.left + width / 2;
+    const highX = viewport.width - insets.right - width / 2;
+    const lowY = insets.top + height / 2;
+    const highY = viewport.height - insets.bottom - height / 2;
+    if (lowX > highX || lowY > highY) continue;
+    // Out from the centre to the first edge the line meets.
+    const reach = Math.min(
+      dx > 0 ? (highX - centre.x) / dx : dx < 0 ? (lowX - centre.x) / dx : Infinity,
+      dy > 0 ? (highY - centre.y) / dy : dy < 0 ? (lowY - centre.y) / dy : Infinity,
+    );
+    const at = { x: centre.x + dx * reach, y: centre.y + dy * reach };
+    const onSide = Math.abs(at.x - lowX) < 0.5 || Math.abs(at.x - highX) < 0.5;
+    const boxAt = (x: number, y: number) => ({ left: x - width / 2, right: x + width / 2, top: y - height / 2, bottom: y + height / 2 });
+    let box: Box | null = null;
+    for (const step of [0, 1, -1, 2, -2, 3, -3]) {
+      const x = onSide ? at.x : Math.min(highX, Math.max(lowX, at.x + step * (width + EDGE_SIGN_GAP)));
+      const y = onSide ? Math.min(highY, Math.max(lowY, at.y + step * (height + EDGE_SIGN_GAP))) : at.y;
+      const tried = boxAt(x, y);
+      if (placed.some((other) => overlapping(other.box, tried))) continue;
+      box = tried;
+      break;
+    }
+    if (!box) continue;
+    placed.push({ sign, header, line, box });
+  }
+  return placed;
 }
 
 /** The thing whose frame or title is under (x, y), the smallest when frames
@@ -332,6 +582,7 @@ export interface FrameHit extends Box {
 export function frameAt(hits: readonly FrameHit[], x: number, y: number): string | null {
   let best: FrameHit | null = null;
   for (const hit of hits) {
+    if (hit.goTo) continue;
     if (x < hit.left || x > hit.right || y < hit.top || y > hit.bottom) continue;
     const area = (hit.right - hit.left) * (hit.bottom - hit.top);
     if (!best || area < (best.right - best.left) * (best.bottom - best.top)) best = hit;
@@ -345,7 +596,7 @@ export function encloseSentences<F extends ThingFrame>(frames: readonly F[], pla
   return frames.map((frame) => {
     let { left, top, right, bottom } = frame;
     for (const sentence of placed) {
-      if (sentence.thing !== frame.thing) continue;
+      if (sentence.thing !== frame.thing || sentence.away) continue;
       left = Math.min(left, sentence.box.left - FRAME_PAD);
       right = Math.max(right, sentence.box.right + FRAME_PAD);
       top = Math.min(top, sentence.box.top - FRAME_PAD);
@@ -388,7 +639,7 @@ export function uncrowdedSentences<F extends ThingFrame>(frames: readonly F[], p
  *  crowded small frame still says what it is. A title is left out where
  *  every spot would cover a name, a sentence, another title or another
  *  frame's border, except the picked thing's: it is placed first and always
- *  gets its full title, so what is picked can be read. `occupied` is read
+ *  gets a title, further out where it must be, so what is picked can be read. `occupied` is read
  *  and extended. A steeping thing's title keeps room after it for its moon. */
 export function placeFrameTitles(
   frames: readonly ThingFrame[],
@@ -431,12 +682,29 @@ export function placeFrameTitles(
       spot = spotsFor(text).find(free);
       if (spot) break;
     }
-    if (!spot && frame.thing === picked) spot = spotsFor(full)[0];
+    if (!spot && frame.thing === picked) {
+      // Crowded all round: a line or more further out, before covering a name.
+      const near = spotsFor(full);
+      const further = TITLE_FURTHER_LINES.flatMap((lines) =>
+        near.map((spot) => {
+          const shift = (spot.baseline < frame.top ? -lines : lines) * TITLE_LINE;
+          return { ...spot, baseline: spot.baseline + shift, box: { ...spot.box, top: spot.box.top + shift, bottom: spot.box.bottom + shift } };
+        }),
+      );
+      spot = further.find(free) ?? near[0];
+    }
     if (!spot) continue;
     occupied.push(spot.box);
     out.push({ thing: frame.thing, text: spot.text, x: spot.x, baseline: spot.baseline, box: spot.box });
   }
   return out;
+}
+
+/** Whether a name is left off where a frame or its title already sits. Points
+ *  have their own rule, and a name the picked thing's points link to is the
+ *  reason for the picture: it stays, and the frame's marks keep off it. */
+export function labelYieldsToFrames(isNight: boolean, isLinked: boolean): boolean {
+  return !isNight && !isLinked;
 }
 
 /**
@@ -450,7 +718,7 @@ export function placeFrameTitles(
  */
 export function drawNightMarks(
   ctx: CanvasRenderingContext2D,
-  marks: { frames: readonly ThingFrame[]; sentences?: readonly NightSentence[] },
+  marks: { frames: readonly ThingFrame[]; sentences?: readonly NightSentence[]; edges?: readonly EdgeSign[] },
   palette: GraphPalette,
   occupied: Box[] = [],
   bodies: readonly Box[] = [],
@@ -458,7 +726,7 @@ export function drawNightMarks(
   picked: string | null = null,
 ): FrameHit[] {
   const hits: FrameHit[] = [];
-  if (marks.frames.length === 0) return hits;
+  if (marks.frames.length === 0 && !marks.edges?.length && !marks.sentences?.length) return hits;
   ctx.save();
   ctx.font = SENTENCE_FONT;
   const width = ctx.canvas.width / (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
@@ -523,6 +791,36 @@ export function drawNightMarks(
     }
     ctx.textAlign = "left";
   }
+  if (marks.edges && marks.edges.length > 0) {
+    const height = ctx.canvas.height / (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    for (const { sign, header, line, box } of placeEdgeSigns(marks.edges, (text) => {
+      ctx.font = TITLE_FONT;
+      return ctx.measureText(text).width;
+    }, { width, height })) {
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = palette.surface;
+      ctx.beginPath();
+      if (typeof ctx.roundRect === "function") ctx.roundRect(box.left, box.top, box.right - box.left, box.bottom - box.top, 8);
+      else ctx.rect(box.left, box.top, box.right - box.left, box.bottom - box.top);
+      ctx.fill();
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = palette.bridge;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.font = TITLE_FONT;
+      ctx.fillStyle = palette.label;
+      ctx.fillText(header, box.left + EDGE_SIGN_PAD, box.top + EDGE_SIGN_PAD / 2 + EDGE_HEADER_LINE / 2);
+      if (line) {
+        ctx.font = SENTENCE_FONT;
+        ctx.fillStyle = sign.open ? palette.labelMuted : palette.label;
+        ctx.fillText(line, box.left + EDGE_SIGN_PAD, box.top + EDGE_SIGN_PAD / 2 + EDGE_HEADER_LINE + SENTENCE_LINE / 2);
+      }
+      hits.push({ thing: sign.thing, goTo: sign.goTo, ...box });
+    }
+  }
   ctx.restore();
   return hits;
 }
@@ -535,7 +833,9 @@ export const THING_STOPS: readonly ThingStop[] = ["this", "nearby", "all"];
 /** A thing's points on the map, in id order. */
 export function thingPointIds(graph: Graph, thing: string): string[] {
   if (!graph.hasNode(thing)) return [];
-  return graph.filterNeighbors(thing, (_id, attrs) => attrs.night === true && (attrs.dustOf === undefined || attrs.dustOf === thing)).sort();
+  const under = graph.filterNeighbors(thing, (_id, attrs) => attrs.night === true && (attrs.dustOf === undefined || attrs.dustOf === thing));
+  const elsewhere = (graph.getNodeAttribute(thing, "elsewhere") as string[] | undefined) ?? [];
+  return [...under, ...elsewhere.filter((id) => graph.hasNode(id))].sort();
 }
 
 /** What a thing's points link to on the map: pages and entities. */
@@ -550,15 +850,34 @@ function linkedBodies(graph: Graph, points: readonly string[]): string[] {
 }
 
 /**
- * The nodes a stop frames. 這件事 (this): the thing's points. 附近 (nearby):
- * those, what they link to, and each of those bodies' own neighbours (pages
- * and entities, not their memory dust). 全部 (all): every node.
+ * The nodes a stop frames. 這件事 (this): the thing's points and what they link
+ * to, so a link is never a line running off the screen. 附近 (nearby): those,
+ * and each of those bodies' own neighbours (pages and entities, not their memory
+ * dust). 全部 (all): every node.
  */
 export function thingStopNodeIds(graph: Graph, thing: string, stop: ThingStop): string[] {
   if (stop === "all") return graph.nodes();
   const points = thingPointIds(graph, thing);
-  if (stop === "this") return points;
   const linked = linkedBodies(graph, points);
+  if (stop === "this") {
+    // An active thing frames itself and the topics near it only: a far one
+    // would pull the camera back until the thing is a speck (Fable's design,
+    // Qi-Xuan 11-05). Its points that fly off to a far topic are shown at the
+    // screen's edge instead (nightMarks' `edges`).
+    if (graph.getNodeAttribute(thing, "quiet") === true) {
+      // Points with no topic stay round its centre (model.ts), so the centre
+      // is framed with them: they may have no spot of their own until shown.
+      const elsewhere = new Set((graph.getNodeAttribute(thing, "elsewhere") as string[] | undefined) ?? []);
+      const under = points.some((point) => !elsewhere.has(point));
+      return [...new Set([...(under || linked.length === 0 ? [thing] : []), ...points, ...linked])].sort();
+    }
+    const near = new Set(nearLinkedBodies(graph, thing));
+    const stays = points.filter((point) => {
+      const flown = graph.getNodeAttribute(point, "flyTo") as { anchor: string } | undefined;
+      return !flown || near.has(flown.anchor);
+    });
+    return [...new Set([thing, ...stays, ...near])].sort();
+  }
   const near = new Set([...points, ...linked]);
   for (const body of linked) {
     graph.forEachNeighbor(body, (other, attrs) => {
@@ -566,6 +885,27 @@ export function thingStopNodeIds(graph: Graph, thing: string, stop: ThingStop): 
     });
   }
   return [...near].sort();
+}
+
+/** Room round a thing's cluster for its points' sentences, graph units: about
+ *  three quarters of a sentence's width at the 這件事 zoom. */
+export const NEAR_ROOM = 20;
+
+/**
+ * The topics a thing's points link to that are near enough to frame with it at
+ * 這件事: within twice the reach of its cluster and the room its sentences take,
+ * from its centre. The rest are far; a point flying to one leaves the screen.
+ */
+export function nearLinkedBodies(graph: Graph, thing: string): string[] {
+  if (!graph.hasNode(thing)) return [];
+  const cx = graph.getNodeAttribute(thing, "x") as number;
+  const cy = graph.getNodeAttribute(thing, "y") as number;
+  const reach = 2 * (((graph.getNodeAttribute(thing, "clusterRadius") as number | undefined) ?? 0) + NEAR_ROOM);
+  return linkedBodies(graph, thingPointIds(graph, thing)).filter((id) => {
+    const x = graph.getNodeAttribute(id, "x") as number;
+    const y = graph.getNodeAttribute(id, "y") as number;
+    return Math.hypot(x - cx, y - cy) <= reach;
+  });
 }
 
 /** The stops a thing offers: 附近 only when its points link to something
@@ -579,8 +919,9 @@ export function thingStopsFor(graph: Graph, thing: string): ThingStop[] {
  *  to its own centre stay hidden and the lines inside the lit set show. */
 export function thingFocusState(graph: Graph, thing: string, stop: ThingStop): HoverState {
   const points = thingPointIds(graph, thing);
-  const lit = stop === "nearby" ? thingStopNodeIds(graph, thing, stop) : [...points, ...linkedBodies(graph, points)];
-  return { hovered: thing, neighbors: new Set(lit), thing };
+  const linked = linkedBodies(graph, points);
+  const lit = stop === "nearby" ? thingStopNodeIds(graph, thing, stop) : [...points, ...linked];
+  return { hovered: thing, neighbors: new Set(lit), thing, linked: new Set(linked) };
 }
 
 /** How long a new point takes to grow out of its thing's centre, ms. */

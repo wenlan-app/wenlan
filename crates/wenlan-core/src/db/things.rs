@@ -773,6 +773,7 @@ impl MemoryDB {
                             bi.updated_at, t.hidden_at,
                             (SELECT MAX(h.ts) FROM thing_history h
                               WHERE h.thing_id = t.id AND h.op = 'thing.dream'
+                                AND json_extract(h.data, '$.backfill') IS NULL
                                 AND NOT EXISTS (SELECT 1 FROM thing_history u
                                                  WHERE u.thing_id = t.id
                                                    AND u.op = 'thing.dream_undo'

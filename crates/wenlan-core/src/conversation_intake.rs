@@ -19,6 +19,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use serde::Deserialize;
 use wenlan_types::session_context::TranscriptRoots;
@@ -1020,6 +1021,8 @@ pub struct DreamPoint {
     /// Index of the point on the thing's map it is, when it is one that was
     /// not kept yet.
     pub map: Option<usize>,
+    /// Index of the topic on the big map it is about, when one fits.
+    pub topic: Option<usize>,
 }
 
 /// A point on a thing's map that no night kept yet: the model can say a point
@@ -1037,6 +1040,7 @@ pub fn dream_prompt(
     conversations: &[FoundConversation],
     prior: &[PriorPoint],
     map: &[MapPoint],
+    topics: &[String],
     language: &str,
 ) -> String {
     let mut chats = String::new();
@@ -1085,6 +1089,15 @@ pub fn dream_prompt(
             .collect::<Vec<_>>()
             .join("\n")
     };
+    // No topics to offer: the question is not asked at all.
+    let (topics_text, topic_field) = if topics.is_empty() {
+        (String::new(), "")
+    } else {
+        (
+            format!("{}\n", topic_list(topics)),
+            ", \"topic\": \"T0\" or null",
+        )
+    };
     format!(
         "A piece of work the person is doing with AI tools: \"{title}\".\n\n\
 Its conversations since the last time they were read:\n{chats}\
@@ -1104,20 +1117,172 @@ kept above. When a kept point no longer holds (it was decided differently, or wh
 settled), give the new point and name the old one in \"replaces\". When a point you write is \
 one of the map points above (the same point, perhaps now settled), name it in \"map\". At most \
 {MAX_DREAM_POINTS} points; none is a fine answer.\n\
+{topics_text}\
 Answer with JSON only: {{\"points\": [{{\"text\": string, \"settled\": true|false, \
-\"from\": \"C0\", \"replaces\": \"P0\" or null, \"map\": \"N0\" or null}}]}}"
+\"from\": \"C0\", \"replaces\": \"P0\" or null, \"map\": \"N0\" or null{topic_field}}}]}}"
     )
+}
+
+/// The topics a model may choose from, and how to choose.
+fn topic_list(topics: &[String]) -> String {
+    let list = topics
+        .iter()
+        .enumerate()
+        .map(|(i, name)| format!("T{i}: {name}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "Topics on the person's big map:\n{list}\n\n\
+For each point also give the one topic above that it is really about, in \"topic\". \
+Sharing a word is not enough: the point must be about that topic. When none fits, use null; \
+do not make up a topic."
+    )
+}
+
+/// Whether a topic's name can be offered at all. Names of code (paths,
+/// functions, file names, test names, bare numbers) and shouted phrases such
+/// as "EXIT CODE" are not what a person's point is about; product names such
+/// as GitHub, macOS and ChatGPT stay.
+pub fn topic_name_offered(name: &str) -> bool {
+    static CODE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r"_|::|/|\.(rs|ts|tsx|py|md|json|toml)\b|\(\)|^#?\d+$|\btests?\b|^https?:|^--",
+        )
+        .expect("the pattern is valid")
+    });
+    let shouted = name.split_whitespace().count() >= 2
+        && name.chars().any(char::is_alphabetic)
+        && !name.chars().any(char::is_lowercase);
+    !name.trim().is_empty() && !CODE.is_match(name) && !shouted
+}
+
+/// How many times a topic's name is in the text, when it is specific enough
+/// that this means something. Several words, or a Chinese, Japanese or Korean
+/// name of three characters or more, count as they are. One word of four
+/// letters or more counts only when it has capitals and is written with them
+/// at least as often as without: "GitHub" does, "Memory" in a text that mostly
+/// says "memory" does not. `lower` is `raw` in lowercase.
+pub fn specific_name_hits(name: &str, raw: &str, lower: &str) -> Option<usize> {
+    let wide = name.chars().any(|c| c as u32 > 0x2E80);
+    if wide {
+        return (name.chars().count() >= 3 && raw.contains(name))
+            .then(|| raw.matches(name).count());
+    }
+    if name.chars().count() < 4 {
+        return None;
+    }
+    if name.split_whitespace().count() >= 2 {
+        let hits = lower.matches(&name.to_lowercase()).count();
+        return (hits > 0).then_some(hits);
+    }
+    if !name.chars().any(char::is_uppercase) {
+        return None;
+    }
+    let exact = raw.matches(name).count();
+    let plain = raw.matches(&name.to_lowercase()).count();
+    (exact > 0 && exact >= plain).then_some(exact)
+}
+
+/// What the person typed about a thing: where its topics' names are looked
+/// for. Not the assistant's replies, which name everything they touched.
+pub fn night_said(title: &str, conversations: &[FoundConversation]) -> String {
+    let mut text = title.to_string();
+    for conv in conversations {
+        for said in &conv.said {
+            text.push('\n');
+            text.push_str(said);
+        }
+    }
+    text
+}
+
+/// What a thing's nearest topics are searched by: its title, the end of what
+/// the person typed, and the points already kept.
+pub fn night_topic_query(
+    title: &str,
+    conversations: &[FoundConversation],
+    prior: &[PriorPoint],
+) -> String {
+    let mut query = title.to_string();
+    for conv in conversations {
+        for said in &conv.said[conv.said.len().saturating_sub(5)..] {
+            query.push('\n');
+            query.push_str(&cut(said, 300));
+        }
+    }
+    for point in prior {
+        query.push('\n');
+        query.push_str(&point.text);
+    }
+    query
+}
+
+/// The prompt that names the topic of points kept before nights did so.
+pub fn night_links_prompt(title: &str, points: &[String], topics: &[String]) -> String {
+    let list = points
+        .iter()
+        .enumerate()
+        .map(|(i, text)| format!("P{i}: {text}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "A piece of work the person is doing with AI tools: \"{title}\".\n\n\
+Points kept from it:\n{list}\n\n{}\n\
+Answer with JSON only: {{\"points\": [{{\"point\": \"P0\", \"topic\": \"T0\" or null}}]}}",
+        topic_list(topics)
+    )
+}
+
+/// The (point, topic) pairs in a model's answer. A pair naming a point or a
+/// topic that does not exist is ignored, and so is a second answer for a point.
+pub fn parse_night_links(text: &str, points: usize, topics: usize) -> Option<Vec<(usize, usize)>> {
+    #[derive(Deserialize)]
+    struct Pair {
+        #[serde(default)]
+        point: String,
+        #[serde(default)]
+        topic: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Answer {
+        #[serde(default)]
+        points: Vec<Pair>,
+    }
+    let answer: Answer = serde_json::from_str(json_object(text)?).ok()?;
+    let mut seen = HashSet::new();
+    Some(
+        answer
+            .points
+            .into_iter()
+            .filter_map(|pair| {
+                let point = answer_index(&pair.point, 'P', points)?;
+                seen.insert(point).then_some(())?;
+                Some((point, answer_index(pair.topic.as_deref()?, 'T', topics)?))
+            })
+            .collect(),
+    )
+}
+
+/// The number in an id a model answered with, such as "T3", when that one
+/// exists.
+fn answer_index(id: &str, prefix: char, len: usize) -> Option<usize> {
+    id.trim()
+        .strip_prefix(prefix)
+        .and_then(|n| n.parse::<usize>().ok())
+        .filter(|n| *n < len)
 }
 
 /// The points in a model's answer. A point without text, or from a
 /// conversation that does not exist, is dropped; a `replaces` that names no
 /// kept point, or one already replaced, is ignored, and so is a `map` that
-/// names no map point or one another point already is.
+/// names no map point or one another point already is. A `topic` that names
+/// no topic offered is ignored: the point is kept, without a topic.
 pub fn parse_dream(
     text: &str,
     conversations: usize,
     prior: usize,
     map: usize,
+    topics: usize,
 ) -> Option<Vec<DreamPoint>> {
     #[derive(Deserialize)]
     struct Point {
@@ -1131,6 +1296,8 @@ pub fn parse_dream(
         replaces: Option<String>,
         #[serde(default)]
         map: Option<String>,
+        #[serde(default)]
+        topic: Option<String>,
     }
     #[derive(Deserialize)]
     struct Answer {
@@ -1138,12 +1305,7 @@ pub fn parse_dream(
         points: Vec<Point>,
     }
     let answer: Answer = serde_json::from_str(json_object(text)?).ok()?;
-    let index = |id: &str, prefix: char, len: usize| {
-        id.trim()
-            .strip_prefix(prefix)
-            .and_then(|n| n.parse::<usize>().ok())
-            .filter(|n| *n < len)
-    };
+    let index = answer_index;
     let mut replaced = HashSet::new();
     let mut mapped = HashSet::new();
     let mut seen = HashSet::new();
@@ -1172,6 +1334,7 @@ pub fn parse_dream(
             from,
             replaces,
             map: on_map,
+            topic: point.topic.as_deref().and_then(|id| index(id, 'T', topics)),
         });
         if points.len() == MAX_DREAM_POINTS {
             break;

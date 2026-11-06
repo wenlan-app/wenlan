@@ -156,7 +156,7 @@ pub struct IntakeModels {
 
 /// The models to use now, or `None` when background AI is off or a model is
 /// missing.
-async fn models(shared: &SharedState) -> Option<IntakeModels> {
+pub(crate) async fn models(shared: &SharedState) -> Option<IntakeModels> {
     let config = wenlan_core::config::load_config();
     if !config.background_ai_enabled() {
         return None;
@@ -347,6 +347,7 @@ pub async fn dream_with(
                 &[],
                 &[],
                 &Default::default(),
+                &[],
                 &thing.conversations,
             )
             .await
@@ -376,13 +377,37 @@ pub async fn dream_with(
             })
             .collect();
         let read: Vec<FoundConversation> = conversations.iter().map(|(_, f)| f.clone()).collect();
+        // The topics a point can connect to. Without a list the night still
+        // keeps its points; they stay under their thing.
+        let mut spaces: Vec<String> = conversations
+            .iter()
+            .filter(|(c, _)| !c.space.is_empty())
+            .map(|(c, _)| c.space.clone())
+            .collect();
+        spaces.sort();
+        spaces.dedup();
+        let topics = db
+            .night_topics(&thing.title, &read, &prior, &spaces)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!("[things] topics for {}: {error}", thing.thing_id);
+                Vec::new()
+            });
+        let topic_names: Vec<String> = topics.iter().map(|t| t.name.clone()).collect();
         let answer = model
             .generate(LlmRequest {
                 system_prompt: Some(
                     "You keep what a person settled in their work, so it can be remembered. Answer with JSON only."
                         .into(),
                 ),
-                user_prompt: intake::dream_prompt(&thing.title, &read, &prior, &map_points, language),
+                user_prompt: intake::dream_prompt(
+                    &thing.title,
+                    &read,
+                    &prior,
+                    &map_points,
+                    &topic_names,
+                    language,
+                ),
                 max_tokens: 2_000,
                 temperature: 0.0,
                 label: Some("things_dream".into()),
@@ -399,8 +424,13 @@ pub async fn dream_with(
             }
             Err(error) => return Err(error),
         };
-        let Some(points) = intake::parse_dream(&answer, read.len(), prior.len(), map_points.len())
-        else {
+        let Some(points) = intake::parse_dream(
+            &answer,
+            read.len(),
+            prior.len(),
+            map_points.len(),
+            topics.len(),
+        ) else {
             return if done > 0 {
                 Ok((done, points_written))
             } else {
@@ -410,6 +440,7 @@ pub async fn dream_with(
         let mut decided = Vec::new();
         let mut open = Vec::new();
         let mut on_map = Vec::new();
+        let mut links = Vec::new();
         for point in points {
             let (from, _) = &conversations[point.from];
             let space = if from.space.is_empty() {
@@ -445,6 +476,22 @@ pub async fn dream_with(
             db.attach_dream_point(&id, &from.session_id)
                 .await
                 .map_err(|e| e.to_string())?;
+            // Its topic, within its own Space. A link that fails leaves the
+            // point under its thing; it does not lose the night.
+            let point_space = (!from.space.is_empty()).then_some(from.space.as_str());
+            if let Some(topic) = point
+                .topic
+                .map(|t| &topics[t])
+                .filter(|t| t.fits(point_space))
+            {
+                match db.link_night_point(&id, &topic.entity_id).await {
+                    Ok(link) => links.extend(link),
+                    Err(error) => tracing::warn!(
+                        "[things] a point of {} was not connected: {error}",
+                        thing.thing_id
+                    ),
+                }
+            }
             // The map point it is: one not kept yet that the model named, or
             // the one the memory it replaces is.
             let node = point.map.map(|n| map.unkept[n].id.clone()).or_else(|| {
@@ -476,12 +523,136 @@ pub async fn dream_with(
             &decided,
             &open,
             &changed,
+            &links,
             &thing.conversations,
         )
         .await
         .map_err(|e| e.to_string())?;
     }
     Ok((due.len(), points_written))
+}
+
+/// Connect the night points kept before nights named topics, once, through the
+/// same list and links a night uses. Only the person starts it. A thing whose
+/// model call fails is counted, and the run can be started again; connected
+/// points are not asked about twice. Undo: `MemoryDB::undo_night_links_backfill`.
+pub async fn connect_old_night_points(
+    db: &MemoryDB,
+    model: &dyn LlmProvider,
+) -> Result<wenlan_types::NightLinksBackfill, String> {
+    // One run at a time: a client that gives up and asks again must not
+    // start a second run that calls the model for every thing again.
+    static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    struct Running;
+    impl Drop for Running {
+        fn drop(&mut self) {
+            RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    if RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("connecting the old points is already running".into());
+    }
+    let _running = Running;
+    let mut report = wenlan_types::NightLinksBackfill::default();
+    if db
+        .night_links_backfilled()
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        report.already_done = true;
+        return Ok(report);
+    }
+    for (thing_id, title) in db.things_with_nights().await.map_err(|e| e.to_string())? {
+        let points = db
+            .unlinked_night_points(&thing_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if points.is_empty() {
+            continue;
+        }
+        report.things += 1;
+        report.points += points.len();
+        let mut spaces: Vec<String> = points.iter().filter_map(|p| p.space.clone()).collect();
+        spaces.sort();
+        spaces.dedup();
+        let as_prior: Vec<intake::PriorPoint> = points
+            .iter()
+            .map(|p| intake::PriorPoint {
+                id: p.id.clone(),
+                text: p.text.clone(),
+                decided: false,
+            })
+            .collect();
+        let topics = db
+            .night_topics(&title, &[], &as_prior, &spaces)
+            .await
+            .map_err(|e| e.to_string())?;
+        if topics.is_empty() {
+            continue;
+        }
+        let texts: Vec<String> = points.iter().map(|p| p.text.clone()).collect();
+        let names: Vec<String> = topics.iter().map(|t| t.name.clone()).collect();
+        let answer = model
+            .generate(LlmRequest {
+                system_prompt: Some(
+                    "You connect a person's kept points to the topics they are about. Answer with JSON only."
+                        .into(),
+                ),
+                user_prompt: intake::night_links_prompt(&title, &texts, &names),
+                max_tokens: 2_000,
+                temperature: 0.0,
+                label: Some("things_night_links".into()),
+                timeout_secs: Some(300),
+            })
+            .await;
+        let pairs = match answer {
+            Ok(text) => {
+                let pairs = intake::parse_night_links(&text, points.len(), topics.len());
+                if pairs.is_none() {
+                    tracing::warn!(
+                        "[things] connecting old points of {thing_id}: unreadable answer"
+                    );
+                }
+                pairs
+            }
+            Err(e) => {
+                tracing::warn!("[things] connecting old points of {thing_id} failed: {e}");
+                None
+            }
+        };
+        let Some(pairs) = pairs else {
+            report.failed += 1;
+            continue;
+        };
+        let mut links = Vec::new();
+        for (point, topic) in pairs {
+            let (point, topic) = (&points[point], &topics[topic]);
+            if !topic.fits(point.space.as_deref()) {
+                continue;
+            }
+            match db.link_night_point(&point.id, &topic.entity_id).await {
+                Ok(link) => links.extend(link),
+                Err(e) => {
+                    // Keep the links already made undoable: record them
+                    // below, and leave this thing to the next run.
+                    tracing::warn!("[things] connecting a night point of {thing_id} failed: {e}");
+                    report.failed += 1;
+                    break;
+                }
+            }
+        }
+        report.linked += links.len();
+        db.record_night_links_backfill(&thing_id, &links)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    if report.failed == 0 {
+        db.mark_night_links_backfilled(report.linked)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(report)
 }
 
 /// One look over conversations already found: label what is new or went on,
