@@ -15,13 +15,24 @@ async function expectDocumentToolsAligned(page: Page, actionsName: string, toggl
   // so the title line holds only the title.
   await expect(page.locator(".note-group-document-tools").getByRole("button", { name: actionsName, exact: true })).toBeVisible();
   const toggle = page.getByRole("button", { name: toggleName, exact: true });
-  const actionsBox = (await actions.boundingBox())!;
-  const toggleBox = (await toggle.boundingBox())!;
-  expect(Math.abs(actionsBox.y + actionsBox.height / 2 - (toggleBox.y + toggleBox.height / 2))).toBeLessThanOrEqual(1);
-  expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(toggleBox.x + 1);
-  expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(
-    await page.evaluate(() => innerWidth),
-  );
+  // Closing a pane reflows the header. Read both rectangles in one frame,
+  // then poll the unchanged geometry contract until that transition settles.
+  await expect(async () => {
+    const geometry = await page.evaluate(([action, context]) => {
+      if (!action || !context) throw new Error("Document tools are unavailable");
+      const a = action.getBoundingClientRect();
+      const b = context.getBoundingClientRect();
+      return {
+        centerDifference: Math.abs(a.y + a.height / 2 - (b.y + b.height / 2)),
+        actionRight: a.right,
+        toggleLeft: b.left,
+        viewportWidth: innerWidth,
+      };
+    }, [await actions.elementHandle(), await toggle.elementHandle()]);
+    expect(geometry.centerDifference).toBeLessThanOrEqual(1);
+    expect(geometry.actionRight).toBeLessThanOrEqual(geometry.toggleLeft + 1);
+    expect(geometry.actionRight).toBeLessThanOrEqual(geometry.viewportWidth);
+  }).toPass({ timeout: 10_000 });
 }
 
 for (const copy of copies) for (const width of [1280, 375]) {
