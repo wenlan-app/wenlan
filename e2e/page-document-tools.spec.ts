@@ -35,6 +35,21 @@ async function expectDocumentToolsAligned(page: Page, actionsName: string, toggl
   }).toPass({ timeout: 10_000 });
 }
 
+test("narrow document tools align across platform font metrics", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 900 });
+  await installTauriMock(page, { locale: "en", rawActions: [] });
+  await page.goto("/");
+  await openWikiNote(page, "Fixture architecture");
+  // The system font differs on macOS and Linux. Icon buttons must not inherit
+  // a vertical offset from their wrapper's text baseline on either platform.
+  for (const font of ["sans-serif", "serif"]) {
+    await page.locator(".note-group-document-tools").evaluate((node, family) => {
+      (node as HTMLElement).style.fontFamily = family;
+    }, font);
+    await expectDocumentToolsAligned(page, "Page actions", "Info");
+  }
+});
+
 for (const copy of copies) for (const width of [1280, 375]) {
   test(`document actions and dedicated inspector: ${copy.locale} ${width}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
