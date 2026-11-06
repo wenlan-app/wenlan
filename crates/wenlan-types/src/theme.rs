@@ -212,11 +212,15 @@ pub struct SetActiveThemeRequest {
     pub id: Option<String>,
 }
 
-/// `POST /api/themes/check` request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `POST /api/themes/check` request. With `theme`, that unsaved theme is
+/// checked as if it were saved in the `id` folder (the app's live editor);
+/// without it, the saved file is checked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckThemeRequest {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<ThemeFile>,
 }
 
 /// `POST /api/themes/check` result.
@@ -225,6 +229,28 @@ pub struct ThemeCheckResponse {
     pub id: String,
     pub ok: bool,
     pub problems: Vec<ThemeProblem>,
+    /// The CSS custom properties the theme would set, when it passes. The
+    /// app's live preview applies these to a sample screen.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tokens: BTreeMap<String, String>,
+}
+
+/// `GET /api/themes/{id}`, `PUT /api/themes/{id}` and `POST /api/themes`
+/// result: one theme file for the app's editor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThemeDetail {
+    pub id: String,
+    pub theme: ThemeFile,
+    #[serde(default)]
+    pub problems: Vec<ThemeProblem>,
+}
+
+/// `POST /api/themes`: start a new theme from the built-in colors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateThemeRequest {
+    pub name: String,
+    pub base: ThemeBase,
 }
 
 #[cfg(test)]

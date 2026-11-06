@@ -814,9 +814,12 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/telemetry` | main | no | not_applicable | `none` | — | anonymous local consent/status counters only |
 | `PUT` | `/api/telemetry` | main | no | not_applicable | `none` | — | anonymous local consent/status counters only |
 | `GET` | `/api/themes` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
+| `POST` | `/api/themes` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
 | `GET` | `/api/themes/active` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
 | `PUT` | `/api/themes/active` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
 | `POST` | `/api/themes/check` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
+| `GET` | `/api/themes/{id}` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
+| `PUT` | `/api/themes/{id}` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
 | `GET` | `/api/suggest-tags` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/tags` | main | no | not_applicable | `none` | — | no prose fields |
 | `DELETE` | `/api/tags/{name}` | main | no | not_applicable | `none` | — | no prose fields |

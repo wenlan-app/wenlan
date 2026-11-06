@@ -4688,7 +4688,7 @@ impl WenlanMcpServer {
                 };
                 let check: ThemeCheckResponse = try_call!(
                     self.client
-                        .post("/api/themes/check", &CheckThemeRequest { id }),
+                        .post("/api/themes/check", &CheckThemeRequest { id, theme: None }),
                     "theme check"
                 );
                 serde_json::to_string_pretty(&check)
@@ -4699,8 +4699,13 @@ impl WenlanMcpServer {
                     Err(result) => return Ok(result),
                 };
                 let check: ThemeCheckResponse = try_call!(
-                    self.client
-                        .post("/api/themes/check", &CheckThemeRequest { id: id.clone() }),
+                    self.client.post(
+                        "/api/themes/check",
+                        &CheckThemeRequest {
+                            id: id.clone(),
+                            theme: None
+                        }
+                    ),
                     "theme check"
                 );
                 if !check.ok {

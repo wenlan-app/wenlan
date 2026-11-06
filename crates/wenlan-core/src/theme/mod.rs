@@ -18,8 +18,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wenlan_types::theme::{
-    ActiveThemeResponse, ResolvedThemeBackground, ResolvedThemeSticker, ThemeBase, ThemeFile,
-    ThemeListResponse, ThemeProblem, ThemeSummary, THEME_SCHEMA_VERSION,
+    ActiveThemeResponse, ResolvedThemeBackground, ResolvedThemeSticker, ThemeBase, ThemeDetail,
+    ThemeFile, ThemeFonts, ThemeImages, ThemeListResponse, ThemeProblem, ThemeSummary,
+    THEME_SCHEMA_VERSION,
 };
 
 /// Token names a theme's `advanced` block may set, generated from
@@ -245,9 +246,13 @@ pub fn themes_dir() -> PathBuf {
     crate::config::data_root().join("themes")
 }
 
+/// Ids the API uses as path words, so no theme folder may take them.
+const RESERVED_IDS: &[&str] = &["active", "check"];
+
 /// A theme id is its folder name: lowercase letters, digits and dashes.
 pub fn valid_theme_id(id: &str) -> bool {
     !id.is_empty()
+        && !RESERVED_IDS.contains(&id)
         && id.len() <= 64
         && id.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
         && id
@@ -762,3 +767,141 @@ pub fn active_theme(root: &Path) -> ActiveThemeResponse {
 
 #[cfg(test)]
 mod tests;
+
+/// A new theme with every friendly color slot filled with the built-in value
+/// for `base`, so the editor starts from what the user sees today.
+pub fn template(name: &str, base: ThemeBase) -> ThemeFile {
+    let dark = base == ThemeBase::Dark;
+    ThemeFile {
+        schema: THEME_SCHEMA_VERSION,
+        name: name.to_string(),
+        base,
+        author: None,
+        colors: SLOTS
+            .iter()
+            .map(|slot| {
+                (
+                    slot.name.to_string(),
+                    (if dark { slot.dark } else { slot.light }).to_string(),
+                )
+            })
+            .collect(),
+        fonts: ThemeFonts::default(),
+        radius: Some(1.0),
+        images: ThemeImages::default(),
+        advanced: BTreeMap::new(),
+    }
+}
+
+fn invalid_id_problem() -> ThemeProblem {
+    problem(
+        "id",
+        "A theme id uses lowercase letters, digits and dashes, like night-bunny.",
+    )
+}
+
+/// One theme file for the editor, with its check result.
+pub fn read_theme(root: &Path, id: &str) -> Result<ThemeDetail, Vec<ThemeProblem>> {
+    if !valid_theme_id(id) {
+        return Err(vec![invalid_id_problem()]);
+    }
+    let dir = root.join(id);
+    let (theme, _) = read_theme_file(&dir).map_err(|p| vec![p])?;
+    Ok(ThemeDetail {
+        problems: check_theme(&theme, &dir),
+        id: id.to_string(),
+        theme,
+    })
+}
+
+/// Check an unsaved theme as if it were saved in the `id` folder, and the
+/// tokens it would set when it passes.
+pub fn check_unsaved(
+    root: &Path,
+    id: &str,
+    theme: &ThemeFile,
+) -> (Vec<ThemeProblem>, BTreeMap<String, String>) {
+    if !valid_theme_id(id) {
+        return (vec![invalid_id_problem()], BTreeMap::new());
+    }
+    let problems = check_theme(theme, &root.join(id));
+    let tokens = if problems.is_empty() {
+        theme_tokens(theme)
+    } else {
+        BTreeMap::new()
+    };
+    (problems, tokens)
+}
+
+/// Save a theme that passes every check. A failing theme is refused, so a
+/// saved file is always one the app can apply.
+pub fn save_theme(
+    root: &Path,
+    id: &str,
+    theme: &ThemeFile,
+) -> Result<ThemeDetail, Vec<ThemeProblem>> {
+    if !valid_theme_id(id) {
+        return Err(vec![invalid_id_problem()]);
+    }
+    let dir = root.join(id);
+    let problems = check_theme(theme, &dir);
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    let write_failed = |e: std::io::Error| {
+        vec![problem(
+            "theme.json",
+            format!("Could not save the theme: {e}"),
+        )]
+    };
+    std::fs::create_dir_all(&dir).map_err(write_failed)?;
+    let body = serde_json::to_vec_pretty(theme).expect("serialize theme");
+    let tmp = dir.join(".theme.json.tmp");
+    std::fs::write(&tmp, body)
+        .and_then(|()| std::fs::rename(&tmp, dir.join(THEME_FILE)))
+        .map_err(write_failed)?;
+    Ok(ThemeDetail {
+        id: id.to_string(),
+        theme: theme.clone(),
+        problems: Vec::new(),
+    })
+}
+
+/// A folder name for a new theme: the name in lowercase with dashes, or
+/// `theme` when the name has no ASCII letters, plus `-2`, `-3`... when taken.
+fn new_theme_id(root: &Path, name: &str) -> String {
+    let mut slug = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let mut slug = slug.trim_end_matches('-').to_string();
+    slug.truncate(40);
+    let slug = slug.trim_end_matches('-');
+    let base = if slug.is_empty() || !valid_theme_id(slug) {
+        "theme".to_string()
+    } else {
+        slug.to_string()
+    };
+    let mut id = base.clone();
+    let mut n = 2;
+    while root.join(&id).exists() {
+        id = format!("{base}-{n}");
+        n += 1;
+    }
+    id
+}
+
+/// Start a new theme from the built-in colors of `base`.
+pub fn create_theme(
+    root: &Path,
+    name: &str,
+    base: ThemeBase,
+) -> Result<ThemeDetail, Vec<ThemeProblem>> {
+    let name = name.trim();
+    let id = new_theme_id(root, name);
+    save_theme(root, &id, &template(name, base))
+}

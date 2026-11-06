@@ -273,11 +273,11 @@ fn manifest_counts_match_the_spec() {
     // thing's night points for the big map; thing and memory titles, not
     // page-bearing). Then 276 after POST `/api/things/points/connect` and
     // `/connect/undo` (the one-time connecting of old night points; counts only).
-    // Then 280 after the four `/api/themes` routes (custom app themes; local
+    // Then 283 after the seven `/api/themes` routes (custom app themes; local
     // appearance settings, no memory or page content).
     assert_eq!(
         HTTP_READERS.len(),
-        280,
+        283,
         "registered (method, path, handler) triples"
     );
     // +1: theme
@@ -289,7 +289,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        292,
+        295,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -297,7 +297,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        275,
+        278,
         "main builder entries"
     );
     assert_eq!(
@@ -480,7 +480,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        272 // all remaining handlers carry no page markers (+4: custom themes, +1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited (removed again: -1), +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +6: sentences, +2: in-chat check, +1: page original, +1: embed lookup, +1: sentence revert, +4: things, +2: thing map, +1: saved-in, +2: conversation words, +1: hide thing, +1: preserve relation, +2: merge or keep things apart, +1: take a night's points back, +1: night points on the big map)
+        275 // all remaining handlers carry no page markers (+7: custom themes, +1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +6: steep new pages, +1: lock-edited (removed again: -1), +9: repo wiki, +1: attachments, +1: pages folder move, +7: vault notes, +3: palace layout, +6: sentences, +2: in-chat check, +1: page original, +1: embed lookup, +1: sentence revert, +4: things, +2: thing map, +1: saved-in, +2: conversation words, +1: hide thing, +1: preserve relation, +2: merge or keep things apart, +1: take a night's points back, +1: night points on the big map)
     );
 }
 
