@@ -3,6 +3,8 @@
 #![allow(dead_code)]
 #[path = "../../app/src/daemon_start/failure.rs"]
 mod daemon_launch_failure;
+#[path = "../../app/src/desktop_codex.rs"]
+mod desktop_codex;
 extern crate self as wenlan_types;
 #[path = "../../app/src/config.rs"]
 mod config;

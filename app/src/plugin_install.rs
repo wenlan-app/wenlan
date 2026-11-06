@@ -12,7 +12,7 @@
 //! Windows), then the conventional install dirs a GUI-launched app's minimal
 //! PATH misses (`~/.local/bin`, Homebrew, npm/volta/bun/pnpm globals, every
 //! `~/.nvm/versions/node/*/bin`, `%APPDATA%\npm` on Windows), then the Codex
-//! CLI bundled with ChatGPT Desktop on macOS, and only then asks the user's
+//! CLI bundled with the desktop app on Windows and macOS, and only then asks the user's
 //! own login shell (`$SHELL -l -i -c 'command -v <bin>'`, Unix only) under a
 //! hard 3 s bound. Both CLIs are commonly installed via
 //! `npm i -g` under a version manager whose bin dir only the user's rc
@@ -77,6 +77,7 @@ struct LookupEnv {
     macos: bool,
     appdata: Option<PathBuf>,
     local_appdata: Option<PathBuf>,
+    desktop_roots: Vec<PathBuf>,
 }
 
 impl LookupEnv {
@@ -93,6 +94,7 @@ impl LookupEnv {
             macos: std::env::consts::OS == "macos",
             appdata: nonempty("APPDATA"),
             local_appdata: nonempty("LOCALAPPDATA"),
+            desktop_roots: crate::desktop_codex::registered_windows_roots(),
         }
     }
 }
@@ -198,21 +200,18 @@ fn known_candidates(
         .collect()
 }
 
-/// Codex is bundled inside ChatGPT Desktop on macOS. Desktop-only users have
-/// no standalone `codex` on PATH, so plugin setup must be able to invoke the
-/// copy shipped with the detected app. Keep this lookup macOS-only and scoped
-/// to Codex; the app's bundled CLI is an implementation detail of that bundle.
+/// Use the desktop-bundled CLI when no standalone installation exists.
 fn bundled_codex_candidates(env: &LookupEnv, binary_name: &str) -> Vec<PathBuf> {
-    if !env.macos || binary_name != "codex" {
+    if binary_name != "codex" {
         return Vec::new();
     }
-    let mut apps = vec![PathBuf::from("/Applications/ChatGPT.app")];
-    if let Some(home) = &env.home {
-        apps.push(home.join("Applications/ChatGPT.app"));
-    }
-    apps.into_iter()
-        .map(|app| app.join("Contents/Resources/codex-cli/bin/codex"))
-        .collect()
+    crate::desktop_codex::candidates(
+        env.windows,
+        env.macos,
+        env.home.as_deref(),
+        env.local_appdata.as_deref(),
+        &env.desktop_roots,
+    )
 }
 
 fn first_existing(candidates: &[PathBuf], exists: &impl Fn(&Path) -> bool) -> Option<PathBuf> {
@@ -445,7 +444,8 @@ fn client_command(bin: &Path) -> Command {
 }
 
 fn codex_command(bin: &Path, codex_home: &Path) -> Command {
-    codex_command_with_path(bin, std::env::var_os("PATH"), codex_home)
+    let path = crate::desktop_codex::path_with_bundled_git(std::env::var_os("PATH"));
+    codex_command_with_path(bin, path, codex_home)
 }
 
 fn codex_command_with_path(
@@ -694,6 +694,7 @@ mod tests {
             macos: false,
             appdata: None,
             local_appdata: None,
+            desktop_roots: Vec::new(),
         }
     }
 
@@ -705,6 +706,7 @@ mod tests {
             macos: false,
             appdata: Some(PathBuf::from("/users/u/AppData/Roaming")),
             local_appdata: Some(PathBuf::from("/users/u/AppData/Local")),
+            desktop_roots: Vec::new(),
         }
     }
 
@@ -716,6 +718,7 @@ mod tests {
             macos: true,
             appdata: None,
             local_appdata: None,
+            desktop_roots: Vec::new(),
         }
     }
 
@@ -823,25 +826,31 @@ mod tests {
 
     #[test]
     fn path_candidates_follow_path_order_with_bare_name_on_unix() {
-        let env = unix_env("/home/u", &["/a/bin", "/b/bin"]);
+        let root = tempfile::tempdir().unwrap();
+        let dirs = [root.path().join("a/bin"), root.path().join("b/bin")];
+        let mut env = unix_env("/home/u", &[]);
+        env.path_var = Some(std::env::join_paths(&dirs).unwrap());
         assert_eq!(
             path_candidates(&env, "codex"),
-            vec![PathBuf::from("/a/bin/codex"), PathBuf::from("/b/bin/codex")]
+            vec![dirs[0].join("codex"), dirs[1].join("codex")]
         );
     }
 
     #[test]
     fn path_candidates_try_exe_cmd_bat_per_dir_on_windows() {
-        let env = windows_env();
+        let root = tempfile::tempdir().unwrap();
+        let dirs = [root.path().join("tools/bin"), root.path().join("more/bin")];
+        let mut env = windows_env();
+        env.path_var = Some(std::env::join_paths(&dirs).unwrap());
         assert_eq!(
             path_candidates(&env, "claude"),
             vec![
-                PathBuf::from("/tools/bin/claude.exe"),
-                PathBuf::from("/tools/bin/claude.cmd"),
-                PathBuf::from("/tools/bin/claude.bat"),
-                PathBuf::from("/more/bin/claude.exe"),
-                PathBuf::from("/more/bin/claude.cmd"),
-                PathBuf::from("/more/bin/claude.bat"),
+                dirs[0].join("claude.exe"),
+                dirs[0].join("claude.cmd"),
+                dirs[0].join("claude.bat"),
+                dirs[1].join("claude.exe"),
+                dirs[1].join("claude.cmd"),
+                dirs[1].join("claude.bat"),
             ]
         );
     }
@@ -849,11 +858,14 @@ mod tests {
     #[test]
     fn path_candidates_skip_relative_and_empty_entries() {
         // A relative PATH entry resolves against the GUI app's arbitrary cwd.
-        let env = unix_env("/home/u", &["", ".", "bin", "/abs/bin"]);
-        assert_eq!(
-            path_candidates(&env, "codex"),
-            vec![PathBuf::from("/abs/bin/codex")]
+        let root = tempfile::tempdir().unwrap();
+        let absolute = root.path().join("abs/bin");
+        let mut env = unix_env("/home/u", &[]);
+        env.path_var = Some(
+            std::env::join_paths([Path::new(""), Path::new("."), Path::new("bin"), &absolute])
+                .unwrap(),
         );
+        assert_eq!(path_candidates(&env, "codex"), vec![absolute.join("codex")]);
     }
 
     #[test]
@@ -961,6 +973,42 @@ mod tests {
     }
 
     #[test]
+    fn windows_desktop_only_resolves_registered_cli_and_preserves_path_priority() {
+        let mut env = windows_env();
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("OpenAI.Codex_26_x64__2p2nqsd0c76g0");
+        let tools = temp.path().join("tools");
+        env.path_var = Some(std::env::join_paths([&tools]).unwrap());
+        env.desktop_roots = vec![root.clone()];
+        let bundled = root.join("app/resources/codex.exe");
+        assert_eq!(
+            resolve_binary_with(
+                "codex",
+                &env,
+                |p| p == bundled,
+                no_dirs,
+                |_| panic!("a desktop hit must not launch a shell")
+            ),
+            Some(bundled.clone())
+        );
+        let standalone = tools.join("codex.exe");
+        assert_eq!(
+            resolve_binary_with(
+                "codex",
+                &env,
+                |p| p == bundled || p == standalone,
+                no_dirs,
+                |_| None
+            ),
+            Some(standalone)
+        );
+        assert_eq!(
+            resolve_binary_with("codex", &env, |_| false, no_dirs, |_| None),
+            None
+        );
+    }
+
+    #[test]
     fn codex_bundle_search_includes_user_applications() {
         let env = macos_env("/Users/u", &[]);
         let system =
@@ -987,14 +1035,16 @@ mod tests {
     #[test]
     fn bundled_codex_is_excluded_for_other_platforms_and_binaries() {
         assert!(bundled_codex_candidates(&unix_env("/Users/u", &[]), "codex").is_empty());
-        assert!(bundled_codex_candidates(&windows_env(), "codex").is_empty());
+        assert!(bundled_codex_candidates(&windows_env(), "claude").is_empty());
         assert!(bundled_codex_candidates(&macos_env("/Users/u", &[]), "claude").is_empty());
     }
 
     #[test]
     fn codex_bundle_does_not_override_path_or_standard_install_dirs() {
-        let env = macos_env("/Users/u", &["/on/path"]);
-        let path_cli = Path::new("/on/path/codex");
+        let root = tempfile::tempdir().unwrap();
+        let mut env = macos_env("/Users/u", &[]);
+        env.path_var = Some(std::env::join_paths([root.path()]).unwrap());
+        let path_cli = root.path().join("codex");
         let standard_cli = Path::new("/Users/u/.local/bin/codex");
         let bundled_cli =
             Path::new("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex");
@@ -1003,7 +1053,7 @@ mod tests {
         };
         assert_eq!(
             resolve_binary_with("codex", &env, exists, no_dirs, |_| None),
-            Some(path_cli.to_path_buf())
+            Some(path_cli)
         );
 
         let exists = |candidate: &Path| candidate == standard_cli || candidate == bundled_cli;
@@ -1026,14 +1076,15 @@ mod tests {
 
     #[test]
     fn resolve_binary_prefers_path_over_known_dir_over_shell() {
-        let env = unix_env("/home/u", &["/on/path"]);
-        let exists = |p: &Path| {
-            p == Path::new("/on/path/codex") || p == Path::new("/home/u/.local/bin/codex")
-        };
+        let root = tempfile::tempdir().unwrap();
+        let mut env = unix_env("/home/u", &[]);
+        env.path_var = Some(std::env::join_paths([root.path()]).unwrap());
+        let path_cli = root.path().join("codex");
+        let exists = |p: &Path| p == path_cli || p == Path::new("/home/u/.local/bin/codex");
         let shell = |_: &str| Some(PathBuf::from("/from/shell/codex"));
         assert_eq!(
             resolve_binary_with("codex", &env, exists, no_dirs, shell),
-            Some(PathBuf::from("/on/path/codex"))
+            Some(path_cli)
         );
 
         let exists = |p: &Path| p == Path::new("/home/u/.local/bin/codex");

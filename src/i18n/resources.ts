@@ -284,6 +284,7 @@ const en = {
     welcomeTitle: "Welcome to Wenlan",
     notesFirst: {
       openFailed: "Could not open your pages. Please try again.",
+      finishFailed: "Could not save setup. You can keep using Wenlan and retry.",
       checkConnection: "Check connection",
       intro: "A personal Wiki you and your AI tools build together. Your files and chats become pages they can recall.",
       start: "Get started",
@@ -3516,6 +3517,7 @@ const zhHans = {
     welcomeTitle: "欢迎使用文澜",
     notesFirst: {
       openFailed: "暂时无法打开笔记，请再试一次。",
+      finishFailed: "未能保存设置。你可以继续使用文澜，稍后重试。",
       checkConnection: "检查连接",
       intro: "你和 AI 工具一起搭建的个人 Wiki。文件和对话会变成它们记得住的笔记。",
       start: "开始使用",
@@ -6688,6 +6690,7 @@ const zhHant = {
     welcomeTitle: "歡迎使用文瀾",
     notesFirst: {
       openFailed: "暫時無法開啟筆記，請再試一次。",
+      finishFailed: "未能儲存設定。你可以繼續使用文瀾，稍後重試。",
       checkConnection: "檢查連線",
       intro: "你和 AI 工具一起搭建的個人 Wiki。文字、檔案和對話會變成它們記得住的筆記。",
       start: "開始使用",

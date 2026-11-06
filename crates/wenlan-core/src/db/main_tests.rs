@@ -56210,6 +56210,56 @@ async fn the_daemon_open_defers_memory_embedding_recovery_and_ordinary_opens_do_
     assert!(memory_has_embedding(&db, "mem_deferred").await);
 }
 
+/// Opening a fresh daemon database must never attempt the model download.
+/// This runs against the real constructor, with no shared model fixture.
+#[tokio::test]
+async fn first_daemon_open_serves_storage_without_loading_a_model() {
+    let dir = tempdir().unwrap();
+    let db = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        MemoryDB::new_with_embedding_recovery(
+            dir.path(),
+            Arc::new(crate::events::NoopEmitter),
+            MemoryEmbeddingRecovery::Deferred,
+        ),
+    )
+    .await
+    .expect("database open must not wait for a model download")
+    .unwrap();
+    assert!(!db.embedder_ready());
+    assert!(
+        db.embedder_load_error().is_none(),
+        "not attempted is not a failure"
+    );
+    let doc = make_memory_doc(
+        "first_boot",
+        "quartz startup canary",
+        "fact",
+        "work",
+        "test",
+    );
+    db.upsert_documents(vec![doc]).await.unwrap();
+    let found = db
+        .search("quartz", 5, None, &crate::read_scope::ReadScope::Global)
+        .await
+        .unwrap();
+    assert!(found.iter().any(|result| result.source_id == "first_boot"));
+    drop(db);
+    let reopened = MemoryDB::new_with_embedding_recovery(
+        dir.path(),
+        Arc::new(crate::events::NoopEmitter),
+        MemoryEmbeddingRecovery::Deferred,
+    )
+    .await
+    .unwrap();
+    assert!(!reopened.embedder_ready());
+    let found = reopened
+        .search("quartz", 5, None, &crate::read_scope::ReadScope::Global)
+        .await
+        .unwrap();
+    assert!(found.iter().any(|result| result.source_id == "first_boot"));
+}
+
 /// A daemon whose first start could not download the embedding model (#1050)
 /// still stores memories and pages and finds them by keyword; once the model
 /// loads, the rows written meanwhile get their vectors.

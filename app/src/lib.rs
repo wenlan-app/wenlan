@@ -15,6 +15,7 @@ pub mod api;
 mod ask_tool;
 pub mod config;
 mod daemon_start;
+mod desktop_codex;
 pub mod error;
 pub mod events;
 pub mod global_shortcuts;
