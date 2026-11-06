@@ -213,12 +213,12 @@
   right: auto;
   width: calc(100% + 1px);
   border-left: 1px solid var(--mem-border);
-  border-top-left-radius: 12px;
+  border-top-left-radius: var(--mem-r-12);
 }
 
 /* A subtle rounded end softens the seam without separating the two regions. */
 .page-info-drawer-group-overlay-body-reserved .page-info-drawer-group-overlay-panel.page-info-drawer--inspector {
-  border-bottom-left-radius: 12px;
+  border-bottom-left-radius: var(--mem-r-12);
 }
 
 .page-info-drawer-group-overlay-body-reserved .page-info-drawer-content {
@@ -268,7 +268,7 @@
   background: var(--mem-bg);
   border: 0;
   border-left: 1px solid var(--mem-border);
-  border-radius: 12px 0 0 12px;
+  border-radius: var(--mem-r-12) 0 0 var(--mem-r-12);
 }
 
 .page-info-drawer.page-info-drawer--inspector {
@@ -317,7 +317,7 @@
   max-width: none;
   border: 0;
   border-left: 1px solid var(--mem-border);
-  border-radius: 12px 0 0 12px;
+  border-radius: var(--mem-r-12) 0 0 var(--mem-r-12);
   box-shadow: none;
   background: var(--mem-bg);
 }

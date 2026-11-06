@@ -17,7 +17,7 @@
 
 .review-environment-stamp {
   border: 1px solid color-mix(in srgb, var(--mem-accent-warm) 55%, transparent);
-  border-radius: 2px;
+  border-radius: var(--mem-r-2);
   color: var(--mem-accent-warm-text);
   font-family: var(--mem-font-mono);
   font-size: 9px;
@@ -38,7 +38,7 @@
 
 .review-environment-reset {
   align-items: center;
-  border-radius: 3px;
+  border-radius: var(--mem-r-3);
   color: var(--mem-text-tertiary);
   display: inline-flex;
   height: 22px;

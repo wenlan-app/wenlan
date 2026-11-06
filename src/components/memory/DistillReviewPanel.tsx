@@ -112,7 +112,7 @@ const emptyTitleStyle = {
 
 const itemSurfaceStyle = {
   border: "1px solid var(--mem-border)",
-  borderRadius: 8,
+  borderRadius: "var(--mem-r-8)",
   backgroundColor: "var(--mem-surface)",
 };
 
@@ -159,7 +159,7 @@ function QueueCard({
           style={{
             fontSize: "var(--mem-text-meta)",
             letterSpacing: "0.04em",
-            borderRadius: 5,
+            borderRadius: "var(--mem-r-5)",
             padding: "2px 8px",
             color: tone.color,
             backgroundColor: tone.background,
@@ -357,7 +357,7 @@ function HiddenFooter({
                     style={{
                       fontSize: "var(--mem-text-meta)",
                       letterSpacing: "0.04em",
-                      borderRadius: 5,
+                      borderRadius: "var(--mem-r-5)",
                       padding: "2px 8px",
                       color: tone.color,
                       backgroundColor: tone.background,

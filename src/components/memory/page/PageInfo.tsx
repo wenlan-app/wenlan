@@ -363,7 +363,7 @@ export default function PageInfo({
                           color: "var(--mem-text-tertiary)",
                           background: "var(--mem-hover)",
                           padding: "1px 5px",
-                          borderRadius: "3px",
+                          borderRadius: "var(--mem-r-3)",
                           whiteSpace: "nowrap",
                         }}
                       >

@@ -448,7 +448,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               ".cm-wiki-page-link:focus-visible": {
                 outline: "2px solid var(--mem-accent-indigo)",
                 outlineOffset: "1px",
-                borderRadius: "2px",
+                borderRadius: "var(--mem-r-2)",
               },
               ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
                 backgroundColor: "var(--mem-indigo-bg)",
@@ -579,7 +579,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               },
               "&.cm-editor .cm-searchMatch": {
                 backgroundColor: "color-mix(in srgb, var(--mem-accent-amber) 28%, transparent)",
-                borderRadius: "2px",
+                borderRadius: "var(--mem-r-2)",
               },
               "&.cm-editor .cm-searchMatch-selected": {
                 backgroundColor: "color-mix(in srgb, var(--mem-accent-amber) 60%, transparent)",

@@ -10,11 +10,11 @@
 .knowledge-context-section li button { display: flex; gap: 8px; align-items: flex-start; width: 100%; text-align: left; padding: 7px 0; border: 0; background: none; font: 13px/1.5 var(--mem-font-body); color: var(--mem-text); cursor: pointer; }
 .knowledge-context-section li button svg { flex: 0 0 auto; margin-top: 3px; color: var(--mem-text-tertiary); }
 .knowledge-context-section button:hover { color: var(--mem-accent-page); }
-.knowledge-context button:focus-visible, .knowledge-local-map summary:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 3px; border-radius: 4px; }
+.knowledge-context button:focus-visible, .knowledge-local-map summary:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 3px; border-radius: var(--mem-r-4); }
 .knowledge-local-map-diagram { position: relative; width: 100%; height: 220px; }
 .knowledge-local-map-diagram > svg { position: absolute; width: 100%; height: 100%; }
 .knowledge-local-map-diagram line { stroke: var(--mem-border); stroke-width: 1; }
-.knowledge-local-map-center, .knowledge-local-map-node { position: absolute; transform: translate(-50%,-50%); display: flex; flex-direction: column; gap: 5px; align-items: center; font: 11px/1.35 var(--mem-font-body); color: var(--mem-text-secondary); background: var(--mem-sidebar); border: 0; border-radius: 5px; padding: 5px; max-width: 85px; }
+.knowledge-local-map-center, .knowledge-local-map-node { position: absolute; transform: translate(-50%,-50%); display: flex; flex-direction: column; gap: 5px; align-items: center; font: 11px/1.35 var(--mem-font-body); color: var(--mem-text-secondary); background: var(--mem-sidebar); border: 0; border-radius: var(--mem-r-5); padding: 5px; max-width: 85px; }
 .knowledge-local-map-center { left: 50%; top: 50%; color: var(--mem-accent-page); }
 .knowledge-local-map-node { cursor: pointer; }
 .knowledge-local-map-node svg { color: var(--mem-accent-page); }
@@ -28,7 +28,7 @@
 }
 
 .page-info-source-button { display: block; width: 100%; text-align: left; border: 0; padding: 0; background: none; color: inherit; cursor: pointer; }
-.page-info-source-button:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 3px; border-radius: 4px; }
+.page-info-source-button:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 3px; border-radius: var(--mem-r-4); }
 @media (max-width: 480px) { .page-detail-top-row .document-kind-label { font-size: 10px; } }
 
 .page-detail-top-row .page-detail-info-slot { width: auto; gap: 2px; }
@@ -43,7 +43,7 @@
   .memory-shell:has(.page-info-drawer-hosted) .document-context-host.document-context-open.memory-detail-content-first { padding-right: 0; }
 }
 
-.knowledge-context-open-graph { display: inline-flex; align-items: center; justify-self: start; gap: 6px; min-height: 32px; max-width: 100%; margin-top: 8px; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--mem-text-secondary); font: 500 13px/1.5 var(--mem-font-body); text-align: left; cursor: pointer; }
+.knowledge-context-open-graph { display: inline-flex; align-items: center; justify-self: start; gap: 6px; min-height: 32px; max-width: 100%; margin-top: 8px; padding: 5px 8px; border: 0; border-radius: var(--mem-r-6); background: transparent; color: var(--mem-text-secondary); font: 500 13px/1.5 var(--mem-font-body); text-align: left; cursor: pointer; }
 .knowledge-context-open-graph svg { flex: none; }
 .knowledge-context-open-graph:hover { background: var(--mem-hover); color: var(--mem-text); }
 @media (pointer: coarse), (max-width: 640px) { .knowledge-context-open-graph { min-height: 44px; } }

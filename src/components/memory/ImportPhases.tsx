@@ -254,7 +254,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
               alignItems: "center",
               gap: "14px",
               padding: "10px 14px",
-              borderRadius: "10px",
+              borderRadius: "var(--mem-r-10)",
               backgroundColor: entry.state === "running" ? "var(--mem-surface)" : "transparent",
               border: entry.state === "running"
                 ? "1px solid var(--mem-border)"
@@ -265,7 +265,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
             <div style={{
               width: "32px",
               height: "32px",
-              borderRadius: "8px",
+              borderRadius: "var(--mem-r-8)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -318,7 +318,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
                 style={{
                   width: "48px",
                   height: "3px",
-                  borderRadius: "2px",
+                  borderRadius: "var(--mem-r-2)",
                   backgroundColor: "var(--mem-border)",
                   overflow: "hidden",
                   flexShrink: 0,
@@ -326,7 +326,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
               >
                 <div style={{
                   height: "100%",
-                  borderRadius: "2px",
+                  borderRadius: "var(--mem-r-2)",
                   backgroundColor: entry.state === "failed" ? "#ef4444" : "var(--mem-accent-indigo)",
                   width: `${fraction * 100}%`,
                   transition: "width 0.3s ease-out",

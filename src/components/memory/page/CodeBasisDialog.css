@@ -55,7 +55,7 @@ html[data-theme="light"] .code-basis-panel {
   overflow-y: auto;
   padding: 10px 0 14px;
   border: 1px solid var(--mem-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: var(--mem-detail-surface-raised, var(--mem-bg));
   color: var(--mem-text);
   font: 12.5px/1.55 var(--mem-font-mono);
@@ -70,7 +70,7 @@ html[data-theme="light"] .code-basis-panel {
   /* Classic (non overlay) scrollbars take space; reserve it on both sides so
      the two boxes stay the same height when only one of them scrolls. */
   scrollbar-gutter: stable;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   outline: none;
   scroll-margin: 0;
 }

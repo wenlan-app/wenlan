@@ -64,3 +64,59 @@ describe("CSS custom property guard", () => {
     expect(missing).toEqual([]);
   });
 });
+
+function listFiles(dir: string, ext: string): string[] {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  return entries.flatMap((entry) => {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) return listFiles(fullPath, ext);
+    if (!entry.name.endsWith(ext) || entry.name.includes(".test.")) return [];
+    return [fullPath];
+  });
+}
+
+// Custom themes change corner roundness through --mem-radius-scale, so a
+// literal px radius would ignore the theme. Pills (99px/999px/9999px), circles
+// (%) and square corners (0) are shapes and stay literal.
+describe("corner radius guard", () => {
+  const PX = /(?<![\w.-])(\d+(?:\.\d+)?)px\b/g;
+  const SHAPE_PX = new Set(["99", "999", "9999"]);
+  const literalPx = (value: string) =>
+    [...value.matchAll(PX)].map((m) => m[1]).filter((n) => !SHAPE_PX.has(n) && Number(n) !== 0);
+
+  it("every CSS border radius uses a --mem-r-* step or a shape value", () => {
+    const offenders: string[] = [];
+    const decl = /border(?:-[a-z]+)*-radius\s*:\s*([^;}]+)/g;
+    for (const file of listFiles(SRC_DIR, ".css")) {
+      const text = fs.readFileSync(file, "utf8");
+      for (const match of text.matchAll(decl)) {
+        if (literalPx(match[1]).length) offenders.push(`${repoRelativePath(file)}\t${match[0].trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("every inline or CodeMirror borderRadius uses a --mem-r-* step or a shape value", () => {
+    const offenders: string[] = [];
+    const prop = /border(?:Top|Bottom)?(?:Left|Right)?Radius\s*:\s*([^,}\n]+)/g;
+    const scripts = [...listFiles(SRC_DIR, ".tsx"), ...listFiles(SRC_DIR, ".ts")].filter((file) => !file.endsWith(".d.ts"));
+    for (const file of scripts) {
+      const text = fs.readFileSync(file, "utf8");
+      for (const match of text.matchAll(prop)) {
+        const value = match[1].trim();
+        const bareNumber = /^\d+(?:\.\d+)?$/.test(value) && Number(value) !== 0 && !SHAPE_PX.has(value);
+        if (bareNumber || literalPx(value).length) offenders.push(`${repoRelativePath(file)}\t${match[0].trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("every radius step scales with --mem-radius-scale", () => {
+    const css = fs.readFileSync(CSS_FILE, "utf8");
+    const steps = [...css.matchAll(/(--mem-r-(\d+)):\s*([^;]+);/g)];
+    expect(steps.length).toBeGreaterThan(0);
+    for (const [, , size, value] of steps) {
+      expect(value.trim()).toBe(`calc(${size}px * var(--mem-radius-scale))`);
+    }
+  });
+});

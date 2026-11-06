@@ -63,7 +63,7 @@
   font-family: var(--mem-font-body);
   font-size: 14px;
   font-weight: 500;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   padding: 9px 16px;
   cursor: pointer;
   transition: opacity 0.15s ease;
@@ -142,7 +142,7 @@
 
 .fus-state {
   border: 1px solid var(--mem-border);
-  border-radius: 12px;
+  border-radius: var(--mem-r-12);
   background-color: var(--mem-surface);
   padding: 20px;
   display: flex;
@@ -178,7 +178,7 @@
   color: var(--mem-text);
   background-color: var(--mem-surface);
   border: 1px solid var(--mem-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   padding: 10px 14px;
   cursor: pointer;
 }

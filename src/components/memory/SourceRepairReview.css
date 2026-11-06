@@ -7,7 +7,7 @@
 
 .source-repair-source {
   border: 1px solid var(--mem-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: var(--mem-detail-surface-raised);
   padding: 13px 15px;
   min-width: 0;
@@ -70,7 +70,7 @@
   line-height: 1.5;
   padding: 9px 12px;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-surface);
   color: var(--mem-text);
 }

@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 .pairing-approval-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 32%); }
-.pairing-approval-panel { position: relative; width: min(440px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; padding: 28px; border: 1px solid var(--mem-border); border-radius: 12px; background: var(--mem-surface); color: var(--mem-text); box-shadow: 0 16px 64px rgb(0 0 0 / 22%); font: 14px/1.6 var(--mem-font-body); outline: none; }
+.pairing-approval-panel { position: relative; width: min(440px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; padding: 28px; border: 1px solid var(--mem-border); border-radius: var(--mem-r-12); background: var(--mem-surface); color: var(--mem-text); box-shadow: 0 16px 64px rgb(0 0 0 / 22%); font: 14px/1.6 var(--mem-font-body); outline: none; }
 .pairing-approval-panel h2 { margin: 0; font: 500 22px/1.3 var(--mem-font-heading); letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .pairing-approval-body { margin: 12px 0 0; color: var(--mem-text-secondary); overflow-wrap: anywhere; }
 .pairing-approval-sends { margin: 8px 0 0; color: var(--mem-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
-.pairing-approval-warning { margin: 16px 0 0; padding: 10px 12px; border: 1px solid var(--mem-status-warning-border); border-radius: 8px; background: var(--mem-status-warning-bg); color: var(--mem-status-warning-text); font-size: 13px; overflow-wrap: anywhere; }
+.pairing-approval-warning { margin: 16px 0 0; padding: 10px 12px; border: 1px solid var(--mem-status-warning-border); border-radius: var(--mem-r-8); background: var(--mem-status-warning-bg); color: var(--mem-status-warning-text); font-size: 13px; overflow-wrap: anywhere; }
 .pairing-approval-field { margin-top: 16px; }
 .pairing-approval-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 24px; }
 .pairing-approval-error { margin-top: 16px; }
 .pairing-approval-question { margin: 20px 0 0; font-weight: 500; color: var(--mem-text); }
 .pairing-approval-options { display: grid; gap: 8px; margin-top: 10px; }
-.pairing-approval-option { display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 0 12px; padding: 12px; border: 1px solid var(--mem-border); border-radius: 8px; cursor: pointer; }
+.pairing-approval-option { display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 0 12px; padding: 12px; border: 1px solid var(--mem-border); border-radius: var(--mem-r-8); cursor: pointer; }
 .pairing-approval-option:hover { background: var(--mem-hover); }
 .pairing-approval-option[data-selected="true"] { border-color: var(--mem-accent-indigo); background: var(--mem-indigo-bg); }
 .pairing-approval-option:has(input:focus-visible) { outline: 2px solid var(--mem-focus-ring); outline-offset: 2px; }

@@ -156,7 +156,7 @@
   min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--mem-border);
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   color: var(--mem-text);
   background: transparent;
   font: inherit;
