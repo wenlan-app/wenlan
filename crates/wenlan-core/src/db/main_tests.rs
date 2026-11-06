@@ -26719,7 +26719,7 @@ async fn test_cleanup_orphaned_concept_sources() {
     );
     let page = db.get_page("c_clean").await.unwrap().unwrap();
     assert!(page.source_memory_ids.is_empty());
-    assert_eq!(page.stale_reason.as_deref(), Some("source_updated"));
+    assert_eq!(page.stale_reason.as_deref(), Some("source_removed"));
     assert_eq!(
         db.get_page_source_revision("c_clean").await.unwrap(),
         source_revision_before + 1,
@@ -26912,7 +26912,7 @@ async fn cleanup_orphaned_page_sources_invalidates_only_affected_pages() {
     }
     assert_eq!(
         states.get("page_orphaned_cleanup"),
-        Some(&(1, None, Vec::new(), Some("source_updated".to_string())))
+        Some(&(1, None, Vec::new(), Some("source_removed".to_string())))
     );
     assert_eq!(
         states.get("page_valid_cleanup"),
@@ -27023,7 +27023,7 @@ async fn cleanup_orphaned_page_sources_accepts_logical_and_row_ids() {
         source_locators,
         "orphan cleanup must keep legacy JSON provenance synchronized with page_sources"
     );
-    assert_eq!(page.stale_reason.as_deref(), Some("source_updated"));
+    assert_eq!(page.stale_reason.as_deref(), Some("source_removed"));
     assert_eq!(
         db.get_page_source_revision("page_locator_forms")
             .await
@@ -27085,7 +27085,7 @@ async fn cleanup_orphaned_page_sources_prunes_json_only_ghosts_once_per_page() {
         page.source_memory_ids,
         vec!["json-cleanup-valid".to_string()]
     );
-    assert_eq!(page.stale_reason.as_deref(), Some("source_updated"));
+    assert_eq!(page.stale_reason.as_deref(), Some("source_removed"));
     assert_eq!(
         page.sources_updated_count,
         before.sources_updated_count + 2,

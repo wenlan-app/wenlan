@@ -62,6 +62,7 @@ const FILTER_ORDER: Exclude<ReviewFilterKey, "all">[] = [
   "revisions",
   "conflicts",
   "pages",
+  "classifications",
   "memory",
 ];
 
@@ -70,6 +71,7 @@ const FILTER_LABEL_KEYS = {
   revisions: "review.filterRevisions",
   conflicts: "review.filterConflicts",
   pages: "review.filterPages",
+  classifications: "selectedSources.classificationTitle",
   memory: "review.filterMemory",
 } as const;
 
@@ -623,6 +625,7 @@ export default function DistillReviewPanel({
     { key: "revisions", title: t("review.sectionRevisions") },
     { key: "conflicts", title: t("review.sectionConflicts") },
     { key: "pages", title: t("review.sectionPages") },
+    { key: "classifications", title: t("selectedSources.classificationTitle") },
     { key: "memory", title: t("review.sectionRefinements") },
   ].map((section) => ({
     ...section,

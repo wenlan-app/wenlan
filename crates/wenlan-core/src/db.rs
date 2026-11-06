@@ -55199,6 +55199,35 @@ impl MemoryDB {
             return Err(error);
         }
 
+        let reviewed_source_update = match (
+            consume_revision_id,
+            basis.research_write.as_ref(),
+            expected_version,
+            expected_source_revision,
+        ) {
+            (Some(revision), Some(fence), Some(version), Some(source_revision)) => {
+                match research_write::reviewed_source_update_on(
+                    &conn,
+                    fence,
+                    id,
+                    source_memory_ids,
+                    &basis.citation_snapshots,
+                    version,
+                    source_revision,
+                    revision,
+                )
+                .await
+                {
+                    Ok(reviewed) => reviewed,
+                    Err(error) => {
+                        let _ = conn.execute("ROLLBACK", ()).await;
+                        return Err(error);
+                    }
+                }
+            }
+            _ => None,
+        };
+
         // Single atomic UPDATE: content + version + timestamps + user_edited
         // flag. Folding the manual_edit branch into SQL closes the TOCTOU gap
         // where a concurrent reader could observe new content paired with the
@@ -55736,6 +55765,14 @@ impl MemoryDB {
                 .collect::<Vec<_>>();
             if let Err(error) =
                 research_write::bind(&conn, fence, id, &sources, None, consume_revision_id).await
+            {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(error);
+            }
+        }
+        if let Some(reviewed) = reviewed_source_update {
+            if let Err(error) =
+                research_write::consume_reviewed_source_update_on(&conn, id, reviewed).await
             {
                 let _ = conn.execute("ROLLBACK", ()).await;
                 return Err(error);
@@ -60078,7 +60115,9 @@ impl MemoryDB {
                 conn.execute(
                     "UPDATE pages
                      SET source_memory_ids = ?1,
-                         stale_reason = 'source_updated',
+                         stale_reason = CASE
+                             WHEN stale_reason IS NULL OR stale_reason = 'source_updated'
+                             THEN 'source_removed' ELSE stale_reason END,
                          sources_updated_count = COALESCE(sources_updated_count, 0) + ?2,
                          source_revision = COALESCE(source_revision, 0) + 1,
                          last_modified = ?3,

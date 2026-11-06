@@ -573,3 +573,410 @@ async fn research_legacy_target_without_incarnation_requires_new_run() {
         .await
         .is_err());
 }
+
+async fn refresh_fixture(db: &MemoryDB, prior: usize, total: usize) -> (String, Vec<String>) {
+    let space = seed(db).await;
+    page(db, "topic", None).await.unwrap();
+    let ids: Vec<String> = (0..total)
+        .map(|i| format!("refresh-paper-{i:02}"))
+        .collect();
+    let conn = db.conn.lock().await;
+    for id in &ids {
+        conn.execute("INSERT INTO memories(id,source,source_id,title,content,space,chunk_index,last_modified,chunk_type) VALUES(?1,'file',?1,?1,'reviewable complete source text','Research',0,1,'text')",[id.as_str()]).await.unwrap();
+    }
+    drop(conn);
+    db.replace_page_sources(
+        "topic",
+        &ids[..prior].iter().map(String::as_str).collect::<Vec<_>>(),
+        "fixture",
+    )
+    .await
+    .unwrap();
+    let conn = db.conn.lock().await;
+    conn.execute("UPDATE pages SET stale_reason='source_updated',sources_updated_count=?1,source_revision=40,review_required=1 WHERE id='topic'",[prior as i64]).await.unwrap();
+    (space, ids)
+}
+
+async fn complete_refresh_run(
+    db: &MemoryDB,
+    space: &str,
+    ids: &[String],
+    read_count: usize,
+) -> (OrganizeRun, ResearchWriteFence) {
+    let mut value = db
+        .create_research_run(
+            space,
+            CreateOrganizeRunRequest {
+                space: "Research".into(),
+                sources: ids
+                    .iter()
+                    .map(|id| ResearchSourceRef {
+                        source: "file".into(),
+                        source_id: id.clone(),
+                        title: String::new(),
+                    })
+                    .collect(),
+                instructions: None,
+                target_page_id: Some("topic".into()),
+            },
+        )
+        .await
+        .unwrap();
+    for id in ids.iter().take(read_count) {
+        let read = db
+            .read_organize_source(
+                space,
+                &value.id,
+                ReadOrganizeSourceRequest {
+                    space: "Research".into(),
+                    source: "file".into(),
+                    source_id: id.clone(),
+                    offset: 0,
+                    limit: 16000,
+                },
+            )
+            .await
+            .unwrap();
+        let digest = value
+            .items
+            .iter()
+            .find(|item| item.source_ref.source_id == *id)
+            .unwrap()
+            .content_digest
+            .clone();
+        value = db
+            .update_research_run(
+                space,
+                &value.id,
+                UpdateOrganizeRunRequest {
+                    space: "Research".into(),
+                    expected_revision: read.run_revision,
+                    source: Some("file".into()),
+                    source_id: Some(id.clone()),
+                    coverage: Some(ResearchCoverage::Complete),
+                    content_digest: Some(digest),
+                    next_offset: None,
+                    error: None,
+                    cancel: false,
+                    resume: false,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let adopted: Vec<String> = ids.iter().take(read_count).cloned().collect();
+    let fence = db
+        .prepare_research_write(
+            &value.id,
+            &ReadScope::Space("Research".into()),
+            Some("topic"),
+            &adopted,
+        )
+        .await
+        .unwrap();
+    (value, fence)
+}
+
+async fn stage_refresh(
+    db: &MemoryDB,
+    ids: &[String],
+    fence: Option<&ResearchWriteFence>,
+    with_snapshots: bool,
+) -> String {
+    let scope = ReadScope::Space("Research".into());
+    let snapshots = if with_snapshots {
+        db.citation_sources(ids, &scope)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|source| source.unwrap().snapshot)
+            .collect::<Vec<_>>()
+    } else {
+        vec![]
+    };
+    crate::post_write::stage_page_revision_card_with_citations(
+        db,
+        &db.get_page("topic").await.unwrap().unwrap(),
+        "human approved refreshed research",
+        ids,
+        db.get_page_source_revision("topic").await.unwrap(),
+        "agent_refresh",
+        Some("agent"),
+        None,
+        &[],
+        Some(&scope),
+        &snapshots,
+        None,
+        fence,
+    )
+    .await
+    .unwrap()
+    .revision_card_id
+    .unwrap()
+}
+
+#[tokio::test]
+async fn research_reviewed_twenty_to_twenty_one_consumes_only_ordinary_source_staleness() {
+    let (db, _temp) = test_db().await;
+    let (space, ids) = refresh_fixture(&db, 20, 21).await;
+    let (run, fence) = complete_refresh_run(&db, &space, &ids, ids.len()).await;
+    let pending = stage_refresh(&db, &ids, Some(&fence), true).await;
+    assert_eq!(
+        db.get_page("topic")
+            .await
+            .unwrap()
+            .unwrap()
+            .sources_updated_count,
+        20
+    );
+    crate::post_write::accept_pending_revision(&db, &pending, "human-reviewer")
+        .await
+        .unwrap();
+    let page = db.get_page("topic").await.unwrap().unwrap();
+    assert_eq!(
+        page.stale_reason, None,
+        "reviewing the full current run must consume ordinary source_updated"
+    );
+    assert_eq!(page.sources_updated_count, 0);
+    assert!(
+        page.review_required,
+        "the continuous human review lock survives adoption"
+    );
+    assert_eq!(page.source_memory_ids, ids);
+    assert_eq!(
+        db.research_run(&space, &run.id).await.unwrap().state,
+        OrganizeRunState::Completed
+    );
+    assert!(db
+        .pending_memory_revision_payload(&pending)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn research_reviewed_refresh_keeps_unproven_or_protected_staleness() {
+    for case in [
+        "omitted_prior",
+        "partial_run",
+        "generic",
+        "legacy_snapshots",
+        "partial_snapshots",
+        "lifecycle",
+        "selection",
+        "other_reason",
+        "extra_live_provenance",
+    ] {
+        let (db, _temp) = test_db().await;
+        let (space, ids) = refresh_fixture(&db, 1, 2).await;
+        if case == "lifecycle" {
+            db.set_source_lifecycle(
+                &space,
+                wenlan_types::source_lifecycle::SetSourceLifecycleRequest {
+                    space: "Research".into(),
+                    source: "file".into(),
+                    source_id: ids[0].clone(),
+                    expected_revision: 0,
+                    state: wenlan_types::source_lifecycle::SourceLifecycleState::Active,
+                    reason: "reviewed lifecycle history".into(),
+                },
+                "human",
+            )
+            .await
+            .unwrap();
+        }
+        if case == "selection" {
+            let conn = db.conn.lock().await;
+            super::super::zotero_scope_impacts::zotero_scope_impact_on(
+                &conn,
+                &space,
+                &ids[..1],
+                "collection selection changed",
+            )
+            .await
+            .unwrap();
+        }
+        if case == "other_reason" || case == "extra_live_provenance" {
+            let conn = db.conn.lock().await;
+            if case == "other_reason" {
+                conn.execute(
+                    "UPDATE pages SET stale_reason='basis_changed' WHERE id='topic'",
+                    (),
+                )
+                .await
+                .unwrap();
+            } else {
+                conn.execute("INSERT INTO edges(edge_id,src_kind,src_id,dst_kind,dst_id,edge_type,lineage,grounded,space,weight,created_at) VALUES('extra-prior-evidence','page','topic','memory','paper','cites','evidence',1,'Research',1,1)", ()).await.unwrap();
+            }
+        }
+        let selected = if case == "omitted_prior" {
+            &ids[1..]
+        } else {
+            &ids[..]
+        };
+        let read_count = if case == "partial_run" {
+            1
+        } else {
+            selected.len()
+        };
+        let (_run, fence) = complete_refresh_run(&db, &space, selected, read_count).await;
+        let adopted = &selected[..read_count];
+        let pending = stage_refresh(
+            &db,
+            adopted,
+            (case != "generic").then_some(&fence),
+            case != "legacy_snapshots",
+        )
+        .await;
+        if case == "partial_snapshots" {
+            let conn = db.conn.lock().await;
+            conn.execute("UPDATE memories SET structured_fields=json_remove(structured_fields,'$.citation_source_snapshots[1]') WHERE source_id=?1", [pending.as_str()]).await.unwrap();
+        }
+        let before = db.get_page("topic").await.unwrap().unwrap();
+        crate::post_write::accept_pending_revision(&db, &pending, "human-reviewer")
+            .await
+            .unwrap();
+        let after = db.get_page("topic").await.unwrap().unwrap();
+        assert_eq!(after.stale_reason, before.stale_reason, "{case}");
+        assert_eq!(
+            after.sources_updated_count, before.sources_updated_count,
+            "{case}"
+        );
+        assert!(after.review_required, "{case}");
+        assert_eq!(
+            after.content, "human approved refreshed research",
+            "{case}: adoption still works"
+        );
+    }
+}
+
+#[tokio::test]
+async fn research_reviewed_refresh_generation_race_and_late_failure_roll_back_acknowledgement() {
+    for case in ["same_bytes_new_generation", "late_card_delete_failure"] {
+        let (db, _temp) = test_db().await;
+        let (space, ids) = refresh_fixture(&db, 1, 2).await;
+        let (run, fence) = complete_refresh_run(&db, &space, &ids, ids.len()).await;
+        let pending = stage_refresh(&db, &ids, Some(&fence), true).await;
+        let before = db.get_page("topic").await.unwrap().unwrap();
+        let source_revision = db.get_page_source_revision("topic").await.unwrap();
+        {
+            let conn = db.conn.lock().await;
+            if case == "same_bytes_new_generation" {
+                conn.execute(
+                    "UPDATE memories SET version=COALESCE(version,1)+1 WHERE source_id=?1",
+                    [ids[0].as_str()],
+                )
+                .await
+                .unwrap();
+            } else {
+                conn.execute("CREATE TEMP TRIGGER fail_review_card_delete BEFORE DELETE ON memories WHEN OLD.pending_revision=1 BEGIN SELECT RAISE(ABORT,'injected late review failure'); END", ()).await.unwrap();
+            }
+        }
+        assert!(
+            crate::post_write::accept_pending_revision(&db, &pending, "human-reviewer")
+                .await
+                .is_err(),
+            "{case}"
+        );
+        let after = db.get_page("topic").await.unwrap().unwrap();
+        assert_eq!(after.content, before.content, "{case}");
+        assert_eq!(after.version, before.version, "{case}");
+        assert_eq!(after.stale_reason, before.stale_reason, "{case}");
+        assert_eq!(
+            after.sources_updated_count, before.sources_updated_count,
+            "{case}"
+        );
+        assert_eq!(
+            db.get_page_source_revision("topic").await.unwrap(),
+            source_revision,
+            "{case}"
+        );
+        let waiting = db.research_run(&space, &run.id).await.unwrap();
+        assert_eq!(waiting.state, OrganizeRunState::AwaitingReview, "{case}");
+        assert_eq!(
+            waiting.pending_revision_id.as_deref(),
+            Some(pending.as_str()),
+            "{case}"
+        );
+        assert!(
+            db.pending_memory_revision_payload(&pending)
+                .await
+                .unwrap()
+                .is_some(),
+            "{case}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn research_survivor_review_keeps_source_removal_after_orphan_cleanup() {
+    let (db, _temp) = test_db().await;
+    let (space, ids) = refresh_fixture(&db, 2, 2).await;
+    db.clear_page_staleness("topic").await.unwrap();
+    let revision_before = db.get_page_source_revision("topic").await.unwrap();
+    // Document-store removal can precede the housekeeping/refinery orphan
+    // sweep. Exercise that real cleanup path, not a hand-edited page source set.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "DELETE FROM memories WHERE source='file' AND source_id=?1",
+            [ids[1].as_str()],
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(db.cleanup_orphaned_page_sources().await.unwrap(), 1);
+    let pruned = db.get_page("topic").await.unwrap().unwrap();
+    assert_eq!(pruned.source_memory_ids, ids[..1]);
+    assert_eq!(db.get_page_sources("topic").await.unwrap().len(), 1);
+    assert_eq!(pruned.sources_updated_count, 1);
+    assert_eq!(
+        db.get_page_source_revision("topic").await.unwrap(),
+        revision_before + 1
+    );
+    let (run, fence) = complete_refresh_run(&db, &space, &ids[..1], 1).await;
+    let pending = stage_refresh(&db, &ids[..1], Some(&fence), true).await;
+    crate::post_write::accept_pending_revision(&db, &pending, "human-reviewer")
+        .await
+        .unwrap();
+    let adopted = db.get_page("topic").await.unwrap().unwrap();
+    assert_eq!(adopted.content, "human approved refreshed research");
+    assert_eq!(
+        db.research_run(&space, &run.id).await.unwrap().state,
+        OrganizeRunState::Completed
+    );
+    assert_eq!(
+        adopted.stale_reason.as_deref(),
+        Some("source_removed"),
+        "reviewing survivor A cannot acknowledge missing B"
+    );
+    assert_eq!(adopted.sources_updated_count, 1);
+    assert!(adopted.review_required);
+}
+
+#[tokio::test]
+async fn research_orphan_cleanup_preserves_existing_nonordinary_notice() {
+    for reason in ["basis_changed", "source_removed"] {
+        let (db, _temp) = test_db().await;
+        let (_space, ids) = refresh_fixture(&db, 2, 2).await;
+        {
+            let conn = db.conn.lock().await;
+            conn.execute("UPDATE pages SET stale_reason=?1,refresh_blocked_reason='already_blocked' WHERE id='topic'", [reason]).await.unwrap();
+            conn.execute(
+                "DELETE FROM memories WHERE source='file' AND source_id=?1",
+                [ids[1].as_str()],
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(db.cleanup_orphaned_page_sources().await.unwrap(), 1);
+        let page = db.get_page("topic").await.unwrap().unwrap();
+        assert_eq!(page.stale_reason.as_deref(), Some(reason));
+        assert_eq!(
+            page.refresh_blocked_reason.as_deref(),
+            Some("already_blocked")
+        );
+        assert_eq!(page.sources_updated_count, 3);
+        assert_eq!(page.source_memory_ids, ids[..1]);
+    }
+}

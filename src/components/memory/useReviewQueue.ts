@@ -95,6 +95,7 @@ export type ReviewSection =
   | "revisions"
   | "conflicts"
   | "pages"
+  | "classifications"
   | "memory"
   | "candidates"
   | "topics"
@@ -106,6 +107,7 @@ const SECTION_ORDER: ReviewSection[] = [
   "revisions",
   "conflicts",
   "pages",
+  "classifications",
   "memory",
   "candidates",
   "topics",
@@ -119,6 +121,8 @@ export function reviewItemSection(item: ReviewItem): ReviewSection {
   if (item.kind === "page_candidate") return "candidates";
   if (item.kind === "topic") return "topics";
   switch (item.action) {
+    case "source_classification":
+      return "classifications";
     case "page_merge":
     case "page_keep_or_archive":
       return "pages";

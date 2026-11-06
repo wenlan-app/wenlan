@@ -58,6 +58,10 @@ trait ZoteroApi {
         &mut self,
         key: &str,
     ) -> impl Future<Output = anyhow::Result<zotero::ZoteroPageSet<ZoteroItem>>> + Send;
+    fn attachment_annotations(
+        &mut self,
+        key: &str,
+    ) -> impl Future<Output = anyhow::Result<zotero::ZoteroPageSet<ZoteroItem>>> + Send;
     fn fulltext(
         &mut self,
         key: &str,
@@ -82,6 +86,12 @@ impl ZoteroApi for ZoteroClient {
     }
     async fn children(&mut self, key: &str) -> anyhow::Result<zotero::ZoteroPageSet<ZoteroItem>> {
         ZoteroClient::children(self, key).await
+    }
+    async fn attachment_annotations(
+        &mut self,
+        key: &str,
+    ) -> anyhow::Result<zotero::ZoteroPageSet<ZoteroItem>> {
+        ZoteroClient::attachment_annotations(self, key).await
     }
     async fn fulltext(&mut self, key: &str) -> anyhow::Result<ZoteroFulltext> {
         ZoteroClient::fulltext(self, key).await
@@ -1471,6 +1481,22 @@ async fn sync_source_with_client<C: ZoteroApi>(
     })
 }
 
+async fn attachment_annotations<C: ZoteroApi>(
+    client: &mut C,
+    key: &str,
+) -> anyhow::Result<Vec<ZoteroItem>> {
+    let listed = client.attachment_annotations(key).await?;
+    if !listed.complete {
+        anyhow::bail!("Zotero annotation listing was incomplete");
+    }
+    if listed.items.iter().any(|item| {
+        item.data.item_type != "annotation" || item.data.parent_item.as_deref() != Some(key)
+    }) {
+        anyhow::bail!("Zotero annotation listing contained an unexpected item or parent");
+    }
+    Ok(listed.items)
+}
+
 async fn prepare_item<C: ZoteroApi>(
     client: &mut C,
     item: &ZoteroItem,
@@ -1488,6 +1514,7 @@ async fn prepare_item<C: ZoteroApi>(
     let mut attachments = Vec::new();
     let mut pdf_warnings = Vec::new();
     if is_pdf_attachment(item) {
+        all_children.extend(attachment_annotations(client, &item.key).await?);
         match client.pdf_bytes(&item.key).await {
             Ok(bytes) => attachments.push(PreparedAttachment {
                 key: item.key.clone(),
@@ -1557,11 +1584,7 @@ async fn prepare_item<C: ZoteroApi>(
                     ));
                 }
             }
-            let nested = client.children(&child.key).await?;
-            if !nested.complete {
-                anyhow::bail!("Zotero annotation listing was incomplete");
-            }
-            all_children.extend(nested.items);
+            all_children.extend(attachment_annotations(client, &child.key).await?);
         }
     }
     let annotations = read_annotations(&all_children, &attachments);
@@ -2329,6 +2352,8 @@ mod tests {
         collection: ZoteroCollection,
         items: Vec<ZoteroItem>,
         fail_children_for: HashSet<String>,
+        children_items: Vec<ZoteroItem>,
+        annotation_items: Vec<ZoteroItem>,
         incomplete_items: bool,
         incomplete_collections: bool,
         replace_source_after_items: Option<Source>,
@@ -2387,12 +2412,20 @@ mod tests {
         ) -> impl Future<Output = anyhow::Result<zotero::ZoteroPageSet<ZoteroItem>>> + Send
         {
             let fail = self.fail_children_for.contains(key);
+            let items = self.children_items.clone();
             async move {
                 if fail {
                     anyhow::bail!("fixture child request failed")
                 }
-                Ok(page(Vec::new()))
+                Ok(page(items))
             }
+        }
+
+        async fn attachment_annotations(
+            &mut self,
+            _key: &str,
+        ) -> anyhow::Result<zotero::ZoteroPageSet<ZoteroItem>> {
+            Ok(page(self.annotation_items.clone()))
         }
 
         async fn fulltext(&mut self, _key: &str) -> anyhow::Result<ZoteroFulltext> {
@@ -2446,6 +2479,8 @@ mod tests {
     fn fake(items: Vec<ZoteroItem>, fail_children_for: &[&str]) -> FakeZotero {
         FakeZotero {
             identity: Some("test-server".into()),
+            children_items: Vec::new(),
+            annotation_items: Vec::new(),
             incomplete_items: false,
             incomplete_collections: false,
             replace_source_after_items: None,
@@ -2463,6 +2498,31 @@ mod tests {
             items,
             fail_children_for: fail_children_for.iter().map(|key| (*key).into()).collect(),
         }
+    }
+
+    #[tokio::test]
+    async fn prepare_item_ingests_attachment_scoped_string_position_annotation() {
+        let attachment: ZoteroItem = serde_json::from_str(r#"{"key":"YXNSB3HI","version":1,"data":{"itemType":"attachment","title":"FiD","contentType":"application/pdf"}}"#).unwrap();
+        // The identity, color and position are from the real Zotero 10.0.7 response.
+        let annotation: ZoteroItem = serde_json::from_str(r##"{"key":"P78LVH7C","version":1,"data":{"itemType":"annotation","parentItem":"YXNSB3HI","annotationType":"highlight","annotationColor":"#ffd400","annotationPosition":"{\"pageIndex\":0,\"rects\":[[436.949,374.142,523.056,382.78]]}"}}"##).unwrap();
+        let mut client = fake(vec![], &[]);
+        client.children_items = vec![attachment];
+        client.annotation_items = vec![annotation.clone()];
+        let prepared = prepare_item(&mut client, &article("V4ZWXW4G", "FiD", ""))
+            .await
+            .unwrap();
+        assert_eq!(prepared.annotations.len(), 1);
+        assert_eq!(prepared.annotations[0].key, "P78LVH7C");
+        assert_eq!(prepared.annotations[0].attachment_key, "YXNSB3HI");
+        assert_eq!(prepared.annotations[0].page_index, 0);
+        assert_eq!(
+            prepared.annotations[0].rects[0],
+            [436.949, 374.142, 523.056, 382.78]
+        );
+        client.annotation_items[0].data.parent_item = Some("FOREIGN1".into());
+        assert!(prepare_item(&mut client, &article("V4ZWXW4G", "FiD", ""))
+            .await
+            .is_err());
     }
 
     fn source() -> Source {

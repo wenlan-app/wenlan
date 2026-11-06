@@ -11825,7 +11825,7 @@ mod tests {
             .expect("write_page registered");
         let description = tool.description.as_deref().unwrap_or_default();
         assert!(
-            description.contains("turn something from this conversation into a page"),
+            description.contains("To save conversation content, provide title and content"),
             "{description}"
         );
         assert!(

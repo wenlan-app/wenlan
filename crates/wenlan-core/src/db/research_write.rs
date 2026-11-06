@@ -202,6 +202,167 @@ pub(super) async fn guard(
     }
     Ok(())
 }
+/// Captured before replacing page provenance. Only a reviewed, complete frozen
+/// run may acknowledge ordinary source staleness; generic writes keep it.
+pub(super) struct ReviewedSourceUpdate {
+    incarnation: String,
+    space_id: String,
+    version: i64,
+    source_revision: i64,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn reviewed_source_update_on(
+    conn: &libsql::Connection,
+    fence: &ResearchWriteFence,
+    page_id: &str,
+    sources: &[&str],
+    snapshots: &[super::CitationSourceSnapshot],
+    expected_version: i64,
+    expected_source_revision: i64,
+    revision_id: &str,
+) -> Result<Option<ReviewedSourceUpdate>, WenlanError> {
+    let value = run(conn, &fence.space_id, &fence.run_id).await?;
+    if value.items.is_empty()
+        || value.items.iter().any(|item| {
+            item.coverage != ResearchCoverage::Complete
+                || !super::research_runs::complete_receipt(item)
+                || item.lifecycle_revision != 0
+        })
+        || super::zotero_scope_impacts::has_pending_on(conn, page_id).await?
+    {
+        return Ok(None);
+    }
+    let name = space_name(conn, &fence.space_id).await?;
+    // Acceptance may append fresh citation snapshots. Only the card's original
+    // staged snapshots prove every source generation was part of the review.
+    let mut rows = conn
+        .query(
+            "SELECT json_extract(m.structured_fields,'$.citation_source_snapshots')
+         FROM memories m JOIN pages p ON p.id=?2
+         WHERE m.source='memory' AND m.source_id=?1 AND m.pending_revision=1
+         AND m.chunk_index=0 AND m.supersedes=p.id AND m.space=?3
+         AND json_extract(m.structured_fields,'$.page_incarnation')=p.incarnation
+         AND json_extract(m.structured_fields,'$.page_version')=?4
+         AND json_extract(m.structured_fields,'$.source_revision')=?5",
+            libsql::params![
+                revision_id,
+                page_id,
+                name.as_str(),
+                expected_version,
+                expected_source_revision
+            ],
+        )
+        .await
+        .map_err(sql)?;
+    let Some(row) = rows.next().await.map_err(sql)? else {
+        return Ok(None);
+    };
+    let Some(staged) = row.get::<Option<String>>(0).map_err(sql)? else {
+        return Ok(None);
+    };
+    let staged: Vec<super::CitationSourceSnapshot> = serde_json::from_str(&staged)?;
+    drop(rows);
+    if staged.iter().any(|snapshot| !snapshots.contains(snapshot)) {
+        return Ok(None);
+    }
+    let snapshots = staged.as_slice();
+    let selected: std::collections::BTreeSet<&str> = value
+        .items
+        .iter()
+        .map(|item| item.source_ref.source_id.as_str())
+        .collect();
+    let adopted: std::collections::BTreeSet<&str> = sources.iter().copied().collect();
+    if selected.len() != value.items.len()
+        || adopted.len() != sources.len()
+        || selected != adopted
+        || value.items.iter().any(|item| {
+            !snapshots.iter().any(|snapshot| {
+                snapshot.source == item.source_ref.source
+                    && snapshot.source_id == item.source_ref.source_id
+                    && snapshot.space.as_deref() == Some(name.as_str())
+            })
+        })
+    {
+        return Ok(None);
+    }
+    let mut rows = conn.query(
+        "SELECT incarnation,source_memory_ids FROM pages WHERE id=?1 AND workspace=?2
+         AND status='active' AND stale_reason='source_updated' AND version=?3 AND source_revision=?4",
+        libsql::params![page_id, name, expected_version, expected_source_revision],
+    ).await.map_err(sql)?;
+    let Some(row) = rows.next().await.map_err(sql)? else {
+        return Ok(None);
+    };
+    let incarnation = row.get::<String>(0).map_err(sql)?;
+    // Malformed provenance is not evidence of an empty prior source set.
+    let prior: Vec<String> = serde_json::from_str(&row.get::<String>(1).map_err(sql)?)?;
+    drop(rows);
+    if value.target_page_id.as_deref() != Some(page_id)
+        || value.target_page_incarnation.as_deref() != Some(incarnation.as_str())
+        || prior.iter().any(|id| !selected.contains(id.as_str()))
+    {
+        return Ok(None);
+    }
+    // Include live provenance edges as well as the page's source list. Unknown
+    // locators conservatively keep the notice rather than silently losing evidence.
+    let mut rows = conn
+        .query(
+            "SELECT dst_id FROM edges WHERE src_kind='page' AND src_id=?1
+         AND edge_type='cites' AND dst_kind IN ('memory','external') AND valid_until IS NULL",
+            [page_id],
+        )
+        .await
+        .map_err(sql)?;
+    while let Some(row) = rows.next().await.map_err(sql)? {
+        let locator = row.get::<String>(0).map_err(sql)?;
+        if !selected.contains(locator.as_str())
+            && !snapshots.iter().any(|snapshot| {
+                snapshot.locator == locator && selected.contains(snapshot.source_id.as_str())
+            })
+        {
+            return Ok(None);
+        }
+    }
+    drop(rows);
+    // Snapshot guard (called by the transaction owner) fences generations, while
+    // this existing guard independently fences raw run digests and run identity.
+    guard(
+        conn,
+        fence,
+        Some(page_id),
+        &sources.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        Some(revision_id),
+    )
+    .await?;
+    Ok(Some(ReviewedSourceUpdate {
+        incarnation,
+        space_id: fence.space_id.clone(),
+        version: expected_version,
+        source_revision: expected_source_revision,
+    }))
+}
+
+pub(super) async fn consume_reviewed_source_update_on(
+    conn: &libsql::Connection,
+    page_id: &str,
+    reviewed: ReviewedSourceUpdate,
+) -> Result<(), WenlanError> {
+    let changed = conn.execute(
+        "UPDATE pages SET stale_reason=NULL,sources_updated_count=0
+         WHERE id=?1 AND incarnation=?2 AND workspace=(SELECT name FROM spaces WHERE id=?3)
+         AND status='active' AND stale_reason='source_updated' AND version=?4 AND source_revision=?5",
+        libsql::params![page_id, reviewed.incarnation, reviewed.space_id,
+            reviewed.version + 1, reviewed.source_revision + 1],
+    ).await.map_err(sql)?;
+    if changed != 1 {
+        return Err(WenlanError::Conflict(
+            "reviewed source acknowledgement changed".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) async fn bind(
     conn: &libsql::Connection,
     fence: &ResearchWriteFence,

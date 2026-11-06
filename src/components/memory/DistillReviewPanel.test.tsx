@@ -905,6 +905,26 @@ describe("DistillReviewPanel review filter", () => {
     orphan_topics: [],
   };
 
+  it("groups source classifications separately from merges", async () => {
+    vi.mocked(distillReview).mockResolvedValue(emptyDistill);
+    vi.mocked(listRefinements).mockResolvedValue({ proposals: [
+      { id: "classification", action: "source_classification", source_ids: ["paper"], payload: { action: "source_classification", run_id: "run", space_id: "space", rules_digest: "rules", changes: [{ source: "file", source_id: "paper", title: "Paper", source_content_digest: "digest", expected_decision_revision: 0, before_tags: [], add_tags: ["method"], remove_tags: [], reason: "Methods" }] }, confidence: 1, created_at: "2026-11-06T00:00:00Z" },
+      { id: "merge", action: "entity_merge", source_ids: ["ent_2", "ent_1"], payload: { action: "entity_merge", existing_id: "ent_1", new_id: "ent_2", similarity: 0.9 }, confidence: 0.9, created_at: "2026-11-06T00:00:00Z" },
+    ] } as unknown as Awaited<ReturnType<typeof listRefinements>>);
+    const { user } = renderPanel();
+    const filters = await screen.findByRole("group", { name: "Filter reviews" });
+    const classifications = await within(filters).findByRole("button", { name: /^Classification suggestions/ });
+    expect(classifications).toHaveTextContent("1");
+    const merges = within(filters).getByRole("button", { name: /^Merges/ });
+    expect(merges).toHaveTextContent("1");
+    await user.click(classifications);
+    expect(screen.getByRole("heading", { name: "Classification suggestions" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Merges & suggestions" })).not.toBeInTheDocument();
+    await user.click(merges);
+    expect(screen.getByRole("heading", { name: "Merges & suggestions" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Classification suggestions" })).not.toBeInTheDocument();
+  });
+
   it("shows only All and Revisions chips when the queue is empty", async () => {
     vi.mocked(distillReview).mockResolvedValue(emptyDistill);
     renderPanel();

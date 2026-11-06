@@ -88,6 +88,23 @@ impl ZoteroClient {
             .await
     }
 
+    pub async fn attachment_annotations(&mut self, key: &str) -> Result<ZoteroPageSet<ZoteroItem>> {
+        validate_key(key)?;
+        let result = self
+            .get_pages_with_query(
+                "/users/0/items",
+                &[("itemKey", key), ("itemType", "annotation")],
+                true,
+            )
+            .await?;
+        if result.items.iter().any(|item: &ZoteroItem| {
+            item.data.item_type != "annotation" || item.data.parent_item.as_deref() != Some(key)
+        }) {
+            bail!("Zotero annotation listing contained an unexpected item or parent");
+        }
+        Ok(result)
+    }
+
     pub async fn fulltext(&mut self, key: &str) -> Result<ZoteroFulltext> {
         validate_key(key)?;
         let path = format!("/users/0/items/{key}/fulltext");
@@ -184,23 +201,35 @@ impl ZoteroClient {
         &mut self,
         path: &str,
     ) -> Result<ZoteroPageSet<T>> {
+        self.get_pages_with_query(path, &[], false).await
+    }
+
+    async fn get_pages_with_query<T: DeserializeOwned + ZoteroKeyed>(
+        &mut self,
+        path: &str,
+        query: &[(&str, &str)],
+        require_total: bool,
+    ) -> Result<ZoteroPageSet<T>> {
         let mut all_items = Vec::new();
         let mut start = 0usize;
         let mut total_results = None;
         let mut prior_page: Option<Vec<u8>> = None;
         let mut seen_keys = HashSet::new();
         for _ in 0..MAX_PAGES {
-            let response = self.request(path, Some(start)).await?;
+            let response = self.request_with_query(path, Some(start), query).await?;
             let (response, body) = self.response_body(response).await?;
             if !response.status().is_success() {
                 bail!("Zotero API returned HTTP {} for {path}", response.status());
             }
-            if let Some(total) = response
+            let page_total = response
                 .headers()
                 .get("total-results")
                 .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<usize>().ok())
-            {
+                .and_then(|s| s.parse::<usize>().ok());
+            if require_total && page_total.is_none() {
+                bail!("Zotero annotation listing requires a valid Total-Results header");
+            }
+            if let Some(total) = page_total {
                 if total_results.is_some_and(|old| old != total) {
                     bail!("Zotero total-results changed during pagination");
                 }
@@ -258,6 +287,15 @@ impl ZoteroClient {
         path: &str,
         page_start: Option<usize>,
     ) -> Result<reqwest::Response> {
+        self.request_with_query(path, page_start, &[]).await
+    }
+
+    async fn request_with_query(
+        &mut self,
+        path: &str,
+        page_start: Option<usize>,
+        query: &[(&str, &str)],
+    ) -> Result<reqwest::Response> {
         let mut url = self.endpoint.clone();
         url.set_path(&format!(
             "{}{}",
@@ -268,6 +306,9 @@ impl ZoteroClient {
             let mut query = url.query_pairs_mut();
             query.append_pair("limit", &PAGE_SIZE.to_string());
             query.append_pair("start", &start.to_string());
+        }
+        for (name, value) in query {
+            url.query_pairs_mut().append_pair(name, value);
         }
         let mut request = self.client.get(url);
         if let Some(server_id) = &self.server_id {
@@ -843,6 +884,65 @@ mod tests {
     }
 
     type HttpFixtureResponse = (u16, Vec<(String, String)>, String);
+
+    #[tokio::test]
+    async fn annotation_query_is_attachment_scoped_and_rejects_foreign_rows() {
+        let annotation = r##"[{"key":"P78LVH7C","version":1,"data":{"itemType":"annotation","parentItem":"YXNSB3HI","annotationType":"highlight","annotationColor":"#ffd400","annotationPosition":"{\"pageIndex\":0,\"rects\":[[436.949,374.142,523.056,382.78]]}"}}]"##;
+        let (endpoint, requests) = fixture_server(vec![(
+            200,
+            vec![
+                ("Zotero-Server-ID".into(), "fixture-server".into()),
+                ("Total-Results".into(), "1".into()),
+            ],
+            annotation.into(),
+        )]);
+        let mut client = ZoteroClient::for_test(&endpoint, None).unwrap();
+        let result = client.attachment_annotations("YXNSB3HI").await.unwrap();
+        assert!(result.complete);
+        assert_eq!(result.items[0].key, "P78LVH7C");
+        assert_eq!(
+            result.items[0].data.annotation_position.as_ref().unwrap()["pageIndex"],
+            0
+        );
+        let captured = requests.lock().unwrap();
+        assert!(captured[0].starts_with(
+            "GET /api/users/0/items?limit=100&start=0&itemKey=YXNSB3HI&itemType=annotation "
+        ));
+        drop(captured);
+        for row in [
+            annotation.replace("YXNSB3HI", "FOREIGN1"),
+            annotation.replace("\"annotation\"", "\"note\""),
+        ] {
+            let (endpoint, _) =
+                fixture_server(vec![(200, vec![("Total-Results".into(), "1".into())], row)]);
+            let mut client = ZoteroClient::for_test(&endpoint, None).unwrap();
+            assert!(client.attachment_annotations("YXNSB3HI").await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn annotation_query_requires_stable_valid_totals() {
+        for headers in [vec![], vec![("Total-Results".into(), "invalid".into())]] {
+            let (endpoint, _) = fixture_server(vec![(200, headers, "[]".into())]);
+            let mut client = ZoteroClient::for_test(&endpoint, None).unwrap();
+            assert!(client.attachment_annotations("YXNSB3HI").await.is_err());
+        }
+        let rows = (0..100).map(|i| format!(r#"{{"key":"K{i}","version":1,"data":{{"itemType":"annotation","parentItem":"YXNSB3HI"}}}}"#)).collect::<Vec<_>>().join(",");
+        let (endpoint, _) = fixture_server(vec![
+            (
+                200,
+                vec![("Total-Results".into(), "101".into())],
+                format!("[{rows}]"),
+            ),
+            (
+                200,
+                vec![("Total-Results".into(), "102".into())],
+                "[]".into(),
+            ),
+        ]);
+        let mut client = ZoteroClient::for_test(&endpoint, None).unwrap();
+        assert!(client.attachment_annotations("YXNSB3HI").await.is_err());
+    }
 
     #[tokio::test]
     async fn pagination_collects_all_pages_and_reports_coverage() {
