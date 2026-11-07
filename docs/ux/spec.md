@@ -199,10 +199,10 @@ and wait for evidence that people need them.
 - **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
-- **UX-WHO-4** `shipped` A sentence that can't be backed up is marked next to
-  that sentence, not in a banner at the top. One press asks the AI to recheck
-  only that sentence.
-  原文：靠不住的句子標在那一句旁邊，不是頁頂橫幅；按一下，AI 只重查那一句。
+- **UX-WHO-4** `shipped` Info → This sentence shows the source-check reason for
+  the sentence under the cursor and lets the person ask AI to recheck only that
+  sentence. Ordinary page prose has no inline Source check interruption.
+  閱讀體驗修正：在 Info 的「這一句」看原因、只重查這一句；正文不插入來源檢查提示。
 - **UX-WHO-5** `shipped` An unverified source can't be hidden and can't look
   verified.
   原文：現有規則不變：沒驗證的出處不能藏，也不能看起來像驗證過。

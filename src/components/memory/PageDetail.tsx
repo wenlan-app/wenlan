@@ -54,8 +54,6 @@ import {
   type PageReviewOutcome,
   type IndexedFileInfo,
   type UpdatePageFailureKind,
-  recheckPageSentence,
-  type WeakReason,
 } from "../../lib/tauri";
 // Imported from its own module, not the lib/tauri barrel: tests mock that
 // barrel, and a mocked module would shadow the value this must stay bound to.
@@ -1008,22 +1006,8 @@ export default function PageDetail({
     return { marks, beforeLabel: t("aiUpdate.before") };
   }, [aiChangesShown, lastAiUpdate, pageSentences, t]);
 
-  // Who said each sentence and which can't be backed up (UX-WHO-1, UX-WHO-4),
-  // plus the sentence the cursor is in for Info's "this sentence" (UX-WHO-3).
+  // Keep authorship and cursor identity for Info's "this sentence" (UX-WHO-1/3/4).
   const [cursorSentenceHash, setCursorSentenceHash] = useState<string | null>(null);
-  const [recheckingHash, setRecheckingHash] = useState<string | null>(null);
-  const recheckSentence = useCallback(async (hash: string) => {
-    const originPageId = pageId;
-    setRecheckingHash(hash);
-    try {
-      await recheckPageSentence(originPageId, hash);
-    } catch {
-      if (activePageIdRef.current === originPageId) setActionErrorMessage(t("thisSentence.recheckFailed"));
-    } finally {
-      await queryClient.invalidateQueries({ queryKey: ["page-sentences", originPageId] });
-      setRecheckingHash(null);
-    }
-  }, [pageId, queryClient, t]);
   const currentSentences = pageSentences?.page_id === pageId ? pageSentences.sentences : null;
   const cursorSentence = useMemo(
     () => currentSentences?.find((sentence) => sentence.hash === cursorSentenceHash) ?? null,
@@ -1038,18 +1022,9 @@ export default function PageDetail({
         said: sentence.author === "original" ? null : sentence.protected ? "you" : sentence.author === "ai" ? "ai" : null,
         weak: sentence.weak ?? [],
       })),
-      labels: {
-        you: t("thisSentence.who.you"),
-        ai: t("thisSentence.who.ai"),
-        weak: (reason: WeakReason) => t("thisSentence.weak", { reason: t(`weakReason.${reason}`) }),
-        recheck: t("thisSentence.recheck"),
-        rechecking: t("thisSentence.rechecking"),
-      },
-      busyHash: recheckingHash,
-      onRecheck: (hash) => void recheckSentence(hash),
       onCursorSentence: setCursorSentenceHash,
     };
-  }, [currentSentences, recheckingHash, recheckSentence, t]);
+  }, [currentSentences]);
 
   const editorSentenceProposals = useMemo<SentenceProposalSettings>(() => ({
     proposals: pendingProposals,

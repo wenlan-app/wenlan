@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { pageLayersEditing } from "./pageLayersEditing";
 import {
   leadingWeakReason,
@@ -23,15 +23,6 @@ function settings(overrides: Partial<SentenceAuthorshipSettings> = {}): Sentence
       { hash: "h3", text: "Tram 28 runs all night.", said: "ai", weak: ["stale", "no_citation"] },
       { hash: "h4", text: "We fly on May 12.", said: "ai", weak: [] },
     ],
-    labels: {
-      you: "Yours",
-      ai: "Written by AI",
-      weak: (reason) => `Unsupported: ${reason}`,
-      recheck: "Ask AI to recheck",
-      rechecking: "Rechecking…",
-    },
-    busyHash: null,
-    onRecheck: vi.fn(),
     ...overrides,
   };
 }
@@ -64,15 +55,15 @@ describe("sentence authorship", () => {
     expect(ranges.map((range) => range.from)).toEqual([0, 18, 52, 76]);
   });
 
-  it("UX-WHO-4: marks a weak sentence right after it and rechecks only that sentence", () => {
-    const onRecheck = vi.fn();
-    const v = mount(settings({ onRecheck }));
-    expect(texts(v, ".cm-sentence-weak-label")).toEqual(["Unsupported: stale"]);
-    (v.dom.querySelector(".cm-sentence-weak-recheck") as HTMLButtonElement).click();
-    expect(onRecheck).toHaveBeenCalledWith("h3");
+  it("UX-WHO-4: keeps source-check text and actions out of ordinary prose", () => {
+    const v = mount(settings());
+    expect(texts(v, ".cm-sentence-weak, .cm-sentence-weak-label, .cm-sentence-weak-recheck")).toEqual([]);
+    expect(v.dom.textContent).not.toContain("Source check");
+    expect(v.dom.textContent).not.toContain("Ask AI to recheck");
+    expect(v.state.doc.toString()).toBe(DOC);
   });
 
-  it("UX-WHO-4: leaves a sentence that only lacks a source unmarked in the text", () => {
+  it("UX-WHO-4: also leaves a sentence that only lacks a source unmarked in the text", () => {
     const v = mount(settings({ sentences: [{ hash: "h9", text: "Tram 28 runs all night.", said: "ai", weak: ["no_citation"] }] }));
     expect(texts(v, ".cm-sentence-weak")).toEqual([]);
   });
