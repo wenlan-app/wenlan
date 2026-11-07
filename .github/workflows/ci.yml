@@ -238,6 +238,7 @@ jobs:
               - 'scripts/resolve-backend-dir*'
               - 'scripts/setup-vulkan-sdk-windows*'
               - 'scripts/smoke-windows.ps1'
+              - 'scripts/smoke-windows.test.ps1'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'app/Cargo.toml'
@@ -672,6 +673,7 @@ jobs:
               - 'crates/**/*.hxx'
               - 'scripts/stage-onnxruntime-windows.ps1'
               - 'scripts/smoke-windows.ps1'
+              - 'scripts/smoke-windows.test.ps1'
               - 'scripts/smoke-windows-llm.ps1'
               - 'scripts/smoke-windows-llm.test.ps1'
               - 'scripts/first-run/lib.ps1'
@@ -801,6 +803,7 @@ jobs:
               - 'install.sh'
               - 'scripts/stage-onnxruntime-windows.ps1'
               - 'scripts/smoke-windows.ps1'
+              - 'scripts/smoke-windows.test.ps1'
               - 'scripts/smoke-windows-llm.ps1'
               - 'scripts/smoke-windows-llm.test.ps1'
               - 'scripts/setup-vulkan-sdk-windows.ps1'
@@ -2346,6 +2349,7 @@ jobs:
         if: matrix.target == 'x86_64-pc-windows-msvc'
         shell: pwsh
         run: |
+          & scripts/smoke-windows.test.ps1
           & scripts/stage-vulkan-loader-windows.test.ps1
           & scripts/stage-msvc-runtime-windows.test.ps1
           & scripts/stage-vulkan-loader-windows.ps1 `
@@ -2354,8 +2358,8 @@ jobs:
             -DestinationDirectory "target\${{ matrix.target }}\release"
           & scripts/stage-onnxruntime-windows.ps1 `
             -DestinationDirectory "target\${{ matrix.target }}\release"
-      # The native smoke starts a fresh daemon. Give it the model prepared by
-      # detect-changes so health does not depend on a cold Hugging Face fetch.
+      # The native smoke starts a fresh daemon and waits for actual embedding
+      # readiness. Give it the model prepared by detect-changes, avoiding a cold fetch.
       - name: Download portable FastEmbed model
         if: matrix.target == 'x86_64-pc-windows-msvc'
         id: fastembed-download
