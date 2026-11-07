@@ -460,3 +460,104 @@ async fn move_checks_scope_before_missing_configuration_or_disk_paths() {
     assert!(hidden_wire.get("page").is_none());
     assert!(hidden_wire.get("storage_path").is_none());
 }
+
+#[tokio::test]
+async fn page_selection_impacts_respect_scope_truth_and_hide_aliases() {
+    use wenlan_core::truth_contract::TruthGrant;
+    let id = "page_00000000-0000-4000-8000-000000000fc3";
+    let (tmp, db, root, page, _) = project_active_page(id, "Research", "papers").await;
+    let space = db.get_space("work").await.unwrap().unwrap();
+    db.create_space("foreign", None, false).await.unwrap();
+    let fence = db.try_get_page_fence(id).await.unwrap().unwrap();
+    let fixture = libsql::Builder::new_local(tmp.path().join("origin_memory.db"))
+        .build()
+        .await
+        .unwrap();
+    let conn = fixture.connect().unwrap();
+    conn.execute("INSERT INTO memories(id,source,source_id,title,content,space,chunk_index,last_modified,chunk_type) VALUES('chunk-a','file','paper-a','Study A','Evidence','work',0,1,'text')", ()).await.unwrap();
+    let event = serde_json::json!([{"event_id":"event","observed_at":1,"reviewed":false,"incarnation":fence.incarnation,"space_id":space.id,"source_revision":fence.source_revision,"page_version":page.version,"locators":["paper-a","chunk-a","old-chunk"],"reason":"Zotero item is no longer in the synchronized selection; retained evidence requires review"}]);
+    db.set_app_metadata(&format!("zotero_scope_impact:{id}"), &event.to_string())
+        .await
+        .unwrap();
+    let state = Arc::new(RwLock::new(ServerState {
+        db: Some(db.clone()),
+        lint_config: LintServerConfig::new(vec![], Some(root)),
+        ..Default::default()
+    }));
+    let Json(full) = handle_get_page(
+        State(state.clone()),
+        axum::http::HeaderMap::new(),
+        SpaceHeader(Some("work".into())),
+        TruthView::automatic(),
+        Path(id.into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(full.selection_impacts.len(), 1);
+    assert_eq!(full.selection_impacts[0].titles, vec!["Study A"]);
+    assert!(!full.selection_impacts[0].unavailable);
+    let serialized = serde_json::to_string(&full.selection_impacts).unwrap();
+    assert!(!serialized.contains("paper-a") && !serialized.contains("chunk-a"));
+    conn.execute("UPDATE memories SET title='paper-a' WHERE id='chunk-a'", ())
+        .await
+        .unwrap();
+    let Json(redacted) = handle_get_page(
+        State(state.clone()),
+        axum::http::HeaderMap::new(),
+        SpaceHeader(Some("work".into())),
+        TruthView::automatic(),
+        Path(id.into()),
+    )
+    .await
+    .unwrap();
+    assert!(redacted.selection_impacts[0].titles.is_empty());
+    assert!(redacted.selection_impacts[0].unavailable);
+    let mut batch = event.clone();
+    batch[0]["reason"] =
+        serde_json::json!("Zotero connection was disabled; retained evidence requires review");
+    db.set_app_metadata(&format!("zotero_scope_impact:{id}"), &batch.to_string())
+        .await
+        .unwrap();
+    let Json(disconnected) = handle_get_page(
+        State(state.clone()),
+        axum::http::HeaderMap::new(),
+        SpaceHeader(Some("work".into())),
+        TruthView::automatic(),
+        Path(id.into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(disconnected.selection_impacts[0].reason, "disconnected");
+    assert!(disconnected.selection_impacts[0].titles.is_empty());
+    assert!(!disconnected.selection_impacts[0].unavailable);
+    db.set_app_metadata(&format!("zotero_scope_impact:{id}"), &event.to_string())
+        .await
+        .unwrap();
+    let foreign = handle_get_page(
+        State(state.clone()),
+        axum::http::HeaderMap::new(),
+        SpaceHeader(Some("foreign".into())),
+        TruthView::automatic(),
+        Path(id.into()),
+    )
+    .await;
+    assert!(matches!(foreign, Err(ServerError::NotFound(_))));
+    conn.execute("INSERT INTO page_truth_state(page_id,page_version,support_status,human_reviewed,updated_at,evaluated_at) VALUES(?1,?2,'provisional',0,1,1)",libsql::params![id,page.version]).await.unwrap();
+    conn.execute("INSERT OR REPLACE INTO claim_derivation_markers(page_id,page_version,page_version_digest,extractor_version,inventory_count,created_at) VALUES(?1,?2,?3,?4,1,0)",libsql::params![id,page.version,wenlan_core::provenance::revision_content_digest(&page.content),wenlan_core::db::EXTRACTOR_VERSION]).await.unwrap();
+    db.set_app_metadata("claim_promoter_enforcement", "1")
+        .await
+        .unwrap();
+    db.set_truth_cutover_generation(1).await.unwrap();
+    let Json(entry) = handle_get_page(
+        State(state),
+        axum::http::HeaderMap::new(),
+        SpaceHeader(Some("work".into())),
+        TruthView {
+            grant: TruthGrant::CollectionEntries,
+        },
+        Path(id.into()),
+    )
+    .await
+    .unwrap();
+    assert!(entry.selection_impacts.is_empty());
+}

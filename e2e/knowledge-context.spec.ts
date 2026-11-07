@@ -86,22 +86,21 @@ test("page action Escape leaves editing intact and narrow context tabs reach the
   await expect(editor).toBeVisible();
   await expect(page.getByRole("button",{name:"Page actions",exact:true})).toBeFocused();
   await openPageTool(page,"Page info");
-  const infoTab=page.getByRole("tab",{name:"Info",exact:true});
-  await infoTab.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("tab",{name:"Mind map",exact:true})).toBeFocused();
-  await page.keyboard.press("ArrowLeft");
-  await page.keyboard.press("Enter");
+  const infoTool=page.getByRole("button",{name:"Info",exact:true});
+  await infoTool.focus();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button",{name:"Mind map",exact:true})).toBeFocused();
   await expect(page.getByRole("group",{name:"Connections",exact:true})).toBeVisible();
   const firstConnection=page.getByRole("group",{name:"Connections",exact:true}).getByRole("button").first();
   let reachedGraph=false;
   for(let step=1;step<=8;step++){
     await page.keyboard.press("Tab");
     const focus=await page.evaluate(()=>{
-      const header=document.querySelector(".page-info-drawer-group-overlay-panel .page-info-drawer-header");
-      const pane=document.querySelector(".page-info-drawer-group-overlay-panel .page-info-drawer-content");
+      const tools=document.querySelector(".wiki-shared-document-tools");
+      const pane=document.querySelector(".page-info-drawer-group-overlay-panel");
+      const resizeHandle=document.querySelector(".sidebar-resize-handle--right");
       const active=document.activeElement;
-      return{inside:!!active&&(header?.contains(active)||pane?.contains(active)),name:active?.getAttribute("aria-label")||active?.textContent?.trim()||active?.tagName};
+      return{inside:!!active&&(tools?.contains(active)||pane?.contains(active)||resizeHandle?.contains(active)),name:active?.getAttribute("aria-label")||active?.textContent?.trim()||active?.tagName};
     });
     expect(focus.inside,`Tab ${step} stays within this inspector; focused ${focus.name}`).toBe(true);
     if(await firstConnection.evaluate(el=>el===document.activeElement)){reachedGraph=true;break;}

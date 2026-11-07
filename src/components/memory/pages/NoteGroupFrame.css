@@ -50,6 +50,9 @@
   min-width: 0;
 }
 
+/* The shared Wiki toolbar is the only visible destination in split reading. */
+.note-group-document-tools--shared { display: none; }
+
 .note-group-frame:has(.page-info-drawer-group-overlay) .note-group-header,
 .note-group-frame:has(.page-info-drawer-expanded-group) .note-group-header {
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -89,6 +92,13 @@
   .page-detail-document { padding:28px 20px 40px; }
   .note-tabs { gap:4px; padding-inline:10px 4px; }
   .note-tabs-list { gap:8px; }
+}
+/* Reclaim decorative spacing before shrinking the selected tab's hit area
+   when a narrow note shares its header with the inspector. */
+@container note-group (max-width:400px) {
+  .note-tabs { padding-inline:6px 0; }
+  .note-group-header .note-group-document-tools,
+  .note-group-header .note-group-global-tools { --mem-icon-action-size:24px; }
 }
 .note-group-global-tools { display:flex; align-items:center; flex:0 0 auto; }
 .note-group-header > * { pointer-events:auto; }

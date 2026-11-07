@@ -4,4 +4,5 @@ crates/wenlan-core/src/eval/seed_contract.rs|crate::eval::seed_contract::tests::
 crates/wenlan-core/src/lint/pages/diagnostic_scale_test.rs|crate::lint::pages::diagnostic_scale_test::generate_fixture|StandaloneLibsqlOrigin|1
 crates/wenlan-core/src/lint/pages/diagnostic_scale_test.rs|crate::lint::pages::diagnostic_scale_test::run_fixture|StandaloneLibsqlOrigin|1
 crates/wenlan-core/src/lint/pages/link_checks_test/orphans.rs|crate::lint::pages::link_checks::tests::orphans::query_failure_propagates_without_a_mutating_fallback|StandaloneLibsqlOrigin|1
+crates/wenlan-core/src/lint/snapshot_tests.rs|crate::lint::snapshot::tests::libsql_connection_lifecycle_closes_last_owner_safely|StandaloneLibsqlOrigin|1
 crates/wenlan-core/src/lint/test_support_tests.rs|crate::lint::test_support::tests::semantic_fingerprint_detects_same_count_mutation_in_every_catalogued_table|StandaloneLibsqlOrigin|1

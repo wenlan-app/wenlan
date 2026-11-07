@@ -258,8 +258,29 @@ pub(super) async fn attach_page_sources_impl(
     link_reason: &str,
     agent: &str,
 ) -> Result<WriteResult, WenlanError> {
-    for sid in source_memory_ids {
-        db.link_page_source(page_id, sid, link_reason).await?;
+    attach_page_sources_checked(db, page_id, source_memory_ids, link_reason, agent, &[]).await
+}
+
+async fn attach_page_sources_checked(
+    db: &MemoryDB,
+    page_id: &str,
+    source_memory_ids: &[String],
+    link_reason: &str,
+    agent: &str,
+    snapshots: &[crate::db::CitationSourceSnapshot],
+) -> Result<WriteResult, WenlanError> {
+    if !snapshots.is_empty() {
+        db.link_page_sources_with_citation_snapshot(
+            page_id,
+            source_memory_ids,
+            link_reason,
+            snapshots,
+        )
+        .await?;
+    } else {
+        for sid in source_memory_ids {
+            db.link_page_source(page_id, sid, link_reason).await?;
+        }
     }
     log_activity_best_effort(db, agent, "page_attach", page_id).await;
     Ok(WriteResult {
@@ -298,9 +319,11 @@ pub(super) struct CreatePageInput<'a> {
     pub(super) page_min_cluster_size: usize,
     pub(super) page_match_threshold: f64,
     pub(super) citations_json: Option<&'a str>,
+    pub(super) citation_snapshots: &'a [crate::db::CitationSourceSnapshot],
     pub(super) basis_marks: &'a [(String, i64)],
     pub(super) basis_space_guard: Option<&'a crate::read_scope::ReadScope>,
     pub(super) skip_protected_title_match: bool,
+    pub(super) research_write: Option<crate::db::research_write::ResearchWriteFence>,
 }
 
 pub(super) async fn create_page_impl(
@@ -315,9 +338,11 @@ pub(super) async fn create_page_impl(
         page_min_cluster_size,
         page_match_threshold,
         citations_json,
+        citation_snapshots,
         basis_marks,
         basis_space_guard,
         skip_protected_title_match,
+        research_write,
     } = input;
 
     // Pre-write validation
@@ -393,6 +418,12 @@ pub(super) async fn create_page_impl(
         )
         .await?
         {
+            if research_write.is_some() {
+                return Err(WenlanError::Conflict(format!(
+                    "organizing topic already exists: {}; read it and write_page with its page_id",
+                    existing.page_id
+                )));
+            }
             if skip_protected_title_match && existing.protected {
                 return Ok(WriteResult {
                     basis_confirm: None,
@@ -411,12 +442,13 @@ pub(super) async fn create_page_impl(
                 });
             }
             if !req.source_memory_ids.is_empty() {
-                return attach_page_sources_impl(
+                return attach_page_sources_checked(
                     db,
                     &existing.page_id,
                     &req.source_memory_ids,
                     "same_title",
                     agent,
+                    citation_snapshots,
                 )
                 .await;
             }
@@ -480,13 +512,20 @@ pub(super) async fn create_page_impl(
                 )
                 .await?
             {
+                if research_write.is_some() {
+                    return Err(WenlanError::Conflict(format!(
+                        "organizing topic matches {}; read it and write_page with its page_id",
+                        matched.id
+                    )));
+                }
                 let matched_id = matched.id;
-                return attach_page_sources_impl(
+                return attach_page_sources_checked(
                     db,
                     &matched_id,
                     &req.source_memory_ids,
                     "page_write_attach",
                     agent,
+                    citation_snapshots,
                 )
                 .await;
             }
@@ -568,6 +607,8 @@ pub(super) async fn create_page_impl(
             basis_marks,
             agent,
             basis_space_guard,
+            citation_snapshots,
+            research_write.as_ref(),
         )
         .await
     {

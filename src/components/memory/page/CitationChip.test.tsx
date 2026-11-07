@@ -77,11 +77,11 @@ describe("CitationChip", () => {
     expect(onOpenMemory).not.toHaveBeenCalled();
   });
 
-  it("renders a focusable button with localized source kind and occurrence superscript", () => {
+  it("renders a compact footnote with the source and number in its accessible name", () => {
     renderChip();
-    const chip = screen.getByRole("button", { name: /Memory/ });
-    expect(chip).toBeInTheDocument();
-    expect(chip.querySelector("sup")?.textContent).toBe("1");
+    const chip = screen.getByRole("button", { name: "Citation 1: Memory: Design decision" });
+    expect(chip).toHaveTextContent("[1]");
+    expect(chip).not.toHaveTextContent("Memory");
     expect(chip).toHaveAttribute("data-status", "verified");
   });
 
@@ -109,6 +109,16 @@ describe("CitationChip", () => {
       "data-status",
       "unverified",
     );
+  });
+
+  it("keeps unchecked citations clickable and labels them without claiming a verdict", () => {
+    renderChip({ citation: cite({ status: "unevaluated" }) });
+    const chip = screen.getByRole("button", { name: /Memory/ });
+    expect(chip).toHaveAttribute("data-status", "unevaluated");
+    expect(chip).toHaveClass("citation-chip--unevaluated");
+    fireEvent.focus(chip);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("source not checked yet");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent("source doesn’t back it");
   });
 
   it("opens the popover on focus and links it via aria-describedby", () => {
@@ -201,14 +211,51 @@ describe("CitationChip", () => {
       within(popover).getByText(/We decided to keep the daemon/),
     ).toBeInTheDocument();
     await user.click(within(popover).getByRole("button", { name: /^Open →$/ }));
-    expect(onOpenMemory).toHaveBeenCalledWith("mem-1");
+    expect(onOpenMemory).toHaveBeenCalledWith("mem-1", expect.objectContaining({ locator: "mem-1" }));
   });
 
   it("clicking a memory chip opens the memory directly", async () => {
     const user = userEvent.setup();
     const { onOpenMemory } = renderChip();
     await user.click(screen.getByRole("button", { name: /Memory/ }));
-    expect(onOpenMemory).toHaveBeenCalledWith("mem-1");
+    expect(onOpenMemory).toHaveBeenCalledWith("mem-1", expect.objectContaining({ locator: "mem-1" }));
+  });
+
+  it("labels an indexed Zotero source without changing its stored-source navigation", async () => {
+    const user = userEvent.setup();
+    const sourceId = "zotero::server::item::space";
+    const { onOpenMemory } = renderChip({
+      citation: cite({ source_kind: "memory", locator: sourceId }),
+      sourceMemory: memory({ source_id: sourceId, source_agent: "zotero" }),
+    });
+    const chip = screen.getByRole("button", { name: /Zotero/ });
+    expect(chip).toHaveAttribute("data-reference-kind", "file");
+    expect(chip).toHaveTextContent("[1]");
+    expect(chip).toHaveAccessibleName("Citation 1: Zotero: Design decision");
+    await user.click(chip);
+    expect(onOpenMemory).toHaveBeenCalledWith(sourceId, expect.objectContaining({ locator: sourceId }));
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("open_file", expect.anything());
+  });
+
+  it("passes the full PDF citation through source navigation", async () => {
+    const user = userEvent.setup();
+    const sourceId = "zotero::server::item::space";
+    const citation = cite({ locator: sourceId, pdf_target: { attachment_key: "PDF00001", pdf_digest: "a".repeat(64), page: 4, quote: "actual quote" } });
+    const { onOpenMemory } = renderChip({ citation, sourceMemory: memory({ source_id: sourceId, source_agent: "zotero" }) });
+    await user.click(screen.getByRole("button", { name: /Zotero/ }));
+    expect(onOpenMemory).toHaveBeenCalledWith(sourceId, citation);
+  });
+
+  it("keeps detached historical citations openable while marking them for review", async () => {
+    const user = userEvent.setup();
+    const citation = cite({ locator: "historical-chunk", historical: true, status: "verified" });
+    const { onOpenMemory } = renderChip({ citation, sourceMemory: null, sourcesLoading: false });
+    const chip = screen.getByRole("button", { name: /Memory/ });
+    expect(chip).toHaveAttribute("data-status", "unevaluated");
+    fireEvent.focus(chip);
+    expect(screen.getByText("Historical source; needs review")).toBeInTheDocument();
+    await user.click(chip);
+    expect(onOpenMemory).toHaveBeenCalledWith("historical-chunk", citation);
   });
 
   it("explains a missing source and does not navigate on click", async () => {
@@ -253,9 +300,9 @@ describe("CitationChip", () => {
     const user = userEvent.setup();
     const url = "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ";
     renderChip({ citation: cite({ source_kind: "external_url", locator: url }), sourceMemory: null });
-    const chip = screen.getByRole("button", { name: /^Gmail/ });
+    const chip = screen.getByRole("button", { name: /Gmail/ });
     expect(chip).not.toHaveTextContent(/Link|mail\.google\.com/);
-    expect(chip.querySelector('[data-resource-icon="gmail"]')).not.toBeNull();
+    expect(chip).toHaveTextContent("[1]");
     fireEvent.focus(chip);
     expect(screen.getByRole("tooltip")).toHaveTextContent("Gmail");
     await user.click(screen.getByRole("button", { name: "Open in Gmail →" }));
@@ -265,7 +312,7 @@ describe("CitationChip", () => {
   it("keeps the generic link label for a site that is not a known app", () => {
     renderChip({ citation: cite({ source_kind: "external_url", locator: "https://example.com/blog" }), sourceMemory: null });
     const chip = screen.getByRole("button", { name: /Link.*example\.com/ });
-    expect(chip.querySelector('[data-resource-icon="webpage"]')).not.toBeNull();
+    expect(chip).toHaveTextContent("[1]");
     fireEvent.focus(chip);
     expect(screen.getByRole("button", { name: /Open in browser/ })).toBeInTheDocument();
   });

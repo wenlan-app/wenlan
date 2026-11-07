@@ -8,6 +8,15 @@ use std::collections::HashMap;
 
 // ===== Memory CRUD =====
 
+/// Optional body for accepting an edited pending revision. Both fields are
+/// required for an edit; omitting the body or sending `{}` preserves ordinary acceptance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevisionAcceptEditRequest {
+    pub expected_content: String,
+    pub content: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoreMemoryRequest {
     pub content: String,
@@ -867,6 +876,21 @@ pub struct SetDocumentTagsRequest {
     pub tags: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentTagAction {
+    Add,
+    Remove,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PatchDocumentTagRequest {
+    pub source: String,
+    pub tag: String,
+    pub action: DocumentTagAction,
+}
+
 // ===== Memory update =====
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -939,6 +963,12 @@ pub struct UpdatePageRequest {
 /// has its own concurrent-read failure mode and lands as a separate route.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RefreshPageRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organize_space: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organize_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub citation_targets: Vec<crate::pages::PdfCitationInput>,
     pub content: String,
     /// May be empty only when the existing page has no sources (an authored
     /// page written from a conversation); a sourced page refuses an empty set.
@@ -987,6 +1017,10 @@ pub struct ManualPageEditRequest {
 /// Body for `POST /api/pages`: the page itself plus the notes it relies on.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreatePageWithBasisRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organize_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub citation_targets: Vec<crate::pages::PdfCitationInput>,
     #[serde(flatten)]
     pub create: CreateConceptRequest,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1182,6 +1216,20 @@ mod set_document_tags_test {
 
         assert!(req.source.is_none());
         assert_eq!(req.tags, vec!["rust"]);
+    }
+
+    #[test]
+    fn patch_document_tag_request_uses_typed_add_remove_actions() {
+        let add: PatchDocumentTagRequest =
+            serde_json::from_str(r#"{"source":"file","tag":"rust","action":"add"}"#).unwrap();
+        assert_eq!(add.action, DocumentTagAction::Add);
+        let remove: PatchDocumentTagRequest =
+            serde_json::from_str(r#"{"source":"webpage","tag":"rust","action":"remove"}"#).unwrap();
+        assert_eq!(remove.action, DocumentTagAction::Remove);
+        assert!(serde_json::from_str::<PatchDocumentTagRequest>(
+            r#"{"source":"memory","tag":"rust","action":"replace"}"#
+        )
+        .is_err());
     }
 }
 

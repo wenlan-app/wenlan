@@ -275,6 +275,8 @@ async fn write_page_and_update_brief_carry_the_session() {
 
     server
         .write_page_impl(WritePageParams {
+            citation_targets: vec![],
+            organize_run_id: None,
             page_id: None,
             title: Some("T".into()),
             content: "body".into(),

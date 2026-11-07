@@ -1050,6 +1050,10 @@ fn refuse_unopenable_search_result(target: &str) -> Result<Option<std::path::Pat
 
     let target = target.strip_prefix("file://").unwrap_or(target);
 
+    if is_zotero_pdf_link(target) {
+        return Ok(None);
+    }
+
     if let Some(scheme) = target_scheme(target) {
         if OPENABLE_SCHEMES.contains(&scheme.as_str()) {
             return Ok(None);
@@ -1085,6 +1089,35 @@ fn refuse_unopenable_search_result(target: &str) -> Result<Option<std::path::Pat
     Ok(Some(canonical))
 }
 
+/// Only Zotero's document-reading action is openable, never arbitrary custom
+/// protocol actions supplied by a source document.
+fn is_zotero_pdf_link(target: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(target) else {
+        return false;
+    };
+    let key = url.path().strip_prefix("/library/items/").unwrap_or("");
+    url.scheme() == "zotero"
+        && url.host_str() == Some("open-pdf")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+        && url.fragment().is_none()
+        && key.len() == 8
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        && url.query_pairs().all(|(name, value)| match name.as_ref() {
+            "page" => value.parse::<u32>().is_ok_and(|page| page > 0),
+            "annotation" => {
+                value.len() == 8
+                    && value
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            }
+            _ => false,
+        })
+}
+
 /// Hand a search result's `url` to the desktop's default handler.
 ///
 /// This is the attacker-influenced twin of `open_file` — see
@@ -1115,6 +1148,22 @@ mod open_target_tests {
 
     fn search_result_allowed(target: &str) -> bool {
         refuse_unopenable_search_result(target).is_ok()
+    }
+
+    #[test]
+    fn only_zotero_pdf_read_links_are_allowed() {
+        assert!(search_result_allowed(
+            "zotero://open-pdf/library/items/ABC12345?page=2&annotation=DEF67890"
+        ));
+        for link in [
+            "zotero://select/library/items/ABC12345",
+            "zotero://open-pdf/library/items/../ABC12345",
+            "zotero://open-pdf/library/items/ABC12345?execute=1",
+            "zotero://open-pdf/library/items/ABC12345?page=0",
+            "zotero://user@open-pdf/library/items/ABC12345",
+        ] {
+            assert!(!search_result_allowed(link), "{link}");
+        }
     }
 
     #[test]
@@ -3459,14 +3508,17 @@ pub async fn list_pinned_memories(
 pub async fn accept_pending_revision(
     state: tauri::State<'_, State>,
     source_id: String,
+    edit: Option<wenlan_types::requests::RevisionAcceptEditRequest>,
 ) -> Result<responses::RevisionAcceptResponse, String> {
     let client = daemon_client(&state).await;
-    client
-        .post_empty(&format!(
-            "/api/memory/revision/{}/accept",
-            percent_encode_path_segment(&source_id)
-        ))
-        .await
+    let path = format!(
+        "/api/memory/revision/{}/accept",
+        percent_encode_path_segment(&source_id)
+    );
+    match edit {
+        Some(edit) => client.post_json(&path, &edit).await,
+        None => client.post_empty(&path).await,
+    }
 }
 
 #[tauri::command]
@@ -3517,24 +3569,26 @@ pub async fn list_refinements(
 pub async fn accept_refinement(
     state: tauri::State<'_, State>,
     id: String,
+    space: Option<String>,
 ) -> Result<responses::AcceptRefinementResponse, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
-    client.accept_refinement(&id).await
+    client.accept_refinement(&id, space.as_deref()).await
 }
 
 #[tauri::command]
 pub async fn reject_refinement(
     state: tauri::State<'_, State>,
     id: String,
+    space: Option<String>,
 ) -> Result<responses::RejectRefinementResponse, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
-    client.reject_refinement(&id).await
+    client.reject_refinement(&id, space.as_deref()).await
 }
 
 #[tauri::command]
@@ -3952,6 +4006,32 @@ pub async fn set_document_tags(
 }
 
 #[tauri::command]
+pub async fn patch_document_tag(
+    state: tauri::State<'_, State>,
+    source: String,
+    source_id: String,
+    tag: String,
+    action: requests::DocumentTagAction,
+) -> Result<(), String> {
+    let client = state.read().await.client.clone();
+    let req = requests::PatchDocumentTagRequest {
+        source,
+        tag,
+        action,
+    };
+    let _: responses::SuccessResponse = client
+        .post_json(
+            &format!(
+                "/api/documents/{}/tags",
+                percent_encode_path_segment(&source_id)
+            ),
+            &req,
+        )
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn delete_tag(state: tauri::State<'_, State>, name: String) -> Result<(), String> {
     let client = state.read().await.client.clone();
     let _resp: responses::SuccessResponse = client
@@ -4164,6 +4244,9 @@ mod remaining_json_command_type_tests {
 /// `code_basis` for lines of code). They belong to the note, so they are folded
 /// into the page the UI receives; the page's own fields win.
 fn page_from_wire(mut wire: serde_json::Value) -> Option<serde_json::Value> {
+    let impacts = wire
+        .get_mut("selection_impacts")
+        .map(serde_json::Value::take);
     let basis = wire.get_mut("basis").map(serde_json::Value::take);
     // The lines of code a note relies on ride beside it the same way.
     let code_basis = wire.get_mut("code_basis").map(serde_json::Value::take);
@@ -4172,6 +4255,9 @@ fn page_from_wire(mut wire: serde_json::Value) -> Option<serde_json::Value> {
         _ => return None,
     };
     if let Some(fields) = page.as_object_mut() {
+        if let Some(impacts) = impacts.filter(|v| !v.is_null()) {
+            fields.entry("selection_impacts").or_insert(impacts);
+        }
         if let Some(basis) = basis.filter(|b| !b.is_null()) {
             fields.entry("basis").or_insert(basis);
         }
@@ -4221,6 +4307,17 @@ mod get_page_tests {
         let page = page_from_wire(wire).expect("page present");
         assert_eq!(page["id"], "p1");
         assert_eq!(page["citations"][0]["occurrence"], 1);
+    }
+
+    #[test]
+    fn page_from_wire_folds_selection_impacts() {
+        let wire = serde_json::json!({"page":{"id":"p1"},"selection_impacts":[{"reason":"selection_removed","titles":["Study A"],"unavailable":false}]});
+        let page = page_from_wire(wire).unwrap();
+        assert_eq!(page["selection_impacts"][0]["titles"][0], "Study A");
+        assert!(page_from_wire(serde_json::json!({"page":{"id":"p2"}}))
+            .unwrap()
+            .get("selection_impacts")
+            .is_none());
     }
 
     #[test]
@@ -6322,6 +6419,7 @@ mod managed_blob_paths_tests {
     fn managed_blob_paths_targets_only_the_managed_dir() {
         let sources_dir = std::path::Path::new("/home/u/.wenlan/sources");
         let managed = crate::sources::Source {
+            display_name: None,
             id: "directory-sources".into(),
             source_type: crate::sources::SourceType::Directory,
             path: sources_dir.to_path_buf(),
@@ -6361,10 +6459,22 @@ pub async fn set_source_follow_changes(
 }
 
 #[tauri::command]
+pub async fn get_zotero_disconnect_preview(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<wenlan_types::zotero::ZoteroDisconnectPreview, String> {
+    daemon_client(&state)
+        .await
+        .get_zotero_disconnect_preview(&id)
+        .await
+}
+
+#[tauri::command]
 pub async fn remove_source(
     state: tauri::State<'_, State>,
     watcher: tauri::State<'_, WatcherState>,
     id: String,
+    expected_zotero_preview: Option<wenlan_types::zotero::ZoteroDisconnectPreview>,
 ) -> Result<(), String> {
     let local_source = config::load_config()
         .sources
@@ -6374,6 +6484,9 @@ pub async fn remove_source(
 
     if let Some(source) = local_source {
         if source.source_type == crate::sources::SourceType::Directory {
+            if expected_zotero_preview.is_some() {
+                return Err("The source connection changed; reload before disconnecting".into());
+            }
             return remove_directory_source(&state, &watcher, &id, source).await;
         }
     }
@@ -6382,7 +6495,13 @@ pub async fn remove_source(
         let s = state.read().await;
         s.client.clone()
     };
-    client.remove_source(&id).await?;
+    if let Some(preview) = expected_zotero_preview {
+        client
+            .remove_zotero_source_at_preview(&id, &preview)
+            .await?;
+    } else {
+        client.remove_source(&id).await?;
+    }
     if id == "directory-sources" {
         let dir = crate::sources::uploads::sources_dir();
         let _ = std::fs::remove_dir_all(&dir); // managed uploads only, best-effort
@@ -6410,6 +6529,88 @@ async fn remove_directory_source(
     // disconnected folder keep flowing into the daemon until the app restarts.
     detach_watch_path(state, watcher, &source.path).await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_zotero_collections(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::zotero::ZoteroCollectionsResponse, String> {
+    let client = daemon_client(&state).await;
+    client.list_zotero_collections().await
+}
+
+#[tauri::command]
+pub async fn list_zotero_items(
+    state: tauri::State<'_, State>,
+    collection_key: String,
+    expected_server_id: String,
+) -> Result<wenlan_types::zotero::ZoteroItemsResponse, String> {
+    daemon_client(&state)
+        .await
+        .list_zotero_items(&collection_key, &expected_server_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn get_zotero_document(
+    state: tauri::State<'_, State>,
+    source_id: String,
+    space: Option<String>,
+    attachment_key: Option<String>,
+    expected_digest: Option<String>,
+    allow_retained: Option<bool>,
+) -> Result<wenlan_types::zotero::ZoteroDocumentResponse, String> {
+    daemon_client(&state)
+        .await
+        .zotero_document(
+            &source_id,
+            space.as_deref(),
+            attachment_key.as_deref(),
+            expected_digest.as_deref(),
+            allow_retained.unwrap_or(false),
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_zotero_pdf(
+    state: tauri::State<'_, State>,
+    source_id: String,
+    attachment_key: String,
+    space: Option<String>,
+    expected_digest: Option<String>,
+    allow_retained: Option<bool>,
+) -> Result<tauri::ipc::Response, String> {
+    let bytes = daemon_client(&state)
+        .await
+        .zotero_pdf(
+            &source_id,
+            &attachment_key,
+            space.as_deref(),
+            expected_digest.as_deref(),
+            allow_retained.unwrap_or(false),
+        )
+        .await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn add_zotero_source(
+    state: tauri::State<'_, State>,
+    collection_key: String,
+    expected_server_id: Option<String>,
+    space: String,
+    item_keys: Option<Vec<String>>,
+) -> Result<crate::sources::Source, String> {
+    let client = daemon_client(&state).await;
+    client
+        .add_zotero_source(&wenlan_types::zotero::AddZoteroSourceRequest {
+            item_keys,
+            collection_key,
+            expected_server_id,
+            space,
+        })
+        .await
 }
 
 #[tauri::command]
@@ -6479,7 +6680,8 @@ async fn sync_registered_source_response(
         ingested: stats.ingested,
         skipped: stats.skipped,
         errors: stats.errors,
-        error_detail: None,
+        error_detail: stats.error_detail,
+        skipped_files: stats.skipped_files,
     })
 }
 
@@ -6531,6 +6733,21 @@ mod sync_registered_source_tests {
         assert_eq!(stats.ingested, 2);
     }
 
+    #[tokio::test]
+    async fn source_sync_retains_individual_failures_for_the_ui() {
+        let (client, request) = serve_status_once(
+            "200 OK",
+            r#"{"files_found":20,"ingested":19,"skipped":0,"errors":1,"error_detail":"partial import","skipped_files":[{"path":"Missing paper","reason":"PDF unavailable"}]}"#,
+        ).await;
+        let stats = sync_registered_source_response(&client, "zotero-test")
+            .await
+            .unwrap();
+        request.await.unwrap();
+        assert_eq!(stats.error_detail.as_deref(), Some("partial import"));
+        assert_eq!(stats.skipped_files[0].path, "Missing paper");
+        assert_eq!(stats.skipped_files[0].reason, "PDF unavailable");
+    }
+
     /// Drives the command's own path with a Directory source registered in
     /// local config, so a restored "only Obsidian sources sync" early return
     /// fails here instead of silently skipping the daemon sync.
@@ -6545,6 +6762,7 @@ mod sync_registered_source_tests {
         std::env::remove_var("ORIGIN_DATA_DIR");
         config::save_config(&config::Config {
             sources: vec![Source {
+                display_name: None,
                 id: "directory-notes".to_string(),
                 source_type: SourceType::Directory,
                 path: data_dir.path().join("notes"),
@@ -7285,6 +7503,7 @@ mod registered_source_tests {
         path: &str,
     ) -> crate::sources::Source {
         crate::sources::Source {
+            display_name: None,
             id: id.to_string(),
             source_type,
             path: PathBuf::from(path),

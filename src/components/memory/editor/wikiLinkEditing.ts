@@ -21,7 +21,7 @@ export interface EditorReferenceContext {
   citations?: PageCitation[];
   sourceMemories?: ReadonlyMap<string, MemoryItem>;
   sourcesLoading?: boolean;
-  labels?: { page: string; memory: string; source: string; authored: string; unverified: string; missing?: string };
+  labels?: { page: string; memory: string; source: string; authored: string; unverified: string; unevaluated?: string; missing?: string };
   /** The open page's own title: `[[it]]` reads as plain text, not a link. */
   selfTitle?: string;
 }
@@ -390,13 +390,15 @@ export function createWikiLinkEditing(
         const target = range.target;
         const kind = target.kind === "citation" ? (target.citation.source_kind === "memory" ? "memory" : "source") : target.kind;
         const unverified = target.kind === "citation" && target.citation.status === "unverified";
+        const unevaluated = target.kind === "citation" && target.citation.status === "unevaluated";
         const typeLabel = currentContext.labels?.[kind] ?? kind;
         const href = target.kind === "page" ? `#concept:${target.id}` : target.kind === "memory" ? `#memory:${target.id}` : `#citation:${target.citation.occurrence}`;
-        const linkClass = `cm-wiki-page-link reference-link reference-link--${kind}${target.kind === "citation" || range.memoryNumber !== undefined ? " cm-citation-link" : ""}${unverified ? " reference-link--unverified" : ""}`;
+        const linkClass = `cm-wiki-page-link reference-link reference-link--${kind}${target.kind === "citation" || range.memoryNumber !== undefined ? " cm-citation-link" : ""}${unverified ? " reference-link--unverified" : unevaluated ? " reference-link--unevaluated" : ""}`;
+        const statusLabel = unverified ? currentContext.labels?.unverified ?? "Unverified" : unevaluated ? currentContext.labels?.unevaluated ?? "Source not checked yet" : null;
         const linkAttributes: Record<string, string> = {
             href, role: "link", tabindex: "0",
-            "aria-label": unverified ? `${range.displayText}, ${typeLabel}, ${currentContext.labels?.unverified ?? "Unverified"}` : range.displayText,
-            "title": unverified ? `${typeLabel} · ${currentContext.labels?.unverified ?? "Unverified"}` : typeLabel,
+            "aria-label": statusLabel ? `${range.displayText}, ${typeLabel}, ${statusLabel}` : range.displayText,
+            "title": statusLabel ? `${typeLabel} · ${statusLabel}` : typeLabel,
             "data-inline-reference-key": range.key,
             "data-reference-resource-icon": target.kind === "citation" && target.citation.source_kind !== "memory"
               ? getSourceKind({ source: target.citation.source_kind === "external_url" ? "webpage" : "file", source_id: target.citation.locator, title: "" })

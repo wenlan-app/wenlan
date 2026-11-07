@@ -343,6 +343,16 @@ describe('setDocumentTags', () => {
   });
 });
 
+describe('patchDocumentTag', () => {
+  it('calls invoke with one atomic tag action', async () => {
+    mockInvoke.mockResolvedValue(['human', 'reviewed']);
+    await tauri.patchDocumentTag('zotero', 'zotero::doc1', 'reviewed', 'add');
+    expect(mockInvoke).toHaveBeenCalledWith('patch_document_tag', {
+      source: 'zotero', sourceId: 'zotero::doc1', tag: 'reviewed', action: 'add',
+    });
+  });
+});
+
 describe('createEntity', () => {
   it('calls invoke with name, entityType, and explicit domain', async () => {
     mockInvoke.mockResolvedValue('entity-id-1');

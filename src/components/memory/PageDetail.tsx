@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
+import { SourceDocumentReader } from "./sources/SourceDocumentReader";
+import { SourceLifecycleControl } from "./sources/SourceLifecycleControl";
+import { resolveSourceReference } from "../../lib/sourceLifecycleApi";
 import { RestorePageDialog } from "./pages/RestorePageDialog";
 import { archiveWikiPage, canArchivePage } from "./pages/archiveWikiPage";
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
@@ -8,9 +11,12 @@ import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/rea
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { createPortal } from "react-dom";
+import { toast } from "sonner";
 import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "./navigation/WorkspacePaneHost";
-import { NoteInspectorTabs, type NoteInspectorTab } from "./page/NoteInspectorTabs";
-import { ArrowLeft, PencilSimple, SidebarSimple } from "@phosphor-icons/react";
+import type { NoteInspectorTab } from "./page/NoteInspectorTabs";
+import { usePageInspectorSession } from "./page/usePageInspectorSession";
+import { preserveReadingPosition } from "./page/readingReflowAnchor";
+import { ArrowLeft, ArrowsIn, ArrowsOut, FilePdf, Info, PencilSimple, TreeStructure } from "@phosphor-icons/react";
 import {
   getPage,
   getPageLinks,
@@ -44,11 +50,10 @@ import {
   type BasisRef,
   type CodeBasisRef,
   type Page,
+  type PageCitation,
   type PageReviewOutcome,
   type IndexedFileInfo,
   type UpdatePageFailureKind,
-  recheckPageSentence,
-  type WeakReason,
 } from "../../lib/tauri";
 // Imported from its own module, not the lib/tauri barrel: tests mock that
 // barrel, and a mocked module would shadow the value this must stay bound to.
@@ -121,6 +126,7 @@ import { NoteReviewNotice } from "./page/NoteReviewNotice";
 import { useBasisActions } from "./page/useBasisActions";
 import { useCodeBasisActions } from "./page/useCodeBasisActions";
 import { basisCountLabel } from "./page/format";
+import PageExportDialog from "./page/PageExportDialog";
 
 interface PageDetailProps {
   pageId: string;
@@ -319,13 +325,18 @@ export default function PageDetail({
   const [renameExpectedVersion, setRenameExpectedVersion] = useState<number | null>(null);
   const [renameError, setRenameError] = useState(false);
   const [renameNeedsReview, setRenameNeedsReview] = useState(false);
-  const [infoOpen, setInfoOpen] = useState(false);
+  const exampleWiki = useExampleWikiActive();
+  const readingSessionKey = JSON.stringify([exampleWiki ? "example" : "own", pageId]);
+  const { infoOpen, setInfoOpen, canvasOpen, setCanvasOpen, pdfPreview, setPdfPreview, pdfPreviewOpen, setPdfPreviewOpen } = usePageInspectorSession(readingSessionKey);
   const [sourcePreview, setSourcePreview] = useState<IndexedFileInfo | null>(null);
-  useEffect(() => setSourcePreview(null), [pageId]);
+  useEffect(() => {
+    setSourcePreview(null);
+  }, [pageId]);
   const [canvasWorkspaceExpanded, setCanvasWorkspaceExpanded] = useState(false);
   const [canvasWorkspaceHost, setCanvasWorkspaceHost] = useState<HTMLDivElement | null>(null);
   const [canvasWorkspaceSupported, setCanvasWorkspaceSupported] = useState(false);
   const pageDetailRootRef = useRef<HTMLDivElement | null>(null);
+  const readingPositionCleanupRef = useRef<(() => void) | null>(null);
   const canvasWorkspaceExpandedRef = useRef(false);
   const canvasWorkspaceScrollRef = useRef<{ pageId: string; element: HTMLElement; scrollTop: number } | null>(null);
   const canvasWorkspaceRestoreRef = useRef<{ pageId: string; element: HTMLElement; scrollTop: number } | null>(null);
@@ -333,6 +344,8 @@ export default function PageDetail({
   const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
   const setPageDetailRootRef = useCallback((node: HTMLDivElement | null) => {
+    readingPositionCleanupRef.current?.();
+    readingPositionCleanupRef.current = node ? preserveReadingPosition(node) : null;
     pageDetailRootRef.current = node;
     setCanvasWorkspaceSupported(node?.parentElement?.closest(".wiki-workspace-content") != null);
   }, []);
@@ -377,7 +390,6 @@ export default function PageDetail({
   const [conflictLatest, setConflictLatest] =
     useState<ConflictLatestSource>({ kind: "idle" });
   const [editValidation, setEditValidation] = useState<string | null>(null);
-  const exampleWiki = useExampleWikiActive();
   const [editorFallbackSessionId, setEditorFallbackSessionId] =
     useState<string | null>(null);
   const [editorShortcutModifier, setEditorShortcutModifier] =
@@ -410,6 +422,7 @@ export default function PageDetail({
     setDeleteGuardEntityId(entityId);
   };
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [pageExportOpen, setPageExportOpen] = useState(false);
   const [actionMenuPlacement, setActionMenuPlacement] = useState<{ top: number; right: number } | null>(null);
   const [redistillNotice, setRedistillNotice] = useState<{
     kind: "success" | "warning" | "error";
@@ -433,7 +446,6 @@ export default function PageDetail({
   // The same for changed code: the next save of this note also confirms these lines.
   const codeConfirmIntentRef = useRef<{ pageId: string; row: CodeBasisRef } | null>(null);
   const codeSaveConfirmRef = useRef<(intent: { pageId: string; row: CodeBasisRef }) => void>(() => undefined);
-  const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasSwitchPending, setCanvasSwitchPending] = useState(false);
   const [storedActionPending, setStoredActionPending] = useState(false);
   const storedActionRef = useRef<object | null>(null);
@@ -468,7 +480,9 @@ export default function PageDetail({
   const editorPageRef = useRef<Page | null>(null);
   const backAttemptRef = useRef(0);
   const actionMenuTriggerRef = useRef<HTMLButtonElement>(null);
-  const inspectorToggleRef = useRef<HTMLButtonElement>(null);
+  const infoToggleRef = useRef<HTMLButtonElement>(null);
+  const canvasToggleRef = useRef<HTMLButtonElement>(null);
+  const pdfToggleRef = useRef<HTMLButtonElement>(null);
   const actionMenuRef = useRef<HTMLDivElement>(null);
   const actionMenuListRef = useRef<HTMLDivElement>(null);
   const actionMenuInitialFocusRef = useRef<MenuInitialFocus>("first");
@@ -627,18 +641,51 @@ export default function PageDetail({
 
   // Imported source memories can be read alongside this note. Ordinary
   // memories retain their existing detail navigation and editing behavior.
-  const openSourceMemory = (sourceId: string) => {
+  const [pdfCitation, setPdfCitation] = useState<{ pageId: string; sourceId: string; citation: PageCitation } | null>(null);
+  const historicalSourceRequest = useRef(0);
+  useEffect(() => {
+    historicalSourceRequest.current++;
+    return () => { historicalSourceRequest.current++; };
+  }, [pageId]);
+  const openSourceMemory = (sourceId: string, citation?: PageCitation) => {
+    if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
+    const requestId = ++historicalSourceRequest.current;
+    if (citation?.historical) {
+      if (!page?.space) { toast.error(t("sourceLifecycle.referenceUnavailable")); return; }
+      void resolveSourceReference(page.space, citation.locator).then(reference => {
+        if (requestId !== historicalSourceRequest.current) return;
+        const file: IndexedFileInfo = { source: reference.source, source_id: reference.source_id, source_agent: reference.source_agent, title: reference.title, chunk_count: 0, last_modified: 0 };
+        if (showCanvas) void requestToggleCanvas();
+        changeCanvasWorkspaceExpanded(false);
+        if (reference.source_agent === "zotero") {
+          setPdfCitation({ pageId, sourceId: file.source_id, citation: { ...citation } });
+          setSourcePreview(null); setInfoOpen(false); setPdfPreview(file); setPdfPreviewOpen(true);
+        } else { setPdfPreviewOpen(false); setSourcePreview(file); }
+      }).catch(() => { if (requestId === historicalSourceRequest.current) toast.error(t("sourceLifecycle.referenceUnavailable")); });
+      return;
+    }
     const memory = pageSources?.find((row) => row.source.memory_source_id === sourceId)?.memory;
-    if (memory && ["folder", "obsidian", "logseq"].includes(memory.source_agent ?? "")) {
+    if (memory && ["folder", "obsidian", "logseq", "zotero"].includes(memory.source_agent ?? "")) {
       if (showCanvas) void requestToggleCanvas();
       changeCanvasWorkspaceExpanded(false);
-      setSourcePreview({
-        source: "memory",
+      const file: IndexedFileInfo = {
+        source: memory.source_agent === "zotero" ? "file" : "memory",
+        source_agent: memory.source_agent,
         source_id: memory.source_id,
         title: memory.title,
         chunk_count: memory.chunk_count,
         last_modified: memory.last_modified,
-      });
+      };
+      if (memory.source_agent === "zotero") {
+        setPdfCitation(citation ? { pageId, sourceId, citation: { ...citation } } : null);
+        setSourcePreview(null);
+        setInfoOpen(false);
+        setPdfPreview(file);
+        setPdfPreviewOpen(true);
+      } else {
+        setPdfPreviewOpen(false);
+        setSourcePreview(file);
+      }
     } else {
       onMemoryClick(sourceId);
     }
@@ -650,7 +697,7 @@ export default function PageDetail({
       ? [[source.source.memory_source_id, source.memory] as const] : [])),
     sourcesLoading: pageSourcesLoading,
     labels: { page: t("references.page"), memory: t("citation.kind.memory"), source: t("references.source"),
-      authored: t("citation.kind.authored"), unverified: t("citation.unverified"), missing: t("references.missingPage") },
+      authored: t("citation.kind.authored"), unverified: t("citation.unverified"), unevaluated: t("thisSentence.evidence.unevaluated"), missing: t("references.missingPage") },
     selfTitle: page?.title,
   }), [page?.citations, page?.title, pageSources, pageSourcesLoading, t]);
   useEffect(() => {
@@ -681,6 +728,7 @@ export default function PageDetail({
       if (!file) return;
       if (showCanvas) void requestToggleCanvas();
       changeCanvasWorkspaceExpanded(false);
+      setPdfPreviewOpen(false);
       setSourcePreview(file);
     },
     menu: {
@@ -799,7 +847,7 @@ export default function PageDetail({
     setRedistillNotice(null);
     setReviewNotice(null);
     setActionErrorMessage(null);
-    // Inspector open/selected state belongs to the workspace, not this note.
+    // Pending transitions reset; each note retains its own inspector session.
     setCanvasSwitchPending(false);
     canvasSwitchPendingRef.current = false;
     canvasReturnToEditorRef.current = false;
@@ -958,22 +1006,8 @@ export default function PageDetail({
     return { marks, beforeLabel: t("aiUpdate.before") };
   }, [aiChangesShown, lastAiUpdate, pageSentences, t]);
 
-  // Who said each sentence and which can't be backed up (UX-WHO-1, UX-WHO-4),
-  // plus the sentence the cursor is in for Info's "this sentence" (UX-WHO-3).
+  // Keep authorship and cursor identity for Info's "this sentence" (UX-WHO-1/3/4).
   const [cursorSentenceHash, setCursorSentenceHash] = useState<string | null>(null);
-  const [recheckingHash, setRecheckingHash] = useState<string | null>(null);
-  const recheckSentence = useCallback(async (hash: string) => {
-    const originPageId = pageId;
-    setRecheckingHash(hash);
-    try {
-      await recheckPageSentence(originPageId, hash);
-    } catch {
-      if (activePageIdRef.current === originPageId) setActionErrorMessage(t("thisSentence.recheckFailed"));
-    } finally {
-      await queryClient.invalidateQueries({ queryKey: ["page-sentences", originPageId] });
-      setRecheckingHash(null);
-    }
-  }, [pageId, queryClient, t]);
   const currentSentences = pageSentences?.page_id === pageId ? pageSentences.sentences : null;
   const cursorSentence = useMemo(
     () => currentSentences?.find((sentence) => sentence.hash === cursorSentenceHash) ?? null,
@@ -988,18 +1022,9 @@ export default function PageDetail({
         said: sentence.author === "original" ? null : sentence.protected ? "you" : sentence.author === "ai" ? "ai" : null,
         weak: sentence.weak ?? [],
       })),
-      labels: {
-        you: t("thisSentence.who.you"),
-        ai: t("thisSentence.who.ai"),
-        weak: (reason: WeakReason) => t("thisSentence.weak", { reason: t(`weakReason.${reason}`) }),
-        recheck: t("thisSentence.recheck"),
-        rechecking: t("thisSentence.rechecking"),
-      },
-      busyHash: recheckingHash,
-      onRecheck: (hash) => void recheckSentence(hash),
       onCursorSentence: setCursorSentenceHash,
     };
-  }, [currentSentences, recheckingHash, recheckSentence, t]);
+  }, [currentSentences]);
 
   const editorSentenceProposals = useMemo<SentenceProposalSettings>(() => ({
     proposals: pendingProposals,
@@ -1578,6 +1603,7 @@ export default function PageDetail({
     }
     if (!editing) {
       canvasReturnToEditorRef.current = false;
+      setPdfPreviewOpen(false);
       setInfoOpen(false);
       setCanvasOpen(true);
       return;
@@ -1598,6 +1624,7 @@ export default function PageDetail({
       if (!await flushEditor() || !isCurrentAttempt()) return;
       closeEditor();
       canvasReturnToEditorRef.current = true;
+      setPdfPreviewOpen(false);
       setInfoOpen(false);
       setCanvasOpen(true);
     } finally {
@@ -1610,6 +1637,8 @@ export default function PageDetail({
 
   const requestPageInfo = async () => {
     if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
+    setSourcePreview(null);
+    setPdfPreviewOpen(false);
     // Keep the same pane mounted while the map yields back to document editing.
     setInfoOpen(true);
     if (showCanvas) {
@@ -1619,8 +1648,14 @@ export default function PageDetail({
   };
 
   const selectInspectorTab = (tab: NoteInspectorTab) => {
+    if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
+    setSourcePreview(null);
     if (tab === "canvas") {
       if (!showCanvas) void requestToggleCanvas();
+    } else if (tab === "pdf" && pdfPreview) {
+      if (showCanvas) void requestToggleCanvas();
+      setInfoOpen(false);
+      setPdfPreviewOpen(true);
     } else {
       void requestPageInfo();
     }
@@ -1628,16 +1663,19 @@ export default function PageDetail({
   const closeInspector = () => {
     if (sourcePreview) {
       setSourcePreview(null);
-      inspectorToggleRef.current?.focus({ preventScroll: true });
+      infoToggleRef.current?.focus({ preventScroll: true });
       return;
     }
     const returningToEditor = showCanvas && canvasReturnToEditorRef.current;
+    setPdfPreviewOpen(false);
     changeCanvasWorkspaceExpanded(false);
     if (showCanvas) void requestToggleCanvas();
     else setInfoOpen(false);
     // Each group owns its return target. A map opened while writing resumes
     // that editor; otherwise closing the inspector returns to its own toggle.
-    if (!returningToEditor) inspectorToggleRef.current?.focus({ preventScroll: true });
+    if (!returningToEditor) {
+      (pdfPreviewOpen ? pdfToggleRef.current : showCanvas ? canvasToggleRef.current : infoToggleRef.current)?.focus({ preventScroll: true });
+    }
   };
 
   useEffect(() => {
@@ -2421,17 +2459,48 @@ export default function PageDetail({
   const hideOuterTitleWhileEditing =
     editing && editGate.kind === "editor" && editHasMatchingTitle;
 
-  const inspectorToggle = <button ref={inspectorToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-inspector-toggle"
-    aria-label={t(infoOpen || showCanvas || sourcePreview ? "pageInspector.close" : "pageInspector.open")}
-    title={t(infoOpen || showCanvas || sourcePreview ? "pageInspector.close" : "pageInspector.open")}
-    aria-expanded={infoOpen || showCanvas || !!sourcePreview} disabled={canvasSwitchPending}
-    onClick={(event) => {
-      // WebKit pointer clicks do not focus buttons; give the pane a stable return target.
-      event.currentTarget.focus({ preventScroll: true });
-      if (infoOpen || showCanvas || sourcePreview) closeInspector(); else void requestPageInfo();
-    }}>
-    <SidebarSimple aria-hidden="true" size={18} style={{transform:"scaleX(-1)"}} />
-  </button>;
+  const inspectorTab: NoteInspectorTab = pdfPreviewOpen ? "pdf" : showCanvas ? "canvas" : "info";
+  const inspectorOpen = infoOpen || showCanvas || pdfPreviewOpen;
+  const inspectorToggle = <>
+    <button id={`${inspectorId}-info`} aria-controls={`${inspectorId}-panel`} ref={infoToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-inspector-toggle"
+      aria-label={t("pageInspector.info")} title={t("pageInspector.info")}
+      aria-expanded={inspectorOpen} aria-pressed={infoOpen && !showCanvas && !pdfPreviewOpen} disabled={canvasSwitchPending}
+      onClick={(event) => {
+        // WebKit pointer clicks do not focus buttons; keep a stable return target.
+        event.currentTarget.focus({ preventScroll: true });
+        if (sourcePreview) void requestPageInfo();
+        else if (infoOpen && !showCanvas && !pdfPreviewOpen) closeInspector();
+        else void requestPageInfo();
+      }}>
+      <Info aria-hidden="true" size={18} />
+    </button>
+    <button id={`${inspectorId}-canvas`} aria-controls={`${inspectorId}-panel`} ref={canvasToggleRef} type="button" className="mem-icon-action workspace-panel-toggle note-mind-map-toggle"
+      aria-label={t("pageCanvas.tabCanvas")} title={t("pageCanvas.tabCanvas")}
+      aria-expanded={inspectorOpen} aria-pressed={showCanvas} disabled={canvasSwitchPending}
+      onClick={(event) => {
+        event.currentTarget.focus({ preventScroll: true });
+        if (showCanvas) closeInspector();
+        else selectInspectorTab("canvas");
+      }}>
+      <TreeStructure aria-hidden="true" size={18} />
+    </button>
+    {pdfPreview && <button id={`${inspectorId}-pdf`} aria-controls={`${inspectorId}-panel`} ref={pdfToggleRef} type="button"
+      className="mem-icon-action workspace-panel-toggle note-pdf-toggle"
+      aria-label={t("pdfReader.tab")} title={t("pdfReader.tab")}
+      aria-expanded={inspectorOpen} aria-pressed={pdfPreviewOpen} disabled={canvasSwitchPending}
+      onClick={event => {
+        event.currentTarget.focus({ preventScroll: true });
+        if (pdfPreviewOpen) closeInspector();
+        else selectInspectorTab("pdf");
+      }}><FilePdf aria-hidden="true" size={18} /></button>}
+    {documentToolsHost && inspectorOpen && canvasWorkspaceSupported && <button type="button"
+      className="mem-icon-action workspace-panel-toggle"
+      aria-label={t(canvasWorkspaceExpanded ? "pageCanvas.restoreSidebar" : "pageCanvas.expandWorkspace")}
+      title={t(canvasWorkspaceExpanded ? "pageCanvas.restoreSidebar" : "pageCanvas.expandWorkspace")}
+      onClick={() => changeCanvasWorkspaceExpanded(!canvasWorkspaceExpanded)}>
+      {canvasWorkspaceExpanded ? <ArrowsIn aria-hidden="true" size={18} /> : <ArrowsOut aria-hidden="true" size={18} />}
+    </button>}
+  </>;
 
   // The example wiki is for looking at: nothing in it can be moved, renamed or deleted.
   // Page actions sit in the top bar beside the page sidebar toggle, as Obsidian's
@@ -2466,6 +2535,7 @@ export default function PageDetail({
                   </svg>
                 </button>
                 {moveOpen && <MovePageDialog page={page} onClose={() => setMoveOpen(false)} />}
+                {pageExportOpen && <PageExportDialog pageId={page.id} onClose={() => setPageExportOpen(false)} />}
                 {actionMenuOpen ? (
                   <div
                     aria-label={t("pageDetail.actions")}
@@ -2515,6 +2585,7 @@ export default function PageDetail({
                         <span aria-hidden="true" className="page-detail-menu-check">{pageLength === "short" ? "✓" : ""}</span>
                       </button>
                     ) : null}
+                    <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>
                     {/* Re-distill rebuilds a page from its sources; a page
                         with none has nothing to rebuild from. */}
                     {page.status === "active" && canUpdateFromSources ? <button
@@ -2588,7 +2659,7 @@ export default function PageDetail({
 
 
   return (
-    <div className={`page-detail document-context-host${infoOpen || showCanvas ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && (infoOpen || showCanvas) ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
+    <div className={`page-detail document-context-host${inspectorOpen ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && inspectorOpen ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
       {documentToolsHost && createPortal(<>{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
       {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
@@ -3055,9 +3126,9 @@ export default function PageDetail({
                   referenceContext={editorReferenceContext}
                   onReferenceActivate={(target, anchor) => {
                     if (target.kind === "page") { dismissWikiLinkPreview(); onPageClick?.(target.id); }
-                    else if (target.kind === "memory") { dismissWikiLinkPreview(); onMemoryClick(target.id); }
-                    else if (target.citation.source_kind === "memory" && target.sourceMemory) {
-                      dismissWikiLinkPreview(); onMemoryClick(target.citation.locator);
+                    else if (target.kind === "memory") { dismissWikiLinkPreview(); openSourceMemory(target.id); }
+                    else if (target.citation.source_kind === "memory" && (target.sourceMemory || target.citation.historical)) {
+                      dismissWikiLinkPreview(); openSourceMemory(target.citation.locator, target.citation);
                     } else showReferencePreview(target, anchor, false);
                   }}
                   onReferencePreview={showReferencePreview}
@@ -3149,25 +3220,28 @@ export default function PageDetail({
       <div aria-hidden={!canvasWorkspaceExpanded} className="page-detail-canvas-workspace-host" ref={setCanvasWorkspaceHost} />
 
       <PageInfoDrawer
-        docked inspector
+        docked inspector headerless={!!documentToolsHost}
+        keepMounted={!!pdfPreview}
+        defaultWidth={pdfPreviewOpen ? 560 : undefined}
         variant={showCanvas ? "canvas" : "info"}
         expanded={canvasWorkspaceExpanded}
         expandedHost={canvasWorkspaceHost}
         onExpandedChange={canvasWorkspaceSupported ? changeCanvasWorkspaceExpanded : undefined}
+        returnFocusRef={pdfPreviewOpen ? pdfToggleRef : showCanvas ? canvasToggleRef : infoToggleRef}
         expandLabel={t("pageCanvas.expandWorkspace")}
         restoreLabel={t("pageCanvas.restoreSidebar")}
-        open={!sourcePreview && (infoOpen || showCanvas)}
+        open={!sourcePreview && inspectorOpen}
         onClose={closeInspector}
         title={t("pageInspector.label")}
         closeLabel={t("common.close")}
-        headerContent={<>
-          <NoteInspectorTabs idPrefix={inspectorId} active={showCanvas ? "canvas" : "info"}
-            onSelect={selectInspectorTab} disabled={canvasSwitchPending} />
-        </>}
       >
-        <div id={`${inspectorId}-panel`} role="tabpanel" aria-labelledby={`${inspectorId}-${showCanvas ? "canvas" : "info"}`}
+        <div id={`${inspectorId}-panel`} role="region" aria-labelledby={`${inspectorId}-${inspectorTab}`}
           className={`note-inspector-panel${showCanvas ? " note-inspector-panel--canvas" : ""}`}>
-          {showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
+          {pdfPreview && <div className="source-document-preview note-inspector-pdf" hidden={!pdfPreviewOpen}>
+            <div className="note-inspector-pdf-header"><h3 className="note-info-section-heading" title={pdfPreview.title}>{pdfPreview.title}</h3><SourceLifecycleControl source="file" sourceId={pdfPreview.source_id} space={page.space ?? undefined} /></div>
+            <SourceDocumentReader readingSessionKey={readingSessionKey} key={`${pageId}:${pdfPreview.source_id}`} file={pdfPreview} space={page.space ?? undefined} citation={pdfCitation?.pageId === pageId && pdfCitation.sourceId === pdfPreview.source_id ? pdfCitation.citation : undefined} />
+          </div>}
+          {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
             onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} />
             : <DetailInfoContent className="note-inspector-info">
           <InfoAction
@@ -3230,6 +3304,8 @@ export default function PageDetail({
               : undefined}>
               {page.stale_reason === "source_conflict"
                 ? t("pageDetail.dateline.needsReview")
+                : page.refresh_blocked_reason === "zotero_selection_changed"
+                  ? t("noteReview.sourceSelectionChanged")
                 : datelineBlocked
                   ? t("pageDetail.dateline.updateBlocked")
                   : t("noteReview.sourceUpdated")}
@@ -3288,6 +3364,7 @@ export default function PageDetail({
             <PageInfo
               embedded
               sourceCount={sourceCount}
+              selectionImpacts={page.selection_impacts}
               sources={pageSources}
               inbound={inboundLinks}
               revisions={pageRevisionEntries}
@@ -3314,7 +3391,7 @@ export default function PageDetail({
               onOpenPage={onPageClick}
             />
           </div>
-            </DetailInfoContent>}
+            </DetailInfoContent>)}
         </div>
       </PageInfoDrawer>
       {sourcePreview && <SourceDocumentPreview

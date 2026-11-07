@@ -82,6 +82,10 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
     let router = refinery_routes::register(router);
     let router = source_routes::register(router);
     let router = source_annotation_routes::register(router);
+    let router = crate::research_routes::register(router);
+    let router = crate::page_export_routes::register(router);
+    let router = crate::research_dispute_routes::register(router);
+    let router = crate::source_lifecycle_routes::register(router);
     let router = config_routes::register(router);
     let router = indexed_files_routes::register(router);
     let router = entity_graph_routes::register_crud(router);

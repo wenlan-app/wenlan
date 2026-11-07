@@ -151,6 +151,9 @@ fn page_routes(id: &str) -> Vec<RouteCase> {
             method: Method::PUT,
             uri: format!("/api/pages/{id}"),
             body: encoded(&RefreshPageRequest {
+                organize_space: None,
+                citation_targets: vec![],
+                organize_run_id: None,
                 basis: Vec::new(),
                 code_basis: Vec::new(),
                 minor: None,
@@ -471,6 +474,9 @@ async fn page_routes_preserve_typed_contracts() {
     assert!(updated.ok);
 
     let refresh = RefreshPageRequest {
+        organize_space: None,
+        citation_targets: vec![],
+        organize_run_id: None,
         basis: Vec::new(),
         code_basis: Vec::new(),
         minor: None,

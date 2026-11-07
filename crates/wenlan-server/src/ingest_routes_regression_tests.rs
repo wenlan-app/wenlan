@@ -28,6 +28,7 @@ impl Drop for DataDirGuard {
 
 fn directory_source(id: &str, path: &Path, status: SyncStatus) -> Source {
     Source {
+        display_name: None,
         id: id.to_string(),
         source_type: SourceType::Directory,
         path: path.to_path_buf(),

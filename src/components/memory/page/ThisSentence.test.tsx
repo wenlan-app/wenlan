@@ -52,7 +52,7 @@ describe("ThisSentence", () => {
 
   it("UX-WHO-4: rechecks only this sentence", async () => {
     renderIt(sentence());
-    expect(screen.getByText("Can’t be backed up: its source changed since")).toBeTruthy();
+    expect(screen.getByText("Source check: its source changed since")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ask AI to recheck" }));
     await waitFor(() => expect(recheckPageSentence).toHaveBeenCalledWith("page-1", "h3"));
   });

@@ -4,6 +4,8 @@
 //! the MCP tool handlers ignore any inbound `space` arg from the model, and
 //! the schema-gating layer (later wired in tools.rs) omits the `space`
 //! field from tool definitions.
+//! Exact `read_source` reads retain a required `space` argument and reject a
+//! mismatch with this lock instead of silently overriding the caller's intent.
 //!
 //! Implementation uses `RwLock<Option<String>>` rather than `OnceLock` so that
 //! the test suite can reset state between cases without spawning separate

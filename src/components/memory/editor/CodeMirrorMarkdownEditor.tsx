@@ -9,7 +9,9 @@ import {
   defaultKeymap,
   history,
   historyKeymap,
+  redo,
   redoDepth,
+  undo,
   undoDepth,
 } from "@codemirror/commands";
 import { closeSearchPanel, findNext, findPrevious, openSearchPanel, search } from "@codemirror/search";
@@ -442,7 +444,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               ".cm-wiki-page-link.cm-citation-link": {
                 color: "var(--mem-text-tertiary)",
               },
-              ".cm-wiki-page-link.cm-citation-link:not(.reference-link--unverified):is(:hover, :focus-visible)": {
+              ".cm-wiki-page-link.cm-citation-link:not(.reference-link--unverified):not(.reference-link--unevaluated):is(:hover, :focus-visible)": {
                 color: "var(--mem-link)",
               },
               ".cm-wiki-page-link:focus-visible": {
@@ -734,9 +736,18 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     }
 
     viewRef.current = view;
+    const onNativeHistory = (event: Event): void => {
+      const direction: unknown = (event as CustomEvent<unknown>).detail;
+      if ((direction !== "undo" && direction !== "redo") || viewRef.current !== view || !view.hasFocus) return;
+      // Even an empty or blocked history belongs to this editor, never Cocoa.
+      event.preventDefault();
+      if (!actionsBlocked(view)) (direction === "undo" ? undo : redo)(view);
+    };
+    window.addEventListener("wenlan-native-history", onNativeHistory);
     publishStatus(view);
     if (focusRequestedRef.current) view.focus();
     return () => {
+      window.removeEventListener("wenlan-native-history", onNativeHistory);
       if (viewRef.current === view) viewRef.current = null;
       compositionActiveRef.current = false;
       view.destroy();

@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { getChunks, openSearchResult, type IndexedFileInfo } from "../../../lib/tauri";
+import { getChunks, openSearchResult, type IndexedFileInfo, type PageCitation } from "../../../lib/tauri";
 import { DetailInfoContent, DetailReadingFrame } from "../DetailLayout";
 import PageInfoDrawer from "../page/PageInfoDrawer";
 import { InfoToggle } from "../page/InfoToggle";
 import { useDetailInfoOpen } from "../useDetailInfoOpen";
 import SourceDocumentContent from "./SourceDocumentContent";
 import SourceAnnotations from "./SourceAnnotations";
+import ZoteroDocumentReader from "./ZoteroDocumentReader";
+import { SourceLifecycleNotice } from "./SourceLifecycleNotice";
+import type { ZoteroAnnotationTarget } from "./zoteroAnnotationLink";
 import { getSourcePresentation, getSourceAppFromUrl, sourceAppName } from "./sourcePresentation";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { SourceCitedBy } from "./SourceCitedBy";
@@ -29,17 +32,22 @@ function safeOriginalUrl(file: IndexedFileInfo): string | null {
   return null;
 }
 
-export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, frame = false, renderRelatedPages }: {
+export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, frame = false, renderRelatedPages, readingSessionKey, citation }: {
   file: IndexedFileInfo;
   space?: string;
   onReady?: () => void;
   onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
   frame?: boolean;
   renderRelatedPages?: (content: ReactNode) => ReactNode;
+  readingSessionKey?: string;
+  citation?: PageCitation;
 }) {
   const { t, i18n } = useTranslation();
   const source = ["file", "webpage"].includes(file.source) ? file.source : "memory";
   const isWebpage = file.source === "webpage";
+  const isZotero = file.source_agent === "zotero" || file.source_id.startsWith("zotero::");
+  const zoteroReaderKey = JSON.stringify([file.source_id, space ?? null]);
+  const [zoteroJump, setZoteroJump] = useState<{ readerKey: string; target: ZoteroAnnotationTarget } | null>(null);
   const chunks = useQuery({
     queryKey: ["sourceDocument", space ?? null, source, file.source_id],
     queryFn: () => space === undefined ? getChunks(source, file.source_id) : getChunks(source, file.source_id, space),
@@ -47,11 +55,14 @@ export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, fr
     retry: false,
   });
   useEffect(() => { if (!isWebpage && !chunks.isPending) onReady?.(); }, [isWebpage, chunks.isPending, onReady]);
-  const originalUrl = safeOriginalUrl(file);
+  const originalUrl = isZotero ? null : safeOriginalUrl(file);
   const app = isWebpage ? getSourceAppFromUrl(originalUrl) : null;
   const content = [...(chunks.data ?? [])].sort((a, b) => a.chunk_index - b.chunk_index).map((chunk) => chunk.content).join("\n\n");
 
   return <div className={`source-document-reader${frame ? " reading-document-frame" : ""}`}>
+    <SourceLifecycleNotice source={source} sourceId={file.source_id} space={space ?? file.space ?? undefined} />
+    {isZotero && <ZoteroDocumentReader key={`${zoteroReaderKey}:${readingSessionKey ?? "default"}`} sourceId={file.source_id} space={space} readingSessionKey={readingSessionKey}
+      citation={citation} annotationTarget={zoteroJump?.readerKey === zoteroReaderKey ? zoteroJump.target : undefined} />}
     {originalUrl && <div className="source-document-reader-url">
       {app && <span className="source-document-reader-app" data-source-app={app}>
         <SourceTypeIcon kind={app} size={16} />{sourceAppName(app, i18n.language)}
@@ -71,7 +82,9 @@ export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, fr
         <p className="source-document-reader-note">{t("sourceAccess.previewFailed")}</p>
         <button type="button" className="page-editor-action" onClick={() => void chunks.refetch()}>{t("sourceAccess.retry")}</button>
       </div>
-      : content ? <SourceDocumentContent content={content} title={file.title} />
+      : content ? isZotero ? <details><summary>{t("pdfReader.originalText")}</summary><SourceDocumentContent content={content} title={file.title}
+        onZoteroAnnotation={(target) => setZoteroJump({ readerKey: zoteroReaderKey, target: { ...target } })} /></details>
+        : <SourceDocumentContent content={content} title={file.title} />
       : <p className="source-document-reader-note">{t("sourceAccess.noPreview")}</p>}
   </div>;
 }

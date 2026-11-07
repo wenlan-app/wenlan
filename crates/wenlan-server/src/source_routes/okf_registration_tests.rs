@@ -33,6 +33,7 @@ fn save_config(pages: &Path, sources: Vec<Source>) {
 
 fn registered(id: &str, source_type: SourceType, path: &Path) -> Source {
     Source {
+        display_name: None,
         id: id.to_string(),
         source_type,
         path: path.to_path_buf(),
