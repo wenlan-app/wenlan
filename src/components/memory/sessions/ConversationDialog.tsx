@@ -7,7 +7,6 @@ import { readable } from "../SearchResults";
 import { useSessionDetail } from "./SessionCard";
 import { SessionResumeAction } from "./SessionResumeAction";
 import "./sessionSources.css";
-import "../navigation/navigation-shell.css";
 
 interface ConversationDialogProps {
   readonly sessionId: string;
