@@ -346,9 +346,14 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
             {"text": "", "settled": true, "from": "C0"},
             {"text": "A point from nowhere.", "settled": true, "from": "C9"}
         ]}"#,
+        r#"{"conclusion": [
+            {"text": "The tagline is settled; a pricing page is still open.", "points": ["P0", "P1"]},
+            {"text": "Nothing backs this.", "points": []}
+        ]}"#,
         r#"{"points": [
             {"text": "The site gets no pricing page for now.", "settled": true, "from": "C0", "replaces": "P1"}
         ]}"#,
+        "not json",
     ]);
     let models = IntakeModels {
         label: label.clone(),
@@ -377,7 +382,7 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
         .unwrap();
     assert_eq!(done, (1, 2));
     // The model read what the person typed and the end of the last reply.
-    let asked = group.prompts.lock().unwrap().last().unwrap().clone();
+    let asked = group.prompts.lock().unwrap()[1].clone();
     assert!(asked.contains("Tagline: go with You do the thinking"));
     assert!(asked.contains("the tagline is in place"));
     assert!(asked.contains("\"Site redesign\""));
@@ -404,6 +409,16 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
         .unwrap();
     let dream = detail.dream.unwrap();
     assert_eq!((dream.decided, dream.open), (1, 1));
+    // UX-VIEW-6: then the page's first paragraph, from every standing point;
+    // the sentence nothing backs is dropped.
+    let concluded = group.prompts.lock().unwrap()[2].clone();
+    assert!(concluded.contains("P1 (open): Whether the site gets a pricing page is still open."));
+    assert_eq!(dream.conclusion.len(), 1);
+    assert_eq!(
+        dream.conclusion[0].text,
+        "The tagline is settled; a pricing page is still open."
+    );
+    assert_eq!(dream.conclusion[0].points.len(), 2);
     assert_eq!(
         detail.memories.len(),
         2,
@@ -447,7 +462,7 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
         .await
         .unwrap();
     assert_eq!(done, (1, 1));
-    let asked = group.prompts.lock().unwrap().last().unwrap().clone();
+    let asked = group.prompts.lock().unwrap()[3].clone();
     assert!(asked.contains("P1 (open): Whether the site gets a pricing page is still open."));
     let kept: Vec<String> = db
         .dream_points(&thing.id)
@@ -470,6 +485,11 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
     assert_eq!(same.label, "The site gets no pricing page for now.");
     assert_eq!(same.state, Some(wenlan_types::ThingMapState::Decided));
     assert_ne!(same.sources[0].memory_id, pricing_node.sources[0].memory_id);
+    // UX-VIEW-6: this night's conclusion failed. The night keeps its point,
+    // and the page does not show last night's conclusion above newer points.
+    let dream = db.thing_dream(&thing.id).await.unwrap().unwrap();
+    assert_eq!(dream.decided, 1);
+    assert!(dream.conclusion.is_empty());
 
     // Taking the night back puts the point back as it was.
     db.undo_thing_dream(&thing.id).await.unwrap();
@@ -552,7 +572,8 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
         .await
         .unwrap();
     assert_eq!(done, (1, 3));
-    assert_eq!(group.prompts.lock().unwrap().len(), 1, "one call");
+    // One call for points and topics; the second writes the conclusion.
+    assert_eq!(group.prompts.lock().unwrap().len(), 2, "one call");
     let asked = group.prompts.lock().unwrap()[0].clone();
     assert!(asked.contains("T0: GitHub"), "{asked}");
 
