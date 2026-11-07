@@ -3,7 +3,7 @@ import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
 import { TabEmptyMark } from "../onboarding/TabIntro";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import Graph from "graphology";
 import Sigma from "sigma";
@@ -38,7 +38,19 @@ import AtlasInspector from "./AtlasInspector";
 import AtlasSelect from "./AtlasSelect";
 import AtlasTooltip from "./AtlasTooltip";
 import { entityTypeHidden, filterGraphEntityTypes } from "../../lib/graph/typeFilter";
-import { getKnowledgeGraph, listThingNightPoints } from "../../lib/tauri";
+import { getKnowledgeGraph, listThingNightPoints, undoNights } from "../../lib/tauri";
+import { SteepMoon } from "./things/ThingSteeped";
+import {
+  growMs,
+  growStagger,
+  nightCounts,
+  nightsToday,
+  ranOvernight,
+  replayStops,
+  REPLAY_TIMING,
+  todayStartSeconds,
+  type ReplayStop,
+} from "../../lib/graph/lastNight";
 import type { Entity, KnowledgeGraph, ThingNightPoints } from "../../lib/tauri";
 import {
   buildKnowledgeGraphModel,
@@ -96,6 +108,7 @@ import {
   SENTENCE_MAX_PX,
   THING_STOPS,
   thingFocusState,
+  thingPointIds,
   thingStopsFor,
   thingStopNodeIds,
   type FrameHit,
@@ -235,6 +248,9 @@ interface AtlasViewProps {
   focusPageId?: string;
   /** Open at this thing's 這件事 stop (from its page's 「在大图上看」). */
   focusThingId?: string;
+  /** Home's "Replay" (UX-GRAPH-6): the press it answers. The map plays last
+   *  night once for it, 300 ms after its first paint. */
+  replay?: number;
   // Main.tsx's Graph view passes navigateBack; renders a back button as the
   // first toolbar item (a floating one would sit on the search box).
   onBack?: () => void;
@@ -253,7 +269,19 @@ function prefersReducedMotion(): boolean {
  * entity overlay's "Atlas" mode. Replaced the canvas ConstellationMap; the
  * query keys keep the "constellation-" prefix so nothing else invalidates.
  */
-export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, onBack }: AtlasViewProps) {
+/** The home presses already played, so going back to such a map is quiet. */
+const playedReplays = new Set<number>();
+
+/** What Replay is doing: the stops it plays, its timers, the things whose
+ *  points it shows, and the view to go back to (UX-GRAPH-6). */
+interface ReplayRun {
+  readonly stops: readonly ReplayStop[];
+  readonly timers: number[];
+  readonly things: ReadonlySet<string>;
+  readonly overview: AtlasViewpoint;
+}
+
+export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack }: AtlasViewProps) {
   const { t } = useTranslation();
   const effectiveFocusId = focusPageId ? pageNodeId(focusPageId) : focusEntityId;
   const palette = useGraphPalette();
@@ -309,7 +337,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const [selectedThing, setSelectedThing] = useState<string | null>(null);
   const [thingStops, setThingStops] = useState<readonly ThingStop[]>(THING_STOPS);
   const thingStopRef = useRef<ThingStop>("this");
-  const selectThingRef = useRef<(thing: string, stop: ThingStop) => void>(() => {});
+  const selectThingRef = useRef<(thing: string, stop: ThingStop, options?: { readonly fly?: boolean }) => void>(() => {});
   const goToSignRef = useRef<(id: string) => void>(() => {});
   const frameHitsRef = useRef<FrameHit[]>([]);
   // Night points that are new to this viewer and have not finished growing
@@ -317,12 +345,23 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // carries them over a rebuild that cuts their growth short.
   const growQueueRef = useRef<Set<string>>(new Set());
   // Sends the picked thing's points out to their topics (see the build).
-  const flyRef = useRef<(thing: string | null, startAt: number | null) => void>(() => {});
+  const flyRef = useRef<(thing: string | null, startAt: number | null, only?: ReadonlySet<string>) => void>(() => {});
   // When the last thing was picked (performance.now()), so its points' flight
   // keeps its time across a rebuild.
   const pickedAtRef = useRef(0);
   const sceneRef = useRef<CartographyScene | null>(null);
   const sceneDirtyRef = useRef(true);
+  // Replay (UX-GRAPH-6): what it is doing, while it plays; "marked" is the
+  // reduced-motion form, where everything is lit at once.
+  const [replaying, setReplaying] = useState<"idle" | "playing" | "marked">("idle");
+  const replayRef = useRef<ReplayRun | null>(null);
+  // Grows the given points out of their thing's centre (see the build): from
+  // `startAt` (performance.now() time), each `stagger` ms after the last.
+  const growRef = useRef<(ids: readonly string[], startAt: number, stagger: number) => void>(() => {});
+  const startReplayRef = useRef<() => void>(() => {});
+  const endReplayRef = useRef<(camera: "return" | "stay") => void>(() => {});
+  // Home's press waits for the map's first paint.
+  const replayPendingRef = useRef(replayPress !== undefined && !playedReplays.has(replayPress));
 
   // ONE read for the whole graph. This used to be two queries — every entity,
   // then a detail fetch per entity capped at the first 20 — which drew every
@@ -478,6 +517,35 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const hasActiveThings = visibleModel.nodes.some((node) => node.kind === "thing" && !node.quiet);
   const hasThingsRef = useRef(hasThings);
   hasThingsRef.current = hasThings;
+  // What last night did on this map (UX-GRAPH-5): the things whose newest
+  // night ran today, counted by what is on the map, so another Space's
+  // points never count here.
+  const tonight = useMemo(() => nightsToday(thingPoints, spaceFilter), [thingPoints, spaceFilter]);
+  const tonightRef = useRef(tonight);
+  tonightRef.current = tonight;
+  const nightCount = useMemo(() => {
+    const ids = new Set(visibleModel.nodes.map((node) => node.id));
+    return nightCounts(tonight, (id) => ids.has(id));
+  }, [tonight, visibleModel]);
+  const queryClient = useQueryClient();
+  // Undo on the map takes back the whole night for every thing; one thing's
+  // own page still takes back only that thing. The line goes at once.
+  const undoNight = useMutation({
+    mutationFn: () => undoNights(todayStartSeconds()),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["thing-night-points"] });
+      void queryClient.invalidateQueries({ queryKey: ["things"] });
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-graph"] });
+    },
+  });
+  const nightShown = (nightCount.written > 0 || nightCount.connected > 0) && !undoNight.isPending && !undoNight.isSuccess;
+  // A fresh read after Undo says what is left; the line follows it again.
+  const resetUndo = undoNight.reset;
+  const undoDone = undoNight.isSuccess;
+  useEffect(() => {
+    if (undoDone) resetUndo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thingPoints]);
 
   // Anything in cartography.ts's unscoped bucket is drawn on the fallback
   // climb, so the badge must never read all-durable while such a node is on
@@ -634,7 +702,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
    * picked (its lit set lit, the stops offered) at every stop. The map itself
    * is its picture, so no inspector opens over it.
    */
-  const selectThing = (thing: string, stop: ThingStop) => {
+  const selectThing = (thing: string, stop: ThingStop, { fly = true }: { readonly fly?: boolean } = {}) => {
     const renderer = sigmaRef.current;
     const drawn = graphRef.current;
     if (!renderer || !drawn || !drawn.hasNode(thing)) return;
@@ -650,7 +718,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // Its points set off as the camera arrives, so the flight is seen.
     // With reduced motion the camera is there at once, and so is the rest.
     pickedAtRef.current = performance.now() - (prefersReducedMotion() ? THING_CAMERA_MS : 0);
-    flyRef.current(thing, pickedAtRef.current + THING_CAMERA_MS);
+    // Replay sends out only the points last night connected, later.
+    if (fly) flyRef.current(thing, pickedAtRef.current + THING_CAMERA_MS);
     // Its sentences come up once the camera is there (sentencesFor).
     window.setTimeout(() => sigmaRef.current?.refresh(), THING_CAMERA_MS + 20);
     const { width } = renderer.getDimensions();
@@ -731,6 +800,124 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     overviewRef.current = null;
   };
   returnToMapRef.current = returnToMap;
+  /**
+   * Replay (UX-GRAPH-6, Fable's design 2026-11-06): last night played on the
+   * map, only ever on a press. Per thing, the camera goes to it and its new
+   * points grow out of its centre one after another; then the camera takes
+   * in the topics it connected, and those points fly to sit beside them,
+   * with no lines. Between things the points go home; at the end they all
+   * do, with the camera going back to the view the press left. With reduced
+   * motion everything last night changed is lit at once instead.
+   */
+  const startReplay = () => {
+    const renderer = sigmaRef.current;
+    const drawn = graphRef.current;
+    if (!renderer || !drawn || replayRef.current) return;
+    const stops = replayStops(tonightRef.current, (id) => drawn.hasNode(id));
+    if (stops.length === 0) return;
+    // A picked thing is let go at once; the view the press left is kept.
+    if (selectedRef.current) {
+      flyRef.current(null, null);
+      selectedRef.current = null;
+      pinnedPointRef.current = null;
+      setSelectedId(null);
+      setSelectedThing(null);
+    }
+    const run: ReplayRun = {
+      stops,
+      timers: [],
+      things: new Set(stops.map((stop) => stop.thing)),
+      overview: captureAtlasViewpoint(renderer, drawn),
+    };
+    replayRef.current = run;
+    overviewRef.current = run.overview;
+    focusLayoutRef.current = null;
+    if (prefersReducedMotion()) {
+      const points = stops.flatMap((stop) => thingPointIds(drawn, stop.thing));
+      const topics = [...new Set(stops.flatMap((stop) => stop.topics))];
+      hoverStateRef.current = { hovered: stops[0]!.thing, neighbors: new Set([...points, ...topics]), linked: new Set(topics) };
+      frameAtlasView(renderer, drawn, {
+        nodeIds: [...run.things, ...points, ...topics],
+        insets: ATLAS_CONTROL_INSETS,
+        duration: 0,
+        padding: 40,
+      });
+      setReplaying("marked");
+      renderer.refresh();
+      return;
+    }
+    setReplaying("playing");
+    const beat = REPLAY_TIMING;
+    let at = 0;
+    const after = (ms: number, step: () => void) => {
+      run.timers.push(window.setTimeout(() => {
+        if (replayRef.current === run) step();
+      }, ms));
+    };
+    stops.forEach((stop, index) => {
+      if (index > 0) {
+        after(at, () => flyRef.current(null, performance.now()));
+        at += beat.home;
+      }
+      after(at, () => {
+        selectThingRef.current(stop.thing, "this", { fly: false });
+        growRef.current(stop.grow, performance.now() + beat.camera, growStagger(stop.grow.length));
+      });
+      at += beat.camera;
+      if (stop.grow.length > 0) at += growMs(stop.grow.length) + beat.holdGrown;
+      if (stop.fly.length > 0) {
+        after(at, () => {
+          const view = sigmaRef.current;
+          const graph = graphRef.current;
+          if (!view || !graph) return;
+          const nodeIds = [stop.thing, ...thingPointIds(graph, stop.thing), ...stop.topics].filter((id) => graph.hasNode(id));
+          frameAtlasView(view, graph, { nodeIds, insets: ATLAS_CONTROL_INSETS, duration: beat.camera, padding: 40 });
+          flyRef.current(stop.thing, performance.now() + beat.camera, new Set(stop.fly));
+        });
+        at += beat.camera + beat.fly + beat.holdFlown;
+      }
+    });
+    after(at, () => endReplayRef.current("return"));
+  };
+  startReplayRef.current = startReplay;
+  /** Replay ends: Skip, Esc and its own end take the camera back; touching
+   *  the map leaves it where the person put it. Everything lands, and what
+   *  the map shows goes back to its usual rules. */
+  const endReplay = (camera: "return" | "stay") => {
+    const run = replayRef.current;
+    if (!run) return;
+    for (const timer of run.timers) window.clearTimeout(timer);
+    growRef.current([], 0, 0);
+    const renderer = sigmaRef.current;
+    const drawn = graphRef.current;
+    const animate = camera === "return" && !prefersReducedMotion() && replaying !== "marked";
+    // Points fly home with the camera at the end; otherwise they are home at once.
+    flyRef.current(null, animate ? performance.now() : null);
+    replayRef.current = null;
+    selectedRef.current = null;
+    pinnedPointRef.current = null;
+    overviewRef.current = null;
+    focusLayoutRef.current = null;
+    setSelectedId(null);
+    setSelectedThing(null);
+    setReplaying("idle");
+    if (!renderer || !drawn) return;
+    hoverStateRef.current = hoverStateFor(drawn, null);
+    const view = renderer.getCamera();
+    if (camera === "return") {
+      const from = { x: view.x, y: view.y, ratio: view.ratio, angle: view.angle };
+      if (restoreAtlasViewpoint(renderer, drawn, run.overview) && animate) {
+        const to = { x: view.x, y: view.y, ratio: view.ratio, angle: view.angle };
+        view.setState(from);
+        void view.animate(to, { duration: REPLAY_TIMING.home, easing: "quadraticInOut" });
+      } else if (view.isAnimated()) {
+        void view.animate({ x: view.x, y: view.y, ratio: view.ratio, angle: view.angle }, { duration: 1 });
+      }
+    }
+    sceneDirtyRef.current = true;
+    renderer.refresh();
+  };
+  endReplayRef.current = endReplay;
   const frameMap = (mode: AtlasFrameMode) => {
     const renderer = sigmaRef.current;
     const drawn = graphRef.current;
@@ -775,6 +962,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         target?.closest?.(".atlas-type-filter-panel")
       );
       if (inDisplayControls) return;
+      if (replayRef.current) {
+        endReplayRef.current("return");
+        return;
+      }
       if (selectedRef.current) returnToMapRef.current();
     };
     window.addEventListener("keydown", escape);
@@ -832,6 +1023,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // Picking a thing flies its linked points out to their topics; letting it
   // go flies them home.
   useEffect(() => {
+    // Replay moves the points itself.
+    if (replayRef.current) return;
     flyRef.current(selectedThing, performance.now());
   }, [selectedThing]);
   const selectedNode = filteredModel.nodes.find((node) => node.id === selectedId);
@@ -907,6 +1100,14 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     applyNightOffsets(graph, readNightOffsets());
     runAtlasLayout(graph);
     graphRef.current = graph;
+    // A rebuild while Replay plays (a fresh read landing) ends it where it is.
+    if (replayRef.current) {
+      for (const timer of replayRef.current.timers) window.clearTimeout(timer);
+      replayRef.current = null;
+      selectedRef.current = null;
+      setSelectedThing(null);
+      setReplaying("idle");
+    }
     hoverStateRef.current = hoverStateFor(graph, null);
     sceneRef.current = null;
     sceneDirtyRef.current = true;
@@ -966,29 +1167,36 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     ]);
     // A point new since the map was last opened grows out of its thing's
     // centre, once (UX-CHAT-5); it is seen from now on, so it never does again.
+    // Opened by home's Replay: they grow once, in the replay.
     const nightNow = nightPointIds(graph);
-    for (const id of newNightPoints(nightNow, readSeenNightPoints())) growQueueRef.current.add(id);
+    if (!replayPendingRef.current) for (const id of newNightPoints(nightNow, readSeenNightPoints())) growQueueRef.current.add(id);
     storeSeenNightPoints(nightNow);
     const growing = prefersReducedMotion() ? [] : nightNow.filter((id) => growQueueRef.current.has(id));
     if (prefersReducedMotion()) growQueueRef.current.clear();
     // Sigma (3.0.3) takes a node's place from the graph on every full paint,
     // not from the reducer, so a growing point is moved on the graph itself:
     // out from its thing's centre to the spot just kept, which it ends on
-    // exactly. Nothing kept is touched (its spot was stored above).
-    let growth: { targets: Map<string, { x: number; y: number }>; start: number; at: number } | null = growing.length > 0
-      ? {
-        targets: new Map(growing.map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }])),
-        start: 0,
-        at: 0,
-      }
-      : null;
-    const placeGrowth = (at: number) => {
+    // exactly. Nothing kept is touched (its spot was stored above). Each
+    // point may start a little after the last (Replay), so each has its own
+    // delay and its own progress.
+    type Growth = { targets: Map<string, { x: number; y: number; delay: number }>; start: number; progress: Map<string, number>; end: number };
+    const growthOf = (ids: readonly string[], start: number, stagger: number): Growth | null => {
+      const targets = new Map(ids.filter((id) => graph.hasNode(id)).map((id, index) => [id, {
+        x: graph.getNodeAttribute(id, "x") as number,
+        y: graph.getNodeAttribute(id, "y") as number,
+        delay: index * stagger,
+      }] as const));
+      return targets.size > 0 ? { targets, start, progress: new Map(), end: GROWTH_MS + (targets.size - 1) * stagger } : null;
+    };
+    let growth = growthOf(growing, 0, 0);
+    const placeGrowth = (elapsed: number) => {
       if (!growth) return;
-      growth.at = at;
       for (const [id, target] of growth.targets) {
+        const at = growthAt(elapsed - target.delay);
+        growth.progress.set(id, at);
         const thing = graph.getNodeAttribute(id, "dustOf") as string | undefined;
         if (at >= 1 || !thing || !graph.hasNode(thing)) {
-          graph.mergeNodeAttributes(id, target);
+          graph.mergeNodeAttributes(id, { x: target.x, y: target.y });
           continue;
         }
         const cx = graph.getNodeAttribute(thing, "x") as number;
@@ -998,6 +1206,29 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     };
     placeGrowth(0);
     let growthFrame = 0;
+    const growStep = () => {
+      if (!growth) return;
+      if (growth.start === 0) growth.start = performance.now();
+      const elapsed = performance.now() - growth.start;
+      placeGrowth(elapsed);
+      if (elapsed >= growth.end) {
+        for (const id of growth.targets.keys()) growQueueRef.current.delete(id);
+        growth = null;
+      }
+      sceneDirtyRef.current = true;
+      sigmaRef.current?.refresh();
+      if (growth) growthFrame = requestAnimationFrame(growStep);
+    };
+    // Replay's growing: whatever was still growing lands first.
+    growRef.current = (ids, startAt, stagger) => {
+      cancelAnimationFrame(growthFrame);
+      placeGrowth(Infinity);
+      growth = growthOf(ids, startAt, stagger);
+      placeGrowth(performance.now() - startAt);
+      sceneDirtyRef.current = true;
+      sigmaRef.current?.refresh();
+      if (growth) growthFrame = requestAnimationFrame(growStep);
+    };
     // A picked thing's points that link to a topic fly out of its frame to
     // sit beside that topic, and home again when it is let go (UX-CHAT-5,
     // Qi-Xuan 11-05): no line runs across the map, and the flight shows the
@@ -1015,7 +1246,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // `startAt` (performance.now() time) is when the flight sets off, so a
     // pick's points wait for the camera to arrive and are then seen to fly;
     // null puts them there at once.
-    const fly = (wanted: string | null, startAt: number | null) => {
+    const fly = (wanted: string | null, startAt: number | null, only?: ReadonlySet<string>) => {
       if (wanted !== null && !graph.hasNode(wanted)) wanted = null;
       // Already there, or already on its way there.
       if (wanted === flightThing && (wanted === null || flightTo === 1)) return;
@@ -1027,7 +1258,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       }
       const thing = wanted ?? flightThing;
       if (thing === null) return;
-      if (thing !== flightThing) flightTargets = thingFlightTargets(graph, thing);
+      if (thing !== flightThing || only) {
+        flightTargets = thingFlightTargets(graph, thing);
+        // Replay flies only what last night connected.
+        if (only) flightTargets = new Map([...flightTargets].filter(([id]) => only.has(id)));
+      }
       flightThing = thing;
       const from = flightAt;
       const to = wanted === null ? 0 : 1;
@@ -1310,7 +1545,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         // (UX-CHAT-5; Fable's design: the thing is a camera, not a mark).
         // The "Working on" switch shows every active thing's points at once;
         // a quiet thing's show only while it is picked.
-        if (attrs.night === true && typeof attrs.dustOf === "string" && (!showWorkingRef.current || attrs.quiet === true) && selectedRef.current !== attrs.dustOf) return { ...attrs, hidden: true };
+        // Replay shows every point of last night's things, whatever the switch says.
+        if (attrs.night === true && typeof attrs.dustOf === "string" && (!showWorkingRef.current || attrs.quiet === true) && selectedRef.current !== attrs.dustOf && !replayRef.current?.things.has(attrs.dustOf)) return { ...attrs, hidden: true };
         // A small group stays out of sight until the islands come up solid,
         // unless it is what the reader is looking at.
         const hover = hoverStateRef.current;
@@ -1342,7 +1578,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         const floor = lodRef.current.phase === "overview" && attrs.landmark ? minimumGraphRadius * 2 : minimumGraphRadius;
         const cap = nodeSizeCapPx(attrs, node === hoverStateRef.current.hovered);
         const size = Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel);
-        if (growth && growth.targets.has(node)) return { ...display, size: size * Math.max(0.15, growth.at) };
+        if (growth && growth.targets.has(node)) return { ...display, size: size * Math.max(0.15, growth.progress.get(node) ?? 0) };
         return { ...display, size };
       },
       edgeReducer: (edge, attrs) => {
@@ -1582,21 +1818,15 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // region name vanished from the map.
     renderer.refresh();
     // New points grow in from the first painted frame on.
-    if (growth) {
-      const grow = () => {
-        if (!growth) return;
-        if (growth.start === 0) growth.start = performance.now();
-        const elapsed = performance.now() - growth.start;
-        placeGrowth(growthAt(elapsed));
-        if (elapsed >= GROWTH_MS) {
-          for (const id of growth.targets.keys()) growQueueRef.current.delete(id);
-          growth = null;
-        }
-        sceneDirtyRef.current = true;
-        renderer.refresh();
-        if (growth) growthFrame = requestAnimationFrame(grow);
-      };
-      growthFrame = requestAnimationFrame(grow);
+    if (growth) growthFrame = requestAnimationFrame(growStep);
+    // Home's Replay starts 300 ms after the map's first paint.
+    let replayTimer = 0;
+    if (replayPendingRef.current) {
+      replayTimer = window.setTimeout(() => {
+        replayPendingRef.current = false;
+        if (replayPress !== undefined) playedReplays.add(replayPress);
+        startReplayRef.current();
+      }, 300);
     }
     renderer.on("clickNode", ({ node }) => {
       // A moved drag must not also navigate on release.
@@ -1698,6 +1928,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     });
     const mouseCaptor = renderer.getMouseCaptor();
     mouseCaptor.on("mousedown", () => {
+      // Touching the map ends Replay at once, the camera left where it is.
+      if (replayRef.current) endReplayRef.current("stay");
       // Freeze the camera frame so dragging a boundary node doesn't re-fit it.
       if (!renderer.getCustomBBox()) renderer.setCustomBBox(renderer.getBBox());
     });
@@ -1767,6 +1999,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // zooming toward the cursor.
     mouseCaptor.on("wheel", (e) => {
       e.preventSigmaDefault();
+      if (replayRef.current) endReplayRef.current("stay");
       const we = e.original as WheelEvent;
       // d3-zoom wheelDelta: pixel-mode deltas x0.002, line-mode x0.05,
       // page-mode x1, and pinch (ctrlKey wheel on mac) x10. Camera ratio
@@ -1785,8 +2018,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       disposed = true;
       containerSizeObserver?.disconnect();
       cancelAnimationFrame(growthFrame);
-      placeGrowth(1);
+      window.clearTimeout(replayTimer);
+      placeGrowth(Infinity);
       growth = null;
+      growRef.current = () => {};
       cancelAnimationFrame(flightFrame);
       flyRef.current = () => {};
       // Sigma only detaches its own camera listener; release our listener too.
@@ -1954,6 +2189,15 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     ...(regionCount > 0 ? [t("atlas.countRegions", { count: regionCount })] : []),
   ].join(" · ");
   const dropdownOpen = searchFocused && query.trim().length > 0;
+  // "Last night: 8 points written, 5 connected"; a part that is zero is left out.
+  const nightOvernight = ranOvernight(tonight.map((thing) => thing.last_night?.at ?? 0));
+  const nightSentence = t("atlas.night.sentence", {
+    when: t(nightOvernight ? "atlas.night.lastNight" : "atlas.night.today"),
+    what: [
+      ...(nightCount.written > 0 ? [t("atlas.night.written", { count: nightCount.written })] : []),
+      ...(nightCount.connected > 0 ? [t("atlas.night.connected", { count: nightCount.connected })] : []),
+    ].join(t("atlas.night.joiner")),
+  });
 
   return (
     <div className="atlas-canvas-shell">
@@ -1990,7 +2234,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
                 setQuery(e.target.value);
                 setActiveIndex(0);
               }}
-              onFocus={() => setSearchFocused(true)}
+              onFocus={() => {
+                if (replayRef.current) endReplayRef.current("stay");
+                setSearchFocused(true);
+              }}
               onBlur={() => setSearchFocused(false)}
               onKeyDown={onSearchKeyDown}
             />
@@ -2135,7 +2382,30 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         )}
       </div>
 
-      {selectedThing ? (
+      {replaying !== "idle" ? (
+        // Replay says what it is doing and how to stop it (UX-GRAPH-6).
+        <p className="atlas-night-line" role="status" data-testid="atlas-night-line">
+          <SteepMoon />
+          <span>{t(replaying === "marked" ? "atlas.night.marked" : "atlas.night.replaying")}</span>
+          <span aria-hidden="true">·</span>
+          <button type="button" onClick={() => endReplay("return")}>{t(replaying === "marked" ? "atlas.night.done" : "atlas.night.skip")}</button>
+        </p>
+      ) : nightShown && !selectedThing ? (
+        // What last night did, one line above the count line (UX-GRAPH-5).
+        <p className="atlas-night-line" data-testid="atlas-night-line" title={nightSentence}>
+          <SteepMoon />
+          <span className="atlas-night-line-full">{nightSentence}</span>
+          <span className="atlas-night-line-short">{t(nightOvernight ? "atlas.night.lastNightShort" : "atlas.night.todayShort")}</span>
+          <span aria-hidden="true">·</span>
+          <button type="button" className="atlas-night-replay" onClick={startReplay}>{t("atlas.night.replay")}</button>
+          <span aria-hidden="true">·</span>
+          <button type="button" disabled={undoNight.isPending} onClick={() => undoNight.mutate()}>{t("atlas.night.undo")}</button>
+        </p>
+      ) : undoNight.isError ? (
+        <p className="atlas-night-line" role="alert">{t("atlas.night.undoFailed")}</p>
+      ) : null}
+
+      {selectedThing && replaying === "idle" ? (
         // A picked thing's three zoom stops, in the camera controls' own
         // style, where the count line sits (UX-CHAT-5).
         <div className="atlas-camera-controls atlas-thing-stops" role="group" aria-label={t("atlas.thingStops")}>

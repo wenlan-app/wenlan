@@ -28,11 +28,11 @@ function thing(overrides: Partial<ThingSummary> = {}): ThingSummary {
   };
 }
 
-function renderWorkingOn(onOpenThing = vi.fn(), onSelectSpace = vi.fn()) {
+function renderWorkingOn(onOpenThing = vi.fn(), onSelectSpace = vi.fn(), onReplayNight?: () => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} />
+      <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
     </QueryClientProvider>,
   );
   return { onOpenThing, onSelectSpace };
@@ -220,6 +220,20 @@ describe("WorkingOn", () => {
     // A quiet thing has no card: its name opens it.
     fireEvent.click(screen.getByRole("button", { name: "Old work" }));
     expect(onOpenThing).toHaveBeenCalledWith("thg_3");
+  });
+
+  it("UX-GRAPH-5: home's names line adds only Replay: no count and no Undo", async () => {
+    const tonight = new Date();
+    tonight.setHours(3, 0, 0, 0);
+    vi.mocked(listThings).mockResolvedValue([thing({ id: "thg_1", title: "Site redesign", dreamed_at: Math.floor(tonight.getTime() / 1000) })]);
+    const onReplayNight = vi.fn();
+    renderWorkingOn(vi.fn(), vi.fn(), onReplayNight);
+    const line = await screen.findByTestId("wiki-working-on-steeped");
+    expect(line.textContent).toBe("Steeped overnight:Site redesign·Replay");
+    expect(line.textContent).not.toMatch(/\d/);
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+    expect(onReplayNight).toHaveBeenCalledTimes(1);
   });
 
   it("UX-CHAT-5: names two steeped things at most, and \"and more\" lights every steeped card", async () => {

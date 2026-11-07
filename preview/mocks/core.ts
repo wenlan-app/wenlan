@@ -57,7 +57,7 @@ const projectSourceText = new Map([
   ["/preview/sources/讀書會資料/每週摘錄.md", "# 每週摘錄\n\n## 本週問題\n哪一段內容改變了我們原先的想法？\n\n## 討論後記\n保留不同觀點，並連回各自引用的段落。"],
 ]);
 import { liveInvoke } from "./live-invoke";
-import { COMMUNITY_READ_SCHEMA_VERSION } from "../../src/lib/tauri";
+import { COMMUNITY_READ_SCHEMA_VERSION, type ThingNightPoints } from "../../src/lib/tauri";
 import { invokeRemoteFixture } from "./remote-access";
 
 // `&things=1&grow=1`: this viewer has seen every night point but the newest,
@@ -204,6 +204,15 @@ export async function invoke(
       // `&quiet=1`: the same things after they have gone quiet, the first with
       // only its points that sit by a topic.
       const quiet = new URLSearchParams(window.location.search).get("quiet") === "1";
+      // `&night=1`: last night wrote and connected some of these points, so
+      // the map has its morning line and Replay (UX-GRAPH-5, UX-GRAPH-6).
+      if (new URLSearchParams(window.location.search).get("night") === "1") {
+        const nights: Record<string, ThingNightPoints["last_night"]> = {
+          "tm-site": { at: HOME_NIGHT, written: ["tm-n-site-3", "tm-n-site-4", "tm-n-site-5"], linked: [{ memory_id: "tm-n-site-2", entity_id: "tm-e15" }, { memory_id: "tm-n-site-4", entity_id: "tm-e15" }] },
+          "tm-rel": { at: HOME_NIGHT, written: ["tm-n-rel-2", "tm-n-rel-3"], linked: [{ memory_id: "tm-n-rel-2", entity_id: "tm-e16" }] },
+        };
+        return THING_MAP_POINTS.map((thing) => (nights[thing.thing_id] ? { ...thing, last_night: nights[thing.thing_id] } : thing));
+      }
       if (!quiet) return THING_MAP_POINTS;
       const linked = new Set(THING_MAP_GRAPH.memory_links.map((link) => link.memory_id));
       return THING_MAP_POINTS.map((thing, i) => ({

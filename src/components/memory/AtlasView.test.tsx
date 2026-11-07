@@ -11,6 +11,7 @@ vi.mock("../../lib/tauri", async () => {
     ...actual,
     getKnowledgeGraph: vi.fn(),
     listThingNightPoints: vi.fn(),
+    undoNights: vi.fn(),
     listCommunities: vi.fn(),
     listCommunityMembers: vi.fn(),
   };
@@ -137,7 +138,7 @@ vi.mock("sigma", () => {
   return { default: SigmaMock };
 });
 
-import { getKnowledgeGraph, listCommunities, listCommunityMembers, listThingNightPoints } from "../../lib/tauri";
+import { getKnowledgeGraph, listCommunities, listCommunityMembers, listThingNightPoints, undoNights } from "../../lib/tauri";
 import type {
   Entity,
   EntityDetail,
@@ -866,6 +867,90 @@ describe("AtlasView", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("group", { name: "Zoom to" })).not.toBeInTheDocument());
     expect(instance.camera.animate).toHaveBeenLastCalledWith(expect.any(Object), { duration: 450, easing: "quadraticInOut" });
+  });
+
+  describe("last night (UX-GRAPH-5, UX-GRAPH-6)", () => {
+    const tonight = () => {
+      const night = new Date();
+      night.setHours(3, 0, 0, 0);
+      return Math.floor(night.getTime() / 1000);
+    };
+    const steeped = () => {
+      mockConnectedPair();
+      mockMemories([], [{ memory_id: "n1", entity_id: "e1" }]);
+      vi.mocked(listThingNightPoints).mockResolvedValue([{
+        thing_id: "t1",
+        title: "Site redesign",
+        spaces: [],
+        points: [
+          { memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 },
+          { memory_id: "n2", title: "Pricing page open", decided: false, created_at: 20 },
+        ],
+        last_night: { at: tonight(), written: ["n1", "n2"], linked: [{ memory_id: "n1", entity_id: "e1" }] },
+      }]);
+    };
+
+    it("says what last night did in one line, with Replay and Undo", async () => {
+      steeped();
+      renderWithQuery(<AtlasView />);
+      const line = await screen.findByTestId("atlas-night-line");
+      expect(line.querySelector(".atlas-night-line-full")).toHaveTextContent("Last night: 2 points written, 1 connected");
+      expect(within(line).getByRole("button", { name: "Replay" })).toBeInTheDocument();
+      vi.mocked(undoNights).mockResolvedValue({ things: 1, points: 2 });
+      fireEvent.click(within(line).getByRole("button", { name: "Undo" }));
+      await waitFor(() => expect(undoNights).toHaveBeenCalledTimes(1));
+      const midnight = new Date();
+      midnight.setHours(0, 0, 0, 0);
+      expect(vi.mocked(undoNights).mock.calls[0]![0]).toBe(Math.floor(midnight.getTime() / 1000));
+      // Gone at once after Undo.
+      await waitFor(() => expect(screen.queryByTestId("atlas-night-line")).not.toBeInTheDocument());
+    });
+
+    it("has no line when the newest night was not today", async () => {
+      mockConnectedPair();
+      vi.mocked(listThingNightPoints).mockResolvedValue([{
+        thing_id: "t1",
+        title: "Site redesign",
+        spaces: [],
+        points: [{ memory_id: "n1", title: "Tagline settled", decided: true, created_at: 10 }],
+        last_night: { at: tonight() - 2 * 86_400, written: ["n1"], linked: [] },
+      }]);
+      renderWithQuery(<AtlasView />);
+      await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+      expect(screen.queryByTestId("atlas-night-line")).not.toBeInTheDocument();
+    });
+
+    it("plays only on a press, says so, and Skip or Esc ends it with the camera going back", async () => {
+      steeped();
+      renderWithQuery(<AtlasView />);
+      const line = await screen.findByTestId("atlas-night-line");
+      const instance = capturedSigmaInstances[0];
+      fireEvent.click(within(line).getByRole("button", { name: "Replay" }));
+      const playing = await screen.findByRole("status");
+      expect(playing).toHaveTextContent("Replaying last night");
+      // The picked thing's zoom stops stay away while it plays.
+      expect(screen.queryByRole("group", { name: "Zoom to" })).not.toBeInTheDocument();
+      fireEvent.click(within(playing).getByRole("button", { name: "Skip" }));
+      await waitFor(() => expect(screen.getByTestId("atlas-night-line")).toHaveTextContent("Replay"));
+      expect(screen.queryByText("Replaying last night")).not.toBeInTheDocument();
+      fireEvent.click(within(screen.getByTestId("atlas-night-line")).getByRole("button", { name: "Replay" }));
+      await screen.findByText("Replaying last night");
+      fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByText("Replaying last night")).not.toBeInTheDocument());
+      expect(instance.camera.animate).toHaveBeenCalled();
+    });
+
+    it("starts by itself only for home's Replay press, and once per press", async () => {
+      steeped();
+      const { unmount } = renderWithQuery(<AtlasView replay={4242} />);
+      expect(await screen.findByText("Replaying last night", {}, { timeout: 2_000 })).toBeInTheDocument();
+      unmount();
+      capturedSigmaInstances.length = 0;
+      renderWithQuery(<AtlasView replay={4242} />);
+      await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(screen.queryByText("Replaying last night")).not.toBeInTheDocument();
+    });
   });
 
   it("keeps a thing's points off the map until it is picked, and arrives at it from its page (UX-CHAT-5)", async () => {

@@ -32,6 +32,8 @@ interface PagesOverviewProps {
   readonly onSelectSpace: (spaceName: string) => void;
   /** Opens one thing from 「正在做的事」 (UX-HOME-1). */
   readonly onOpenThing?: (thingId: string) => void;
+  /** Opens the big map and plays last night there (UX-GRAPH-6). */
+  readonly onReplayNight?: () => void;
   /** Getting-started destinations. The checklist renders only when both are
    *  wired, so no step ever names an action with nothing behind it. Adding a
    *  source opens its dialog in place and needs no destination. */
@@ -51,6 +53,7 @@ export function PagesOverview({
   onSelectPage,
   onSelectSpace,
   onOpenThing,
+  onReplayNight,
   onConnectTool,
   onSeeExample,
   onImportChatsQuick,
@@ -172,7 +175,7 @@ export function PagesOverview({
           under it as one row of cards that scrolls sideways, so neither pushes
           the other down. */}
       <div className="home-columns">
-        {example ? null : <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} />}
+        {example ? null : <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />}
         {newPages}
         {/* With no AI tool connected there is nothing to be working on yet:
             the pages lead, and one line says what connecting adds. */}

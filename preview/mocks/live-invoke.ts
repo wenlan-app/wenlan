@@ -1200,6 +1200,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       other_thing_id: a?.otherId,
     }),
   undo_thing_dream: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/dream/undo`, {}),
+  undo_nights: (a) => post("/api/things/nights/undo", { since: Number(a?.since ?? 0) }),
   answer_thing_map_proposal: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/map/ops`, {
     expected_revision: Number(a?.revision ?? 0),
     ops: [{ op: a?.accept ? "accept" : "reject", proposal_id: String(a?.proposalId ?? "") }],
