@@ -180,3 +180,20 @@
 @media (max-width: 640px) {
   .atlas-camera-controls.atlas-thing-stops { left: 12px; bottom: 58px; }
 }
+
+/* UX-GRAPH-5: what last night did, one quiet line above the count line,
+   with Replay and Undo. While Replay plays it says so and offers Skip.
+   Under 560 px it shortens to "Last night · Replay · Undo" so English
+   never wraps; the full sentence stays as its tooltip. */
+.atlas-night-line { position: absolute; z-index: 11; left: 14px; bottom: 34px; max-width: calc(100% - 174px); display: inline-flex; align-items: baseline; gap: 6px; color: var(--mem-text-secondary); font: 400 12.5px/1.4 var(--mem-font-body); white-space: nowrap; }
+.atlas-night-line .steep-moon { flex: none; align-self: center; color: var(--mem-accent-page); }
+.atlas-night-line-short { display: none; }
+.atlas-night-line button { padding: 0; border: 0; background: none; color: var(--mem-text-secondary); font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--mem-text) 18%, transparent); text-underline-offset: 3px; }
+.atlas-night-line button:hover { color: var(--mem-text); }
+.atlas-night-line .atlas-night-replay { color: var(--mem-accent-page); font-weight: 500; text-decoration: none; }
+.atlas-night-line button:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; }
+.atlas-night-line button:disabled { cursor: default; opacity: .6; }
+@media (max-width: 560px) {
+  .atlas-night-line-full { display: none; }
+  .atlas-night-line-short { display: inline; }
+}

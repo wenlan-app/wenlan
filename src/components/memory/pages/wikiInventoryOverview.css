@@ -173,3 +173,7 @@
 .home-connect-line button { padding:0;border:0;background:none;color:var(--mem-accent-page);font:inherit;font-weight:600;cursor:pointer; }
 .home-connect-line button:hover { text-decoration:underline; }
 .home-connect-line button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:4px; }
+/* UX-GRAPH-6: home's names line gains only "Replay", in the moon's colour. */
+.wiki-working-on-steeped-replay { flex:none;padding:0;border:0;background:none;color:var(--mem-accent-page);font:500 12.5px/1.4 var(--mem-font-body);white-space:nowrap;cursor:pointer; }
+.wiki-working-on-steeped-replay:hover { text-decoration:underline;text-underline-offset:3px; }
+.wiki-working-on-steeped-replay:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }

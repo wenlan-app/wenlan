@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { steepedToday } from "../../../lib/graph/lastNight";
 import {
   answerThingMapProposal,
   getThingMap,
@@ -31,13 +32,6 @@ function writeView(view: ThingView) {
   } catch {
     // Remembering the view is a convenience; the page works without it.
   }
-}
-
-/** Whether a night's steeping (unix seconds) happened today, local time:
- *  then the app says "last night" and marks what it steeped as new. */
-export function steepedToday(atSeconds: number, now = new Date()): boolean {
-  const at = new Date(atSeconds * 1000);
-  return at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
 }
 
 /** Oldest first, so the points read in the order they were worked out. */

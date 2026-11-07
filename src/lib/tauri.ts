@@ -1128,6 +1128,17 @@ export interface ThingNightPoints {
   /** Off home's "what you're working on" (the same `quiet` as ThingSummary). */
   quiet?: boolean;
   points: ThingNightPoint[];
+  /** What its newest night did on the big map (UX-GRAPH-5); absent when its
+   *  nights were all taken back, and from older daemons. */
+  last_night?: ThingLastNight;
+}
+
+/** One night of a thing on the big map: when it ran (Unix seconds), the
+ *  points it wrote (memory `source_id`s) and the topics it connected them to. */
+export interface ThingLastNight {
+  at: number;
+  written: string[];
+  linked: { memory_id: string; entity_id: string }[];
 }
 
 /** Every thing with night points, for the big map. */
@@ -1207,6 +1218,12 @@ export async function hideThing(id: string): Promise<ThingSummary> {
  *  merge `otherId` into `id`, or keep them apart so it is not asked again. */
 export async function undoThingDream(id: string): Promise<ThingSummary> {
   return invoke("undo_thing_dream", { id });
+}
+
+/** Take back the whole night on the big map (UX-GRAPH-5): every thing whose
+ *  newest night ran at or after `since` (Unix seconds, local midnight). */
+export async function undoNights(since: number): Promise<{ things: number; points: number }> {
+  return invoke("undo_nights", { since });
 }
 
 export async function answerThingMerge(id: string, otherId: string, merge: boolean): Promise<ThingSummary> {
