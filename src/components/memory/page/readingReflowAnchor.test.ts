@@ -37,3 +37,44 @@ it("keeps the current visible block offset when the reading width changes", () =
   cleanup();
   expect(disconnect).toHaveBeenCalledOnce();
 });
+
+it("keeps the pre-reflow anchor when widening clamps scroll before resize notification", () => {
+  let notify: ResizeObserverCallback = () => {};
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: ResizeObserverCallback) { notify = callback; }
+    observe() {} disconnect() {}
+  });
+  const scroller = document.createElement("div");
+  scroller.className = "wiki-workspace-content";
+  scroller.innerHTML = '<div class="page-detail"><div class="page-detail-document"><p>Original paragraph</p><p>Later paragraph</p></div></div>';
+  document.body.append(scroller);
+  const root = scroller.querySelector<HTMLElement>(".page-detail")!;
+  const frame = scroller.querySelector<HTMLElement>(".page-detail-document")!;
+  const [original, later] = Array.from(frame.querySelectorAll("p"));
+  let width = 472;
+  let originalTop = 43;
+  let laterTop = 900;
+  vi.spyOn(scroller, "getBoundingClientRect").mockImplementation(() => rect(0, 500));
+  vi.spyOn(frame, "getBoundingClientRect").mockImplementation(() => rect(-7000, 3000, width));
+  vi.spyOn(original, "getBoundingClientRect").mockImplementation(() => rect(originalTop, originalTop + 100));
+  vi.spyOn(later, "getBoundingClientRect").mockImplementation(() => rect(laterTop, laterTop + 100));
+  scroller.scrollTop = 7298;
+  const cleanup = preserveReadingPosition(root);
+  width = 794;
+  scroller.scrollTop = 5291;
+  originalTop = -640;
+  laterTop = 57;
+  scroller.dispatchEvent(new Event("scroll"));
+  notify([], {} as ResizeObserver);
+  expect(scroller.scrollTop).toBe(4608);
+  // The programmatic scroll event may run after the correction; it must
+  // capture the corrected position for the next resize.
+  originalTop = 43;
+  laterTop = 740;
+  scroller.dispatchEvent(new Event("scroll"));
+  width = 600;
+  originalTop = 100;
+  notify([], {} as ResizeObserver);
+  expect(scroller.scrollTop).toBe(4665);
+  cleanup();
+});

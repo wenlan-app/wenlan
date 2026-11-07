@@ -18,7 +18,12 @@ export function preserveReadingPosition(root: HTMLElement): () => void {
     anchor = element ? { element, offset: element.getBoundingClientRect().top - top } : null;
   };
   capture();
-  scroller.addEventListener("scroll", capture, { passive: true });
+  // A width change can clamp scrollTop before ResizeObserver runs. Keep the
+  // old anchor until that observer has applied the reflow correction.
+  const onScroll = () => {
+    if (document.getBoundingClientRect().width === width) capture();
+  };
+  scroller.addEventListener("scroll", onScroll, { passive: true });
   const observer = new ResizeObserver(() => {
     const next = document.getBoundingClientRect().width;
     if (next === width) return;
@@ -32,6 +37,6 @@ export function preserveReadingPosition(root: HTMLElement): () => void {
   observer.observe(document);
   return () => {
     observer.disconnect();
-    scroller.removeEventListener("scroll", capture);
+    scroller.removeEventListener("scroll", onScroll);
   };
 }
