@@ -19,7 +19,6 @@ import {
   daemonErrorMessage,
   isOkfExportDaemonTooOld,
 } from "../../../../lib/tauri";
-import { type Theme, useTheme } from "../../../../lib/theme";
 import {
   readStoredLocalePreference,
   setLocalePreference,
@@ -29,7 +28,6 @@ import {
   Button,
   ConfirmActionButton,
   Input,
-  SegmentedControl,
   Select,
   SettingRow,
 } from "../primitives";
@@ -37,41 +35,6 @@ import { SettingsGroup } from "../SettingsView";
 import ProfileAvatar from "../../ProfileAvatar";
 import { replayPageTour, usePageTourState } from "../../../onboarding/PageTour";
 import { resetTabIntros } from "../../../onboarding/TabIntro";
-
-type ThemeLabelKey =
-  | "settings.theme.auto"
-  | "settings.theme.light"
-  | "settings.theme.dark";
-
-const THEME_OPTIONS: { value: Theme; labelKey: ThemeLabelKey; icon: React.ReactNode }[] = [
-  {
-    value: "system",
-    labelKey: "settings.theme.auto",
-    icon: (
-      <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-      </svg>
-    ),
-  },
-  {
-    value: "light",
-    labelKey: "settings.theme.light",
-    icon: (
-      <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-      </svg>
-    ),
-  },
-  {
-    value: "dark",
-    labelKey: "settings.theme.dark",
-    icon: (
-      <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-      </svg>
-    ),
-  },
-];
 
 interface ProfileUpdateFields {
   name?: string;
@@ -211,7 +174,6 @@ function errorMessage(error: unknown): string | null {
 export default function GeneralSection() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [theme, setThemeValue] = useTheme();
   const [languagePreference, setLanguagePreference] = useState<StoredLocale>(
     () => readStoredLocalePreference(),
   );
@@ -306,23 +268,6 @@ export default function GeneralSection() {
     <>
       <ProfileSettingsBlock />
       <SettingsGroup heading={t("settings.general.appSection")} className="mem-fade-up" style={{ animationDelay: "0ms" }}>
-          {/* Theme — folded into General; previously its own "Appearance" sidebar entry. */}
-          <SettingRow
-            title={t("settings.theme.label")}
-            description=""
-            control={
-              <SegmentedControl
-                aria-label={t("settings.theme.label")}
-                options={THEME_OPTIONS.map((opt) => ({
-                  value: opt.value,
-                  label: t(opt.labelKey),
-                  icon: opt.icon,
-                }))}
-                value={theme}
-                onChange={setThemeValue}
-              />
-            }
-          />
           <SettingRow
             title={t("settings.language.label")}
             description=""

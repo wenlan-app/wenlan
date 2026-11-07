@@ -10,7 +10,8 @@ description: >
   ("open my note on X", "打開筆記"), organizing existing pages and folders
   ("organize my notes", "整理我的資料"), checking memory quality or cleaning
   up ("lint", "檢查重複", "清一清"), reviewing pending items ("review what's
-  waiting", "看待確認的"), and deleting one memory ("forget <id>", "刪掉這筆").
+  waiting", "看待確認的"), deleting one memory ("forget <id>", "刪掉這筆"),
+  and changing how the app looks ("make Wenlan purple", "換個主題").
   Say what to prepare, update, or rearrange; these all use steep.
   Invoked as `/wenlan [what you want]`.
 argument-hint: "[what you want]"
@@ -42,6 +43,7 @@ Match the request to one row. Old command words count as their row.
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `/wenlan lint`, `/wenlan lint repair`, `/wenlan 檢查重複` |
 | Walk pending captures, revisions or refinements | curate | `/wenlan curate revisions`, `/wenlan 看待確認的` |
 | Delete one memory by id | forget | `/wenlan forget mem_123` |
+| Change how the Wenlan app looks: colors, fonts, images, or back to normal | theme | `/wenlan theme 紫色夜晚風格`, `/wenlan theme reset` |
 | Save one memory, or save this conversation as one note | capture | `/wenlan 記住我們改用 SQLite` |
 | Look something up | recall | `/wenlan 我們上次怎麼決定資料庫` |
 | Catch up on the project | brief | `/wenlan 上次做到哪`, `/wenlan where did I leave off?` |

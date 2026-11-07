@@ -235,7 +235,7 @@ export function ImportFlow({ onBusyChange, onImportAccepted, onLeave }: ImportFl
         <div
           style={{
             marginTop: 10,
-            borderRadius: 8,
+            borderRadius: "var(--mem-r-8)",
             padding: "8px 12px",
             fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-sm)",
@@ -295,7 +295,7 @@ export function ImportFlow({ onBusyChange, onImportAccepted, onLeave }: ImportFl
               style={{
                 flexShrink: 0,
                 padding: "2px 8px",
-                borderRadius: 6,
+                borderRadius: "var(--mem-r-6)",
                 border: "1px solid var(--mem-status-danger-border)",
                 background: "transparent",
                 color: "inherit",

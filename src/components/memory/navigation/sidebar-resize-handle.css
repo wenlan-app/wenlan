@@ -24,7 +24,7 @@
   left: 2.5px;
   width: 3px;
   height: 40px;
-  border-radius: 2px;
+  border-radius: var(--mem-r-2);
   background: color-mix(in srgb, var(--mem-text-tertiary) 55%, transparent);
   content: "";
   opacity: 0;

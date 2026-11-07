@@ -193,7 +193,7 @@ function PhaseDot({ state }: { state: ImportPhaseState }) {
     state === "complete"
       ? "var(--mem-accent-sage)"
       : state === "failed"
-        ? "#ef4444"
+        ? "var(--mem-signal-red)"
         : state === "running"
           ? "var(--mem-accent-indigo)"
           : "var(--mem-text-tertiary)";
@@ -254,7 +254,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
               alignItems: "center",
               gap: "14px",
               padding: "10px 14px",
-              borderRadius: "10px",
+              borderRadius: "var(--mem-r-10)",
               backgroundColor: entry.state === "running" ? "var(--mem-surface)" : "transparent",
               border: entry.state === "running"
                 ? "1px solid var(--mem-border)"
@@ -265,7 +265,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
             <div style={{
               width: "32px",
               height: "32px",
-              borderRadius: "8px",
+              borderRadius: "var(--mem-r-8)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -278,7 +278,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
               fontFamily: "var(--mem-font-body)",
               fontSize: "13px",
               fontWeight: entry.state === "running" ? 500 : 400,
-              color: entry.state === "failed" ? "#ef4444" : "var(--mem-text)",
+              color: entry.state === "failed" ? "var(--mem-signal-red)" : "var(--mem-text)",
             }}>
               {t(`importBatch.phases.${phase}`)}
             </span>
@@ -294,7 +294,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
               whiteSpace: "nowrap",
             }}>
               {entry.state === "failed" && (
-                <span style={{ color: "#ef4444" }}>{t("importBatch.states.failed")}</span>
+                <span style={{ color: "var(--mem-signal-red)" }}>{t("importBatch.states.failed")}</span>
               )}
               {hasTotal ? (
                 <span>{t("importBatch.countOf", { done: entry.done, total: entry.total })}</span>
@@ -302,7 +302,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
                 <span>{t("importBatch.states.waiting")}</span>
               )}
               {entry.failed > 0 && (
-                <span style={{ color: "#ef4444" }}>
+                <span style={{ color: "var(--mem-signal-red)" }}>
                   {t("importBatch.failedUnits", { count: entry.failed })}
                 </span>
               )}
@@ -318,7 +318,7 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
                 style={{
                   width: "48px",
                   height: "3px",
-                  borderRadius: "2px",
+                  borderRadius: "var(--mem-r-2)",
                   backgroundColor: "var(--mem-border)",
                   overflow: "hidden",
                   flexShrink: 0,
@@ -326,8 +326,8 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
               >
                 <div style={{
                   height: "100%",
-                  borderRadius: "2px",
-                  backgroundColor: entry.state === "failed" ? "#ef4444" : "var(--mem-accent-indigo)",
+                  borderRadius: "var(--mem-r-2)",
+                  backgroundColor: entry.state === "failed" ? "var(--mem-signal-red)" : "var(--mem-accent-indigo)",
                   width: `${fraction * 100}%`,
                   transition: "width 0.3s ease-out",
                 }} />
@@ -391,9 +391,9 @@ export function ImportStatusPill({
         padding: "1px 8px",
         border: "none",
         cursor: "pointer",
-        color: failed ? "#ef4444" : "var(--mem-accent-indigo)",
+        color: failed ? "var(--mem-signal-red)" : "var(--mem-accent-indigo)",
         backgroundColor: failed
-          ? "color-mix(in srgb, #ef4444 12%, transparent)"
+          ? "color-mix(in srgb, var(--mem-signal-red) 12%, transparent)"
           : "var(--mem-indigo-bg)",
         whiteSpace: "nowrap",
       }}

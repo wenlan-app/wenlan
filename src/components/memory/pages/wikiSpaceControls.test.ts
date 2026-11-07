@@ -11,11 +11,11 @@ describe("Wiki, Space, and Page microcontrol contract", () => {
     const css = stylesheet("src/index.css");
 
     expect(css).toMatch(/--mem-control-height:\s*34px;/);
-    expect(css).toMatch(/--mem-control-radius:\s*6px;/);
+    expect(css).toMatch(/--mem-control-radius:\s*var\(--mem-r-6\);/);
     expect(css).toMatch(/--mem-control-font-size:\s*14px;/);
     expect(css).toMatch(/--mem-icon-action-size:\s*32px;/);
     expect(css).toMatch(/--mem-icon-glyph-size:\s*16px;/);
-    expect(css).toMatch(/--mem-popover-radius:\s*6px;/);
+    expect(css).toMatch(/--mem-popover-radius:\s*var\(--mem-r-6\);/);
     expect(css).toMatch(/--mem-popover-shadow:\s*var\(--mem-shadow-overlay\);/);
   });
 

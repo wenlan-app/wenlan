@@ -102,7 +102,7 @@
   gap: 2px;
   padding: 6px;
   border: 1px solid var(--mem-popover-border);
-  border-radius: 9px;
+  border-radius: var(--mem-r-9);
   background: var(--mem-popover);
   box-shadow: var(--mem-popover-shadow);
 }
@@ -116,7 +116,7 @@
   gap: 10px;
   padding: 0 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: transparent;
   color: var(--mem-text-secondary);
   font: 13px var(--mem-font-body);

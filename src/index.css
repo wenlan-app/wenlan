@@ -4,6 +4,20 @@
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/* Tailwind's rounded-* utilities follow the theme's corner scale too
+   (defaults are Tailwind 4's own values). */
+@theme {
+  --radius-xs: calc(0.125rem * var(--mem-radius-scale));
+  --radius-sm: calc(0.25rem * var(--mem-radius-scale));
+  --radius-md: calc(0.375rem * var(--mem-radius-scale));
+  --radius-lg: calc(0.5rem * var(--mem-radius-scale));
+  --radius-xl: calc(0.75rem * var(--mem-radius-scale));
+  --radius-2xl: calc(1rem * var(--mem-radius-scale));
+  --radius-3xl: calc(1.5rem * var(--mem-radius-scale));
+  --radius-4xl: calc(2rem * var(--mem-radius-scale));
+  --radius: calc(0.25rem * var(--mem-radius-scale));
+}
+
 :root {
   --bg-primary: #191C24;
   --bg-secondary: #202430;
@@ -104,7 +118,7 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: var(--separator);
-  border-radius: 3px;
+  border-radius: var(--mem-r-3);
 }
 
 [data-sonner-toaster] {
@@ -131,6 +145,32 @@ body {
 
 /* Shared fonts (theme-independent) */
 :root {
+  /* Signal colors that used to be written as literals inside components
+     (import errors, review diff marks, search highlights, capture toast).
+     Same value in both themes, exactly as before; a custom theme can now
+     override them. Alpha variants are made at the use site with
+     color-mix(in srgb, var(--mem-signal-*) N%, transparent). */
+  --mem-signal-red: #EF4444;
+  --mem-signal-amber: #F59E0B;
+  --mem-signal-yellow: #FBBF24;
+  --mem-signal-green: #10B981;
+  --mem-signal-mint: #4ADE80;
+  --mem-signal-leaf: #4CAF6A;
+  --mem-signal-clay: #CD5C4A;
+  --mem-signal-indigo: #7B7BE8;
+  --mem-signal-violet: #6366F1;
+  --mem-signal-warm: #D4884A;
+  --mem-signal-zinc: #A1A1AA;
+  --mem-signal-purple: #C084FC;
+  --mem-signal-teal: #2DD4BF;
+  --mem-signal-rose: #FB7185;
+  --mem-signal-pink: #F472B6;
+  --mem-accent-blue: #60A5FA;
+  /* The capture toast window is always dark, whatever the app theme. */
+  --mem-toast-bg: #14141C;
+  --mem-toast-border: #2A2A3A;
+  --mem-toast-text: rgba(255, 255, 255, 0.9);
+  --mem-toast-text-muted: rgba(255, 255, 255, 0.4);
   --mem-font-heading: 'Fraunces', Georgia, serif;
   --mem-font-body: 'Instrument Sans', -apple-system, sans-serif;
   --mem-font-mono: 'JetBrains Mono', monospace;
@@ -144,18 +184,38 @@ body {
      shares the radius of the container it sits in.
      Tailwind equivalence (both remain legal): rounded-md=sm,
      rounded-lg=md, rounded-xl=lg, rounded-full=full. */
-  --mem-radius-sm: 6px;
-  --mem-radius-md: 8px;
-  --mem-radius-lg: 12px;
+  /* Corner roundness scale. Every corner radius in the app is a
+     --mem-r-N step (N = its default size in px) multiplied by
+     --mem-radius-scale, so a custom theme rounds or squares the whole app
+     by changing this one number. At the default 1 every step equals its
+     old literal value. Pills (999px), circles (50%) and square corners (0)
+     stay literal: they are shapes, not roundness. cssTokenGuard.test.ts
+     fails on a new literal px radius outside this file. */
+  --mem-radius-scale: 1;
+  --mem-r-2: calc(2px * var(--mem-radius-scale));
+  --mem-r-3: calc(3px * var(--mem-radius-scale));
+  --mem-r-4: calc(4px * var(--mem-radius-scale));
+  --mem-r-5: calc(5px * var(--mem-radius-scale));
+  --mem-r-6: calc(6px * var(--mem-radius-scale));
+  --mem-r-7: calc(7px * var(--mem-radius-scale));
+  --mem-r-8: calc(8px * var(--mem-radius-scale));
+  --mem-r-9: calc(9px * var(--mem-radius-scale));
+  --mem-r-10: calc(10px * var(--mem-radius-scale));
+  --mem-r-12: calc(12px * var(--mem-radius-scale));
+  --mem-r-14: calc(14px * var(--mem-radius-scale));
+  --mem-r-16: calc(16px * var(--mem-radius-scale));
+  --mem-radius-sm: var(--mem-r-6);
+  --mem-radius-md: var(--mem-r-8);
+  --mem-radius-lg: var(--mem-r-12);
   --mem-radius-full: 999px;
 
   /* Wiki / Space / Page microcontrols */
   --mem-control-height: 34px;
-  --mem-control-radius: 6px;
+  --mem-control-radius: var(--mem-r-6);
   --mem-control-font-size: 14px;
   --mem-icon-action-size: 32px;
   --mem-icon-glyph-size: 16px;
-  --mem-popover-radius: 6px;
+  --mem-popover-radius: var(--mem-r-6);
   --mem-popover-shadow: var(--mem-shadow-overlay);
 
   /* ── Spacing scale (4px grid) ─────────────────────────────
@@ -344,7 +404,7 @@ body {
 /* Dark (default — logo ink with a quiet reading cast) */
 :root,
 html[data-theme="dark"] {
-  --workspace-radius: 12px;
+  --workspace-radius: var(--mem-r-12);
   --mem-bg: #191C24;
   --mem-surface: #202430;
   --mem-sidebar: #161920;
@@ -411,6 +471,9 @@ html[data-theme="dark"] {
   /* Completes the status triplet — warning and danger have borders,
      success never did. */
   --mem-status-success-border: rgba(157, 169, 144, 0.36);
+  /* Removed / added line tints in code diffs (code basis dialog). */
+  --mem-diff-removed-bg: rgba(205, 92, 74, 0.22);
+  --mem-diff-added-bg: rgba(118, 184, 110, 0.24);
   --mem-focus-ring: rgba(169, 174, 242, 0.55);
   /* Elevation: borders carry structure; shadow only for hover-lift
      and overlays. --mem-shadow-toast stays as a back-compat alias. */
@@ -528,6 +591,8 @@ html[data-theme="light"] {
   --mem-accent-indigo-hover: #524CB8;
   --mem-accent-indigo-border: rgba(94, 88, 200, 0.34);
   --mem-status-success-border: rgba(111, 143, 118, 0.28);
+  --mem-diff-removed-bg: rgba(164, 68, 47, 0.22);
+  --mem-diff-added-bg: rgba(111, 143, 118, 0.30);
   --mem-focus-ring: rgba(94, 88, 200, 0.45);
   --mem-shadow-raised: 0 1px 3px rgba(26, 26, 46, 0.08);
   --mem-shadow-overlay:
@@ -626,7 +691,7 @@ html[data-theme="light"] {
   justify-content: center;
   margin-left: -6px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: transparent;
   color: var(--mem-text-tertiary);
   cursor: pointer;
@@ -656,7 +721,7 @@ html[data-theme="light"] {
   align-items: center;
   gap: 7px;
   border: 1px solid var(--mem-border);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: transparent;
   color: var(--mem-text-secondary);
   cursor: pointer;
@@ -800,7 +865,7 @@ html[data-theme="light"] {
 .memory-detail-source-quote {
   margin: 8px 0 0;
   border-left: 2px solid var(--mem-accent-warm);
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 var(--mem-r-8) var(--mem-r-8) 0;
   background: color-mix(in srgb, var(--mem-accent-warm) 5%, transparent);
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-body);
@@ -824,7 +889,7 @@ html[data-theme="light"] {
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: transparent;
   color: var(--mem-text-tertiary);
   cursor: pointer;
@@ -883,7 +948,7 @@ html[data-theme="light"] {
   display: inline-flex;
   margin-top: 6px;
   border: 1px solid color-mix(in srgb, var(--mem-accent-warm) 34%, transparent);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: var(--mem-confirm-bg);
   color: var(--mem-accent-warm);
   font-family: var(--mem-font-mono);
@@ -898,7 +963,7 @@ html[data-theme="light"] {
 .memory-detail-status-card {
   width: min(100%, 640px);
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-detail-surface);
   padding: 18px 20px;
 }
@@ -924,7 +989,7 @@ html[data-theme="light"] {
   display: grid;
   gap: 8px;
   border: 1px solid color-mix(in srgb, var(--mem-accent-warm) 58%, var(--mem-border));
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-detail-surface);
   padding: 12px;
 }
@@ -961,7 +1026,7 @@ html[data-theme="light"] {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--mem-border);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: var(--mem-detail-surface-raised);
   color: var(--mem-text-secondary);
   cursor: pointer;
@@ -1052,7 +1117,7 @@ html[data-theme="light"] {
 
 .memory-detail-pending {
   border: 1px solid var(--mem-status-warning-border);
-  border-radius: 9px;
+  border-radius: var(--mem-r-9);
   background: var(--mem-status-warning-bg);
   color: var(--mem-status-warning-text);
   padding: 12px;
@@ -1150,7 +1215,7 @@ html[data-theme="light"] {
   align-items: baseline;
   gap: 4px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--mem-r-5);
   background: transparent;
   color: var(--mem-text-tertiary);
   cursor: pointer;
@@ -1241,7 +1306,7 @@ html[data-theme="light"] {
 .memory-detail-related-facet {
   display: inline-flex;
   align-items: center;
-  border-radius: 5px;
+  border-radius: var(--mem-r-5);
   font-family: var(--mem-font-mono);
   font-size: 9px;
   font-weight: 600;
@@ -1341,7 +1406,7 @@ html[data-theme="light"] {
   align-items: center;
   gap: 6px;
   border: 1px solid color-mix(in srgb, var(--mem-border) 62%, transparent);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: transparent;
   cursor: pointer;
   padding: 4px 7px;
@@ -1453,7 +1518,7 @@ html[data-theme="light"] {
 .memory-detail-tag-edit {
   display: inline-flex;
   align-items: center;
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   cursor: pointer;
   font-family: var(--mem-font-body);
   transition:
@@ -1497,7 +1562,7 @@ html[data-theme="light"] {
 
 .memory-detail-link-button {
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: transparent;
   color: var(--mem-accent-sage);
   cursor: pointer;
@@ -1550,7 +1615,7 @@ html[data-theme="light"] {
   display: inline-flex;
   align-items: center;
   border-width: 1px;
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   font-family: var(--mem-font-body);
   font-size: var(--mem-text-label);
   font-weight: 600;
@@ -1563,7 +1628,7 @@ html[data-theme="light"] {
   max-width: 100%;
   align-items: center;
   border: 1px solid var(--mem-detail-divider);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: var(--mem-detail-surface);
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-mono);
@@ -1660,7 +1725,7 @@ html[data-theme="light"] {
   gap: 16px;
   align-items: start;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-detail-surface);
   color: var(--mem-text);
   padding: 14px 16px;
@@ -1768,7 +1833,7 @@ html[data-theme="light"] {
   align-items: flex-start;
   justify-content: space-between;
   border: 1px solid var(--mem-status-warning-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-status-warning-bg);
   color: var(--mem-status-warning-text);
   padding: 10px 12px;
@@ -1802,7 +1867,7 @@ html[data-theme="light"] {
 .memory-list-row-update-actions button {
   min-height: 30px;
   border: 1px solid var(--mem-detail-divider);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: transparent;
   color: var(--mem-text-secondary);
   cursor: pointer;
@@ -1832,7 +1897,7 @@ html[data-theme="light"] {
   min-height: 156px;
   place-items: center;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-detail-surface);
   color: var(--mem-text-tertiary);
   font-family: var(--mem-font-body);
@@ -1968,7 +2033,7 @@ html[data-theme="light"] {
 .memory-detail-card {
   min-width: 0;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-detail-surface);
   box-shadow: none;
   overflow: hidden;
@@ -2080,7 +2145,7 @@ html[data-theme="light"] {
   align-items: center;
   gap: 6px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: transparent;
   color: var(--mem-text-secondary);
   cursor: pointer;
@@ -2106,7 +2171,7 @@ html[data-theme="light"] {
   max-width: 100%;
   align-items: center;
   border: 1px solid var(--mem-detail-divider);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: var(--mem-detail-surface);
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-mono);
@@ -2409,7 +2474,7 @@ html[data-theme="light"] {
 
 .page-editor-notice {
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-detail-surface-raised);
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-body);
@@ -2451,7 +2516,7 @@ html[data-theme="light"] {
   overflow: auto;
   margin: 8px 0;
   border: 1px solid var(--mem-border);
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: var(--mem-bg);
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-mono);
@@ -2467,7 +2532,7 @@ html[data-theme="light"] {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--mem-border);
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: var(--mem-surface);
   color: var(--mem-text-secondary);
   cursor: pointer;
@@ -2757,7 +2822,7 @@ html[data-theme="light"] {
   justify-content: center;
   margin-top: 2px;
   border: 1px solid var(--mem-accent-sage);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: color-mix(in srgb, var(--mem-accent-sage) 14%, transparent);
   color: var(--mem-accent-sage-text);
   font-family: var(--mem-font-heading);
@@ -2778,7 +2843,7 @@ html[data-theme="light"] {
 
 .entity-delete-confirm {
   border: 1px solid var(--mem-status-warning-border);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: var(--mem-status-warning-bg);
   color: var(--mem-status-warning-text);
   cursor: pointer;
@@ -2895,7 +2960,7 @@ html[data-theme="light"] {
   align-items: center;
   gap: 7px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: var(--mem-detail-surface);
   cursor: pointer;
   padding: 3px 5px;
@@ -3115,7 +3180,7 @@ p.entity-error {
   z-index: 30;
   background: var(--mem-surface);
   border: 1px solid var(--mem-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   box-shadow: var(--mem-shadow-overlay);
   padding: 11px 13px;
   opacity: 0;
@@ -3253,7 +3318,7 @@ p.entity-error {
   display: flex;
   overflow: hidden;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background-color: var(--mem-surface);
 }
 
@@ -3361,7 +3426,7 @@ p.entity-error {
 .page-canvas-badge {
   padding: 2px 6px;
   border: 1px solid var(--mem-border);
-  border-radius: 5px;
+  border-radius: var(--mem-r-5);
   color: var(--mem-text-tertiary);
   font-family: var(--mem-font-mono);
   font-size: var(--mem-text-label);
@@ -3372,7 +3437,7 @@ p.entity-error {
 .page-canvas-notice {
   padding: 4px 8px;
   border: 1px solid var(--mem-border);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background-color: var(--mem-surface);
   color: var(--mem-accent-amber);
   font-family: var(--mem-font-body);
@@ -3393,7 +3458,7 @@ p.entity-error {
   height: min(68vh, 620px);
   overflow: hidden;
   border: 1px solid var(--mem-border);
-  border-radius: 12px;
+  border-radius: var(--mem-r-12);
   background-color: var(--mem-surface);
   /* A map is dragged, not read: any drag that starts off the pane — on a
      control, on the frame's own padding — used to start a text selection
@@ -3472,7 +3537,7 @@ p.entity-error {
   padding: 4px;
   list-style: none;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background-color: var(--mem-surface);
   box-shadow: 0 8px 24px rgb(0 0 0 / 22%);
 }
@@ -3482,7 +3547,7 @@ p.entity-error {
   width: 100%;
   padding: 5px 9px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--mem-r-5);
   background: none;
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-body);
@@ -3508,7 +3573,7 @@ p.entity-error {
 .page-canvas-menu-item.is-separated {
   margin-top: 4px;
   border-top: 1px solid var(--mem-border);
-  border-radius: 0 0 5px 5px;
+  border-radius: 0 0 var(--mem-r-5) var(--mem-r-5);
   padding-top: 8px;
 }
 
@@ -3544,7 +3609,7 @@ p.entity-error {
   height: 26px;
   padding: 0;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background-color: var(--mem-surface);
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-body);
@@ -3582,7 +3647,7 @@ p.entity-error {
   overflow-y: auto;
   padding: 10px 12px;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background-color: var(--mem-surface);
   box-shadow: 0 8px 24px rgb(0 0 0 / 22%);
 }
@@ -3632,7 +3697,7 @@ p.entity-error {
   align-self: start;
   padding: 1px 5px;
   border: 1px solid var(--mem-border);
-  border-radius: 4px;
+  border-radius: var(--mem-r-4);
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-mono);
   font-size: 10px;
@@ -3653,7 +3718,7 @@ p.entity-error {
    fighting it. Scoped to .page-canvas-surface so Atlas keeps its own look. */
 .page-canvas-surface .react-flow__controls {
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   overflow: hidden;
   box-shadow: none;
   background-color: var(--mem-surface);
@@ -3719,7 +3784,7 @@ p.entity-error {
 .page-canvas-message-action {
   padding: 5px 12px;
   border: 1px solid var(--mem-border);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background-color: var(--mem-surface);
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-body);
@@ -3789,7 +3854,7 @@ p.entity-error {
   margin: 0 0 var(--content-para-gap, 0.75em);
   padding: 16px;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   overflow-x: auto;
   overscroll-behavior-x: contain;
   text-align: center;
@@ -3820,7 +3885,7 @@ p.entity-error {
 .content-renderer pre {
   margin: 0 0 var(--content-para-gap, 0.75em);
   padding: 12px 14px;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background-color: var(--mem-hover);
   color: var(--mem-text);
   font-family: var(--mem-font-mono);
@@ -3872,7 +3937,7 @@ p.entity-error {
   align-items: center;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   color: var(--mem-text-secondary);
   cursor: pointer;
   display: flex;
@@ -3948,7 +4013,7 @@ p.entity-error {
 .mem-activity-causes {
   align-items: center;
   background: var(--mem-status-warning-bg);
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   color: var(--mem-text);
   display: flex;
   flex-wrap: wrap;
@@ -3967,7 +4032,7 @@ p.entity-error {
 .mem-activity-popover-action {
   background: transparent;
   border: 1px solid var(--mem-border);
-  border-radius: 5px;
+  border-radius: var(--mem-r-5);
   color: var(--mem-text-secondary);
   cursor: pointer;
   font-family: var(--mem-font-body);
@@ -3989,7 +4054,7 @@ p.entity-error {
   margin: 0 0 20px;
   padding: 10px 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: transparent;
   color: var(--mem-text-secondary);
   font: 500 14px/20px var(--mem-font-body);
@@ -4016,7 +4081,7 @@ p.entity-error {
 .mem-activity-now-surface {
   background: var(--mem-surface);
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   padding: 14px;
 }
 .mem-activity-rail-shell { display: flex; gap: 24px; }
@@ -4041,7 +4106,7 @@ p.entity-error {
 .mem-activity-steps-toggle:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
 .mem-activity-lane-chip {
   border: 1px solid var(--mem-border);
-  border-radius: 4px;
+  border-radius: var(--mem-r-4);
   color: var(--mem-text-tertiary);
   font-family: var(--mem-font-body);
   font-size: 9px;
@@ -4072,7 +4137,7 @@ p.entity-error {
   color: var(--mem-text);
   background: var(--mem-surface);
   border: 1px solid var(--mem-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   box-shadow: var(--mem-shadow-toast);
 }
 .mem-toast-content { flex: 1; min-width: 0; }
@@ -4105,3 +4170,39 @@ p.entity-error {
 }
 .quick-capture-alert p { margin: 0; }
 .quick-capture-alert .quick-capture-alert-note { color: var(--mem-text-secondary); }
+
+/* Fixed swatch colors for the built-in theme cards in Settings > Appearance.
+   They show what Light and Dark look like, so a custom theme never repaints
+   them. */
+:root {
+  --theme-swatch-dark-bg: #191C24;
+  --theme-swatch-light-bg: #FCFCFB;
+  --theme-swatch-line: #969BAD;
+}
+
+/* ── Custom theme decoration ──────────────────────────────────────────
+   ThemeDecor (src/components/ThemeDecor.tsx) sets data-theme-bg and the two
+   variables below from the daemon-checked active theme. "sidebar" paints the
+   image behind the sidebar's content; "window" lays a faint copy over the
+   whole window that never takes clicks. */
+html[data-theme-bg="sidebar"] :is(.memory-sidebar, .settings-sidebar) {
+  isolation: isolate;
+}
+html[data-theme-bg="sidebar"] :is(.memory-sidebar, .settings-sidebar)::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--wenlan-theme-bg-image) center / cover no-repeat;
+  opacity: var(--wenlan-theme-bg-opacity, 0.35);
+  content: "";
+  pointer-events: none;
+}
+html[data-theme-bg="window"] body::after {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  background: var(--wenlan-theme-bg-image) center / cover no-repeat;
+  opacity: var(--wenlan-theme-bg-opacity, 0.35);
+  content: "";
+  pointer-events: none;
+}

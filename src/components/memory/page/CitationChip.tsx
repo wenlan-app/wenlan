@@ -176,7 +176,7 @@ export default function CitationChip({
           fontSize: "calc(var(--content-body-size, 15px) * 0.8)",
           lineHeight: 1,
           border: unverified ? "1px dashed var(--mem-accent-amber)" : undefined,
-          borderRadius: "3px",
+          borderRadius: "var(--mem-r-3)",
           padding: "1px 2px",
           margin: "0 2px",
           verticalAlign: "baseline",

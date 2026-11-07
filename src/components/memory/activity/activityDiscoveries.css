@@ -16,12 +16,12 @@
 .mem-activity-discovery-excerpt { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; margin: 6px 0 0; color: var(--mem-text); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 .mem-activity-discovery-action { flex: none; margin: 1px 0 0; padding: 3px 0; border: 0; background: transparent; color: var(--mem-text-secondary); font: 500 12px/1.4 var(--mem-font-body); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .mem-activity-discovery-action:hover { color: var(--mem-text); background: transparent; }
-.mem-activity-discovery-action:focus-visible { outline: 2px solid var(--mem-focus-ring); outline-offset: 3px; border-radius: 2px; }
+.mem-activity-discovery-action:focus-visible { outline: 2px solid var(--mem-focus-ring); outline-offset: 3px; border-radius: var(--mem-r-2); }
 .mem-activity-discovery-action:disabled { cursor: default; opacity: .5; }
 .mem-activity-cross-space-count { margin: 4px 0 3px; color: var(--mem-text-secondary); font-size: 13px; }
 .mem-activity-space-tokens { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 4px 0 7px; color: var(--mem-text); }
 .mem-activity-space-token-group { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
-.mem-activity-space-token { max-width: 100%; overflow-wrap: anywhere; color: var(--mem-text); background: var(--mem-hover); border-radius: 4px; padding: 3px 7px; font-size: 13px; font-weight: 500; }
+.mem-activity-space-token { max-width: 100%; overflow-wrap: anywhere; color: var(--mem-text); background: var(--mem-hover); border-radius: var(--mem-r-4); padding: 3px 7px; font-size: 13px; font-weight: 500; }
 .mem-activity-space-link { flex: none; color: var(--mem-text-tertiary, var(--mem-text-secondary)); }
 .mem-activity-discovery-source { white-space: pre-wrap; font-size: 13px; padding-inline-start: 12px; border-inline-start: 1px solid var(--mem-border); }
 .mem-activity-source-preview,
@@ -29,7 +29,7 @@
 .mem-activity-source-preview summary,
 .mem-activity-hidden-results summary { cursor: pointer; width: fit-content; max-width: 100%; padding: 4px 0; font-size: 12px; }
 .mem-activity-source-preview summary:focus-visible,
-.mem-activity-hidden-results summary:focus-visible { outline: 2px solid var(--mem-focus-ring); outline-offset: 3px; border-radius: 3px; }
+.mem-activity-hidden-results summary:focus-visible { outline: 2px solid var(--mem-focus-ring); outline-offset: 3px; border-radius: var(--mem-r-3); }
 .mem-activity-source-preview > ul { display: grid; gap: 8px; margin-top: 8px; }
 .mem-activity-hidden-results > ul { margin-top: 8px; }
 .mem-activity-hidden-results > ul li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; }

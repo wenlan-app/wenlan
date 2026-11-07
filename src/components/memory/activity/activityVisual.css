@@ -28,7 +28,7 @@ button.mem-activity-review-link:hover {
   min-width: 0;
   padding: 12px 14px;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: color-mix(in srgb, var(--mem-surface) 72%, transparent);
 }
 .mem-activity-asset-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -62,7 +62,7 @@ button.mem-activity-review-link:hover {
 .mem-activity-state-blocked .mem-activity-step-state svg { color: var(--mem-accent-amber); }
 .mem-activity-state-running .mem-activity-step-state svg { color: var(--mem-accent-indigo); }
 .mem-activity-step-progress { display: flex; align-items: center; justify-content: center; color: var(--mem-text-tertiary); }
-.mem-activity-step-track { display: block; width: min(100%, 88px); height: 4px; overflow: hidden; border-radius: 4px; background: var(--mem-border); }
+.mem-activity-step-track { display: block; width: min(100%, 88px); height: 4px; overflow: hidden; border-radius: var(--mem-r-4); background: var(--mem-border); }
 .mem-activity-step-track > span { display: block; height: 100%; border-radius: inherit; background: var(--mem-text-tertiary); }
 .mem-activity-state-running .mem-activity-step-track > span { background: var(--mem-accent-indigo); }
 .mem-activity-step-count { min-width: 0; color: var(--mem-text-secondary); text-align: end; overflow-wrap: anywhere; }
@@ -88,7 +88,7 @@ button.mem-activity-review-link:hover {
 .mem-activity-page { min-width: 0; container-type: inline-size; }
 .mem-activity-page-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px; margin-bottom: 32px; }
 .mem-activity-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.mem-activity-page .mem-activity-page-actions > button { display: inline-flex; align-items: center; gap: 8px; width: auto; min-height: 38px; margin: 0; padding: 8px 12px; border-radius: 7px; font: 500 13px/1.4 var(--mem-font-body); }
+.mem-activity-page .mem-activity-page-actions > button { display: inline-flex; align-items: center; gap: 8px; width: auto; min-height: 38px; margin: 0; padding: 8px 12px; border-radius: var(--mem-r-7); font: 500 13px/1.4 var(--mem-font-body); }
 .mem-activity-page-actions > button > svg { flex: none; }
 .mem-activity-page-actions .mem-activity-knowledge-link { border-color: transparent; background: transparent; }
 .mem-activity-page-actions .mem-activity-knowledge-link:hover { background: var(--mem-hover); }

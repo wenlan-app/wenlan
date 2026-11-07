@@ -31,6 +31,9 @@ const APP_COMMANDS = new Set([
   "inspect_remote_pairing", "lookup_remote_pairing", "revoke_remote_grant", "test_external_llm",
   "test_remote_mcp_connection", "download_on_device_model", "on_device_model_download_bytes",
   "record_page_editor_diagnostic", "get_truth_status", "page_review_supported",
+  // The app's look is the user's own setting, not part of the example library.
+  "get_active_theme", "active_theme_image", "list_themes", "get_theme", "check_theme_draft", "save_theme",
+  "create_theme", "set_active_theme", "theme_image", "import_theme_image", "open_themes_folder",
 ]);
 
 /** Library reads the example has nothing for: an empty answer of the right shape. */

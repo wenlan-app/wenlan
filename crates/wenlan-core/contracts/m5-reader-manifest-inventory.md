@@ -828,6 +828,13 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/steep` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/telemetry` | main | no | not_applicable | `none` | — | anonymous local consent/status counters only |
 | `PUT` | `/api/telemetry` | main | no | not_applicable | `none` | — | anonymous local consent/status counters only |
+| `GET` | `/api/themes` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
+| `POST` | `/api/themes` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
+| `GET` | `/api/themes/active` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
+| `PUT` | `/api/themes/active` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
+| `POST` | `/api/themes/check` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
+| `GET` | `/api/themes/{id}` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
+| `PUT` | `/api/themes/{id}` | main | no | not_applicable | `none` | — | local appearance settings from the themes folder; no memory or page content |
 | `GET` | `/api/suggest-tags` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/tags` | main | no | not_applicable | `none` | — | no prose fields |
 | `DELETE` | `/api/tags/{name}` | main | no | not_applicable | `none` | — | no prose fields |
@@ -907,6 +914,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `rename_page` | yes | automatic | `none` | tool handler |
 | `save_source` | yes | automatic | `none` | tool handler |
 | `steep` | yes | automatic | `none` | tool handler |
+| `theme` | no | not_applicable | `none` | — |
 | `thing_map` | no | not_applicable | `none` | — |
 | `update_brief` | yes | automatic | `none` | tool handler |
 | `write_page` | yes | automatic | `none` | tool handler |

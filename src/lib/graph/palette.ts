@@ -91,8 +91,8 @@ function readPalette(): GraphPalette {
 
 /**
  * Graph colors as React state, re-read whenever the theme flips. The theme
- * switch stamps data-theme on <html>; a MutationObserver on that attribute
- * triggers the re-read. Never read tokens inside a paint callback — read here,
+ * switch stamps data-theme on <html>, and a custom theme also stamps
+ * data-theme-rev; a MutationObserver on those attributes triggers the re-read. Never read tokens inside a paint callback — read here,
  * pass the resolved values down.
  */
 export function useGraphPalette(): GraphPalette {
@@ -101,7 +101,7 @@ export function useGraphPalette(): GraphPalette {
     const observer = new MutationObserver(() => setPalette(readPalette()));
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-theme"],
+      attributeFilter: ["data-theme", "data-theme-rev"],
     });
     return () => observer.disconnect();
   }, []);

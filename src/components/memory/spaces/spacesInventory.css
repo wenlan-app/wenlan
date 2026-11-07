@@ -230,7 +230,7 @@
 }
 
 .spaces-row-wrap .spaces-row {
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   transition: background-color 140ms ease, box-shadow 140ms ease;
 }
 
@@ -442,7 +442,7 @@
   display: flex;
   list-style: none;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   min-height: 36px;
   padding: 0 12px;
   color: var(--mem-text-secondary);
@@ -480,7 +480,7 @@
   overscroll-behavior: contain;
   padding: 8px 16px;
   border: 1px solid var(--mem-popover-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: var(--mem-surface);
   box-shadow: var(--mem-shadow-toast);
 }
