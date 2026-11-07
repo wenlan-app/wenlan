@@ -20,6 +20,15 @@ describe("selected source actions", () => {
     expect(prompt).toContain("provenance");
     expect(prompt).toContain("coverage");
     expect(prompt).toContain("Prompt revision: ");
+    expect(prompt).toContain("exactly one ## Details for AI section");
+    expect(prompt).toContain("### Research context");
+    expect(prompt).toContain("### Continue from here");
+    expect(prompt).toContain("### Traceability last");
+    expect(prompt).toContain("do not hide them only in collapsed details");
+    expect(prompt).toContain("the full optional instructions below, the exact selected source IDs, and coverage");
+    expect(prompt).toContain("which sources were read and which failed or were unavailable");
+    expect(prompt).toContain("established decisions versus hypotheses");
+    expect(prompt).toContain("preserve human-written text and manually assigned tags/classifications");
     expect(promptFingerprint("same")).toBe(promptFingerprint("same"));
     expect(promptFingerprint("same")).not.toBe(promptFingerprint("different"));
   });
@@ -30,6 +39,15 @@ describe("selected source actions", () => {
     expect(prompt).toContain("hypotheses");
     expect(prompt).toContain("legacy");
     expect(prompt).toContain("selected sources");
+    expect(prompt).toContain("exactly one ## Details for AI section");
+    expect(prompt).toContain("### Research context");
+    expect(prompt).toContain("### Continue from here");
+    expect(prompt).toContain("### Traceability last");
+    expect(prompt).toContain("do not hide them only in collapsed details");
+    expect(prompt).toContain("read_organize_run is the authority");
+    expect(prompt).toContain("Include a final ### Traceability with a compact reference to this run ID");
+    expect(prompt).toContain("Keep full selected-source IDs, raw read receipts, and full instructions in the durable run");
+    expect(prompt).toContain("Do not claim coverage or findings beyond the run and source reads");
   });
 
   it("uses the canonical source::source_id tag key and preserves unrelated tags", () => {
