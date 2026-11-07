@@ -40,7 +40,11 @@ pub struct ResearchQuery {
     pub source_id: Option<String>,
 }
 /// `noun` names the caller in the error text ("research", "source").
-fn validate_scope(space: &str, header: Option<&str>, noun: &str) -> Result<(), ServerError> {
+pub(crate) fn validate_scope(
+    space: &str,
+    header: Option<&str>,
+    noun: &str,
+) -> Result<(), ServerError> {
     if space.trim().is_empty() || header.is_some_and(|s| s != space) {
         return Err(ServerError::BadRequest(format!(
             "explicit {noun} Space and header must agree"

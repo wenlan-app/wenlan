@@ -28,11 +28,7 @@ async fn scoped(
     space: &str,
     header: Option<&str>,
 ) -> Result<(std::sync::Arc<wenlan_core::db::MemoryDB>, String), ServerError> {
-    if space.trim().is_empty() || header.is_some_and(|header| header.trim() != space.trim()) {
-        return Err(ServerError::BadRequest(
-            "explicit dispute Space and header must agree".into(),
-        ));
-    }
+    crate::research_routes::validate_scope(space, header, "dispute")?;
     let db = {
         state
             .read()
@@ -298,6 +294,25 @@ mod tests {
             )
             .await,
             Err(ServerError::BadRequest(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn dispute_header_with_extra_spaces_is_rejected_like_other_research_routes() {
+        let state = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::state::ServerState::default(),
+        ));
+        assert!(matches!(
+            read(
+                State(state),
+                SpaceHeader(Some(" Research".into())),
+                Path("case".into()),
+                Query(DisputeQuery {
+                    space: "Research".into()
+                })
+            )
+            .await,
+            Err(ServerError::BadRequest(message)) if message == "explicit dispute Space and header must agree"
         ));
     }
 }
