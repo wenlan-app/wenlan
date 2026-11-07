@@ -371,7 +371,7 @@ test("real tree: the output includes each declared shared and nested supporting 
     ),
   ].sort();
   assert.deepEqual(treeFiles(), expected);
-  assert.equal(hidden.length, 7);
+  assert.equal(hidden.length, 8);
 });
 
 test("real tree: every SKILL.md is valid Agent Skills with name equal to its folder", () => {

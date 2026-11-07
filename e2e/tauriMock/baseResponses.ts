@@ -55,6 +55,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     // The fixture has no native startup service to repair; shared shell chrome
     // can proceed as if preflight succeeded.
     case "get_startup_preflight_status": return "ready";
+    // No custom theme in a fixture: the app keeps its built-in look.
+    case "get_active_theme": return { revision: "builtin", tokens: {}, problems: [] };
     case "get_remote_access_profile": return null;
     case "get_remote_access_status": return { status: "off" };
     case "set_traffic_lights_visible": case "set_editor_composing": case "set_setup_completed": case "set_ui_language": return null;

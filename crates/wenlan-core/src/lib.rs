@@ -100,6 +100,7 @@ pub mod store;
 pub mod synthesis;
 pub mod tags;
 pub(crate) mod temporal_query;
+pub mod theme;
 pub mod topic_match;
 pub mod transcript_lines;
 pub mod truth_adapter;

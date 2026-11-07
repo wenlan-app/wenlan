@@ -85,6 +85,7 @@ The daemon stays the single writer and storage owner. The connected AI handles o
 - `/wenlan pages [q]` - browse and open distilled pages
 - `/wenlan curate <surface>` - deep audit of captures, revisions or refinements
 - `/wenlan forget <id>` - delete one memory by ID, after confirmation
+- `/wenlan theme [idea]` - design a custom look for the app: colors, fonts, corners, images
 <!-- verbs:end -->
 
 Skill instructions live in [`skills/`](skills/). Plugin metadata is in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json), the MCP declaration in [`.mcp.json`](.mcp.json), and the marketplace entry in [`../.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json) at the repository root.

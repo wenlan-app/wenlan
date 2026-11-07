@@ -35,18 +35,19 @@ function readTheme() {
   };
 }
 
-/** Re-renders when <html data-theme> changes. */
+function readThemeKey(): string {
+  const root = document.documentElement;
+  return `${root.getAttribute("data-theme") ?? ""}:${root.getAttribute("data-theme-rev") ?? ""}`;
+}
+
+/** Re-renders when <html data-theme> or a custom theme's revision changes. */
 function useThemeKey(): string {
-  const [key, setKey] = useState(
-    () => document.documentElement.getAttribute("data-theme") ?? "",
-  );
+  const [key, setKey] = useState(readThemeKey);
   useEffect(() => {
-    const observer = new MutationObserver(() =>
-      setKey(document.documentElement.getAttribute("data-theme") ?? ""),
-    );
+    const observer = new MutationObserver(() => setKey(readThemeKey()));
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-theme"],
+      attributeFilter: ["data-theme", "data-theme-rev"],
     });
     return () => observer.disconnect();
   }, []);
