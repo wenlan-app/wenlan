@@ -7,7 +7,7 @@ import {
   type CitationKindLabels,
 } from "../../../lib/pageCitations";
 import CitationPopover, { openCitationTarget } from "./CitationPopover";
-import { ReferenceTypeIcon, citationReferenceKind, citationSourceApp } from "../links/ReferenceTypeIcon";
+import { citationReferenceKind, citationSourceApp } from "../links/ReferenceTypeIcon";
 import { sourceAppName } from "../sources/sourcePresentation";
 import "../links/reference-links.css";
 
@@ -49,6 +49,9 @@ export default function CitationChip({
   const zoteroSource = citation.source_kind === "memory" && sourceMemory?.source_id === citation.locator && sourceMemory.source_agent === "zotero";
   const referenceKind = zoteroSource ? "file" : citationReferenceKind(citation);
   const displayLabel = zoteroSource ? "Zotero" : app ? sourceAppName(app, i18n.language) : citationDisplayLabel(citation, kindLabels);
+  const accessibleSource = sourceMemory?.source_id === citation.locator && sourceMemory.title
+    ? `${displayLabel}: ${sourceMemory.title}`
+    : displayLabel;
 
   const clearCloseTimer = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -160,6 +163,7 @@ export default function CitationChip({
         type="button"
         data-status={citation.historical ? "unevaluated" : citation.status}
         data-reference-kind={referenceKind}
+        aria-label={t("citation.chipLabel", { number, source: accessibleSource })}
         aria-describedby={open ? popoverId : undefined}
         onPointerDown={(e) => {
           lastPointerType.current = e.pointerType;
@@ -177,31 +181,13 @@ export default function CitationChip({
           margin: "0 2px",
           verticalAlign: "baseline",
           cursor: "pointer",
-          maxWidth: "min(180px, 28vw)",
-          overflow: "hidden",
-          whiteSpace: "nowrap",
-          textOverflow: "ellipsis",
           textDecoration: "underline",
           textUnderlineOffset: "2px",
           display: "inline-flex",
           alignItems: "baseline",
-          gap: "2px",
         }}
       >
-        <ReferenceTypeIcon kind={referenceKind} size={12} locator={citation.locator} />
-        <span
-          style={{
-            display: "inline-block",
-            maxWidth: "150px",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            verticalAlign: "bottom",
-          }}
-        >
-          {displayLabel}
-        </span>
-        <sup style={{ marginLeft: "1px" }}>{number}</sup>
+        <span aria-hidden="true">[{number}]</span>
       </button>
       {open && (
         <CitationPopover

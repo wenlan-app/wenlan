@@ -856,6 +856,10 @@ const en = {
     close: "Close tips",
   },
   citation: {
+    chipLabel: "Citation {{number}}: {{source}}",
+    importedFromZotero: "Imported from Zotero",
+    pageLocator: "p. {{page}}",
+    viewOriginal: "View original →",
     authoredDescription: "Written by you in this page. It is kept unchanged when the page is rebuilt from its sources.",
     missingTitle: "Source removed",
     untitledMemory: "Untitled memory",
@@ -4088,6 +4092,10 @@ const zhHans = {
     close: "关闭提示",
   },
   citation: {
+    chipLabel: "引用 {{number}}：{{source}}",
+    importedFromZotero: "从 Zotero 导入",
+    pageLocator: "第 {{page}} 页",
+    viewOriginal: "查看原文 →",
     authoredDescription: "你在本页撰写的内容。文澜重新整理来源时，会保留原文。",
     missingTitle: "来源已删除",
     untitledMemory: "未命名记忆",
@@ -7276,6 +7284,10 @@ const zhHant = {
     close: "關閉提示",
   },
   citation: {
+    chipLabel: "引用 {{number}}：{{source}}",
+    importedFromZotero: "從 Zotero 匯入",
+    pageLocator: "第 {{page}} 頁",
+    viewOriginal: "檢視原文 →",
     authoredDescription: "你在這篇筆記撰寫的內容。文瀾重新整理來源時，會保留原文。",
     missingTitle: "來源已刪除",
     untitledMemory: "未命名記憶",

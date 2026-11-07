@@ -77,11 +77,11 @@ describe("CitationChip", () => {
     expect(onOpenMemory).not.toHaveBeenCalled();
   });
 
-  it("renders a focusable button with localized source kind and occurrence superscript", () => {
+  it("renders a compact footnote with the source and number in its accessible name", () => {
     renderChip();
-    const chip = screen.getByRole("button", { name: /Memory/ });
-    expect(chip).toBeInTheDocument();
-    expect(chip.querySelector("sup")?.textContent).toBe("1");
+    const chip = screen.getByRole("button", { name: "Citation 1: Memory: Design decision" });
+    expect(chip).toHaveTextContent("[1]");
+    expect(chip).not.toHaveTextContent("Memory");
     expect(chip).toHaveAttribute("data-status", "verified");
   });
 
@@ -230,6 +230,8 @@ describe("CitationChip", () => {
     });
     const chip = screen.getByRole("button", { name: /Zotero/ });
     expect(chip).toHaveAttribute("data-reference-kind", "file");
+    expect(chip).toHaveTextContent("[1]");
+    expect(chip).toHaveAccessibleName("Citation 1: Zotero: Design decision");
     await user.click(chip);
     expect(onOpenMemory).toHaveBeenCalledWith(sourceId, expect.objectContaining({ locator: sourceId }));
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("open_file", expect.anything());
@@ -298,9 +300,9 @@ describe("CitationChip", () => {
     const user = userEvent.setup();
     const url = "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ";
     renderChip({ citation: cite({ source_kind: "external_url", locator: url }), sourceMemory: null });
-    const chip = screen.getByRole("button", { name: /^Gmail/ });
+    const chip = screen.getByRole("button", { name: /Gmail/ });
     expect(chip).not.toHaveTextContent(/Link|mail\.google\.com/);
-    expect(chip.querySelector('[data-resource-icon="gmail"]')).not.toBeNull();
+    expect(chip).toHaveTextContent("[1]");
     fireEvent.focus(chip);
     expect(screen.getByRole("tooltip")).toHaveTextContent("Gmail");
     await user.click(screen.getByRole("button", { name: "Open in Gmail →" }));
@@ -310,7 +312,7 @@ describe("CitationChip", () => {
   it("keeps the generic link label for a site that is not a known app", () => {
     renderChip({ citation: cite({ source_kind: "external_url", locator: "https://example.com/blog" }), sourceMemory: null });
     const chip = screen.getByRole("button", { name: /Link.*example\.com/ });
-    expect(chip.querySelector('[data-resource-icon="webpage"]')).not.toBeNull();
+    expect(chip).toHaveTextContent("[1]");
     fireEvent.focus(chip);
     expect(screen.getByRole("button", { name: /Open in browser/ })).toBeInTheDocument();
   });
