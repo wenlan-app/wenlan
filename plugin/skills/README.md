@@ -29,6 +29,7 @@ Skills must write `${CLAUDE_PLUGIN_ROOT}` with braces and no `:-` default: Claud
 | `/wenlan pages [q]` | browse and open distilled pages |
 | `/wenlan curate <surface>` | deep audit of captures, revisions or refinements |
 | `/wenlan forget <id>` | delete one memory by ID, after confirmation |
+| `/wenlan theme [idea]` | design a custom look for the app: colors, fonts, corners, images |
 <!-- verbs:end -->
 
 Plugin metadata lives in [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json); the listing README is [`../README.md`](../README.md).

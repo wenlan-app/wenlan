@@ -156,9 +156,9 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// length of `attach_file`'s, then by the length of `propose_note_change`'s,
 /// then by the length of `check_reply`'s, then by the length of
 /// `thing_map`'s, then by the four folder and link tool descriptions, then by
-/// `list_entities` and `read_entity`, then the exact-source read description.
+/// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 19_751;
+const DESCRIPTION_BUDGET_CHARS: usize = 20_018;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1407,6 +1407,28 @@ pub struct RenamePageParams {
         description = "Current page version from the latest page result. Required to prevent renaming a page that changed since it was read."
     )]
     pub expected_version: i64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeAction {
+    List,
+    Check,
+    Apply,
+    Reset,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ThemeParams {
+    #[schemars(
+        description = "list: themes, their check results and the folder to write themes in. check: run every check on one theme. apply: use a theme in the app (refused if it fails a check). reset: back to Wenlan's built-in themes."
+    )]
+    pub action: ThemeAction,
+    #[schemars(
+        description = "Theme id, which is its folder name (lowercase letters, digits, dashes), for check and apply."
+    )]
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -4694,6 +4716,80 @@ impl WenlanMcpServer {
         Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
     }
 
+    pub async fn theme_impl(&self, params: ThemeParams) -> Result<CallToolResult, McpError> {
+        use wenlan_types::theme::{
+            ActiveThemeResponse, CheckThemeRequest, SetActiveThemeRequest, ThemeCheckResponse,
+            ThemeListResponse,
+        };
+        if self.remote_write_blocked() {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Themes can only be changed from the computer running Wenlan.".to_string(),
+            )]));
+        }
+        let need_id = |id: &Option<String>| -> Result<String, CallToolResult> {
+            id.clone().filter(|id| !id.is_empty()).ok_or_else(|| {
+                CallToolResult::error(vec![ContentBlock::text(
+                    "Pass the theme id (its folder name) for check and apply.".to_string(),
+                )])
+            })
+        };
+        let text = match params.action {
+            ThemeAction::List => {
+                let list: ThemeListResponse =
+                    try_call!(self.client.get("/api/themes"), "theme list");
+                serde_json::to_string_pretty(&list)
+            }
+            ThemeAction::Check => {
+                let id = match need_id(&params.id) {
+                    Ok(id) => id,
+                    Err(result) => return Ok(result),
+                };
+                let check: ThemeCheckResponse = try_call!(
+                    self.client
+                        .post("/api/themes/check", &CheckThemeRequest { id }),
+                    "theme check"
+                );
+                serde_json::to_string_pretty(&check)
+            }
+            ThemeAction::Apply => {
+                let id = match need_id(&params.id) {
+                    Ok(id) => id,
+                    Err(result) => return Ok(result),
+                };
+                let check: ThemeCheckResponse = try_call!(
+                    self.client
+                        .post("/api/themes/check", &CheckThemeRequest { id: id.clone() }),
+                    "theme check"
+                );
+                if !check.ok {
+                    let body = serde_json::to_string_pretty(&check).unwrap_or_default();
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                        "Theme {id} was not applied because it fails these checks. Fix theme.json and try again.\n{body}"
+                    ))]));
+                }
+                let active: ActiveThemeResponse = try_call!(
+                    self.client.put(
+                        "/api/themes/active",
+                        &SetActiveThemeRequest { id: Some(id) }
+                    ),
+                    "theme apply"
+                );
+                serde_json::to_string_pretty(&active)
+            }
+            ThemeAction::Reset => {
+                let active: ActiveThemeResponse = try_call!(
+                    self.client
+                        .put("/api/themes/active", &SetActiveThemeRequest { id: None }),
+                    "theme reset"
+                );
+                serde_json::to_string_pretty(&active)
+            }
+        };
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            text.unwrap_or_default(),
+        )]))
+    }
+
     pub async fn delete_page_impl(&self, page_id: &str) -> Result<CallToolResult, McpError> {
         if self.remote_write_blocked() {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
@@ -6104,6 +6200,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Change how the Wenlan app looks: colors, fonts, corners, a background image and a corner sticker. list gives the themes folder; write <id>/theme.json there (see the wenlan-theme skill), run check, fix every problem, then apply. reset restores the default. Local only.",
+        annotations(
+            title = "Theme",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn theme(
+        &self,
+        Parameters(params): Parameters<ThemeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.theme_impl(params).await
+    }
+
+    #[tool(
         description = "Delete a page by id only when the user explicitly asks to remove it. Destructive — removes both the DB row and the on-disk md projection. To refresh an existing page while preserving its page_id and version history, use write_page. Pages without sources can be re-derived by running /distill again on the same scope.",
         annotations(
             title = "Delete page",
@@ -6624,6 +6737,7 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "propose_note_change",
     "create_folder",
     "move_page",
+    "theme",
 ];
 
 impl WenlanMcpServer {
@@ -13773,6 +13887,7 @@ mod tests {
             ("list_folders", (true, false, false)),
             ("read_entity", (true, false, false)),
             ("move_page", (false, false, false)),
+            ("theme", (false, false, false)),
             ("list_pending", (true, false, false)),
             ("list_pending_imports", (true, false, false)),
             ("list_pending_revisions", (true, false, false)),
@@ -14209,6 +14324,7 @@ mod tests {
             "save_source",
             "steep",
             "thing_map",
+            "theme",
             "update_brief",
             "write_page",
         ]
