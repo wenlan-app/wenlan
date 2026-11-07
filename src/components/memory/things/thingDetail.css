@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* One thing (一件事): where it stands, its conversations and pages. No divider
    lines; groups are separated by space and type only. */
-.thing-detail-title-row { display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;min-width:0; }
+.thing-detail-title-row { display:flex;align-items:baseline;gap:12px;min-width:0; }
 .thing-detail-title-row .page-detail-title { min-width:0;overflow-wrap:anywhere; }
 /* Rename and Move stay quiet until the row is pointed at or focused. */
 .thing-detail-rename, .thing-detail-row-action { flex:none;opacity:0;transition:opacity .15s ease; }

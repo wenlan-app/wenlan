@@ -1345,6 +1345,95 @@ pub fn parse_dream(
     Some(points)
 }
 
+/// Most sentences in a thing's conclusion.
+pub const MAX_CONCLUSION_SENTENCES: usize = 2;
+/// Longest conclusion sentence kept, in characters.
+pub const MAX_CONCLUSION_CHARS: usize = 160;
+/// Most standing points a conclusion is written from, newest kept.
+pub const MAX_CONCLUSION_POINTS: usize = 40;
+
+/// The prompt that writes what a thing has come to from its standing points,
+/// oldest first: the first paragraph of its page (UX-VIEW-6). Give it at most
+/// [`MAX_CONCLUSION_POINTS`]; see [`conclusion_points`].
+pub fn conclusion_prompt(title: &str, points: &[PriorPoint], language: &str) -> String {
+    let list = points
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let state = if p.decided { "settled" } else { "open" };
+            format!("P{i} ({state}): {}", p.text)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "A piece of work the person is doing with AI tools: \"{title}\".\n\n\
+What they settled and left open in it so far, oldest first:\n{list}\n\n\
+Write what the work has come to, for the top of its page: at most \
+{MAX_CONCLUSION_SENTENCES} short sentences in {language}. First the main thing that is \
+settled, then what is still open or comes next. When nothing is settled yet, one sentence \
+on what is still being decided. Say only what the points above say; add nothing. A later \
+point wins over an earlier one. Each sentence names the points it rests on. {KEEP_NAMES}\n\
+Answer with JSON only: {{\"conclusion\": [{{\"text\": string, \"points\": [\"P0\"]}}]}}"
+    )
+}
+
+/// The standing points a conclusion is written from: the newest
+/// [`MAX_CONCLUSION_POINTS`], still oldest first.
+pub fn conclusion_points(points: &[PriorPoint]) -> &[PriorPoint] {
+    &points[points.len().saturating_sub(MAX_CONCLUSION_POINTS)..]
+}
+
+/// A conclusion sentence in a model's answer: its text and the indices of the
+/// points it rests on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConclusionSentence {
+    pub text: String,
+    pub points: Vec<usize>,
+}
+
+/// The conclusion in a model's answer. A sentence that names no point of the
+/// `points` given is dropped, since it would say something with no source;
+/// sentences past [`MAX_CONCLUSION_SENTENCES`] are dropped and each is cut to
+/// [`MAX_CONCLUSION_CHARS`]. `None` when the answer is not JSON.
+pub fn parse_conclusion(text: &str, points: usize) -> Option<Vec<ConclusionSentence>> {
+    #[derive(Deserialize)]
+    struct Sentence {
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        points: Vec<String>,
+    }
+    #[derive(Deserialize)]
+    struct Answer {
+        #[serde(default)]
+        conclusion: Vec<Sentence>,
+    }
+    let answer: Answer = serde_json::from_str(json_object(text)?).ok()?;
+    let mut out = Vec::new();
+    for sentence in answer.conclusion {
+        let text = cut(sentence.text.trim(), MAX_CONCLUSION_CHARS);
+        let mut cited: Vec<usize> = Vec::new();
+        for id in &sentence.points {
+            if let Some(i) = answer_index(id, 'P', points) {
+                if !cited.contains(&i) {
+                    cited.push(i);
+                }
+            }
+        }
+        if text.is_empty() || cited.is_empty() {
+            continue;
+        }
+        out.push(ConclusionSentence {
+            text,
+            points: cited,
+        });
+        if out.len() == MAX_CONCLUSION_SENTENCES {
+            break;
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 #[path = "conversation_intake_test.rs"]
 mod tests;
