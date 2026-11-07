@@ -396,6 +396,19 @@ describe("canonical references share editor behavior", () => {
     expect(view.state.doc.toString()).toBe(source);
   });
 
+  it("keeps unchecked citation links actionable and labels them as unchecked", () => {
+    const citation = { occurrence: 1, marker: 1, source_kind: "external_file" as const, locator: "folder::/tmp/demo.md", score: 1, status: "unevaluated" as const, scope: "sentence" as const };
+    const { view, onReferenceActivate } = make("[1]", targets, { citations: [citation], labels: {
+      page: "Page", memory: "Memory", source: "Source", authored: "Yours", unverified: "Unverified", unevaluated: "Source not checked yet",
+    } });
+    const link = view.contentDOM.querySelector<HTMLAnchorElement>("a[data-inline-reference-key]");
+    expect(link).toHaveClass("reference-link--source", "reference-link--unevaluated");
+    expect(link).toHaveAttribute("aria-label", "1, Source, Source not checked yet");
+    expect(link).toHaveAttribute("href", "#citation:1");
+    link?.click();
+    expect(onReferenceActivate).toHaveBeenCalled();
+  });
+
   it("leaves markers raw when the map mismatches or a marker is escaped, HTML, or frontmatter", () => {
     const citation = { occurrence: 1, marker: 1, source_kind: "memory" as const, locator: "m-1", score: 1, status: "verified" as const, scope: "sentence" as const };
     const { view } = make("[1] [2]", targets, { citations: [citation] });

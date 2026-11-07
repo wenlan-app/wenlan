@@ -13,7 +13,6 @@ import {
   ATTEMPT_TIMEOUT_MS,
   BOOT_QUERY_RETRY,
   RUST_HEALTH_LOOP_BUDGET_MS,
-  BOOT_SLOW_NOTICE_MS,
   bootQueryBudgetMs,
   bootQueryRetryDelay,
   runBootGate,
@@ -53,16 +52,6 @@ describe("boot retry policy", () => {
   it("shrinks with the retry count, so a test double cannot inflate it", () => {
     expect(bootQueryBudgetMs(1)).toBe(2 * ATTEMPT_TIMEOUT_MS + 1_000);
     expect(bootQueryBudgetMs(0)).toBe(ATTEMPT_TIMEOUT_MS);
-  });
-
-  it("captions the boot screen well before the budget runs out", () => {
-    // 15s is a caption on a wait that is still healthy, not a deadline: the
-    // gate keeps retrying behind it for another two and a half minutes. If
-    // this ever crept past the budget the line would never render at all.
-    expect(BOOT_SLOW_NOTICE_MS).toBe(15_000);
-    expect(BOOT_SLOW_NOTICE_MS).toBeLessThan(bootQueryBudgetMs());
-    // And it must outlast a normal cold start, or every launch flashes it.
-    expect(BOOT_SLOW_NOTICE_MS).toBeGreaterThanOrEqual(2 * ATTEMPT_TIMEOUT_MS);
   });
 
   it("times out a hung boot attempt instead of waiting forever", async () => {

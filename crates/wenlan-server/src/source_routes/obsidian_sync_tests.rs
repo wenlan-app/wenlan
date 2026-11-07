@@ -74,6 +74,7 @@ fn register_vault(root: &Path) -> Source {
 
 fn register_source(root: &Path, source_type: SourceType) -> Source {
     let source = Source {
+        display_name: None,
         id: SOURCE_ID.to_string(),
         source_type,
         path: root.to_path_buf(),

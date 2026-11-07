@@ -14,7 +14,7 @@
 .search-modal {
   background: var(--mem-sidebar);
   border: 1px solid var(--mem-border);
-  border-radius: 14px;
+  border-radius: var(--mem-r-14);
   box-shadow: 0 24px 72px color-mix(in srgb, #000 28%, transparent);
   box-sizing: border-box;
   display: flex;
@@ -60,7 +60,7 @@
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   color: var(--mem-text-tertiary);
   cursor: pointer;
   display: flex;

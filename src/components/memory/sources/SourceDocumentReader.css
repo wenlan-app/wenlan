@@ -5,6 +5,84 @@
   overflow-wrap: anywhere;
 }
 
+/* The in-inspector PDF uses the drawer height; ordinary source reads keep the
+   standalone reader's content-driven layout. */
+.page-info-drawer-content:has(.note-inspector-pdf:not([hidden])) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.note-inspector-panel:has(.note-inspector-pdf:not([hidden])) {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-inspector-pdf:not([hidden]) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-inspector-pdf:not([hidden]) > .note-inspector-pdf-header {
+  display: flex; align-items: center; gap: 8px;
+}
+.note-inspector-pdf:not([hidden]) .note-inspector-pdf-header > .note-info-section-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-inspector-pdf:not([hidden]) > .source-document-reader {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-inspector-pdf:not([hidden]) .zotero-document-reader {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-inspector-pdf:not([hidden]) .zotero-document-reader > [role="status"] {
+  flex: 0 1 auto;
+  max-height: 4em;
+  overflow: auto;
+}
+
+.note-inspector-pdf:not([hidden]) .zotero-document-reader > .source-pdf-reader {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.note-inspector-pdf:not([hidden]) .source-pdf-stage {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+.note-inspector-pdf:not([hidden]) .source-document-reader > details {
+  flex: 0 1 auto;
+  max-height: 28%;
+  min-height: 0;
+  overflow: auto;
+}
+
 .source-document-preview .reading-document-frame {
   padding-block-start: 0;
 }
@@ -52,7 +130,7 @@
 .source-document-reader-url a:focus-visible {
   outline: 2px solid var(--mem-accent-page);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: var(--mem-r-2);
 }
 
 .source-document-reader-url a svg {
@@ -112,6 +190,6 @@
 .source-cited-by { display: flex; flex-direction: column; gap: 6px; }
 .source-cited-by-none { color: var(--mem-text-tertiary); font-family: var(--mem-font-body); font-size: 12px; margin: 0; }
 .source-cited-by .note-info-source-list { list-style: none; margin: 0; padding: 0; }
-.source-cited-by li { border-radius: 6px; padding: 6px 8px; }
+.source-cited-by li { border-radius: var(--mem-r-6); padding: 6px 8px; }
 .source-cited-by li:hover { background: var(--mem-hover); }
 .page-info-source-button.source-cited-by-page { align-items: center; color: var(--mem-text); display: flex; font-family: var(--mem-font-body); font-size: 13px; gap: 8px; }

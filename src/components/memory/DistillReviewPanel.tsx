@@ -38,6 +38,7 @@ import {
 import { isActionableReviewItem } from "./reviewDisposition";
 
 interface DistillReviewPanelProps {
+  currentSpace?: string;
   initialReviewItemId?: string;
   onBack: () => void;
   onPageClick: (pageId: string) => void;
@@ -61,6 +62,7 @@ const FILTER_ORDER: Exclude<ReviewFilterKey, "all">[] = [
   "revisions",
   "conflicts",
   "pages",
+  "classifications",
   "memory",
 ];
 
@@ -69,6 +71,7 @@ const FILTER_LABEL_KEYS = {
   revisions: "review.filterRevisions",
   conflicts: "review.filterConflicts",
   pages: "review.filterPages",
+  classifications: "selectedSources.classificationTitle",
   memory: "review.filterMemory",
 } as const;
 
@@ -112,7 +115,7 @@ const emptyTitleStyle = {
 
 const itemSurfaceStyle = {
   border: "1px solid var(--mem-border)",
-  borderRadius: 8,
+  borderRadius: "var(--mem-r-8)",
   backgroundColor: "var(--mem-surface)",
 };
 
@@ -159,7 +162,7 @@ function QueueCard({
           style={{
             fontSize: "var(--mem-text-meta)",
             letterSpacing: "0.04em",
-            borderRadius: 5,
+            borderRadius: "var(--mem-r-5)",
             padding: "2px 8px",
             color: tone.color,
             backgroundColor: tone.background,
@@ -357,7 +360,7 @@ function HiddenFooter({
                     style={{
                       fontSize: "var(--mem-text-meta)",
                       letterSpacing: "0.04em",
-                      borderRadius: 5,
+                      borderRadius: "var(--mem-r-5)",
                       padding: "2px 8px",
                       color: tone.color,
                       backgroundColor: tone.background,
@@ -473,6 +476,7 @@ function FilterChipRow({
 }
 
 export default function DistillReviewPanel({
+  currentSpace,
   initialReviewItemId,
   onBack,
   onPageClick,
@@ -494,7 +498,7 @@ export default function DistillReviewPanel({
   // "basis-updates" points at a group, not at one queue item.
   const focusBasisUpdates = initialReviewItemId === BASIS_UPDATES_REVIEW_ID;
   const focusedQueueItemId = focusBasisUpdates ? undefined : initialReviewItemId;
-  const queue = useReviewQueue(true, focusedQueueItemId ? "note-context" : "default");
+  const queue = useReviewQueue(true, focusedQueueItemId ? "note-context" : "default", currentSpace);
   const basisPending = useBasisPending();
   const codeBasisPending = useCodeBasisPending();
   const focusedRequestRef = useRef<string | null>(null);
@@ -603,7 +607,7 @@ export default function DistillReviewPanel({
 
   // Stale-page refreshes resolve against the panel's distill result, not the
   // queue caches — drop them here after the daemon verb succeeds.
-  const resolveItem = async (args: { item: ReviewItem; approve: boolean }) => {
+  const resolveItem = async (args: { item: ReviewItem; approve: boolean; edited_content?: string }) => {
     const { item, approve } = args;
     if (item.kind === "stale_page" && !approve) {
       hide(item);
@@ -613,6 +617,16 @@ export default function DistillReviewPanel({
     if (item.kind === "stale_page" && approve) {
       setResolvedStaleIds((prev) => new Set(prev).add(item.id));
     }
+    if (item.kind === "revision" && item.targetKind === "page" && approve) {
+      void queryClient.invalidateQueries({ queryKey: ["recent-changes"] });
+      try {
+        await review.mutateAsync();
+      } catch {
+        // Approval already succeeded; the Review refresh has its own error UI.
+      }
+      // Do not immediately advance into a stale snapshot of the approved page.
+      return { skipStalePageId: item.targetSourceId };
+    }
     return result;
   };
 
@@ -621,6 +635,7 @@ export default function DistillReviewPanel({
     { key: "revisions", title: t("review.sectionRevisions") },
     { key: "conflicts", title: t("review.sectionConflicts") },
     { key: "pages", title: t("review.sectionPages") },
+    { key: "classifications", title: t("selectedSources.classificationTitle") },
     { key: "memory", title: t("review.sectionRefinements") },
   ].map((section) => ({
     ...section,

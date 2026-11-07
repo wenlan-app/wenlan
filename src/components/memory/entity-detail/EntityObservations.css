@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 .entity-about .entity-obs-list { list-style: none; margin: 0; padding: 0; }
-.entity-about .entity-obs-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; margin: 0 -12px; padding: calc(var(--reading-paragraph-gap) / 2) 12px; border-radius: 8px; }
+.entity-about .entity-obs-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; margin: 0 -12px; padding: calc(var(--reading-paragraph-gap) / 2) 12px; border-radius: var(--mem-r-8); }
 /* Align paragraph markers with About; keep prose and its editor on one inset edge. */
 .entity-about .entity-obs-row[data-observation-row-id] { padding-inline-start: 26px; }
 .entity-about .entity-obs-row[data-observation-row-id]::before {
@@ -22,7 +22,7 @@
 .entity-about .entity-obs-content:disabled { opacity: 1; cursor: default; }
 .entity-about .entity-obs-editor { min-width: 0; }
 .entity-about .entity-obs-input { display: block; box-sizing: border-box; width: 100%; min-height: 1.65em; margin: 0; padding: 0; resize: none; overflow: hidden; border: 0; border-radius: 0; outline: none; background: transparent; color: var(--mem-text); font-family: var(--mem-font-body); font-size: var(--reading-font-size); line-height: var(--reading-line-height); }
-.entity-about .entity-obs-delete { display: inline-grid; flex: 0 0 28px; place-items: center; width: 28px; height: 28px; margin: 0; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--mem-text-tertiary); opacity: 0; cursor: pointer; }
+.entity-about .entity-obs-delete { display: inline-grid; flex: 0 0 28px; place-items: center; width: 28px; height: 28px; margin: 0; padding: 0; border: 0; border-radius: var(--mem-r-4); background: transparent; color: var(--mem-text-tertiary); opacity: 0; cursor: pointer; }
 .entity-about .entity-obs-row:hover .entity-obs-delete, .entity-about .entity-obs-row:focus-within .entity-obs-delete { opacity: 1; }
 .entity-about .entity-obs-delete:hover { color: var(--mem-text); }
 .entity-about .entity-obs-delete:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; opacity: 1; }
@@ -34,7 +34,7 @@
 .entity-about .entity-obs-add-trigger { margin-top: 7px; padding: 4px 0; border: 0; background: transparent; box-shadow: none; color: var(--mem-text-secondary); font-size: var(--mem-text-meta); }
 .entity-about .entity-obs-add-trigger:hover { color: var(--mem-text); background: transparent; }
 .entity-obs-empty { width: 100%; padding: 7px 0; border: 0; background: transparent; color: var(--mem-text-secondary); font: inherit; font-size: var(--reading-font-size); line-height: var(--reading-line-height); text-align: left; cursor: text; }
-.entity-obs-content:focus-visible, .entity-obs-empty:focus-visible, .entity-obs-add-trigger:focus-visible, .entity-obs-retry:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 3px; border-radius: 3px; }
+.entity-obs-content:focus-visible, .entity-obs-empty:focus-visible, .entity-obs-add-trigger:focus-visible, .entity-obs-retry:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 3px; border-radius: var(--mem-r-3); }
 @media (max-width: 600px), (pointer: coarse) {
   .entity-obs-add-trigger, .entity-obs-empty, .entity-obs-retry { min-height: 44px; }
   .entity-about .entity-obs-delete { flex-basis: 44px; width: 44px; height: 44px; opacity: 1; }

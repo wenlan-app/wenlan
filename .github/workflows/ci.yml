@@ -214,6 +214,7 @@ jobs:
               - 'app/src/search.rs'
               - 'app/src/remote_access.rs'
               - 'app/src/plugin_install.rs'
+              - 'app/src/desktop_codex.rs'
               - 'app/src/sources/obsidian.rs'
               - 'app/src/config.rs'
               - 'app/src/error.rs'
@@ -716,7 +717,7 @@ jobs:
               - '.github/workflows/release.yml'
             windows-lint:
               # The Windows functional lint-scale proof is useful only when
-              # its implementation or harness changes.
+              # its implementation, database dependency, or harness changes.
               - 'crates/wenlan-core/src/lint/**'
               - 'scripts/lint-scale-gate.sh'
               - 'scripts/stage-vulkan-loader-windows.ps1'
@@ -837,6 +838,8 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
             workspace-platform:
+              # The lifecycle regression includes a macOS-only Guard Malloc child.
+              - 'crates/wenlan-core/src/lint/snapshot_tests.rs'
               # Dependency graph inputs can introduce target-specific compile
               # failures without requiring four release-profile builds.
               - 'Cargo.toml'
@@ -1547,6 +1550,7 @@ jobs:
           $fixture = Join-Path $env:RUNNER_TEMP "lint-scale-fixture"
           $receipt = Join-Path $env:RUNNER_TEMP "task-19-memory-lint-debugger-windows.txt"
           $env:WENLAN_LINT_SCALE_FIXTURE = $fixture
+          $lifecycle = "lint::snapshot::tests::libsql_connection_lifecycle_closes_last_owner_safely"
           $setup = "lint::pages::diagnostic_scale_test::generate_diagnostic_scale_fixture"
           $gate = "lint::pages::diagnostic_scale_test::production_page_group_scale_gate"
           $head = git rev-parse HEAD
@@ -1555,10 +1559,15 @@ jobs:
             "cwd=$PWD",
             "head=$head",
             "platform=Windows",
+            "lifecycle_command=cargo test -p wenlan-core --lib $lifecycle -- --exact --nocapture",
             "fixture_command=cargo test -p wenlan-core --lib $setup -- --ignored --exact --nocapture",
             "functional_command=cargo test -p wenlan-core --lib $gate -- --ignored --exact --nocapture",
             "model_embedder=not constructed or loaded"
           ) | Set-Content -Path $receipt
+          cargo test -p wenlan-core --lib $lifecycle -- --exact --nocapture 2>&1 |
+            Tee-Object -FilePath $receipt -Append
+          $lifecycleCode = $LASTEXITCODE
+          if ($lifecycleCode -ne 0) { throw "libsql connection lifecycle regression failed" }
           cargo test -p wenlan-core --lib $setup -- --ignored --exact --nocapture 2>&1 |
             Tee-Object -FilePath $receipt -Append
           $setupCode = $LASTEXITCODE

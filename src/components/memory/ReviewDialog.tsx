@@ -16,6 +16,10 @@ import {
   getPageSources,
   search,
 } from "../../lib/tauri";
+import type { ClassificationChange } from "../../lib/researchApi";
+import { SourceClassificationReview } from "./SourceClassificationReview";
+import { ResearchDisputeReview } from "./ResearchDisputeReview";
+import { isResearchDisputePayload } from "../../lib/disputeApi";
 import { diffWords, diffWordCounts, type DiffSegment } from "../../lib/wordDiff";
 import { isExampleReviewItem } from "./reviewExamples";
 import { reviewItemId, type ReviewItem } from "./useReviewQueue";
@@ -41,6 +45,8 @@ export function reviewKindLabel(t: TFunction, item: ReviewItem): string {
   if (item.kind === "page_candidate") return t("review.kindPageCandidate");
   if (item.kind === "topic") return t("review.kindTopic");
   switch (item.action) {
+    case "source_classification": return t("selectedSources.classificationTitle");
+    case "research_dispute": return t("researchDispute.title");
     case "entity_merge":
       return t("review.kindEntityMerge");
     case "detect_contradiction":
@@ -97,6 +103,8 @@ export function reviewApproveBlocked(item: ReviewItem): boolean {
   const pair = nonempty(first) && nonempty(second) && first !== second;
   const payload = item.payload;
   switch (item.action) {
+    case "source_classification":
+      return payload?.action !== "source_classification" || !nonempty(payload.run_id) || !nonempty(payload.space_id) || !nonempty(payload.rules_digest) || !Array.isArray(payload.changes) || payload.changes.length === 0 || payload.changes.some(change => !nonempty(change.source) || !nonempty(change.source_id) || !nonempty(change.source_content_digest) || !Array.isArray(change.before_tags) || !Array.isArray(change.add_tags) || !Array.isArray(change.remove_tags));
     case "page_keep_or_archive":
       return pageKeepOrArchiveId(item) === null ||
         pageKeepOrArchiveId(item) !== first ||
@@ -126,6 +134,7 @@ export function reviewApproveBlocked(item: ReviewItem): boolean {
  * stale-page refreshes hide locally (see DistillReviewPanel's resolveItem
  * wrapper) rather than calling a daemon dismiss verb. */
 export function reviewDismissBlocked(item: ReviewItem): boolean {
+  if (item.kind === "refinement" && item.action === "research_dispute") return true;
   return item.kind === "refinement" && item.payload?.action === "page_keep_or_archive" &&
     item.payload.allowed_actions != null && !item.payload.allowed_actions.includes("dismiss");
 }
@@ -197,6 +206,7 @@ function revisionReasonText(t: TFunction, reason: string | null | undefined): st
     case "locked": return t("review.reasonLocked");
     case "background": return t("review.reasonBackground");
     case "owned": return t("review.reasonOwned");
+    case "source_selection_changed": return t("review.reasonSourceSelectionChanged");
     default: return null;
   }
 }
@@ -375,6 +385,13 @@ export function useReviewItemSummary(item: ReviewItem | null): {
     });
     reason = confidence;
     switch (item.action) {
+      case "source_classification":
+        reason = null;
+        break;
+      case "research_dispute":
+        title = t("researchDispute.title");
+        reason = t("researchDispute.reviewHint");
+        break;
       case "lint_repair_review":
         title = short(a.data?.name, 96);
         reason = sourceRepairHint(t, item);
@@ -434,21 +451,21 @@ export function useReviewItemSummary(item: ReviewItem | null): {
 // read as grey behind rendered page text, and the light theme's danger tint
 // almost vanished behind struck-through words.
 const INS_STYLE: React.CSSProperties = {
-  backgroundColor: "rgba(76, 175, 106, 0.26)",
+  backgroundColor: "color-mix(in srgb, var(--mem-signal-leaf) 26%, transparent)",
   textDecoration: "none",
-  borderRadius: 3,
+  borderRadius: "var(--mem-r-3)",
   padding: "0 2px",
 };
 
 const DEL_STYLE: React.CSSProperties = {
-  backgroundColor: "rgba(205, 92, 74, 0.24)",
-  borderRadius: 3,
+  backgroundColor: "color-mix(in srgb, var(--mem-signal-clay) 24%, transparent)",
+  borderRadius: "var(--mem-r-3)",
   padding: "0 2px",
 };
 
 const paneStyle: React.CSSProperties = {
   border: "1px solid var(--mem-border)",
-  borderRadius: 10,
+  borderRadius: "var(--mem-r-10)",
   backgroundColor: "var(--mem-detail-surface-raised)",
   padding: "13px 15px",
   fontFamily: "var(--mem-font-body)",
@@ -477,7 +494,7 @@ const paneLabelStyle: React.CSSProperties = {
 const actionButtonStyle: React.CSSProperties = {
   fontFamily: "var(--mem-font-body)",
   fontSize: "var(--mem-text-control)",
-  borderRadius: 8,
+  borderRadius: "var(--mem-r-8)",
   padding: "8px 15px",
   cursor: "pointer",
   border: "1px solid var(--mem-border)",
@@ -492,7 +509,7 @@ const examplePillStyle: React.CSSProperties = {
   fontSize: "var(--mem-text-meta)",
   letterSpacing: "0.06em",
   textTransform: "uppercase",
-  borderRadius: 5,
+  borderRadius: "var(--mem-r-5)",
   padding: "1px 7px",
   color: "var(--mem-text-secondary)",
   border: "1px dashed var(--mem-border)",
@@ -517,7 +534,7 @@ const evidenceRowStyle: React.CSSProperties = {
   width: "100%",
   textAlign: "left",
   border: "1px solid var(--mem-border)",
-  borderRadius: 8,
+  borderRadius: "var(--mem-r-8)",
   padding: "8px 12px",
   backgroundColor: "var(--mem-surface)",
   cursor: "pointer",
@@ -619,7 +636,7 @@ interface ReviewDialogProps {
   items: ReviewItem[];
   openId: string | null;
   onOpenChange: (id: string | null) => void;
-  onResolve: (args: { item: ReviewItem; approve: boolean }) => Promise<unknown>;
+  onResolve: (args: { item: ReviewItem; approve: boolean; edited_content?: string; classification_changes?: ClassificationChange[] }) => Promise<unknown>;
   isResolving: boolean;
   onOpenMemory?: (sourceId: string) => void;
   onOpenPage?: (pageId: string) => void;
@@ -638,6 +655,11 @@ export default function ReviewDialog({
   const queryClient = useQueryClient();
   const [showDone, setShowDone] = useState(false);
   const [sideBySide, setSideBySide] = useState(false);
+  const [disputeSourceOpen, setDisputeSourceOpen] = useState(false);
+  // Keep both the draft and the proposal it was based on, by exact card id.
+  // Closing or navigating does not save or discard a human's adjustment.
+  const [classificationDrafts, setClassificationDrafts] = useState<Record<string, ClassificationChange[]>>({});
+  const [revisionDrafts, setRevisionDrafts] = useState<Record<string, { content: string; expectedContent: string }>>({});
   const [flash, setFlash] = useState<string | null>(null);
   // A notice flash explains an outcome the human did not choose (a card the
   // daemon discarded), so it stays up longer and carries no checkmark.
@@ -676,6 +698,14 @@ export default function ReviewDialog({
   const item = repairBusy && retainedRepairItemRef.current
     ? retainedRepairItemRef.current
     : showDone ? null : index >= 0 ? items[index] : null;
+  const classification = item?.kind === "refinement" && item.action === "source_classification" && item.payload?.action === "source_classification" ? item.payload : null;
+  const classificationDraft = item ? classificationDrafts[item.id] : undefined;
+  const revisionDraft = item?.kind === "revision" ? revisionDrafts[item.revisionSourceId] : undefined;
+  const clearRevisionDraft = (id: string) => setRevisionDrafts((drafts) => {
+    const next = { ...drafts };
+    delete next[id];
+    return next;
+  });
   displayedItemRef.current = item;
   const done = open && !repairBusy && (showDone || items.length === 0);
   const resolving = isResolving || resolvingLocally || repairBusy;
@@ -846,7 +876,8 @@ export default function ReviewDialog({
   const missingTarget = decisionQueries.some((query) => query.isSuccess && query.data == null) || vocabularyTargetMismatch;
   const evidenceUnavailable = decisionQueries.some((query) => query.isError || query.data == null) || missingMergeSources || vocabularyTargetMismatch;
   const contractBlocked = item != null && reviewApproveBlocked(item);
-  const canApprove = !contractBlocked && !evidenceLoading && !evidenceUnavailable;
+  const canApprove = !contractBlocked && !evidenceLoading && !evidenceUnavailable &&
+    (revisionDraft === undefined || revisionDraft.content.trim().length > 0);
   const retryEvidence = () => { decisionQueries.forEach((query) => void query.refetch()); };
 
   const copyRepairDetails = async () => {
@@ -876,7 +907,7 @@ export default function ReviewDialog({
       item.kind === "topic" ||
       item.kind === "page_candidate" ||
       item.kind === "stale_page";
-    const next = items[index + 1] ?? (index > 0 ? items[index - 1] : null);
+    let next = items[index + 1] ?? (index > 0 ? items[index - 1] : null);
     const navigationVersion = navigationVersionRef.current;
     const requestId = ++resolveRequestRef.current;
     setResolveError(null);
@@ -884,7 +915,14 @@ export default function ReviewDialog({
     let outdated = false;
     let discardedNotice: "review.revisionOutdated" | "review.revisionBasisRefused" = "review.revisionOutdated";
     try {
-      await onResolve({ item, approve });
+      const resolution = await onResolve(approve && item.kind === "revision" && revisionDraft
+        ? { item: { ...item, content: revisionDraft.expectedContent }, approve, edited_content: revisionDraft.content }
+        : approve && classificationDraft ? { item, approve, classification_changes: classificationDraft } : { item, approve });
+      if (resolution && typeof resolution === "object" && "skipStalePageId" in resolution && typeof resolution.skipStalePageId === "string") {
+        const remaining = items.filter(candidate => candidate !== item && !(candidate.kind === "stale_page" && candidate.id === resolution.skipStalePageId));
+        if (next?.kind === "stale_page" && next.id === resolution.skipStalePageId) next = remaining[0] ?? null;
+      }
+      if (item.kind === "revision") clearRevisionDraft(item.revisionSourceId);
     } catch (error) {
       if (error instanceof SteepNeedsAiToolError && item.kind === "stale_page") {
         const staleId = item.id;
@@ -894,9 +932,9 @@ export default function ReviewDialog({
       // The page moved after this revision was proposed, or a page the change
       // relied on is gone; either way the daemon discarded the card. Say so
       // and move on, the way a resolved card would.
-      const basisRefused = item.kind === "revision" && isPageRevisionBasisRefused(error);
+      const basisRefused = revisionDraft === undefined && item.kind === "revision" && isPageRevisionBasisRefused(error);
       if (basisRefused) discardedNotice = "review.revisionBasisRefused";
-      outdated = basisRefused || (item.kind === "revision" && isPageRevisionOutdated(error));
+      outdated = basisRefused || (revisionDraft === undefined && item.kind === "revision" && isPageRevisionOutdated(error));
       if (
         !outdated &&
         resolveRequestRef.current === requestId &&
@@ -966,7 +1004,7 @@ export default function ReviewDialog({
   };
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || disputeSourceOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const el = event.target as HTMLElement | null;
       if (event.key === "Tab") {
@@ -1047,12 +1085,16 @@ export default function ReviewDialog({
   return createPortal(
     <div
       role="dialog"
-      aria-modal="true"
+      aria-modal={disputeSourceOpen ? undefined : true}
+      aria-hidden={disputeSourceOpen || undefined}
+      inert={disputeSourceOpen || undefined}
       aria-label={t("review.title")}
       style={{
         position: "fixed",
         inset: 0,
-        display: "flex",
+        // The source reader portals outside this DOM subtree. Hiding the
+        // modal removes its backdrop without unmounting the decision draft.
+        display: disputeSourceOpen ? "none" : "flex",
         alignItems: "flex-start",
         justifyContent: "center",
         padding: "6vh 16px 16px",
@@ -1073,7 +1115,7 @@ export default function ReviewDialog({
           overflowY: item?.kind === "refinement" && item.action === "lint_repair_review" ? "hidden" : "auto",
           backgroundColor: "var(--mem-surface)",
           border: "1px solid var(--mem-border)",
-          borderRadius: 16,
+          borderRadius: "var(--mem-r-16)",
           boxShadow: "0 24px 48px rgba(0,0,0,0.35)",
           outline: "none",
           display: "flex",
@@ -1090,7 +1132,7 @@ export default function ReviewDialog({
               justifyContent: "center",
               gap: 10,
               backgroundColor: "var(--mem-surface)",
-              borderRadius: 16,
+              borderRadius: "var(--mem-r-16)",
               zIndex: 3,
               fontFamily: "var(--mem-font-heading)",
               fontSize: flashNotice ? 16 : 19,
@@ -1120,7 +1162,7 @@ export default function ReviewDialog({
                 fontFamily: "var(--mem-font-body)",
                 fontSize: "var(--mem-text-meta)",
                 letterSpacing: "0.04em",
-                borderRadius: 5,
+                borderRadius: "var(--mem-r-5)",
                 padding: "2px 8px",
                 color: reviewKindTone(item).color,
                 backgroundColor: reviewKindTone(item).background,
@@ -1161,7 +1203,7 @@ export default function ReviewDialog({
               fontSize: 16,
               lineHeight: 1,
               padding: 6,
-              borderRadius: 6,
+              borderRadius: "var(--mem-r-6)",
             }}
           >
             ✕
@@ -1237,7 +1279,7 @@ export default function ReviewDialog({
               >
                 {heading}
               </h3>
-              <p
+              {!(item.kind === "refinement" && item.action === "source_classification") && <p
                 style={{
                   fontFamily: "var(--mem-font-body)",
                   color: "var(--mem-text-secondary)",
@@ -1275,6 +1317,8 @@ export default function ReviewDialog({
                                   count: item.sourcesUpdated,
                                 })
                               : "")
+                        : item.action === "research_dispute"
+                          ? t("researchDispute.reviewHint")
                         : isContradiction
                           ? t("review.contradictionHint")
                       : item.action === "lint_repair_review"
@@ -1301,10 +1345,10 @@ export default function ReviewDialog({
                                   : t("review.confidence", {
                                       percent: Math.round(item.confidence * 100),
                                     })}
-              </p>
+              </p>}
 
               {contractBlocked && !reviewReadOnly(item) && !isExampleReviewItem(item) &&
-                !(item.kind === "refinement" && item.action === "lint_repair_review" && item.payload?.action === "lint_repair_review") && (
+                !(item.kind === "refinement" && (item.action === "research_dispute" || (item.action === "lint_repair_review" && item.payload?.action === "lint_repair_review"))) && (
                 <p role="status" style={paneStyle}>{t("review.approvalUnavailable")}</p>
               )}
               {!contractBlocked && (evidenceLoading || evidenceUnavailable) && (
@@ -1374,12 +1418,31 @@ export default function ReviewDialog({
 
               {item.kind === "revision" && (
                 <>
+                  {revisionDraft ? (
+                    <div style={{ display: "grid", gap: 8 }}>
+                      <label htmlFor="review-adjust-content" style={paneLabelStyle}>{t("reviewAdjust.label")}</label>
+                      <textarea
+                        id="review-adjust-content"
+                        value={revisionDraft.content}
+                        onChange={(event) => {
+                          const content = event.target.value;
+                          setRevisionDrafts((drafts) => ({ ...drafts, [item.revisionSourceId]: { ...revisionDraft, content } }));
+                        }}
+                        disabled={resolving}
+                        autoFocus
+                        rows={12}
+                        style={{ ...paneStyle, width: "100%", boxSizing: "border-box", resize: "vertical", minHeight: 220,
+                          maxHeight: "48vh", color: "var(--mem-text)", fontFamily: "var(--mem-font-body)", lineHeight: 1.6 }}
+                      />
+                      <p style={{ ...paneLabelStyle, margin: 0, textTransform: "none", letterSpacing: "normal" }}>{t("reviewAdjust.hint")}</p>
+                    </div>
+                  ) : (<>
                   <div
                     role="tablist"
                     style={{
                       display: "inline-flex",
                       border: "1px solid var(--mem-border)",
-                      borderRadius: 8,
+                      borderRadius: "var(--mem-r-8)",
                       overflow: "hidden",
                       marginBottom: 14,
                     }}
@@ -1483,6 +1546,8 @@ export default function ReviewDialog({
                     </p>
                   )}
 
+                  </>)}
+
                   {item.targetKind === "page" ? (
                     <PageRevisionChain pageId={item.targetSourceId} />
                   ) : (
@@ -1561,6 +1626,8 @@ export default function ReviewDialog({
                 </div>
               )}
 
+              {item.kind === "refinement" && item.action === "research_dispute" && <ResearchDisputeReview key={item.id} onSourceOpenChange={setDisputeSourceOpen} id={item.id} space={isResearchDisputePayload(item.payload) ? item.payload.space : ""} payload={isResearchDisputePayload(item.payload) ? item.payload : null} />}
+              {classification && <SourceClassificationReview changes={classificationDraft ?? classification.changes} editing={!!classificationDraft} onChange={changes => setClassificationDrafts(drafts => ({ ...drafts, [item.id]: changes }))} />}
               {item.kind === "refinement" &&
                 item.action === "entity_merge" && (
                   <div style={{ display: "grid", gap: 12 }}>
@@ -1772,7 +1839,7 @@ export default function ReviewDialog({
                 style={{
                   background: "var(--mem-status-danger-bg)",
                   border: "1px solid var(--mem-status-danger-border)",
-                  borderRadius: 8,
+                  borderRadius: "var(--mem-r-8)",
                   color: "var(--mem-status-danger-text)",
                   font: "var(--mem-text-description)/1.5 var(--mem-font-body)",
                   margin: "4px 20px 0",
@@ -1883,6 +1950,17 @@ export default function ReviewDialog({
                     {t("review.openMemory")}
                   </button>
                 )}
+              {classification && <button type="button" disabled={resolving} style={actionButtonStyle} onClick={() => setClassificationDrafts(drafts => { const next = { ...drafts }; if (classificationDraft) delete next[item.id]; else next[item.id] = classification.changes.map(change => ({ ...change })); return next; })}>{t(classificationDraft ? "reviewAdjust.cancel" : "selectedSources.classificationEdit")}</button>}
+              {item.kind === "revision" && !isExampleReviewItem(item) && (
+                <button type="button" disabled={resolving} style={actionButtonStyle}
+                  onClick={() => {
+                    setResolveError(null);
+                    if (revisionDraft) clearRevisionDraft(item.revisionSourceId);
+                    else setRevisionDrafts((drafts) => ({ ...drafts, [item.revisionSourceId]: { content: item.content, expectedContent: item.content } }));
+                  }}>
+                  {t(revisionDraft ? "reviewAdjust.cancel" : "reviewAdjust.open")}
+                </button>
+              )}
               <span style={{ flex: 1 }} />
               {items.length > 1 && (
                 <button

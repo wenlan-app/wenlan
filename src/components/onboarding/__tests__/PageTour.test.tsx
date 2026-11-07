@@ -6,8 +6,8 @@ import { PageTour, replayPageTour } from "../PageTour";
 
 const TOUR_KEY = "onboarding:pageTour";
 
-function Page({ unverified = true, chips = true, eligible = true, newUser = true }: {
-  unverified?: boolean;
+function Page({ unevaluated = true, chips = true, eligible = true, newUser = true }: {
+  unevaluated?: boolean;
   chips?: boolean;
   eligible?: boolean;
   newUser?: boolean;
@@ -19,7 +19,7 @@ function Page({ unverified = true, chips = true, eligible = true, newUser = true
         <p>
           A sentence.
           {chips ? <button type="button" className="citation-chip" data-status="verified">1</button> : null}
-          {chips && unverified ? <button type="button" className="citation-chip" data-status="unverified">2</button> : null}
+          {chips && unevaluated ? <button type="button" className="citation-chip" data-status="unevaluated">2</button> : null}
         </p>
       </div>
       <PageTour rootRef={root} eligible={eligible} newUser={newUser} pageKey="p1" />
@@ -37,7 +37,8 @@ describe("PageTour", () => {
     expect(tour).toHaveAttribute("data-tip", "sources");
     expect(tour).toHaveTextContent("1 of 3");
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(screen.getByTestId("page-tour")).toHaveAttribute("data-tip", "unverified");
+    expect(screen.getByTestId("page-tour")).toHaveAttribute("data-tip", "unevaluated");
+    expect(screen.getByTestId("page-tour")).toHaveTextContent("This source has not been checked against the sentence yet");
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByTestId("page-tour")).toHaveAttribute("data-tip", "edit");
     expect(screen.getByText(/After you edit, Wenlan asks first: look for Review changes/)).toBeInTheDocument();
@@ -50,7 +51,7 @@ describe("PageTour", () => {
   });
 
   it("leaves out a tip with nothing to point at", () => {
-    render(<Page unverified={false} />);
+    render(<Page unevaluated={false} />);
     expect(screen.getByTestId("page-tour")).toHaveTextContent("1 of 2");
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByTestId("page-tour")).toHaveAttribute("data-tip", "edit");

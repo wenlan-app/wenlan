@@ -52,7 +52,7 @@ function statusLabel(status: SyncStatusStr): string | null {
 
 const STATUS_COLORS: Record<string, string> = {
   "Imported once": "var(--mem-text-tertiary)",
-  "Sync error": "#ef4444",
+  "Sync error": "var(--mem-signal-red)",
   Unavailable: "var(--mem-text-tertiary)",
 };
 
@@ -708,7 +708,7 @@ function FileDetail({
                       fontSize: "10px",
                       letterSpacing: "0.02em",
                       padding: "1px 6px",
-                      borderRadius: 4,
+                      borderRadius: "var(--mem-r-4)",
                       background: "var(--mem-indigo-bg)",
                       color: "var(--mem-accent-indigo)",
                     }}
@@ -723,7 +723,7 @@ function FileDetail({
                       fontSize: "10px",
                       letterSpacing: "0.02em",
                       padding: "1px 6px",
-                      borderRadius: 4,
+                      borderRadius: "var(--mem-r-4)",
                       background: "var(--mem-hover)",
                       color: "var(--mem-text-tertiary)",
                     }}
@@ -982,7 +982,7 @@ function SkeletonRows() {
             height: 18,
             width: `${w * 100}%`,
             maxWidth: 320,
-            borderRadius: 5,
+            borderRadius: "var(--mem-r-5)",
             background: "var(--mem-shimmer-color)",
           }}
         />

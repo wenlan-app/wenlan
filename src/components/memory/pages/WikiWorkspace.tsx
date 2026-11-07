@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CaretDown, Folder, FolderPlus, NotePencil } from "@phosphor-icons/react";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { useTranslation } from "react-i18next";
@@ -18,6 +18,8 @@ export interface WikiWorkspaceProps {
   readonly children: ReactNode;
   readonly tabs?: ReactNode;
   readonly onGlobalToolsHost?: (host: HTMLDivElement | null) => void;
+  readonly onSharedReadingHost?: (host: HTMLDivElement | null) => void;
+  readonly onSharedToolsHost?: (host: HTMLDivElement | null) => void;
   readonly onGroupFocus?: () => void;
   readonly secondaryOpen?: boolean;
   readonly onSecondaryHost?: (host: HTMLDivElement | null) => void;
@@ -59,6 +61,8 @@ export function WikiWorkspace({
   tabs,
   onGroupFocus,
   onGlobalToolsHost,
+  onSharedReadingHost,
+  onSharedToolsHost,
   secondaryOpen,
   onSecondaryHost,
   inventoryScope = "all",
@@ -100,6 +104,30 @@ export function WikiWorkspace({
   }, [creationFolderPath, inventoryMode, onCreationFolderPathChange]);
   const [canCreateFolder, setCanCreateFolder] = useState(false);
   const [noteCount, setNoteCount] = useState<number | null>(null);
+  const readingRootRef = useRef<HTMLDivElement | null>(null);
+  const [sharedToolsElement, setSharedToolsElement] = useState<HTMLDivElement | null>(null);
+  const setReadingRoot = useCallback((node: HTMLDivElement | null) => {
+    readingRootRef.current = node;
+    onSharedReadingHost?.(node);
+  }, [onSharedReadingHost]);
+  const setSharedToolsHost = useCallback((node: HTMLDivElement | null) => {
+    setSharedToolsElement(node);
+    onSharedToolsHost?.(node);
+  }, [onSharedToolsHost]);
+  useLayoutEffect(() => {
+    const root = readingRootRef.current;
+    if (!root || !sharedToolsElement) return;
+    const update = () => root.style.setProperty("--wiki-shared-tools-width", `${sharedToolsElement.getBoundingClientRect().width}px`);
+    update();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    observer?.observe(sharedToolsElement);
+    window.addEventListener("resize", update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+      root.style.removeProperty("--wiki-shared-tools-width");
+    };
+  }, [sharedToolsElement]);
   const createFormRef = useRef<(() => void) | null>(null);
   const id = useId();
   useReportWorkspaceDemand("list", WIKI_LIST_DOCKED_WIDTH);
@@ -235,13 +263,16 @@ export function WikiWorkspace({
             />
           )}
         </aside>
-        <div className={`wiki-workspace-reading${secondaryOpen ? " is-split" : ""}`}>
+        <div className={`wiki-workspace-reading${secondaryOpen ? " is-split" : ""}`} ref={setReadingRoot}>
           <div className={`wiki-primary-note-group${fullBleed ? " is-full-bleed" : ""}`}>
             <NoteGroupFrame id="primary" label={t("pages.groups.central")} tabs={tabs} onGlobalToolsHost={onGlobalToolsHost} contentId="wiki-note-content" onFocus={onGroupFocus}>
               {children}
             </NoteGroupFrame>
           </div>
           <div className="wiki-secondary-note-group" ref={onSecondaryHost} hidden={!secondaryOpen} />
+          <div aria-label={t("pageInspector.label")} className="wiki-shared-tools-rail" data-tauri-drag-region={undefined}>
+            <div className="note-group-document-tools wiki-shared-document-tools" ref={setSharedToolsHost} />
+          </div>
         </div>
       </div>
     </div>

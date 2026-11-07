@@ -34,12 +34,8 @@
    blue grey on the raised surface, so the added tint there is a plainer
    green. */
 .code-basis-panel {
-  --code-basis-removed-bg: rgba(205, 92, 74, 0.22);
-  --code-basis-added-bg: rgba(118, 184, 110, 0.24);
-}
-html[data-theme="light"] .code-basis-panel {
-  --code-basis-removed-bg: rgba(164, 68, 47, 0.22);
-  --code-basis-added-bg: rgba(111, 143, 118, 0.30);
+  --code-basis-removed-bg: var(--mem-diff-removed-bg);
+  --code-basis-added-bg: var(--mem-diff-added-bg);
 }
 
 /* The box (a pre) keeps the frame and scrolls vertically past 46dvh. The lines
@@ -55,7 +51,7 @@ html[data-theme="light"] .code-basis-panel {
   overflow-y: auto;
   padding: 10px 0 14px;
   border: 1px solid var(--mem-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: var(--mem-detail-surface-raised, var(--mem-bg));
   color: var(--mem-text);
   font: 12.5px/1.55 var(--mem-font-mono);
@@ -70,7 +66,7 @@ html[data-theme="light"] .code-basis-panel {
   /* Classic (non overlay) scrollbars take space; reserve it on both sides so
      the two boxes stay the same height when only one of them scrolls. */
   scrollbar-gutter: stable;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   outline: none;
   scroll-margin: 0;
 }

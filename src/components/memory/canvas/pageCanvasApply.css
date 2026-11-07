@@ -8,7 +8,7 @@
 }
 
 .page-canvas-node-name input {
-  border-radius: 4px;
+  border-radius: var(--mem-r-4);
 }
 
 .page-canvas-name-confirm,
@@ -20,7 +20,7 @@
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--mem-r-5);
   background: transparent;
   color: var(--mem-text-secondary);
   cursor: pointer;
@@ -62,7 +62,7 @@
   justify-content: flex-start;
   padding: 8px;
   border: 1px solid var(--mem-border);
-  border-radius: 9px;
+  border-radius: var(--mem-r-9);
   background: var(--mem-detail-surface);
   box-shadow: var(--mem-shadow-overlay);
 }
@@ -75,7 +75,7 @@
   min-height: 36px;
   padding: 7px 10px;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-detail-surface);
   color: var(--mem-text);
   font: inherit;
@@ -85,7 +85,7 @@
   min-height: 36px;
   padding: 7px 11px;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-detail-surface);
   color: var(--mem-text);
   cursor: pointer;

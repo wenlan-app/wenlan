@@ -94,7 +94,7 @@
 
 .page-info-drawer .detail-info-content :is(.entity-relation-list, .entity-relation-row, .memory-detail-related-card, .memory-detail-context-row) { border: 0; }
 .page-info-drawer .detail-info-content :is(.entity-relation-list, .memory-detail-related-grid, .memory-detail-compact-list) { display: grid; gap: 4px; }
-.page-info-drawer .detail-info-content :is(.entity-relation-row, .memory-detail-related-card, .memory-detail-context-row) { padding-block: 8px; border-radius: 4px; }
+.page-info-drawer .detail-info-content :is(.entity-relation-row, .memory-detail-related-card, .memory-detail-context-row) { padding-block: 8px; border-radius: var(--mem-r-4); }
 .page-info-drawer .detail-info-content :is(.entity-relation-row, .memory-detail-related-card, .memory-detail-context-row-button):hover { background: var(--mem-hover); }
 .page-info-drawer .detail-info-content .entity-relation-row { flex-wrap: wrap; gap: 4px 8px; }
 .page-info-drawer .detail-info-content :is(.entity-relation-verb, .entity-relation-name, .entity-relation-type, .entity-appears-hint, .memory-detail-related-meta, .memory-detail-context-row-meta-text, .memory-detail-context-row-agent, .memory-detail-context-row-badge, .memory-detail-version-index) {

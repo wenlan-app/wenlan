@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { StrictMode, useEffect, useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { StrictMode, useCallback, useEffect, useState } from "react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import PageInfoDrawer from "./PageInfoDrawer";
-import { WorkspacePaneHostContext } from "../navigation/WorkspacePaneHost";
+import { SharedWikiInspectorContext, WorkspacePaneHostContext } from "../navigation/WorkspacePaneHost";
+import { RIGHT_SIDEBAR_PREFERENCE_KEY, rightSidebarPreferenceKey } from "../navigation/rightSidebarPreferences";
 import { NoteGroupFrame } from "../pages/NoteGroupFrame";
 
 function Harness() {
@@ -32,6 +33,17 @@ function InspectorHarness() {
       title="Note inspector"
     >
       <a href="#source">Open source</a>
+    </PageInfoDrawer>
+  </>;
+}
+
+function RetainedInspectorHarness() {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  return <>
+    <button onClick={() => setOpen(true)} type="button">Open retained inspector</button>
+    <PageInfoDrawer keepMounted open={open} onClose={close} title="Retained inspector" closeLabel="Close retained inspector">
+      <input aria-label="Reader position" defaultValue="page 4" />
     </PageInfoDrawer>
   </>;
 }
@@ -88,7 +100,218 @@ function GroupExpandableInspectorHarness() {
   </>;
 }
 
+function SharedWikiInspectorHarness() {
+  const [activeGroupId, setActiveGroupId] = useState("primary");
+  const [readingElement, setReadingElement] = useState<HTMLDivElement | null>(null);
+  const [toolsElement, setToolsElement] = useState<HTMLDivElement | null>(null);
+  const [mounts, setMounts] = useState({ primary: 0, secondary: 0 });
+  const recordMount = useCallback((group: "primary" | "secondary") => setMounts(current => ({ ...current, [group]: current[group] + 1 })), []);
+  return <SharedWikiInspectorContext.Provider value={{ activeGroupId, readingElement, toolsElement }}>
+    <div className="wiki-workspace-reading" ref={setReadingElement}>
+      <div className="note-group-document-tools" ref={setToolsElement}><button type="button">Shared tools</button></div>
+      <NoteGroupFrame id="primary" label="Primary note" tabs={<button type="button">Primary tab</button>} onFocus={() => setActiveGroupId("primary")}>
+        <input aria-label="Primary editor" />
+        <PageInfoDrawer docked inspector keepMounted open onClose={sharedCloseCalls.primary} title="Primary inspector" closeLabel="Close primary">
+          <MountCounter group="primary" onMount={recordMount} />
+        </PageInfoDrawer>
+      </NoteGroupFrame>
+      <NoteGroupFrame id="secondary" label="Secondary note" tabs={<button type="button">Secondary tab</button>} onFocus={() => setActiveGroupId("secondary")}>
+        <input aria-label="Secondary editor" />
+        <PageInfoDrawer docked inspector keepMounted open onClose={sharedCloseCalls.secondary} title="Secondary inspector" closeLabel="Close secondary">
+          <MountCounter group="secondary" onMount={recordMount} />
+        </PageInfoDrawer>
+      </NoteGroupFrame>
+    </div>
+    <output data-testid="mount-counts">{mounts.primary}:{mounts.secondary}</output>
+  </SharedWikiInspectorContext.Provider>;
+}
+
+const sharedCloseCalls = { primary: vi.fn(), secondary: vi.fn() };
+
+function MountCounter({ group, onMount }: { group: "primary" | "secondary"; onMount: (group: "primary" | "secondary") => void }) {
+  useEffect(() => onMount(group), [group, onMount]);
+  return <button type="button">{group} source</button>;
+}
+
+function SharedSplitWidthHarness({ isSplit }: { isSplit: boolean }) {
+  const [readingElement, setReadingElement] = useState<HTMLDivElement | null>(null);
+  return <SharedWikiInspectorContext.Provider value={{ activeGroupId: "primary", readingElement, toolsElement: null, isSplit }}>
+    <div className="wiki-workspace-reading" ref={setReadingElement}>
+      <NoteGroupFrame id="primary" label="Primary note" tabs={<button>Primary tab</button>}>
+        <PageInfoDrawer defaultWidth={560} docked inspector open onClose={() => {}} title="PDF inspector" closeLabel="Close PDF">
+          <button>PDF page</button>
+        </PageInfoDrawer>
+      </NoteGroupFrame>
+    </div>
+  </SharedWikiInspectorContext.Provider>;
+}
+
+function SharedNarrowSplitHarness() {
+  const [activeGroupId, setActiveGroupId] = useState("primary");
+  const [readingElement, setReadingElement] = useState<HTMLDivElement | null>(null);
+  return <SharedWikiInspectorContext.Provider value={{ activeGroupId, readingElement, toolsElement: null, isSplit: true }}>
+    <div className="wiki-workspace-reading" ref={setReadingElement}>
+      <NoteGroupFrame id="primary" label="Primary note" tabs={<button>Primary tab</button>} onFocus={() => setActiveGroupId("primary")}>
+        <input aria-label="Primary editor" />
+        <PageInfoDrawer docked inspector keepMounted open onClose={() => {}} title="Primary inspector" closeLabel="Close primary">
+          <button>Primary PDF controls</button>
+        </PageInfoDrawer>
+      </NoteGroupFrame>
+      <NoteGroupFrame id="secondary" label="Secondary note" tabs={<button>Secondary tab</button>} onFocus={() => setActiveGroupId("secondary")}>
+        <input aria-label="Secondary editor" />
+        <PageInfoDrawer docked inspector keepMounted open onClose={() => {}} title="Secondary inspector" closeLabel="Close secondary">
+          <button>Secondary PDF controls</button>
+        </PageInfoDrawer>
+      </NoteGroupFrame>
+    </div>
+  </SharedWikiInspectorContext.Provider>;
+}
+
 describe("PageInfoDrawer", () => {
+  it("shares one inspector across Wiki groups without remounting the inactive reader", () => {
+    sharedCloseCalls.primary.mockClear();
+    sharedCloseCalls.secondary.mockClear();
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("wiki-workspace-reading")) {
+        return { x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 700, width: 800, height: 700, toJSON: () => ({}) } as DOMRect;
+      }
+      return originalRect.call(this);
+    });
+    try {
+    render(<SharedWikiInspectorHarness />);
+    const reading = document.querySelector<HTMLElement>(".wiki-workspace-reading")!;
+    const primaryEditor = screen.getByRole("textbox", { name: "Primary editor" });
+    const secondaryEditor = screen.getByRole("textbox", { name: "Secondary editor" });
+    expect(within(reading).getByRole("complementary", { name: "Primary inspector" })).toBeInTheDocument();
+    expect(within(reading).queryByRole("complementary", { name: "Secondary inspector" })).not.toBeInTheDocument();
+    expect(reading).toHaveClass("wiki-shared-inspector-open");
+    expect(screen.getByTestId("mount-counts")).toHaveTextContent("1:1");
+
+    act(() => secondaryEditor.focus());
+    expect(within(reading).getByRole("complementary", { name: "Secondary inspector" })).toBeInTheDocument();
+    expect(within(reading).queryByRole("complementary", { name: "Primary inspector" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Primary editor" })).toBe(primaryEditor);
+    expect(screen.getByRole("textbox", { name: "Secondary editor" })).toBe(secondaryEditor);
+    expect(screen.getByTestId("mount-counts")).toHaveTextContent("1:1");
+    expect(secondaryEditor).toHaveFocus();
+
+    fireEvent.keyDown(primaryEditor, { key: "Escape" });
+    expect(sharedCloseCalls.primary).not.toHaveBeenCalled();
+    expect(sharedCloseCalls.secondary).not.toHaveBeenCalled();
+    fireEvent.keyDown(within(reading).getByRole("button", { name: "secondary source" }), { key: "Escape" });
+    expect(sharedCloseCalls.secondary).toHaveBeenCalledOnce();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Shared tools" }), { key: "Escape" });
+    expect(sharedCloseCalls.secondary).toHaveBeenCalledTimes(2);
+    expect(sharedCloseCalls.primary).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("omits the inspector header when its controls live in the shared toolbar", () => {
+    render(<PageInfoDrawer headerless headerContent={<button>Hidden toolbar</button>} open onClose={() => {}} title="Unified inspector" closeLabel="Close">
+      <button>Reader action</button>
+    </PageInfoDrawer>);
+    const panel = screen.getByRole("dialog", { name: "Unified inspector" });
+    expect(within(panel).getByRole("heading", { name: "Unified inspector" })).toHaveClass("sr-only");
+    expect(within(panel).queryByRole("button", { name: "Hidden toolbar" })).not.toBeInTheDocument();
+    expect(panel.querySelector(".page-info-drawer-header")).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Reader action" })).toBeInTheDocument();
+  });
+
+  it.each([
+    { width: 800, isSplit: false, panelWidth: "320px", reservedWidth: "320px" },
+    { width: 600, isSplit: true, panelWidth: "560px", reservedWidth: null },
+    { width: 799, isSplit: true, panelWidth: "320px", reservedWidth: "320px" },
+    { width: 800, isSplit: true, panelWidth: "320px", reservedWidth: "320px" },
+    { width: 801, isSplit: true, panelWidth: "320px", reservedWidth: "320px" },
+    { width: 1032, isSplit: true, panelWidth: "392px", reservedWidth: "392px" },
+  ])("keeps split reading width continuous ($width px, split=$isSplit)", async ({ width, isSplit, panelWidth, reservedWidth }) => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("wiki-workspace-reading")) {
+        return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 700, width, height: 700, toJSON: () => ({}) } as DOMRect;
+      }
+      return originalRect.call(this);
+    });
+    try {
+      render(<SharedSplitWidthHarness isSplit={isSplit} />);
+      const panel = await screen.findByRole("complementary", { name: "PDF inspector" });
+      expect(panel).toHaveStyle({ width: panelWidth });
+      const reading = document.querySelector<HTMLElement>(".wiki-workspace-reading")!;
+      if (reservedWidth) expect(reading).toHaveStyle({ "--wiki-shared-inspector-width": reservedWidth });
+      else expect(reading).not.toHaveClass("wiki-shared-inspector-open");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("overlays a usable narrow inspector without narrowing either Wiki or remounting them", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const preferenceKeys = [RIGHT_SIDEBAR_PREFERENCE_KEY, rightSidebarPreferenceKey("primary"), rightSidebarPreferenceKey("secondary")];
+    const previousPreferences = preferenceKeys.map(key => localStorage.getItem(key));
+    preferenceKeys.forEach(key => localStorage.removeItem(key));
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("wiki-workspace-reading")) {
+        return { x: 0, y: 0, top: 0, left: 0, right: 375, bottom: 700, width: 375, height: 700, toJSON: () => ({}) } as DOMRect;
+      }
+      return originalRect.call(this);
+    });
+    try {
+      render(<SharedNarrowSplitHarness />);
+      const reading = document.querySelector<HTMLElement>(".wiki-workspace-reading")!;
+      const primaryEditor = screen.getByRole("textbox", { name: "Primary editor" });
+      const secondaryEditor = screen.getByRole("textbox", { name: "Secondary editor" });
+      const primaryPanel = await screen.findByRole("complementary", { name: "Primary inspector" });
+      expect(primaryPanel).toHaveStyle({ width: "320px" });
+      expect(primaryPanel.closest(".page-info-drawer-group-overlay")).toHaveClass("page-info-drawer-shared-narrow-overlay");
+      expect(reading).not.toHaveClass("wiki-shared-inspector-open");
+      expect(reading.style.getPropertyValue("--wiki-shared-inspector-width")).toBe("");
+      const resize = screen.getByRole("separator", { name: "Resize right sidebar" });
+      expect(resize).toHaveAttribute("aria-valuemax", "375");
+      expect(resize).toHaveAttribute("aria-valuenow", "320");
+      fireEvent.keyDown(resize, { key: "ArrowLeft" });
+      expect(primaryPanel).toHaveStyle({ width: "340px" });
+      expect(resize).toHaveAttribute("aria-valuenow", "340");
+
+      act(() => secondaryEditor.focus());
+      expect(screen.getByRole("complementary", { name: "Secondary inspector" })).toHaveStyle({ width: "320px" });
+      expect(screen.queryByRole("complementary", { name: "Primary inspector" })).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "Primary editor" })).toBe(primaryEditor);
+      expect(screen.getByRole("textbox", { name: "Secondary editor" })).toBe(secondaryEditor);
+      expect(reading).not.toHaveClass("wiki-shared-inspector-open");
+    } finally {
+      vi.restoreAllMocks();
+      preferenceKeys.forEach((key, index) => {
+        const value = previousPreferences[index];
+        if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value);
+      });
+    }
+  });
+
+  it("keeps a requested reader mounted while the closed pane is fully hidden", async () => {
+    const user = userEvent.setup();
+    render(<RetainedInspectorHarness />);
+    const opener = screen.getByRole("button", { name: "Open retained inspector" });
+    expect(screen.queryByRole("complementary", { name: "Retained inspector" })).toBeNull();
+    const hiddenOverlay = document.querySelector<HTMLElement>(".page-info-drawer-overlay[hidden]");
+    expect(hiddenOverlay).toBeTruthy();
+    expect(hiddenOverlay).toHaveAttribute("inert");
+
+    await user.click(opener);
+    const position = screen.getByRole("textbox", { name: "Reader position" });
+    const drawer = screen.getByRole("dialog", { name: "Retained inspector" });
+    expect(position).toHaveValue("page 4");
+    await user.click(within(drawer).getByRole("button", { name: "Close retained inspector" }));
+    expect(screen.queryByRole("dialog", { name: "Retained inspector" })).toBeNull();
+    expect(opener).toHaveFocus();
+
+    await user.click(opener);
+    expect(screen.getByRole("textbox", { name: "Reader position" })).toBe(position);
+    expect(position).toHaveValue("page 4");
+  });
+
   it.each([true, false])("preserves reader focus only for automatic docked context (wide=%s)", (wide) => {
     const original = window.matchMedia;
     window.matchMedia = vi.fn().mockReturnValue({ matches: wide, addEventListener: vi.fn(), removeEventListener: vi.fn() });
@@ -398,7 +621,7 @@ it("overlays a narrow inspector against only its own group edge", () => {
     expect(overlay).toHaveClass("page-info-drawer-group-overlay-panel");
     expect(overlay).not.toHaveAttribute("aria-modal");
     expect(group).toContainElement(overlay.closest(".page-info-drawer-group-overlay"));
-    expect(overlay).toHaveStyle({ width: "min(320px, max(0px, calc(100% - max(204px, min(320px, 50%)))))" });
+    expect(overlay).toHaveStyle({ width: "min(320px, max(0px, calc(100% - max(230px, min(320px, 50%)))))" });
   } finally {
     vi.restoreAllMocks();
   }

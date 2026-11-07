@@ -69,6 +69,7 @@ pub mod page_titles;
 pub mod pages;
 pub mod pages_folder;
 pub mod palace;
+pub mod pdf_citations;
 pub mod post_ingest;
 pub mod post_write;
 pub mod presence;

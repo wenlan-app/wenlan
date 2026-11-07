@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::traits::{ChunkContext, ChunkInfo, ChunkingStrategy};
 use super::MAX_CONTENT_TOKENS;
-use text_splitter::{ChunkConfig, TextSplitter};
+use text_splitter::{ChunkConfig, ChunkSizer, TextSplitter};
 use tokenizers::Tokenizer;
 
 /// Plain-text chunking strategy backed by `text-splitter`'s [`TextSplitter`],
@@ -16,6 +16,28 @@ enum Splitter {
     Chars(TextSplitter<text_splitter::Characters>),
     // Boxed: a `Tokenizer` carries its vocab maps, dwarfing the char variant.
     Tokens(Box<TextSplitter<Tokenizer>>),
+}
+
+/// Keep the token splitter's semantic-level search bounded for long inputs.
+/// The token budget remains independent of this character window size.
+const TOKEN_WINDOW_CHARS: usize = 8192;
+
+fn token_chunk_indices<'a, S: ChunkSizer>(
+    splitter: &TextSplitter<S>,
+    content: &'a str,
+) -> Vec<(usize, &'a str)> {
+    let window_splitter = TextSplitter::<text_splitter::Characters>::new(
+        ChunkConfig::new(TOKEN_WINDOW_CHARS).with_trim(false),
+    );
+    let mut indices = Vec::new();
+    for (window_offset, window) in window_splitter.chunk_indices(content) {
+        indices.extend(
+            splitter
+                .chunk_indices(window)
+                .map(|(offset, chunk)| (window_offset + offset, chunk)),
+        );
+    }
+    indices
 }
 
 pub struct FixedSizeStrategy {
@@ -61,7 +83,7 @@ impl ChunkingStrategy for FixedSizeStrategy {
         // collect the (offset, text) pairs inside the match before mapping.
         let indices: Vec<(usize, &str)> = match &self.splitter {
             Splitter::Chars(s) => s.chunk_indices(context.content).collect(),
-            Splitter::Tokens(s) => s.chunk_indices(context.content).collect(),
+            Splitter::Tokens(s) => token_chunk_indices(s, context.content),
         };
 
         indices
@@ -80,7 +102,7 @@ impl ChunkingStrategy for FixedSizeStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::{cell::Cell, collections::HashMap};
 
     fn make_context<'a>(
         content: &'a str,
@@ -182,6 +204,95 @@ mod tests {
     /// token budget.
     fn dense_document() -> String {
         "1+2=3;4-5=6;7*8=9;a<b>c|d&e^f~g/h%i.j,k:l;m?n!o@p#q$r".repeat(200)
+    }
+
+    fn in_memory_wordpiece_tokenizer() -> Tokenizer {
+        use tokenizers::{models::wordpiece::WordPiece, pre_tokenizers::bert::BertPreTokenizer};
+
+        let vocab = [
+            ("[UNK]".to_string(), 0),
+            ("[CLS]".to_string(), 1),
+            ("[SEP]".to_string(), 2),
+        ];
+        let model = WordPiece::builder()
+            .vocab(vocab)
+            .unk_token("[UNK]".to_string())
+            .build()
+            .expect("build in-memory WordPiece model");
+        let mut tokenizer = Tokenizer::new(model);
+        tokenizer.with_pre_tokenizer(Some(BertPreTokenizer));
+        tokenizer
+    }
+
+    #[test]
+    fn long_token_document_keeps_original_utf8_slices_and_token_budget() {
+        let tokenizer = in_memory_wordpiece_tokenizer();
+        let strategy = FixedSizeStrategy::with_tokenizer(tokenizer.clone());
+        let metadata = HashMap::new();
+        let text = "  Mixed Unicode 世界 café 🙂 words\nwith tabs\tand spaces.  ".repeat(600);
+        let chunks = strategy.chunk(make_context(&text, "", &metadata));
+        assert!(chunks.len() > 1);
+
+        let mut previous_end = 0;
+        for chunk in &chunks {
+            let (start, end) = chunk.byte_range.expect("chunk byte range");
+            assert!(start >= previous_end, "chunk ranges must be monotonic");
+            assert!(
+                start <= end && end <= text.len(),
+                "range must be in document bounds"
+            );
+            assert!(text.is_char_boundary(start) && text.is_char_boundary(end));
+            assert_eq!(chunk.content, text[start..end]);
+            assert!(text[previous_end..start].chars().all(char::is_whitespace));
+
+            let token_count = tokenizer
+                .encode_fast(chunk.content.as_str(), false)
+                .expect("encode chunk")
+                .get_ids()
+                .len();
+            assert!(token_count <= MAX_CONTENT_TOKENS, "{token_count} tokens");
+            previous_end = end;
+        }
+        assert!(text[previous_end..].chars().all(char::is_whitespace));
+        assert!(chunks.iter().any(|chunk| chunk.content.contains('世')));
+        assert!(chunks.iter().any(|chunk| chunk.content.contains('🙂')));
+    }
+
+    #[test]
+    fn token_sizing_work_is_bounded_by_semantic_windows() {
+        struct CountingSizer {
+            calls: Cell<usize>,
+            bytes_sized: Cell<usize>,
+            largest_input_chars: Cell<usize>,
+        }
+        impl ChunkSizer for CountingSizer {
+            fn size(&self, text: &str) -> usize {
+                self.calls.set(self.calls.get() + 1);
+                self.bytes_sized.set(self.bytes_sized.get() + text.len());
+                self.largest_input_chars
+                    .set(self.largest_input_chars.get().max(text.chars().count()));
+                text.split_whitespace().count()
+            }
+        }
+
+        let sizer = CountingSizer {
+            calls: Cell::new(0),
+            bytes_sized: Cell::new(0),
+            largest_input_chars: Cell::new(0),
+        };
+        let splitter = TextSplitter::new(ChunkConfig::new(32).with_sizer(&sizer));
+        let text = "bounded sizing work across many semantic windows ".repeat(4000);
+        let indices = token_chunk_indices(&splitter, &text);
+
+        assert!(!indices.is_empty());
+        assert!(sizer.calls.get() > 0);
+        assert!(sizer.largest_input_chars.get() <= TOKEN_WINDOW_CHARS);
+        assert!(
+            sizer.bytes_sized.get() <= text.len() * 256,
+            "sized {} bytes for {} input bytes",
+            sizer.bytes_sized.get(),
+            text.len()
+        );
     }
 
     /// Property: every chunk from the text strategy stays within the BGE token

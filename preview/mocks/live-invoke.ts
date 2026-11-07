@@ -7,6 +7,11 @@ import { daemonMeetsFloor } from "../../src/lib/daemonVersion";
 import type { RenamePageResponse, RestorePageResponse } from "../../src/lib/tauri";
 import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 
+declare const __WENLAN_SOURCE_PREVIEW__: boolean;
+const sourcePreviewEnabled = () => typeof __WENLAN_SOURCE_PREVIEW__ !== "undefined" && __WENLAN_SOURCE_PREVIEW__;
+const requireSourcePreview = () => {
+  if (!sourcePreviewEnabled()) throw new Error("Live page writes require an explicitly isolated daemon");
+};
 type Args = Record<string, unknown> | undefined;
 const PAGE_EDIT_DAEMON_FLOOR = "0.14.1";
 // app/src/search.rs `OKF_EXPORT_DAEMON_FLOOR` and its typed rejection.
@@ -279,6 +284,23 @@ function previewPage(
   };
 }
 
+/** Match app/src/search.rs DraftPageResponse::into_page without hiding a
+ * missing/malformed daemon response behind a browser-only page. */
+function pageFromDraftResponse(response: any): Record<string, unknown> {
+  if (!response?.page || typeof response.page !== "object") {
+    throw new Error("Daemon returned an invalid Page draft response");
+  }
+  const page = { ...response.page, folder_path: response.folder_path ?? "" };
+  if (response.projection_status != null) {
+    Object.assign(page, {
+      projection_status: response.projection_status,
+      storage_path: response.storage_path ?? null,
+      projection_error: response.projection_error ?? null,
+    });
+  }
+  return page;
+}
+
 function previewDraft(id: unknown): Record<string, unknown> {
   const draft = PREVIEW_AUTHORED_PAGES.get(String(id));
   if (!draft || draft.status !== "draft") {
@@ -407,6 +429,48 @@ const nativeRemoteAccessRequired = async (): Promise<never> => {
 // Exported (not just module-local) so the parity test below can read the
 // covered-command key sets without re-parsing this file.
 export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
+  get_research_rules: a => { requireSourcePreview(); return get(`/api/research/rules${qs({space:a.space})}`); },
+  save_research_rules: a => { requireSourcePreview(); return post("/api/research/rules",a.request); },
+  list_research_runs: a => { requireSourcePreview(); return get(`/api/research/runs${qs({space:a.space})}`); },
+  create_research_run: a => { requireSourcePreview(); return post("/api/research/runs",a.request); },
+  get_research_run: a => { requireSourcePreview(); return get(`/api/research/runs/${enc(a.id)}${qs({space:a.space})}`); },
+  update_research_run: a => { requireSourcePreview(); return post(`/api/research/runs/${enc(a.id)}`,a.request); },
+  get_research_classification_decisions: a => { requireSourcePreview(); return get(`/api/research/classifications${qs({space:a.space,source:a.source,source_id:a.sourceId})}`); },
+  propose_research_classifications: a => { requireSourcePreview(); return post("/api/research/classifications",a.request); },
+  accept_research_classification: a => { requireSourcePreview(); return post(`/api/refinery/queue/${enc(a.id)}/accept${qs({space:a.space})}`,{action:"classification_edit",changes:a.changes}); },
+  merge_research_tags: a => { requireSourcePreview(); return post("/api/research/merge-tags",a.request); },
+  get_source_lifecycle: a => { requireSourcePreview(); return get(`/api/research/source-lifecycle${qs({space:a.space,source:a.source,source_id:a.sourceId})}`); },
+  set_source_lifecycle: a => { requireSourcePreview(); return post("/api/research/source-lifecycle",a.request); },
+  resolve_source_reference: a => { requireSourcePreview(); return get(`/api/research/source-lifecycle/reference${qs({space:a.space,locator:a.locator})}`); },
+  capture_page_export: a => { requireSourcePreview(); return post(`/api/pages/${enc(a.pageId)}/export-capture`,{space:a.space}); },
+  list_page_export_versions: a => { requireSourcePreview(); return get(`/api/pages/${enc(a.pageId)}/export-versions${qs({space:a.space})}`); },
+  get_page_export_bundle: a => { requireSourcePreview(); return get(`/api/pages/${enc(a.pageId)}/export-bundles/${enc(a.bundleId)}${qs({space:a.space})}`); },
+  // Native log collection has no equivalent in a browser. Never return null as
+  // if a diagnostic report had been gathered successfully.
+  problem_report: async () => { throw new Error("Problem reports require the native app's local diagnostics"); },
+  get_research_dispute: a => { requireSourcePreview(); return get(`/api/research/disputes/${enc(a.id)}${qs({space:a.space})}`); },
+  decide_research_dispute: a => { requireSourcePreview(); return post(`/api/research/disputes/${enc(a.id)}/decision`, {space:a.space,expected_payload_digest:a.expectedPayloadDigest,decision:a.decision,reason:a.reason}); },
+  get_zotero_disconnect_preview: a => { requireSourcePreview(); return get(`/api/zotero/sources/${enc(a.id)}/disconnect-preview`); },
+  list_zotero_items: a => { requireSourcePreview(); return get(`/api/zotero/items${qs({collection_key:a.collectionKey,expected_server_id:a.expectedServerId})}`); },
+  list_zotero_collections: () => { requireSourcePreview(); return get("/api/zotero/collections"); },
+  add_zotero_source: (a) => { requireSourcePreview(); return post("/api/zotero/sources", { collection_key: a.collectionKey, expected_server_id: a.expectedServerId, space: a.space, item_keys: a.itemKeys }); },
+  get_zotero_document: (a) => { requireSourcePreview(); return get(`/api/zotero/documents${qs({source_id:a.sourceId,space:a.space,attachment_key:a.attachmentKey,expected_digest:a.expectedDigest,allow_retained:a.allowRetained})}`); },
+  read_zotero_pdf: async (a) => {
+    requireSourcePreview();
+    const response = await fetch(`/daemon/api/zotero/pdf${qs({source_id:a.sourceId,attachment_key:a.attachmentKey,space:a.space,expected_digest:a.expectedDigest,allow_retained:a.allowRetained})}`);
+    if (!response.ok) throw new Error(`Could not read saved PDF: ${response.status}`);
+    return response.arrayBuffer();
+  },
+  list_registered_sources: () => sourcePreviewEnabled() ? get("/api/sources") : Promise.resolve([]),
+  remove_source: (a) => {
+    requireSourcePreview();
+    const preview = a.expectedZoteroPreview;
+    if (preview != null && (preview.identity?.registration_id !== a.id || !Number.isSafeInteger(preview.revision) || preview.revision < 0 || typeof preview.identity_digest !== "string" || !/^[0-9a-f]{64}$/i.test(preview.identity_digest))) {
+      throw new Error("Zotero disconnect preview does not match this connection");
+    }
+    return del(`/api/sources/${enc(a.id)}${preview == null ? "" : qs({expected_revision:preview.revision,expected_identity:preview.identity_digest})}`);
+  },
+
   repair_lint: nativeRepairRequired,
   repair_prepare: nativeRepairRequired,
   repair_prepare_current: nativeRepairRequired,
@@ -510,6 +574,19 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     const content = String(a?.content ?? "").trim();
     const space = normalizedSpace(a?.space);
     if (!title || !content) return Promise.reject(new Error("Title and content are required"));
+    if (sourcePreviewEnabled()) {
+      requireSourcePreview();
+      return post("/api/pages", {
+        title,
+        content,
+        summary: null,
+        entity_id: null,
+        space,
+        source_memory_ids: [],
+        creation_kind: "authored",
+        workspace: null,
+      });
+    }
     const id = `preview-authored-page-${previewAuthoredPageSeq++}`;
     PREVIEW_AUTHORED_PAGES.set(id, previewPage(id, title, content, space, "active"));
     return Promise.resolve({ id, attached_to: null, warnings: [] });
@@ -530,6 +607,17 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       }));
     }
     const requestedSpace = normalizedSpace(a?.space);
+    if (sourcePreviewEnabled()) {
+      requireSourcePreview();
+      const response = await post("/api/pages/drafts", {
+        draft_id: id,
+        title,
+        content,
+        space: requestedSpace,
+        ...(a?.folderPath !== undefined ? { folder_path: a.folderPath } : {}),
+      });
+      return pageFromDraftResponse(response);
+    }
     const existing = PREVIEW_AUTHORED_PAGES.get(id);
     if (existing) {
       const request = PREVIEW_PAGE_DRAFT_CREATE_REQUESTS.get(id);
@@ -567,6 +655,16 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     return { ...draft };
   },
   update_page_draft: async (a) => {
+    if (sourcePreviewEnabled()) {
+      requireSourcePreview();
+      const response = await put(`/api/pages/drafts/${enc(String(a?.id ?? ""))}`, {
+        expected_version: a?.expectedVersion,
+        title: a?.title,
+        content: a?.content,
+        space: normalizedSpace(a?.space),
+      });
+      return pageFromDraftResponse(response);
+    }
     const draft = previewDraft(a?.id);
     const title = String(a?.title ?? "");
     const content = String(a?.content ?? "");
@@ -604,6 +702,11 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   publish_page_draft: async (a) => {
     const id = String(a?.id);
     const expectedVersion = a?.expectedVersion;
+    if (sourcePreviewEnabled()) {
+      requireSourcePreview();
+      const response = await post(`/api/pages/drafts/${enc(id)}/publish`, { expected_version: expectedVersion });
+      return pageFromDraftResponse(response);
+    }
     const publishedReplay = PREVIEW_AUTHORED_PAGES.get(id);
     if (
       publishedReplay?.status === "active"
@@ -668,6 +771,14 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     return Promise.resolve({ ...published });
   },
   discard_page_draft: (a) => {
+    if (sourcePreviewEnabled()) {
+      requireSourcePreview();
+      return http("DELETE", `/api/pages/drafts/${enc(String(a?.id ?? ""))}`, { expected_version: a?.expectedVersion })
+        .then((response) => {
+          if (response?.status !== "deleted") throw new Error("discard_page_draft returned unexpected status");
+          return null;
+        });
+    }
     const draft = previewDraft(a?.id);
     assertPreviewDraftVersion(draft, a?.expectedVersion);
     const id = String(a.id);
@@ -1055,6 +1166,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_profile: () => get("/api/profile"),
   get_profile_narrative: () => get("/api/profile/narrative"),
   list_spaces: () => listPreviewSpaces(),
+  get_space: async (a) => (await listPreviewSpaces()).find(space => space.name === a.name) ?? null,
+  create_space: (a) => { requireSourcePreview(); return post("/api/spaces", { name: a.name, description: a.description }); },
+  patch_document_tag: (a) => { requireSourcePreview(); return post(`/api/documents/${enc(a.sourceId)}/tags`, { source: a.source, tag: a.tag, action: a.action }); },
   // Mirrors the app's list_working_on: active Brief items across kept Spaces.
   list_working_on: async () => {
     const spaces = (await listPreviewSpaces()).filter((space) => space.suggested !== true);
@@ -1168,7 +1282,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // Review-only pass: POST /api/distill with an empty body never creates pages.
   distill_review: () => post("/api/distill", {}),
   list_new_material: () => get("/api/steep/new?limit=200"),
-  accept_pending_revision: (a) => post(`/api/memory/revision/${enc(a.sourceId)}/accept`),
+  accept_pending_revision: (a) => http("POST", `/api/memory/revision/${enc(a.sourceId)}/accept`, a.edit),
   dismiss_pending_revision: (a) => post(`/api/memory/revision/${enc(a.sourceId)}/dismiss`),
   accept_refinement: (a) => post(`/api/refinery/queue/${enc(a.id)}/accept`),
   reject_refinement: (a) => post(`/api/refinery/queue/${enc(a.id)}/reject`),
@@ -1246,8 +1360,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       file_count: 0,
       memory_count: 0,
     }),
-  sync_registered_source: () =>
-    Promise.resolve({
+  sync_registered_source: (a) =>
+    sourcePreviewEnabled() && String(a?.id).startsWith("zotero-") ? post(`/api/sources/${enc(a.id)}/sync`) : Promise.resolve({
       files_found: 12,
       ingested: 12,
       skipped: 0,

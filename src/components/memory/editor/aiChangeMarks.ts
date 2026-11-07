@@ -92,7 +92,7 @@ export function aiChangeMarks(initial: AiChangeMarkSettings | null): Extension {
     EditorView.theme({
       ".cm-ai-changed": {
         backgroundColor: "color-mix(in srgb, var(--mem-accent-amber) 16%, transparent)",
-        borderRadius: "3px",
+        borderRadius: "var(--mem-r-3)",
       },
       ".cm-ai-change-before": {
         display: "flex",

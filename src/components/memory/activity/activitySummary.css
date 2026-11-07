@@ -12,11 +12,11 @@
 .mem-activity-summary-list { display: grid; gap: 14px; }
 .mem-activity-summary-row { display: grid; gap: 4px; min-width: 0; }
 .mem-activity-summary-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.mem-activity-summary-dot { align-self: center; flex: none; width: 7px; height: 7px; border-radius: 2px; background: var(--activity-asset-color); }
+.mem-activity-summary-dot { align-self: center; flex: none; width: 7px; height: 7px; border-radius: var(--mem-r-2); background: var(--activity-asset-color); }
 .mem-activity-summary-name { color: var(--mem-text); font-size: 13px; font-weight: 600; line-height: 1.4; }
 .mem-activity-summary-count { margin-left: auto; color: var(--mem-text-secondary); font: 400 12px/1.4 var(--mem-font-body); font-variant-numeric: tabular-nums; }
 .mem-activity-summary-description { margin: 0 0 0 15px; color: var(--mem-text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.mem-activity-summary-track { margin-left: 15px; height: 3px; border-radius: 3px; overflow: hidden; background: var(--mem-border); }
+.mem-activity-summary-track { margin-left: 15px; height: 3px; border-radius: var(--mem-r-3); overflow: hidden; background: var(--mem-border); }
 .mem-activity-summary-track > div { height: 100%; border-radius: inherit; background: var(--activity-asset-color); }
 .mem-activity-summary-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding-top: 2px; }
 .mem-activity-summary-last { color: var(--mem-text-tertiary); font-size: 11px; line-height: 1.5; }

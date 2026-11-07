@@ -135,6 +135,18 @@ describe("WikiWorkspace", () => {
     expect(screen.queryByTestId("wiki-directory")).not.toBeInTheDocument();
   });
 
+  it("registers one stable reading root and a shared right-toolbar host", () => {
+    const onSharedReadingHost = vi.fn();
+    const onSharedToolsHost = vi.fn();
+    const { container } = render(<WikiWorkspace onSharedReadingHost={onSharedReadingHost} onSharedToolsHost={onSharedToolsHost}
+      onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
+    const reading = container.querySelector<HTMLElement>(".wiki-workspace-reading")!;
+    const tools = container.querySelector<HTMLElement>(".wiki-shared-tools-rail .wiki-shared-document-tools")!;
+    expect(onSharedReadingHost).toHaveBeenLastCalledWith(reading);
+    expect(onSharedToolsHost).toHaveBeenLastCalledWith(tools);
+    expect(reading).toContainElement(tools);
+  });
+
   it("opens the mobile pages panel and registered folder form only in folders mode", async () => {
     const openForm = vi.fn();
     function RequestFolder() {

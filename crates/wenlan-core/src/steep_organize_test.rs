@@ -542,6 +542,7 @@ async fn the_note_is_about_the_entity_most_sources_mention_and_links_its_pages()
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await
@@ -661,6 +662,7 @@ async fn a_note_is_about_the_next_majority_entity_when_the_first_has_a_note() {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await
@@ -774,6 +776,7 @@ async fn authored_note_in(
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await
@@ -1473,6 +1476,7 @@ async fn a_note_in_another_space_that_shares_an_entity_is_a_link_target() {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await

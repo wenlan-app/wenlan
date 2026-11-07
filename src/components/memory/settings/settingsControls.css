@@ -635,7 +635,7 @@
 /* Steeping mode: Automatic or On demand. Same radio treatment as the pairing
    access choice; both options are always visible so neither reads as "off". */
 .settings-steep-mode-options { display: grid; gap: 8px; margin-top: 10px; }
-.settings-steep-mode-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 0 12px; padding: 12px; border: 1px solid var(--mem-border); border-radius: 8px; cursor: pointer; }
+.settings-steep-mode-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 0 12px; padding: 12px; border: 1px solid var(--mem-border); border-radius: var(--mem-r-8); cursor: pointer; }
 .settings-steep-mode-option:hover { background: var(--mem-hover); }
 .settings-steep-mode-option[data-selected="true"] { border-color: var(--mem-accent-indigo); background: var(--mem-indigo-bg); }
 .settings-steep-mode-option:has(input:focus-visible) { outline: 2px solid var(--mem-focus-ring); outline-offset: 2px; }
