@@ -314,7 +314,7 @@ const markdownBlockTheme = EditorView.theme({
   },
   ".cm-md-table code": {
     padding: "0.08em 0.3em",
-    borderRadius: "3px",
+    borderRadius: "var(--mem-r-3)",
     backgroundColor: "var(--mem-hover)",
     color: "var(--mem-accent-warm)",
   },

@@ -3,7 +3,7 @@
 .page-length-show-full::before { content:"▸ "; }
 .page-length-show-full:hover, .page-length-show-full:focus-visible { color:var(--mem-text); }
 /* The part for AI (UX-VIEW-3): one folded section after the human part. */
-.page-ai-details { margin-top:32px;border-radius:10px;background:var(--mem-hover);padding:12px 16px; }
+.page-ai-details { margin-top:32px;border-radius:var(--mem-r-10);background:var(--mem-hover);padding:12px 16px; }
 .page-ai-details > summary { cursor:pointer;color:var(--mem-text-secondary);font:13px/1.5 var(--mem-font-body); }
 .page-ai-details[open] > summary { margin-bottom:8px; }
 .page-ai-details > summary:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }

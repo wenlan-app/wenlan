@@ -380,7 +380,7 @@ export default function PageInfo({
                           color: "var(--mem-text-tertiary)",
                           background: "var(--mem-hover)",
                           padding: "1px 5px",
-                          borderRadius: "3px",
+                          borderRadius: "var(--mem-r-3)",
                           whiteSpace: "nowrap",
                         }}
                       >
@@ -435,7 +435,7 @@ export default function PageInfo({
                           style={{
                             fontFamily: "var(--mem-font-mono)",
                             fontSize: "10px",
-                            color: "var(--mem-accent-blue, #60a5fa)",
+                            color: "var(--mem-accent-blue)",
                           }}
                         >
                           v{mem.version}

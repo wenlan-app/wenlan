@@ -22,7 +22,7 @@
   display: flex;
   align-items: center;
   min-width: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
 }
 .wiki-recent-note-row:hover,
 .wiki-recent-note-row[aria-current="page"],
@@ -45,7 +45,7 @@
   gap: 8px;
   padding: 6px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: transparent;
   color: var(--mem-text-secondary);
   font: 14px/1.35 var(--mem-font-body);
@@ -74,7 +74,7 @@
   min-height: 36px;
   padding: 0 6px;
   border: 0;
-  border-radius: 6px 0 0 6px;
+  border-radius: var(--mem-r-6) 0 0 var(--mem-r-6);
   background: transparent;
   color: var(--mem-text-tertiary, var(--mem-text-secondary));
   cursor: grab;
@@ -155,7 +155,7 @@
   height: 28px;
   padding: 0 6px;
   border: 1px solid var(--mem-border);
-  border-radius: 4px;
+  border-radius: var(--mem-r-4);
   background: var(--mem-surface, var(--mem-bg));
   color: var(--mem-text);
   font: 14px/1.35 var(--mem-font-body);

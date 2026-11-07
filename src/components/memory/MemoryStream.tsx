@@ -407,7 +407,7 @@ export default function MemoryStream({
                   className="overflow-hidden"
                   style={{
                     border: "1px solid var(--mem-border)",
-                    borderRadius: "12px",
+                    borderRadius: "var(--mem-r-12)",
                     marginBottom: "14px",
                     animation: `mem-fade-up 400ms cubic-bezier(0.16, 1, 0.3, 1) both`,
                     animationDelay: `${i * 40}ms`,

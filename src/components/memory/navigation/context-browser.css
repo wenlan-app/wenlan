@@ -28,7 +28,7 @@
   max-height: min(560px, calc(100vh - 76px));
   overflow: hidden;
   border: 1px solid var(--mem-border);
-  border-radius: 12px;
+  border-radius: var(--mem-r-12);
   background: var(--mem-surface);
   color: var(--mem-text);
   box-shadow: 0 12px 32px color-mix(in srgb, var(--mem-text) 14%, transparent);
