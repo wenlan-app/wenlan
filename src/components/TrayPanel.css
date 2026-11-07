@@ -8,7 +8,7 @@
   flex-direction: column;
   gap: 12px;
   padding: 10px;
-  border-radius: 12px;
+  border-radius: var(--mem-r-12);
   --tray-control: color-mix(in srgb, var(--mem-text) 7%, transparent);
   --tray-control-hover: color-mix(in srgb, var(--mem-text) 12%, transparent);
   background: var(--mem-popover);
@@ -70,7 +70,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--tray-control);
   color: var(--mem-text-tertiary);
 }
@@ -97,7 +97,7 @@
   gap: 10px;
   min-width: 0;
   padding: 7px 6px;
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
 }
 .tray-panel .tray-panel-row:hover { background: var(--tray-control); }
 
@@ -121,7 +121,7 @@
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-status-warning-bg);
 }
 .tray-panel-need--danger { background: var(--mem-status-danger-bg); }
@@ -162,7 +162,7 @@
 .tray-panel .tray-panel-btn {
   flex: 1;
   padding: 7px 4px;
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   text-align: center;
   font-size: 13px;
   white-space: nowrap;

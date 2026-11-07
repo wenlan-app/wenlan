@@ -7,7 +7,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 18px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   box-shadow: none;
   background: transparent;
   padding: 18px 16px;
@@ -134,7 +134,7 @@
   max-width: min(280px, calc(100vw - 48px));
   padding: 5px;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-detail-surface-raised);
   box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
 }

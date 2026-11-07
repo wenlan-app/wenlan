@@ -12,7 +12,7 @@
   display: flex;
   align-items: center;
   gap: 0;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
 }
 
 .notes-inventory-scope,
@@ -20,7 +20,7 @@
   display: flex;
   align-items: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: transparent;
   color: var(--mem-text-secondary);
   font-family: var(--mem-font-body);
@@ -100,11 +100,11 @@
 }
 
 .notes-inventory-collection-row > .notes-inventory-disclosure {
-  border-radius: 8px 0 0 8px;
+  border-radius: var(--mem-r-8) 0 0 var(--mem-r-8);
 }
 
 .notes-inventory-collection-row > .notes-inventory-scope {
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 var(--mem-r-8) var(--mem-r-8) 0;
 }
 
 .notes-inventory-collection-row:hover > button,
@@ -138,7 +138,7 @@
   padding-left: 8px;
 }
 .notes-folder-create { padding: 0 8px 12px; display:flex;flex-direction:column;gap:7px;color:var(--mem-text-secondary);font-size:12px; }
-.notes-folder-create input { width:100%;min-width:0;border:1px solid var(--mem-border);background:var(--mem-bg);color:var(--mem-text);padding:6px 8px;border-radius:5px; }
+.notes-folder-create input { width:100%;min-width:0;border:1px solid var(--mem-border);background:var(--mem-bg);color:var(--mem-text);padding:6px 8px;border-radius:var(--mem-r-5); }
 .notes-folder-create button { background:none;border:0;color:var(--mem-text-secondary);padding:5px 8px;cursor:pointer; }
 .notes-folder-create button:hover { background:var(--mem-hover); }
 .notes-folder-create button:disabled,.notes-list-create:disabled { opacity:.4;cursor:default; }
@@ -152,7 +152,7 @@
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--mem-r-5);
   background: transparent;
   color: var(--mem-text-secondary);
   opacity: 0;
@@ -174,7 +174,7 @@
   width: 100%;
   padding: 7px 9px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--mem-r-4);
   background: transparent;
   color: var(--mem-text);
   font: 13px/18px var(--mem-font-body);
@@ -185,7 +185,7 @@
 .notes-folder-context-menu > [role="menuitem"]:focus-visible:not([aria-disabled="true"]) { background: var(--mem-hover); }
 .notes-folder-context-menu > [role="menuitem"][aria-disabled="true"] { opacity: .45; cursor: default; }
 .notes-folder-context-menu > [role="menuitem"].is-danger { color: var(--mem-status-warning-text); }
-.notes-folder-create { margin: 4px 0 8px 18px; padding: 8px; border: 1px solid var(--mem-border); border-radius: 6px; background: var(--mem-surface); }
+.notes-folder-create { margin: 4px 0 8px 18px; padding: 8px; border: 1px solid var(--mem-border); border-radius: var(--mem-r-6); background: var(--mem-surface); }
 
 @media (pointer: coarse) {
   .notes-inventory-scope,

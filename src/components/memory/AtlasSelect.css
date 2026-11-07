@@ -18,7 +18,7 @@
   gap: 10px;
   padding: 7px 11px;
   border: 1px solid var(--mem-control-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   background: var(--mem-surface);
   color: var(--mem-text);
   font: inherit;
@@ -58,7 +58,7 @@
   padding: 8px;
   overflow: hidden;
   border: 1px solid var(--mem-popover-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: var(--mem-surface);
   color: var(--mem-text);
   box-shadow: var(--mem-popover-shadow);
@@ -74,7 +74,7 @@
   margin-bottom: 6px;
   padding: 6px 9px;
   border: 1px solid var(--mem-control-border);
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: var(--mem-bg);
   color: var(--mem-text);
   font: inherit;
@@ -91,7 +91,7 @@
   gap: 12px;
   padding: 7px 9px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: transparent;
   color: var(--mem-text);
   font: inherit;

@@ -102,7 +102,7 @@
   gap: 14px;
   padding: 13px 10px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--mem-r-5);
   background: transparent;
   color: var(--mem-text);
   cursor: pointer;

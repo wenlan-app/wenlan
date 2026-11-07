@@ -17,20 +17,20 @@ import { truncateReviewText } from "./ReviewDialog";
 const INS_STYLE: React.CSSProperties = {
   backgroundColor: "color-mix(in srgb, var(--mem-accent-sage) 24%, transparent)",
   textDecoration: "none",
-  borderRadius: 3,
+  borderRadius: "var(--mem-r-3)",
   padding: "0 2px",
 };
 
 const DEL_STYLE: React.CSSProperties = {
   backgroundColor: "var(--mem-status-danger-bg)",
-  borderRadius: 3,
+  borderRadius: "var(--mem-r-3)",
   padding: "0 2px",
 };
 
 /** Replicated from ReviewDialog.tsx:320-331 (not exported). */
 const paneStyle: React.CSSProperties = {
   border: "1px solid var(--mem-border)",
-  borderRadius: 10,
+  borderRadius: "var(--mem-r-10)",
   backgroundColor: "var(--mem-detail-surface-raised)",
   padding: "13px 15px",
   fontFamily: "var(--mem-font-body)",
@@ -117,7 +117,7 @@ function VerdictBanner({
 }) {
   const { t } = useTranslation();
   const base: React.CSSProperties = {
-    borderRadius: 10,
+    borderRadius: "var(--mem-r-10)",
     padding: "10px 14px",
     fontFamily: "var(--mem-font-body)",
     fontSize: "var(--mem-text-control)",
