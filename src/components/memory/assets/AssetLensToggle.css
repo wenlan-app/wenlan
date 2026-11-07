@@ -4,7 +4,7 @@
   align-items: center;
   background: transparent;
   border: 1px solid var(--mem-border);
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   box-sizing: border-box;
   display: inline-flex;
   flex: 0 0 auto;
@@ -16,7 +16,7 @@
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--mem-r-5);
   color: var(--mem-text-secondary);
   cursor: pointer;
   display: inline-flex;

@@ -12,7 +12,7 @@ interface MemorySearchResultProps {
 }
 
 const MARK_CLASS =
-  "bg-[rgba(212,136,74,0.18)] text-[var(--mem-text)] rounded-sm px-[1px]";
+  "bg-[color-mix(in_srgb,var(--mem-signal-warm)_18%,transparent)] text-[var(--mem-text)] rounded-sm px-[1px]";
 
 export default function MemorySearchResult({
   result,
@@ -68,8 +68,8 @@ export default function MemorySearchResult({
           className="px-1.5 py-0.5 rounded text-[10px] font-medium"
           style={{
             backgroundColor: isKeyword
-              ? "rgba(212, 136, 74, 0.12)"
-              : "rgba(123, 123, 232, 0.12)",
+              ? "color-mix(in srgb, var(--mem-signal-warm) 12%, transparent)"
+              : "color-mix(in srgb, var(--mem-signal-indigo) 12%, transparent)",
             color: isKeyword
               ? "var(--mem-accent-warm)"
               : "var(--mem-accent-indigo)",

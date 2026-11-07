@@ -518,18 +518,76 @@ pub async fn dream_with(
             .dream_into_map(&thing.thing_id, &thing.title, &on_map)
             .await
             .map_err(|e| e.to_string())?;
-        db.record_dream(
-            &thing.thing_id,
-            &decided,
-            &open,
-            &changed,
-            &links,
-            &thing.conversations,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        let night = db
+            .record_dream(
+                &thing.thing_id,
+                &decided,
+                &open,
+                &changed,
+                &links,
+                &thing.conversations,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        // Then what the work has come to, from every point that stands now,
+        // once the night is safely recorded: a failure here loses no point
+        // and does not stop the night (UX-VIEW-6).
+        if let Some(seq) = night {
+            if let Err(error) =
+                write_conclusion(db, &thing.thing_id, &thing.title, seq, model, language).await
+            {
+                tracing::warn!("[things] no conclusion for {}: {error}", thing.thing_id);
+            }
+        }
     }
     Ok((due.len(), points_written))
+}
+
+/// Write a thing's conclusion onto the night `seq`: at most two sentences
+/// from its standing points, each resting on points that exist (checked by
+/// [`intake::parse_conclusion`]). No sentence survives, no conclusion.
+async fn write_conclusion(
+    db: &MemoryDB,
+    thing_id: &str,
+    title: &str,
+    seq: i64,
+    model: &dyn LlmProvider,
+    language: &str,
+) -> Result<(), String> {
+    let standing = db.dream_points(thing_id).await.map_err(|e| e.to_string())?;
+    let points = intake::conclusion_points(&standing);
+    if points.is_empty() {
+        return Ok(());
+    }
+    let answer = model
+        .generate(LlmRequest {
+            system_prompt: Some(
+                "You sum up where a person's work has got to, from what they settled. Answer with JSON only."
+                    .into(),
+            ),
+            user_prompt: intake::conclusion_prompt(title, points, language),
+            max_tokens: 600,
+            temperature: 0.0,
+            label: Some("things_conclusion".into()),
+            timeout_secs: Some(120),
+        })
+        .await
+        .map_err(|e| format!("writing the conclusion: {e}"))?;
+    let sentences = intake::parse_conclusion(&answer, points.len())
+        .ok_or_else(|| "the conclusion answer was not JSON".to_string())?;
+    let conclusion: Vec<wenlan_types::ThingConclusionSentence> = sentences
+        .into_iter()
+        .map(|s| wenlan_types::ThingConclusionSentence {
+            text: s.text,
+            points: s.points.into_iter().map(|i| points[i].id.clone()).collect(),
+        })
+        .collect();
+    if conclusion.is_empty() {
+        return Ok(());
+    }
+    db.set_dream_conclusion(thing_id, seq, &conclusion)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Connect the night points kept before nights named topics, once, through the

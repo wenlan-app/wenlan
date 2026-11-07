@@ -339,7 +339,7 @@ function ToolFamilyRow({
                 type="button"
                 variant="secondary"
                 size="sm"
-                style={{ height: "30px", paddingInline: "12px", borderRadius: "8px", fontSize: "13px" }}
+                style={{ height: "30px", paddingInline: "12px", borderRadius: "var(--mem-r-8)", fontSize: "13px" }}
                 onClick={onRepair}
                 disabled={busy}
               >

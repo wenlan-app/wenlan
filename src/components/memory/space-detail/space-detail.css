@@ -49,7 +49,7 @@
   min-height: 112px;
   padding: 16px;
   border: 1px solid var(--mem-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: var(--mem-surface);
 }
 
@@ -303,7 +303,7 @@
   height: 100%;
   padding: 16px;
   border: 1px solid var(--mem-border);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: var(--mem-surface);
 }
 .space-project-sources[data-lens="cards"] .source-library-row:hover { background: var(--mem-hover); }

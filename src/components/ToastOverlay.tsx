@@ -19,21 +19,21 @@ type ToastLabelKey =
   | "toast.thought";
 
 const SOURCE_CONFIG: Record<string, { labelKey: ToastLabelKey; color: string; silent?: boolean }> = {
-  clipboard:      { labelKey: "toast.clipboard", color: "#4ade80" },
-  screen_capture: { labelKey: "toast.screen",    color: "#fbbf24" },
-  local_files:    { labelKey: "toast.files",     color: "#60a5fa", silent: true },
-  manual:         { labelKey: "toast.captured",  color: "#c084fc" },
+  clipboard:      { labelKey: "toast.clipboard", color: "var(--mem-signal-mint)" },
+  screen_capture: { labelKey: "toast.screen",    color: "var(--mem-signal-yellow)" },
+  local_files:    { labelKey: "toast.files",     color: "var(--mem-accent-blue)", silent: true },
+  manual:         { labelKey: "toast.captured",  color: "var(--mem-signal-purple)" },
   // Quick Capture confirms its own save; its event only refreshes the other windows.
-  memory:         { labelKey: "toast.captured",  color: "#c084fc", silent: true },
-  ambient:        { labelKey: "toast.ambient",   color: "#2dd4bf", silent: true },
-  focus:          { labelKey: "toast.focus",     color: "#fbbf24", silent: true },
-  focus_capture:  { labelKey: "toast.focus",     color: "#fbbf24", silent: true },
-  hotkey:         { labelKey: "toast.capture",   color: "#c084fc" },
-  hotkey_capture: { labelKey: "toast.capture",   color: "#c084fc" },
-  snip:           { labelKey: "toast.snip",      color: "#fb7185" },
-  snip_capture:   { labelKey: "toast.snip",      color: "#fb7185" },
-  quick_thought:  { labelKey: "toast.thought",   color: "#f472b6" },
-  thought:        { labelKey: "toast.thought",   color: "#f472b6" },
+  memory:         { labelKey: "toast.captured",  color: "var(--mem-signal-purple)", silent: true },
+  ambient:        { labelKey: "toast.ambient",   color: "var(--mem-signal-teal)", silent: true },
+  focus:          { labelKey: "toast.focus",     color: "var(--mem-signal-yellow)", silent: true },
+  focus_capture:  { labelKey: "toast.focus",     color: "var(--mem-signal-yellow)", silent: true },
+  hotkey:         { labelKey: "toast.capture",   color: "var(--mem-signal-purple)" },
+  hotkey_capture: { labelKey: "toast.capture",   color: "var(--mem-signal-purple)" },
+  snip:           { labelKey: "toast.snip",      color: "var(--mem-signal-rose)" },
+  snip_capture:   { labelKey: "toast.snip",      color: "var(--mem-signal-rose)" },
+  quick_thought:  { labelKey: "toast.thought",   color: "var(--mem-signal-pink)" },
+  thought:        { labelKey: "toast.thought",   color: "var(--mem-signal-pink)" },
 };
 
 const pillStyle: React.CSSProperties = {
@@ -41,8 +41,8 @@ const pillStyle: React.CSSProperties = {
   alignItems: "center",
   gap: 8,
   borderRadius: 9999,
-  backgroundColor: "#14141c",
-  border: "1px solid #2a2a3a",
+  backgroundColor: "var(--mem-toast-bg)",
+  border: "1px solid var(--mem-toast-border)",
   padding: "6px 12px",
 };
 
@@ -58,12 +58,12 @@ const labelStyle: React.CSSProperties = {
   flexShrink: 0,
   fontSize: 11,
   fontWeight: 500,
-  color: "rgba(255,255,255,0.9)",
+  color: "var(--mem-toast-text)",
 };
 
 const summaryStyle: React.CSSProperties = {
   fontSize: 11,
-  color: "rgba(255,255,255,0.4)",
+  color: "var(--mem-toast-text-muted)",
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",

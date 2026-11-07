@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Immutable export journal. All `_on` hooks use the caller's connection/transaction.
-use super::{
-    citation_provenance, citation_sources, commit_or_rollback, MemoryDB, UNFILED_SPACE_ID,
-};
+use super::{citation_provenance, citation_sources, metadata_json, MemoryDB, UNFILED_SPACE_ID};
 use crate::{pages::Page, read_scope::ReadScope, WenlanError};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -31,40 +29,14 @@ async fn load<T: DeserializeOwned>(
     conn: &libsql::Connection,
     key: &str,
 ) -> Result<Option<T>, WenlanError> {
-    let mut rows = conn
-        .query("SELECT value FROM app_metadata WHERE key=?1", [key])
-        .await
-        .map_err(sql)?;
-    rows.next()
-        .await
-        .map_err(sql)?
-        .map(|row| -> Result<T, WenlanError> {
-            Ok(serde_json::from_str(&row.get::<String>(0).map_err(sql)?)?)
-        })
-        .transpose()
+    metadata_json::load(conn, key, sql).await
 }
 async fn save(
     conn: &libsql::Connection,
     key: &str,
     value: &impl Serialize,
 ) -> Result<(), WenlanError> {
-    conn.execute("INSERT INTO app_metadata(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",libsql::params![key,serde_json::to_string(value)?]).await.map_err(sql)?;
-    Ok(())
-}
-async fn finish<T>(
-    conn: &libsql::Connection,
-    result: Result<T, WenlanError>,
-) -> Result<T, WenlanError> {
-    match result {
-        Ok(value) => {
-            commit_or_rollback(conn).await.map_err(sql)?;
-            Ok(value)
-        }
-        Err(error) => {
-            let _ = conn.execute("ROLLBACK", ()).await;
-            Err(error)
-        }
-    }
+    metadata_json::save(conn, key, value, sql).await
 }
 fn missing() -> WenlanError {
     WenlanError::NotFound("page export not found".into())
@@ -657,7 +629,7 @@ impl MemoryDB {
             let mut ids=Vec::new();while let Some(row)=rows.next().await.map_err(sql)?{ids.push(row.get::<String>(0).map_err(sql)?)}drop(rows);
             for revision in ids{capture_pending_on(&conn,id,&revision).await?}Ok(saved)
         }.await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
     pub async fn page_export_versions(
         &self,
@@ -774,7 +746,7 @@ impl MemoryDB {
             let record=BibRecord{metadata_digest:hash(&serde_json::to_string(&value)?),value};
             save(&conn,&bib_key(&record.value.space_id,&record.value.source_id),&record).await?;Ok(())
         }.await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
 }
 /// Called from page deletion, before the row is removed; old incarnations cannot leak after ID reuse.

@@ -582,3 +582,58 @@ fn ux_chat_5_old_points_are_connected_by_id_or_left_alone() {
     assert_eq!(parse_night_links(answer, 3, 2), Some(vec![(0, 0)]));
     assert_eq!(parse_night_links("no json", 3, 2), None);
 }
+
+/// UX-VIEW-6: the conclusion says only what the points say. A sentence that
+/// names no real point is dropped; at most two are kept, each cut short.
+#[test]
+fn ux_view_6_a_conclusion_sentence_needs_a_point_behind_it() {
+    let answer = r#"thinking… {"conclusion": [
+        {"text": "  The tagline is settled.  ", "points": ["P0", "P0", "P9"]},
+        {"text": "Something nobody said.", "points": []},
+        {"text": "A made-up point.", "points": ["P7"]},
+        {"text": "Pricing is still open.", "points": ["P1"]},
+        {"text": "A third sentence.", "points": ["P1"]}
+    ]}"#;
+    let parsed = parse_conclusion(answer, 2).unwrap();
+    assert_eq!(
+        parsed,
+        [
+            ConclusionSentence {
+                text: "The tagline is settled.".into(),
+                points: vec![0]
+            },
+            ConclusionSentence {
+                text: "Pricing is still open.".into(),
+                points: vec![1]
+            },
+        ]
+    );
+    assert!(parse_conclusion("not json", 2).is_none());
+    assert_eq!(parse_conclusion(r#"{"conclusion": []}"#, 2), Some(vec![]));
+    let long = format!(
+        r#"{{"conclusion": [{{"text": "{}", "points": ["P0"]}}]}}"#,
+        "a".repeat(400)
+    );
+    assert!(parse_conclusion(&long, 1).unwrap()[0].text.chars().count() <= MAX_CONCLUSION_CHARS);
+}
+
+/// UX-VIEW-6: the conclusion is written from the newest standing points, in
+/// the app's language, marked settled or open.
+#[test]
+fn ux_view_6_the_conclusion_prompt_lists_the_newest_points() {
+    let points: Vec<PriorPoint> = (0..MAX_CONCLUSION_POINTS + 5)
+        .map(|i| PriorPoint {
+            id: format!("mem_{i}"),
+            text: format!("point {i}"),
+            decided: i % 2 == 0,
+        })
+        .collect();
+    let kept = conclusion_points(&points);
+    assert_eq!(kept.len(), MAX_CONCLUSION_POINTS);
+    assert_eq!(kept[0].id, "mem_5");
+    let prompt = conclusion_prompt("Site redesign", kept, "Traditional Chinese");
+    assert!(prompt.contains("\"Site redesign\""));
+    assert!(prompt.contains("P0 (open): point 5"));
+    assert!(prompt.contains("in Traditional Chinese"));
+    assert!(!prompt.contains("point 4\n"));
+}

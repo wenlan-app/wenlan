@@ -550,11 +550,6 @@ fn find_note_with_id(
     Ok(None)
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::Digest as _;
-    format!("{:x}", sha2::Sha256::digest(bytes))
-}
-
 enum Outcome {
     Applied { page_id: String },
     SkippedNoOriginId,
@@ -624,7 +619,9 @@ async fn sync_one_file(
     // bytes are compared with the ones recorded for it instead.
     let person_file = person.get(&page_id).filter(|file| file.file == relative);
     if let Some(file) = person_file {
-        if file.digest.as_deref() == Some(sha256_hex(raw.as_bytes()).as_str()) {
+        if file.digest.as_deref()
+            == Some(crate::sources::directory::sha256_hex(raw.as_bytes()).as_str())
+        {
             return Ok(Outcome::Unchanged);
         }
     } else {

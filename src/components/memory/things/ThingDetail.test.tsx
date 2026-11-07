@@ -105,6 +105,36 @@ describe("ThingDetail", () => {
     expect(within(decided).queryByText("Let's lead with the X wording.")).toBeNull();
   });
 
+  it("UX-VIEW-6: the page opens with what the work has come to, then how it got there", async () => {
+    vi.mocked(getThing).mockResolvedValue({
+      ...tagline,
+      dream: {
+        at: now - 3_600,
+        decided: 1,
+        open: 0,
+        conclusion: [
+          { text: "The tagline leads with the X wording", points: ["mem_1"] },
+          { text: "The hero line stays short.", points: ["mem_2"] },
+        ],
+      },
+    });
+    renderThing();
+    const short = await screen.findByTestId("thing-short");
+    await within(short).findByRole("region", { name: "Decided" });
+    expect(short.firstElementChild).toHaveTextContent("The tagline leads with the X wording. The hero line stays short.");
+    // The conclusion takes the place of where it stands; nothing else is added.
+    expect(within(short).queryByText(/Picked the X wording/)).toBeNull();
+    expect(within(short).getAllByTestId("thing-lead")).toHaveLength(1);
+  });
+
+  it("UX-VIEW-6: until a night writes a conclusion, the page opens with where it stands", async () => {
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, dream: { at: now - 3_600, decided: 1, open: 0, conclusion: [] } });
+    renderThing();
+    const short = await screen.findByTestId("thing-short");
+    await within(short).findByRole("region", { name: "Decided" });
+    expect(screen.getByTestId("thing-lead")).toHaveTextContent(/Picked the X wording/);
+  });
+
   it("UX-VIEW-1: short text and mind map show the same points, and the last view is remembered", async () => {
     const { onOpenPage } = renderThing();
     const short = await screen.findByTestId("thing-short");

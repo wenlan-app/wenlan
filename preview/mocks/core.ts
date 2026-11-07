@@ -193,7 +193,17 @@ export async function invoke(
           point("mem_home_c", "Cards are whole; nothing scrolls sideways", 28_000),
           point("mem_home_d", "Should the Space Brief and handoff merge into things?", 27_000),
         ],
-        dream: { at: HOME_NIGHT, decided: 3, open: 1, fresh: [] },
+        dream: {
+          at: HOME_NIGHT,
+          decided: 3,
+          open: 1,
+          fresh: [],
+          // What the night wrote for the top of the page (UX-VIEW-6).
+          conclusion: [
+            { text: "Home shows only things from your own chats, as whole cards, with one Home button in the sidebar", points: ["mem_home_a", "mem_home_b", "mem_home_c"] },
+            { text: "Whether the Space Brief and handoff merge into things is still open", points: ["mem_home_d"] },
+          ],
+        },
         open_points: ["mem_home_d"],
       };
     }

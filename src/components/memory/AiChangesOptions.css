@@ -2,7 +2,7 @@
 /* The one "AI changes" choice shared by Wenlan's pages and the person's notes. */
 .note-ai-changes { margin: 22px 0 0; }
 .note-ai-options { display: flex; flex-direction: column; gap: 2px; }
-.note-ai-option { align-items: flex-start; border-radius: 8px; cursor: pointer; display: flex; gap: 10px; padding: 9px 10px; }
+.note-ai-option { align-items: flex-start; border-radius: var(--mem-r-8); cursor: pointer; display: flex; gap: 10px; padding: 9px 10px; }
 .note-ai-option:hover { background: color-mix(in srgb, var(--mem-accent-indigo) 9%, transparent); }
 .note-ai-option.is-on { background: color-mix(in srgb, var(--mem-accent-indigo) 15%, transparent); }
 .note-ai-option:has(input:focus-visible) { outline: 2px solid var(--mem-focus-ring); outline-offset: 2px; }
