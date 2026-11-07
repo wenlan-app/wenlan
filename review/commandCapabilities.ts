@@ -139,6 +139,13 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "answer_thing_map_proposal",
     "list_registered_sources",
   ],
+  research: [
+    "get_research_dispute", "decide_research_dispute",
+    "get_research_rules", "save_research_rules", "list_research_runs", "create_research_run", "get_research_run", "update_research_run",
+    "accept_research_classification", "merge_research_tags",
+    "get_source_lifecycle", "set_source_lifecycle", "resolve_source_reference",
+    "get_zotero_disconnect_preview", "list_zotero_items",
+  ],
   pageDrafts: [
     "create_page_draft",
     "update_page_draft",
@@ -229,7 +236,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
   // Settings, General: the OKF bundle export. The fixture answers with an
   // empty bundle; a real export needs the daemon to write a folder.
   pageExport: [
-    "export_pages_as_okf",
+    "export_pages_as_okf", "capture_page_export", "list_page_export_versions", "get_page_export_bundle",
   ],
 } as const;
 

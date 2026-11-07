@@ -4,6 +4,7 @@ use wenlan_types::sources::SyncStatus;
 
 fn source(source_type: SourceType, path: &Path) -> Source {
     Source {
+        display_name: None,
         id: "s".into(),
         source_type,
         path: path.to_path_buf(),

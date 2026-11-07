@@ -32,6 +32,12 @@ describe("source presentation", () => {
     expect(getSourcePresentation(source({ source: "obsidian", source_id: "vault::C:\\Notes\\Reading.md::0" }), labels).format).toBe("Markdown");
   });
 
+  it("labels Zotero imported files by their app provenance without exposing the virtual path", () => {
+    const file = source({ source: "file", source_agent: "zotero", source_id: "zotero::A1::ITEM1::paper.pdf" });
+    expect(getSourcePresentation(file, labels)).toMatchObject({ format: "Zotero · PDF", metadata: "Zotero · PDF" });
+    expect(getSourcePresentation(file, labels).metadata).not.toContain("zotero-local");
+  });
+
   it("keeps a literal ordinal suffix in non-Obsidian filenames", () => {
     expect(getSourceKind(source({ source: "directory", source_id: "folder::/notes/Reading.md::2" }))).toBe("file");
   });

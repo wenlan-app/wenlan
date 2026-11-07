@@ -111,7 +111,12 @@ async fn page_with_my_unsupported_line(db: &MemoryDB, id: &str) -> Page {
     assert!(write(db, id, &mine, "manual_edit", None).await.wrote);
     let page = db.get_page(id).await.unwrap().unwrap();
     assert!(db
-        .set_page_citations_at_page_version(id, &citation("mem-tokio", "unverified"), page.version)
+        .set_page_citations_at_page_version(
+            id,
+            &citation("mem-tokio", "unverified"),
+            page.version,
+            &[]
+        )
         .await
         .unwrap());
     db.get_page(id).await.unwrap().unwrap()
@@ -227,7 +232,12 @@ async fn a_machine_rewrite_keeps_the_citations_on_the_persons_sentence() {
     assert!(write(&db, "p", &mine, "manual_edit", None).await.wrote);
     let before = db.get_page("p").await.unwrap().unwrap();
     assert!(db
-        .set_page_citations_at_page_version("p", &citation("mem-x", "unverified"), before.version)
+        .set_page_citations_at_page_version(
+            "p",
+            &citation("mem-x", "unverified"),
+            before.version,
+            &[]
+        )
         .await
         .unwrap());
 
@@ -787,6 +797,8 @@ async fn authored_page(db: &MemoryDB, id: &str, actor: &str) -> Page {
         None,
         &[],
         actor,
+        None,
+        &[],
         None,
     )
     .await

@@ -24,6 +24,7 @@ pub(crate) mod obsidian_sync;
 #[path = "source_routes/okf_registration_tests.rs"]
 mod okf_registration_tests;
 mod okf_sync;
+pub(crate) mod zotero_sync;
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
@@ -33,9 +34,28 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         )
         .route(
             "/api/sources/{id}",
-            delete(handle_remove_source).patch(handle_update_source),
+            delete(handle_remove_source_checked).patch(handle_update_source),
         )
         .route("/api/sources/{id}/sync", post(handle_sync_source))
+        .route(
+            "/api/zotero/collections",
+            get(zotero_sync::handle_list_collections),
+        )
+        .route("/api/zotero/items", get(zotero_sync::handle_list_items))
+        .route("/api/zotero/sources", post(zotero_sync::handle_add_source))
+        .route(
+            "/api/zotero/sources/{id}/disconnect-preview",
+            get(zotero_sync::handle_disconnect_preview),
+        )
+        .route(
+            "/api/zotero/documents",
+            get(zotero_sync::handle_get_document),
+        )
+        .route(
+            "/api/zotero/pdf-page",
+            get(zotero_sync::handle_get_pdf_page),
+        )
+        .route("/api/zotero/pdf", get(zotero_sync::handle_get_pdf))
 }
 
 // ===== Request/Response Types =====
@@ -109,9 +129,95 @@ fn is_google_drive_path(path: &std::path::Path) -> bool {
 // ===== Handlers =====
 
 /// GET /api/sources
-pub async fn handle_list_sources() -> Json<Vec<Source>> {
-    let config = wenlan_core::config::load_config();
-    Json(config.sources)
+pub async fn handle_list_sources(
+    State(state): State<SharedState>,
+) -> Result<Json<Vec<Source>>, ServerError> {
+    let db = { state.read().await.db.clone() };
+    let pending = match &db {
+        Some(db) => db.pending_zotero_disconnects().await?,
+        None => Vec::new(),
+    };
+    // Read-only snapshots must not wait behind a remote Zotero sync. Actions
+    // obtain fresh previews and recheck identity under the mutation lane.
+    let mut sources = if pending.is_empty() {
+        wenlan_core::config::load_config().sources
+    } else {
+        // A corrupt/unreadable config is not evidence of registration absence.
+        match std::fs::read(wenlan_core::config::data_root().join("config.json")) {
+            Ok(bytes) => {
+                serde_json::from_slice::<wenlan_core::config::Config>(&bytes)
+                    .map_err(|_| {
+                        ServerError::Internal(
+                            "Cannot read Sources config while recovering pending Zotero disconnect"
+                                .into(),
+                        )
+                    })?
+                    .sources
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(_) => {
+                return Err(ServerError::Internal(
+                    "Cannot read Sources config while recovering pending Zotero disconnect".into(),
+                ))
+            }
+        }
+    };
+    if let Some(db) = db {
+        if !pending.is_empty() {
+            let spaces = db.list_spaces().await?;
+            for identity in pending {
+                let space = spaces
+                    .iter()
+                    .find(|space| space.id == identity.space_id)
+                    .ok_or_else(|| {
+                        ServerError::Conflict(
+                            "Pending Zotero disconnect Space is unavailable".into(),
+                        )
+                    })?;
+                let matches = sources
+                    .iter()
+                    .filter(|source| source.id == identity.registration_id)
+                    .count();
+                if matches > 1 {
+                    return Err(ServerError::Conflict(
+                        "Pending Zotero disconnect registration ID is ambiguous".into(),
+                    ));
+                }
+                if let Some(source) = sources
+                    .iter_mut()
+                    .find(|source| source.id == identity.registration_id)
+                {
+                    if source.source_type != SourceType::Zotero
+                        || source.path.to_string_lossy() != identity.locator
+                        || source.space.as_deref() != Some(space.name.as_str())
+                    {
+                        return Err(ServerError::Conflict(
+                            "Pending Zotero disconnect registration identity changed".into(),
+                        ));
+                    }
+                    source.status = SyncStatus::Paused;
+                    source.last_sync_error_detail = Some("zotero_disconnect_pending".into());
+                } else {
+                    sources.push(Source {
+                        display_name: None,
+                        id: identity.registration_id,
+                        source_type: SourceType::Zotero,
+                        path: identity.locator.into(),
+                        status: SyncStatus::Paused,
+                        last_sync: None,
+                        file_count: 0,
+                        memory_count: 0,
+                        last_sync_errors: 0,
+                        last_sync_error_detail: Some("zotero_disconnect_pending".into()),
+                        space: Some(space.name.clone()),
+                        queued_files: 0,
+                        waiting_files: 0,
+                    });
+                }
+            }
+        }
+    }
+    Ok(Json(sources))
 }
 
 /// POST /api/sources
@@ -248,6 +354,7 @@ pub async fn handle_add_source(
     }
 
     let mut source = Source {
+        display_name: None,
         id: base_id.clone(),
         source_type: st.clone(),
         path: path.clone(),
@@ -348,6 +455,16 @@ pub async fn handle_update_source(
     Path(id): Path<String>,
     Json(body): Json<UpdateSourceRequest>,
 ) -> Result<Json<Source>, ServerError> {
+    if body.follow_changes
+        && wenlan_core::config::load_config()
+            .sources
+            .iter()
+            .any(|src| src.id == id && src.source_type == SourceType::Zotero)
+    {
+        return Err(ServerError::ValidationError(
+            "Zotero sources support manual sync only".to_string(),
+        ));
+    }
     let updated = wenlan_core::config::update_config(|config| {
         require_unambiguous_source(config, &id)?;
         let Some(src) = config.sources.iter_mut().find(|s| s.id == id) else {
@@ -364,11 +481,74 @@ pub async fn handle_update_source(
     Ok(Json(updated))
 }
 
+// Zotero sync/disconnect changes repair-observed pages as well as config.
+// Hold the coordinator guard across the complete operation, including bounded
+// explicit remote sync, so a repair cannot observe a half-applied selection.
+async fn begin_zotero_source_write(
+    state: &SharedState,
+) -> Result<crate::maintenance_coordinator::BackgroundMaintenanceGuard, ServerError> {
+    let coordinator = { state.read().await.maintenance_coordinator.clone() };
+    coordinator
+        .try_begin_background()
+        .ok_or_else(|| ServerError::Conflict("repair_write_fence_conflict".into()))
+}
+
+#[derive(Deserialize)]
+struct RemoveSourceQuery {
+    expected_revision: Option<u64>,
+    expected_identity: Option<String>,
+}
+async fn handle_remove_source_checked(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<RemoveSourceQuery>,
+) -> Result<StatusCode, ServerError> {
+    match (query.expected_revision,query.expected_identity) {
+        (Some(revision),Some(identity))=>{
+            let db={state.read().await.db.clone().ok_or(ServerError::DbNotInitialized)?};
+            let _maintenance = begin_zotero_source_write(&state).await?;
+            zotero_sync::disconnect_source(db,&id,Some((revision,&identity))).await?;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        (None,None)=>handle_remove_source(State(state),Path(id)).await,
+        _=>Err(ServerError::BadRequest("Both expected_revision and expected_identity are required for a fenced Zotero disconnect".into()))
+    }
+}
+
 /// DELETE /api/sources/{id}
 pub async fn handle_remove_source(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ServerError> {
+    let snapshot = wenlan_core::config::load_config();
+    require_unambiguous_source(&snapshot, &id)?;
+    let db = { state.read().await.db.clone() };
+    let zotero = snapshot
+        .sources
+        .iter()
+        .any(|s| s.id == id && s.source_type == SourceType::Zotero);
+    if !zotero && snapshot.sources.iter().any(|s| s.id == id) {
+        if let Some(db) = &db {
+            if db.zotero_known_registration(&id).await?.is_some() {
+                return Err(ServerError::ValidationError("Source ID has retained Zotero provenance but its type changed; reload Sources before disconnecting".into()));
+            }
+        }
+    }
+    let retained = if snapshot.sources.iter().all(|s| s.id != id) {
+        if let Some(db) = &db {
+            db.zotero_retained_registration(&id).await?.is_some()
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    if zotero || retained {
+        let db = db.ok_or(ServerError::DbNotInitialized)?;
+        let _maintenance = begin_zotero_source_write(&state).await?;
+        zotero_sync::disconnect_source(db, &id, None).await?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
     let removed = wenlan_core::config::update_config(|config| {
         require_unambiguous_source(config, &id)?;
         let removed = config.sources.iter().find(|s| s.id == id).cloned();
@@ -987,6 +1167,11 @@ pub async fn handle_sync_source(
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
 
+    if source.source_type == SourceType::Zotero {
+        let _maintenance = begin_zotero_source_write(&state).await?;
+        return zotero_sync::sync_source(db, &source).await.map(Json);
+    }
+
     if matches!(source.source_type, SourceType::Directory | SourceType::Okf) {
         let outcome = sync_directory_source(db.clone(), &source, &config).await?;
         if outcome.newly_queued > 0 {
@@ -1107,6 +1292,7 @@ mod tests {
         let mut config = Config::default();
         for parent in ["a", "b"] {
             config.sources.push(Source {
+                display_name: None,
                 id: "directory-notes".into(),
                 source_type: SourceType::Directory,
                 path: PathBuf::from(parent).join("Notes"),
@@ -1148,6 +1334,7 @@ mod tests {
             )
             .unwrap();
             let source = Source {
+                display_name: None,
                 id: "directory-notes".into(),
                 source_type: SourceType::Directory,
                 path: root,
@@ -1524,6 +1711,7 @@ mod tests {
 
     fn register_directory_source(id: &str, path: &std::path::Path) {
         let source = Source {
+            display_name: None,
             id: id.to_string(),
             source_type: SourceType::Directory,
             path: path.to_path_buf(),
@@ -1907,6 +2095,7 @@ mod tests {
 
         let source_id = "directory-notes".to_string();
         let source = Source {
+            display_name: None,
             id: source_id.clone(),
             source_type: SourceType::Directory,
             path: source_root.path().to_path_buf(),
@@ -2109,6 +2298,7 @@ mod tests {
         let source_id = "directory-notes".to_string();
         wenlan_core::config::save_config(&Config {
             sources: vec![Source {
+                display_name: None,
                 id: source_id.clone(),
                 source_type: SourceType::Directory,
                 path: source_root.path().to_path_buf(),
@@ -2249,6 +2439,7 @@ mod tests {
                 basis_marks: Vec::new(),
                 basis_space_guard: None,
                 skip_protected_title_match: false,
+                research_write: None,
             },
         )
         .await

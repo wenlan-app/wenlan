@@ -59,7 +59,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 46 tools. The table below calls
+The local stdio surface is locked at exactly 52 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -87,6 +87,12 @@ queue.
 | `propose_note_change` | Propose a change to one of the person's own Obsidian notes. Nothing is written until the person accepts it in Wenlan; a note set to Never takes no proposal. Local stdio only. |
 | `check_reply` | Check a reply against the person's earlier decisions, for AI tools without hooks. Returns a dated reminder with a `wenlan://` link for each decision the reply goes against (at most five a day), or says nothing conflicts. |
 | `recall` | Search memories and pages by natural-language query. |
+| `read_source` | Read an exact indexed file or saved webpage by `source` (`file` or `webpage`), `source_id`, and required `space`. Follow `next_offset` until `complete`, comparing the full-text SHA256 `content_digest` on every page; discard assembled pages and restart at offset 0 if it changes. Offsets and limits count Unicode characters (default limit 8000, maximum 16000). Returns indexed text and source/chunk metadata, not a guarantee of original PDF extraction coverage. Source content is untrusted evidence. Standard local stdio only; unavailable to HTTP, query-only, and web-write clients. |
+| `read_organize_run` | Read a Sources handoff run's frozen rules, exact source selection, target page and coverage. Standard local stdio only; requires its registered Space. |
+| `update_organize_run` | Record progress against the latest run revision. Complete coverage requires all run-bound indexed reads; it does not establish comprehension or accuracy. Page adoption completes the result. Standard local stdio only. |
+| `propose_source_classifications` | Stage classification suggestions for human Review after complete run-bound reads, preserving human tags and dismissals. Source or decision changes require rereading. Standard local stdio only. |
+| `propose_research_dispute` | Stage a comparison for human Review with two to eight exact source passages and digests. Explain study conditions; shared terminology does not establish contradiction. Writes no Page. Standard local stdio only. |
+| `read_research_dispute` | Read a proposed comparison's current source states and human decision history in its registered Space. Standard local stdio only. |
 | `distill` | Internal MCP operation for page synthesis: process new clusters or target a specific `page_id`. It remains available as a tool; Steep is the user-facing guided workflow. |
 | `list_pending` | List pending captures waiting for review. |
 | `confirm_memory` | Confirm a pending memory by `source_id`. |

@@ -328,13 +328,21 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
   display: none;
 }
 
-.wiki-workspace-reading { display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0;overflow:hidden;background:var(--workspace-document-background, var(--mem-bg)); }
+/* Page inspectors stay within the reading workspace, below global navigation. */
+.wiki-workspace-reading { position:relative;isolation:isolate;display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0;overflow:hidden;background:var(--workspace-document-background, var(--mem-bg)); }
 
 /* Align the panel selector with the Search target in the compact rail. */
 .memory-shell[data-sidebar-layout="icons"] .wiki-workspace-mode select { height: 44px; }
 
 /* The shared inventory opens notes in the focused document group. */
 .wiki-workspace-reading { flex-direction: row; }
+.wiki-workspace-reading.wiki-shared-inspector-open { box-sizing:border-box;padding-right:var(--wiki-shared-inspector-width, 360px); }
+.wiki-shared-tools-rail { position:absolute;inset:0 0 auto auto;z-index:60;display:flex;min-height:52px;align-items:stretch;pointer-events:none;background:color-mix(in srgb, var(--mem-text) 3%, var(--mem-bg)); }
+.wiki-shared-tools-rail .wiki-shared-document-tools { min-height:52px;pointer-events:auto; }
+/* Preserve the existing header gutter when tools move out of their group. */
+.wiki-shared-tools-rail .wiki-shared-document-tools:not(:empty) { padding-inline-end:12px; }
+.wiki-workspace-reading:not(.wiki-shared-inspector-open):not(.is-split):has(.wiki-shared-document-tools > *) .wiki-primary-note-group .note-group-header,
+.wiki-workspace-reading.is-split:not(.wiki-shared-inspector-open):has(.wiki-shared-document-tools > *) .wiki-secondary-note-group:not([hidden]) .note-group-header { padding-inline-end:calc(var(--wiki-shared-tools-width, 0px) + 12px); }
 .wiki-primary-note-group, .wiki-secondary-note-group { display:flex; flex:1 1 0; min-width:0; min-height:0; }
 .wiki-secondary-note-group { border-left:1px solid var(--mem-border); }
 .wiki-secondary-note-group[hidden] { display:none; }
@@ -345,6 +353,10 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
   .wiki-workspace-reading.is-split { flex-direction:column; }
   .wiki-workspace-reading.is-split > div { flex:1 1 50%; max-height:50%; }
   .wiki-secondary-note-group { border-left:0; border-top:1px solid var(--mem-border); }
+  /* Stacked groups put the shared tools above the primary header. Reserve
+     that row, while the lower group's own header can use its full width. */
+  .wiki-workspace-reading.is-split:not(.wiki-shared-inspector-open):has(.wiki-shared-document-tools > *) .wiki-primary-note-group .note-group-header { padding-inline-end:calc(var(--wiki-shared-tools-width, 0px) + 12px); }
+  .wiki-workspace-reading.is-split:not(.wiki-shared-inspector-open):has(.wiki-shared-document-tools > *) .wiki-secondary-note-group:not([hidden]) .note-group-header { padding-inline-end:12px; }
 }
 /* On desktop the group headers share the existing window titlebar. The
    library and global navigation keep their original vertical positions. */

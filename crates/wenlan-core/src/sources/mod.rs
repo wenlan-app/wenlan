@@ -13,6 +13,7 @@ pub mod logseq;
 pub mod obsidian;
 pub mod okf;
 pub mod page_watcher;
+pub mod zotero;
 
 // Re-export canonical type definitions from wenlan-types. This keeps
 // `crate::sources::RawDocument` working for wenlan-core modules while the
@@ -248,6 +249,7 @@ mod tests {
     #[test]
     fn test_source_roundtrip() {
         let source = Source {
+            display_name: None,
             id: "obsidian-main".to_string(),
             source_type: SourceType::Obsidian,
             path: PathBuf::from("/Users/x/vault"),

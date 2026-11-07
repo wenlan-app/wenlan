@@ -74,13 +74,47 @@ function findInsertion(strip: HTMLElement, group: NoteTabDrop["targetGroup"], dr
   return { group, beforeKey, x: Math.max(bounds.left, Math.min(bounds.right, refBounds?.left ?? lastBounds?.right ?? bounds.left)), y: bounds.top, height: bounds.height };
 }
 
+/** A shared inspector is physically outside both note frames but belongs to
+ * the Wiki reading workspace. Treat it as the rightmost drop target: transfer
+ * into an existing secondary group, or split the primary group when none is
+ * open. There is no third destination in this workspace. */
+function sharedWorkspaceInsertion(current: Gesture, root: HTMLElement, x: number, y: number): Insertion | null {
+  const rootRect = root.getBoundingClientRect();
+  if (x < rootRect.left || x > rootRect.right || y < rootRect.top || y > rootRect.bottom || current.sourceGroup !== "primary") return null;
+  const primary = root.querySelector<HTMLElement>('[data-note-group-id="primary"]');
+  if (!primary || !visible(primary)) return null;
+  const secondary = root.querySelector<HTMLElement>('[data-note-group-id="secondary"]');
+  if (secondary && !secondary.closest("[hidden]") && visible(secondary)) {
+    const bounds = secondary.getBoundingClientRect();
+    return { group: "secondary", beforeKey: null, x: bounds.left, y: bounds.top, height: bounds.height, kind: "transfer",
+      preview: { left: bounds.left + 8, top: bounds.top + 8, width: Math.max(0, bounds.width - 16), height: Math.max(0, bounds.height - 16) } };
+  }
+
+  // The root's measured box is the right target geometry; use the Wiki
+  // container only for the same stacked-vs-side-by-side breakpoint as CSS.
+  const mainWidth = root.closest<HTMLElement>(".memory-main-content--wiki")?.clientWidth || rootRect.width;
+  const stacked = mainWidth <= 640;
+  const left = stacked ? rootRect.left : rootRect.left + rootRect.width / 2;
+  const top = stacked ? rootRect.top + rootRect.height / 2 : rootRect.top;
+  const width = stacked ? rootRect.width : rootRect.width / 2;
+  const height = stacked ? rootRect.height / 2 : rootRect.height;
+  return { group: "secondary", beforeKey: null, x: left, y: top, height, kind: "split",
+    preview: { left: left + 8, top: top + 8, width: Math.max(0, width - 16), height: Math.max(0, height - 16) } };
+}
+
 /** A visible note-group frame is a generous target, including its own inspector. */
 function documentInsertion(current: Gesture, x: number, y: number, point: Element | null): Insertion | null {
   if (!point) return null;
+  if (point.closest('[role="menu"]')) return null;
+  const sharedSurface = point.closest<HTMLElement>(".wiki-shared-tools-rail, .page-info-drawer-group-overlay, .page-info-drawer-expanded-group");
+  const sharedRoot = sharedSurface?.closest<HTMLElement>(".wiki-workspace-reading");
+  if (sharedRoot && visible(sharedRoot)) {
+    if (point.closest('[role="dialog"]')) return null;
+    return sharedWorkspaceInsertion(current, sharedRoot, x, y);
+  }
   const frame = point.closest<HTMLElement>("[data-note-group-id]");
   const group = frame?.dataset.noteGroupId;
   if (!frame || !visible(frame) || (group !== "primary" && group !== "secondary")) return null;
-  if (point.closest('[role="menu"]')) return null;
   const dialog = point.closest<HTMLElement>('[role="dialog"]');
   if (dialog) {
     const inspector = dialog.classList.contains("page-info-drawer")

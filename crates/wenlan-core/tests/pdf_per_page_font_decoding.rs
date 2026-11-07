@@ -15,7 +15,7 @@
 
 use lopdf::content::{Content, Operation};
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
-use wenlan_core::sources::directory::extract_pdf_text;
+use wenlan_core::sources::directory::{extract_pdf_page, extract_pdf_text};
 
 /// A base-14 font dictionary; no `/Encoding`, so the font's built-in one applies.
 fn base14_font(doc: &mut Document, base_font: &str) -> ObjectId {
@@ -96,6 +96,13 @@ fn pdf_text_decodes_each_page_with_its_own_font() {
         ],
     );
 
+    let (first, count) = extract_pdf_page(&bytes, 1).expect("page extraction");
+    assert_eq!(count, 2);
+    assert!(first.contains("Hello") && !first.contains("αβγ"));
+    let (second, _) = extract_pdf_page(&bytes, 2).unwrap();
+    assert!(second.contains("αβγ") && !second.contains("abg"));
+    assert!(extract_pdf_page(&bytes, 0).is_err());
+    assert!(extract_pdf_page(&bytes, 3).is_err());
     let text = extract_pdf_text(&bytes).expect("pdf extraction");
     assert!(
         text.contains("Hello"),
@@ -141,6 +148,9 @@ fn pdf_text_decodes_form_xobject_with_its_own_font() {
         )],
     );
 
+    let (page, count) = extract_pdf_page(&bytes, 1).expect("scoped form page extraction");
+    assert_eq!(count, 1);
+    assert!(page.contains("Hello") && page.contains("αβγ") && !page.contains("abg"));
     let text = extract_pdf_text(&bytes).expect("pdf extraction");
     assert!(
         text.contains("Hello"),

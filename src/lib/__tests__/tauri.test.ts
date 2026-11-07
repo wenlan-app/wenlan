@@ -9,12 +9,32 @@ describe("sources, page export, and knowledge wrappers", () => {
     vi.resetAllMocks();
   });
 
+  it("accepts an optional typed edited revision without changing the legacy payload", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const { acceptPendingRevision } = await import("../tauri");
+    await acceptPendingRevision("target");
+    expect(invoke).toHaveBeenLastCalledWith("accept_pending_revision", { sourceId: "target" });
+    const edit = { expected_content: "Proposal", content: "Human correction" };
+    await acceptPendingRevision("exact-card", edit);
+    expect(invoke).toHaveBeenLastCalledWith("accept_pending_revision", { sourceId: "exact-card", edit });
+  });
+
   it("listRegisteredSources calls list_registered_sources", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const { listRegisteredSources } = await import("../tauri");
     (invoke as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     await listRegisteredSources();
     expect(invoke).toHaveBeenCalledWith("list_registered_sources");
+  });
+
+  it("lists local Zotero collections and registers one collection with its expected server and Space", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const { listZoteroCollections, addZoteroSource } = await import("../tauri");
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({ server_id: "local", collections: [] });
+    await listZoteroCollections();
+    expect(invoke).toHaveBeenCalledWith("list_zotero_collections");
+    await addZoteroSource("COLL", "local", "Research");
+    expect(invoke).toHaveBeenLastCalledWith("add_zotero_source", { collectionKey: "COLL", expectedServerId: "local", space: "Research" });
   });
 
   it("addSource passes sourceType and path", async () => {

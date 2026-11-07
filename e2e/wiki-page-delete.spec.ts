@@ -75,8 +75,8 @@ test("deleting a Page from the right group removes only that tab", async ({ page
   await expect(editor).toBeVisible();
   await editor.press("Escape");
   await expect(editor).toHaveCount(0);
-  await secondary.getByRole("button", { name: "Page actions" }).click();
-  await secondary.getByRole("menuitem", { name: "Delete page" }).click();
+  await page.getByRole("button", { name: "Page actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete page" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Delete page", exact: true }).click();
 
   await expect(secondary).toHaveCount(0);

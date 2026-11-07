@@ -1024,6 +1024,7 @@ async fn write_source_page(
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await
@@ -1407,6 +1408,26 @@ mod tests {
             )
             .await
             .unwrap();
+        }
+
+        if matches!(
+            corruption,
+            PreparedGenerationCorruption::BlobContentHash
+                | PreparedGenerationCorruption::BlobContent
+        ) {
+            let error = db
+                .citation_sources(
+                    std::slice::from_ref(&first.doc_source_id),
+                    &crate::read_scope::ReadScope::Global,
+                )
+                .await
+                .err()
+                .expect("invalid stored bytes cannot produce a trusted source snapshot");
+            assert!(
+                matches!(error, WenlanError::Validation(ref message)
+                    if message.starts_with("source_read_refused: malformed stored source")),
+                "{corruption:?}: malformed values are refused without hiding database failures"
+            );
         }
 
         let retry_entry = db

@@ -1670,6 +1670,7 @@ pub async fn handle_accept_revision(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: axum::http::HeaderMap,
     Path(id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<wenlan_types::RevisionAcceptResponse>, ServerError> {
     let db = {
         let s = state.read().await;
@@ -1677,13 +1678,39 @@ pub async fn handle_accept_revision(
     };
     let agent = extract_agent_name(&headers, None);
     let knowledge_path = wenlan_core::config::load_config().knowledge_path_or_default();
-    let result = wenlan_core::post_write::accept_pending_revision_with_knowledge_path(
-        &db,
-        &id,
-        &agent,
-        Some(knowledge_path.as_path()),
-    )
-    .await?;
+    // Legacy callers send either no body or an empty JSON object. Every other
+    // payload must pass the complete, strict typed edit request parser below.
+    let ordinary_acceptance = if body.is_empty() {
+        true
+    } else {
+        let object: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&body)
+            .map_err(|error| {
+                ServerError::ValidationError(format!("invalid revision edit: {error}"))
+            })?;
+        object.is_empty()
+    };
+    let result = if ordinary_acceptance {
+        wenlan_core::post_write::accept_pending_revision_with_knowledge_path(
+            &db,
+            &id,
+            &agent,
+            Some(knowledge_path.as_path()),
+        )
+        .await?
+    } else {
+        let edit: wenlan_types::requests::RevisionAcceptEditRequest = serde_json::from_slice(&body)
+            .map_err(|error| {
+                ServerError::ValidationError(format!("invalid revision edit: {error}"))
+            })?;
+        wenlan_core::post_write::accept_pending_revision_edited_with_knowledge_path(
+            &db,
+            &id,
+            &agent,
+            Some(knowledge_path.as_path()),
+            &edit,
+        )
+        .await?
+    };
     Ok(Json(result))
 }
 
@@ -4774,6 +4801,123 @@ mod dismiss_revision_tests {
             ..Default::default()
         };
         (Arc::new(RwLock::new(server_state)), tmp)
+    }
+
+    #[tokio::test]
+    async fn edited_acceptance_http_contract_and_empty_post_compatibility() {
+        for (body, expected_content) in [
+            ("", "Proposed body."),
+            ("{}", "Proposed body."),
+            (" \n{ }\t", "Proposed body."),
+            (
+                r#"{"expected_content":"Proposed body.","content":"Human correction."}"#,
+                "Human correction.",
+            ),
+        ] {
+            let (state, _tmp) = build_state_with_db().await;
+            let db = state.read().await.db.clone().unwrap();
+            db.upsert_documents(vec![
+                RawDocument {
+                    source: "memory".into(),
+                    source_id: "accept_http_target".into(),
+                    title: "Original".into(),
+                    content: "Original body.".into(),
+                    confirmed: Some(true),
+                    ..Default::default()
+                },
+                RawDocument {
+                    source: "memory".into(),
+                    source_id: "accept_http_card".into(),
+                    title: "Revision".into(),
+                    content: "Proposed body.".into(),
+                    supersedes: Some("accept_http_target".into()),
+                    pending_revision: true,
+                    ..Default::default()
+                },
+            ])
+            .await
+            .unwrap();
+            let app = crate::router::build_router(state);
+            // Invalid nonempty JSON cannot silently become ordinary acceptance.
+            for (invalid, expected_status) in [
+                ("{", StatusCode::UNPROCESSABLE_ENTITY),
+                (" ", StatusCode::UNPROCESSABLE_ENTITY),
+                ("null", StatusCode::UNPROCESSABLE_ENTITY),
+                ("[]", StatusCode::UNPROCESSABLE_ENTITY),
+                (
+                    r#"["Proposed body.","Human correction."]"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                ("true", StatusCode::UNPROCESSABLE_ENTITY),
+                (r#""{}""#, StatusCode::UNPROCESSABLE_ENTITY),
+                (
+                    r#"{"content":"Human correction."}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                (
+                    r#"{"expected_content":"Proposed body."}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                (r#"{"unexpected":true}"#, StatusCode::UNPROCESSABLE_ENTITY),
+                (
+                    r#"{"expected_content":"Proposed body.","content":"Human correction.","unexpected":true}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                (
+                    r#"{"expected_content":"Proposed body.","content":"Human correction.","content":"Other correction."}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+                (
+                    r#"{"expected_content":"stale","content":"Human correction."}"#,
+                    StatusCode::CONFLICT,
+                ),
+                (
+                    r#"{"expected_content":"Proposed body.","content":" "}"#,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                ),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/api/memory/revision/accept_http_card/accept")
+                            .header("content-type", "application/json")
+                            .body(Body::from(invalid))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), expected_status, "{invalid}");
+                assert_eq!(db.list_pending_revisions(10).await.unwrap().len(), 1);
+                assert_eq!(
+                    db.get_memory_detail("accept_http_target")
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .content,
+                    "Original body."
+                );
+            }
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/memory/revision/accept_http_card/accept")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let detail = db
+                .get_memory_detail("accept_http_card")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(detail.content, expected_content);
+        }
     }
 
     /// HTTP contract for the external wenlan-app caller. `POST

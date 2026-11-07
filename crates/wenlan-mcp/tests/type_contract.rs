@@ -1690,6 +1690,7 @@ async fn t_list_pending_uses_post_with_confirmed_false() {
 
     let response = ListMemoriesResponse {
         memories: vec![IndexedFileInfo {
+            source_lifecycle: Default::default(),
             source_id: "mem_pending1".into(),
             title: "Pending capture".into(),
             source: "memory".into(),

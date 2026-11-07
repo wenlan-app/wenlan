@@ -21,6 +21,63 @@ async fn json_body(response: Response<Body>) -> (StatusCode, Value) {
     )
 }
 
+pub async fn document_tag_patch_is_scoped() {
+    let fixture = ScopeFixture::new().await;
+    fixture
+        .seed_record(
+            "file",
+            "tagged-document",
+            Some("work"),
+            "fact",
+            1,
+            None,
+            false,
+        )
+        .await;
+    fixture
+        .db
+        .set_document_tags("file", "tagged-document", vec!["keep".into()])
+        .await
+        .unwrap();
+    for (space, expected) in [
+        ("missing-space", StatusCode::UNPROCESSABLE_ENTITY),
+        ("personal", StatusCode::NOT_FOUND),
+    ] {
+        let response = fixture
+            .send(
+                HttpMethod::POST,
+                "/api/documents/tagged-document/tags",
+                Some(serde_json::json!({"source":"file", "tag":"keep", "action":"remove"})),
+                Some(space),
+            )
+            .await;
+        assert_eq!(response.status(), expected, "{space}");
+        assert_eq!(
+            fixture
+                .db
+                .get_document_tags("file", "tagged-document")
+                .await
+                .unwrap(),
+            vec!["keep"]
+        );
+    }
+    let response = fixture
+        .send(
+            HttpMethod::POST,
+            "/api/documents/tagged-document/tags",
+            Some(serde_json::json!({"source":"file", "tag":"keep", "action":"remove"})),
+            Some("work"),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(fixture
+        .db
+        .get_document_tags("file", "tagged-document")
+        .await
+        .unwrap()
+        .is_empty());
+}
+
 pub async fn unknown_selectors_are_rejected() {
     let fixture = ScopeFixture::new().await;
     let probes = [
@@ -418,4 +475,177 @@ pub async fn history_and_chunk_source_priority_are_scoped() {
 pub fn registry_matches_catalog() {
     super::case_runner::assert_wave_2_records_catalog_contract();
     assert_eq!(WAVE_2_RECORDS.len(), 13);
+}
+
+/// Research cards carry private evidence; legacy generic cards have no Space identity.
+pub async fn refinery_queue_research_payloads_are_scoped() {
+    use std::collections::BTreeSet;
+    use wenlan_server::sensitive_read_routes::{
+        route, CrossScopePolicy, ScopeBinding, SelectionGate, SelectorPrecedence,
+        UnknownScopePolicy,
+    };
+    let contract = route(Method::Get, "/api/refinery/queue").unwrap();
+    assert_eq!(contract.scope_binding, ScopeBinding::MemorySpace);
+    assert_eq!(
+        contract.selector_precedence,
+        SelectorPrecedence::QueryThenHeader
+    );
+    assert_eq!(contract.selection_gate, SelectionGate::BatchFiltered);
+    assert_eq!(contract.unknown_scope, UnknownScopePolicy::Rejected);
+    assert_eq!(
+        contract.cross_scope_policy,
+        CrossScopePolicy::MixedRowsAndAggregates
+    );
+    let fixture = ScopeFixture::new().await;
+    let work = fixture.db.get_space("work").await.unwrap().unwrap();
+    let personal = fixture.db.get_space("personal").await.unwrap().unwrap();
+    // Foreign rows sort first: the result limit must run after filtering.
+    let rows = [
+        (
+            "class-personal",
+            "source_classification",
+            serde_json::json!({"action":"source_classification","run_id":"run-personal","space_id":personal.id,"rules_digest":"private-classification-personal","changes":[]}),
+        ),
+        (
+            "dispute-personal",
+            "research_dispute",
+            serde_json::json!({"action":"research_dispute","dispute":{"space_id":personal.id,"kind":"opposing_claims","conditions":"exact conditions","reason":"private-dispute-personal","evidence":[]},"payload_digest":"personal-digest"}),
+        ),
+        (
+            "class-work",
+            "source_classification",
+            serde_json::json!({"action":"source_classification","run_id":"run-work","space_id":work.id,"rules_digest":"private-classification-work","changes":[]}),
+        ),
+        (
+            "dispute-work",
+            "research_dispute",
+            serde_json::json!({"action":"research_dispute","dispute":{"space_id":work.id,"kind":"opposing_claims","conditions":"exact conditions","reason":"private-dispute-work","evidence":[]},"payload_digest":"work-digest"}),
+        ),
+        (
+            "generic-global",
+            "dedup_merge",
+            serde_json::json!({"action":"dedup_merge"}),
+        ),
+        (
+            "orphan-dispute",
+            "research_dispute",
+            serde_json::json!({"action":"research_dispute","dispute":{"space_id":"deleted-space-id","kind":"opposing_claims","conditions":"exact conditions","reason":"private-orphan-dispute","evidence":[]},"payload_digest":"orphan-digest"}),
+        ),
+    ];
+    for (id, action, payload) in &rows {
+        fixture
+            .db
+            .insert_refinement_proposal(
+                id,
+                action,
+                &["legacy-global-source".into()],
+                Some(&payload.to_string()),
+                0.5,
+            )
+            .await
+            .unwrap();
+    }
+    let direct = libsql::Builder::new_local(fixture._tmp.path().join("origin_memory.db"))
+        .build()
+        .await
+        .unwrap();
+    let conn = direct.connect().unwrap();
+    for (index, (id, _, _)) in rows.iter().enumerate() {
+        conn.execute(
+            "UPDATE refinement_queue SET status='awaiting_review',created_at=?2 WHERE id=?1",
+            libsql::params![*id, format!("2026-01-01T00:00:{index:02}Z")],
+        )
+        .await
+        .unwrap();
+    }
+    for (space, allowed, forbidden) in [
+        (
+            "work",
+            ["class-work", "dispute-work", "generic-global"],
+            [
+                "private-classification-personal",
+                "private-dispute-personal",
+            ],
+        ),
+        (
+            "personal",
+            ["class-personal", "dispute-personal", "generic-global"],
+            ["private-classification-work", "private-dispute-work"],
+        ),
+    ] {
+        let (status, bytes) = body_bytes(
+            fixture
+                .send(HttpMethod::GET, "/api/refinery/queue", None, Some(space))
+                .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let result: wenlan_types::responses::ListRefinementsResponse =
+            serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            result
+                .proposals
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<BTreeSet<_>>(),
+            allowed.into_iter().collect()
+        );
+        let serialized = String::from_utf8(bytes).unwrap();
+        for canary in forbidden {
+            assert!(
+                !serialized.contains(canary),
+                "{space} leaked foreign research payload {canary}"
+            );
+        }
+        assert!(!serialized.contains("private-orphan-dispute"));
+        assert!(
+            serialized.contains("legacy-global-source"),
+            "generic legacy proposals retain their existing global semantics"
+        );
+    }
+    let (status, result) = json_body(
+        fixture
+            .send(
+                HttpMethod::GET,
+                "/api/refinery/queue?space=work&action=source_classification&limit=1",
+                None,
+                None,
+            )
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["proposals"].as_array().unwrap().len(), 1);
+    assert_eq!(result["proposals"][0]["id"], "class-work");
+    for (uri, header) in [
+        ("/api/refinery/queue", Some("missing-space")),
+        ("/api/refinery/queue?space=missing-space", None),
+    ] {
+        let (status, bytes) =
+            body_bytes(fixture.send(HttpMethod::GET, uri, None, header).await).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        let body = String::from_utf8(bytes).unwrap();
+        assert!(!body.contains("private-"));
+        assert!(!body.contains("generic-global"));
+    }
+    assert_eq!(
+        fixture
+            .send(
+                HttpMethod::GET,
+                "/api/refinery/queue?space=personal",
+                None,
+                Some("work")
+            )
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let (status, unscoped) = json_body(
+        fixture
+            .send(HttpMethod::GET, "/api/refinery/queue", None, None)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(unscoped["proposals"].as_array().unwrap().len(),5,"no selector retains registered research and generic proposals, excluding orphan identities");
 }

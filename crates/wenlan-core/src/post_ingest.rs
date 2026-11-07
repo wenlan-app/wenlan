@@ -34,34 +34,24 @@ use wenlan_types::requests::UpdatePageRequest;
 /// read -- the exact window a concurrent source detach must land in to prove
 /// the counter alone (without a reload of the matched page) cannot catch it.
 ///
-/// One-shot (`take`), so a retry runs unblocked. Compiled out entirely in
-/// non-test builds. Same shape as `post_write::page_update`'s
-/// `PRE_WRITE_GATE`/`pre_write_pause`.
+/// One-shot per page (`remove`), so a retry runs unblocked. Distinct test
+/// pages coexist: registering one handshake cannot drop another test's sender.
+/// Compiled out entirely in non-test builds.
 #[cfg(test)]
 type PostMatchPauseGate = (
-    String,
     tokio::sync::oneshot::Sender<()>,
     tokio::sync::oneshot::Receiver<()>,
 );
 
 #[cfg(test)]
-pub(crate) static POST_MATCH_PAUSE_GATE: std::sync::Mutex<Option<PostMatchPauseGate>> =
-    std::sync::Mutex::new(None);
+pub(crate) static POST_MATCH_PAUSE_GATE: std::sync::Mutex<
+    std::collections::BTreeMap<String, PostMatchPauseGate>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 #[cfg(test)]
 async fn pause_after_match(page_id: &str) {
-    let gate = {
-        let mut slot = POST_MATCH_PAUSE_GATE.lock().unwrap();
-        if slot
-            .as_ref()
-            .is_some_and(|(target, _, _)| target == page_id)
-        {
-            slot.take()
-        } else {
-            None
-        }
-    };
-    if let Some((_, parked, go)) = gate {
+    let gate = POST_MATCH_PAUSE_GATE.lock().unwrap().remove(page_id);
+    if let Some((parked, go)) = gate {
         let _ = parked.send(());
         let _ = go.await;
     }
@@ -2625,6 +2615,56 @@ mod tests {
             .all(|step| step.step != "page_growth"));
     }
 
+    /// Both pages must be registered before either consumer starts: a single
+    /// global slot loses the first sender even without scheduler interleaving.
+    #[tokio::test]
+    async fn post_match_pause_gates_for_distinct_pages_coexist() {
+        let first_id = "pause-gate-isolation-first";
+        let second_id = "pause-gate-isolation-second";
+        let (first_parked_tx, first_parked_rx) = tokio::sync::oneshot::channel();
+        let (first_go_tx, first_go_rx) = tokio::sync::oneshot::channel();
+        let (second_parked_tx, second_parked_rx) = tokio::sync::oneshot::channel();
+        let (second_go_tx, second_go_rx) = tokio::sync::oneshot::channel();
+        {
+            let mut gates = POST_MATCH_PAUSE_GATE.lock().unwrap();
+            assert!(gates
+                .insert(first_id.to_string(), (first_parked_tx, first_go_rx))
+                .is_none());
+            assert!(gates
+                .insert(second_id.to_string(), (second_parked_tx, second_go_rx))
+                .is_none());
+        }
+        pause_after_match("pause-gate-isolation-unregistered").await;
+        {
+            let gates = POST_MATCH_PAUSE_GATE.lock().unwrap();
+            assert!(gates.contains_key(first_id));
+            assert!(gates.contains_key(second_id));
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let release = async {
+                let (first, second) = tokio::join!(first_parked_rx, second_parked_rx);
+                first.expect("the first page handshake must survive the second registration");
+                second.expect("the second page handshake must remain available");
+                first_go_tx
+                    .send(())
+                    .expect("the first page must still be parked");
+                second_go_tx
+                    .send(())
+                    .expect("the second page must still be parked");
+            };
+            tokio::join!(
+                pause_after_match(first_id),
+                pause_after_match(second_id),
+                release
+            );
+        })
+        .await
+        .expect("both independent handshakes must complete");
+        let gates = POST_MATCH_PAUSE_GATE.lock().unwrap();
+        assert!(!gates.contains_key(first_id));
+        assert!(!gates.contains_key(second_id));
+    }
+
     /// G1: a source detached in the window between the CPU-only match and
     /// the `source_revision` counter read must not be re-attached by the
     /// growth write. The counter itself cannot catch this -- nothing
@@ -2691,8 +2731,10 @@ mod tests {
 
         let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
         let (go_tx, go_rx) = tokio::sync::oneshot::channel();
-        *POST_MATCH_PAUSE_GATE.lock().unwrap() =
-            Some(("match-reload-page".to_string(), parked_tx, go_rx));
+        POST_MATCH_PAUSE_GATE
+            .lock()
+            .unwrap()
+            .insert("match-reload-page".to_string(), (parked_tx, go_rx));
 
         let prompts = PromptRegistry::default();
         let slice = run_page_growth_slice(&db, &llm, &prompts, -1.0, None);
@@ -2777,8 +2819,10 @@ mod tests {
 
         let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
         let (go_tx, go_rx) = tokio::sync::oneshot::channel();
-        *POST_MATCH_PAUSE_GATE.lock().unwrap() =
-            Some(("recheck-page".to_string(), parked_tx, go_rx));
+        POST_MATCH_PAUSE_GATE
+            .lock()
+            .unwrap()
+            .insert("recheck-page".to_string(), (parked_tx, go_rx));
 
         let prompts = PromptRegistry::default();
         let slice = run_page_growth_slice(&db, &llm, &prompts, -1.0, None);
@@ -3395,8 +3439,10 @@ mod tests {
 
         let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
         let (go_tx, go_rx) = tokio::sync::oneshot::channel();
-        *POST_MATCH_PAUSE_GATE.lock().unwrap() =
-            Some(("grow-page-match-reload-page".to_string(), parked_tx, go_rx));
+        POST_MATCH_PAUSE_GATE.lock().unwrap().insert(
+            "grow-page-match-reload-page".to_string(),
+            (parked_tx, go_rx),
+        );
 
         let prompts = crate::prompts::PromptRegistry::default();
         let grow = grow_page(
@@ -3492,8 +3538,10 @@ mod tests {
 
         let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
         let (go_tx, go_rx) = tokio::sync::oneshot::channel();
-        *POST_MATCH_PAUSE_GATE.lock().unwrap() =
-            Some(("grow-recheck-page".to_string(), parked_tx, go_rx));
+        POST_MATCH_PAUSE_GATE
+            .lock()
+            .unwrap()
+            .insert("grow-recheck-page".to_string(), (parked_tx, go_rx));
 
         let prompts = crate::prompts::PromptRegistry::default();
         let grow = grow_page(

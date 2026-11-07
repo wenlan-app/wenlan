@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_types::requests::{
-    CreateConceptRequest, CreatePageDraftRequest, ExportFormat, ExportPagesRequest,
-    MovePageRequest, PageDraftVersionRequest, SearchPagesRequest, UpdatePageDraftRequest,
+    CreatePageDraftRequest, ExportFormat, ExportPagesRequest, MovePageRequest,
+    PageDraftVersionRequest, SearchPagesRequest, UpdatePageDraftRequest,
 };
 use wenlan_types::responses::{
     CreatePageResponse, MovePageResponse, OkfConceptRef, PageDraftResponse, PageInventoryEntry,
@@ -234,6 +234,7 @@ pub async fn handle_get_page(
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Q1 browse surface: a shadow id resolves 200 here, so read the unfenced
     // `_browse` twin (mutation/export by-id reads keep fenced `get_page_scoped`).
+    let impact_fence = db.try_get_page_fence(&id).await?;
     let page = db
         .get_page_scoped_browse(&id, &scope)
         .await
@@ -320,8 +321,77 @@ pub async fn handle_get_page(
                     version,
                 })
                 .collect();
+            let mut selection_impacts = Vec::new();
+            // Only a Full page may disclose its source information.
+            let full = !wenlan_core::truth_adapter::filter_page_refs(
+                &db,
+                &view.grant,
+                vec![id.clone()],
+                |id| id.as_str(),
+            )
+            .await?
+            .is_empty();
+            if full && impact_fence.is_some() {
+                if let Some(space) = page.space.as_deref() {
+                    let source_scope = wenlan_core::read_scope::ReadScope::Space(space.to_owned());
+                    let pending = db.pending_zotero_scope_impacts(&id, space).await?;
+                    for (reason, locators) in &pending {
+                        let mut titles = Vec::new();
+                        let mut unavailable = reason == "selection_removed";
+                        // Selection removal events are created for one source. Disconnect
+                        // and unknown legacy events can contain a collection-wide batch.
+                        if reason == "selection_removed" {
+                            let mut canonical = std::collections::BTreeSet::new();
+                            let mut display = std::collections::BTreeSet::new();
+                            for locator in locators {
+                                if let Ok(sources) = db
+                                    .citation_sources(std::slice::from_ref(locator), &source_scope)
+                                    .await
+                                {
+                                    if let Some(Some(source)) = sources.first() {
+                                        canonical.insert(source.snapshot.source_id.clone());
+                                        if let Ok(metadata) = db
+                                            .citation_source_metadata(
+                                                std::slice::from_ref(locator),
+                                                &source_scope,
+                                            )
+                                            .await
+                                        {
+                                            for entry in metadata {
+                                                let title = entry.title.trim();
+                                                if !title.is_empty()
+                                                    && !locators.iter().any(|id| id == title)
+                                                    && title != source.snapshot.source_id
+                                                {
+                                                    display.insert(title.to_owned());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if canonical.len() == 1 && display.len() == 1 {
+                                titles = display.into_iter().collect();
+                                unavailable = false;
+                            }
+                        }
+                        selection_impacts.push(wenlan_types::responses::PageSelectionImpact {
+                            reason: reason.clone(),
+                            titles,
+                            unavailable,
+                        });
+                    }
+                    // Refuse to attach details from another generation or moved/recreated Space.
+                    if db.try_get_page_fence(&id).await? != impact_fence
+                        || db.pending_zotero_scope_impacts(&id, space).await? != pending
+                    {
+                        selection_impacts.clear();
+                    }
+                }
+            }
             let body = Some(wenlan_core::page_body::body_parts(&page.content));
             Ok(Json(PageReadResponse {
+                selection_impacts,
                 code_basis: db.list_page_code_basis(&id).await?,
                 basis,
                 linked_changed,
@@ -374,16 +444,17 @@ pub async fn handle_get_page_sources(
 
     let source_id_strings: Vec<String> =
         sources.iter().map(|s| s.memory_source_id.clone()).collect();
-    let memories = match &scope {
-        wenlan_core::read_scope::ReadScope::Global => {
-            db.get_memories_by_source_ids(&source_id_strings).await
-        }
-        _ => {
-            db.get_memories_by_source_ids_scoped(&source_id_strings, &scope)
-                .await
-        }
-    }
-    .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
+    let page = db.get_page(&id).await?;
+    let source_scope = page
+        .as_ref()
+        .and_then(|page| page.space.clone())
+        .filter(|space| !wenlan_core::read_scope::ReadScope::Uncategorized.matches(Some(space)))
+        .map(wenlan_core::read_scope::ReadScope::Space)
+        .unwrap_or(wenlan_core::read_scope::ReadScope::Uncategorized);
+    let memories = db
+        .citation_source_metadata(&source_id_strings, &source_scope)
+        .await
+        .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
 
     let result: Vec<wenlan_types::PageSourceWithMemory> = sources
         .iter()
@@ -715,11 +786,7 @@ pub async fn handle_create_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(wire): Json<wenlan_types::requests::CreatePageWithBasisRequest>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
-    let wenlan_types::requests::CreatePageWithBasisRequest {
-        create: req,
-        basis,
-        code_basis,
-    } = wire;
+    let req = &wire.create;
     // An omitted creation_kind is resolved by the core writer from the
     // distinct source count against the distillation floor. Classify
     // telemetry with the same resolver so MCP's compact write_page payload is
@@ -740,9 +807,7 @@ pub async fn handle_create_page(
         State(state),
         headers,
         crate::space_header::SpaceHeader(header_space),
-        Json(req),
-        basis,
-        code_basis,
+        Json(wire),
     )
     .await;
     if is_distilled {
@@ -761,10 +826,15 @@ async fn handle_create_page_inner(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
-    Json(mut req): Json<CreateConceptRequest>,
-    basis: Vec<wenlan_types::BasisInput>,
-    code_basis: Vec<wenlan_types::CodeBasisInput>,
+    Json(wire): Json<wenlan_types::requests::CreatePageWithBasisRequest>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
+    let wenlan_types::requests::CreatePageWithBasisRequest {
+        create: mut req,
+        basis,
+        code_basis,
+        citation_targets,
+        organize_run_id,
+    } = wire;
     let agent = extract_agent_name(&headers, None);
     let (db, page_root, page_min_cluster_size, page_match_threshold) = {
         let s = state.read().await;
@@ -816,19 +886,38 @@ async fn handle_create_page_inner(
     // `[n]` citations are checked against the named sources now, before
     // anything is created: a page whose cited sentences do not match their
     // sources is refused with the reason, and nothing lands.
-    let (citations_json, citations_summary) =
-        match check_write_citations(&db, &req.content, &req.source_memory_ids, &scope).await? {
-            Some((body, json, summary)) => {
-                req.content = body;
-                (Some(json), Some(summary))
-            }
-            None => (None, None),
-        };
+    let citation_scope = resolved
+        .space_name
+        .clone()
+        .map(wenlan_core::read_scope::ReadScope::Space)
+        .unwrap_or(wenlan_core::read_scope::ReadScope::Uncategorized);
+    let (checked, citation_snapshots) = check_write_citations(
+        &db,
+        &req.content,
+        &req.source_memory_ids,
+        &citation_scope,
+        &citation_targets,
+    )
+    .await?;
+    let (citations_json, citations_summary) = match checked {
+        Some((body, json, summary)) => {
+            req.content = body;
+            (Some(json), Some(summary))
+        }
+        None => (None, None),
+    };
+    let research_write = match organize_run_id.as_deref() {
+        Some(run) => Some(
+            db.prepare_research_write(run, &citation_scope, None, &req.source_memory_ids)
+                .await?,
+        ),
+        None => None,
+    };
     let diagram_content = req.content.clone();
     // The marks are recorded in the create transaction itself, so a mark
     // refused at write time (its note archived or moved since the check above)
     // creates nothing: no page row, no page file.
-    let result = wenlan_core::post_write::page_write(
+    let result = wenlan_core::post_write::page_write_with_citation_snapshot(
         &db,
         wenlan_core::post_write::PageWrite::Create {
             page_id: None,
@@ -842,7 +931,9 @@ async fn handle_create_page_inner(
             basis_space_guard: (scope != wenlan_core::read_scope::ReadScope::Global)
                 .then(|| scope.clone()),
             skip_protected_title_match: false,
+            research_write,
         },
+        &citation_snapshots,
     )
     .await?;
     let persisted_page_id = result.attached_to.as_deref().unwrap_or(&result.id);
@@ -1753,6 +1844,8 @@ pub async fn handle_update_page(
             edited_by: "manual_edit",
             knowledge_path: page_root.as_deref(),
             basis: wenlan_core::db::BasisWrite {
+                research_write: None,
+                citation_snapshots: Vec::new(),
                 minor: minor.unwrap_or(false),
                 actor: "human".to_string(),
                 marks: Vec::new(),
@@ -1904,15 +1997,35 @@ async fn check_write_citations(
     content: &str,
     source_ids: &[String],
     scope: &wenlan_core::read_scope::ReadScope,
-) -> Result<Option<(String, String, String)>, ServerError> {
+    targets: &[wenlan_types::pages::PdfCitationInput],
+) -> Result<
+    (
+        Option<(String, String, String)>,
+        Vec<wenlan_core::db::CitationSourceSnapshot>,
+    ),
+    ServerError,
+> {
     use wenlan_core::citations::WriteCitations;
     match wenlan_core::citations::check_write_citations(db, content, source_ids, scope).await? {
-        Ok(WriteCitations::Uncited) => Ok(None),
+        Ok(WriteCitations::Uncited { snapshots }) if targets.is_empty() => Ok((None, snapshots)),
+        Ok(WriteCitations::Uncited { .. }) => Err(ServerError::ValidationError(
+            "PDF targets require citation markers".into(),
+        )),
         Ok(WriteCitations::Checked {
             body,
-            citations_json,
+            mut citations_json,
             summary,
-        }) => Ok(Some((body, citations_json, summary))),
+            snapshots,
+        }) => {
+            crate::source_routes::zotero_sync::attach_pdf_targets(
+                &mut citations_json,
+                targets,
+                source_ids,
+                scope,
+            )
+            .await?;
+            Ok((Some((body, citations_json, summary)), snapshots))
+        }
         Err(counts) => Err(ServerError::ValidationError(format!(
             "citations_unsupported: {counts}"
         ))),
@@ -2000,7 +2113,23 @@ async fn handle_refresh_page_inner(
     };
     // A Space-locked caller writes only inside its Space. The app sends no
     // Space header, so its scope is global and it reaches every note.
-    let scope = crate::read_scope::effective_read_scope(&db, None, header_space).await?;
+    if req.organize_run_id.is_some()
+        && req
+            .organize_space
+            .as_deref()
+            .zip(header_space)
+            .is_some_and(|(body, header)| body != header)
+    {
+        return Err(ServerError::BadRequest(
+            "organizing Space conflicts with connection lock".into(),
+        ));
+    }
+    let explicit_organize_space = req
+        .organize_run_id
+        .as_ref()
+        .and(req.organize_space.as_deref());
+    let scope =
+        crate::read_scope::effective_read_scope(&db, explicit_organize_space, header_space).await?;
     // A note id in the source list is a mistake the agent can fix right now:
     // say which field takes notes.
     crate::page_basis_routes::refuse_note_ids_in_sources(&db, &scope, &req.source_memory_ids)
@@ -2038,7 +2167,6 @@ async fn handle_refresh_page_inner(
     // Moving a note to another Space leaves its version alone, so the write
     // below repeats this check in its own transaction. Without it, a note
     // moved out after this check would still take the write or the card.
-    let space_guard = (scope != wenlan_core::read_scope::ReadScope::Global).then(|| scope.clone());
     // `existing` just proved the page row exists, so the counter read a
     // moment earlier must also have found one; `None` here means the page
     // was deleted in the gap between the two reads — an internal race, not
@@ -2084,6 +2212,13 @@ async fn handle_refresh_page_inner(
     // directly. The page prose stays byte-unchanged until the human accepts a
     // card. The core gate re-runs the same rule inside its CAS loop, which
     // still stages a card if the page turns human-owned mid-write.
+    let research_write = match req.organize_run_id.as_deref() {
+        Some(run) => Some(
+            db.prepare_research_write(run, &scope, Some(&id), &req.source_memory_ids)
+                .await?,
+        ),
+        None => None,
+    };
     let requires_review = wenlan_core::post_write::machine_write_requires_review(
         wenlan_core::post_write::Writer::classify("agent_refresh"),
         &existing,
@@ -2100,8 +2235,21 @@ async fn handle_refresh_page_inner(
     // `[n]` citations are checked against the sources this write names, so a
     // refused check stages and writes nothing.
     let mut req = req;
-    let checked_citations =
-        check_write_citations(&db, &req.content, &req.source_memory_ids, &scope).await?;
+    let citation_scope = existing
+        .space
+        .as_deref()
+        .filter(|space| !wenlan_core::read_scope::ReadScope::Uncategorized.matches(Some(space)))
+        .map(|space| wenlan_core::read_scope::ReadScope::Space(space.to_string()))
+        .unwrap_or(wenlan_core::read_scope::ReadScope::Uncategorized);
+    let space_guard = Some(citation_scope.clone());
+    let (checked_citations, citation_snapshots) = check_write_citations(
+        &db,
+        &req.content,
+        &req.source_memory_ids,
+        &citation_scope,
+        &req.citation_targets,
+    )
+    .await?;
     let citations_summary = checked_citations.as_ref().map(|(_, _, s)| s.clone());
     let citations = checked_citations.map(|(body, json, summary)| {
         req.content = body;
@@ -2109,7 +2257,9 @@ async fn handle_refresh_page_inner(
     });
     // A locked page whose write only changes sentences it already has goes
     // to the core gate, which turns each change into a sentence proposal.
-    let lock_proposes = existing.review_required
+    let lock_proposes = citation_snapshots.is_empty()
+        && research_write.is_none()
+        && existing.review_required
         && wenlan_core::sentences::locked_write_only_changes_sentences(
             &db,
             &existing,
@@ -2124,7 +2274,7 @@ async fn handle_refresh_page_inner(
             .prepare_staged_basis_marks(&id, &basis_marks)
             .await
             .map_err(crate::page_basis_routes::basis_error)?;
-        let result = wenlan_core::post_write::stage_page_revision_card_proposed_by(
+        let result = wenlan_core::post_write::stage_page_revision_card_with_citations(
             &db,
             &existing,
             &req.content,
@@ -2135,6 +2285,9 @@ async fn handle_refresh_page_inner(
             None,
             &staged_marks,
             space_guard.as_ref(),
+            &citation_snapshots,
+            citations.as_ref().map(|(json, _)| json.as_str()),
+            research_write.as_ref(),
         )
         .await;
         let result = match result {
@@ -2144,6 +2297,7 @@ async fn handle_refresh_page_inner(
         return Ok((
             wenlan_core::post_write::WriteOutcome::Gated,
             wenlan_types::responses::PageWriteResponse {
+                write_outcome: Some(page_refresh_outcome(result.outcome)),
                 code_basis: db.list_page_code_basis(&id).await?,
                 basis: crate::page_basis_routes::written_basis(&db, &scope, &id).await?,
                 ok: true,
@@ -2167,10 +2321,12 @@ async fn handle_refresh_page_inner(
         None => None,
     };
     use wenlan_core::post_write::WriteOutcome;
-    let result = wenlan_core::post_write::page_write(
+    let result = wenlan_core::post_write::page_write_with_citation_snapshot(
         &db,
         wenlan_core::post_write::PageWrite::AgentUpdate {
             basis: wenlan_core::db::BasisWrite {
+                research_write: research_write.clone(),
+                citation_snapshots: Vec::new(),
                 minor: req.minor.unwrap_or(false),
                 actor: proposer.unwrap_or("unknown").to_string(),
                 marks: req
@@ -2197,6 +2353,7 @@ async fn handle_refresh_page_inner(
             knowledge_path: page_root.as_deref(),
             citations,
         },
+        &citation_snapshots,
     )
     .await;
     let result = match result {
@@ -2213,6 +2370,12 @@ async fn handle_refresh_page_inner(
             .map(|page| page.version)
             .unwrap_or(existing.version);
         return Err(page_moved_conflict(&id, current_version));
+    }
+    if result.outcome == WriteOutcome::Unchanged {
+        if let Some(fence) = &research_write {
+            db.bind_research_unchanged(fence, &id, &req.source_memory_ids, existing.version)
+                .await?;
+        }
     }
     // Metadata follows the canonical result, never a rejected/staged candidate.
     if matches!(
@@ -2271,6 +2434,12 @@ async fn handle_refresh_page_inner(
     } else if !result.sentence_proposals.is_empty() {
         "Some sentences are the person's: your changes to them wait as sentence proposals \
          for the person to accept. Do not rewrite them again."
+    } else if result.outcome == WriteOutcome::Unchanged {
+        if req.content != saved.content {
+            "The page was left unchanged because the person's text was preserved. Read the page before proposing another change; no revision card was created."
+        } else {
+            "The page already matches this content; no change was written."
+        }
     } else if link_targets.is_empty() {
         "Nothing else is needed for this page."
     } else {
@@ -2279,6 +2448,7 @@ async fn handle_refresh_page_inner(
     Ok((
         result.outcome,
         wenlan_types::responses::PageWriteResponse {
+            write_outcome: Some(page_refresh_outcome(result.outcome)),
             code_basis: db.list_page_code_basis(&id).await?,
             basis: crate::page_basis_routes::written_basis(&db, &scope, &id).await?,
             ok: true,
@@ -2300,6 +2470,20 @@ async fn handle_refresh_page_inner(
             sentence_proposals: result.sentence_proposals,
         },
     ))
+}
+
+fn page_refresh_outcome(
+    outcome: wenlan_core::post_write::WriteOutcome,
+) -> wenlan_types::responses::PageWriteOutcome {
+    use wenlan_core::post_write::WriteOutcome as Core;
+    use wenlan_types::responses::PageWriteOutcome as Wire;
+    match outcome {
+        Core::Wrote => Wire::Wrote,
+        Core::Unchanged => Wire::Unchanged,
+        Core::Refused => Wire::Refused,
+        Core::Contended => Wire::Contended,
+        Core::Gated => Wire::Gated,
+    }
 }
 
 /// A refresh staged as a revision card records no code bases: the prose the
@@ -2616,6 +2800,7 @@ mod create_page_endpoint_tests {
                     source_agent: Some("test".to_string()),
                     confidence: Some(0.9),
                     confirmed: Some(true),
+                    space: space.map(str::to_string),
                     ..Default::default()
                 })
                 .collect(),
@@ -3022,7 +3207,7 @@ mod create_page_endpoint_tests {
             "Rust Workspace Operations",
             Some("Rust workspace operations"),
             "Rust workspaces share Cargo lockfiles, inherited metadata, and all-crate checks",
-            Some("recap"),
+            Some("work"),
             &["mem-page-floor-a", "mem-page-floor-b", "mem-page-floor-c"],
         )
         .await;
@@ -3152,6 +3337,81 @@ mod create_page_endpoint_tests {
         let (state, tmp) = build_state_with_db(3).await;
         let db = { state.read().await.db.as_ref().cloned().unwrap() };
         (db, crate::router::build_router(state), tmp)
+    }
+
+    #[tokio::test]
+    async fn scoped_document_citations_read_late_body_and_reject_cross_space_without_header() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (db, app, _tmp) = state_db_app().await;
+        db.create_space("Research", None, false).await.unwrap();
+        db.create_space("Other", None, false).await.unwrap();
+        let claim = "Neural retrieval calibration improves citation precision through structured contextual evidence";
+        for (source, id) in [("file", "zotero::late-paper"), ("webpage", "saved-paper")] {
+            db.upsert_documents_without_embeddings(vec![wenlan_types::RawDocument {
+                source: source.into(),
+                source_id: id.into(),
+                title: format!("{source} paper"),
+                content: format!(
+                    "{}\n\n{}",
+                    "Unrelated methods background ".repeat(100),
+                    claim.repeat(12)
+                ),
+                space: Some("Research".into()),
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+            let body = format!("{claim} [1].");
+            let (status,result)=send_json(&app,"POST","/api/pages".into(),json!({
+                "title":format!("{source} late body"),"content":body,"space":"Research","source_memory_ids":[id]
+            })).await;
+            assert_eq!(status, StatusCode::OK, "{result}");
+            let page_id = result["id"].as_str().unwrap();
+            let page = db.get_page(page_id).await.unwrap().unwrap();
+            assert_eq!(page.citations[0].status, "verified");
+            assert_eq!(page.citations[0].locator, id);
+            assert_eq!(page.citations[0].source_kind, "memory");
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/pages/{page_id}/sources"))
+                        .header("X-Origin-Space", "Research")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 1_048_576)
+                .await
+                .unwrap();
+            let sources: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(sources[0]["memory"]["source_id"], id);
+            for content in [&body, claim] {
+                let (status,result)=send_json(&app,"POST","/api/pages".into(),json!({
+                    "title":format!("{source} forbidden"),"content":content,"space":"Other","source_memory_ids":[id]
+                })).await;
+                assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{result}");
+            }
+            db.set_page_review_required(page_id, true).await.unwrap();
+            let (status,result)=send_json(&app,"PUT",format!("/api/pages/{page_id}"),json!({
+                "content":format!("{claim} with structured evidence [1]."),"source_memory_ids":[id],"expected_version":page.version
+            })).await;
+            assert_eq!(status, StatusCode::OK, "{result}");
+            assert!(result["revision_card_id"].is_string(), "{result}");
+            assert!(result["sentence_proposals"]
+                .as_array()
+                .is_none_or(|items| items.is_empty()));
+            assert_eq!(
+                db.get_page(page_id).await.unwrap().unwrap().content,
+                page.content
+            );
+        }
     }
 
     #[tokio::test]
@@ -3363,6 +3623,15 @@ mod create_page_endpoint_tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_ne!(body["gated"], json!(true), "{body}");
+        assert_eq!(body["write_outcome"], "unchanged");
+        assert!(body["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("person's text was preserved"));
+        assert!(body["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("Read the page"));
         // The page's one sentence is the person's (their fs_edit wrote it):
         // a version-checked agent write lands only on the AI's sentences, and
         // a rewording of the person's sentence, with no change in its facts,
@@ -3380,6 +3649,23 @@ mod create_page_endpoint_tests {
             .await
             .unwrap();
         assert!(view.proposals.is_empty());
+
+        let (status, identical) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{}", page.id),
+            json!({
+                "content": page.content, "source_memory_ids": REFRESH_SOURCES,
+                "expected_version": page.version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(identical["write_outcome"], "unchanged");
+        assert_eq!(
+            identical["next_step"],
+            "The page already matches this content; no change was written."
+        );
 
         // Without expected_version the same page is refused: nothing is
         // written and no card is staged, and the agent is told to re-read.
@@ -3450,9 +3736,9 @@ mod create_page_endpoint_tests {
                 .review_required
         );
 
-        // A rewrite of the page's one sentence: under the lock every sentence
-        // is protected, so it goes to the sentence gate, not a card, and a
-        // rewording with no change in its facts is dropped.
+        // A source-snapshot-bearing rewrite under the review lock waits as a
+        // whole-page card; it cannot mutate the protected page or leak a
+        // separate sentence proposal.
         let (status, body) = send_json(
             &app,
             "PUT",
@@ -3465,18 +3751,29 @@ mod create_page_endpoint_tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert_ne!(body["gated"], json!(true), "{body}");
+        assert_eq!(body["gated"], json!(true), "{body}");
         assert!(
             body["sentence_proposals"]
                 .as_array()
                 .is_none_or(Vec::is_empty),
             "{body}"
         );
-        assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+        let pending = db.list_pending_revisions(10).await.unwrap();
+        assert_eq!(pending.len(), 1, "{pending:?}");
+        assert_eq!(pending[0].target_source_id, page_id);
+        assert_eq!(body["revision_card_id"], pending[0].revision_source_id);
         assert_eq!(
-            db.get_page(&page_id).await.unwrap().unwrap().content,
-            REFRESH_BODY
+            pending[0].revision_content,
+            format!("{REFRESH_BODY}, agent rewrite under lock")
         );
+        let protected = db.get_page(&page_id).await.unwrap().unwrap();
+        assert_eq!(protected.content, REFRESH_BODY);
+        assert_eq!(protected.version, version);
+        assert!(wenlan_core::sentences::page_sentences(&db, &page_id)
+            .await
+            .unwrap()
+            .proposals
+            .is_empty());
 
         // A write that adds a sentence still waits as a whole-page card.
         let (status, body) = send_json(
@@ -3499,6 +3796,10 @@ mod create_page_endpoint_tests {
         assert_eq!(
             db.get_page(&page_id).await.unwrap().unwrap().content,
             REFRESH_BODY
+        );
+        assert_eq!(
+            db.get_page(&page_id).await.unwrap().unwrap().version,
+            version
         );
 
         let (status, body) = send_json(

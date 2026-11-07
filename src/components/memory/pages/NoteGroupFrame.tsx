@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useMemo, useState, type FocusEvent, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useContext, useMemo, useState, type FocusEvent, type PointerEvent, type ReactNode } from "react";
 import {
   WorkspaceDocumentToolsHostContext,
   WorkspaceNoteGroupContext,
   WorkspacePaneHostContext,
+  SharedWikiInspectorContext,
 } from "../navigation/WorkspacePaneHost";
 import "./NoteGroupFrame.css";
 
@@ -22,6 +23,7 @@ export function NoteGroupFrame({ id, label, tabs, children, onFocus, contentId, 
   const [element, setElement] = useState<HTMLDivElement | null>(null);
   const [paneHost, setPaneHost] = useState<HTMLDivElement | null>(null);
   const [toolsHost, setToolsHost] = useState<HTMLDivElement | null>(null);
+  const sharedInspector = useContext(SharedWikiInspectorContext);
   const assignElement = useCallback((node: HTMLDivElement | null) => setElement(node), []);
   const notifyFocus = (_event: FocusEvent<HTMLDivElement> | PointerEvent<HTMLDivElement>) => onFocus?.();
   const group = useMemo(() => ({ id, element }), [id, element]);
@@ -29,14 +31,14 @@ export function NoteGroupFrame({ id, label, tabs, children, onFocus, contentId, 
   return (
     <WorkspaceNoteGroupContext.Provider value={group}>
       <WorkspacePaneHostContext.Provider value={paneHost}>
-        <WorkspaceDocumentToolsHostContext.Provider value={toolsHost}>
+        <WorkspaceDocumentToolsHostContext.Provider value={sharedInspector?.activeGroupId === id && sharedInspector.toolsElement ? sharedInspector.toolsElement : toolsHost}>
           <div className="note-group-frame" data-note-group-id={id} ref={assignElement}
             onFocusCapture={notifyFocus} onPointerDownCapture={notifyFocus}>
             <section aria-label={label} className="note-group-document">
               <header className="note-group-header" data-tauri-drag-region>
                 <div className="note-group-tabs" data-tauri-drag-region>{tabs}</div>
                 {onGlobalToolsHost && <div className="note-group-global-tools" ref={onGlobalToolsHost} />}
-                <div className="note-group-document-tools" ref={setToolsHost} />
+                <div aria-hidden={sharedInspector ? true : undefined} className={`note-group-document-tools${sharedInspector ? " note-group-document-tools--shared" : ""}`} ref={setToolsHost} />
               </header>
               <div className="wiki-workspace-content note-group-content" id={contentId ?? `note-group-${id}-content`}>
                 {children}

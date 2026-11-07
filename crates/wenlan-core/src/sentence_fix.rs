@@ -181,7 +181,7 @@ pub async fn ask_ai_to_fix(
         .filter(|c| occurrences.contains(&c.occurrence) && !c.locator.is_empty())
         .cloned()
         .collect();
-    let states = source_states(db, &cited).await?;
+    let states = source_states(db, &cited, &page).await?.0;
     let mut seen = HashSet::new();
     let sources: Vec<&str> = cited
         .iter()

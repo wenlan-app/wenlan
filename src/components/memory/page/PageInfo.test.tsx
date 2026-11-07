@@ -77,6 +77,14 @@ function renderInfo(over: Partial<React.ComponentProps<typeof PageInfo>> = {}) {
 }
 
 describe("PageInfo", () => {
+  it("shows scoped selection impacts and an unavailable fallback", () => {
+    renderInfo({ embedded: true, selectionImpacts: [{ reason: "selection_removed", titles: ["RAGChecker"], unavailable: true }, { reason: "disconnected", titles: [], unavailable: true }] });
+    expect(screen.getByRole("heading", { name: "Zotero change details" })).toBeInTheDocument();
+    expect(screen.getByText("RAGChecker")).toBeInTheDocument();
+    expect(screen.getByText("No longer in the synchronized Zotero selection.")).toBeInTheDocument();
+    expect(screen.getByText("The Zotero connection was disconnected.")).toBeInTheDocument();
+    expect(screen.getAllByText("Some affected sources are unavailable.")).toHaveLength(2);
+  });
   it("always renders, with zero counts in the summary line", () => {
     renderInfo();
     expect(
@@ -175,6 +183,17 @@ describe("PageInfo", () => {
     expect(onMemoryClick).toHaveBeenCalledWith("mem-a");
   });
 
+  it("counts unchecked citations separately from unsupported ones", async () => {
+    const { user } = renderInfo({
+      sourceCount: 1,
+      sources: [source("mem-a")],
+      citations: [cite(1, 1, "mem-a", { status: "unevaluated" })],
+      citationState: "cited",
+    });
+    await user.click(screen.getByText(/Page info/i));
+    expect(screen.getByText("Citations: 1 (0 unverified, 1 not checked yet)")).toBeInTheDocument();
+  });
+
   it("shows backlinks by label without raw page ids", async () => {
     const { user, onPageClick } = renderInfo({
       inbound: [{ source_page_id: "page-uuid-42", label: "Inbound Mention" }],
@@ -246,7 +265,7 @@ describe("PageInfo", () => {
       citationState: "cited",
     });
     await user.click(screen.getByText(/Page info/i));
-    expect(screen.getByText("Citations: 2 (1 unverified)")).toBeInTheDocument();
+    expect(screen.getByText("Citations: 2 (1 unverified, 0 not checked yet)")).toBeInTheDocument();
   });
 
   it("explains stripped states", async () => {

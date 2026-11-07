@@ -481,6 +481,28 @@ describe("DistillReviewPanel review queue", () => {
     expect(within(dialog).getByText("1 of 2")).toBeInTheDocument();
   });
 
+  it.each([false, true])("refreshes after page approval and skips its stale card (refresh fails: %s)", async (refreshFails) => {
+    const samePage = { ...reviewPayload.stale_pages[0], page_id: "page_stale", title: "Approved page" };
+    const otherPage = { ...samePage, page_id: "page_other", title: "Other stale page" };
+    vi.mocked(distillReview).mockResolvedValueOnce({ ...reviewPayload, stale_pages: [samePage, otherPage], stale_truncated: false });
+    if (refreshFails) vi.mocked(distillReview).mockRejectedValue(new Error("refresh offline"));
+    else vi.mocked(distillReview).mockResolvedValue({ ...reviewPayload, stale_pages: [otherPage], stale_truncated: false });
+    vi.mocked(listPendingRevisions).mockResolvedValueOnce([revision({ target_source_id: "page_stale", target_kind: "page", revision_content: "Updated page content" })]).mockResolvedValue([]);
+    vi.mocked(getPage).mockImplementation(async (id: string) => ({ id, title: id === "page_stale" ? "Approved page" : "Other stale page", content: "Previous page content", summary: null, entity_id: null, domain: null, source_memory_ids: [], version: 1, status: "active", created_at: "2026-07-09T00:00:00Z", last_compiled: "2026-07-09T00:00:00Z", last_modified: "2026-07-09T00:00:00Z" }));
+    const { user } = renderPanel();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /Review Approved page/ })).toHaveLength(2));
+    await user.click(screen.getAllByRole("button", { name: /Review Approved page/ })[0]);
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(distillReview).toHaveBeenCalledTimes(2));
+    expect(await within(dialog).findByText("Other stale page")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /close/i }));
+    if (refreshFails) expect(screen.getByRole("button", { name: /Review Approved page/ })).toBeInTheDocument();
+    else expect(screen.queryByRole("button", { name: /Review Approved page/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Review Other stale page/ })).toBeInTheDocument();
+    await waitFor(() => expect(listRecentChanges).toHaveBeenCalledTimes(2));
+  });
+
   it("approves the last revision and shows the caught-up pane when nothing else is queued", async () => {
     vi.mocked(distillReview).mockResolvedValue({
       pages_created: 0,
@@ -904,6 +926,26 @@ describe("DistillReviewPanel review filter", () => {
     stale_truncated: false,
     orphan_topics: [],
   };
+
+  it("groups source classifications separately from merges", async () => {
+    vi.mocked(distillReview).mockResolvedValue(emptyDistill);
+    vi.mocked(listRefinements).mockResolvedValue({ proposals: [
+      { id: "classification", action: "source_classification", source_ids: ["paper"], payload: { action: "source_classification", run_id: "run", space_id: "space", rules_digest: "rules", changes: [{ source: "file", source_id: "paper", title: "Paper", source_content_digest: "digest", expected_decision_revision: 0, before_tags: [], add_tags: ["method"], remove_tags: [], reason: "Methods" }] }, confidence: 1, created_at: "2026-11-06T00:00:00Z" },
+      { id: "merge", action: "entity_merge", source_ids: ["ent_2", "ent_1"], payload: { action: "entity_merge", existing_id: "ent_1", new_id: "ent_2", similarity: 0.9 }, confidence: 0.9, created_at: "2026-11-06T00:00:00Z" },
+    ] } as unknown as Awaited<ReturnType<typeof listRefinements>>);
+    const { user } = renderPanel();
+    const filters = await screen.findByRole("group", { name: "Filter reviews" });
+    const classifications = await within(filters).findByRole("button", { name: /^Classification suggestions/ });
+    expect(classifications).toHaveTextContent("1");
+    const merges = within(filters).getByRole("button", { name: /^Merges/ });
+    expect(merges).toHaveTextContent("1");
+    await user.click(classifications);
+    expect(screen.getByRole("heading", { name: "Classification suggestions" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Merges & suggestions" })).not.toBeInTheDocument();
+    await user.click(merges);
+    expect(screen.getByRole("heading", { name: "Merges & suggestions" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Classification suggestions" })).not.toBeInTheDocument();
+  });
 
   it("shows only All and Revisions chips when the queue is empty", async () => {
     vi.mocked(distillReview).mockResolvedValue(emptyDistill);

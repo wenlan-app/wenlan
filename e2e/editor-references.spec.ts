@@ -7,7 +7,7 @@ import { showWikiFolders } from './helpers/wikiWorkspace';
 import { openPrimaryDestination, openSourceLibrary } from './helpers/primaryNavigation';
 
 const body = '# Three references\n\nRead [城市散步](#concept:linked-page), [討論記憶](#memory:linked-memory), and the imported source [1].\n';
-async function openReferences(page: Page) {
+async function openReferences(page: Page, withAuthorship = false) {
   const fixture = createReviewDecisionFixture('wiki-folders');
   const memory = { ...fixture.memories[0], source_id: 'linked-memory', title: '討論記憶', content: 'Keep the original evidence and its meaning.', summary: null };
   const source = { ...memory, source_id: 'fixture-folder::/tmp/已匯入的設計紀錄.md', title: '已匯入的設計紀錄', content: '# Design record\n\nA local imported source excerpt.', summary: null };
@@ -15,6 +15,21 @@ async function openReferences(page: Page) {
     storage_path: 'Work/Three references.md', folder_path: 'Work', source_memory_ids: [source.source_id], citations: [{ occurrence: 1, marker: 1, source_kind: 'external_file' as const, locator: source.source_id, status: 'unverified' as const, score: 0.2, scope: 'sentence' as const }] };
   const target = { ...fixture.pages[0], id: 'linked-page', title: '城市散步', content: '# 城市散步\n\nThe linked page is readable.', summary: null };
   const controller = await installTauriMock(page, { locale: 'en', rawActions: [], fixture: { ...fixture, pages: [sourcePage, target], memories: [memory, source] } });
+  if (withAuthorship) {
+    await page.addInitScript(() => {
+      const invoke = window.__TAURI_INTERNALS__!.invoke;
+      window.__TAURI_INTERNALS__!.invoke = async (command, args) => {
+        if (command === 'get_page_sentences') return {
+          page_id: 'three-references', version: 1, ai_edits: 'propose', proposals: [],
+          sentences: [
+            { idx: 0, text: 'Three references', hash: 'human-title', author: 'person', protected: true, weak: [] },
+            { idx: 1, text: 'Read [城市散步](#concept:linked-page), [討論記憶](#memory:linked-memory), and the imported source [1].', hash: 'ai-body', author: 'ai', protected: false, weak: [] },
+          ],
+        };
+        return invoke(command, args);
+      };
+    });
+  }
   await page.goto('/');
   await openPrimaryDestination(page, 'Wiki');
   const directory = await showWikiFolders(page);
@@ -148,3 +163,23 @@ test.describe('touch reference opening', () => {
   });
 
 });
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`UX-WHO-1: readable prose without authorship underlines retains citation cues (${theme})`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ colorScheme: theme });
+    const { controller, editor } = await openReferences(page, true);
+    for (const selector of ['.cm-said-you', '.cm-said-ai']) {
+      const sentence = editor.locator(selector).first();
+      await expect(sentence).toBeVisible();
+      await expect(sentence).toHaveCSS('text-decoration-line', 'none');
+    }
+    const citation = editor.locator('a.reference-link--source');
+    await expect(citation).toBeVisible();
+    await expect(citation).toHaveClass(/reference-link--unverified/);
+    await expect(citation).toHaveCSS('text-decoration-line', 'underline');
+    await page.screenshot({ path: testInfo.outputPath(`quiet-authorship-${theme}.png`) });
+    await citation.hover();
+    await expect(page.locator('[data-reference-preview]')).toContainText(/unverified/i);
+    expect(controller.calls().filter(call => call.command === 'update_page')).toEqual([]);
+  });
+}

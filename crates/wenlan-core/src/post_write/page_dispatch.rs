@@ -39,6 +39,7 @@ pub enum PageWrite<'a> {
         /// Automatic lanes must not attach new sources to a page a person
         /// edited or locked for review.
         skip_protected_title_match: bool,
+        research_write: Option<crate::db::research_write::ResearchWriteFence>,
     },
     Update {
         page_id: &'a str,
@@ -128,6 +129,14 @@ pub(super) struct PageGrowthCommit<'a> {
 }
 
 pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResult, WenlanError> {
+    page_write_with_citation_snapshot(db, write, &[]).await
+}
+
+pub async fn page_write_with_citation_snapshot(
+    db: &MemoryDB,
+    write: PageWrite<'_>,
+    snapshots: &[crate::db::CitationSourceSnapshot],
+) -> Result<WriteResult, WenlanError> {
     match write {
         PageWrite::Attach {
             page_id,
@@ -146,6 +155,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
             basis_marks,
             basis_space_guard,
             skip_protected_title_match,
+            research_write,
         } => {
             create_page_impl(
                 db,
@@ -157,9 +167,11 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                     page_min_cluster_size,
                     page_match_threshold,
                     citations_json: citations_json.as_deref(),
+                    citation_snapshots: snapshots,
                     basis_marks: &basis_marks,
                     basis_space_guard: basis_space_guard.as_ref(),
                     skip_protected_title_match,
+                    research_write,
                 },
             )
             .await
@@ -197,9 +209,10 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
             agent,
             expected_source_revision,
             knowledge_path,
-            basis,
+            mut basis,
             citations,
         } => {
+            basis.citation_snapshots = snapshots.to_vec();
             update_page_impl(
                 db,
                 page_id,
@@ -379,6 +392,7 @@ pub async fn create_page_with_tuning(
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await

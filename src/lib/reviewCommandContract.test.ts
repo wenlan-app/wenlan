@@ -42,6 +42,12 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "list_themes",
   "open_themes_folder",
   "theme_image",
+  // Zotero needs a real local library and the scoped daemon attachment cache.
+  // Fixture-only Review must not pretend a real connection or import succeeded.
+  "list_zotero_collections",
+  "add_zotero_source",
+  "get_zotero_document",
+  "read_zotero_pdf",
   "accept_pending_revision",
   "accept_note_proposal",
   "acknowledge_guarded_quit_request",
@@ -166,6 +172,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "set_avatar",
   "set_document_space",
   "set_document_tags",
+  "patch_document_tag",
   "set_external_llm",
   "set_knowledge_path",
   "set_note_ai_changes",
