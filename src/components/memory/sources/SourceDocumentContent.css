@@ -92,7 +92,7 @@
   overflow-x: auto;
   overscroll-behavior-x: contain;
   padding: 0.75em;
-  border-radius: 4px;
+  border-radius: var(--mem-r-4);
   background: var(--mem-hover);
   font-family: var(--mem-font-mono);
   font-size: 0.86em;
@@ -106,7 +106,7 @@
 
 .source-document-body :not(pre) > code {
   padding: 0.12em 0.35em;
-  border-radius: 3px;
+  border-radius: var(--mem-r-3);
   background: var(--mem-hover);
   font-size: var(--content-code-size);
 }

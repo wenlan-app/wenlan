@@ -26,7 +26,7 @@
   margin: 8px 20px 0;
   padding: 0 12px;
   border: 1px solid var(--mem-border);
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: var(--mem-surface);
   color: var(--mem-text-secondary);
   font: 13px var(--mem-font-body);
@@ -121,7 +121,7 @@
   appearance: none;
   padding: 0 30px 0 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--mem-r-7);
   background: transparent;
   color: var(--mem-text-secondary);
   font: 14px var(--mem-font-body);
@@ -153,7 +153,7 @@
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: transparent;
   color: var(--mem-text-secondary);
   cursor: pointer;
@@ -373,9 +373,9 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
   .memory-shell[data-note-workspace]:has(.wiki-workspace[data-directory-hidden="true"]) .note-tabs { padding-left:max(20px, calc(var(--workspace-header-tools-end, 0px) - var(--workspace-sidebar-width) + 16px)); }
 }
 
-.note-owner-notice { position:absolute; z-index:1200; bottom:24px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:12px; max-width:calc(100% - 32px); padding:10px 12px; border:1px solid var(--mem-border); border-radius:8px; background:var(--mem-surface); color:var(--mem-text); box-shadow:var(--mem-shadow-overlay); font:13px/1.5 var(--mem-font-body); }
+.note-owner-notice { position:absolute; z-index:1200; bottom:24px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:12px; max-width:calc(100% - 32px); padding:10px 12px; border:1px solid var(--mem-border); border-radius:var(--mem-r-8); background:var(--mem-surface); color:var(--mem-text); box-shadow:var(--mem-shadow-overlay); font:13px/1.5 var(--mem-font-body); }
 .note-owner-notice > span { min-width:0; }
-.note-owner-notice > button { flex:0 0 auto; min-height:32px; border:0; border-radius:5px; background:transparent; color:var(--mem-accent-page); cursor:pointer; font:inherit; }
+.note-owner-notice > button { flex:0 0 auto; min-height:32px; border:0; border-radius:var(--mem-r-5); background:transparent; color:var(--mem-accent-page); cursor:pointer; font:inherit; }
 .note-owner-notice > button:hover { background:var(--mem-hover); }
 .note-owner-notice > button:focus-visible { outline:2px solid var(--mem-accent-page); }
 .note-owner-notice-dismiss { display:flex; align-items:center; justify-content:center; width:32px; }

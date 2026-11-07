@@ -235,7 +235,7 @@ export const markdownComponents = {
             fontSize: "var(--content-code-size, 12px)",
             backgroundColor: "var(--mem-hover)",
             padding: "0.15em 0.4em",
-            borderRadius: "3px",
+            borderRadius: "var(--mem-r-3)",
           }}
         >
           {children}

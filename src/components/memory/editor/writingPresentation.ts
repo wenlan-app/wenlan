@@ -408,7 +408,7 @@ const writingTheme = EditorView.theme({
   },
   ".cm-writing-file-path": {
     padding: "0.05em 0.4em",
-    borderRadius: "4px",
+    borderRadius: "var(--mem-r-4)",
     backgroundColor: "var(--mem-hover)",
     color: "var(--mem-text-secondary)",
     fontSize: "0.9em",
@@ -424,7 +424,7 @@ const writingTheme = EditorView.theme({
   },
   ".cm-writing-inline-code": {
     padding: "0.08em 0.3em",
-    borderRadius: "3px",
+    borderRadius: "var(--mem-r-3)",
     backgroundColor: "var(--mem-hover)",
   },
   ".cm-writing-fenced-code": {

@@ -8,7 +8,7 @@
   margin: 0 0 12px;
   padding: 9px 12px;
   border: 1px solid var(--mem-border);
-  border-radius: 9px;
+  border-radius: var(--mem-r-9);
   background: var(--mem-surface);
   color: var(--mem-text);
   font-size: 13px;
@@ -56,7 +56,7 @@
 
 .note-review-notice__button {
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   padding: 5px 8px;
   background: transparent;
   color: var(--mem-text);

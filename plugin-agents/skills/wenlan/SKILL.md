@@ -1,6 +1,6 @@
 ---
 name: wenlan
-description: "The one front door to Wenlan. Takes plain words after `/wenlan` and runs the right Wenlan workflow; bare `/wenlan` shows status or starts setup. Use for: setting up or fixing Wenlan (\"set up wenlan\", \"is wenlan working\", \"裝好了嗎\"), turning what was imported or saved into notes and bringing out of date notes up to date (\"steep\", \"沉澱\", \"整理成筆記\"), getting to know a code repository (\"build a wiki for this repo\", \"認識這個倉庫\"), opening or listing notes (\"open my note on X\", \"打開筆記\"), organizing existing pages and folders (\"organize my notes\", \"整理我的資料\"), checking memory quality or cleaning up (\"lint\", \"檢查重複\", \"清一清\"), reviewing pending items (\"review what's waiting\", \"看待確認的\"), and deleting one memory (\"forget <id>\", \"刪掉這筆\"). Say what to prepare, update, or rearrange; these all use steep. Invoked as `/wenlan [what you want]`."
+description: "The one front door to Wenlan. Takes plain words after `/wenlan` and runs the right Wenlan workflow; bare `/wenlan` shows status or starts setup. Use for: setting up or fixing Wenlan (\"set up wenlan\", \"is wenlan working\", \"裝好了嗎\"), turning what was imported or saved into notes and bringing out of date notes up to date (\"steep\", \"沉澱\", \"整理成筆記\"), getting to know a code repository (\"build a wiki for this repo\", \"認識這個倉庫\"), opening or listing notes (\"open my note on X\", \"打開筆記\"), organizing existing pages and folders (\"organize my notes\", \"整理我的資料\"), checking memory quality or cleaning up (\"lint\", \"檢查重複\", \"清一清\"), reviewing pending items (\"review what's waiting\", \"看待確認的\"), deleting one memory (\"forget <id>\", \"刪掉這筆\"), and changing how the app looks (\"make Wenlan purple\", \"換個主題\"). Say what to prepare, update, or rearrange; these all use steep. Invoked as `/wenlan [what you want]`."
 ---
 
 # /wenlan
@@ -29,6 +29,7 @@ Match the request to one row. Old command words count as their row.
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `/wenlan lint`, `/wenlan lint repair`, `/wenlan 檢查重複` |
 | Walk pending captures, revisions or refinements | curate | `/wenlan curate revisions`, `/wenlan 看待確認的` |
 | Delete one memory by id | forget | `/wenlan forget mem_123` |
+| Change how the Wenlan app looks: colors, fonts, images, or back to normal | theme | `/wenlan theme 紫色夜晚風格`, `/wenlan theme reset` |
 | Save one memory, or save this conversation as one note | capture | `/wenlan 記住我們改用 SQLite` |
 | Look something up | recall | `/wenlan 我們上次怎麼決定資料庫` |
 | Catch up on the project | brief | `/wenlan 上次做到哪`, `/wenlan where did I leave off?` |
@@ -52,7 +53,7 @@ Rules:
 
 ## 3. Run the chosen workflow
 
-For setup, steep, pages, lint, curate, forget and wiki, read
+For setup, steep, pages, lint, curate, forget, wiki and theme, read
 `references/<workflow>.md` beside this SKILL.md and follow it to the end,
 treating the arguments below as what the user typed after that workflow word.
 For brief, capture, recall and handoff, use the `wenlan-<workflow>` skill.

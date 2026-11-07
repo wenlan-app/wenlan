@@ -130,7 +130,7 @@ function CanvasNode({
         gap: 6,
         boxSizing: "border-box",
         padding: "0 10px",
-        borderRadius: 10,
+        borderRadius: "var(--mem-r-10)",
         border: `${isRoot ? 1.5 : 1}px ${suggested ? "dashed" : "solid"} ${
           branch ? slotColor : compositeOver(slotColor, palette.surface, 0.5)
         }`,
@@ -373,7 +373,7 @@ function controlStyle(color: string): React.CSSProperties {
     flexShrink: 0,
     width: 18,
     height: 18,
-    borderRadius: 5,
+    borderRadius: "var(--mem-r-5)",
     border: "none",
     background: "none",
     cursor: "pointer",
