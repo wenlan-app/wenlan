@@ -53,20 +53,7 @@ async fn scoped(
     space: &str,
     header: Option<&str>,
 ) -> Result<(Arc<MemoryDB>, String), ServerError> {
-    if space.trim().is_empty() || header.is_some_and(|value| value != space) {
-        return Err(ServerError::BadRequest(
-            "explicit source Space and header must agree".into(),
-        ));
-    }
-    let db = {
-        let state = state.read().await;
-        state.db.clone().ok_or(ServerError::DbNotInitialized)?
-    };
-    let registered = db
-        .get_space(space)
-        .await?
-        .ok_or_else(|| ServerError::NotFound("registered source Space not found".into()))?;
-    Ok((db, registered.id))
+    crate::research_routes::scoped_space(state, space, header, "source").await
 }
 
 async fn read(
