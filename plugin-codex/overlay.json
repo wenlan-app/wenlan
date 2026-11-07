@@ -289,7 +289,7 @@
         {
           "from": [
             "```bash",
-            "npx -y wenlan@0.20.7 setup",
+            "npx -y wenlan@0.21.0 setup",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "```",
             "",
@@ -321,7 +321,7 @@
             "prints the status:",
             "",
             "```bash",
-            "npx -y wenlan@0.20.7 setup",
+            "npx -y wenlan@0.21.0 setup",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "```",
             "",
@@ -335,7 +335,7 @@
             "If absent, install and configure local memory:",
             "",
             "```bash",
-            "curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.20.7/install.sh | bash",
+            "curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.21.0/install.sh | bash",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "wenlan setup --basic",
             "wenlan background on",

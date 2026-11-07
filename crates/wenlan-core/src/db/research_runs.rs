@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Exact-scope research runs and classification decisions. Every mutation owns
 //! the connection lock through validation, CAS, write and commit.
-use super::{commit_or_rollback, MemoryDB};
+use super::{metadata_json, MemoryDB};
 use crate::error::WenlanError;
 use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
@@ -44,40 +44,14 @@ async fn load<T: DeserializeOwned>(
     conn: &libsql::Connection,
     key: &str,
 ) -> Result<Option<T>, WenlanError> {
-    let mut rows = conn
-        .query("SELECT value FROM app_metadata WHERE key=?1", [key])
-        .await
-        .map_err(sql)?;
-    rows.next()
-        .await
-        .map_err(sql)?
-        .map(|r| -> Result<T, WenlanError> {
-            Ok(serde_json::from_str(&r.get::<String>(0).map_err(sql)?)?)
-        })
-        .transpose()
+    metadata_json::load(conn, key, sql).await
 }
 pub(super) async fn save(
     conn: &libsql::Connection,
     key: &str,
     value: &impl Serialize,
 ) -> Result<(), WenlanError> {
-    conn.execute("INSERT INTO app_metadata(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", libsql::params![key, serde_json::to_string(value)?]).await.map_err(sql)?;
-    Ok(())
-}
-async fn finish<T>(
-    conn: &libsql::Connection,
-    result: Result<T, WenlanError>,
-) -> Result<T, WenlanError> {
-    match result {
-        Ok(value) => {
-            commit_or_rollback(conn).await.map_err(sql)?;
-            Ok(value)
-        }
-        Err(error) => {
-            let _ = conn.execute("ROLLBACK", ()).await;
-            Err(error)
-        }
-    }
+    metadata_json::save(conn, key, value, sql).await
 }
 pub(super) async fn space_name(
     conn: &libsql::Connection,
@@ -302,7 +276,7 @@ impl MemoryDB {
             })
         }
         .await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
     pub async fn research_rules(&self, space_id: &str) -> Result<OrganizeRules, WenlanError> {
         let conn = self.conn.lock().await;
@@ -345,7 +319,7 @@ impl MemoryDB {
             Ok(value)
         }
         .await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
     pub async fn create_research_run(
         &self,
@@ -441,7 +415,7 @@ impl MemoryDB {
             Ok(value)
         }
         .await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
     pub async fn research_run(&self, space_id: &str, id: &str) -> Result<OrganizeRun, WenlanError> {
         let conn = self.conn.lock().await;
@@ -604,7 +578,7 @@ impl MemoryDB {
             })
         }
         .await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
     pub async fn update_research_run(
         &self,
@@ -714,7 +688,7 @@ impl MemoryDB {
             Ok(value)
         }
         .await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
     pub async fn research_classification_decisions(
         &self,
@@ -847,7 +821,7 @@ impl MemoryDB {
             Ok(ClassificationProposalResult { id, created })
         }
         .await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
     /// Narrow dismissal path: scope authorization and terminal transition share one transaction.
     pub async fn reject_research_classification(
@@ -866,7 +840,7 @@ impl MemoryDB {
             conn.execute("UPDATE refinement_queue SET status='dismissed',resolved_at=datetime('now') WHERE id=?1", [id]).await.map_err(sql)?;
             Ok(())
         }.await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
     pub async fn accept_research_classifications(
         &self,
@@ -942,7 +916,7 @@ impl MemoryDB {
                 .await.map_err(sql)?;
             Ok(())
         }.await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
 }
 async fn classification_scope_on(

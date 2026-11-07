@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+use crate::db::commit_or_rollback;
 use crate::db::tests::test_db;
 use wenlan_types::pages::PageCitation;
 fn scope() -> ReadScope {

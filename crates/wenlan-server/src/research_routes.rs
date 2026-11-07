@@ -39,35 +39,47 @@ pub struct ResearchQuery {
     pub source: Option<String>,
     pub source_id: Option<String>,
 }
-fn validate_scope(space: &str, header: Option<&str>) -> Result<(), ServerError> {
+/// `noun` names the caller in the error text ("research", "source").
+fn validate_scope(space: &str, header: Option<&str>, noun: &str) -> Result<(), ServerError> {
     if space.trim().is_empty() || header.is_some_and(|s| s != space) {
-        return Err(ServerError::BadRequest(
-            "explicit research Space and header must agree".into(),
-        ));
+        return Err(ServerError::BadRequest(format!(
+            "explicit {noun} Space and header must agree"
+        )));
     }
     Ok(())
 }
 async fn scoped_database(
     db: Arc<MemoryDB>,
     space: &str,
+    noun: &str,
 ) -> Result<(Arc<MemoryDB>, String), ServerError> {
     let registered = db
         .get_space(space)
         .await?
-        .ok_or_else(|| ServerError::NotFound("registered research Space not found".into()))?;
+        .ok_or_else(|| ServerError::NotFound(format!("registered {noun} Space not found")))?;
     Ok((db, registered.id))
+}
+/// The database and registered Space id for an explicit Space that must match
+/// the request's Space header.
+pub(crate) async fn scoped_space(
+    state: &SharedState,
+    space: &str,
+    header: Option<&str>,
+    noun: &str,
+) -> Result<(Arc<MemoryDB>, String), ServerError> {
+    validate_scope(space, header, noun)?;
+    let db = {
+        let s = state.read().await;
+        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    scoped_database(db, space, noun).await
 }
 async fn scoped(
     state: &SharedState,
     space: &str,
     header: Option<&str>,
 ) -> Result<(Arc<MemoryDB>, String), ServerError> {
-    validate_scope(space, header)?;
-    let db = {
-        let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
-    };
-    scoped_database(db, space).await
+    scoped_space(state, space, header, "research").await
 }
 async fn guarded_scoped(
     state: &SharedState,
@@ -81,7 +93,7 @@ async fn guarded_scoped(
     ),
     ServerError,
 > {
-    validate_scope(space, header)?;
+    validate_scope(space, header, "research")?;
     let (db, coordinator) = {
         let s = state.read().await;
         (
@@ -92,7 +104,7 @@ async fn guarded_scoped(
     let guard = coordinator
         .try_begin_background()
         .ok_or_else(|| ServerError::Conflict("repair_write_fence_conflict".into()))?;
-    let (db, id) = scoped_database(db, space).await?;
+    let (db, id) = scoped_database(db, space, "research").await?;
     Ok((db, id, guard))
 }
 async fn get_rules(

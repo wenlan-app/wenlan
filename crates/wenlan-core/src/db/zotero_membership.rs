@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Identity-bound positive import provenance and impact-only selection observations.
-use super::{commit_or_rollback, MemoryDB};
+use super::{commit_or_rollback, metadata_json, MemoryDB};
 use crate::WenlanError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -26,19 +26,10 @@ fn key(id: &str) -> String {
     format!("zotero_membership:{id}")
 }
 async fn load(conn: &libsql::Connection, id: &str) -> Result<Option<Membership>, WenlanError> {
-    let mut rows = conn
-        .query("SELECT value FROM app_metadata WHERE key=?1", [key(id)])
-        .await
-        .map_err(sql)?;
-    rows.next()
-        .await
-        .map_err(sql)?
-        .map(|r| Ok(serde_json::from_str(&r.get::<String>(0).map_err(sql)?)?))
-        .transpose()
+    metadata_json::load(conn, &key(id), sql).await
 }
 async fn save(conn: &libsql::Connection, value: &Membership) -> Result<(), WenlanError> {
-    conn.execute("INSERT INTO app_metadata(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",libsql::params![key(&value.identity.registration_id),serde_json::to_string(value)?]).await.map_err(sql)?;
-    Ok(())
+    metadata_json::save(conn, &key(&value.identity.registration_id), value, sql).await
 }
 fn checked(value: &Membership, identity: &ZoteroRegistrationIdentity) -> Result<(), WenlanError> {
     if &value.identity != identity || value.pending_disconnect || value.disconnected {
