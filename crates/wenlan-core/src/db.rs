@@ -55,6 +55,7 @@ mod maintenance_duplicate_reads;
 mod maintenance_queue;
 mod maintenance_retro_scan;
 mod memory_point_reads;
+mod metadata_json;
 mod migrations_v004_v009;
 mod okf_concepts;
 mod onboarding_milestones;
