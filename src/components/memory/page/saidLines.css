@@ -1,0 +1,17 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The lines a sentence came from (UX-WHO-6). No divider lines; space separates. */
+.said-lines { display:grid;gap:6px;margin-top:6px;min-width:0; }
+.said-lines-title { margin:0;color:var(--mem-text-tertiary);font:500 12px/1.4 var(--mem-font-body); }
+.said-lines-none { margin:0;color:var(--mem-text-secondary);font:13px/1.5 var(--mem-font-body); }
+.said-lines-list { display:grid;gap:4px;margin:0;padding:0;list-style:none; }
+.said-line { display:grid;gap:2px;width:100%;padding:6px 8px;border:0;border-radius:var(--mem-r-8);background:var(--mem-hover);color:var(--mem-text);text-align:left;cursor:pointer; }
+.said-line:hover { background:var(--mem-active, var(--mem-hover)); }
+.said-line:focus-visible,
+.said-lines-all:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.said-line-meta { display:flex;gap:6px;color:var(--mem-text-tertiary);font:10px/1.4 var(--mem-font-mono);white-space:nowrap; }
+.said-line-text { font:13px/1.55 var(--mem-font-body);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap; }
+.said-lines-all { justify-self:start;padding:0;border:0;background:none;color:var(--mem-accent-page);font:12px/1.4 var(--mem-font-body);cursor:pointer;white-space:nowrap; }
+.said-lines-all:hover { text-decoration:underline; }
+.session-card-panel.conversation-dialog { width:min(720px, calc(100vw - 32px)); }
+.conversation-dialog-lines { max-height:min(60vh, 560px);overflow-y:auto; }
+.conversation-dialog-actions { display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-top:12px; }

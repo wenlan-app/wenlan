@@ -279,9 +279,11 @@ fn manifest_counts_match_the_spec() {
     // tools. Declaration/handler inventory tests independently check the set.
     // Then 310 after the seven `/api/themes` routes (custom app themes; local
     // appearance settings, no memory or page content) and 52 tools with `theme`.
+    // Then 311 after GET `/api/memories/{source_id}/said` (the transcript
+    // lines one memory came from; not page-bearing).
     assert_eq!(
         HTTP_READERS.len(),
-        310,
+        311,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 52, "#[tool( declarations");
@@ -292,7 +294,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        322,
+        323,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -300,7 +302,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        305,
+        306,
         "main builder entries"
     );
     assert_eq!(
@@ -483,7 +485,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        302 // Existing 273 plus 22 research workflow routes and 7 custom-theme routes, all with no page markers.
+        303 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes and a memory's conversation lines, all with no page markers.
     );
 }
 

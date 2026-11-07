@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { SaidLines } from "../page/SaidLines";
 import {
   answerThingMapProposal,
   getThingMap,
@@ -180,6 +181,7 @@ function RecapGroup({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [openPoint, setOpenPoint] = useState<string | null>(null);
   if (points.length === 0) return null;
   // Newest first within a group; the rest wait behind one line.
   const newest = [...points].sort((a, b) => b.created_at - a.created_at);
@@ -191,7 +193,16 @@ function RecapGroup({
       <ul>
         {shown.map((point) => (
           <li key={point.source_id} data-fresh={fresh.has(point.source_id) ? "true" : undefined}>
-            {withStop(point.title)}
+            {/* Opening a point shows the lines it came from (UX-VIEW-6, UX-WHO-6). */}
+            <button
+              type="button"
+              className="thing-recap-point"
+              aria-expanded={openPoint === point.source_id}
+              onClick={() => setOpenPoint((current) => (current === point.source_id ? null : point.source_id))}
+            >
+              {withStop(point.title)}
+            </button>
+            {openPoint === point.source_id ? <SaidLines sourceIds={[point.source_id]} /> : null}
           </li>
         ))}
       </ul>

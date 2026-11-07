@@ -74,3 +74,31 @@ pub struct ConversationLinesResponse {
     pub first_index: usize,
     pub lines: Vec<ConversationLine>,
 }
+
+/// One line a memory came from, with the line before and after it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaidLine {
+    /// Where the line sits in the conversation, for opening it there.
+    pub index: usize,
+    pub line: ConversationLine,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<ConversationLine>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<ConversationLine>,
+}
+
+/// `GET /api/memories/{source_id}/said`: the lines of its conversation a
+/// memory came from (UX-WHO-6). `lines` is empty when the conversation can
+/// be read but no line says the same thing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemorySaidResponse {
+    pub session_id: String,
+    pub tool: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thing_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thing_title: Option<String>,
+    pub lines: Vec<SaidLine>,
+}

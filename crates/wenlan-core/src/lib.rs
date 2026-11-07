@@ -88,6 +88,7 @@ pub mod repo_wiki_github;
 pub mod reranker;
 pub(crate) mod retrieval;
 pub mod router;
+pub mod said_lines;
 pub mod schema;
 pub mod sentences;
 pub mod sources;
