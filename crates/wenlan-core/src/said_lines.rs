@@ -19,11 +19,16 @@ pub const MAX_SAID_LINES: usize = 3;
 /// A line said this long after the memory was saved still counts: Claude
 /// Code writes each part of a reply as its own timestamped entry, so the
 /// AI's own wording of the memory can land a few seconds after the save.
-pub const SAVE_SLACK_SECS: i64 = 60;
+/// Measured 2026-11-07 on real Claude Code memories: right lines landed up
+/// to 67 s after the save.
+pub const SAVE_SLACK_SECS: i64 = 120;
 /// The least a line must share with the memory to be picked: shared words
 /// over the square root of both word counts, so a long reply that mentions
-/// everything does not win by length alone.
-pub const MIN_SAID_SCORE: f64 = 0.2;
+/// everything does not win by length alone. Measured 2026-11-07 on 60 real
+/// Claude Code memories, best line hand-checked: at 0.35, 10 of 11 picks
+/// were right; at 0.3, 17 of 21; at 0.2 most picks were wrong (short
+/// "still unexplained" memories matched unrelated status lines).
+pub const MIN_SAID_SCORE: f64 = 0.35;
 
 /// How much `line` says the same words as `memory` (0 to 1).
 pub fn said_score(
