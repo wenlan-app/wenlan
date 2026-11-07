@@ -55,7 +55,7 @@
 .thing-recap-group li::marker { color:var(--mem-text-tertiary); }
 .thing-recap-point { padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer; }
 .thing-recap-point:hover { text-decoration:underline;text-decoration-color:var(--mem-text-tertiary);text-underline-offset:3px; }
-.thing-recap-point:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:4px; }
+.thing-recap-point:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:var(--mem-r-4); }
 .thing-recap-group li .said-lines { margin:4px 0 8px; }
 .thing-recap-more { justify-self:start;padding:0;border:0;background:none;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body);cursor:pointer; }
 .thing-recap-more:hover { color:var(--mem-text-secondary);text-decoration:underline; }
