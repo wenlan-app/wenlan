@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/wenlan-app/wenlan/compare/v0.21.0...v0.21.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **release:** retry transient Apple ticket lookups ([#1196](https://github.com/wenlan-app/wenlan/issues/1196)) ([c9e8748](https://github.com/wenlan-app/wenlan/commit/c9e87480350089c4d95ea67e6825687b16f84e54))
+
 ## [0.21.0](https://github.com/wenlan-app/wenlan/compare/v0.20.7...v0.21.0) (2026-11-07)
 
 
