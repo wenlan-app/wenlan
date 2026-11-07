@@ -107,7 +107,11 @@ export function WorkingOn({
   // A thing with nothing new for a week leaves this list; search still finds
   // it, and its next conversation brings it back (UX-HOME-5). There is no
   // cap: when more are current, "See all" opens the rest in place.
-  const current: ThingSummary[] = onOpenThing ? (things.data ?? []).filter((thing) => !thing.quiet) : [];
+  // A thing without a usable title is still being sorted or named in the
+  // background. Home is for work a person can recognize, not this placeholder.
+  const current: ThingSummary[] = onOpenThing
+    ? (things.data ?? []).filter((thing) => !thing.quiet && !!thing.title?.trim())
+    : [];
   const more = current.length > WORKING_ON_LISTED;
   const thingItems = showAll ? current : current.slice(0, WORKING_ON_LISTED);
   // What Wenlan steeped from today's things into long-term memory (UX-CHAT-5),

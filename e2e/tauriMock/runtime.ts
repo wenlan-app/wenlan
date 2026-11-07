@@ -30,6 +30,7 @@ import { ConfiguredTauriFailureError, TauriMockArgumentError } from "./errors";
 import { archiveFixturePage, restoreFixturePage } from "./pageRestore";
 import { PageBasisStore } from "./pageBasis";
 import { PageCodeBasisStore } from "./pageCodeBasis";
+import { ResearchFixtureStore } from "./research";
 import { PageMapStore } from "./pageMap";
 import type { MockCommandCall, MockFailure, TauriMockPageScenario } from "./types";
 
@@ -135,6 +136,7 @@ function stringArray(args: unknown, key: string): readonly string[] {
 }
 
 export class TauriMockRuntime {
+  private readonly research = new ResearchFixtureStore();
   private spaces: Space[];
   private folders: KnowledgeFolder[];
   private readonly folderMoveReceipts = new Map<string, {id:string;expectedStoragePath:string;folderPath:string;storage_path:string}>();
@@ -231,6 +233,8 @@ export class TauriMockRuntime {
     }
     const delay = this.delays[command];
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+
+    if (this.research.supports(command)) return this.research.invoke(command, args, this.spaces, this.pages, (this.fixture.documents ?? []).map(document => document.file), this.refinements);
 
     switch (command) {
       case "knowledge_folders_list": return { folders: structuredClone(this.folders), truncated: false };

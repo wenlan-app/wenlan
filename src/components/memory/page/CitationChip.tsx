@@ -7,7 +7,7 @@ import {
   type CitationKindLabels,
 } from "../../../lib/pageCitations";
 import CitationPopover, { openCitationTarget } from "./CitationPopover";
-import { ReferenceTypeIcon, citationReferenceKind, citationSourceApp } from "../links/ReferenceTypeIcon";
+import { citationReferenceKind, citationSourceApp } from "../links/ReferenceTypeIcon";
 import { sourceAppName } from "../sources/sourcePresentation";
 import "../links/reference-links.css";
 
@@ -18,7 +18,7 @@ interface CitationChipProps {
   citation: PageCitation;
   sourceMemory: MemoryItem | null;
   sourcesLoading: boolean;
-  onOpenMemory: (sourceId: string) => void;
+  onOpenMemory: (sourceId: string, citation?: PageCitation) => void;
 }
 
 const HOVER_OPEN_DELAY_MS = 150;
@@ -46,7 +46,12 @@ export default function CitationChip({
     authored: t("citation.kind.authored"),
   };
   const app = citationSourceApp(citation);
-  const displayLabel = app ? sourceAppName(app, i18n.language) : citationDisplayLabel(citation, kindLabels);
+  const zoteroSource = citation.source_kind === "memory" && sourceMemory?.source_id === citation.locator && sourceMemory.source_agent === "zotero";
+  const referenceKind = zoteroSource ? "file" : citationReferenceKind(citation);
+  const displayLabel = zoteroSource ? "Zotero" : app ? sourceAppName(app, i18n.language) : citationDisplayLabel(citation, kindLabels);
+  const accessibleSource = sourceMemory?.source_id === citation.locator && sourceMemory.title
+    ? `${displayLabel}: ${sourceMemory.title}`
+    : displayLabel;
 
   const clearCloseTimer = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -115,11 +120,11 @@ export default function CitationChip({
     if (citation.source_kind === "memory") {
       // A deleted/merged source has no detail view to land on — explain in
       // the popover instead of navigating to a blank page.
-      if (!sourceMemory && !sourcesLoading) {
+      if (!sourceMemory && !sourcesLoading && !citation.historical) {
         setOpen((v) => !v);
         return;
       }
-      onOpenMemory(citation.locator);
+      onOpenMemory(citation.locator, citation);
     } else if (citation.source_kind === "external_url") {
       void openTarget();
     } else {
@@ -127,7 +132,7 @@ export default function CitationChip({
     }
   };
 
-  const unverified = citation.status === "unverified";
+  const unverified = citation.status === "unverified" || !!citation.historical;
 
   return (
     <span
@@ -156,50 +161,33 @@ export default function CitationChip({
       <button
         ref={chipRef}
         type="button"
-        data-status={citation.status}
-        data-reference-kind={citationReferenceKind(citation)}
+        data-status={citation.historical ? "unevaluated" : citation.status}
+        data-reference-kind={referenceKind}
+        aria-label={t("citation.chipLabel", { number, source: accessibleSource })}
         aria-describedby={open ? popoverId : undefined}
         onPointerDown={(e) => {
           lastPointerType.current = e.pointerType;
         }}
         onClick={activate}
-        className="reference-link reference-link--source citation-chip focus-visible:outline-2 focus-visible:outline-[var(--mem-accent-indigo)]"
+        className={`reference-link reference-link--source citation-chip focus-visible:outline-2 focus-visible:outline-[var(--mem-accent-indigo)]${(citation.historical || citation.status === "unevaluated") ? " citation-chip--unevaluated" : ""}`}
         style={{
           fontFamily: "var(--mem-font-body)",
           // A footnote step below the reading size: 12px beside 15px body text.
           fontSize: "calc(var(--content-body-size, 15px) * 0.8)",
           lineHeight: 1,
-          border: unverified ? "1px dashed var(--mem-accent-amber)" : "0",
+          border: unverified ? "1px dashed var(--mem-accent-amber)" : undefined,
           borderRadius: "3px",
           padding: "1px 2px",
           margin: "0 2px",
           verticalAlign: "baseline",
           cursor: "pointer",
-          maxWidth: "min(180px, 28vw)",
-          overflow: "hidden",
-          whiteSpace: "nowrap",
-          textOverflow: "ellipsis",
           textDecoration: "underline",
           textUnderlineOffset: "2px",
           display: "inline-flex",
           alignItems: "baseline",
-          gap: "2px",
         }}
       >
-        <ReferenceTypeIcon kind={citationReferenceKind(citation)} size={12} locator={citation.locator} />
-        <span
-          style={{
-            display: "inline-block",
-            maxWidth: "150px",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            verticalAlign: "bottom",
-          }}
-        >
-          {displayLabel}
-        </span>
-        <sup style={{ marginLeft: "1px" }}>{number}</sup>
+        <span aria-hidden="true">[{number}]</span>
       </button>
       {open && (
         <CitationPopover

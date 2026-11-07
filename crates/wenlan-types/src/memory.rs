@@ -208,6 +208,8 @@ pub struct DomainInfo {
 /// File/document info as shown in list views.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexedFileInfo {
+    #[serde(default)]
+    pub source_lifecycle: crate::source_lifecycle::SourceLifecycleSummary,
     pub source_id: String,
     pub title: String,
     pub source: String,
@@ -479,6 +481,7 @@ mod indexed_file_info_created_at_test {
 
     fn make_info(created_at: i64) -> IndexedFileInfo {
         IndexedFileInfo {
+            source_lifecycle: Default::default(),
             source_id: "mem_abc".into(),
             title: "Title".into(),
             source: "memory".into(),

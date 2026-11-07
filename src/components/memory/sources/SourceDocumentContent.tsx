@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ReferenceLink } from "../links/ReferenceLink";
 import { referenceTargetFromHref } from "../links/referenceTypes";
 import { displayUrl, isBareUrlLink } from "../../../lib/displayUrl";
+import { parseZoteroAnnotationLink, type ZoteroAnnotationTarget } from "./zoteroAnnotationLink";
 import "./SourceDocumentContent.css";
 
 interface SourceDocumentContentProps {
   content: string;
   title: string;
+  onZoteroAnnotation?: (target: ZoteroAnnotationTarget) => void;
 }
 
 type MarkdownNode = {
@@ -80,14 +82,25 @@ const markdownComponents = {
   ),
 };
 
-export default function SourceDocumentContent({ content, title }: SourceDocumentContentProps) {
+export default function SourceDocumentContent({ content, title, onZoteroAnnotation }: SourceDocumentContentProps) {
   if (!content.trim()) return null;
 
   return (
     <div className="source-document-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, omitMatchingLeadingTitle(title)]}
-        components={markdownComponents}
+        urlTransform={(url, key, node) => onZoteroAnnotation && key === "href" && node.tagName === "a" && parseZoteroAnnotationLink(url)
+          ? url : defaultUrlTransform(url)}
+        components={{ ...markdownComponents, a: ({ href, children }) => {
+          const target = onZoteroAnnotation ? parseZoteroAnnotationLink(href) : null;
+          if (!target) return markdownComponents.a({ href, children });
+          // The rendered link is local, so opening its context menu or using
+          // a modified click can never launch an arbitrary Zotero attachment.
+          return <a href="#zotero-pdf" onClick={(event) => {
+            event.preventDefault();
+            onZoteroAnnotation?.(target);
+          }}>{children}</a>;
+        } }}
       >
         {content}
       </ReactMarkdown>

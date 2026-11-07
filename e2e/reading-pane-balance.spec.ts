@@ -102,7 +102,7 @@ for (const cfg of [
     const listShown = await directory.isVisible();
     const shell = page.locator(".memory-shell");
     await expect(shell).toHaveAttribute("data-sidebar-layout", cfg.mode);
-    await page.getByRole("button", { name: t.pageInspector.open, exact: true }).click();
+    await page.getByRole("button", { name: t.pageInspector.info, exact: true }).click();
     await expect(pane).toBeVisible();
     // Labels fold to icons while the rail, list, Info and a 600px note do not fit.
     const folds = cfg.mode === "labels" && cfg.width < 240 + 248 + 320 + 600;
@@ -122,7 +122,7 @@ for (const cfg of [
       await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);
       await readable(".page-detail-document", ".note-group-content");
     }
-    await pane.locator(".page-info-drawer-close").click();
+    await page.getByRole("button", { name: t.pageInspector.info, exact: true }).click();
     await expect(pane).toHaveCount(0);
     await expect(shell).toHaveAttribute("data-sidebar-layout", cfg.mode);
     await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);
@@ -130,7 +130,7 @@ for (const cfg of [
     await expect(page.locator(".page-detail .cm-content")).toBeVisible();
     await readable(".page-detail-document", ".note-group-content");
     expect(Math.abs((await page.locator(".page-detail-document").boundingBox())!.x - wikiStart)).toBeLessThanOrEqual(1);
-    await page.getByRole("button", { name: t.pageInspector.open, exact: true }).click();
+    await page.getByRole("button", { name: t.pageInspector.info, exact: true }).click();
     await page.locator(".note-info-source-list").getByRole("button", { name: /Fixture architecture$/ }).click();
     await expect(page.locator(".memory-document-editor .cm-content")).toBeVisible();
     for (const kind of ["memory", "topic"] as const) {

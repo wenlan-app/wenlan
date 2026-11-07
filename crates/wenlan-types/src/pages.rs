@@ -195,6 +195,22 @@ pub struct PageEvidence {
     pub link_reason: Option<String>,
 }
 
+/// Immutable original PDF location. Location alone makes no support claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PdfCitationTarget {
+    pub attachment_key: String,
+    pub pdf_digest: String,
+    pub page: u32,
+    pub quote: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PdfCitationInput {
+    pub occurrence: u32,
+    #[serde(flatten)]
+    pub target: PdfCitationTarget,
+}
+
 /// One [N] marker occurrence in a page body, in body order (per-occurrence,
 /// NOT per marker number: the same [1] reused in two sentences gets two
 /// records with independent statuses). Renderer join rule: the k-th [N]
@@ -209,8 +225,10 @@ pub struct PageCitation {
     /// Claim-vs-this-source-alone content-token overlap (0..=1) at the
     /// recorded `scope` granularity, audit only.
     pub score: f64,
-    /// "verified" | "unverified" — decided claim-level vs the UNION of the
-    /// claim's cited sources (spec §5).
+    /// "verified" | "unverified" for a completed claim-level check against the
+    /// UNION of cited sources (spec §5). "unevaluated" means the reference target
+    /// was retained after a human edit but the current claim has not been checked;
+    /// it must not be presented as unsupported or verified.
     pub status: String,
     /// Granularity that decided the status: "sentence" (the marker's own
     /// sentence cleared the floor) or "paragraph" (sentence failed; the
@@ -234,6 +252,12 @@ pub struct PageCitation {
     /// support for a citation that had support at the version it cited.
     #[serde(default, skip_serializing_if = "is_false")]
     pub disproven: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdf_target: Option<PdfCitationTarget>,
+    /// A detached/withdrawn reference retained for traceability, never a
+    /// current selected input or an active cites-edge producer.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub historical: bool,
 }
 
 fn default_citation_scope() -> String {
@@ -266,6 +290,8 @@ mod citation_tests {
             cited_version: Some(4),
             cited_digest: Some("d".into()),
             disproven: false,
+            historical: false,
+            pdf_target: None,
         };
         let s = serde_json::to_string(&vec![c]).unwrap();
         assert!(!s.contains("disproven"), "a false flag stays off the wire");

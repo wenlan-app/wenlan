@@ -135,6 +135,27 @@ fn citation_null_empty_nonempty_and_occurrence_partitions_are_exact() {
 }
 
 #[test]
+fn unevaluated_citation_is_a_valid_unchecked_partition() {
+    let raw = serde_json::json!([{"occurrence":1,"marker":1,"source_kind":"memory", "locator":"retained-source",
+        "score":0.0,"status":"unevaluated","scope":"sentence","cited_version":3,"cited_digest":"historical"}]).to_string();
+    let (assessment, partitions) = assess_citations(&[Some(raw)]);
+    let result = assessment.result(CITATION_PARTITIONS_ID, 0).unwrap();
+    assert_eq!(result.outcome(), LintOutcome::Pass);
+    assert_eq!(partitions.unevaluated, 1);
+    assert!(partitions.partitions_are_exact());
+    assert_eq!(metric(&result, LintMetricCode::ObservedRecords), 1);
+    assert_eq!(
+        metric(&result, LintMetricCode::CitationVerifiedOccurrences),
+        0
+    );
+    assert_eq!(
+        metric(&result, LintMetricCode::CitationUnverifiedOccurrences),
+        0
+    );
+    assert_eq!(metric(&result, LintMetricCode::AffectedRecords), 0);
+}
+
+#[test]
 fn malformed_or_unknown_citation_dimensions_are_errors() {
     for raw in [
         "not-json".to_string(),

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #[cfg(target_os = "macos")]
+mod native_edit_history;
+#[cfg(target_os = "macos")]
 #[macro_use]
 extern crate objc;
 
@@ -37,6 +39,7 @@ mod source_paths;
 // `page_review::review_page`; the claim-attest half has no daemon route yet,
 // so its action variant and the test-only verifier are still unconstructed
 // outside tests. See the module doc comment.
+mod page_export;
 #[allow(dead_code)]
 mod presence;
 mod problem_report;
@@ -46,8 +49,11 @@ mod remote_access_platform;
 pub mod remote_relay;
 mod repair;
 mod repo_wiki;
+mod research;
+mod research_disputes;
 mod search;
 mod skills_install;
+mod source_lifecycle;
 pub mod sources;
 pub mod state;
 pub mod system_info;
@@ -876,6 +882,9 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
+            #[cfg(target_os = "macos")]
+            native_edit_history::install(&handle)?;
+
             build_main_window(&handle)?;
 
             // Tell the Claude Code and Codex plugins where this app's
@@ -1638,7 +1647,13 @@ pub fn run() {
             search::list_sources,
             search::add_source,
             search::remove_source,
+            search::get_zotero_disconnect_preview,
             search::list_registered_sources,
+            search::list_zotero_collections,
+            search::list_zotero_items,
+            search::get_zotero_document,
+            search::read_zotero_pdf,
+            search::add_zotero_source,
             search::sync_registered_source,
             search::set_source_follow_changes,
             search::daemon_version,
@@ -1675,6 +1690,7 @@ pub fn run() {
             search::get_activity,
             search::list_all_tags,
             search::set_document_tags,
+            search::patch_document_tag,
             search::delete_tag,
             search::suggest_tags,
             search::dismiss_quick_capture,
@@ -1772,6 +1788,24 @@ pub fn run() {
             search::get_briefing,
             search::get_pending_contradictions,
             // Refinery queue commands
+            source_lifecycle::get_source_lifecycle,
+            source_lifecycle::set_source_lifecycle,
+            source_lifecycle::resolve_source_reference,
+            research_disputes::get_research_dispute,
+            research_disputes::decide_research_dispute,
+            page_export::capture_page_export,
+            page_export::list_page_export_versions,
+            page_export::get_page_export_bundle,
+            research::get_research_rules,
+            research::merge_research_tags,
+            research::save_research_rules,
+            research::list_research_runs,
+            research::create_research_run,
+            research::get_research_run,
+            research::update_research_run,
+            research::get_research_classification_decisions,
+            research::propose_research_classifications,
+            research::accept_research_classification,
             search::list_refinements,
             search::accept_refinement,
             search::reject_refinement,

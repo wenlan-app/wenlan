@@ -49,6 +49,7 @@ async fn edit(db: &MemoryDB, id: &str, content: &str, minor: bool) {
             None,
             None,
             None,
+            None,
             false,
             false,
             &BasisWrite {
@@ -1215,6 +1216,7 @@ async fn write_with(
         None,
         None,
         None,
+        None,
         false,
         false,
         basis,
@@ -2033,24 +2035,20 @@ async fn editing_a_gated_card_before_accepting_it_keeps_its_marks() {
     .unwrap();
     let card_id = staged.revision_card_id.expect("the lock stages a card");
 
-    // The human rewrites the card's text in the review queue, then accepts.
+    // Human editing and acceptance share the same transaction, retaining marks.
     let edited = "Plans built on Alpha, reworded by a human.";
-    crate::post_write::update_memory(
+    crate::post_write::accept_pending_revision_edited_with_knowledge_path(
         &db,
         &card_id,
-        crate::post_write::MemoryUpdate {
-            content: Some(edited),
-            expected_content: None,
-            space: None,
-            confirm: false,
-            memory_type: None,
+        "human",
+        None,
+        &wenlan_types::requests::RevisionAcceptEditRequest {
+            expected_content: "Original plans. Plans built on Alpha.".into(),
+            content: edited.into(),
         },
     )
     .await
     .unwrap();
-    crate::post_write::accept_pending_revision(&db, &card_id, "human")
-        .await
-        .unwrap();
 
     assert_eq!(db.get_page("b").await.unwrap().unwrap().content, edited);
     let a = entry(&db, "b", "a").await;
@@ -2247,6 +2245,7 @@ async fn create_with(
             basis_marks,
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await
@@ -2331,4 +2330,48 @@ async fn a_space_locked_mark_refuses_a_note_moved_out_of_its_space() {
         .await
         .unwrap();
     assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_OK);
+}
+
+#[tokio::test]
+async fn edited_acceptance_refuses_archived_basis_without_changing_page_or_card() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "Source facts.", "sp").await;
+    page(&db, "b", "Beta", "Original plans.", "sp").await;
+    assert!(db.set_page_review_required("b", true).await.unwrap());
+    let proposed = "Original plans. Plans built on Alpha.";
+    let card = agent_write(&db, "b", proposed, vec![("a".into(), 1)])
+        .await
+        .unwrap()
+        .revision_card_id
+        .unwrap();
+    db.archive_page("a").await.unwrap();
+    let before = db.get_page("b").await.unwrap().unwrap();
+    let error = crate::post_write::accept_pending_revision_edited_with_knowledge_path(
+        &db,
+        &card,
+        "human",
+        None,
+        &wenlan_types::requests::RevisionAcceptEditRequest {
+            expected_content: proposed.into(),
+            content: "Human corrected plans.".into(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(error, WenlanError::Conflict(ref reason) if reason.starts_with(wenlan_types::PAGE_REVISION_BASIS_REFUSED)),
+        "{error:?}"
+    );
+    let after = db.get_page("b").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.version, before.version);
+    assert!(db.list_page_basis("b").await.unwrap().is_empty());
+    assert_eq!(
+        db.pending_memory_revision_payload(&card)
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+        proposed
+    );
 }

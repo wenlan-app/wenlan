@@ -354,6 +354,7 @@ fn agent_submission(work: &LintAgentWork) -> LintAgentSubmission {
 #[tokio::test]
 async fn lint_finding_response_stays_complete_and_typed() {
     let source = Source {
+        display_name: None,
         id: String::new(),
         source_type: SourceType::Directory,
         path: PathBuf::new(),
@@ -487,6 +488,7 @@ async fn lint_endpoint_does_not_mutate_database_or_page_tree() {
 #[tokio::test]
 async fn lint_endpoint_uses_configured_process_clock_for_age_buckets() {
     let source = Source {
+        display_name: None,
         id: "clock-source".to_string(),
         source_type: SourceType::Directory,
         path: PathBuf::from("clock-source"),

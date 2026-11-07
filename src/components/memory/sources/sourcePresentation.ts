@@ -236,6 +236,10 @@ export function getSourcePresentation(
   labels: SourcePresentationLabels,
 ): SourcePresentation {
   const classification = classifySource(file);
+  if (file.source_agent === "zotero" || file.source_id.startsWith("zotero::")) {
+    const format = classification.format ? `Zotero · ${classification.format}` : "Zotero";
+    return { kind: classification.kind, app: null, iconKind: classification.kind, format, origin: null, metadata: format };
+  }
   if (classification.format) {
     return {
       kind: classification.kind,

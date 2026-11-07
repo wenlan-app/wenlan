@@ -27,6 +27,9 @@
 .page-detail-title-edit:not(:disabled):hover { background: var(--mem-hover); }
 .page-detail-title-edit:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 3px; }
 .page-document-tools { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
+/* Match adjacent icon buttons without a font-dependent inline baseline below
+   the menu trigger, especially when compact headers use 24px controls. */
+.note-group-document-tools .page-detail-actions-anchor { display: flex; align-items: center; }
 .page-document-tools .page-detail-actions-menu { z-index: 40; }
 .page-document-editor { position: relative; min-width: 0; }
 .page-document-editor--title > .page-document-tools { position: absolute; top: 0; right: 0; z-index: 20; }

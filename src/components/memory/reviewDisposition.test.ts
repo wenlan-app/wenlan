@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewItem } from "./useReviewQueue";
 import { isActionableReviewItem } from "./reviewDisposition";
+import { reviewApproveBlocked, reviewDismissBlocked } from "./ReviewDialog";
 
 const revision: ReviewItem = {
   kind: "revision",
@@ -19,6 +20,26 @@ describe("isActionableReviewItem", () => {
     expect(isActionableReviewItem(revision)).toBe(true);
     expect(isActionableReviewItem({ ...revision, targetSourceId: " " })).toBe(false);
     expect(isActionableReviewItem({ ...revision, id: "example:memory-1" })).toBe(false);
+  });
+
+  it("admits only valid scoped research disputes to their dedicated decision flow", () => {
+    const digest = "a".repeat(64);
+    const item: ReviewItem = {
+      kind: "refinement", id: "dispute-1", action: "research_dispute", sourceIds: ["paper-a", "paper-b"], confidence: 0, timestampMs: null,
+      payload: { action: "research_dispute", space: "Research", payload_digest: digest, dispute: {
+        space_id: "space-1", kind: "incomparable_conditions", conditions: "Different methods", reason: "Compare findings", evidence: [
+          { source: "file", source_id: "paper-a", source_digest: digest, quote: "First finding" },
+          { source: "file", source_id: "paper-b", source_digest: digest, quote: "Second finding" },
+        ],
+      } },
+    };
+    expect(isActionableReviewItem(item)).toBe(true);
+    expect(reviewApproveBlocked(item)).toBe(true);
+    expect(reviewDismissBlocked(item)).toBe(true);
+    expect(isActionableReviewItem({ ...item, id: "  " })).toBe(false);
+    if (item.payload?.action !== "research_dispute") throw new Error("fixture must be a dispute");
+    expect(isActionableReviewItem({ ...item, payload: { ...item.payload, space: " " } })).toBe(false);
+    expect(isActionableReviewItem({ ...item, payload: null })).toBe(false);
   });
 
   it("keeps captures and background discovery outside the decision queue", () => {

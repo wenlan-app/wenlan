@@ -114,6 +114,11 @@ describe("prepareForRender", () => {
     expect(result).toBe("We decided:\n**Context:** auth rewrite\n**Decision:** use JWT");
   });
 
+  it("keeps GFM table cells intact in mixed content while formatting ordinary fields", () => {
+    const text = "Context: review\n\n| Paper | Evaluation target |\n| --- | --- |\n| ARES | Faithfulness [1] |\n\nDecision: inspect originals";
+    expect(prepareForRender(text, "mixed")).toBe("**Context:** review\n\n| Paper | Evaluation target |\n| --- | --- |\n| ARES | Faithfulness [1] |\n\n**Decision:** inspect originals");
+  });
+
   it("converts pipe-delimited lines to bold key-value", () => {
     const text = "context | auth rewrite\ndecision | use JWT";
     const result = prepareForRender(text, "key-value");
@@ -137,6 +142,11 @@ describe("normalizeContent", () => {
     const text = "claim: Memory is important | domain: origin | verified: true";
     const result = normalizeContent(text);
     expect(result).toBe("claim: Memory is important\ndomain: origin\nverified: true");
+  });
+
+  it("preserves a GFM table block and still normalizes pipe fields outside it", () => {
+    const text = "claim: one | domain: research | verified: true\n\n| Paper | Evaluation target |\n| --- | --- |\n| ARES [1] | Faithfulness |\n| ALCE [2] | Citation support |\n\ncontext | notes | source | original";
+    expect(normalizeContent(text)).toBe("claim: one\ndomain: research\nverified: true\n\n| Paper | Evaluation target |\n| --- | --- |\n| ARES [1] | Faithfulness |\n| ALCE [2] | Citation support |\n\ncontext\nnotes\nsource\noriginal");
   });
 
   it("splits pipe-delimited with key | value format", () => {

@@ -756,6 +756,50 @@ describe("CodeMirrorMarkdownEditor", () => {
     expect(view.state.doc.toString()).toBe("alpha beta alpha");
   });
 
+  it("routes native history events to the focused editor after replace-all", () => {
+    const props = baseProps({ initialDocument: "alpha beta alpha" });
+    const { rerender, unmount } = render(<CodeMirrorMarkdownEditor {...props} />);
+    const view = editorViewFromTextbox(screen.getByRole("textbox"));
+    act(() => {
+      view.focus();
+      view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "alpha", replace: "changed" })) });
+      replaceAll(view);
+    });
+    const send = (direction: string) => window.dispatchEvent(new CustomEvent("wenlan-native-history", { cancelable: true, detail: direction }));
+    act(() => { expect(send("undo")).toBe(false); });
+    expect(view.state.doc.toString()).toBe("alpha beta alpha");
+    rerender(<CodeMirrorMarkdownEditor {...props} initialDocument="changed beta changed" />);
+    act(() => { expect(send("redo")).toBe(false); });
+    expect(view.state.doc.toString()).toBe("changed beta changed");
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+    expect(send("undo")).toBe(true);
+    input.remove();
+    unmount();
+    expect(send("undo")).toBe(true);
+  });
+
+  it("consumes blocked or empty editor history without touching another editor", () => {
+    const { rerender } = render(<><CodeMirrorMarkdownEditor {...baseProps({ sessionId: "one", ariaLabel: "First" })} /><CodeMirrorMarkdownEditor {...baseProps({ sessionId: "two", ariaLabel: "Second" })} /></>);
+    const first = editorViewFromTextbox(screen.getByRole("textbox", { name: "First" }));
+    const second = editorViewFromTextbox(screen.getByRole("textbox", { name: "Second" }));
+    const send = () => window.dispatchEvent(new CustomEvent("wenlan-native-history", { cancelable: true, detail: "undo" }));
+    act(() => { first.focus(); expect(send()).toBe(false); });
+    act(() => { second.focus(); second.dispatch({ changes: { from: 0, insert: "new " }, userEvent: "input" }); });
+    act(() => { expect(send()).toBe(false); });
+    expect(first.state.doc.toString()).toBe("alpha\nbeta");
+    expect(second.state.doc.toString()).toBe("alpha\nbeta");
+    rerender(<><CodeMirrorMarkdownEditor {...baseProps({ sessionId: "one", ariaLabel: "First", disabled: true })} /><CodeMirrorMarkdownEditor {...baseProps({ sessionId: "two", ariaLabel: "Second" })} /></>);
+    act(() => { first.focus(); expect(send()).toBe(false); });
+    expect(first.state.doc.toString()).toBe("alpha\nbeta");
+    act(() => { second.focus(); second.dispatch({ changes: { from: 0, insert: "composing " }, userEvent: "input" }); });
+    fireEvent.compositionStart(second.contentDOM);
+    act(() => { expect(send()).toBe(false); });
+    expect(second.state.doc.toString()).toBe("composing alpha\nbeta");
+    fireEvent.compositionEnd(second.contentDOM);
+  });
+
   it("labels the find panel in the interface language", async () => {
     await act(async () => { await i18n.changeLanguage("zh-Hant"); });
     try {

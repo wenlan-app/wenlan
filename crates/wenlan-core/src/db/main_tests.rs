@@ -26719,7 +26719,7 @@ async fn test_cleanup_orphaned_concept_sources() {
     );
     let page = db.get_page("c_clean").await.unwrap().unwrap();
     assert!(page.source_memory_ids.is_empty());
-    assert_eq!(page.stale_reason.as_deref(), Some("source_updated"));
+    assert_eq!(page.stale_reason.as_deref(), Some("source_removed"));
     assert_eq!(
         db.get_page_source_revision("c_clean").await.unwrap(),
         source_revision_before + 1,
@@ -26912,7 +26912,7 @@ async fn cleanup_orphaned_page_sources_invalidates_only_affected_pages() {
     }
     assert_eq!(
         states.get("page_orphaned_cleanup"),
-        Some(&(1, None, Vec::new(), Some("source_updated".to_string())))
+        Some(&(1, None, Vec::new(), Some("source_removed".to_string())))
     );
     assert_eq!(
         states.get("page_valid_cleanup"),
@@ -27023,7 +27023,7 @@ async fn cleanup_orphaned_page_sources_accepts_logical_and_row_ids() {
         source_locators,
         "orphan cleanup must keep legacy JSON provenance synchronized with page_sources"
     );
-    assert_eq!(page.stale_reason.as_deref(), Some("source_updated"));
+    assert_eq!(page.stale_reason.as_deref(), Some("source_removed"));
     assert_eq!(
         db.get_page_source_revision("page_locator_forms")
             .await
@@ -27085,7 +27085,7 @@ async fn cleanup_orphaned_page_sources_prunes_json_only_ghosts_once_per_page() {
         page.source_memory_ids,
         vec!["json-cleanup-valid".to_string()]
     );
-    assert_eq!(page.stale_reason.as_deref(), Some("source_updated"));
+    assert_eq!(page.stale_reason.as_deref(), Some("source_removed"));
     assert_eq!(
         page.sources_updated_count,
         before.sources_updated_count + 2,
@@ -32573,6 +32573,65 @@ async fn test_set_document_tags_is_idempotent_replace() {
 
     let tags = db.get_document_tags("memory", "doc1").await.unwrap();
     assert_eq!(tags, vec!["python"]);
+}
+
+#[tokio::test]
+async fn patch_document_tag_is_additive_idempotent_and_source_scoped() {
+    let (db, _dir) = test_db().await;
+    let memory = make_memory_doc("same-id", "memory document", "fact", "research", "test");
+    db.upsert_documents_without_embeddings(vec![memory])
+        .await
+        .unwrap();
+    // Import-generated IDs derive from source_id, so seed the legacy kind
+    // collision with its own row ID rather than colliding at fixture insertion.
+    db.conn.lock().await.execute(
+        "INSERT INTO memories (id,content,source,source_id,title,chunk_index,last_modified,chunk_type,space)
+         VALUES ('file-row-same-source','file document','file','same-id','file',0,1,'text','research')",
+        (),
+    ).await.unwrap();
+
+    let global = ReadScope::Global;
+    let (left, right) = tokio::join!(
+        db.patch_document_tag("memory", "same-id", " Alpha ", "add", &global),
+        db.patch_document_tag("memory", "same-id", "beta", "add", &global),
+    );
+    left.unwrap();
+    right.unwrap();
+    db.patch_document_tag("memory", "same-id", "ALPHA", "add", &global)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.get_document_tags("memory", "same-id").await.unwrap(),
+        vec!["alpha", "beta"]
+    );
+    assert!(db
+        .get_document_tags("file", "same-id")
+        .await
+        .unwrap()
+        .is_empty());
+
+    db.patch_document_tag("memory", "same-id", "alpha", "remove", &global)
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_document_tags("memory", "same-id").await.unwrap(),
+        vec!["beta"]
+    );
+    assert!(db
+        .patch_document_tag(
+            "memory",
+            "same-id",
+            "beta",
+            "remove",
+            &ReadScope::Space("another-space".to_string()),
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        db.get_document_tags("memory", "same-id").await.unwrap(),
+        vec!["beta"]
+    );
 }
 
 #[tokio::test]
@@ -54838,6 +54897,7 @@ async fn dual_write_page_citations_retracts_edge_even_when_backed_by_page_eviden
     // -- `page_evidence` independently still backing the same (page,
     // locator) pair no longer grants immunity.
     let (db, _dir) = test_db().await;
+    seed_memory_with_source_id_and_space(&db, "mem_shared", "cited source", "space_a").await;
     let edge_id = crate::provenance::compute_edge_id(
         "cites",
         "page",
@@ -54858,6 +54918,14 @@ async fn dual_write_page_citations_retracts_edge_even_when_backed_by_page_eviden
     db.set_page_citations("page_dc", Some(&initial.to_string()))
         .await
         .unwrap();
+    {
+        let conn = db.conn.lock().await;
+        assert_eq!(
+            edge_valid_until(&conn, &edge_id).await,
+            None,
+            "precondition: the initial citation write must create an active edge"
+        );
+    }
 
     // Replace with an empty citation set -- mem_shared drops out of
     // pages.citations, but page_evidence still cites it.
@@ -54878,6 +54946,7 @@ async fn dual_write_page_citations_retracts_dropped_citation_when_unbacked() {
     // without cleanup for NULL/malformed JSON" gap) -- never leaving a
     // removed citation's edge dangling active.
     let (db, _dir) = test_db().await;
+    seed_memory_with_source_id_and_space(&db, "mem_x", "cited source", "space_a").await;
     let edge_id =
         crate::provenance::compute_edge_id("cites", "page", "page_dc2", "memory", "mem_x", "mem_x");
     {
@@ -55094,6 +55163,7 @@ async fn combine_version_and_source_revision_cas_rejected_for_non_growth_non_bac
             None,
             Some(version),
             Some(source_revision),
+            None,
             None,
             None,
             None,
@@ -59791,6 +59861,77 @@ fn daemon_cache_dir_never_falls_through_to_the_cwd_default() {
     assert_eq!(
         daemon_fastembed_cache_dir_from(Some("".into()), None, None, db_path),
         db_path.join("fastembed_cache")
+    );
+}
+
+#[tokio::test]
+async fn edited_acceptance_memory_rolls_back_edit_when_activation_fails() {
+    let (db, _dir) = test_db().await;
+    db.upsert_documents(vec![
+        RawDocument {
+            source: "memory".into(),
+            source_id: "rollback_edit_target".into(),
+            title: "Original".into(),
+            content: "Original body.".into(),
+            confirmed: Some(true),
+            ..Default::default()
+        },
+        RawDocument {
+            source: "memory".into(),
+            source_id: "rollback_edit_card".into(),
+            title: "Revision".into(),
+            content: "revised content".into(),
+            supersedes: Some("rollback_edit_target".into()),
+            pending_revision: true,
+            ..Default::default()
+        },
+    ])
+    .await
+    .unwrap();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "CREATE TRIGGER fail_edited_activation BEFORE UPDATE OF pending_revision ON memories
+            WHEN OLD.source_id='rollback_edit_card' AND NEW.pending_revision=0
+            BEGIN SELECT RAISE(ABORT, 'activation blocked'); END",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    assert!(
+        crate::post_write::accept_pending_revision_edited_with_knowledge_path(
+            &db,
+            "rollback_edit_card",
+            "human",
+            None,
+            &wenlan_types::requests::RevisionAcceptEditRequest {
+                expected_content: "revised content".into(),
+                content: "Human correction.".into(),
+            },
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        db.pending_memory_revision_payload("rollback_edit_card")
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+        "revised content"
+    );
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT confirmed FROM memories WHERE source_id='rollback_edit_target'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        1
     );
 }
 

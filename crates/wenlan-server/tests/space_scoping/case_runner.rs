@@ -398,20 +398,25 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // thing's map one more. Conversation search and a conversation's
     // lines add two more. Protected relation creation adds one EntitySpace-scoped
     // route; the organization MCP integration covers its endpoint and source gates.
-    // Every thing's night points for the big map adds one more scoped reader,
-    // and the conversation lines a memory was said in one more.
-    assert_eq!(rows.len(), 106);
+    // Zotero discovery adds one Global reader; document metadata, PDF and
+    // atomic tagging add three MemorySpace readers. Night points adds one more.
+    // Research adds 20 scoped contracts and two Global Zotero discovery /
+    // disconnect-metadata contracts; their exact identities are enumerated.
+    // Refinery queue is scoped for research payloads while preserving legacy
+    // generic proposals; this moves one existing key from Global to scoped.
+    // The conversation lines a memory was said in adds one more scoped reader.
+    assert_eq!(rows.len(), 132);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        24
+        26
     );
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        82
+        106
     );
     assert_eq!(
         rows.iter()
@@ -449,7 +454,7 @@ pub fn assert_global_executed_keys(executed: impl IntoIterator<Item = (Method, &
     let executed = executed.into_iter().collect::<Vec<_>>();
     let unique = executed.iter().copied().collect::<BTreeSet<_>>();
 
-    assert_eq!(expected.len(), 24, "Global route catalog count drifted");
+    assert_eq!(expected.len(), 26, "Global route catalog count drifted");
     assert_eq!(
         unique.len(),
         executed.len(),

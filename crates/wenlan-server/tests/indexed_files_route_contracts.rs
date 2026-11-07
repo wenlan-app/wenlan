@@ -271,6 +271,7 @@ async fn folder_page_source_locator_opens_original_document() {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await

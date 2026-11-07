@@ -717,6 +717,9 @@ pub struct OkfConceptRef {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PageReadResponse {
     pub page: PageInventoryEntry,
+    /// Pending Zotero selection changes; titles are scoped and no locators are exposed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selection_impacts: Vec<PageSelectionImpact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub okf: Option<OkfConceptRef>,
     /// Every basis of this note, in any state.
@@ -734,6 +737,13 @@ pub struct PageReadResponse {
     /// it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<crate::chat_check::PageBodyParts>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PageSelectionImpact {
+    pub reason: String,
+    pub titles: Vec<String>,
+    pub unavailable: bool,
 }
 
 /// Wikilink graph centered on a single page. Outbound = labels parsed
@@ -934,9 +944,25 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// Actual outcome of a page refresh. Separate from the create/source-resolution receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageWriteOutcome {
+    Wrote,
+    Unchanged,
+    Refused,
+    Contended,
+    Gated,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PageWriteResponse {
     pub ok: bool,
+    /// Absent on older daemons; consumers retain their legacy fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_outcome: Option<PageWriteOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision_card_id: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -1351,6 +1377,16 @@ pub struct SyncStatsResponse {
     pub ingested: usize,
     pub skipped: usize,
     pub errors: usize,
+    #[serde(default)]
+    pub error_detail: Option<String>,
+    #[serde(default)]
+    pub skipped_files: Vec<SkippedSourceFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkippedSourceFile {
+    pub path: String,
+    pub reason: String,
 }
 
 /// GET /api/notes/proposals
@@ -1381,6 +1417,8 @@ pub struct AcceptNoteProposalResponse {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProposalAction {
+    ResearchDispute,
+    SourceClassification,
     EntityMerge,
     RelationConflict,
     DetectContradiction,
@@ -1415,6 +1453,18 @@ pub enum RefinementCardAction {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum RefinementPayload {
+    ResearchDispute {
+        dispute: crate::research_disputes::ResearchDispute,
+        payload_digest: String,
+        #[serde(default)]
+        space: String,
+    },
+    SourceClassification {
+        run_id: String,
+        space_id: String,
+        rules_digest: String,
+        changes: Vec<crate::research::SourceClassificationChange>,
+    },
     EntityMerge {
         existing_id: String,
         new_id: String,
@@ -2607,8 +2657,13 @@ mod page_write_response_warnings_tests {
     fn warnings_are_omitted_when_empty_and_old_bodies_still_parse() {
         let old: PageWriteResponse = serde_json::from_str(r#"{"ok":true}"#).unwrap();
         assert!(old.warnings.is_empty());
+        assert_eq!(old.write_outcome, None);
         let quiet = serde_json::to_value(&old).unwrap();
         assert!(quiet.get("warnings").is_none(), "{quiet}");
+        assert!(quiet.get("write_outcome").is_none());
+        let unchanged: PageWriteResponse =
+            serde_json::from_str(r#"{"ok":true,"write_outcome":"unchanged"}"#).unwrap();
+        assert_eq!(unchanged.write_outcome, Some(PageWriteOutcome::Unchanged));
 
         let warned = PageWriteResponse {
             warnings: vec!["code_basis was not recorded".into()],

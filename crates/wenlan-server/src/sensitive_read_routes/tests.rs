@@ -83,6 +83,9 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/spaces"),
         (Method::Get, "/api/spaces/default"),
         (Method::Get, "/api/sources"),
+        (Method::Get, "/api/zotero/collections"),
+        (Method::Get, "/api/zotero/items"),
+        (Method::Get, "/api/zotero/sources/{id}/disconnect-preview"),
         (Method::Get, "/api/sources/{id}/ai-changes"),
         (Method::Get, "/api/notes/proposals"),
         (Method::Get, "/api/notes/proposals/{id}"),
@@ -93,7 +96,6 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/import/batches/active"),
         (Method::Get, "/api/import/batches/{batch_id}/status"),
         (Method::Get, "/api/memory/rejections"),
-        (Method::Get, "/api/refinery/queue"),
         (Method::Get, "/api/capture-stats"),
         (Method::Get, "/api/activity"),
         (Method::Get, "/api/decisions/domains"),
@@ -101,13 +103,13 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/palace/layout"),
     ];
     const SCOPED: &[(Method, &str)] = &[
+        (Method::Post, "/api/pages/{id}/export-capture"),
+        (Method::Get, "/api/pages/{id}/export-versions"),
+        (Method::Get, "/api/pages/{id}/export-bundles/{bundle_id}"),
+        (Method::Get, "/api/refinery/queue"),
         (Method::Post, "/api/memory/relations/preserve"),
-        (Method::Post, "/api/check"),
-        (Method::Post, "/api/check/context"),
         (Method::Get, "/api/knowledge/folders"),
         (Method::Post, "/api/pages/{id}/move"),
-        (Method::Post, "/api/pages/{id}/rename"),
-        (Method::Post, "/api/pages/{id}/restore"),
         (Method::Post, "/api/search"),
         (Method::Post, "/api/context"),
         (Method::Post, "/api/brief"),
@@ -123,14 +125,20 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/memory/{id}/revisions"),
         (Method::Get, "/api/indexed-files"),
         (Method::Get, "/api/chunks/{source_id}"),
+        (Method::Get, "/api/zotero/documents"),
+        (Method::Get, "/api/zotero/pdf"),
+        (Method::Get, "/api/zotero/pdf-page"),
         (Method::Get, "/api/webpage-chunks/{source_id}"),
         (Method::Get, "/api/activities"),
         (Method::Get, "/api/tags"),
+        (Method::Post, "/api/documents/{source_id}/tags"),
         (Method::Get, "/api/suggest-tags"),
         (Method::Get, "/api/memory/{id}/detail"),
         (Method::Get, "/api/memory/by-ids"),
         (Method::Get, "/api/memory/{id}/versions"),
         (Method::Get, "/api/decisions"),
+        (Method::Post, "/api/check"),
+        (Method::Post, "/api/check/context"),
         (Method::Get, "/api/brief/history"),
         (Method::Get, "/api/brief/history/{version}"),
         (Method::Get, "/api/sessions/{id}"),
@@ -154,6 +162,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/pages/orphan-links"),
         (Method::Get, "/api/pages/{id}"),
         (Method::Post, "/api/pages/{id}/export"),
+        (Method::Post, "/api/pages/{id}/rename"),
+        (Method::Post, "/api/pages/{id}/restore"),
         (Method::Get, "/api/pages/{id}/sources"),
         (Method::Get, "/api/pages/{id}/links"),
         (Method::Get, "/api/pages/{id}/revisions"),
@@ -187,6 +197,22 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/memory/graph"),
         (Method::Get, "/api/communities"),
         (Method::Get, "/api/communities/members"),
+        (Method::Get, "/api/research/source-lifecycle"),
+        (Method::Post, "/api/research/source-lifecycle"),
+        (Method::Get, "/api/research/source-lifecycle/reference"),
+        (Method::Get, "/api/research/disputes/{id}"),
+        (Method::Post, "/api/research/disputes"),
+        (Method::Post, "/api/research/disputes/{id}/decision"),
+        (Method::Get, "/api/research/rules"),
+        (Method::Post, "/api/research/rules"),
+        (Method::Get, "/api/research/runs"),
+        (Method::Post, "/api/research/runs"),
+        (Method::Get, "/api/research/runs/{id}"),
+        (Method::Post, "/api/research/runs/{id}"),
+        (Method::Post, "/api/research/runs/{id}/read-source"),
+        (Method::Get, "/api/research/classifications"),
+        (Method::Post, "/api/research/classifications"),
+        (Method::Post, "/api/research/merge-tags"),
         (Method::Get, "/api/source-annotations"),
         (Method::Post, "/api/source-annotations"),
     ];
@@ -207,8 +233,8 @@ fn canonical_matrix_freezes_exact_global_and_scoped_keys() {
         .map(|row| (row.method, row.path))
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(rows.len(), 106);
-    assert_eq!(keys.len(), 106, "duplicate sensitive route key");
+    assert_eq!(rows.len(), 132);
+    assert_eq!(keys.len(), 132, "duplicate sensitive route key");
     assert_eq!(global, GLOBAL.iter().copied().collect());
     assert_eq!(scoped, SCOPED.iter().copied().collect());
     assert_eq!(

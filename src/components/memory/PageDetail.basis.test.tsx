@@ -249,14 +249,14 @@ describe("PageDetail with note bases", () => {
 
   it("reads has_basis as a plain source update in the dateline, and keeps other blocks as blocked", async () => {
     const { unmount } = renderPage({ stale_reason: "source_updated", refresh_blocked_reason: "has_basis" });
-    await userEvent.click(await screen.findByRole("button", { name: i18n.t("pageInspector.open") }));
+    await userEvent.click(await screen.findByRole("button", { name: i18n.t("pageInspector.info") }));
     await screen.findByRole("dialog", { name: i18n.t("pageInspector.label") });
     expect(screen.queryByText("update blocked: citations couldn't be verified")).toBeNull();
     expect(screen.queryByText("updating...")).toBeNull();
     unmount();
 
     renderPage({ stale_reason: "source_updated", refresh_blocked_reason: "citation_gate" });
-    await userEvent.click(await screen.findByRole("button", { name: i18n.t("pageInspector.open") }));
+    await userEvent.click(await screen.findByRole("button", { name: i18n.t("pageInspector.info") }));
     expect(await screen.findByText("update blocked: citations couldn't be verified")).toBeInTheDocument();
   });
 

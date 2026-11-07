@@ -6,8 +6,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "./PageDetail";
 import { i18n } from "../../i18n";
 
+vi.mock("./sources/SourceDocumentReader", () => ({
+  SourceDocumentReader: ({ file, space }: { file: { source_id: string }; space?: string }) => (
+    <section aria-label="PDF reader" data-source={file.source_id} data-space={space} />
+  ),
+}));
+vi.mock("./sources/SourceDocumentPreview", () => ({
+  default: ({ file, onClose }: { file: { title: string }; onClose: () => void }) => (
+    <section aria-label="External source preview">
+      <span>{file.title}</span>
+      <button onClick={onClose} type="button">Close source preview</button>
+    </section>
+  ),
+}));
+
 // Same reasoning as PageCanvas.test.tsx: React Flow needs real dimensions.
-// These tests only care that the canvas tab mounts, so the node state hook is
+// These tests only care that the canvas view mounts, so the node state hook is
 // stubbed down to plain useState — selection and dragging are exercised in
 // PageCanvas.test.tsx, not here.
 vi.mock("@xyflow/react", async () => {
@@ -101,14 +115,15 @@ class ResizeObserverStub {
 }
 vi.stubGlobal("ResizeObserver", ResizeObserverStub);
 
-function renderDetail() {
+function renderDetail(pageId = "concept_abc") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return {
     user: userEvent.setup(),
+    client,
     ...render(
       <QueryClientProvider client={client}>
         <PageDetail
-          pageId="concept_abc"
+          pageId={pageId}
           onBack={vi.fn()}
           onMemoryClick={vi.fn()}
           onPageClick={vi.fn()}
@@ -123,51 +138,139 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => cleanup());
 
 async function openInspector(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.open") }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("pageInspector.info") }));
   return screen.queryByRole("dialog", { name: i18n.t("pageInspector.label") })
     ?? screen.getByRole("complementary", { name: i18n.t("pageInspector.label") });
 }
 
-async function selectInspectorTab(user: ReturnType<typeof userEvent.setup>, name: string) {
-  if (!screen.queryByRole("tablist")) await openInspector(user);
-  await user.click(await screen.findByRole("tab", { name }));
+async function selectInspectorTool(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(await screen.findByRole("button", { name }));
 }
 
 describe("PageDetail page inspector", () => {
+  it("reveals the PDF tool only after opening a Zotero citation and restores that reader", async () => {
+    const { getPageSources } = await import("../../lib/tauri");
+    const sources = await getPageSources("concept_abc");
+    vi.mocked(getPageSources).mockResolvedValueOnce(sources.map(row => ({
+      ...row, memory: row.memory ? { ...row.memory, source_agent: "zotero" } : row.memory,
+    })));
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    try {
+      const { user } = renderDetail();
+      await screen.findByText("libSQL Architecture");
+      expect(screen.queryByRole("button", { name: "PDF" })).toBeNull();
+      const panel = await openInspector(user);
+      await user.click(within(panel).getByRole("button", { name: /libSQL stores vectors/ }));
+      const pdfButton = await screen.findByRole("button", { name: "PDF" });
+      expect(pdfButton).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getAllByRole("complementary")).toHaveLength(1);
+      expect(screen.getByRole("complementary", { name: i18n.t("pageInspector.label") })).toBe(panel);
+      const reader = within(panel).getByRole("region", { name: "PDF reader" });
+      expect(reader).toHaveAttribute("data-source", "mem_1");
+      expect(screen.getByText("More prose here.")).toBeTruthy();
+
+      await selectInspectorTool(user, i18n.t("pageCanvas.tabCanvas"));
+      expect(await screen.findByRole("region", { name: "Canvas for libSQL Architecture" })).toBeTruthy();
+      expect(screen.queryByRole("region", { name: "PDF reader" })).toBeNull();
+      await user.click(pdfButton);
+      expect(screen.getByRole("region", { name: "PDF reader" })).toBe(reader);
+      expect(screen.getByRole("region", { name: "PDF reader" })).toHaveAttribute("data-source", "mem_1");
+      await selectInspectorTool(user, i18n.t("pageInspector.info"));
+      expect(screen.queryByRole("region", { name: "PDF reader" })).toBeNull();
+      await user.click(pdfButton);
+      expect(screen.getByRole("region", { name: "PDF reader" })).toBe(reader);
+      await user.click(pdfButton);
+      expect(screen.queryByRole("region", { name: "PDF reader" })).toBeNull();
+      expect(pdfButton).toHaveAttribute("aria-pressed", "false");
+      await user.click(pdfButton);
+      expect(screen.getByRole("region", { name: "PDF reader" })).toBe(reader);
+    } finally { window.matchMedia = original; }
+  });
+
   it("opens the dedicated page sidebar with Info selected and no inspector actions in the overflow menu", async () => {
     const { user, container } = renderDetail();
     await screen.findByText("libSQL Architecture");
     expect(container.querySelector(".page-detail-top-row")).toBeNull();
-    expect(screen.getByRole("button", { name: i18n.t("pageInspector.open") })).toBeTruthy();
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toBeTruthy();
+    expect(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") })).toBeTruthy();
+    expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.getByRole("button", { name: "Page actions" }).closest(".page-document-title-row")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Page actions" }));
     expect(screen.queryByRole("menuitem", { name: i18n.t("pageInspector.info") })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: i18n.t("pageCanvas.tabCanvas") })).toBeNull();
     await user.keyboard("{Escape}");
     await openInspector(user);
-    const tablist = screen.getByRole("tablist", { name: i18n.t("pageInspector.label") });
-    expect(within(tablist).getByRole("tab", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", expect.stringContaining("-info"));
-    expect(screen.getByRole("button", { name: i18n.t("pageInspector.close") })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("opens the Mind map directly without first opening Info", async () => {
+    const { user } = renderDetail();
+    await screen.findByText("libSQL Architecture");
+    expect(screen.queryByRole("tablist")).toBeNull();
+    await user.click(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") }));
+    expect(await screen.findByRole("region", { name: "Canvas for libSQL Architecture" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-expanded", "true");
+    await user.click(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") }));
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveFocus();
+  });
+
+  it("switches from an external source preview to the requested page view", async () => {
+    const { getPageSources } = await import("../../lib/tauri");
+    const sources = await getPageSources("concept_abc");
+    vi.mocked(getPageSources).mockResolvedValueOnce(sources.map(row => ({
+      ...row, memory: row.memory ? { ...row.memory, source_agent: "obsidian" } : row.memory,
+    })));
+    const { user } = renderDetail();
+    await screen.findByText("libSQL Architecture");
+    await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
+    const panel = screen.queryByRole("dialog", { name: i18n.t("pageInspector.label") })
+      ?? screen.getByRole("complementary", { name: i18n.t("pageInspector.label") });
+    await user.click(within(panel)
+      .getByRole("button", { name: /libSQL stores vectors/ }));
+    expect(await screen.findByRole("region", { name: "External source preview" })).toBeTruthy();
+
+    // Info was already active under the external preview: choosing it dismisses
+    // the preview while leaving the requested Info pane visible.
+    await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
+    expect(screen.queryByRole("region", { name: "External source preview" })).toBeNull();
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("lets the Info control close its own pane and reclaim the reading width", async () => {
+    const { user } = renderDetail();
+    await screen.findByText("libSQL Architecture");
+    const info = screen.getByRole("button", { name: i18n.t("pageInspector.info") });
+    await user.click(info);
+    expect(await screen.findByRole("dialog", { name: i18n.t("pageInspector.label") })).toBeTruthy();
+    expect(info).toHaveAttribute("aria-pressed", "true");
+    await user.click(info);
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(info).toHaveAttribute("aria-expanded", "false");
+    expect(info).toHaveFocus();
   });
 
   it("opens the map beside the reading page and returns through the panel close button", async () => {
     const { user } = renderDetail();
     await screen.findByText("libSQL Architecture");
-    await selectInspectorTab(user, i18n.t("pageCanvas.tabCanvas"));
+    await selectInspectorTool(user, i18n.t("pageCanvas.tabCanvas"));
     const panel = await screen.findByRole("dialog", { name: i18n.t("pageInspector.label") });
     expect(await screen.findByRole("region", { name: "Canvas for libSQL Architecture" })).toBeTruthy();
     expect(screen.getByText("More prose here.")).toBeTruthy();
     expect(screen.getByTestId("page-document-reading")).not.toHaveAttribute("contenteditable");
     await user.click(panel.querySelector<HTMLButtonElement>(".page-info-drawer-close")!);
     expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
-    expect(screen.getByRole("button", { name: i18n.t("pageInspector.open") })).toHaveFocus();
+    expect(screen.getByRole("button", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveFocus();
   });
 
   it("resolves node labels from the page and sources already loaded", async () => {
     const { user } = renderDetail();
     await screen.findByText("libSQL Architecture");
-    await selectInspectorTab(user, i18n.t("pageCanvas.tabCanvas"));
+    await selectInspectorTool(user, i18n.t("pageCanvas.tabCanvas"));
     await screen.findByTestId("react-flow");
     expect(screen.getAllByText("libSQL Architecture").length).toBeGreaterThan(1);
     expect(screen.getByText("libSQL stores vectors")).toBeTruthy();
@@ -181,16 +284,55 @@ describe("PageDetail page inspector", () => {
       await screen.findByText("libSQL Architecture");
       await openInspector(user);
       const panel = screen.getByRole("complementary", { name: i18n.t("pageInspector.label") });
-      const infoTab = screen.getByRole("tab", { name: i18n.t("pageInspector.info") });
-      expect(infoTab).toHaveAttribute("aria-selected", "true");
-      expect(screen.queryByRole("tab", { name: i18n.t("knowledgeContext.localGraph") })).toBeNull();
-      expect(within(panel).getAllByRole("tab")).toHaveLength(2);
-      await user.click(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") }));
+      const infoTab = screen.getByRole("button", { name: i18n.t("pageInspector.info") });
+      expect(infoTab).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByRole("tablist")).toBeNull();
+      await selectInspectorTool(user, i18n.t("pageCanvas.tabCanvas"));
       expect(screen.getByRole("complementary", { name: i18n.t("pageInspector.label") })).toBe(panel);
       expect(await screen.findByRole("region", { name: "Canvas for libSQL Architecture" })).toBeTruthy();
-      await user.click(infoTab);
+      await selectInspectorTool(user, i18n.t("pageInspector.info"));
       expect(screen.getByRole("complementary", { name: i18n.t("pageInspector.label") })).toBe(panel);
       expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
     } finally { window.matchMedia = original; }
+  });
+
+  it("keeps inspector state with its Wiki page and starts a different page closed", async () => {
+    const { getPageSources } = await import("../../lib/tauri");
+    const baseSources = await getPageSources("concept_abc");
+    vi.mocked(getPageSources).mockImplementation(async id => {
+      return id === "page_a" ? baseSources.map(row => ({
+        ...row, memory: row.memory ? { ...row.memory, source_agent: "zotero" } : row.memory,
+      })) : baseSources;
+    });
+    const { getPage } = await import("../../lib/tauri");
+    const page = await getPage("concept_abc");
+    if (!page) throw new Error("the mocked page is missing");
+    vi.mocked(getPage).mockImplementation(async id => ({ ...page, id, title: id === "page_b" ? "Second page" : "First page" }));
+    const { user, client, rerender } = renderDetail("page_a");
+    await screen.findByText("First page");
+    await openInspector(user);
+    const panel = screen.queryByRole("dialog", { name: i18n.t("pageInspector.label") })
+      ?? screen.getByRole("complementary", { name: i18n.t("pageInspector.label") });
+    await user.click(within(panel).getByRole("button", { name: /libSQL stores vectors/ }));
+    const pdf = await screen.findByRole("button", { name: "PDF" });
+    expect(screen.getByRole("region", { name: "PDF reader" })).toBeTruthy();
+    const reader = screen.getByRole("region", { name: "PDF reader" });
+    await user.click(pdf);
+    expect(screen.queryByRole("region", { name: "PDF reader" })).toBeNull();
+    expect(pdf).toHaveAttribute("aria-pressed", "false");
+    await user.click(pdf);
+    expect(screen.getByRole("region", { name: "PDF reader" })).toBe(reader);
+
+    rerender(<QueryClientProvider client={client}><PageDetail pageId="page_b" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onEntityClick={vi.fn()} /></QueryClientProvider>);
+    await screen.findByText("Second page");
+    expect(screen.queryByRole("region", { name: "PDF reader" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "PDF" })).toBeNull();
+    expect(screen.getByRole("button", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-expanded", "false");
+
+    rerender(<QueryClientProvider client={client}><PageDetail pageId="page_a" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onEntityClick={vi.fn()} /></QueryClientProvider>);
+    await screen.findByText("First page");
+    expect(screen.getByRole("button", { name: "PDF" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "PDF" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "PDF reader" })).toHaveAttribute("data-source", "mem_1");
   });
 });
