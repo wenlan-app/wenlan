@@ -936,7 +936,7 @@ fn min_text_rejection_detail(content: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
@@ -1390,7 +1390,7 @@ mod tests {
     /// With `None`, the page has an empty content stream (no text operators) —
     /// the "image-only / no extractable text" case (no OCR in v1). Generated
     /// with lopdf so the xref/trailer are byte-correct and pdf_extract parses it.
-    fn build_pdf(text: Option<&str>) -> Vec<u8> {
+    pub(crate) fn build_pdf(text: Option<&str>) -> Vec<u8> {
         use lopdf::content::{Content, Operation};
         use lopdf::{dictionary, Document, Object, Stream};
 

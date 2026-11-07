@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Disputes remain Review proposals. Resolution never writes a Page.
-use super::{citation_provenance, commit_or_rollback, research_runs, MemoryDB};
+use super::{citation_provenance, metadata_json, research_runs, MemoryDB};
 use crate::{read_scope::ReadScope, WenlanError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -131,21 +131,6 @@ fn pdf_citations(dispute: &ResearchDispute) -> Vec<PageCitation> {
         })
         .collect()
 }
-async fn finish<T>(
-    conn: &libsql::Connection,
-    result: Result<T, WenlanError>,
-) -> Result<T, WenlanError> {
-    match result {
-        Ok(value) => {
-            commit_or_rollback(conn).await.map_err(sql)?;
-            Ok(value)
-        }
-        Err(error) => {
-            let _ = conn.execute("ROLLBACK", ()).await;
-            Err(error)
-        }
-    }
-}
 async fn load_on(
     conn: &libsql::Connection,
     space_id: &str,
@@ -180,22 +165,7 @@ async fn history_on(
     conn: &libsql::Connection,
     id: &str,
 ) -> Result<Option<DecisionHistory>, WenlanError> {
-    let mut rows = conn
-        .query(
-            "SELECT value FROM app_metadata WHERE key=?1",
-            [decision_key(id)],
-        )
-        .await
-        .map_err(sql)?;
-    rows.next()
-        .await
-        .map_err(sql)?
-        .map(|row| -> Result<_, WenlanError> {
-            Ok(serde_json::from_str::<DecisionHistory>(
-                &row.get::<String>(0).map_err(sql)?,
-            )?)
-        })
-        .transpose()
+    metadata_json::load(conn, &decision_key(id), sql).await
 }
 async fn states_on(
     conn: &libsql::Connection,
@@ -348,7 +318,7 @@ impl MemoryDB {
             let (original,_,_)=load_on(&conn,space_id,&id).await?;
             Ok(ResearchDisputeProposalResult{id:id.clone(),created,payload_digest:original.payload_digest})
         }.await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
     pub async fn research_dispute(
         &self,
@@ -429,7 +399,7 @@ impl MemoryDB {
             };
             Ok(ResearchDisputeView{space:request.space.clone(),id:id.into(),status:final_status,dispute:stored.dispute,payload_digest:stored.payload_digest,source_states,decisions:history.events})
         }.await;
-        finish(&conn, result).await
+        metadata_json::finish(&conn, result, sql).await
     }
 }
 

@@ -391,3 +391,173 @@ async fn ux_chat_5_the_big_map_reads_each_things_night_points() {
         .unwrap()
         .is_empty());
 }
+
+/// UX-VIEW-6: a thing's page opens with the conclusion its newest night wrote.
+/// It belongs to that night only: taking the night back brings back the one
+/// before, and a sentence whose point was replaced or is out of the caller's
+/// scope is not shown, since its source no longer backs it.
+#[tokio::test]
+async fn ux_view_6_the_page_opens_with_the_newest_nights_conclusion() {
+    use wenlan_types::ThingConclusionSentence;
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _) = two_things(&db, now).await;
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let due = due.iter().find(|d| d.thing_id == site).unwrap();
+    remember(
+        &db,
+        "mem_tagline",
+        "The tagline is \"You do the thinking\".",
+        "decision",
+        None,
+    )
+    .await;
+    remember(
+        &db,
+        "mem_pricing",
+        "Whether to add a pricing page is open.",
+        "fact",
+        None,
+    )
+    .await;
+    let first = db
+        .record_dream(
+            &site,
+            &["mem_tagline".into()],
+            &["mem_pricing".into()],
+            &Default::default(),
+            &[],
+            &due.conversations,
+        )
+        .await
+        .unwrap()
+        .expect("a night with points has a number");
+    let sentence = |text: &str, points: &[&str]| ThingConclusionSentence {
+        text: text.into(),
+        points: points.iter().map(|p| p.to_string()).collect(),
+    };
+    // Without a conclusion yet, the page keeps its old first line.
+    let dream = db.thing_dream(&site).await.unwrap().unwrap();
+    assert!(dream.conclusion.is_empty());
+    db.set_dream_conclusion(
+        &site,
+        first,
+        &[
+            sentence("The tagline is settled.", &["mem_tagline"]),
+            sentence("A pricing page is still open.", &["mem_pricing"]),
+        ],
+    )
+    .await
+    .unwrap();
+    let detail = db
+        .get_thing_detail(&site, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    let shown: Vec<String> = detail
+        .dream
+        .unwrap()
+        .conclusion
+        .into_iter()
+        .map(|s| s.text)
+        .collect();
+    assert_eq!(
+        shown,
+        ["The tagline is settled.", "A pricing page is still open."]
+    );
+    // A caller that sees another Space gets no sentence resting on points it
+    // cannot see.
+    let elsewhere = db
+        .thing_dream_in(&site, &ReadScope::Space("elsewhere".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(elsewhere.conclusion.is_empty());
+
+    // The next night replaces the open point and writes no conclusion: the
+    // older night's conclusion is not shown above newer points.
+    remember(
+        &db,
+        "mem_pricing_2",
+        "No pricing page for now.",
+        "decision",
+        Some("mem_pricing"),
+    )
+    .await;
+    let second = db
+        .record_dream(
+            &site,
+            &["mem_pricing_2".into()],
+            &[],
+            &Default::default(),
+            &[],
+            &[],
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(db
+        .thing_dream(&site)
+        .await
+        .unwrap()
+        .unwrap()
+        .conclusion
+        .is_empty());
+    // A sentence of that night that still cites the replaced point is hidden;
+    // the rest stays.
+    db.set_dream_conclusion(
+        &site,
+        second,
+        &[
+            sentence(
+                "The tagline is settled; no pricing page for now.",
+                &["mem_tagline", "mem_pricing_2"],
+            ),
+            sentence("Pricing is still open.", &["mem_tagline", "mem_pricing"]),
+        ],
+    )
+    .await
+    .unwrap();
+    let shown: Vec<String> = db
+        .thing_dream(&site)
+        .await
+        .unwrap()
+        .unwrap()
+        .conclusion
+        .into_iter()
+        .map(|s| s.text)
+        .collect();
+    assert_eq!(shown, ["The tagline is settled; no pricing page for now."]);
+    // Writing onto another thing's night changes nothing.
+    db.set_dream_conclusion("thg_other", second, &[sentence("x", &["mem_tagline"])])
+        .await
+        .unwrap();
+    assert_eq!(
+        db.thing_dream(&site)
+            .await
+            .unwrap()
+            .unwrap()
+            .conclusion
+            .len(),
+        1
+    );
+
+    // Undo the second night: the first night's conclusion is back.
+    db.undo_thing_dream(&site).await.unwrap();
+    db.delete_by_source_id("memory", "mem_pricing_2")
+        .await
+        .unwrap();
+    let back: Vec<String> = db
+        .thing_dream(&site)
+        .await
+        .unwrap()
+        .unwrap()
+        .conclusion
+        .into_iter()
+        .map(|s| s.text)
+        .collect();
+    assert_eq!(
+        back,
+        ["The tagline is settled.", "A pricing page is still open."]
+    );
+}
