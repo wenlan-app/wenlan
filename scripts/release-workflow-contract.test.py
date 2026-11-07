@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import textwrap
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
@@ -4903,6 +4904,217 @@ def windows_recipe_drift_violations(ci: str, release: str) -> list[str]:
     return violations
 
 
+def apple_stapler_retry_contract_violations(release: str) -> list[str]:
+    """Exercise the workflow-embedded helper and retain every Apple ticket check."""
+    violations: list[str] = []
+    job = job_body(release, "app-bundle")
+    prepare = named_step_body(job, "Prepare bounded Apple stapler retry")
+    helper_path = '"$RUNNER_TEMP/apple-stapler-retry.sh"'
+    helper = heredoc_body(prepare, helper_path)
+    if not helper or "<< 'APPLE_STAPLER_RETRY'" not in prepare:
+        return ["Apple stapler retry helper is not an inline quoted workflow heredoc"]
+    if "if: env.APPLE_NOTARIZATION_CONFIGURED == 'true'" not in prepare:
+        violations.append("Apple stapler helper is not gated by notarization configuration")
+    if 'bash -n "$RUNNER_TEMP/apple-stapler-retry.sh"' not in prepare:
+        violations.append("Apple stapler helper lacks a shell syntax check")
+
+    expected = {
+        "Notarize and staple the DMG": [
+            'apple_stapler_retry staple "$dmg"',
+            'apple_stapler_retry validate "$dmg"',
+        ],
+        "Staple the app and rebuild the updater archive": [
+            'apple_stapler_retry staple "$app"',
+            'apple_stapler_retry validate "$app"',
+            'codesign --verify --deep --strict "$unpacked_app"',
+            'apple_stapler_retry validate "$unpacked_app"',
+        ],
+        "Verify Apple signature and notarization": [
+            'codesign --verify --deep --strict --verbose=2 "$app"',
+            'spctl --assess --type execute --verbose=2 "$app"',
+            'apple_stapler_retry validate "$app"',
+            'apple_stapler_retry validate "$dmg"',
+            'spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"',
+            'hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"',
+            "source=Notarized Developer ID",
+        ],
+    }
+    for step_name, markers in expected.items():
+        step = named_step_body(job, step_name)
+        if not step:
+            violations.append(f"Apple stapler step missing: {step_name}")
+            continue
+        if f"source {helper_path}" not in step:
+            violations.append(f"Apple stapler helper not sourced in {step_name}")
+        position = 0
+        for marker in markers:
+            found = step.find(marker, position)
+            if found < 0:
+                violations.append(f"Apple ticket proof missing or reordered in {step_name}: {marker}")
+                break
+            position = found + len(marker)
+    notarize = named_step_body(job, "Notarize and staple the DMG")
+    for marker in ["xcrun notarytool submit", "status: Accepted"]:
+        if marker not in notarize:
+            violations.append(f"Apple notarization proof missing: {marker}")
+    archive = named_step_body(job, "Staple the app and rebuild the updater archive")
+    for marker in ['tar --no-mac-metadata', 'pnpm tauri signer sign "$archive"',
+                   'tar -C "$unpacked" -xzf "$archive"']:
+        if marker not in archive:
+            violations.append(f"Apple updater archive proof missing: {marker}")
+    without_helper = job.replace(helper, "", 1)
+    if re.search(r"\bxcrun\s+stapler\s+(?:staple|validate)\b", without_helper):
+        violations.append("bare xcrun stapler call bypasses bounded retry")
+    calls = re.findall(
+        r'^\s*apple_stapler_retry (staple|validate) "\$(dmg|app|unpacked_app)"\s*$',
+        without_helper, re.MULTILINE,
+    )
+    if sorted(calls) != sorted([
+        ("staple", "dmg"), ("validate", "dmg"),
+        ("staple", "app"), ("validate", "app"),
+        ("validate", "unpacked_app"),
+        ("validate", "app"), ("validate", "dmg"),
+    ]):
+        violations.append(f"Apple stapler targets changed: {calls!r}")
+    violations.extend(_exercise_apple_stapler_retry(textwrap.dedent(helper)))
+    return violations
+
+
+def _exercise_apple_stapler_retry(helper: str) -> list[str]:
+    """Run the actual embedded Bash function with deterministic xcrun and clock."""
+    harness = r'''
+set -euo pipefail
+source "$HELPER_FILE"
+printf '100\n' > "$CLOCK_FILE"
+printf '0\n' > "$COUNT_FILE"
+: > "$SLEEPS_FILE"
+date() { cat "$CLOCK_FILE"; }
+sleep() {
+  printf '%s,' "$1" >> "$SLEEPS_FILE"
+  current="$(cat "$CLOCK_FILE")"
+  printf '%s\n' "$((current + $1))" > "$CLOCK_FILE"
+}
+transient() {
+  echo 'error is Error Domain=NSURLErrorDomain Code=-1005 The network connection was lost. NSErrorFailingURLStringKey=https://api.apple-cloudkit.com/database/1/com.apple.gk.ticket-delivery/production/public/records/lookup'
+}
+xcrun() {
+  [[ "$#" -eq 3 && "$1" == stapler && "$2" == "$ACTION" && "$3" == "$TARGET" ]] || return 90
+  current="$(cat "$COUNT_FILE")"
+  next=$((current + 1))
+  printf '%s\n' "$next" > "$COUNT_FILE"
+  case "$CASE" in
+    transient_then_pass) if (( next < 3 )); then transient; return 68; else echo 'stapler success'; return 0; fi ;;
+    repeated_transient) transient; return 68 ;;
+    invalid_ticket) echo 'The staple action failed! Error 65: invalid ticket'; return 65 ;;
+    unrelated_68) echo 'Error Domain=NSURLErrorDomain Code=-1005 https://example.com/other'; return 68 ;;
+    transport_non68) transient; return 65 ;;
+    deadline) transient; printf '161\n' > "$CLOCK_FILE"; return 68 ;;
+    *) return 91 ;;
+  esac
+}
+set +e
+apple_stapler_retry "$ACTION" "$TARGET" > "$OUTPUT_FILE" 2>&1
+actual_rc=$?
+set -e
+actual_count="$(cat "$COUNT_FILE")"
+actual_sleeps="$(cat "$SLEEPS_FILE")"
+if [[ "$actual_rc" -ne "$EXPECTED_RC" || "$actual_count" -ne "$EXPECTED_COUNT" || "$actual_sleeps" != "$EXPECTED_SLEEPS" ]]; then
+  echo "unexpected result rc=$actual_rc count=$actual_count sleeps=$actual_sleeps" >&2
+  cat "$OUTPUT_FILE" >&2
+  exit 1
+fi
+if [[ "$EXPECTED_RC" -eq 0 ]]; then
+  grep -q 'stapler success' "$OUTPUT_FILE"
+else
+  if grep -q 'stapler success' "$OUTPUT_FILE"; then
+    echo 'failed stapler was accepted as success' >&2
+    exit 1
+  fi
+fi
+if [[ "$CASE" == repeated_transient || "$CASE" == deadline ]]; then
+  grep -q 'NSURLErrorDomain Code=-1005' "$OUTPUT_FILE"
+fi
+'''
+    scenarios = [
+        ("transient_then_pass", "staple", 0, 3, "2,4,"),
+        ("transient_then_pass", "validate", 0, 3, "2,4,"),
+        ("repeated_transient", "validate", 68, 3, "2,4,"),
+        ("invalid_ticket", "staple", 65, 1, ""),
+        ("unrelated_68", "validate", 68, 1, ""),
+        ("transport_non68", "validate", 65, 1, ""),
+        ("deadline", "validate", 68, 1, ""),
+    ]
+    violations: list[str] = []
+    try:
+        bash = posix_bash()
+    except AssertionError as error:
+        return [f"Apple stapler Bash check is unavailable: {error}"]
+    if shutil.which(bash) is None:
+        return [f"Apple stapler Bash check is unavailable: {bash}"]
+    with tempfile.TemporaryDirectory(prefix="wenlan-apple-stapler-test-") as raw:
+        root = Path(raw)
+        helper_file = root / "helper.sh"
+        helper_file.write_bytes(helper.encode("utf-8"))  # LF on Windows too.
+        posix_root = root.as_posix()
+        if sys.platform == "win32":
+            try:
+                converted = subprocess.run(
+                    [bash, "-c", 'cygpath -u "$1"', "--", str(root)],
+                    capture_output=True, text=True, timeout=10,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                return [f"Apple stapler Git Bash path conversion could not run: {error}"]
+            posix_root = converted.stdout.rstrip("\r\n")
+            if (converted.returncode or not posix_root.startswith("/")
+                    or "\n" in posix_root or "\r" in posix_root):
+                return [
+                    "Apple stapler Git Bash path conversion failed: "
+                    f"exit={converted.returncode} stdout={converted.stdout!r} "
+                    f"stderr={converted.stderr!r}"
+                ]
+        helper_posix = f"{posix_root}/helper.sh"
+        try:
+            syntax = subprocess.run(
+                [bash, "-n", helper_posix], capture_output=True,
+                text=True, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return [f"Apple stapler Bash syntax check could not run: {error}"]
+        if syntax.returncode:
+            return [f"Apple stapler helper has Bash syntax error: {syntax.stderr.strip()}"]
+        for scenario, action, expected_rc, expected_count, expected_sleeps in scenarios:
+            env = os.environ.copy()
+            env.update({
+                "HELPER_FILE": helper_posix,
+                "CLOCK_FILE": f"{posix_root}/clock",
+                "COUNT_FILE": f"{posix_root}/count",
+                "SLEEPS_FILE": f"{posix_root}/sleeps",
+                "OUTPUT_FILE": f"{posix_root}/output",
+                "CASE": scenario,
+                "ACTION": action,
+                "TARGET": f"{posix_root}/candidate.app",
+                "EXPECTED_RC": str(expected_rc),
+                "EXPECTED_COUNT": str(expected_count),
+                "EXPECTED_SLEEPS": expected_sleeps,
+            })
+            try:
+                result = subprocess.run(
+                    [bash, "-c", harness], env=env, capture_output=True,
+                    text=True, timeout=10,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                violations.append(
+                    f"Apple stapler retry {scenario}/{action} could not run: {error}"
+                )
+                continue
+            if result.returncode:
+                violations.append(
+                    f"Apple stapler retry {scenario}/{action} failed: "
+                    f"{result.stderr.strip() or result.stdout.strip()}"
+                )
+    return violations
+
+
 def main() -> None:
     publish_helper_tests = subprocess.run(
         [sys.executable, str(PUBLISH_CRATE_TEST_PATH)],
@@ -4932,6 +5144,7 @@ def main() -> None:
     )
     violations.extend(windows_recipe_drift_violations(ci, release))
     violations.extend(desktop_link_order_violations(release))
+    violations.extend(apple_stapler_retry_contract_violations(release))
     violations.extend(candidate_observer_contract_violations(ci, observer, validator, archive))
     violations.extend(trusted_candidate_gate_violations(ci, classifier, validator))
     violations.extend(signpath_status_violations())
