@@ -2,11 +2,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getChunks, getSpace, listEntities, listIndexedFiles, listMemoriesRich, listPages, type ChunkDetail, type IndexedFileInfo, type Space } from "../../../lib/tauri";
+import { addZoteroSource, getChunks, getSpace, listEntities, listIndexedFiles, listMemoriesRich, listPages, listSpaces, listZoteroCollections, syncRegisteredSource, type ChunkDetail, type IndexedFileInfo, type Space } from "../../../lib/tauri";
 import SpaceDetail from "../SpaceDetail";
 import { SPACE_DETAIL_TEST_COPY } from "./testTranslation";
 
-vi.mock("../../../lib/tauri", () => ({ getSpace: vi.fn(), listPages: vi.fn(), listIndexedFiles: vi.fn(), getChunks: vi.fn(), openSearchResult: vi.fn(), listEntities: vi.fn(), listMemoriesRich: vi.fn(), updateSpace: vi.fn(), deleteSpace: vi.fn(), confirmSpace: vi.fn() }));
+vi.mock("../../../lib/tauri", () => ({ listAllTags: vi.fn().mockResolvedValue({tags: [], document_tags: {}, categories: [], document_categories: {}}), getSpace: vi.fn(), listPages: vi.fn(), listIndexedFiles: vi.fn(), getChunks: vi.fn(), openSearchResult: vi.fn(), listEntities: vi.fn(), listMemoriesRich: vi.fn(), updateSpace: vi.fn(), deleteSpace: vi.fn(), confirmSpace: vi.fn(), addZoteroSource: vi.fn(), listZoteroCollections: vi.fn(), listSpaces: vi.fn(), syncRegisteredSource: vi.fn() }));
 const a: Space = { id: "stable-a", name: "讀書會", description: "Reading together", suggested: false, starred: false, sort_order: 0, memory_count: 12, entity_count: 6, created_at: 1, updated_at: 1 };
 const b: Space = { ...a, id: "stable-b", name: "另一個專案" };
 const source = (id: string, patch: Partial<IndexedFileInfo> = {}): IndexedFileInfo => ({ source: "file", source_id: id, title: id, chunk_count: 1, last_modified: 1, ...patch });
@@ -25,8 +25,23 @@ beforeEach(() => {
   vi.mocked(listPages).mockResolvedValue([]);
   vi.mocked(listIndexedFiles).mockResolvedValue([]);
   vi.mocked(getChunks).mockResolvedValue([]);
+  vi.mocked(listZoteroCollections).mockResolvedValue({ server_id: "local", collections: [{ key: "A1", name: "Articles", item_count: 2 }] });
+  vi.mocked(addZoteroSource).mockResolvedValue({ id: "zotero-src", source_type: "zotero", path: "zotero-local/instance/users/0/collections/A1", status: "Active", last_sync: null, file_count: 0, memory_count: 0 });
+  vi.mocked(syncRegisteredSource).mockResolvedValue({ files_found: 2, ingested: 2, skipped: 0, errors: 0 });
 });
 describe("Space pages and sources", () => {
+  it("offers Zotero import into the current Space without loading a destination list", async () => {
+    workspace();
+    fireEvent.click(await screen.findByRole("tab", { name: "Sources" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add Zotero collection" }));
+    await screen.findByText("Connected to local Zotero");
+    await waitFor(() => expect(screen.getByLabelText("Collection")).toHaveValue("A1"));
+    fireEvent.click(screen.getByRole("button", { name: "Import collection" }));
+    await screen.findByText("Imported 2; skipped 0; errors 0.");
+    expect(addZoteroSource).toHaveBeenCalledExactlyOnceWith("A1", "local", a.name);
+    expect(listSpaces).not.toHaveBeenCalled();
+  });
+
   it("defaults to pages, creates in the current Space and never fetches standalone memories or topics", async () => {
     const result = workspace();
     expect(await screen.findByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");

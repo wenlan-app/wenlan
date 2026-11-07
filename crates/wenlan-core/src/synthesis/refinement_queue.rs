@@ -148,6 +148,16 @@ pub async fn apply_refinement_with_decision(
 
     let mut resolved_inside_action = false;
     match prop.action.as_str() {
+        "research_dispute" => {
+            return Err(WenlanError::Validation(
+                "research disputes require the typed human decision pathway".into(),
+            ))
+        }
+        "source_classification" => {
+            return Err(WenlanError::Validation(
+                "source classification requires scoped Review adoption".into(),
+            ));
+        }
         "entity_merge" => {
             let new_id = prop.source_ids.first().ok_or_else(|| {
                 WenlanError::Validation("entity_merge missing source_ids[0]".into())
@@ -325,6 +335,7 @@ async fn apply_cross_space_discovery(
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: true,
+            research_write: None,
         },
     )
     .await?;

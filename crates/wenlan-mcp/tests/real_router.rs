@@ -356,6 +356,8 @@ async fn plain_mcp_host_gets_guarded_page_flow_from_daemon_replies() {
     let duplicate = text_of(
         &server
             .write_page_impl(WritePageParams {
+                citation_targets: vec![],
+                organize_run_id: None,
                 page_id: None,
                 title: Some("kitchen renovation".into()),
                 content: "A second page with the same title must not land.".into(),

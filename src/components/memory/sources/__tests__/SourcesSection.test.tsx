@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import SourcesSection from "../SourcesSection";
 import * as tauri from "../../../../lib/tauri";
@@ -98,5 +98,45 @@ describe("SourcesSection", () => {
     expect(screen.queryByText("Knowledge Directory")).not.toBeInTheDocument();
     expect(screen.queryByText(/Wenlan\/knowledge/)).not.toBeInTheDocument();
     expect(tauri.getKnowledgePath).not.toHaveBeenCalled();
+  });
+
+  it("offers Zotero from settings and keeps its virtual path away from Finder actions", async () => {
+    vi.mocked(tauri.listRegisteredSources).mockResolvedValue([{
+      id: "zotero-source", source_type: "zotero", path: "zotero-local/instance/users/0/collections/ABCD", status: "Active", last_sync: null, file_count: 2, memory_count: 2,
+    }]);
+    render(<SourcesSection />, { wrapper });
+    expect(await screen.findByText("Zotero Collection")).toBeInTheDocument();
+    expect(screen.queryByText("ABCD")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect Zotero" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.queryByRole("menuitem", { name: "Reveal in Finder" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Remove source" })).toBeInTheDocument();
+  });
+
+  it("shows a trimmed Zotero collection name without changing folder names", async () => {
+    vi.mocked(tauri.listRegisteredSources).mockResolvedValue([
+      { id: "zotero", source_type: "zotero", path: "zotero-local/instance/users/0/collections/ABCD", display_name: "  RAG20-research-acceptance  ", status: "Active", last_sync: null, file_count: 21, memory_count: 21 },
+      { id: "folder", source_type: "directory", path: "/tmp/papers", display_name: "Ignored name", status: "Active", last_sync: null, file_count: 1, memory_count: 1 },
+      { id: "legacy", source_type: "zotero", path: "zotero-local/instance/users/0/collections/LEGACY", display_name: "  ", status: "Active", last_sync: null, file_count: 0, memory_count: 0 },
+    ]);
+    render(<SourcesSection />, { wrapper });
+    expect(await screen.findByText("RAG20-research-acceptance")).toBeInTheDocument();
+    expect(screen.getByText("papers")).toBeInTheDocument();
+    expect(screen.getByText("Zotero Collection")).toBeInTheDocument();
+    expect(screen.queryByText("Ignored name")).not.toBeInTheDocument();
+    expect(screen.queryByText("LEGACY")).not.toBeInTheDocument();
+  });
+
+  it("offers interrupted Zotero disconnection without pretending to know file counts", async () => {
+    vi.mocked(tauri.listRegisteredSources).mockResolvedValue([{ id:"pending",source_type:"zotero",path:"zotero/private-locator",space:"Research",status:"Active",last_sync:null,file_count:0,memory_count:0,last_sync_error_detail:"zotero_disconnect_pending" }]);
+    vi.mocked(tauri.getZoteroDisconnectPreview).mockResolvedValue({identity:{registration_id:"pending",locator:"zotero/private-locator",server_id:"server",space_id:"space"},identity_digest:"digest",space_name:"Research",revision:1,canonical_item_ids:[],affected_page_ids:[],impact_scope_known:false,pending_disconnect:true,disconnected:false});
+    render(<SourcesSection />, {wrapper});
+    expect(await screen.findByText("Zotero · Research")).toBeInTheDocument();
+    expect(screen.queryByText(/0 files/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", {name:"Sync"})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Finish disconnect"}));
+    expect(await screen.findByText(/previous disconnect was interrupted/)).toBeInTheDocument();
+    expect(tauri.getZoteroDisconnectPreview).toHaveBeenCalledWith("pending");
   });
 });

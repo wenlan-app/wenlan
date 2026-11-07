@@ -8,11 +8,13 @@ import { useReviewQueue } from "./useReviewQueue";
 
 const mocks = vi.hoisted(() => ({
   listPendingRevisions: vi.fn(),
+  acceptPendingRevision: vi.fn(),
 }));
 
 vi.mock("../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/tauri")>()),
   listPendingRevisions: mocks.listPendingRevisions,
+  acceptPendingRevision: mocks.acceptPendingRevision,
   listRefinements: vi.fn().mockResolvedValue({ proposals: [] }),
   listUnconfirmedMemories: vi.fn().mockResolvedValue([]),
 }));
@@ -48,4 +50,33 @@ describe("useReviewQueue revision cards", () => {
     );
     expect(reasons).toEqual({ page_a: "locked", page_b: null, page_c: null });
   });
+});
+
+
+it("edited acceptance uses the exact revision ID and retains siblings in the immediate cache", async () => {
+  const first = card("a", { target_source_id: "shared-target", revision_source_id: "first-card" });
+  const sibling = card("b", { target_source_id: "shared-target", revision_source_id: "sibling-card" });
+  mocks.listPendingRevisions.mockResolvedValue([first, sibling]);
+  mocks.acceptPendingRevision.mockResolvedValue({ target_source_id: "shared-target", revision_source_id: "first-card", wrote: true });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const { result } = renderHook(() => useReviewQueue(true), { wrapper });
+  await waitFor(() => expect(result.current.items).toHaveLength(2));
+  const item = result.current.items.find((entry) => entry.kind === "revision" && entry.revisionSourceId === "first-card")!;
+  mocks.listPendingRevisions.mockResolvedValue([sibling]);
+  await result.current.resolve({ item, approve: true, edited_content: "Human body" });
+  expect(mocks.acceptPendingRevision).toHaveBeenLastCalledWith("first-card", { expected_content: "Proposed body", content: "Human body" });
+  await waitFor(() => expect(result.current.items).toHaveLength(1));
+  expect(result.current.items[0]).toMatchObject({ revisionSourceId: "sibling-card" });
+});
+
+it("an edited conflict retains the proposal in the queue", async () => {
+  mocks.listPendingRevisions.mockResolvedValue([card("a")]);
+  mocks.acceptPendingRevision.mockRejectedValue(new Error("page_revision_outdated: current note changed"));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const { result } = renderHook(() => useReviewQueue(true), { wrapper });
+  await waitFor(() => expect(result.current.items).toHaveLength(1));
+  await expect(result.current.resolve({ item: result.current.items[0], approve: true, edited_content: "Human body" })).rejects.toThrow();
+  expect(result.current.items).toHaveLength(1);
 });

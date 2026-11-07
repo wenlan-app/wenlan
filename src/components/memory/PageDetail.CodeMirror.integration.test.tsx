@@ -961,8 +961,7 @@ it("refreshes an open context graph after a page autosave persists new links", a
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} /></QueryClientProvider>);
   const textbox = await screen.findByRole("textbox", { name: "Page editor" });
-  await userEvent.click(screen.getByRole("button", { name: "Open page sidebar" }));
-  await userEvent.click(screen.getByRole("tab", { name: "Info" }));
+  await userEvent.click(screen.getByRole("button", { name: "Info" }));
   await screen.findByText("No direct connections in the currently visible knowledge.");
   const priorSave = tauriMocks.updatePage.getMockImplementation()!;
   tauriMocks.updatePage.mockImplementationOnce(async (input) => {

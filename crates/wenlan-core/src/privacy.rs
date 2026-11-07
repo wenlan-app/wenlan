@@ -16,7 +16,6 @@ fn pii_pattern(pattern: &str, label: &'static str) -> PiiPattern {
 
 static PII_PATTERNS: LazyLock<Vec<PiiPattern>> = LazyLock::new(|| {
     vec![
-        pii_pattern(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b", "CREDIT_CARD"),
         pii_pattern(r"\b\d{3}-\d{2}-\d{4}\b", "SSN"),
         pii_pattern(r"(?i)AKIA[0-9A-Z]{16}", "AWS_KEY"),
         pii_pattern(
@@ -31,16 +30,50 @@ static PII_PATTERNS: LazyLock<Vec<PiiPattern>> = LazyLock::new(|| {
             r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
             "EMAIL",
         ),
-        pii_pattern(
-            r"(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
-            "PHONE",
-        ),
     ]
 });
 
+static CREDIT_CARD_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b").unwrap());
+static PHONE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b").unwrap());
+static UUID_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}").unwrap()
+});
+
+fn redact_numeric_matches_outside_uuids(text: &str, pattern: &Regex, replacement: &str) -> String {
+    let bytes = text.as_bytes();
+    let uuid_spans: Vec<_> = UUID_PATTERN
+        .find_iter(text)
+        .filter(|uuid| {
+            let token_char =
+                |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-';
+            (uuid.start() == 0 || !token_char(bytes[uuid.start() - 1]))
+                && (uuid.end() == bytes.len() || !token_char(bytes[uuid.end()]))
+        })
+        .map(|uuid| uuid.start()..uuid.end())
+        .collect();
+    let mut result = String::with_capacity(text.len());
+    let mut last = 0;
+    for matched in pattern.find_iter(text) {
+        if uuid_spans
+            .iter()
+            .any(|uuid| uuid.start <= matched.start() && matched.end() <= uuid.end)
+        {
+            continue;
+        }
+        result.push_str(&text[last..matched.start()]);
+        result.push_str(replacement);
+        last = matched.end();
+    }
+    result.push_str(&text[last..]);
+    result
+}
+
 /// Redact PII patterns from text, replacing matches with [REDACTED].
 pub fn redact_pii(text: &str) -> String {
-    let mut result = text.to_string();
+    let mut result =
+        redact_numeric_matches_outside_uuids(text, &CREDIT_CARD_PATTERN, "[REDACTED:CREDIT_CARD]");
     for pattern in PII_PATTERNS.iter() {
         if let std::borrow::Cow::Owned(next) = pattern
             .regex
@@ -49,7 +82,7 @@ pub fn redact_pii(text: &str) -> String {
             result = next;
         }
     }
-    result
+    redact_numeric_matches_outside_uuids(&result, &PHONE_PATTERN, "[REDACTED:PHONE]")
 }
 
 #[cfg(test)]
@@ -126,5 +159,38 @@ mod tests {
         let input = "Error code 12345 and version 1.2.3";
         let result = redact_pii(input);
         assert!(!result.contains("[REDACTED:PHONE]"));
+    }
+
+    #[test]
+    fn test_phone_preserves_bounded_uuid_but_redacts_nearby_numbers() {
+        let run = "9c1cd858-fc2d-4d9e-857d-ff4125043945";
+        let numeric_tail = "9c1cd858-fc2d-4d9e-857d-123456789012";
+        let numeric_card_shape = "9c1cd858-fc2d-4d9e-1234-123456789012";
+        let input = format!(
+            "Run {run}, {numeric_tail}, and {numeric_card_shape}. Card 4111-1111-1111-1111; call (555) 123-4567, +1-800-555-0199, or tel5551234567."
+        );
+        let result = redact_pii(&input);
+        assert!(result.contains(run), "run UUID was changed: {result}");
+        assert!(
+            result.contains(numeric_tail),
+            "numeric UUID was changed: {result}"
+        );
+        assert!(
+            result.contains(numeric_card_shape),
+            "card-shaped UUID was changed: {result}"
+        );
+        assert_eq!(result.matches("[REDACTED:CREDIT_CARD]").count(), 1);
+        assert_eq!(result.matches("[REDACTED:PHONE]").count(), 3);
+        assert!(!result.contains("5551234567"));
+    }
+
+    #[test]
+    fn test_phone_does_not_exempt_lookalikes_or_other_pii() {
+        let uuid = "9c1cd858-fc2d-4d9e-857d-ff4125043945";
+        let input = format!("api_key={uuid} and broken-ff4125043945 and abc4125043945");
+        let result = redact_pii(&input);
+        assert!(result.contains("[REDACTED:API_KEY]"));
+        assert_eq!(result.matches("[REDACTED:PHONE]").count(), 2);
+        assert!(!result.contains("broken-ff4125043945"));
     }
 }

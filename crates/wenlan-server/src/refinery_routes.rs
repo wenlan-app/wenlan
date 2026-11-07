@@ -39,14 +39,23 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 
 #[derive(Debug, Deserialize)]
 pub struct ListRefinementsQuery {
+    pub space: Option<String>,
     pub action: Option<String>,
     pub limit: Option<usize>,
 }
 
 pub async fn handle_list_refinements(
     State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Query(q): Query<ListRefinementsQuery>,
 ) -> Result<Json<ListRefinementsResponse>, ServerError> {
+    if let (Some(query), Some(header)) = (q.space.as_deref(), header_space.as_deref()) {
+        if query.trim() != header.trim() {
+            return Err(ServerError::BadRequest(
+                "Review Space and header must agree".into(),
+            ));
+        }
+    }
     let limit = q.limit.unwrap_or(500).min(500);
 
     let db = {
@@ -54,6 +63,16 @@ pub async fn handle_list_refinements(
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
 
+    let scope =
+        crate::read_scope::effective_read_scope(&db, q.space.as_deref(), header_space.as_deref())
+            .await?;
+    let registered = db
+        .list_spaces()
+        .await?
+        .into_iter()
+        .filter(|space| scope.matches(Some(&space.name)))
+        .map(|space| (space.id, space.name))
+        .collect::<std::collections::HashMap<_, _>>();
     let pending = db
         .get_pending_refinements()
         .await
@@ -78,8 +97,15 @@ pub async fn handle_list_refinements(
                     return None;
                 }
             };
-            let payload =
+            let mut payload =
                 parse_payload_for_proposal(&p.id, &p.source_ids, p.payload.as_deref(), &p.action);
+            if !crate::research_dispute_routes::scope_research_payload(
+                &p.action,
+                &mut payload,
+                &registered,
+            ) {
+                return None;
+            }
             if matches!(action, ProposalAction::LintRepairReview) && payload.is_none() {
                 tracing::warn!(
                     proposal_id = %p.id,
@@ -102,9 +128,34 @@ pub async fn handle_list_refinements(
     Ok(Json(ListRefinementsResponse { proposals }))
 }
 
+#[derive(Default, Deserialize)]
+pub struct ReviewMutationQuery {
+    pub space: Option<String>,
+}
+async fn classification_mutation_scope(
+    db: &wenlan_core::db::MemoryDB,
+    id: &str,
+    query: Option<&str>,
+    header: Option<&str>,
+) -> Result<Option<wenlan_core::read_scope::ReadScope>, ServerError> {
+    let proposal = db.get_refinement_proposal(id).await?;
+    if proposal.is_none_or(|p| p.action != "source_classification") {
+        return Ok(None);
+    }
+    if query.zip(header).is_some_and(|(a, b)| a.trim() != b.trim()) {
+        return Err(ServerError::BadRequest(
+            "Review Space and header must agree".into(),
+        ));
+    }
+    let scope = crate::read_scope::effective_read_scope(db, query, header).await?;
+    Ok(Some(scope))
+}
+
 pub async fn handle_reject_refinement(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: HeaderMap,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Query(query): Query<ReviewMutationQuery>,
     Path(id): Path<String>,
 ) -> Result<Json<RejectRefinementResponse>, ServerError> {
     let agent = extract_agent_name(&headers, None);
@@ -123,27 +174,83 @@ pub async fn handle_reject_refinement(
         .try_begin_background()
         .ok_or_else(|| ServerError::Conflict("repair_write_fence_conflict".to_string()))?;
 
+    if let Some(scope) =
+        classification_mutation_scope(&db, &id, query.space.as_deref(), header_space.as_deref())
+            .await?
+    {
+        db.reject_research_classification(&id, &scope).await?;
+        return Ok(Json(RejectRefinementResponse { id }));
+    }
     let result = resolve_proposal(&db, &id, ResolveStatus::Dismissed, &agent)
         .await
         .map_err(ServerError::from)?;
-
     Ok(Json(RejectRefinementResponse { id: result.id }))
 }
 
 pub async fn handle_accept_refinement(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: HeaderMap,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Query(query): Query<ReviewMutationQuery>,
     Path(id): Path<String>,
     body: Bytes,
 ) -> Result<Json<AcceptRefinementResponse>, ServerError> {
     let agent = extract_agent_name(&headers, None);
 
-    let db = {
+    let (db, maintenance_coordinator) = {
         let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.maintenance_coordinator.clone(),
+        )
     };
+    let _maintenance_guard = maintenance_coordinator
+        .try_begin_background()
+        .ok_or_else(|| ServerError::Conflict("repair_write_fence_conflict".into()))?;
 
+    let classification_scope =
+        classification_mutation_scope(&db, &id, query.space.as_deref(), header_space.as_deref())
+            .await?;
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ClassificationEdit {
+        action: String,
+        changes: Vec<wenlan_types::research::SourceClassificationChange>,
+    }
+    if let Ok(edit) = serde_json::from_slice::<ClassificationEdit>(&body) {
+        if edit.action != "classification_edit" {
+            return Err(ServerError::BadRequest(
+                "unknown classification action".into(),
+            ));
+        }
+        db.accept_research_classifications(
+            &id,
+            &agent,
+            Some(edit.changes),
+            classification_scope
+                .as_ref()
+                .ok_or_else(|| ServerError::BadRequest("not a classification proposal".into()))?,
+        )
+        .await?;
+        return Ok(Json(AcceptRefinementResponse {
+            id,
+            action_applied: "source_classification".into(),
+        }));
+    }
     let decision = parse_accept_decision(&body)?;
+    if let Some(scope) = classification_scope {
+        if !matches!(decision, RefinementDecision::Accept { .. }) {
+            return Err(ServerError::BadRequest(
+                "classification requires accept or edited adoption".into(),
+            ));
+        }
+        db.accept_research_classifications(&id, &agent, None, &scope)
+            .await?;
+        return Ok(Json(AcceptRefinementResponse {
+            id,
+            action_applied: "source_classification".into(),
+        }));
+    }
     let outcome = apply_refinement_with_decision(&db, &id, &agent, decision)
         .await
         .map_err(ServerError::from)?;
@@ -158,6 +265,8 @@ pub async fn handle_accept_refinement(
 /// "ready for review" has one rule.
 pub(crate) fn parse_action(s: &str) -> Option<ProposalAction> {
     match s {
+        "research_dispute" => Some(ProposalAction::ResearchDispute),
+        "source_classification" => Some(ProposalAction::SourceClassification),
         "entity_merge" => Some(ProposalAction::EntityMerge),
         "relation_conflict" => Some(ProposalAction::RelationConflict),
         "detect_contradiction" => Some(ProposalAction::DetectContradiction),
@@ -462,5 +571,97 @@ mod parse_payload_tests {
     fn parse_action_unknown_returns_none() {
         assert!(super::parse_action("entity_split_v2").is_none());
         assert!(super::parse_action("").is_none());
+    }
+}
+
+#[cfg(test)]
+mod research_scope_tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+    #[tokio::test]
+    async fn classification_known_foreign_id_cannot_be_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            wenlan_core::db::MemoryDB::new(root.path(), Arc::new(wenlan_core::events::NoopEmitter))
+                .await
+                .unwrap(),
+        );
+        let a = db.create_space("A", None, false).await.unwrap();
+        db.create_space("B", None, false).await.unwrap();
+        let payload=serde_json::json!({"action":"source_classification","space_id":a.id,"run_id":"unused","rules_digest":"rules","changes":[]}).to_string();
+        db.insert_refinement_proposal("foreign", "source_classification", &[], Some(&payload), 1.0)
+            .await
+            .unwrap();
+        let state = Arc::new(RwLock::new(ServerState {
+            db: Some(db.clone()),
+            ..Default::default()
+        }));
+        state.read().await.maintenance_coordinator.finish_recovery();
+        let router = crate::router::build_router(state);
+        for (action, body) in [
+            ("reject", "{}"),
+            ("accept", "{}"),
+            ("accept", r#"{"action":"classification_edit","changes":[]}"#),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!("/api/refinery/queue/foreign/{action}"))
+                        .header("x-wenlan-space", "B")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::NOT_FOUND,
+                "known foreign ID {action} must be unavailable"
+            );
+            assert_ne!(
+                db.get_refinement_proposal("foreign")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                "dismissed"
+            );
+        }
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/refinery/queue/foreign/reject?space=A")
+                    .header("x-wenlan-space", "B")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/refinery/queue/foreign/reject?space=A")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            db.get_refinement_proposal("foreign")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            "dismissed"
+        );
     }
 }

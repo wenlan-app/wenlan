@@ -34,16 +34,15 @@ async function assertClean(errors:ReturnType<typeof collectBrowserErrors>){expec
 
 for (const target of ['inspector', 'header']) test(`right ${target} creates a new group with inspector open`,async({page},info)=>{
  const {errors}=await start(page,1440);
- await group(page).getByRole('button',{name:'Open page sidebar',exact:true}).click();
- const drawer=group(page).getByRole('complementary');await expect(drawer).toBeVisible();
- const frame=(await group(page).boundingBox())!;
- const to={x:frame.x+frame.width-30,y:frame.y+(target==='header'?25:220)};
+ await page.getByRole('button',{name:'Info',exact:true}).click();
+ const drawer=page.locator('.page-info-drawer');await expect(drawer).toBeVisible();
+ const to=target==='header'?await point(page.locator('.wiki-shared-tools-rail')):await point(drawer);
  await hold(page,tab(page,1),to);
  await page.screenshot({path:info.outputPath('before-release.png')});
  await expect(page.locator('.note-tab-split-preview[data-kind="split"]')).toBeVisible();
  await page.mouse.up();
  await expect(tab(page,1,'secondary')).toBeVisible();await expect(group(page,'secondary').getByRole('textbox',{name:'Page editor',exact:true})).toContainText('Drag page 1');
- await expect(tab(page,3)).toBeVisible();await expect(group(page).getByRole('tab',{name:'Info',exact:true})).toBeVisible();
+ await expect(tab(page,3)).toBeVisible();await expect(page.getByRole('button',{name:'Info',exact:true})).toBeVisible();
  await expect(page.locator('[data-note-group-id]')).toHaveCount(2);
  await page.screenshot({path:info.outputPath('created-group.png')});await assertClean(errors);
 });
@@ -59,15 +58,18 @@ for(const theme of ['light','dark']) test(`insertion line stays vertical and neu
 
 test('existing opposite inspector accepts transfer; save refusal preserves source',async({page},info)=>{
  const {errors,runtime}=await start(page,2560,'dark');await menu(page,3);
- await group(page,'secondary').getByRole('button',{name:'Open page sidebar',exact:true}).click();
- const drawer=group(page,'secondary').getByRole('complementary');await expect(drawer).toBeVisible();
+ await group(page,'secondary').getByRole('tab',{selected:true}).click();
+ await page.getByRole('button',{name:'Info',exact:true}).click();
+ const drawer=page.locator('.page-info-drawer');await expect(drawer).toBeVisible();
  await hold(page,tab(page,1),await point(drawer));
  await expect(page.locator('.note-tab-split-preview[data-kind="transfer"]')).toBeVisible();
  await page.mouse.up();await expect.poll(()=>order(page,'secondary')).toEqual(['Drag page 3','Drag page 1']);
- await expect(group(page,'secondary').getByRole('tab',{name:'Info',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Info',exact:true})).toBeVisible();
  const editor=group(page).getByRole('textbox',{name:'Page editor',exact:true});runtime.failNext('update_page','save refused',3);
  await editor.evaluate(el=>{const v=(el as any).cmTile.root.view;v.dispatch({selection:{anchor:v.state.doc.length}});v.focus();});await page.keyboard.insertText(' Unsaved survives.');
- await drag(page,tab(page,2),await point(drawer));
+ // Focusing the primary editor closes the secondary page's inspector. The
+ // shared toolbar remains the right-hand workspace drop target.
+ await drag(page,tab(page,2),await point(page.locator('.wiki-shared-tools-rail')));
  await expect(group(page).getByRole('alert')).toBeVisible();await expect(tab(page,2)).toBeVisible();await expect(editor).toContainText('Unsaved survives.');
  await expect(page.locator('[data-note-group-id]')).toHaveCount(2);
  await page.screenshot({path:info.outputPath('save-refused.png')});await assertClean(errors);
@@ -75,11 +77,10 @@ test('existing opposite inspector accepts transfer; save refusal preserves sourc
 
 test('compact group overlay is a split target without trapping the source tab',async({page},info)=>{
  const {errors}=await start(page,375,'dark',2);
- await group(page).getByRole('button',{name:'Open page sidebar',exact:true}).click();
+ await page.getByRole('button',{name:'Info',exact:true}).click();
  await page.screenshot({path:info.outputPath('before-drag.png')});
  await info.attach('source-hit',{body:JSON.stringify(await tab(page,2).evaluate(el=>{const r=el.getBoundingClientRect();return{rect:r.toJSON(),hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML};})),contentType:'application/json'});
- const frame=(await group(page).boundingBox())!;
- await hold(page,tab(page,2),{x:frame.x+frame.width-22,y:frame.y+200});
+ await hold(page,tab(page,2),await point(page.locator('.page-info-drawer')));
  await expect(page.locator('.note-tab-split-preview[data-kind="split"]')).toBeVisible();
  await page.screenshot({path:info.outputPath('compact-preview.png')});await page.mouse.up();
  await expect(tab(page,2,'secondary')).toBeVisible();await expect(page.locator('[data-note-group-id]')).toHaveCount(2);
@@ -88,13 +89,12 @@ test('compact group overlay is a split target without trapping the source tab',a
 
 test('expanded local inspector still exposes the right split target',async({page},info)=>{
  const {errors}=await start(page,1440);
- await group(page).getByRole('button',{name:'Open page sidebar',exact:true}).click();
- await group(page).getByRole('button',{name:'Expand workspace',exact:true}).click();
- await expect(group(page).locator('.page-info-drawer-expanded-group')).toBeVisible();
+ await page.getByRole('button',{name:'Info',exact:true}).click();
+ await page.getByRole('button',{name:'Expand workspace',exact:true}).click();
+ await expect(page.locator('.page-info-drawer-expanded-workspace, .page-info-drawer-expanded-group')).toBeVisible();
  await page.screenshot({path:info.outputPath('before-drag.png')});
  await info.attach('source-hit',{body:JSON.stringify(await tab(page,1).evaluate(el=>{const r=el.getBoundingClientRect();return{rect:r.toJSON(),hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML};})),contentType:'application/json'});
- const frame=(await group(page).boundingBox())!;
- await hold(page,tab(page,1),{x:frame.x+frame.width-30,y:frame.y+210});
+ await hold(page,tab(page,1),await point(page.locator('.page-info-drawer')));
  await expect(page.locator('.note-tab-split-preview[data-kind="split"]')).toBeVisible();
  await page.screenshot({path:info.outputPath('expanded-preview.png')});await page.mouse.up();
  await expect(tab(page,1,'secondary')).toBeVisible();await expect(page.locator('[data-note-group-id]')).toHaveCount(2);await assertClean(errors);

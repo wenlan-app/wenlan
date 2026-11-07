@@ -192,18 +192,24 @@ async fn generate_fixture(root: &Path) {
 }
 
 async fn run_fixture(root: &Path) {
+    // Native Windows faults do not produce a Rust panic/backtrace. Keep bounded
+    // phase markers in this ignored gate so its CI receipt locates the failure.
+    eprintln!("SCALE_GATE_PHASE database_open");
     let database = libsql::Builder::new_local(root.join("lint-scale.db"))
         .build()
         .await
         .expect("open prebuilt scale database");
     let page_root = root.join("pages");
     let measured = Instant::now();
+    eprintln!("SCALE_GATE_PHASE snapshot_open");
     let snapshot = LintReadSnapshot::open(&database)
         .await
         .expect("open shared production lint snapshot");
+    eprintln!("SCALE_GATE_PHASE page_scan");
     let scan = scan_page_root(&page_root).expect("scan production Page projection");
     assert_eq!(scan.page_markdown().len(), PAGE_COUNT);
     assert_eq!(scan.raw_state.edges.len(), PAGE_COUNT);
+    eprintln!("SCALE_GATE_PHASE population_counts");
     assert_eq!(
         scalar_count(&snapshot, "SELECT COUNT(*) FROM pages").await,
         PAGE_COUNT as u64
@@ -228,7 +234,9 @@ async fn run_fixture(root: &Path) {
         &gate,
         wenlan_types::lint::LintProfile::General,
     );
+    eprintln!("SCALE_GATE_PHASE page_checks");
     let results = super::run(&context, true).await;
+    eprintln!("SCALE_GATE_PHASE result_assertions");
     let failed_checks = results
         .iter()
         .filter(|result| result.outcome() == LintOutcome::FailedToRun)
@@ -265,11 +273,13 @@ async fn run_fixture(root: &Path) {
         }]
     );
     drop(context);
+    eprintln!("SCALE_GATE_PHASE snapshot_finish");
     let receipt = snapshot
         .finish()
         .await
         .expect("finish shared lint snapshot");
     assert!(receipt.is_consistent());
+    eprintln!("SCALE_GATE_PHASE complete");
     println!(
         "SCALE_GATE_PASS pages={PAGE_COUNT} state_entries={PAGE_COUNT} owner_rows={EVIDENCE_COUNT} evidence_rows={EVIDENCE_COUNT} projection_defect_file={PAGE_COUNT} evidence_defect_row={EVIDENCE_COUNT} sample_cap={LINT_MAX_EVIDENCE_PER_CHECK} measured_ms={} measured_region=shared_snapshot+page_scan+exact_population_assertions+production_page_group+snapshot_finish",
         measured.elapsed().as_millis()

@@ -48,6 +48,7 @@ async fn run_at(
 
 fn source(id: &str, path: &str, status: SyncStatus) -> Source {
     Source {
+        display_name: None,
         id: id.into(),
         source_type: SourceType::Directory,
         path: PathBuf::from(path),

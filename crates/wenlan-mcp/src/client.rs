@@ -299,6 +299,42 @@ impl WenlanClient {
         Self::parse_response(&bytes)
     }
 
+    /// Source reads must receive the daemon's exact acknowledgement of the
+    /// requested Space; older daemons silently ignore query selectors.
+    pub(crate) async fn get_source_scoped<R: DeserializeOwned>(
+        &self,
+        path: &str,
+        space: &str,
+    ) -> Result<R, WenlanError> {
+        let url = format!("{}{}", self.base_url, path);
+        let resp = self
+            .send_with_retry(|| {
+                self.attach_common_headers(self.client.get(&url).query(&[("space", space)]))
+            })
+            .await?;
+        if resp.status().is_success() {
+            let expected: String = space
+                .bytes()
+                .map(|byte| match byte {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                        char::from(byte).to_string()
+                    }
+                    _ => format!("%{byte:02X}"),
+                })
+                .collect();
+            if resp
+                .headers()
+                .get("x-wenlan-source-scope")
+                .and_then(|value| value.to_str().ok())
+                != Some(expected.as_str())
+            {
+                return Err(WenlanError::SourceScopeNotConfirmed);
+            }
+        }
+        let bytes = Self::read_body(resp).await?;
+        Self::parse_response(&bytes)
+    }
+
     /// POST request with JSON body, deserialize JSON response.
     pub async fn post<B: Serialize, R: DeserializeOwned>(
         &self,
@@ -465,6 +501,9 @@ pub enum WenlanError {
     #[error("Failed to parse Wenlan response")]
     Deserialize,
 
+    #[error("The daemon did not confirm the requested source Space scope")]
+    SourceScopeNotConfirmed,
+
     #[error("Wenlan response exceeds the size limit")]
     ResponseTooLarge,
 }
@@ -510,6 +549,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "steep_invalid"
             | "steep_citations"
             | "citations_unsupported"
+            | "source_read_refused"
             | "attachment_type_unsupported"
             | "attachment_content_mismatch"
             | "attachment_not_found"

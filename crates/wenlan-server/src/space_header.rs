@@ -30,8 +30,7 @@ where
             .or_else(|| parts.headers.get(HEADER_NAME_LEGACY));
         let val = header
             .map(|value| {
-                value
-                    .to_str()
+                std::str::from_utf8(value.as_bytes())
                     .map_err(|_| ServerError::ValidationError("invalid Space header".to_string()))
             })
             .transpose()?
@@ -97,6 +96,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(val.as_deref(), Some("health"));
+    }
+
+    #[tokio::test]
+    async fn wenlan_header_accepts_valid_utf8_space_names() {
+        let mut parts = build_parts(&[]);
+        parts.headers.insert(
+            HEADER_NAME,
+            axum::http::HeaderValue::from_bytes("研究空間".as_bytes()).unwrap(),
+        );
+
+        let SpaceHeader(val) = SpaceHeader::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+
+        assert_eq!(val.as_deref(), Some("研究空間"));
     }
 
     #[tokio::test]

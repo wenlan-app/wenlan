@@ -398,7 +398,7 @@ impl MemoryDB {
 
     /// [`Self::page_truth_states`] on an already-held connection guard, for
     /// callers whose verdict must share one snapshot with their other reads.
-    async fn page_truth_states_on_conn(
+    pub(super) async fn page_truth_states_on_conn(
         conn: &libsql::Connection,
         page_ids: &[String],
     ) -> Result<HashMap<String, PageTruth>, WenlanError> {

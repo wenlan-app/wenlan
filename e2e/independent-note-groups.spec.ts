@@ -30,52 +30,54 @@ async function append(page:Page, id:string, text:string) {
  await page.keyboard.insertText(text);return editor;
 }
 async function source(editor:Locator) { return editor.evaluate(el=>(el as any).cmTile.root.view.state.doc.toString() as string); }
-test("inspector drag widths belong to each group and cancel without changing the other", async ({ page }) => {
+test("the shared inspector resizes in the active group and cancels without saving", async ({ page }) => {
  const { errors } = await start(page, "light", 2560);
  await move(page);
- const left = group(page, "primary"), right = group(page, "secondary");
- for (const frame of [left, right]) await frame.getByRole("button", { name: "Open page sidebar", exact: true }).click();
- const paneWidth = (frame: Locator) => frame.locator(".page-info-drawer-group-overlay-panel").evaluate(el => el.getBoundingClientRect().width);
+ const right = group(page, "secondary");
+ await right.getByRole("tab", { selected: true }).click();
+ await page.getByRole("button", { name: "Info", exact: true }).click();
+ const panel = page.locator(".page-info-drawer");
+ await expect(panel).toBeVisible();
+ const paneWidth = () => panel.evaluate(el => el.getBoundingClientRect().width);
  const preference = (id: string) => page.evaluate(k => localStorage.getItem(k), `wenlan-right-sidebar-v1:${id}`);
- await left.getByTestId("right-sidebar-resize-handle").focus();
+ await page.getByTestId("right-sidebar-resize-handle").focus();
  await page.keyboard.press("End");
- await expect.poll(() => paneWidth(left)).toBe(600);
- await expect.poll(() => paneWidth(right)).toBe(320);
- const savedLeft = await preference("primary"), beforeRight = await preference("secondary");
- const box = (await right.getByTestId("right-sidebar-resize-handle").boundingBox())!;
+ await expect.poll(paneWidth).toBe(600);
+ const beforeRight = await preference("secondary");
+ const box = (await page.getByTestId("right-sidebar-resize-handle").boundingBox())!;
  const x = box.x + box.width / 2, y = box.y + box.height / 2;
- await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x - 80, y, { steps: 8 });
- await expect.poll(() => paneWidth(right)).toBe(400);
+ await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 80, y, { steps: 8 });
+ await expect.poll(paneWidth).toBe(520);
  expect(await preference("secondary")).toBe(beforeRight);
  await page.keyboard.press("Escape"); await page.mouse.up();
- await expect.poll(() => paneWidth(right)).toBe(320);
- await expect.poll(() => paneWidth(left)).toBe(600);
- await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x - 80, y, { steps: 8 }); await page.mouse.up();
- await expect.poll(() => paneWidth(right)).toBe(400);
+ await expect.poll(paneWidth).toBe(600);
+ await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 80, y, { steps: 8 }); await page.mouse.up();
+ await expect.poll(paneWidth).toBe(520);
  await expect.poll(() => preference("secondary")).not.toBe(beforeRight);
- expect(await preference("primary")).toBe(savedLeft);
- await right.getByRole("button", { name: "Close", exact: true }).click();
- await expect(left.getByRole("complementary")).toBeVisible();
- await right.getByRole("button", { name: "Open page sidebar", exact: true }).click();
- await expect.poll(() => paneWidth(right)).toBe(400);
+ await page.getByRole("button", { name: "Info", exact: true }).click();
+ await expect(panel).toHaveCount(0);
+ await right.getByRole("tab", { selected: true }).click();
+ await page.getByRole("button", { name: "Info", exact: true }).click();
+ await expect.poll(paneWidth).toBe(520);
  expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
-test("independent editors, local inspectors, and a failed save cannot lose a moved page",async({page},info)=>{
+test("independent editors share one focused inspector without losing a moved page",async({page},info)=>{
  const {runtime,errors}=await start(page);
  await move(page);
  await expect(group(page,"secondary").getByRole("textbox",{name:"Page editor",exact:true})).toBeVisible();
  await expect(group(page,"primary").getByRole("tab",{name:"Fixture architecture",exact:true})).toBeVisible();
  const rightEditor=await append(page,"secondary","\nRight group edit remains.");
  await rightEditor.evaluate(el=>el.setAttribute("data-editor-instance","right"));
- await group(page,"primary").getByRole("button",{name:"Open page sidebar",exact:true}).click();
- await group(page,"secondary").getByRole("button",{name:"Open page sidebar",exact:true}).click();
- await expect(group(page,"primary").getByRole("tab",{name:"Info",exact:true})).toBeVisible();
- await expect(group(page,"secondary").getByRole("tab",{name:"Info",exact:true})).toBeVisible();
- // Closing an inspector in one group does not close the other.
- await group(page,"primary").getByRole("button",{name:"Close",exact:true}).click();
- await expect(group(page,"secondary").getByRole("tab",{name:"Info",exact:true})).toBeVisible();
+ await group(page,"primary").getByRole("tab",{name:"Fixture architecture",exact:true}).click();
+ await page.getByRole("button",{name:"Info",exact:true}).click();
+ await expect(page.locator(".page-info-drawer")).toHaveCount(1);
+ await group(page,"secondary").getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
+ await expect(page.locator(".page-info-drawer")).toHaveCount(0);
+ await expect(page.locator(".page-info-drawer")).toHaveCount(0);
+ await page.getByRole("button",{name:"Info",exact:true}).click();
+ await expect(page.locator(".page-info-drawer")).toHaveCount(1);
  await expect(rightEditor).toHaveAttribute("data-editor-instance","right");
- await group(page,"secondary").getByRole("button",{name:"Close",exact:true}).click();
+ await page.getByRole("button",{name:"Info",exact:true}).click();
  await expect.poll(()=>source(rightEditor)).toContain("Right group edit remains.");
  await expect(group(page,"secondary").locator('.page-detail .sr-only[role="status"]')).toHaveText("Saved");
  runtime.failNext("update_page","save refused");
@@ -92,13 +94,13 @@ test("independent editors, local inspectors, and a failed save cannot lose a mov
  await expect(group(page,"primary").getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveAttribute("aria-selected","true");
  expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
-test("switching the central page preserves the right editor and both inspector choices",async({page},info)=>{
+test("switching Wiki pages keeps inspector state with the same page and preserves the other editor",async({page},info)=>{
  const {tree,errors}=await start(page,"light",2560);
  await move(page);
  const right=group(page,"secondary"), left=group(page,"primary");
- await right.getByRole("button",{name:"Open page sidebar",exact:true}).click();
- await right.getByRole("tab",{name:"Mind map",exact:true}).click();
- await left.getByRole("button",{name:"Open page sidebar",exact:true}).click();
+ await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
+ await page.getByRole("button",{name:"Mind map",exact:true}).click();
+ await expect(page.getByRole("region",{name:"Canvas for Why fixtures stay deterministic",exact:true})).toBeVisible();
  const editor=right.locator(".page-detail");
  await editor.evaluate(el=>el.setAttribute("data-editor-instance","right-stays"));
  // Focus the central group before choosing another note in the shared tree.
@@ -106,9 +108,12 @@ test("switching the central page preserves the right editor and both inspector c
  await tree.getByRole("button",{name:"Open Next experiment",exact:true}).click();
  await expect(left.getByRole("textbox",{name:"Title",exact:true})).toHaveValue("Next experiment");
  await expect(editor).toHaveAttribute("data-editor-instance","right-stays");
- await expect(right.getByRole("tab",{name:"Mind map",exact:true})).toHaveAttribute("aria-selected","true");
+ // Next experiment is opened as a draft editor, which has no Wiki inspector toolbar.
+ await expect(page.getByRole("button",{name:"Info",exact:true})).toHaveCount(0);
  await left.getByRole("tab",{name:"Fixture architecture",exact:true}).click();
  await expect(left.getByRole("textbox",{name:"Page editor",exact:true})).toBeVisible();
+ await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
+ await expect(page.getByRole("region",{name:"Canvas for Why fixtures stay deterministic",exact:true})).toBeVisible();
  await page.screenshot({path:info.outputPath("independent-inspectors.png"),fullPage:true});
  expect(errors.pageErrors).toEqual([]);
 });
@@ -190,9 +195,10 @@ test("a newer right tab choice cancels a pending global graph navigation", async
  await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
  await tree.getByRole("button",{name:"Open Independent research",exact:true}).click();
  await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
- await right.getByRole("button",{name:"Open page sidebar",exact:true}).click();
+ await page.getByRole("button",{name:"Info",exact:true}).click();
  await append(page,"primary","\nSave before global graph navigation.");
- await right.getByRole("button",{name:"Open in graph",exact:true}).click();
+ await right.getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click();
+ await page.locator(".page-info-drawer").getByRole("button",{name:"Open in graph",exact:true}).click();
  await right.getByRole("tab",{name:"Independent research",exact:true}).click();
  await expect(right.getByRole("tab",{name:"Independent research",exact:true})).toHaveAttribute("aria-selected","true");
  await expect(left.locator('.page-detail .sr-only[role="status"]')).toHaveText("Saved");

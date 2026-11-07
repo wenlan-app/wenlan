@@ -36,6 +36,54 @@ const sourceMemory: MemoryItem = {
 };
 
 describe("ReferencePreview citation targets", () => {
+  it("leads a Zotero citation with the paper title, provenance, page, and original action", () => {
+    const anchor = document.body.appendChild(document.createElement("a"));
+    const onOpenMemory = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const paper = { ...sourceMemory, source_agent: "zotero", title: "A Study of Memory" };
+    const pdfCitation: PageCitation = {
+      ...citation,
+      source_kind: "memory",
+      locator: paper.source_id,
+      pdf_target: { attachment_key: "PDF00001", pdf_digest: "a".repeat(64), page: 19, quote: "source quote" },
+    };
+    render(<QueryClientProvider client={client}>
+      <ReferencePreview
+        request={{ target: { kind: "citation", citation: pdfCitation, sourceMemory: paper, sourcesLoading: false }, anchor, keyboard: false }}
+        onDismiss={vi.fn()}
+        onOpenMemory={onOpenMemory}
+        onPointerEnter={vi.fn()}
+        onPointerLeave={vi.fn()}
+      />
+    </QueryClientProvider>);
+
+    const preview = screen.getByRole("dialog", { name: "A Study of Memory" });
+    expect(preview.querySelector("strong")).toHaveTextContent("A Study of Memory");
+    expect(preview).toHaveTextContent("Imported from Zotero · p. 19");
+    expect(preview).not.toHaveTextContent("File");
+    fireEvent.click(screen.getByRole("button", { name: "View original →" }));
+    expect(onOpenMemory).toHaveBeenCalledWith(paper.source_id, pdfCitation);
+  });
+
+  it("labels an unevaluated citation as unchecked without hiding its source", () => {
+    const anchor = document.body.appendChild(document.createElement("a"));
+    anchor.textContent = "original.md";
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <ReferencePreview
+        request={{ target: { kind: "citation", citation: { ...citation, status: "unevaluated" }, sourceMemory, sourcesLoading: false }, anchor, keyboard: false }}
+        onDismiss={vi.fn()}
+        onOpenPage={vi.fn()}
+        onOpenMemory={vi.fn()}
+        onPointerEnter={vi.fn()}
+        onPointerLeave={vi.fn()}
+      />
+    </QueryClientProvider>);
+    expect(screen.getByRole("dialog", { name: "Imported meeting notes" })).toHaveTextContent("source not checked yet");
+    expect(screen.getByRole("dialog", { name: "Imported meeting notes" })).not.toHaveTextContent("source doesn’t back it");
+    expect(screen.getByRole("button", { name: /^Open →$/ })).toBeEnabled();
+  });
+
   it("uses supplied source content without lookup and keeps the original action explicit", async () => {
     const anchor = document.body.appendChild(document.createElement("a"));
     anchor.textContent = "original.md";

@@ -157,6 +157,14 @@ describe("NoteReviewNotice", () => {
     expect(screen.queryByText("A source changed; the current page was kept.")).toBeNull();
   });
 
+  it("explains a Zotero selection change even when a revision awaits review", async () => {
+    vi.mocked(listPendingRevisions).mockResolvedValue([revision("page-1", "page")]);
+    vi.mocked(listRefinements).mockResolvedValue({ proposals: [] });
+    renderNotice({ ...basePage, stale_reason: "source_updated", refresh_blocked_reason: "zotero_selection_changed" });
+    expect(await screen.findByText("The Zotero collection or selection changed. Your saved work is retained; review the updated research.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Review changes" })).toBeEnabled();
+  });
+
   it("keeps matching cached items visible after a partial query error and retries both lists", async () => {
     vi.mocked(listPendingRevisions).mockRejectedValue(new Error("offline"));
     vi.mocked(listRefinements).mockResolvedValue({ proposals: [] });

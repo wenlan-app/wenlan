@@ -94,7 +94,7 @@ describe("PageInfo i18n", () => {
     await user.click(screen.getByText("Page info"));
     expect(screen.getByText("1 incoming memory")).toBeInTheDocument();
     expect(
-      screen.getByText("Citations: 2 (1 unverified)"),
+      screen.getByText("Citations: 2 (1 unverified, 0 not checked yet)"),
     ).toBeInTheDocument();
     // Known agent display names and source titles stay untouched.
     expect(screen.getByText("Claude Code")).toBeInTheDocument();
@@ -137,7 +137,7 @@ describe("PageInfo i18n", () => {
     expect(within(row).getByText("记忆")).toBeInTheDocument();
     // Source titles stay in their original language.
     expect(within(row).getByText("Title mem-a")).toBeInTheDocument();
-    expect(screen.getByText("引用：1（1 未验证）")).toBeInTheDocument();
+    expect(screen.getByText("引用：1（1 条未通过核对，0 条尚未核对）")).toBeInTheDocument();
   });
 
   it("localizes stripped diagnostics and relative times in zh-Hans", async () => {
@@ -187,7 +187,7 @@ describe("PageInfo i18n", () => {
     expect(within(row).getByText("未驗證")).toBeInTheDocument();
     expect(within(row).getByText("未知代理")).toBeInTheDocument();
     expect(within(row).getByText("記憶")).toBeInTheDocument();
-    expect(screen.getByText("引用：2（1 未驗證）")).toBeInTheDocument();
+    expect(screen.getByText("引用：2（1 條未通過核對，0 條尚未核對）")).toBeInTheDocument();
   });
 
   it("localizes the mismatch diagnostic in zh-Hant", async () => {

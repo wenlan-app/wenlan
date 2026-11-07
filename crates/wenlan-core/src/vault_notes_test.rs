@@ -4,6 +4,7 @@ use wenlan_types::sources::{SourceType, SyncStatus};
 
 fn vault(id: &str, root: &Path) -> Source {
     Source {
+        display_name: None,
         id: id.into(),
         source_type: SourceType::Obsidian,
         path: root.to_path_buf(),

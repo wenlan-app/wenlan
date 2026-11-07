@@ -50,7 +50,7 @@ export function usePageTourState(): TourState {
   return useSyncExternalStore(subscribeTour, readTour, () => null);
 }
 
-type TipId = "sources" | "unverified" | "edit";
+type TipId = "sources" | "unevaluated" | "edit";
 
 /** Each tip points at the first match of its selectors, read view or editor,
  *  tried in order. A tip with nothing to point at is left out. */
@@ -58,15 +58,15 @@ const TIPS: ReadonlyArray<{ id: TipId; selectors: readonly string[] }> = [
   {
     id: "sources",
     selectors: [
-      '.citation-chip:not([data-status="unverified"])',
-      ".cm-citation-link:not(.reference-link--unverified)",
+      '.citation-chip:not([data-status="unverified"]):not([data-status="unevaluated"])',
+      ".cm-citation-link:not(.reference-link--unverified):not(.reference-link--unevaluated)",
       ".citation-chip",
       ".cm-citation-link",
     ],
   },
   {
-    id: "unverified",
-    selectors: ['.citation-chip[data-status="unverified"]', ".cm-citation-link.reference-link--unverified"],
+    id: "unevaluated",
+    selectors: ['.citation-chip[data-status="unevaluated"]', ".cm-citation-link.reference-link--unevaluated"],
   },
   {
     id: "edit",

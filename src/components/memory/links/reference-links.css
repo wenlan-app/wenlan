@@ -11,11 +11,12 @@
   color: var(--mem-text-tertiary);
   text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
 }
-.citation-chip:not([data-status="unverified"]):is(:hover, :focus-visible, [aria-describedby]) {
+.citation-chip:not([data-status="unverified"]):not([data-status="unevaluated"]):is(:hover, :focus-visible, [aria-describedby]) {
   color: var(--mem-link);
   text-decoration-color: currentColor;
 }
 .citation-chip[aria-describedby] { background: var(--mem-indigo-bg); }
+.citation-chip--unevaluated { border: 1px dashed var(--mem-text-tertiary); }
 
 .reference-link > svg {
   display: inline-block;
@@ -37,6 +38,15 @@
   text-decoration-color: var(--mem-accent-amber);
   text-decoration-style: dashed;
   border-bottom: 1px dashed var(--mem-accent-amber);
+}
+
+.reference-link--unevaluated,
+.cm-wiki-page-link.reference-link--unevaluated,
+.cm-wiki-page-link[data-reference-status="unevaluated"] {
+  color: var(--mem-text-tertiary);
+  text-decoration-color: var(--mem-text-tertiary);
+  text-decoration-style: dotted;
+  border-bottom: 1px dotted var(--mem-text-tertiary);
 }
 
 .cm-wiki-page-link.reference-link--page::before,

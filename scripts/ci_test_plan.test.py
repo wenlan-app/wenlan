@@ -637,6 +637,25 @@ class PlatformPlanTests(unittest.TestCase):
             patterns,
         )
 
+    def test_lifecycle_regression_keeps_native_and_windows_scale_gates(self) -> None:
+        path = "crates/wenlan-core/src/lint/snapshot_tests.rs"
+        suite = plan_for(path)["workspace_lib"]
+        self.assertEqual(suite["mode"], "packages")
+        self.assertIn("wenlan-core", suite["packages"])
+        workflow_path = Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        for name in ("rust", "windows", "windows-lint", "workspace-platform"):
+            with self.subTest(filter=name):
+                block = workflow.split(f"            {name}:\n", 1)[1]
+                block = re.split(
+                    r"^ {12}[A-Za-z0-9_-]+:\s*$", block, maxsplit=1, flags=re.MULTILINE
+                )[0]
+                patterns = re.findall(r"^\s+- '([^']+)'\s*$", block, re.MULTILINE)
+                self.assertTrue(
+                    any(fnmatchcase(path, pattern) for pattern in patterns),
+                    f"{name} filter does not route the lifecycle regression",
+                )
+
     def test_app_filter_covers_every_app_only_planner_input(self) -> None:
         """Missing app globs would silently skip app-check, the sole owner.
 
@@ -678,7 +697,8 @@ class PlatformPlanTests(unittest.TestCase):
             )
 
     def test_relay_ci_is_required_and_uses_its_own_toolchain(self) -> None:
-        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text()
+        workflow_path = Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
         self.assertTrue("relay:   ${{ steps.filter.outputs.relay }}" in workflow,
                         "relay path-filter output is missing")
         relay_filter = workflow.split("            relay:\n", 1)[1].split("            macos:\n", 1)[0]

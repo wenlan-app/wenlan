@@ -1,0 +1,6 @@
+.source-dialog .zotero-article-choice { margin-top: 12px; }
+.source-dialog .zotero-article-selection p { margin: 8px 0; }
+.source-dialog .zotero-article-list { max-height: 180px; overflow-y: auto; border: 1px solid var(--mem-border); border-radius: var(--mem-radius-md); padding: 2px 10px; }
+.source-dialog .zotero-article-list label { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; margin: 8px 0; line-height: 1.4; }
+.source-dialog .zotero-article-list input { width: auto; flex: 0 0 auto; margin: 3px 0 0; padding: 0; }
+.source-dialog .zotero-article-list span { min-width: 0; overflow-wrap: anywhere; }

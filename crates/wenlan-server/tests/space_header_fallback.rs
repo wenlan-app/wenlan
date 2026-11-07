@@ -1046,7 +1046,8 @@ async fn create_page_uses_header_when_body_omits_space() {
     let (router, _tmp, db) = common::test_app_no_gate().await;
     db.create_space("career", None, false).await.unwrap();
 
-    // Seed a source memory via HTTP so we have a valid source_id to cite.
+    // Seed evidence in the same Space; the page's header fallback must not
+    // grant access to an unfiled or different-Space source.
     let content = "Rust is a systems programming language with memory safety guarantees";
     let store_res = router
         .clone()
@@ -1058,7 +1059,8 @@ async fn create_page_uses_header_when_body_omits_space() {
                 .body(Body::from(
                     serde_json::json!({
                         "content": content,
-                        "memory_type": "fact"
+                        "memory_type": "fact",
+                        "space": "career"
                     })
                     .to_string(),
                 ))

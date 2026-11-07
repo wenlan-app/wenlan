@@ -3014,8 +3014,8 @@ mod redistill_contract_tests {
             "{route:?}: the forced rebuild must stage exactly one new card: {staged:?}"
         );
         assert_eq!(
-            staged[0].revision_content, VERIFIED_REBUILD_BODY,
-            "{route:?}: the card carries the rebuilt body"
+            staged[0].revision_content, format!("{VERIFIED_REBUILD_BODY}\n\n{USER_PROSE}"),
+            "{route:?}: the card carries the rebuilt body and preserves the person's paragraph exactly once"
         );
     }
 

@@ -39,7 +39,7 @@ use wenlan_types::authorship::{LastAiUpdate, SentenceRevertResponse};
 use wenlan_types::pages::PageCitation;
 
 use crate::authorship::{self, GatePlan, SentenceUnit, VersionText};
-use crate::db::sentence_history::{cited_text_digest, NewHistoryEntry};
+use crate::db::sentence_history::NewHistoryEntry;
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
 use crate::pages::Page;
@@ -273,7 +273,7 @@ async fn unit_citations(
     page: &Page,
     units: &[SentenceUnit],
 ) -> Result<Vec<Vec<SentenceCitation>>, WenlanError> {
-    let states = source_states(db, &page.citations).await?;
+    let states = source_states(db, &page.citations, page).await?.0;
     let by_occurrence: HashMap<u32, &PageCitation> =
         page.citations.iter().map(|c| (c.occurrence, c)).collect();
     let markers = occurrence_units(&page.content, units);
@@ -789,19 +789,44 @@ fn occurrence_units(content: &str, units: &[SentenceUnit]) -> Vec<Option<usize>>
 async fn source_states(
     db: &MemoryDB,
     citations: &[PageCitation],
-) -> Result<HashMap<String, Option<(i64, String, String)>>, WenlanError> {
+    page: &Page,
+) -> Result<
+    (
+        HashMap<String, Option<(i64, String, String)>>,
+        Vec<crate::db::CitationSourceSnapshot>,
+    ),
+    WenlanError,
+> {
+    let scope = page
+        .space
+        .clone()
+        .filter(|space| space != crate::db::UNFILED_SPACE_ID)
+        .map(crate::read_scope::ReadScope::Space)
+        .unwrap_or(crate::read_scope::ReadScope::Uncategorized);
+    let locators = citations
+        .iter()
+        .map(|citation| citation.locator.clone())
+        .collect::<Vec<_>>();
+    let sources = db.citation_sources(&locators, &scope).await?;
     let mut states = HashMap::new();
-    for citation in citations {
-        if states.contains_key(&citation.locator) {
-            continue;
-        }
-        let state = db
-            .cited_source_state(&citation.locator)
-            .await?
-            .map(|(version, text)| (version, cited_text_digest(&text), text));
-        states.insert(citation.locator.clone(), state);
+    let mut snapshots = Vec::new();
+    for (locator, source) in locators.into_iter().zip(sources) {
+        let source = match source {
+            Some(source) => Some(source),
+            None => db.citation_page_source(&locator, &scope).await?,
+        };
+        let state = source.map(|source| {
+            let state = (
+                source.snapshot.version,
+                source.snapshot.text_digest.clone(),
+                source.full_text,
+            );
+            snapshots.push(source.snapshot);
+            state
+        });
+        states.insert(locator, state);
     }
-    Ok(states)
+    Ok((states, snapshots))
 }
 
 fn is_stale(citation: &PageCitation, current: Option<&(i64, String, String)>) -> bool {
@@ -812,7 +837,7 @@ fn is_stale(citation: &PageCitation, current: Option<&(i64, String, String)>) ->
     ) {
         // Only a changed text makes a citation stale: a newer version that
         // says the same still supports it (same rule as the basis check).
-        (Some(cited), Some(digest), Some((version, now, _))) => *version > cited && digest != now,
+        (Some(_), Some(digest), Some((_, now, _))) => digest != now,
         _ => false,
     }
 }
@@ -844,7 +869,7 @@ pub async fn page_sentences(
         .filter(|p| p.status == SentenceProposalStatus::Pending)
         .filter(|p| present.contains(p.sentence_hash.as_str()))
         .collect();
-    let states = source_states(db, &page.citations).await?;
+    let states = source_states(db, &page.citations, &page).await?.0;
     let by_occurrence: HashMap<u32, &PageCitation> =
         page.citations.iter().map(|c| (c.occurrence, c)).collect();
     let markers = occurrence_units(&page.content, &units);
@@ -1288,16 +1313,47 @@ pub async fn recheck_sentence(
         .map(|(i, _)| i)
         .collect();
     if !targets.is_empty() {
-        let states = source_states(db, &citations).await?;
-        let texts: Vec<&str> = targets
+        let (states, snapshots) = source_states(db, &citations, &page).await?;
+        if targets.iter().any(|&index| {
+            states
+                .get(&citations[index].locator)
+                .and_then(Option::as_ref)
+                .is_none()
+        }) {
+            return Err(WenlanError::Validation("source_requires_review: cited source missing or outside this Space; no claim was reverified".into()));
+        }
+        let checked_snapshots = snapshots
             .iter()
-            .map(|&i| {
-                states
+            .filter(|snapshot| {
+                targets
+                    .iter()
+                    .any(|&i| citations[i].locator == snapshot.locator)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        db.ensure_citation_sources_active(&checked_snapshots)
+            .await?;
+        let texts = targets
+            .iter()
+            .enumerate()
+            .map(|(k, &i)| crate::citations::NumberedSource {
+                index: k as u32 + 1,
+                locator: citations[i].locator.clone(),
+                source_kind: match snapshots
+                    .iter()
+                    .find(|snapshot| snapshot.locator == citations[i].locator)
+                    .map(|snapshot| snapshot.source.as_str())
+                {
+                    Some("file") => "external_file".into(),
+                    Some("webpage") => "external_url".into(),
+                    _ => "memory".into(),
+                },
+                text: states
                     .get(&citations[i].locator)
                     .and_then(Option::as_ref)
-                    .map_or("", |(_, _, text)| text.as_str())
+                    .map_or_else(String::new, |(_, _, text)| text.clone()),
             })
-            .collect();
+            .collect::<Vec<_>>();
         let sentence = crate::citations::strip_markers(&unit.text);
         let paragraph = crate::citations::strip_markers(paragraph_at(&page.content, unit.start));
         let (verified, scope, scores) =
@@ -1308,14 +1364,21 @@ pub async fn recheck_sentence(
             let was_verified = citation.status == "verified" && !citation.disproven;
             citation.disproven = !verified && was_verified;
             citation.status = if verified { "verified" } else { "unverified" }.to_string();
+            citation.historical = false;
             citation.scope = scope.to_string();
             citation.score = scores.get(k).copied().unwrap_or(0.0);
+            if matches!(
+                texts[k].source_kind.as_str(),
+                "external_file" | "external_url"
+            ) {
+                citation.source_kind = texts[k].source_kind.clone();
+            }
             citation.cited_version = state.map(|(version, _, _)| *version);
             citation.cited_digest = state.map(|(_, digest, _)| digest.clone());
         }
         let json = serde_json::to_string(&citations)?;
         if !db
-            .set_page_citations_at_page_version(page_id, &json, page.version)
+            .set_page_citations_at_page_version(page_id, &json, page.version, &snapshots)
             .await?
         {
             return Err(WenlanError::Conflict(format!(

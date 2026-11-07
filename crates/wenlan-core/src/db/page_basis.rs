@@ -880,6 +880,8 @@ pub(super) async fn confirm_page_basis_on_conn(
 /// edit) is what every writer that predates the page basis passes.
 #[derive(Debug, Clone, Default)]
 pub struct BasisWrite {
+    pub research_write: Option<super::research_write::ResearchWriteFence>,
+    pub citation_snapshots: Vec<super::CitationSourceSnapshot>,
     /// The history row is flagged as a minor edit (typo, formatting).
     pub minor: bool,
     /// Who marks and confirms: `human`, or the agent's name.

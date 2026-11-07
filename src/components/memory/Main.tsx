@@ -99,7 +99,7 @@ import { NoteTabDragProvider } from "./pages/NoteTabDragProvider";
 import type { NoteTabDrop } from "./pages/noteTabDragContext";
 import { useViewScroll } from "./navigation/useViewScroll";
 import { WorkspaceBackButton, WorkspaceNavigationProvider } from "./navigation/WorkspaceNavigation";
-import { WorkspacePaneHostContext, WorkspaceDocumentToolsHostContext } from "./navigation/WorkspacePaneHost";
+import { WorkspacePaneHostContext, WorkspaceDocumentToolsHostContext, SharedWikiInspectorContext } from "./navigation/WorkspacePaneHost";
 import { ReferenceNavigationProvider } from "./links/ReferenceNavigationContext";
 import "./navigation/navigation-shell.css";
 import "./assets/collectionToolbar.css";
@@ -219,16 +219,19 @@ export default function Main({
   const secondaryGroupRef = useRef<SecondaryNoteGroupHandle>(null);
   const [secondaryOpen, setSecondaryOpen] = useState(false);
   const [groupToolsHost, setGroupToolsHost] = useState<HTMLDivElement | null>(null);
+  const [sharedReadingHost, setSharedReadingHost] = useState<HTMLDivElement | null>(null);
+  const [sharedToolsHost, setSharedToolsHost] = useState<HTMLDivElement | null>(null);
   const [secondaryHost, setSecondaryHost] = useState<HTMLDivElement | null>(null);
   const focusedGroup = useRef<"primary" | "secondary">("primary");
+  const [activeNoteGroupId, setActiveNoteGroupId] = useState<"primary" | "secondary">("primary");
   const [ownershipNotice, setOwnershipNotice] = useState<{ side: "primary" | "secondary"; note: NoteView } | null>(null);
   const [movingNote, setMovingNote] = useState(false);
   const movingNoteRef = useRef(false);
-  const focusPrimaryGroup = useCallback(() => { focusedGroup.current = "primary"; }, []);
-  const focusSecondaryGroup = useCallback(() => { focusedGroup.current = "secondary"; }, []);
+  const focusPrimaryGroup = useCallback(() => { focusedGroup.current = "primary"; setActiveNoteGroupId("primary"); }, []);
+  const focusSecondaryGroup = useCallback(() => { focusedGroup.current = "secondary"; setActiveNoteGroupId("secondary"); }, []);
   const setSecondaryPresence = useCallback((present: boolean) => {
     setSecondaryOpen(present);
-    if (!present) focusedGroup.current = "primary";
+    if (!present) { focusedGroup.current = "primary"; setActiveNoteGroupId("primary"); }
   }, []);
   const pendingDraftNavigationRef = useRef<{
     readonly action: (sourceView: View) => void;
@@ -1430,6 +1433,7 @@ export default function Main({
     <WorkspaceReadingHostContext.Provider value={mainContentRef}>
     <WorkspacePaneHostContext.Provider value={workspacePaneHost}>
     <WorkspaceDocumentToolsHostContext.Provider value={documentToolsHost}>
+    <SharedWikiInspectorContext.Provider value={isWikiWorkspaceView ? { activeGroupId: activeNoteGroupId, readingElement: sharedReadingHost, toolsElement: sharedToolsHost, isSplit: secondaryOpen } : null}>
     <WorkspaceDemandContext.Provider value={autoSidebar.demand}>
     <OrganizeActionsContext.Provider value={organizeActions}>
     <div
@@ -1587,6 +1591,7 @@ export default function Main({
               // belongs to the Wiki.
               directoryHidden={view.kind === "home" || directoryHidden}
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
+              onSharedReadingHost={setSharedReadingHost} onSharedToolsHost={setSharedToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
               directoryOpenRequest={wikiDirectoryOpenRequest}
@@ -1703,6 +1708,7 @@ export default function Main({
           ) : view.kind === "page-draft" ? (
             <WikiWorkspace key={exampleWiki ? "example" : "own"}
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
+              onSharedReadingHost={setSharedReadingHost} onSharedToolsHost={setSharedToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
               directoryOpenRequest={wikiDirectoryOpenRequest}
@@ -1758,6 +1764,7 @@ export default function Main({
           ) : view.kind === "page" ? (
             <WikiWorkspace key={exampleWiki ? "example" : "own"}
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
+              onSharedReadingHost={setSharedReadingHost} onSharedToolsHost={setSharedToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
               directoryOpenRequest={wikiDirectoryOpenRequest}
@@ -1804,6 +1811,7 @@ export default function Main({
             </WikiWorkspace>
           ) : view.kind === "distill-review" ? (
             <DistillReviewPanel
+              currentSpace={contextSpace?.spaceName}
               onBack={navigateBack}
               onOpenActivity={() => navigateTo({ kind: "activity" })}
               initialReviewItemId={view.reviewItemId}
@@ -1955,6 +1963,7 @@ export default function Main({
     </div>
     </OrganizeActionsContext.Provider>
     </WorkspaceDemandContext.Provider>
+    </SharedWikiInspectorContext.Provider>
     </WorkspaceDocumentToolsHostContext.Provider>
     </WorkspacePaneHostContext.Provider>
     </WorkspaceReadingHostContext.Provider>
