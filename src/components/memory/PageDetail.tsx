@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "./navigation/WorkspacePaneHost";
 import type { NoteInspectorTab } from "./page/NoteInspectorTabs";
 import { usePageInspectorSession } from "./page/usePageInspectorSession";
+import { preserveReadingPosition } from "./page/readingReflowAnchor";
 import { ArrowLeft, ArrowsIn, ArrowsOut, FilePdf, Info, PencilSimple, TreeStructure } from "@phosphor-icons/react";
 import {
   getPage,
@@ -337,6 +338,7 @@ export default function PageDetail({
   const [canvasWorkspaceHost, setCanvasWorkspaceHost] = useState<HTMLDivElement | null>(null);
   const [canvasWorkspaceSupported, setCanvasWorkspaceSupported] = useState(false);
   const pageDetailRootRef = useRef<HTMLDivElement | null>(null);
+  const readingPositionCleanupRef = useRef<(() => void) | null>(null);
   const canvasWorkspaceExpandedRef = useRef(false);
   const canvasWorkspaceScrollRef = useRef<{ pageId: string; element: HTMLElement; scrollTop: number } | null>(null);
   const canvasWorkspaceRestoreRef = useRef<{ pageId: string; element: HTMLElement; scrollTop: number } | null>(null);
@@ -344,6 +346,8 @@ export default function PageDetail({
   const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
   const setPageDetailRootRef = useCallback((node: HTMLDivElement | null) => {
+    readingPositionCleanupRef.current?.();
+    readingPositionCleanupRef.current = node ? preserveReadingPosition(node) : null;
     pageDetailRootRef.current = node;
     setCanvasWorkspaceSupported(node?.parentElement?.closest(".wiki-workspace-content") != null);
   }, []);
