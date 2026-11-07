@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { answerThingMapProposal, answerThingMerge, getThing, undoThingDream, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
+import { answerThingMapProposal, answerThingMerge, getMemorySaid, getThing, undoThingDream, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
 import { ThingDetail } from "./ThingDetail";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
@@ -15,6 +15,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   answerThingMerge: vi.fn(),
   undoThingDream: vi.fn(),
   answerThingMapProposal: vi.fn(),
+  getMemorySaid: vi.fn(),
 }));
 
 const now = Math.floor(Date.now() / 1000);
@@ -85,6 +86,23 @@ describe("ThingDetail", () => {
     expect(short.firstElementChild).toHaveTextContent(/Picked the X wording/);
     expect(within(short).getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(["Decided", "Background"]);
     expect(within(short).getByRole("region", { name: "Background" })).toHaveTextContent("The old line still ships in the PH gallery.");
+  });
+
+  it("UX-WHO-6: opening a point shows the lines of conversation it came from", async () => {
+    vi.mocked(getMemorySaid).mockReset().mockResolvedValue({
+      session_id: "ses_a",
+      tool: "claude-code",
+      lines: [{ index: 4, line: { speaker: "you", text: "Let's lead with the X wording.", at: now - 950 } }],
+    });
+    renderThing();
+    const decided = await screen.findByRole("region", { name: "Decided" });
+    const point = within(decided).getByRole("button", { name: "Lead with the X wording." });
+    expect(point).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(point);
+    expect(await within(decided).findByText("Let's lead with the X wording.")).toBeTruthy();
+    expect(getMemorySaid).toHaveBeenCalledWith("mem_1");
+    fireEvent.click(point);
+    expect(within(decided).queryByText("Let's lead with the X wording.")).toBeNull();
   });
 
   it("UX-VIEW-1: short text and mind map show the same points, and the last view is remembered", async () => {

@@ -1079,6 +1079,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     get(`/api/conversations/search?q=${enc(String(a?.query ?? ""))}&limit=${Number(a?.limit ?? 5)}`)
       .then((r) => r?.hits ?? []).catch(() => []),
   get_conversation_lines: (a) => get(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/lines`),
+  get_memory_said: (a) => get(`/api/memories/${enc(String(a?.sourceId ?? ""))}/said`),
   rename_thing: (a) => patch(`/api/things/${enc(String(a?.id ?? ""))}`, { title: a?.title }),
   hide_thing: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/hide`, {}),
   answer_thing_merge: (a) =>

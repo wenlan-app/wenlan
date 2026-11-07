@@ -1757,6 +1757,19 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
+    /// `GET /api/memories/{source_id}/said`: the lines of its conversation a
+    /// memory came from (UX-WHO-6).
+    pub async fn memory_said(
+        &self,
+        source_id: &str,
+    ) -> Result<wenlan_types::conversations::MemorySaidResponse, String> {
+        let path = format!(
+            "/api/memories/{}/said",
+            percent_encode_path_segment(source_id)
+        );
+        self.get_json(&path).await
+    }
+
     /// `PATCH /api/things/{id}`: the person renames a thing.
     pub async fn rename_thing(
         &self,

@@ -1856,6 +1856,7 @@ pub fn run() {
             search::get_thing_map,
             search::search_conversations,
             search::get_conversation_lines,
+            search::get_memory_said,
             search::rename_thing,
             search::hide_thing,
             search::answer_thing_merge,
