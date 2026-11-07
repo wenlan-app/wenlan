@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Selection loss is a durable research-review fact, independent of source bytes/lifecycle.
+use super::metadata_json;
 use crate::{pages::Page, WenlanError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,18 +28,12 @@ fn sql(e: libsql::Error) -> WenlanError {
     WenlanError::VectorDb(format!("Zotero scope impact: {e}"))
 }
 async fn load(conn: &libsql::Connection, id: &str) -> Result<Vec<Impact>, WenlanError> {
-    let mut rows = conn
-        .query("SELECT value FROM app_metadata WHERE key=?1", [key(id)])
-        .await
-        .map_err(sql)?;
-    Ok(match rows.next().await.map_err(sql)? {
-        Some(row) => serde_json::from_str(&row.get::<String>(0).map_err(sql)?)?,
-        None => vec![],
-    })
+    Ok(metadata_json::load(conn, &key(id), sql)
+        .await?
+        .unwrap_or_default())
 }
 async fn save(conn: &libsql::Connection, id: &str, impacts: &[Impact]) -> Result<(), WenlanError> {
-    conn.execute("INSERT INTO app_metadata(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",libsql::params![key(id),serde_json::to_string(impacts)?]).await.map_err(sql)?;
-    Ok(())
+    metadata_json::save(conn, &key(id), &impacts, sql).await
 }
 pub(super) async fn zotero_scope_preview_on(
     conn: &libsql::Connection,

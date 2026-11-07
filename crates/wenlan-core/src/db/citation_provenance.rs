@@ -2,8 +2,8 @@
 //! Historical reference identity is separate from the NULL citation-work queue.
 //! Records live in existing app_metadata and participate in the caller's DB transaction.
 use super::{
-    citation_sources::CitationSourceSnapshot, commit_or_rollback, MemoryDB, PageFence,
-    UNFILED_SPACE_ID,
+    citation_sources::CitationSourceSnapshot, commit_or_rollback, metadata_json, MemoryDB,
+    PageFence, UNFILED_SPACE_ID,
 };
 use crate::{pages::Page, read_scope::ReadScope, WenlanError};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -27,25 +27,14 @@ async fn load<T: DeserializeOwned>(
     conn: &libsql::Connection,
     key: &str,
 ) -> Result<Option<T>, WenlanError> {
-    let mut rows = conn
-        .query("SELECT value FROM app_metadata WHERE key=?1", [key])
-        .await
-        .map_err(sql)?;
-    rows.next()
-        .await
-        .map_err(sql)?
-        .map(|row| -> Result<T, WenlanError> {
-            Ok(serde_json::from_str(&row.get::<String>(0).map_err(sql)?)?)
-        })
-        .transpose()
+    metadata_json::load(conn, key, sql).await
 }
 async fn save(
     conn: &libsql::Connection,
     key: &str,
     value: &impl Serialize,
 ) -> Result<(), WenlanError> {
-    conn.execute("INSERT INTO app_metadata(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", libsql::params![key,serde_json::to_string(value)?]).await.map_err(sql)?;
-    Ok(())
+    metadata_json::save(conn, key, value, sql).await
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1095,15 +1084,7 @@ async fn metadata_value_on(
     conn: &libsql::Connection,
     key: &str,
 ) -> Result<Option<String>, WenlanError> {
-    let mut rows = conn
-        .query("SELECT value FROM app_metadata WHERE key=?1", [key])
-        .await
-        .map_err(sql)?;
-    rows.next()
-        .await
-        .map_err(sql)?
-        .map(|row| row.get::<String>(0).map_err(sql))
-        .transpose()
+    metadata_json::load_raw(conn, key, sql).await
 }
 async fn copy_identity_metadata_on(
     conn: &libsql::Connection,
