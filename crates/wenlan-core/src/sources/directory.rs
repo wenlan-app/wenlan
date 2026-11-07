@@ -511,6 +511,25 @@ pub fn extract_pdf_text(bytes: &[u8]) -> Result<String, String> {
     }
 }
 
+/// Extract exactly one physical PDF page without treating an intermediate error as EOF.
+/// The same font resource isolation as whole-document extraction is applied.
+pub fn extract_pdf_page(bytes: &[u8], page: u32) -> Result<(String, u32), String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut doc = load_pdf_for_extraction(bytes).map_err(|e| e.to_string())?;
+        let count = u32::try_from(doc.get_pages().len()).map_err(|_| "too many PDF pages")?;
+        if page == 0 || page > count {
+            return Err("PDF page is out of range".to_owned());
+        }
+        let rewritten = plan_form_font_scoping(&doc);
+        apply_form_font_scoping(&mut doc, rewritten);
+        let mut text = String::new();
+        let mut output = pdf_extract::PlainTextOutput::new(&mut text);
+        pdf_extract::output_doc_page(&doc, &mut output, page).map_err(|e| e.to_string())?;
+        Ok((normalize_extracted_text(&text), count))
+    }))
+    .unwrap_or_else(|_| Err("PDF page extraction panicked".to_owned()))
+}
+
 /// `pdf_extract::extract_text_from_mem`, with form font names scoped first.
 fn extract_pdf_text_scoped(bytes: &[u8]) -> Result<String, pdf_extract::OutputError> {
     let mut doc = load_pdf_for_extraction(bytes)?;

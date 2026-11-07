@@ -1866,6 +1866,7 @@ pub async fn commit_new(
             basis_marks: Vec::new(),
             basis_space_guard: (claim.scope != ReadScope::Global).then(|| claim.scope.clone()),
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await;

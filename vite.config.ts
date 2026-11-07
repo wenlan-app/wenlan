@@ -1,3 +1,4 @@
+import { pdfAssets } from "./vite.pdf";
 import { resolve } from "node:path";
 import { defineConfig, normalizePath } from "vite";
 import react from "@vitejs/plugin-react";
@@ -13,7 +14,7 @@ const cachePrefix = normalizePath(resolve(cacheDir)).replace(/[.*+?^${}()|[\]\\]
 export default defineConfig(async () => ({
   // Linked node_modules can be shared by worktrees; optimizer state must not be.
   cacheDir,
-  plugins: [react({ exclude: [/\/node_modules\//, new RegExp(`^${cachePrefix}/`)] }), tailwindcss()],
+  plugins: [react({ exclude: [/\/node_modules\//, new RegExp(`^${cachePrefix}/`)] }), tailwindcss(), pdfAssets()],
   define: {
     __WENLAN_REVIEW__: "false",
   },

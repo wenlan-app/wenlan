@@ -201,6 +201,7 @@ async fn a_group_named_after_an_existing_page_attaches_to_it() {
             basis_marks: Vec::new(),
             basis_space_guard: None,
             skip_protected_title_match: false,
+            research_write: None,
         },
     )
     .await

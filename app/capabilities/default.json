@@ -10,6 +10,7 @@
     "global-shortcut:allow-unregister",
     "clipboard-x:default",
     "fs:default",
+    "fs:allow-write-text-file",
     "shell:default",
     "shell:allow-open",
     {

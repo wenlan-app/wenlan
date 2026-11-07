@@ -25,6 +25,8 @@ pub struct SyncStats {
     /// "google_drive_offline", "file_read_errors".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_files: Vec<wenlan_types::responses::SkippedSourceFile>,
 }
 
 /// Compute SHA-256 hex digest of a string.

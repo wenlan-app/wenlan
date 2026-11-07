@@ -4,7 +4,7 @@ use wenlan_types::lint::{LintMetric, LintMetricCode, LintMetricValue};
 use wenlan_types::pages::PageCitation;
 
 const VALID_KINDS: [&str; 4] = ["authored", "external_file", "external_url", "memory"];
-const VALID_STATUSES: [&str; 2] = ["unverified", "verified"];
+const VALID_STATUSES: [&str; 3] = ["unevaluated", "unverified", "verified"];
 const VALID_SCOPES: [&str; 2] = ["paragraph", "sentence"];
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -15,6 +15,7 @@ pub(super) struct CitationPartitions {
     pub(super) occurrences: u64,
     pub(super) verified: u64,
     pub(super) unverified: u64,
+    pub(super) unevaluated: u64,
     pub(super) sentence: u64,
     pub(super) paragraph: u64,
     pub(super) memory: u64,
@@ -32,7 +33,10 @@ impl CitationPartitions {
 
     #[cfg(test)]
     pub(super) fn partitions_are_exact(&self) -> bool {
-        self.verified.saturating_add(self.unverified) == self.occurrences
+        self.verified
+            .saturating_add(self.unverified)
+            .saturating_add(self.unevaluated)
+            == self.occurrences
             && self.sentence.saturating_add(self.paragraph) == self.occurrences
             && self
                 .memory
@@ -91,6 +95,9 @@ pub(super) fn assess_citations(rows: &[Option<String>]) -> (Assessment, Citation
         partitions.page_total(),
         u64::try_from(rows.len()).unwrap_or(u64::MAX)
     );
+    // Keep strict wire metric codes compatible with older clients. For a valid
+    // map, unevaluated = ObservedRecords - verified occurrences - unverified occurrences.
+    // Unevaluated references are neither successful nor failed checks.
     assessment.set_metrics(vec![
         count_metric(
             LintMetricCode::EligibleRecords,
@@ -149,6 +156,7 @@ fn add_occurrences(partitions: &mut CitationPartitions, citations: &[PageCitatio
         match citation.status.as_str() {
             "verified" => partitions.verified = partitions.verified.saturating_add(1),
             "unverified" => partitions.unverified = partitions.unverified.saturating_add(1),
+            "unevaluated" => partitions.unevaluated = partitions.unevaluated.saturating_add(1),
             _ => valid = false,
         }
         match citation.scope.as_str() {

@@ -434,13 +434,29 @@ pub async fn direct_and_child_routes_are_gated() {
             false,
         )
         .await;
+    fixture
+        .seed_record(
+            "file",
+            "work-file",
+            Some("work"),
+            "document",
+            13,
+            None,
+            false,
+        )
+        .await;
     let work = seed_page(
         &fixture,
         "work parent page",
         "decision",
         Some("work"),
         "work parent [[missing work topic]]",
-        &["work-memory", "personal-memory", "external-file"],
+        &[
+            "work-memory",
+            "personal-memory",
+            "external-file",
+            "work-file",
+        ],
     )
     .await;
     let personal = seed_page(
@@ -500,6 +516,10 @@ pub async fn direct_and_child_routes_are_gated() {
     let serialized = sources.to_string();
     assert!(serialized.contains("work-memory"), "{serialized}");
     assert!(
+        serialized.contains("record canary work-file"),
+        "{serialized}"
+    );
+    assert!(
         serialized.contains("personal-memory"),
         "source metadata may remain: {serialized}"
     );
@@ -511,6 +531,15 @@ pub async fn direct_and_child_routes_are_gated() {
         !serialized.contains("record canary external-file"),
         "selected Page source materialized cross-Space external content: {serialized}"
     );
+    for source_id in ["personal-memory", "external-file"] {
+        let source = sources
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["source"]["memory_source_id"] == source_id)
+            .expect("cross-Space edge metadata remains visible");
+        assert!(source["memory"].is_null(), "{source}");
+    }
 
     let (status, global_sources) = json_body(
         fixture
@@ -524,12 +553,9 @@ pub async fn direct_and_child_routes_are_gated() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{global_sources}");
-    assert!(
-        global_sources
-            .to_string()
-            .contains("record canary external-file"),
-        "Global Page source compatibility lost external content: {global_sources}"
-    );
+    // Omitting the selector broadens page discovery, not the page's own
+    // evidence scope. Keep dangling source metadata without exposing its text.
+    assert_eq!(global_sources, sources);
 
     let (status, orphan) = json_body(
         fixture

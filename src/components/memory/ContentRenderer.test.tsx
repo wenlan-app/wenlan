@@ -211,9 +211,13 @@ describe("ContentRenderer preserveMarkdown", () => {
     expect(screen.queryByText(/wrong/)).toBeNull();
   });
 
-  it("still flattens pipe rows by default, so other readers are unchanged", () => {
-    const { container } = render(<ContentRenderer variant="detail" content={table} />);
-    expect(container.querySelector("table")).toBeNull();
+  it("renders GFM tables by default while retaining legacy pipe-field normalization", () => {
+    const content = `${table}\n\nclaim: yes | domain: research | verified: true`;
+    const { container } = render(<ContentRenderer variant="detail" content={content} />);
+    expect(container.querySelector("table")).toHaveTextContent("alphabeta");
+    expect(container.textContent).toContain("claim: yes");
+    expect(container.textContent).toContain("domain: research");
+    expect(container.textContent).not.toContain("|");
   });
 });
 

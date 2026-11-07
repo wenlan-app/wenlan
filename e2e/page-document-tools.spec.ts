@@ -5,7 +5,7 @@ import { openPageTool } from "./helpers/pageTools";
 import { openWikiNote } from "./helpers/wikiWorkspace";
 
 const copies = [
-  { locale: "en", open: "Open Fixture architecture", editor: "Page editor", actions: "Page actions", info: "Page info", map: "Mind map", note: "Page", close: "Close", pane: "Page views", toggle: "Open page sidebar", untoggle: "Close page sidebar" },
+  { locale: "en", open: "Open Fixture architecture", editor: "Page editor", actions: "Page actions", info: "Page info", map: "Mind map", note: "Page", close: "Close", pane: "Page views", toggle: "Info", untoggle: "Info" },
 ] as const;
 
 async function expectDocumentToolsAligned(page: Page, actionsName: string, toggleName: string): Promise<void> {
@@ -13,16 +13,42 @@ async function expectDocumentToolsAligned(page: Page, actionsName: string, toggl
   await expect(actions).toBeInViewport();
   // Page actions sit in the top bar, just left of the page sidebar toggle,
   // so the title line holds only the title.
-  await expect(page.locator(".note-group-document-tools").getByRole("button", { name: actionsName, exact: true })).toBeVisible();
+  await expect(page.locator(".note-group-document-tools.wiki-shared-document-tools").getByRole("button", { name: actionsName, exact: true })).toBeVisible();
   const toggle = page.getByRole("button", { name: toggleName, exact: true });
-  const actionsBox = (await actions.boundingBox())!;
-  const toggleBox = (await toggle.boundingBox())!;
-  expect(Math.abs(actionsBox.y + actionsBox.height / 2 - (toggleBox.y + toggleBox.height / 2))).toBeLessThanOrEqual(1);
-  expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(toggleBox.x + 1);
-  expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(
-    await page.evaluate(() => innerWidth),
-  );
+  // Closing a pane reflows the header. Read both rectangles in one frame,
+  // then poll the unchanged geometry contract until that transition settles.
+  await expect(async () => {
+    const geometry = await page.evaluate(([action, context]) => {
+      if (!action || !context) throw new Error("Document tools are unavailable");
+      const a = action.getBoundingClientRect();
+      const b = context.getBoundingClientRect();
+      return {
+        centerDifference: Math.abs(a.y + a.height / 2 - (b.y + b.height / 2)),
+        actionRight: a.right,
+        toggleLeft: b.left,
+        viewportWidth: innerWidth,
+      };
+    }, [await actions.elementHandle(), await toggle.elementHandle()]);
+    expect(geometry.centerDifference).toBeLessThanOrEqual(1);
+    expect(geometry.actionRight).toBeLessThanOrEqual(geometry.toggleLeft + 1);
+    expect(geometry.actionRight).toBeLessThanOrEqual(geometry.viewportWidth);
+  }).toPass({ timeout: 10_000 });
 }
+
+test("narrow document tools align across platform font metrics", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 900 });
+  await installTauriMock(page, { locale: "en", rawActions: [] });
+  await page.goto("/");
+  await openWikiNote(page, "Fixture architecture");
+  // The system font differs on macOS and Linux. Icon buttons must not inherit
+  // a vertical offset from their wrapper's text baseline on either platform.
+  for (const font of ["sans-serif", "serif"]) {
+    await page.locator(".note-group-document-tools.wiki-shared-document-tools").evaluate((node, family) => {
+      (node as HTMLElement).style.fontFamily = family;
+    }, font);
+    await expectDocumentToolsAligned(page, "Page actions", "Info");
+  }
+});
 
 for (const copy of copies) for (const width of [1280, 375]) {
   test(`document actions and dedicated inspector: ${copy.locale} ${width}`, async ({ page }, testInfo) => {
@@ -31,6 +57,22 @@ for (const copy of copies) for (const width of [1280, 375]) {
     const controller = await installTauriMock(page, { locale: copy.locale, rawActions: [] });
     await page.goto("/");
     await openWikiNote(page, "Fixture architecture");
+    await expect(page.locator(".page-info-drawer")).toHaveCount(0);
+    await expect(page.locator(".note-inspector-tabs")).toHaveCount(0);
+    const infoButton = page.getByRole("button", { name: "Info", exact: true });
+    const mapButton = page.getByRole("button", { name: copy.map, exact: true });
+    await expect(infoButton).toBeVisible();
+    await expect(mapButton).toBeVisible();
+    await mapButton.click();
+    await expect(page.getByRole("region", { name: "Canvas for Fixture architecture", exact: true })).toBeVisible();
+    await expect(page.getByRole("complementary", { name: copy.pane, exact: true })).toBeVisible();
+    await mapButton.click();
+    await expect(page.locator(".page-info-drawer")).toHaveCount(0);
+    await expect(page.locator(".note-inspector-tabs")).toHaveCount(0);
+    await infoButton.click();
+    await expect(infoButton).toHaveAttribute("aria-pressed", "true");
+    await infoButton.click();
+    await expect(page.locator(".page-info-drawer")).toHaveCount(0);
     const editor = page.getByRole("textbox", { name: copy.editor, exact: true });
     // Note-group inspectors remain non-modal at every viewport width.
     const role = "complementary";
@@ -39,7 +81,7 @@ for (const copy of copies) for (const width of [1280, 375]) {
       await expect(page.locator(".page-detail").getByRole("button", { name, exact: true })).toHaveCount(0);
     }
     await expect(page.locator(".page-detail-top-row, .page-detail-view-controls, .page-detail-canvas-toggle")).toHaveCount(0);
-    await expect(page.getByRole("tab", { name: copy.map, exact: true })).toHaveCount(0);
+    await expect(mapButton).toBeVisible();
     await expectDocumentToolsAligned(page, copy.actions, copy.toggle);
     await page.screenshot({ path: testInfo.outputPath("note-title-tools.png") });
 
@@ -47,15 +89,15 @@ for (const copy of copies) for (const width of [1280, 375]) {
     const info = page.getByRole(role, { name: copy.pane, exact: true });
     await expect(info).toBeVisible();
     await expect(page.getByRole("button", { name: copy.untoggle, exact: true })).toHaveAttribute("aria-expanded", "true");
-    await expect(page.getByRole("tab", { name: "Info", exact: true })).toHaveAttribute("aria-selected", "true");
-    const entry = page.getByRole("tab", { name: copy.map, exact: true });
-    await expect(entry).toHaveAttribute("aria-selected", "false");
+    await expect(infoButton).toHaveAttribute("aria-pressed", "true");
+    const entry = mapButton;
+    await expect(entry).toHaveAttribute("aria-pressed", "false");
     await expect(entry).toBeInViewport();
     const entryBox = (await entry.boundingBox())!;
     expect(entryBox.x).toBeGreaterThanOrEqual(0);
     expect(entryBox.x + entryBox.width).toBeLessThanOrEqual(width);
     await expect(editor).toBeEditable();
-    await info.getByRole("button", { name: copy.close, exact: true }).press("Escape");
+    await infoButton.press("Enter");
     await expect(info).toHaveCount(0);
     await expect(page.getByRole("button", {name:copy.toggle, exact:true})).toBeFocused();
     await expect(editor).toBeEditable();
@@ -65,7 +107,7 @@ for (const copy of copies) for (const width of [1280, 375]) {
     await editor.fill(draft);
     await openPageTool(page, copy.info, copy.actions);
     await entry.press("Enter");
-    await expect(entry).toHaveAttribute("aria-selected", "true");
+    await expect(entry).toHaveAttribute("aria-pressed", "true");
     const map = page.getByRole(role, { name: copy.pane, exact: true });
     await expect(map).toBeVisible();
     await expect(map.locator(".page-canvas")).toBeVisible();
@@ -75,8 +117,10 @@ for (const copy of copies) for (const width of [1280, 375]) {
     await expect(reading).toContainText("Saved before the map pane opens.");
     await expect(reading.locator('[contenteditable="true"], textarea')).toHaveCount(0);
     const calls = controller.calls();
-    const writeIndex = calls.findIndex((call) => call.command === "update_page");
-    const mapIndex = calls.findIndex((call) => call.command === "get_page_map");
+    const writeIndex = calls.findIndex((call) => call.command === "update_page"
+      && typeof call.args === "object" && call.args !== null
+      && "content" in call.args && call.args.content === draft);
+    const mapIndex = calls.findIndex((call, index) => index > writeIndex && call.command === "get_page_map");
     expect(writeIndex).toBeGreaterThanOrEqual(0);
     expect(mapIndex).toBeGreaterThan(writeIndex);
     expect(calls[writeIndex].args).toMatchObject({ content: draft });
@@ -93,16 +137,17 @@ for (const copy of copies) for (const width of [1280, 375]) {
     } else {
       const frame = page.locator(".wiki-primary-note-group .note-group-frame");
       const frameBox = (await frame.boundingBox())!;
+      const shellBox = (await page.locator(".memory-shell").boundingBox())!;
       const groupHeaderBox = (await frame.locator(".note-group-header").boundingBox())!;
       const noteContentBox = (await frame.locator(".note-group-content").boundingBox())!;
       expect(mapBox.x).toBeGreaterThanOrEqual(frameBox.x);
-      expect(mapBox.x + mapBox.width).toBeLessThanOrEqual(frameBox.x + frameBox.width + 1);
+      expect(mapBox.x + mapBox.width).toBeLessThanOrEqual(shellBox.x + shellBox.width + 1);
       expect(mapBox.y).toBeGreaterThanOrEqual(groupHeaderBox.y + groupHeaderBox.height - 1);
       expect(mapBox.y + mapBox.height).toBeLessThanOrEqual(frameBox.y + frameBox.height + 1);
       expect(noteContentBox.width).toBeGreaterThanOrEqual(await page.evaluate(() => matchMedia("(pointer: coarse)").matches ? 228 : 204));
     }
     await page.screenshot({ path: testInfo.outputPath("map-pane-and-note.png") });
-    await map.getByRole("button", { name: copy.close, exact: true }).press("Enter");
+    await entry.press("Enter");
     await expect(map).toHaveCount(0);
     await expect(editor).toBeEditable();
     await expect(editor).toContainText("Saved before the map pane opens.");
@@ -191,6 +236,8 @@ test("docked tools resize the complete workspace and keep search usable across t
   await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.goto("/");
   await openWikiNote(page, "Fixture architecture");
+  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
+  await expect(editor).toBeVisible();
   await openPageTool(page, "Mind map");
   const pane = page.getByRole("complementary", { name: "Page views", exact: true });
   const header = page.locator(".memory-workspace-header");
@@ -205,8 +252,8 @@ test("docked tools resize the complete workspace and keep search usable across t
   expect(panelBox.y).toBeGreaterThanOrEqual(groupHeaderBox.y + groupHeaderBox.height - 1);
   expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(frameBox.y + frameBox.height + 1);
   expect(panelBox.x).toBeGreaterThanOrEqual(noteBox.x + noteBox.width - 1);
-  expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(frameBox.x + frameBox.width + 1);
-  expect(panelBox.width).toBeGreaterThanOrEqual(320); // Current note-group inspector default width.
+  expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(await page.evaluate(() => innerWidth));
+  expect(panelBox.width).toBeGreaterThanOrEqual(320); // Minimum useful docked inspector width.
   expect(noteBox.width).toBeGreaterThanOrEqual(240);
   await expect(search).toBeHidden();
   await page.locator(".notes-workspace-sidebar").getByRole("button", { name: "Search", exact: true }).click();
@@ -215,7 +262,7 @@ test("docked tools resize the complete workspace and keep search usable across t
   await expect(search).toBeHidden();
   await expect(pane).toBeVisible();
 
-  await pane.getByRole("button", { name: "Close", exact: true }).focus();
+  await page.getByRole("button", { name: "Info", exact: true }).focus();
   await page.setViewportSize({ width: 1099, height: 900 });
   const narrowPane = page.getByRole("complementary", { name: "Page views", exact: true });
   await expect(narrowPane).toBeVisible();
@@ -224,11 +271,10 @@ test("docked tools resize the complete workspace and keep search usable across t
   const narrowFrameBox = (await narrowFrame.boundingBox())!;
   const narrowPaneBox = (await narrowPane.boundingBox())!;
   expect(narrowPaneBox.x).toBeGreaterThanOrEqual(narrowFrameBox.x);
-  expect(narrowPaneBox.x + narrowPaneBox.width).toBeLessThanOrEqual(narrowFrameBox.x + narrowFrameBox.width + 1);
-  await expect.poll(() => narrowPane.evaluate(node => node.contains(document.activeElement))).toBe(true);
+  expect(narrowPaneBox.x + narrowPaneBox.width).toBeLessThanOrEqual(await page.evaluate(() => innerWidth));
   await page.keyboard.press("Escape");
   await expect(narrowPane).toHaveCount(0);
-  await expect(page.getByRole("textbox", { name: "Page editor", exact: true })).toBeFocused();
+  await expect(editor).toBeFocused();
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(header.getByRole("textbox")).toHaveCount(0);
@@ -248,5 +294,5 @@ test('many tabs leave the entire action group reachable with the main sidebar hi
  await expect(page.locator('.note-tabs-list [role=tab][aria-selected=true]')).toHaveText('Independent research');
  const plus=(await page.locator('.note-tab-create').boundingBox())!,actions=(await page.locator('.workspace-header-actions').boundingBox())!;
  await page.screenshot({path:info.outputPath('many-tabs.png')});expect(plus.x+plus.width).toBeLessThanOrEqual(actions.x+1);
- await expect(page.getByRole('button',{name:'Open page sidebar',exact:true})).toBeInViewport();await page.getByRole('button',{name:'Open page sidebar',exact:true}).click();await expect(page.getByRole('complementary',{name:'Page views',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Info',exact:true})).toBeInViewport();await page.getByRole('button',{name:'Info',exact:true}).click();await expect(page.getByRole('complementary',{name:'Page views',exact:true})).toBeVisible();
 });

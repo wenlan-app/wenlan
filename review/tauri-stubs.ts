@@ -160,6 +160,10 @@ export function onClipboardChange(): () => void {
   return () => {};
 }
 export async function writeText(): Promise<void> {}
+/** The fixture-only Review app must never write files to the host machine. */
+export async function writeTextFile(): Promise<void> {
+  throw new Error("File writes are unavailable in the fixture-only Review runtime");
+}
 export async function readText(): Promise<string> {
   return "";
 }

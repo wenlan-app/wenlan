@@ -180,8 +180,16 @@ test("opens an ordinary page directly in one editable writing view", async ({ pa
   // Still announced to assistive technology, without a row above the title.
   await expect(saveStatus).toHaveCSS("position", "absolute");
   await expect(saveStatus).toHaveCSS("clip-path", "inset(50%)");
-  await expect(page.getByRole("button", { name: "Page info", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Mind map", exact: true })).toHaveCount(0);
+  // Context tools stay in the header; the writing view opens without a pane.
+  for (const name of ["Info", "Mind map"]) {
+    const tool = page.getByRole("button", { name, exact: true });
+    await expect(tool).toBeVisible();
+    await expect(tool).toHaveText("");
+    await expect(tool).toHaveAttribute("aria-expanded", "false");
+    await expect(tool).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator(".page-detail").getByRole("button", { name, exact: true })).toHaveCount(0);
+  }
+  await expect(page.locator(".page-info-drawer, .note-inspector-tabs")).toHaveCount(0);
   const pageActions = page.getByRole("button", { name: "Page actions", exact: true });
   await expect(pageActions).toHaveText("");
   await expect(pageActions.locator("svg")).toHaveCount(1);
@@ -682,9 +690,10 @@ test("renders a borderless dark editor while page-actions focus stays visible", 
   }
 
   const actions = page.getByRole("button", { name: "Page actions", exact: true });
-  await actions.focus();
+  // The shared tools follow the editor in DOM order; use the adjacent Info
+  // control to enter Page actions by keyboard without tabbing into CodeMirror.
+  await page.getByRole("button", { name: "Info", exact: true }).focus();
   await page.keyboard.press("Shift+Tab");
-  await page.keyboard.press("Tab");
   await expect(actions).toBeFocused();
   expect(await actions.evaluate((element) => {
     const style = window.getComputedStyle(element);

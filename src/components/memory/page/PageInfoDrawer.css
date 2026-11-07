@@ -8,6 +8,8 @@
   background: rgba(0, 0, 0, 0.22);
 }
 
+.page-info-drawer-overlay[hidden] { display: none; }
+
 .page-info-drawer {
   /* Embedded graph labels mask their edges against the same pane surface. */
   --mem-detail-surface: var(--mem-sidebar);

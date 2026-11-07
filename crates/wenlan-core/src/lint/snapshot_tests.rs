@@ -4,6 +4,110 @@ use std::time::Duration;
 use tokio::sync::Barrier;
 
 #[tokio::test]
+async fn libsql_connection_lifecycle_closes_last_owner_safely() {
+    let database = libsql::Builder::new_local(":memory:")
+        .build()
+        .await
+        .expect("in-memory libsql database opens");
+
+    for _ in 0..32 {
+        // A plain connection clone must keep the native handle alive until its
+        // final owner is dropped.
+        {
+            let connection = database.connect().expect("connection opens");
+            let clone = connection.clone();
+            drop(connection);
+            let mut rows = clone.query("SELECT 1", ()).await.unwrap();
+            assert_eq!(
+                rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+                1
+            );
+            drop(rows);
+            drop(clone);
+        }
+
+        // A transaction owns its connection after the original is dropped.
+        {
+            let connection = database.connect().expect("connection opens");
+            connection
+                .execute("CREATE TABLE IF NOT EXISTS lifecycle (id INTEGER)", ())
+                .await
+                .unwrap();
+            let transaction = connection
+                .transaction_with_behavior(libsql::TransactionBehavior::ReadOnly)
+                .await
+                .expect("read-only transaction starts");
+            drop(connection);
+            let mut rows = transaction
+                .query("SELECT COUNT(*) FROM lifecycle", ())
+                .await
+                .unwrap();
+            assert_eq!(
+                rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+                0
+            );
+            drop(rows);
+            transaction.rollback().await.unwrap();
+        }
+
+        // Statements and rows retain the handle after the original connection
+        // is dropped, including when the rows are released first.
+        {
+            let connection = database.connect().expect("connection opens");
+            let statement = connection.prepare("SELECT 7").await.unwrap();
+            let mut rows = statement.query(()).await.unwrap();
+            drop(connection);
+            assert_eq!(
+                rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+                7
+            );
+            drop(rows);
+            drop(statement);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn libsql_connection_lifecycle_guard_malloc() {
+    use std::process::Command;
+
+    const GUARD_MALLOC: &str = "/usr/lib/libgmalloc.dylib";
+    const LIFECYCLE_TEST: &str =
+        "lint::snapshot::tests::libsql_connection_lifecycle_closes_last_owner_safely";
+
+    assert!(
+        std::path::Path::new(GUARD_MALLOC).is_file(),
+        "Guard Malloc library is missing at {GUARD_MALLOC}"
+    );
+    let output = Command::new(std::env::current_exe().expect("test executable path resolves"))
+        .args([LIFECYCLE_TEST, "--exact", "--nocapture"])
+        .env("DYLD_INSERT_LIBRARIES", GUARD_MALLOC)
+        .env("WENLAN_NO_AUTOSTART", "1")
+        .output()
+        .expect("Guard Malloc lifecycle child starts");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Guard Malloc lifecycle child exited with {:?}; stdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status
+    );
+    assert!(
+        stderr.contains("GuardMalloc["),
+        "child output does not prove Guard Malloc loaded; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("running 1 test"),
+        "child did not run exactly one selected test; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("test result: ok. 1 passed;"),
+        "child test did not report one pass; stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+#[tokio::test]
 async fn lint_snapshot_baseline_primary_connection_answers_independently() {
     // Given: a separate read-only test session is open.
     let (db, _dir) = test_db().await;

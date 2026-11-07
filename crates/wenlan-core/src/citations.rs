@@ -131,6 +131,156 @@ pub(crate) fn marker_spans(body: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// Exact occurrence groups used by process_citation_output's union check.
+/// An incomplete or mismatched map cannot prove any independent claim safe.
+pub(crate) fn citation_claim_groups(
+    body: &str,
+    citations: &[PageCitation],
+) -> Option<Vec<Vec<u32>>> {
+    let mut bare = String::new();
+    let mut markers = Vec::new();
+    let mut end = 0;
+    for marker in RE_MARKER.captures_iter(body) {
+        let matched = marker.get(0)?;
+        bare.push_str(&body[end..matched.start()]);
+        markers.push((marker[1].parse::<u32>().ok()?, bare.len()));
+        end = matched.end();
+    }
+    bare.push_str(&body[end..]);
+    if markers.len() != citations.len() {
+        return None;
+    }
+    let spans = crate::faithfulness::sentence_spans(&bare);
+    if spans.is_empty() {
+        return None;
+    }
+    let mut groups: Vec<Vec<u32>> = Vec::new();
+    let mut previous = None;
+    for (index, (marker, at)) in markers.into_iter().enumerate() {
+        let occurrence = u32::try_from(index + 1).ok()?;
+        if citations
+            .iter()
+            .filter(|c| c.occurrence == occurrence && c.marker == marker)
+            .count()
+            != 1
+        {
+            return None;
+        }
+        let span = spans.iter().rposition(|s| s.0 <= at).unwrap_or(0);
+        if previous != Some(span) {
+            groups.push(Vec::new());
+            previous = Some(span);
+        }
+        groups.last_mut()?.push(occurrence);
+    }
+    Some(groups)
+}
+
+/// Preserve unambiguous navigable references after a human edit, without
+/// treating the edited text as verified. Unknown markers fail closed.
+pub(crate) fn retain_unchanged_manual_references(
+    old_body: &str,
+    new_body: &str,
+    old_citations: &[PageCitation],
+) -> Option<Vec<PageCitation>> {
+    use std::collections::HashMap;
+
+    fn marker(raw: &str) -> Option<u32> {
+        let n = raw
+            .strip_prefix('[')?
+            .strip_suffix(']')?
+            .parse::<u32>()
+            .ok()?;
+        (n != 0 && raw == format!("[{n}]")).then_some(n)
+    }
+    let old_markers: Vec<_> = RE_MARKER.find_iter(old_body).collect();
+    if old_markers.is_empty() || old_markers.len() != old_citations.len() {
+        return None;
+    }
+    let mut occurrences = HashMap::new();
+    let mut targets: HashMap<u32, Option<&PageCitation>> = HashMap::new();
+    for citation in old_citations {
+        if citation.locator.trim().is_empty()
+            || !matches!(
+                citation.source_kind.as_str(),
+                "memory" | "external_file" | "external_url" | "authored"
+            )
+            || citation.cited_version.is_none()
+            || citation
+                .cited_digest
+                .as_ref()
+                .is_none_or(|digest| digest.trim().is_empty())
+            || occurrences.insert(citation.occurrence, citation).is_some()
+        {
+            return None;
+        }
+        let target = targets.entry(citation.marker).or_insert(Some(citation));
+        if let Some(previous) = *target {
+            if (
+                previous.source_kind.as_str(),
+                previous.locator.as_str(),
+                previous.cited_version,
+                &previous.cited_digest,
+                previous.historical,
+            ) != (
+                citation.source_kind.as_str(),
+                citation.locator.as_str(),
+                citation.cited_version,
+                &citation.cited_digest,
+                citation.historical,
+            ) {
+                *target = None;
+            }
+        }
+    }
+    for (index, found) in old_markers.iter().enumerate() {
+        let citation = occurrences.get(&u32::try_from(index + 1).ok()?)?;
+        if marker(found.as_str())? != citation.marker {
+            return None;
+        }
+    }
+
+    // Exact unique paragraphs are the only safe basis for carrying a PDF region.
+    let mut old_paragraphs: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut offset = 0usize;
+    for paragraph in RE_PARAGRAPH_BREAK.split(old_body) {
+        old_paragraphs.entry(paragraph).or_default().push(offset);
+        offset += RE_MARKER.find_iter(paragraph).count();
+    }
+    let mut new_counts = HashMap::new();
+    for paragraph in RE_PARAGRAPH_BREAK.split(new_body) {
+        *new_counts.entry(paragraph).or_insert(0usize) += 1;
+    }
+    let mut retained = Vec::new();
+    for paragraph in RE_PARAGRAPH_BREAK.split(new_body) {
+        let exact = old_paragraphs
+            .get(paragraph)
+            .filter(|v| v.len() == 1 && new_counts[paragraph] == 1)
+            .map(|v| v[0]);
+        for (local, found) in RE_MARKER.find_iter(paragraph).enumerate() {
+            let number = marker(found.as_str())?;
+            let original = exact.and_then(|start| {
+                occurrences
+                    .get(&u32::try_from(start + local + 1).ok()?)
+                    .copied()
+            });
+            let mut citation = match original {
+                Some(citation) => citation.clone(),
+                None => (*targets.get(&number)?.as_ref()?).clone(),
+            };
+            if original.is_none() {
+                citation.pdf_target = None;
+            }
+            citation.occurrence = u32::try_from(retained.len() + 1).ok()?;
+            citation.status = "unevaluated".into();
+            citation.score = 0.0;
+            citation.disproven = false;
+            retained.push(citation);
+        }
+    }
+    (!retained.is_empty()).then_some(retained)
+}
+
 /// Remove every `[N]` marker from body prose, collapsing the resulting
 /// doubled whitespace.
 pub fn strip_markers(body: &str) -> String {
@@ -184,23 +334,87 @@ fn bidirectional_support(span: &str, source: &str) -> f64 {
 pub(crate) fn claim_support(
     sentence: &str,
     paragraph: &str,
-    sources: &[&str],
+    sources: &[NumberedSource],
 ) -> (bool, &'static str, Vec<f64>) {
-    let union = sources.join("\n");
-    let (verified, scope, claim) = if bidirectional_support(sentence, &union) >= 0.5 {
+    let refs = sources.iter().collect::<Vec<_>>();
+    let (verified, scope, claim) = if bounded_support(sentence, &refs) >= 0.5 {
         (true, "sentence", sentence)
     } else {
         (
-            bidirectional_support(paragraph, &union) >= 0.5,
+            bounded_support(paragraph, &refs) >= 0.5,
             "paragraph",
             paragraph,
         )
     };
     let scores = sources
         .iter()
-        .map(|source| bidirectional_support(claim, source))
+        .map(|source| bounded_support(claim, &[source]))
         .collect();
     (verified, scope, scores)
+}
+
+/// Select one contiguous, overlapping evidence window. The final window is
+/// filled backwards to avoid a tiny tail inflating reverse lexical overlap.
+fn evidence_window(claim: &str, source: &NumberedSource) -> String {
+    let chars: Vec<char> = source.text.chars().collect();
+    if !matches!(
+        source.source_kind.as_str(),
+        "external_file" | "external_url"
+    ) || chars.len() <= SOURCE_TEXT_CAP
+    {
+        return source.text.clone();
+    }
+    let last = chars.len() - SOURCE_TEXT_CAP;
+    // Same whole-word regex semantics as overlap_fraction, compiled once per
+    // claim instead of once per token per candidate window.
+    let matchers = crate::faithfulness::content_tokens(claim)
+        .into_iter()
+        .map(|token| Regex::new(&format!(r"\b{}\b", regex::escape(&token))).expect("escaped token"))
+        .collect::<Vec<_>>();
+    let mut best = String::new();
+    let mut best_score = -1.0;
+    for start in (0..last)
+        .step_by(SOURCE_TEXT_CAP / 2)
+        .chain(std::iter::once(last))
+    {
+        let window: String = chars[start..start + SOURCE_TEXT_CAP].iter().collect();
+        let lowered = window.to_ascii_lowercase();
+        let score = if matchers.is_empty() {
+            1.0
+        } else {
+            matchers
+                .iter()
+                .filter(|matcher| matcher.is_match(&lowered))
+                .count() as f64
+                / matchers.len() as f64
+        };
+        if score > best_score {
+            best = window;
+            best_score = score;
+        }
+    }
+    best
+}
+
+fn bounded_support(claim: &str, sources: &[&NumberedSource]) -> f64 {
+    let windows = sources
+        .iter()
+        .map(|source| evidence_window(claim, source))
+        .collect::<Vec<_>>();
+    let union = windows.join("\n");
+    if sources.iter().any(|source| {
+        matches!(
+            source.source_kind.as_str(),
+            "external_file" | "external_url"
+        ) && source.text.chars().count() > SOURCE_TEXT_CAP
+    }) {
+        if !claim.chars().any(char::is_alphanumeric) {
+            return 0.0;
+        }
+        crate::faithfulness::overlap_fraction(claim, &union)
+    } else {
+        bidirectional_support(claim, &union)
+    }
 }
 
 /// Normalize raw LLM marker output: `[ 1 ]` -> `[1]`, `[1,3]` -> `[1][3]`.
@@ -316,16 +530,14 @@ pub fn process_citation_output(
 
         let (span_start, span_end) = spans[span_idx];
         let sentence = bare_body[span_start..span_end].trim();
-        let union: String = group
+        let claim_sources = group
             .iter()
             .filter_map(|&(n, _)| sources.get((n - 1) as usize))
-            .map(|s| s.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
+            .collect::<Vec<_>>();
         // Tier 1: the marker's own sentence. Tier 2 (fallback): the
         // enclosing paragraph — see the para_spans comment above.
         let marker_pos = group[0].1;
-        let sentence_verified = bidirectional_support(sentence, &union) >= 0.5;
+        let sentence_verified = bounded_support(sentence, &claim_sources) >= 0.5;
         let (claim_verified, scope, claim_text) = if sentence_verified {
             (true, "sentence", sentence)
         } else {
@@ -336,7 +548,7 @@ pub fn process_citation_output(
                 .copied()
                 .unwrap_or((0, bare_body.len()));
             let paragraph = bare_body[p_start..p_end].trim();
-            let para_verified = bidirectional_support(paragraph, &union) >= 0.5;
+            let para_verified = bounded_support(paragraph, &claim_sources) >= 0.5;
             (para_verified, "paragraph", paragraph)
         };
         if claim_verified {
@@ -349,7 +561,7 @@ pub fn process_citation_output(
             occurrence += 1;
             if let Some(src) = sources.get((n - 1) as usize) {
                 // Audit score at the scope that decided the status.
-                let score = bidirectional_support(claim_text, &src.text);
+                let score = bounded_support(claim_text, &[src]);
                 citations.push(PageCitation {
                     occurrence,
                     marker: n,
@@ -370,6 +582,8 @@ pub fn process_citation_output(
                     cited_version: None,
                     cited_digest: None,
                     disproven: false,
+                    historical: false,
+                    pdf_target: None,
                 });
             }
         }
@@ -753,6 +967,16 @@ async fn run_citation_backfill_with_page_limit(
             continue;
         };
 
+        // Source-only invalidation retains the old occurrence map. The queue
+        // restores references without renumbering them against today's sources.
+        if db
+            .restore_citation_provenance(&page_id, page.version, &fence)
+            .await?
+            .is_some()
+        {
+            continue;
+        }
+
         let evidence = db.get_page_evidence(&page_id).await.unwrap_or_default();
         let evidence_sources: Vec<(String, String)> = evidence
             .iter()
@@ -1070,7 +1294,9 @@ async fn project_annotated_page(db: &MemoryDB, knowledge_path: &std::path::Path,
 /// What the daemon made of the `[n]` markers in a page an AI tool wrote.
 pub enum WriteCitations {
     /// The page cites nothing, so there is nothing to check.
-    Uncited,
+    Uncited {
+        snapshots: Vec<crate::db::CitationSourceSnapshot>,
+    },
     /// Each cited sentence was checked against its source. `body` is the
     /// page with markers that point nowhere removed; `summary` is the count
     /// line recorded on the page's history.
@@ -1078,6 +1304,7 @@ pub enum WriteCitations {
         body: String,
         citations_json: String,
         summary: String,
+        snapshots: Vec<crate::db::CitationSourceSnapshot>,
     },
 }
 
@@ -1096,47 +1323,84 @@ pub async fn check_write_citations(
     scope: &crate::read_scope::ReadScope,
 ) -> Result<Result<WriteCitations, String>, WenlanError> {
     // Without sources a bracketed number is just text the writer typed.
-    if source_ids.is_empty() || !RE_MARKERS.is_match(&normalize_markers(content)) {
-        return Ok(Ok(WriteCitations::Uncited));
+    if source_ids.is_empty() {
+        return Ok(Ok(WriteCitations::Uncited {
+            snapshots: Vec::new(),
+        }));
     }
-    let mut texts: std::collections::HashMap<String, String> = db
-        .get_memory_contents_by_ids(source_ids)
-        .await?
-        .into_iter()
-        .collect();
-    if *scope != crate::read_scope::ReadScope::Global {
-        let visible: std::collections::HashSet<String> = db
-            .get_memories_by_source_ids_scoped(source_ids, scope)
-            .await?
-            .into_iter()
-            .map(|memory| memory.source_id)
-            .collect();
-        texts.retain(|id, _| visible.contains(id));
+    let resolved = db.citation_sources(source_ids, scope).await?;
+    if resolved.iter().any(Option::is_none) {
+        return Err(WenlanError::Validation("source_read_refused: source unavailable, ambiguous, or incomplete in the target Space; reread exact sources and check scope".into()));
     }
-    let kinds = db
-        .resolve_source_kinds(source_ids)
-        .await
-        .unwrap_or_default();
-    // Numbered in the caller's order, so `[n]` means what the caller meant.
-    // A source that is gone keeps its number with no text, so a sentence
-    // citing it cannot be verified.
+    if !RE_MARKERS.is_match(&normalize_markers(content)) {
+        return Ok(Ok(WriteCitations::Uncited {
+            snapshots: resolved
+                .into_iter()
+                .flatten()
+                .map(|source| source.snapshot)
+                .collect(),
+        }));
+    }
     let numbered: Vec<NumberedSource> = source_ids
         .iter()
+        .zip(&resolved)
         .enumerate()
-        .map(|(i, id)| NumberedSource {
+        .map(|(i, (id, source))| NumberedSource {
             index: u32::try_from(i + 1).unwrap_or(u32::MAX),
-            source_kind: kinds
-                .get(id)
-                .cloned()
-                .unwrap_or_else(|| "memory".to_string()),
             locator: id.clone(),
-            text: texts
-                .get(id)
-                .map(|text| text.chars().take(SOURCE_TEXT_CAP).collect())
-                .unwrap_or_default(),
+            // Scoring mode is internal. Restore the stored evidence kind below;
+            // a file indexed in Wenlan remains a memory edge under its opaque ID.
+            source_kind: source
+                .as_ref()
+                .map(|s| match s.snapshot.source.as_str() {
+                    "file" => "external_file".into(),
+                    "webpage" => "external_url".into(),
+                    _ => s.source_kind.clone(),
+                })
+                .unwrap_or_else(|| "memory".into()),
+            text: source.as_ref().map(|s| s.text.clone()).unwrap_or_default(),
         })
         .collect();
-    check_numbered_citations(content, &numbered)
+    let mut checked = check_numbered_citations(content, &numbered)?;
+    if let Ok(WriteCitations::Checked {
+        citations_json,
+        snapshots,
+        summary,
+        body,
+    }) = &mut checked
+    {
+        let mut citations: Vec<PageCitation> = serde_json::from_str(citations_json)?;
+        for citation in &mut citations {
+            if let Some(source) = resolved
+                .get(citation.marker.saturating_sub(1) as usize)
+                .and_then(Option::as_ref)
+            {
+                citation.source_kind = source.source_kind.clone();
+                citation.cited_version = Some(source.snapshot.version);
+                citation.cited_digest = Some(source.snapshot.text_digest.clone());
+            }
+        }
+        *citations_json = serde_json::to_string(&citations)?;
+        *snapshots = resolved
+            .into_iter()
+            .flatten()
+            .map(|source| source.snapshot)
+            .collect();
+        let original = citations_json.clone();
+        *citations_json = db
+            .downgrade_inactive_citations(body, citations_json, snapshots)
+            .await?;
+        if *citations_json != original {
+            let current: Vec<PageCitation> = serde_json::from_str(citations_json)?;
+            *summary = format!(
+                "{} verified, {} unverified, {} unevaluated; source lifecycle requires review",
+                current.iter().filter(|c| c.status == "verified").count(),
+                current.iter().filter(|c| c.status == "unverified").count(),
+                current.iter().filter(|c| c.status == "unevaluated").count()
+            );
+        }
+    }
+    Ok(checked)
 }
 
 /// The gate itself, on sources already numbered: refused when no cited
@@ -1153,12 +1417,220 @@ fn check_numbered_citations(
         body,
         citations_json: serde_json::to_string(&cites)?,
         summary: stats.summary(),
+        snapshots: Vec::new(),
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn manual_reference_fixture() -> (&'static str, Vec<PageCitation>) {
+        let body = "Reading notes.\n\nRetrieval improves grounding [1]. Evaluation catches errors [2].\n\nMy interview plan.";
+        let citations = (1..=2)
+            .map(|marker| PageCitation {
+                occurrence: marker,
+                marker,
+                source_kind: "memory".into(),
+                locator: format!("zotero::paper-{marker}"),
+                score: 1.0,
+                status: "verified".into(),
+                scope: "sentence".into(),
+                cited_version: Some(7),
+                cited_digest: Some(format!("historical-digest-{marker}")),
+                disproven: false,
+                historical: false,
+                pdf_target: None,
+            })
+            .collect();
+        (body, citations)
+    }
+
+    #[test]
+    fn manual_edit_with_deleted_marker_keeps_other_41_reference_targets() {
+        // Marker order from the saved native v8 page, including repetitions.
+        let markers = [
+            1, 2, 3, 4, 5, 6, 8, 7, 9, 13, 17, 18, 10, 12, 14, 16, 19, 21, 11, 15, 20, 2, 5, 10, 4,
+            11, 21, 16, 19, 20, 10, 21, 21, 4, 11, 10, 21, 10, 21, 4, 12, 11,
+        ];
+        let body = markers
+            .iter()
+            .enumerate()
+            .map(|(i, marker)| format!("Study paragraph {i} has a claim [{marker}]."))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let citations = markers
+            .iter()
+            .enumerate()
+            .map(|(i, marker)| PageCitation {
+                occurrence: i as u32 + 1,
+                marker: *marker,
+                source_kind: "memory".into(),
+                locator: format!("paper-{marker}"),
+                score: 0.8,
+                status: "verified".into(),
+                scope: "sentence".into(),
+                cited_version: Some(7),
+                cited_digest: Some(format!("digest-{marker}")),
+                disproven: false,
+                historical: false,
+                pdf_target: Some(wenlan_types::pages::PdfCitationTarget {
+                    attachment_key: "ATTACH01".into(),
+                    pdf_digest: "a".repeat(64),
+                    page: i as u32 + 1,
+                    quote: format!("quote {i}"),
+                }),
+            })
+            .collect::<Vec<_>>();
+        let edited = body
+            .replace(
+                "Study paragraph 8 has a claim [9].",
+                "Study paragraph 8 was revised.",
+            )
+            .replace(
+                "Study paragraph 9 has a claim [13].",
+                "Study paragraph 9 now says something different [13].",
+            );
+        let retained = retain_unchanged_manual_references(&body, &edited, &citations)
+            .expect("remaining citations should stay navigable");
+        assert_eq!(retained.len(), 41);
+        assert_eq!((retained[8].occurrence, retained[8].marker), (9, 13));
+        assert_eq!(retained[8].locator, "paper-13");
+        assert!(retained[8].pdf_target.is_none());
+        assert_eq!(retained[9].pdf_target, citations[10].pdf_target);
+        assert!(retained
+            .iter()
+            .all(|c| c.status == "unevaluated" && c.score == 0.0));
+    }
+
+    #[test]
+    fn manual_reference_retention_keeps_complete_targets_but_never_verification() {
+        let (body, mut citations) = manual_reference_fixture();
+        citations[0].disproven = true;
+        citations[0].pdf_target = Some(wenlan_types::pages::PdfCitationTarget {
+            attachment_key: "ATTACH01".into(),
+            pdf_digest: "a".repeat(64),
+            page: 1,
+            quote: "Original evidence".into(),
+        });
+        for (case, edited) in [
+            format!("{body}\n\nA new interview question."),
+            body.replace("My interview plan.", "My revised interview plan."),
+            body.replace("improves", "harms"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let retained = retain_unchanged_manual_references(body, &edited, &citations).unwrap();
+            assert_eq!(retained.len(), 2);
+            for (old, new) in citations.iter().zip(retained) {
+                assert_eq!((new.occurrence, new.marker), (old.occurrence, old.marker));
+                assert_eq!(new.locator, old.locator);
+                assert_eq!(new.source_kind, old.source_kind);
+                assert_eq!(new.cited_version, old.cited_version);
+                assert_eq!(new.cited_digest, old.cited_digest);
+                assert_eq!(new.status, "unevaluated");
+                assert_eq!(new.score, 0.0);
+                assert!(!new.disproven);
+                if old.occurrence == 1 && case < 2 {
+                    assert_eq!(new.pdf_target, old.pdf_target);
+                } else {
+                    assert!(new.pdf_target.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn manual_reference_retention_refuses_changed_markers_and_ambiguous_maps() {
+        let (body, citations) = manual_reference_fixture();
+        for edited in [body.replace("[1]", "[01]"), body.replace("[1]", "[3]")] {
+            assert!(retain_unchanged_manual_references(body, &edited, &citations).is_none());
+        }
+        for edited in [
+            body.replace("[1]", "[2]"),
+            body.replace("[1]", ""),
+            format!("{body}\n\nNew claim [1]."),
+        ] {
+            assert!(retain_unchanged_manual_references(body, &edited, &citations).is_some());
+        }
+        for variant in 0..5 {
+            let mut invalid = citations.clone();
+            match variant {
+                0 => {
+                    invalid.pop();
+                }
+                1 => invalid[1].occurrence = 1,
+                2 => invalid[1].marker = 1,
+                3 => invalid[0].cited_version = None,
+                _ => invalid[0].cited_digest = None,
+            }
+            assert!(retain_unchanged_manual_references(
+                body,
+                &format!("{body}\n\nNote."),
+                &invalid
+            )
+            .is_none());
+        }
+    }
+
+    #[test]
+    fn manual_reference_retention_fails_closed_for_duplicate_paragraphs_and_generation_conflicts() {
+        let (body, mut citations) = manual_reference_fixture();
+        citations[0].pdf_target = Some(wenlan_types::pages::PdfCitationTarget {
+            attachment_key: "ATTACH01".into(),
+            pdf_digest: "a".repeat(64),
+            page: 1,
+            quote: "evidence".into(),
+        });
+        let duplicate = format!("{body}\n\n{body}");
+        let mut doubled = citations.clone();
+        doubled.extend(citations.iter().cloned().map(|mut c| {
+            c.occurrence += 2;
+            c
+        }));
+        let retained =
+            retain_unchanged_manual_references(&duplicate, &duplicate, &doubled).unwrap();
+        assert!(retained
+            .iter()
+            .all(|c| c.pdf_target.is_none() && c.status == "unevaluated"));
+        doubled[2].cited_digest = Some("different-generation".into());
+        assert!(retain_unchanged_manual_references(&duplicate, &duplicate, &doubled).is_none());
+    }
+
+    #[test]
+    fn manual_reference_retention_preserves_exact_mixed_generations_only() {
+        let (body, citations) = manual_reference_fixture();
+        let second = body.replace("[1]", "[2]");
+        let original = format!("{body}\n\n{second}");
+        let mut records = citations.clone();
+        records.extend(citations.iter().cloned().map(|mut c| {
+            c.occurrence += 2;
+            c.marker = 2;
+            c.locator = citations[1].locator.clone();
+            c.cited_digest = Some("older-generation".into());
+            c
+        }));
+        // The two original [2] records have different generations but each
+        // belongs to an exact unique paragraph in the updated body.
+        let retained = retain_unchanged_manual_references(
+            &original,
+            &format!("{original}\n\nA note."),
+            &records,
+        )
+        .unwrap();
+        assert_eq!(
+            retained.iter().map(|c| &c.cited_digest).collect::<Vec<_>>(),
+            records.iter().map(|c| &c.cited_digest).collect::<Vec<_>>()
+        );
+        assert!(retained.iter().all(|c| c.status == "unevaluated"));
+        assert!(retain_unchanged_manual_references(
+            &original,
+            &format!("{original}\n\nNew claim [2]."),
+            &records
+        )
+        .is_none());
+    }
 
     fn srcs() -> Vec<NumberedSource> {
         vec![
@@ -3365,6 +3837,7 @@ mod tests {
             body,
             citations_json,
             summary,
+            ..
         }) = checked
         else {
             panic!("a supported citation is checked, not refused");
@@ -3401,12 +3874,12 @@ mod tests {
         let no_markers = check_write_citations(&db, BACKFILL_BODY, &ids, &global)
             .await
             .unwrap();
-        assert!(matches!(no_markers, Ok(WriteCitations::Uncited)));
+        assert!(matches!(no_markers, Ok(WriteCitations::Uncited { .. })));
         // Without sources a bracketed number is the writer's own text.
         let no_sources = check_write_citations(&db, "Step [1] comes first.", &[], &global)
             .await
             .unwrap();
-        assert!(matches!(no_sources, Ok(WriteCitations::Uncited)));
+        assert!(matches!(no_sources, Ok(WriteCitations::Uncited { .. })));
         let checked = check_write_citations(
             &db,
             "The daemon binds to port 7878 by default [2].",
@@ -3438,8 +3911,7 @@ mod tests {
             &ids,
             &crate::read_scope::ReadScope::Space("elsewhere".into()),
         )
-        .await
-        .unwrap();
+        .await;
         assert!(
             elsewhere.is_err(),
             "a memory outside the Space reads as gone"

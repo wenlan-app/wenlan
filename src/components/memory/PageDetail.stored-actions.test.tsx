@@ -110,7 +110,7 @@ describe("PageDetail stored actions in seamless editing", () => {
   return screen.getByRole('menuitem',{name:label});
  }
  async function reviewAction(user:ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button',{name:i18n.t('pageInspector.open')}));
+  await user.click(screen.getByRole('button',{name:i18n.t('pageInspector.info')}));
   return screen.getByRole('button',{name:i18n.t('pageDetail.markPageReviewed')});
  }
  it('archived arrival while the asynchronous editor opener waits cannot open its stale active source', async () => {

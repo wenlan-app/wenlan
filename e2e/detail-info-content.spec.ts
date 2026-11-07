@@ -24,7 +24,7 @@ for(const locale of ['en','zh-Hant','zh-Hans'] as const)for(const theme of ['lig
    if(!await nav.isVisible())await page.getByRole('button',{name:/^(Show sidebar|顯示側邊欄|显示侧边栏)$/}).click();
    await nav.getByRole('button',{name,exact:true}).click();
   };
-  await openMemoryFromPage(page,'Fixture architecture',/Fixture architecture$/,{wiki:t.sidebar.pages,more:t.sidebar.more,info:t.pageInspector.open});
+  await openMemoryFromPage(page,'Fixture architecture',/Fixture architecture$/,{wiki:t.sidebar.pages,more:t.sidebar.more,info:t.pageInspector.info});
   const editor=page.locator('.memory-document-editor .cm-content');await expect(editor).toContainText(content);
   const openInfo=async()=>{const toggle=page.getByRole('button',{name:t.knowledgeContext.memoryPanel,exact:true});if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();};
   await openInfo();const pane=page.locator('.page-info-drawer:visible');await expect(pane).toBeVisible();

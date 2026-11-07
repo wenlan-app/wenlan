@@ -21,6 +21,33 @@ function isListLine(line: string): boolean {
   return LIST_PATTERN.test(line);
 }
 
+/** Keep real GFM table blocks together while normalizing legacy pipe fields. */
+function gfmTableRows(lines: string[]): Set<number> {
+  const cells = (line: string): string[] | null => {
+    const trimmed = line.trim();
+    if (!trimmed.includes("|")) return null;
+    const inner = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+    const columns = inner.split("|").map((column) => column.trim());
+    return columns.length >= 2 ? columns : null;
+  };
+  const protectedRows = new Set<number>();
+  for (let index = 1; index < lines.length; index += 1) {
+    const header = cells(lines[index - 1]);
+    const separator = cells(lines[index]);
+    if (!header || !separator || header.length !== separator.length ||
+        !separator.every((column) => /^:?-{3,}:?$/.test(column))) continue;
+    protectedRows.add(index - 1);
+    protectedRows.add(index);
+    let row = index + 1;
+    while (row < lines.length && lines[row].trim() && cells(lines[row])) {
+      protectedRows.add(row);
+      row += 1;
+    }
+    index = row - 1;
+  }
+  return protectedRows;
+}
+
 /**
  * Pre-normalize single-line content into multi-line text so the classifier
  * can detect structure. Handles three patterns common in agent-generated memories:
@@ -31,7 +58,9 @@ export function normalizeContent(text: string): string {
   // get_memory_detail concatenates chunks with \n, so each line may be
   // a long single-line chunk that needs its own normalization.
   if (text.includes("\n")) {
-    return text.split("\n").map((line) => normalizeLine(line)).join("\n");
+    const lines = text.split("\n");
+    const tableRows = gfmTableRows(lines);
+    return lines.map((line, index) => tableRows.has(index) ? line : normalizeLine(line)).join("\n");
   }
   return normalizeLine(text);
 }
@@ -151,9 +180,11 @@ export function prepareForRender(
     return text;
   }
 
-  return text
-    .split("\n")
-    .map((line) => {
+  const lines = text.split("\n");
+  const tableRows = gfmTableRows(lines);
+  return lines
+    .map((line, index) => {
+      if (tableRows.has(index)) return line;
       if (line.trimStart().startsWith("**")) return line;
 
       const pipeMatch = line.match(/^\s*([\w][\w\s]{0,30}?)\s*\|\s*(.+)$/);

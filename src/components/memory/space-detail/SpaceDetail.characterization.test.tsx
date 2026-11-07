@@ -17,6 +17,7 @@ vi.mock("../../../lib/tauri", () => ({
   getPendingRevision: vi.fn().mockResolvedValue(null),
   getSpace: vi.fn(),
   listIndexedFiles: vi.fn(),
+  listAllTags: vi.fn().mockResolvedValue({ tags: [], document_tags: {}, categories: [], document_categories: {} }),
   getVersionChain: vi.fn().mockResolvedValue([]),
   listEntities: vi.fn(),
   listMemoriesRich: vi.fn(),
@@ -46,6 +47,7 @@ import {
   getSpace,
   listEntities,
   listIndexedFiles,
+  listAllTags,
   listMemoriesRich,
   listPages,
   updateSpace,
@@ -146,6 +148,7 @@ describe("SpaceDetail existing behavior", () => {
       source: "webpage", source_id: "https://example.com/article", title: "Source article",
       chunk_count: 0, last_modified: 1, url: "https://example.com/article",
     }]);
+    vi.mocked(listAllTags).mockResolvedValue({ tags: [], document_tags: {}, categories: [], document_categories: {} });
   });
 
   it("keeps a suggested space through confirmSpace", async () => {

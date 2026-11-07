@@ -4,33 +4,34 @@ import { useTranslation } from "react-i18next";
 import "../pages/noteTabs.css";
 import "./NoteInspectorTabs.css";
 
-export type NoteInspectorTab = "info" | "canvas";
+export type NoteInspectorTab = "info" | "canvas" | "pdf";
 
 interface NoteInspectorTabsProps {
   readonly active: NoteInspectorTab;
   readonly onSelect: (tab: NoteInspectorTab) => void;
   readonly disabled?: boolean;
   readonly idPrefix: string;
+  readonly includePdf?: boolean;
 }
 
-const TABS: readonly NoteInspectorTab[] = ["info", "canvas"];
-
-export function NoteInspectorTabs({ active, onSelect, disabled = false, idPrefix }: NoteInspectorTabsProps) {
+export function NoteInspectorTabs({ active, onSelect, disabled = false, idPrefix, includePdf = false }: NoteInspectorTabsProps) {
   const { t } = useTranslation();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const tabs: readonly NoteInspectorTab[] = includePdf ? ["info", "canvas", "pdf"] : ["info", "canvas"];
   const labels: Record<NoteInspectorTab, string> = {
     info: t("pageInspector.info"),
     canvas: t("pageCanvas.tabCanvas"),
+    pdf: t("pdfReader.tab"),
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, current: NoteInspectorTab) => {
     if (disabled) return;
-    const index = TABS.indexOf(current);
+    const index = tabs.indexOf(current);
     let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") nextIndex = (index + 1) % TABS.length;
-    else if (event.key === "ArrowLeft") nextIndex = (index + TABS.length - 1) % TABS.length;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index + tabs.length - 1) % tabs.length;
     else if (event.key === "Home") nextIndex = 0;
-    else if (event.key === "End") nextIndex = TABS.length - 1;
+    else if (event.key === "End") nextIndex = tabs.length - 1;
     if (nextIndex === null) return;
     event.preventDefault();
     tabRefs.current[nextIndex]?.focus();
@@ -38,7 +39,7 @@ export function NoteInspectorTabs({ active, onSelect, disabled = false, idPrefix
 
   return (
     <div aria-label={t("pageInspector.label")} className="note-inspector-tabs" role="tablist">
-      {TABS.map((tab, index) => (
+      {tabs.map((tab, index) => (
         <button
           aria-controls={`${idPrefix}-panel`}
           aria-selected={active === tab}

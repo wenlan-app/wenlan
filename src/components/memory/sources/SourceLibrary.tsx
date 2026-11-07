@@ -84,7 +84,7 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
   const foldersQuery = useQuery({ queryKey: ["registeredSources"], queryFn: listRegisteredSources });
   const filesQuery = useQuery({ queryKey: ["indexedFiles"], queryFn: () => listIndexedFiles(), refetchInterval: 5000 });
 
-  const folders = useMemo(() => (foldersQuery.data ?? [])
+  const folders = useMemo(() => (foldersQuery.data ?? []).filter(source => source.source_type !== "zotero")
     .filter((source) => !/(?:^|\/)\.wenlan\/sources$/.test(normalizedPath(source.path)))
     .sort((a, b) => pathName(a.path).localeCompare(pathName(b.path))), [foldersQuery.data]);
   const documents = useMemo(() => (filesQuery.data ?? []).filter(isLibraryDocument)

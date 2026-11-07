@@ -95,7 +95,9 @@
   display: flex;
   flex: 0 0 auto;
   align-items: flex-start;
-  max-width: 220px;
+  /* A split reading lane can be narrower than a normal tab. Keep its title
+     start and close button inside the strip; only the title gets ellipsized. */
+  max-width: min(220px, 100%);
   border-radius: var(--mem-r-10) var(--mem-r-10) 0 0;
   transition: background-color 140ms ease;
 }

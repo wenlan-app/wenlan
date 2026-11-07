@@ -9168,6 +9168,7 @@ dependencies = [
  "wenlan-core",
  "wenlan-types",
  "windows-sys 0.59.0",
+ "winreg",
  "zip 2.4.2",
 ]
 
@@ -9243,6 +9244,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "sha2",
  "subtle",
  "tempfile",
  "thiserror 2.0.18",

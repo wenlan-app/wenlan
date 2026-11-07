@@ -42,6 +42,7 @@ fn setup(guard: &DataDirGuard) -> (std::path::PathBuf, crate::router::AppRouter)
         ..Config::default()
     };
     config.sources.push(wenlan_core::sources::Source {
+        display_name: None,
         id: "notes".into(),
         source_type: SourceType::Obsidian,
         path: root.clone(),

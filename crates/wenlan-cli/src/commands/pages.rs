@@ -377,7 +377,8 @@ pub async fn run(
 }
 
 /// Render a page's per-claim citations for terminal display: verified
-/// citations show plain, unverified ones carry the exact spec-mandated badge
+/// citations show plain, unevaluated references say "not yet checked", and
+/// unverified ones carry the exact spec-mandated badge
 /// text (never "false" — see spec §5). Empty input renders empty (no
 /// dangling "Citations:" header for uncited pages).
 fn render_citations(citations: &[wenlan_types::pages::PageCitation]) -> String {
@@ -388,6 +389,11 @@ fn render_citations(citations: &[wenlan_types::pages::PageCitation]) -> String {
     for c in citations {
         if c.status == "verified" {
             out.push_str(&format!("  [{}] {}\n", c.marker, c.locator));
+        } else if c.status == "unevaluated" {
+            out.push_str(&format!(
+                "  [{}] {} — not yet checked\n",
+                c.marker, c.locator
+            ));
         } else {
             out.push_str(&format!(
                 "  [{}] {} — ⚠ not directly traceable to a source\n",
@@ -662,6 +668,18 @@ mod tests {
     }
 
     #[test]
+    fn render_citations_unevaluated_does_not_claim_unsupported() {
+        let citation: wenlan_types::pages::PageCitation = serde_json::from_value(serde_json::json!({
+            "occurrence":1,"marker":1,"source_kind":"memory","locator":"zotero::paper", "score":0.0,
+            "status":"unevaluated","scope":"sentence","cited_version":3,"cited_digest":"historical"
+        })).unwrap();
+        let out = render_citations(&[citation]);
+        assert!(out.contains("[1] zotero::paper — not yet checked"));
+        assert!(!out.contains("not directly traceable"));
+        assert!(!out.contains('⚠'));
+    }
+
+    #[test]
     fn render_citations_verified_and_badged() {
         use wenlan_types::pages::PageCitation;
         let cites = vec![
@@ -676,6 +694,8 @@ mod tests {
                 cited_version: None,
                 cited_digest: None,
                 disproven: false,
+                historical: false,
+                pdf_target: None,
             },
             PageCitation {
                 occurrence: 2,
@@ -688,6 +708,8 @@ mod tests {
                 cited_version: None,
                 cited_digest: None,
                 disproven: false,
+                historical: false,
+                pdf_target: None,
             },
         ];
         let out = render_citations(&cites);

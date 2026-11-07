@@ -8,7 +8,7 @@
  *
  * ## Why the budget is what it is
  *
- * The daemon binds its port BEFORE it can serve: migrations, embedder load and
+ * The daemon binds its port BEFORE it can serve: migrations and
  * projection reconcile all happen behind an already-bound socket
  * (`crates/wenlan-server/src/main.rs` binds first, `axum::serve` starts in
  * `crates/wenlan-server/src/main/runtime.rs`, and the mute-port window is
@@ -21,7 +21,7 @@
  * (10 attempts, each bounded by the 5s HEALTH_TIMEOUT, with 200ms * 2^i
  * backoff between them — 50_000ms of attempts + 102_200ms of delays). This
  * frontend gate must not give up before the Rust side does, or it drops an
- * already-configured user into the fail-closed SetupWizard while the app's own
+ * user into a failure state while the app's own
  * startup path is still patiently waiting for the very same daemon.
  *
  * So: the budget below is >= RUST_HEALTH_LOOP_BUDGET_MS, on purpose.
@@ -61,18 +61,6 @@ export function bootQueryBudgetMs(retry: number = BOOT_QUERY_RETRY): number {
   }
   return total;
 }
-
-/**
- * How long "Starting Wenlan" may stay a single unexplained line.
- *
- * The gate above can legitimately hold this screen for the better part of
- * three minutes, and for all of it the user is looking at one sentence with
- * no subject: they cannot tell a slow cold start from a machine that will
- * never finish booting. After this much, the screen names what it is waiting
- * for. Well inside `bootQueryBudgetMs()`, on purpose — this is a caption on a
- * wait that is still healthy, not a deadline.
- */
-export const BOOT_SLOW_NOTICE_MS = 15_000;
 
 /**
  * After the gate gives up on a user who opened early, the app keeps asking

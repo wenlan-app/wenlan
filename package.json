@@ -65,6 +65,7 @@
     "graphology-layout-forceatlas2": "0.10.1",
     "i18next": "^26.3.4",
     "mermaid": "^11.17.2",
+    "pdfjs-dist": "6.5.438",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-i18next": "^17.0.8",
@@ -97,6 +98,7 @@
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
+    "vite-plugin-static-copy": "^4.1.1",
     "vitest": "^4.1.11"
   },
   "pnpm": {

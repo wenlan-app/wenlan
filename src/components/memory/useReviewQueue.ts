@@ -23,6 +23,8 @@ import {
   type RefinementProposalSummary,
   type RevisionTargetKind,
 } from "../../lib/tauri";
+import { acceptClassification, type ClassificationChange, type ClassificationPayload } from "../../lib/researchApi";
+import type { ResearchDisputePayload } from "../../lib/disputeApi";
 import { BASIS_PENDING_QUERY_KEY } from "./page/useBasisActions";
 import { CODE_BASIS_PENDING_QUERY_KEY } from "./page/useCodeBasisActions";
 import { SteepNeedsAiToolError } from "../../lib/steepMode";
@@ -45,9 +47,9 @@ export type ReviewItem =
   | {
       kind: "refinement";
       id: string;
-      action: ProposalAction;
+      action: ProposalAction | "source_classification" | "research_dispute";
       sourceIds: string[];
-      payload: RefinementPayload | null;
+      payload: RefinementPayload | ClassificationPayload | ResearchDisputePayload | null;
       confidence: number;
       timestampMs: number | null;
     }
@@ -93,6 +95,7 @@ export type ReviewSection =
   | "revisions"
   | "conflicts"
   | "pages"
+  | "classifications"
   | "memory"
   | "candidates"
   | "topics"
@@ -104,6 +107,7 @@ const SECTION_ORDER: ReviewSection[] = [
   "revisions",
   "conflicts",
   "pages",
+  "classifications",
   "memory",
   "candidates",
   "topics",
@@ -117,9 +121,12 @@ export function reviewItemSection(item: ReviewItem): ReviewSection {
   if (item.kind === "page_candidate") return "candidates";
   if (item.kind === "topic") return "topics";
   switch (item.action) {
+    case "source_classification":
+      return "classifications";
     case "page_merge":
     case "page_keep_or_archive":
       return "pages";
+    case "research_dispute":
     case "detect_contradiction":
     case "relation_conflict":
       return "conflicts";
@@ -149,7 +156,7 @@ export const REVIEW_QUEUE_LIMIT = 50;
  * refinement proposals. `resolve` approves or dismisses one item through the
  * matching daemon verb and removes it from the cached queue immediately.
  */
-export function useReviewQueue(enabled: boolean = true, scope: "default" | "note-context" = "default") {
+export function useReviewQueue(enabled: boolean = true, scope: "default" | "note-context" = "default", currentSpace?: string) {
   const decisionLimit = scope === "note-context" ? 500 : REVIEW_QUEUE_LIMIT;
   const revisionsKey = scope === "note-context" ? [...REVISIONS_KEY, scope] : REVISIONS_KEY;
   const refinementsKey = scope === "note-context" ? [...REFINEMENTS_KEY, scope] : REFINEMENTS_KEY;
@@ -222,13 +229,19 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
     mutationFn: async ({
       item,
       approve,
+      edited_content,
+      classification_changes,
     }: {
       item: ReviewItem;
       approve: boolean;
+      edited_content?: string;
+      classification_changes?: ClassificationChange[];
     }) => {
       if (item.kind === "revision") {
         return approve
-          ? acceptPendingRevision(item.targetSourceId)
+          ? edited_content === undefined
+            ? acceptPendingRevision(item.targetSourceId)
+            : acceptPendingRevision(item.revisionSourceId, { expected_content: item.content, content: edited_content })
           : dismissPendingRevision(item.targetSourceId);
       }
       if (item.kind === "capture") {
@@ -248,13 +261,16 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
         // Read-only discovery — no daemon verb; the dialog never offers one.
         return;
       }
-      return approve ? acceptRefinement(item.id) : rejectRefinement(item.id);
+      if (item.action === "source_classification" && approve && classification_changes) {
+        return acceptClassification(item.id, classification_changes.map(({ source, source_id, source_content_digest, expected_decision_revision, add_tags, remove_tags, reason }) => ({ source, source_id, source_content_digest, expected_decision_revision, add_tags, remove_tags, reason })), currentSpace);
+      }
+      return approve ? (currentSpace ? acceptRefinement(item.id, currentSpace) : acceptRefinement(item.id)) : (currentSpace ? rejectRefinement(item.id, currentSpace) : rejectRefinement(item.id));
     },
-    onError: (error, { item }) => {
+    onError: (error, { item, edited_content }) => {
       // The daemon discards a page revision card that can no longer apply.
       // Drop it here too, so neither the queue nor the page banner keeps
       // offering a card that is already gone.
-      if (item.kind !== "revision" || !(isPageRevisionOutdated(error) || isPageRevisionBasisRefused(error))) return;
+      if (edited_content !== undefined || item.kind !== "revision" || !(isPageRevisionOutdated(error) || isPageRevisionBasisRefused(error))) return;
       queryClient.setQueriesData<PendingRevisionItem[]>(
         { queryKey: REVISIONS_KEY },
         (old) =>
@@ -265,7 +281,7 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
       }
       queryClient.invalidateQueries({ queryKey: REVISIONS_KEY });
     },
-    onSuccess: (_result, { item, approve }) => {
+    onSuccess: (_result, { item, approve, edited_content }) => {
       if (approve && item.kind === "refinement" && item.action === "vocab_promote") {
         // Promoting an entity type also retypes its active concept pages.
         for (const key of ["entity-detail", "entityDetail", "entities", "space-entities",
@@ -289,7 +305,9 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
           { queryKey: REVISIONS_KEY },
           (old) =>
             old?.filter(
-              (entry) => entry.target_source_id !== item.targetSourceId,
+              (entry) => edited_content === undefined
+                ? entry.target_source_id !== item.targetSourceId
+                : entry.revision_source_id !== item.revisionSourceId,
             ) ?? [],
         );
       } else if (item.kind === "capture") {
@@ -311,7 +329,7 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
       // or a dismissed card looking pending on return. Accepting an update can
       // confirm a basis, so the "source note changed" group and each note's
       // basis diff refresh too.
-      for (const key of ["page", "pages", "page-revisions", "page-sources", "page-links", "space-pages", "memory-detail", "page-basis-diff", ...BASIS_PENDING_QUERY_KEY, ...CODE_BASIS_PENDING_QUERY_KEY]) {
+      for (const key of ["tags", "space-sources", "research-runs", "page", "pages", "page-revisions", "page-sources", "page-links", "space-pages", "memory-detail", "page-basis-diff", ...BASIS_PENDING_QUERY_KEY, ...CODE_BASIS_PENDING_QUERY_KEY]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
       queryClient.invalidateQueries({ queryKey: REVISIONS_KEY });

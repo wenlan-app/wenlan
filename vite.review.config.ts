@@ -1,3 +1,4 @@
+import { pdfAssets } from "./vite.pdf";
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
@@ -8,7 +9,7 @@ const local = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 const stubs = local("./review/tauri-stubs.ts");
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), pdfAssets()],
   clearScreen: false,
   define: {
     __WENLAN_REVIEW__: JSON.stringify(true),

@@ -93,6 +93,9 @@ and wait for evidence that people need them.
   inside pages. "What you're working on" shows only when there is something.
   The recent list holds pages you edited and pages the AI newly wrote (quietly
   marked as the AI's); the AI's small edits to old pages don't put them there.
+  An unnamed thing is still being organized and is not a Home card. Keep its
+  record, but show it only once it has a name a person can recognize; do not
+  replace it with an older Brief or ask the person to dismiss a placeholder.
   原文（2026-10-31 選擇卡）：正在做的事 + 最近編輯，不放小圖。選擇卡「你改的 + AI 新写的」（2026-10-31 17:16）
 - **UX-HOME-4** `shipped` Check results and source updates are not on home.
   原文：檢查結果和來源更新不放首頁。
@@ -179,9 +182,12 @@ and wait for evidence that people need them.
 
 ## Who said each sentence
 
-- **UX-WHO-1** `shipped` Every sentence shows whether it is yours (including
-  ones you approved) or the AI's: visible, but quiet.
+- **UX-WHO-1** `shipped` Each sentence retains whether it is yours (including
+  ones you approved) or the AI's, inspectable in Info. Ordinary prose has no
+  permanent authorship underline. Citation links and weak-source notices keep
+  their own visible cues; authorship does not decorate the whole page.
   原文：每一句都分得出是你的（含你點頭的）還是 AI 的，看得出來但不吵。
+  閱讀修正（2026-11-05）：幾乎每段文字都有底線，閱讀上不舒服；正文恢復正常排版，身分資訊留在資訊面板。
 - **UX-WHO-2** `shipped` The AI updates the sentences it wrote that nobody has
   touched; each update is recorded and can be undone. It cannot change your
   sentences: it proposes, one sentence at a time, with accept or no under that
@@ -193,10 +199,10 @@ and wait for evidence that people need them.
 - **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
-- **UX-WHO-4** `shipped` A sentence that can't be backed up is marked next to
-  that sentence, not in a banner at the top. One press asks the AI to recheck
-  only that sentence.
-  原文：靠不住的句子標在那一句旁邊，不是頁頂橫幅；按一下，AI 只重查那一句。
+- **UX-WHO-4** `shipped` Info → This sentence shows the source-check reason for
+  the sentence under the cursor and lets the person ask AI to recheck only that
+  sentence. Ordinary page prose has no inline Source check interruption.
+  閱讀體驗修正：在 Info 的「這一句」看原因、只重查這一句；正文不插入來源檢查提示。
 - **UX-WHO-5** `shipped` An unverified source can't be hidden and can't look
   verified.
   原文：現有規則不變：沒驗證的出處不能藏，也不能看起來像驗證過。
