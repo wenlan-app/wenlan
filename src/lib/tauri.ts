@@ -1003,7 +1003,16 @@ export interface ThingDetail extends ThingSummary {
    *  (UX-THING-3). Older daemons leave it out. */
   merge_proposals?: { id: string; title: string | null }[];
   /** The newest night that steeped this thing's points, not taken back. */
-  dream?: { at: number; decided: number; open: number; fresh?: string[] };
+  dream?: {
+    at: number;
+    decided: number;
+    open: number;
+    fresh?: string[];
+    /** What the work has come to, written by that night from the standing
+     *  points: the page's first paragraph (UX-VIEW-6). Each sentence names
+     *  the memories it rests on. Older daemons leave it out. */
+    conclusion?: { text: string; points: string[] }[];
+  };
   /** Points steeped from it that are still open. */
   open_points?: string[];
 }
