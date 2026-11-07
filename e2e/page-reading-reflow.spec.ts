@@ -12,7 +12,9 @@ test("opening and closing the inspector keeps the visible reading paragraph", as
   await page.goto("/");
   await openWikiNote(page, "Fixture architecture");
   const scroll = page.locator(".wiki-workspace-content");
+  await expect.poll(async () => scroll.evaluate(el => el.scrollHeight - el.clientHeight)).toBeGreaterThan(3000);
   await scroll.evaluate(el => { el.style.overflowAnchor = "none"; el.scrollTop = 3000; });
+  await expect.poll(async () => scroll.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
   await page.waitForTimeout(100);
   const visible = await page.locator(".cm-line").evaluateAll((nodes) => {
     const bounds = document.querySelector(".wiki-workspace-content")!.getBoundingClientRect();
@@ -23,13 +25,16 @@ test("opening and closing the inspector keeps the visible reading paragraph", as
   const target = page.locator(".cm-line").filter({ hasText: visible! });
   const before = await target.boundingBox();
   expect(before).not.toBeNull();
+  // Chromium rounds this scroller's scrollTop to whole CSS pixels, so the
+  // restored line may land exactly half a pixel from its original position.
+  const paragraphShift = async () => Math.abs((await target.boundingBox())!.y - before!.y);
   const initialWidth = await page.locator(".page-detail-document").evaluate(el => el.getBoundingClientRect().width);
   const info = page.getByRole("button", { name: "Info", exact: true });
   await info.click();
   await expect(info).toHaveAttribute("aria-pressed", "true");
   await expect.poll(async () => page.locator(".page-detail-document").evaluate(el => el.getBoundingClientRect().width)).toBeLessThan(initialWidth - 10);
-  await expect.poll(async () => (await target.boundingBox())!.y).toBeCloseTo(before!.y, 0);
+  await expect.poll(paragraphShift).toBeLessThanOrEqual(0.5);
   await info.click();
   await expect(info).toHaveAttribute("aria-pressed", "false");
-  await expect.poll(async () => (await target.boundingBox())!.y).toBeCloseTo(before!.y, 0);
+  await expect.poll(paragraphShift).toBeLessThanOrEqual(0.5);
 });

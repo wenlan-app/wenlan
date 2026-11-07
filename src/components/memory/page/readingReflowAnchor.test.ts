@@ -8,6 +8,60 @@ function rect(top: number, bottom: number, width = 500): DOMRect {
 
 afterEach(() => { document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
+it("captures the rendered paragraph after scrolling and keeps it through resize callbacks", () => {
+  let notify: ResizeObserverCallback = () => {};
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: ResizeObserverCallback) { notify = callback; }
+    observe() {} disconnect() {}
+  });
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.set(++frameId, callback);
+    return frameId;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => { frames.delete(id); });
+  const flushFrame = () => {
+    const callbacks = [...frames.values()];
+    frames.clear();
+    callbacks.forEach(callback => callback(0));
+  };
+  const scroller = document.createElement("div");
+  scroller.className = "wiki-workspace-content";
+  scroller.innerHTML = '<div class="page-detail"><div class="page-detail-document"><p>Heading</p><p class="target">Paragraph 14</p><p class="placeholder"></p></div></div>';
+  document.body.append(scroller);
+  const root = scroller.querySelector<HTMLElement>(".page-detail")!;
+  const frame = scroller.querySelector<HTMLElement>(".page-detail-document")!;
+  const heading = frame.querySelector<HTMLElement>("p")!;
+  const target = frame.querySelector<HTMLElement>(".target")!;
+  let width = 700;
+  let contentY = 3050;
+  let rendered = false;
+  vi.spyOn(scroller, "getBoundingClientRect").mockImplementation(() => rect(0, 500));
+  vi.spyOn(frame, "getBoundingClientRect").mockImplementation(() => rect(0, 4000, width));
+  vi.spyOn(heading, "getBoundingClientRect").mockImplementation(() => rect(20 - scroller.scrollTop, 60 - scroller.scrollTop));
+  vi.spyOn(target, "getBoundingClientRect").mockImplementation(() => rendered ? rect(contentY - scroller.scrollTop, contentY + 100 - scroller.scrollTop) : rect(3050, 3150));
+  const cleanup = preserveReadingPosition(root);
+  scroller.scrollTop = 3000;
+  scroller.dispatchEvent(new Event("scroll"));
+  rendered = true;
+  flushFrame();
+  width = 500;
+  contentY = 3250;
+  notify([], {} as ResizeObserver);
+  expect(scroller.scrollTop).toBe(3200);
+  scroller.dispatchEvent(new Event("scroll"));
+  width = 450;
+  contentY = 3330;
+  notify([], {} as ResizeObserver);
+  expect(scroller.scrollTop).toBe(3280);
+  flushFrame();
+  flushFrame();
+  expect(target.getBoundingClientRect().top).toBe(50);
+  cleanup();
+  expect(frames.size).toBe(0);
+});
+
 it("keeps the current visible block offset when the reading width changes", () => {
   let notify: ResizeObserverCallback = () => {};
   const disconnect = vi.fn();
