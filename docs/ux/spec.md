@@ -201,7 +201,7 @@ and wait for evidence that people need them.
   verified.
   原文：現有規則不變：沒驗證的出處不能藏，也不能看起來像驗證過。
 
-- **UX-WHO-6** `planned` Opening a sentence shows the lines of the
+- **UX-WHO-6** `shipped` Opening a sentence shows the lines of the
   conversation it came from: who said each one and when, at most three, each
   opening the whole conversation at that line. When no line says the same
   thing, it says so instead of guessing. Finding the lines is not checking
