@@ -1064,7 +1064,16 @@ export interface ThingDetail extends ThingSummary {
    *  (UX-THING-3). Older daemons leave it out. */
   merge_proposals?: { id: string; title: string | null }[];
   /** The newest night that steeped this thing's points, not taken back. */
-  dream?: { at: number; decided: number; open: number; fresh?: string[] };
+  dream?: {
+    at: number;
+    decided: number;
+    open: number;
+    fresh?: string[];
+    /** What the work has come to, written by that night from the standing
+     *  points: the page's first paragraph (UX-VIEW-6). Each sentence names
+     *  the memories it rests on. Older daemons leave it out. */
+    conclusion?: { text: string; points: string[] }[];
+  };
   /** Points steeped from it that are still open. */
   open_points?: string[];
 }
@@ -5104,6 +5113,131 @@ export async function listCommunityMembers(
   return invoke("list_community_members", { space, cursor: cursor ?? null, limit: limit ?? null });
 }
 
+// ── Custom themes ──────────────────────────────────────────────────
+// The daemon owns theme files and every check (`wenlan_core::theme`); these
+// mirror `wenlan_types::theme`.
+
+export type ThemeBase = "dark" | "light";
+export type ThemeBackgroundPlacement = "sidebar" | "window";
+export type ThemeStickerCorner = "bottom-right" | "bottom-left" | "top-right";
+
+export interface ThemeProblem {
+  field: string;
+  message: string;
+}
+
+export interface ThemeFile {
+  schema: number;
+  name: string;
+  base: ThemeBase;
+  author?: string;
+  colors: Record<string, string>;
+  fonts: { heading?: string; body?: string; mono?: string };
+  radius?: number;
+  images: {
+    background?: { file: string; placement: ThemeBackgroundPlacement; opacity: number };
+    sticker?: { file: string; corner: ThemeStickerCorner; size: number };
+  };
+  advanced: Record<string, string>;
+}
+
+export interface ThemeSummary {
+  id: string;
+  name?: string;
+  base?: ThemeBase;
+  author?: string;
+  problems: ThemeProblem[];
+  /** Resolved `background`, `sidebar`, `text` and `accent` for the card thumbnail. */
+  swatch?: Record<string, string>;
+}
+
+export interface ThemeList {
+  themes_dir: string;
+  active?: string;
+  themes: ThemeSummary[];
+  allowed_fonts: string[];
+}
+
+export interface ActiveTheme {
+  id?: string;
+  name?: string;
+  base?: ThemeBase;
+  revision: string;
+  tokens: Record<string, string>;
+  background?: { path: string; placement: ThemeBackgroundPlacement; opacity: number };
+  sticker?: { path: string; corner: ThemeStickerCorner; size: number };
+  problems: ThemeProblem[];
+}
+
+export interface ThemeDetail {
+  id: string;
+  theme: ThemeFile;
+  problems: ThemeProblem[];
+}
+
+export interface ThemeCheck {
+  id: string;
+  ok: boolean;
+  problems: ThemeProblem[];
+  tokens?: Record<string, string>;
+}
+
+/** A save the daemon refused comes back as its problems, not as an error. */
+export type ThemeWriteOutcome<T> =
+  | { status: "ok"; value: T }
+  | { status: "refused"; problems: ThemeProblem[] };
+
+export async function listThemes(): Promise<ThemeList> {
+  return invoke<ThemeList>("list_themes");
+}
+
+export async function getActiveTheme(): Promise<ActiveTheme> {
+  return invoke<ActiveTheme>("get_active_theme");
+}
+
+export async function getThemeDetail(id: string): Promise<ThemeDetail> {
+  return invoke<ThemeDetail>("get_theme", { id });
+}
+
+export async function createTheme(name: string, base: ThemeBase): Promise<ThemeWriteOutcome<ThemeDetail>> {
+  return invoke<ThemeWriteOutcome<ThemeDetail>>("create_theme", { name, base });
+}
+
+export async function saveTheme(id: string, theme: ThemeFile): Promise<ThemeWriteOutcome<ThemeDetail>> {
+  return invoke<ThemeWriteOutcome<ThemeDetail>>("save_theme", { id, theme });
+}
+
+export async function checkThemeDraft(id: string, theme: ThemeFile): Promise<ThemeCheck> {
+  return invoke<ThemeCheck>("check_theme_draft", { id, theme });
+}
+
+/** Choose a custom theme, or `null` for the built-in look. */
+export async function setActiveTheme(id: string | null): Promise<ThemeWriteOutcome<ActiveTheme>> {
+  return invoke<ThemeWriteOutcome<ActiveTheme>>("set_active_theme", { id });
+}
+
+/** The active theme's checked background or sticker, as a `data:` URL. */
+export async function getActiveThemeImage(kind: "background" | "sticker"): Promise<string | null> {
+  return invoke<string | null>("active_theme_image", { kind });
+}
+
+/** Copy a picked image into the theme's folder; returns the file name to save. */
+export async function importThemeImage(
+  id: string,
+  kind: "background" | "sticker",
+  source: string,
+): Promise<string> {
+  return invoke<string>("import_theme_image", { id, kind, source });
+}
+
+/** One image in a theme's folder, as a `data:` URL, for the editor. */
+export async function getThemeImage(id: string, file: string, kind: "background" | "sticker"): Promise<string> {
+  return invoke<string>("theme_image", { id, file, kind });
+}
+
+export async function openThemesFolder(): Promise<void> {
+  return invoke("open_themes_folder");
+}
 // Original Zotero attachments are read through the daemon's scoped cache.
 export interface ZoteroPdfAnnotation {
   key: string;

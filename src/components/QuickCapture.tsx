@@ -353,7 +353,7 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
                 fontSize: "12px",
                 fontWeight: 500,
                 padding: "4px 14px",
-                borderRadius: 8,
+                borderRadius: "var(--mem-r-8)",
                 color:
                   saved
                     ? "var(--mem-accent-warm)"

@@ -18,6 +18,9 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // Shared app shell preflight status; the Review fixture has no OS service
     // manager, so it reports the ordinary ready state.
     "get_startup_preflight_status",
+    // The app shell asks for the active custom theme on start; the fixture
+    // has none, so the built-in look stays.
+    "get_active_theme",
     "search",
     "search_pages",
     "search_entities_cmd",

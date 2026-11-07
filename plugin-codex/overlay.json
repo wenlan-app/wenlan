@@ -13,7 +13,7 @@
             "then follow that skill to the end. Its arguments:"
           ],
           "to": [
-            "For setup, steep, pages, lint, curate, forget and wiki, read",
+            "For setup, steep, pages, lint, curate, forget, wiki and theme, read",
             "`references/<workflow>.md` beside this SKILL.md and follow it to the end,",
             "treating the arguments below as what the user typed after that workflow word.",
             "For brief, capture, recall and handoff, use that Wenlan skill. Arguments:"
@@ -289,7 +289,7 @@
         {
           "from": [
             "```bash",
-            "npx -y wenlan@0.20.7 setup",
+            "npx -y wenlan@0.21.0 setup",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "```",
             "",
@@ -321,7 +321,7 @@
             "prints the status:",
             "",
             "```bash",
-            "npx -y wenlan@0.20.7 setup",
+            "npx -y wenlan@0.21.0 setup",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "```",
             "",
@@ -335,7 +335,7 @@
             "If absent, install and configure local memory:",
             "",
             "```bash",
-            "curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.20.7/install.sh | bash",
+            "curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.21.0/install.sh | bash",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "wenlan setup --basic",
             "wenlan background on",

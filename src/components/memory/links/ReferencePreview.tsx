@@ -237,8 +237,8 @@ export function ReferencePreview({
       </div>}
       {loading && <p role="status" style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{t(`${copyPrefix}.loading`)}</p>}
       {loading && citation?.source_kind === "memory" && <div data-testid="citation-popover-skeleton" className="flex flex-col gap-1.5">
-        <div style={{ width: "70%", height: "10px", background: "var(--mem-hover)", borderRadius: "4px" }} />
-        <div style={{ width: "90%", height: "10px", background: "var(--mem-hover)", borderRadius: "4px" }} />
+        <div style={{ width: "70%", height: "10px", background: "var(--mem-hover)", borderRadius: "var(--mem-r-4)" }} />
+        <div style={{ width: "90%", height: "10px", background: "var(--mem-hover)", borderRadius: "var(--mem-r-4)" }} />
       </div>}
       {error && <div role="alert" style={{ color: "var(--mem-accent-amber)", fontSize: "var(--mem-text-xs)" }}>
         <span>{t(`${copyPrefix}.error`)}</span>{" "}

@@ -26,7 +26,8 @@ use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use std::collections::HashSet;
 use wenlan_types::{
-    NightLinkMade, ThingActor, ThingDream, ThingLastNight, ThingNightPoint, ThingNightPoints,
+    NightLinkMade, ThingActor, ThingConclusionSentence, ThingDream, ThingLastNight,
+    ThingNightPoint, ThingNightPoints,
 };
 
 /// `thing_history` with the two operations added. Same columns, rows and
@@ -90,6 +91,11 @@ struct DreamEntry {
     /// has its own undo (see `night_links`).
     #[serde(default)]
     backfill: bool,
+    /// What the work has come to, written after the night's points from all
+    /// the thing's standing points (UX-VIEW-6). Older entries, and a night
+    /// whose conclusion call failed, have none.
+    #[serde(default)]
+    conclusion: Vec<ThingConclusionSentence>,
 }
 
 impl MemoryDB {
@@ -350,23 +356,101 @@ impl MemoryDB {
     /// The newest night that wrote points for a thing and was not taken
     /// back: what its page says was put away.
     pub async fn thing_dream(&self, thing_id: &str) -> Result<Option<ThingDream>, WenlanError> {
+        self.thing_dream_in(thing_id, &ReadScope::Global).await
+    }
+
+    /// [`Self::thing_dream`] for a caller that sees only `scope`. The
+    /// conclusion is that same night's, never an older one, so the first
+    /// paragraph and the night's Undo speak of one night. A sentence is left
+    /// out unless every point it rests on still stands (not taken back,
+    /// forgotten or replaced) and is in scope: it would otherwise say
+    /// something its sources no longer back.
+    pub async fn thing_dream_in(
+        &self,
+        thing_id: &str,
+        scope: &ReadScope,
+    ) -> Result<Option<ThingDream>, WenlanError> {
         let nights = self.dream_nights(thing_id).await?;
-        Ok(nights
+        let Some((_, _, night)) = nights
             .into_iter()
             .rev()
             .find(|(_, undone, night)| !undone && !night.entry.backfill)
-            .map(|(_, _, night)| ThingDream {
-                at: night.at,
-                decided: night.entry.decided.len(),
-                open: night.entry.open.len(),
-                fresh: night
-                    .entry
-                    .decided
-                    .iter()
-                    .chain(&night.entry.open)
-                    .cloned()
-                    .collect(),
-            }))
+        else {
+            return Ok(None);
+        };
+        let conclusion = if night.entry.conclusion.is_empty() {
+            Vec::new()
+        } else {
+            let standing: HashSet<String> = self
+                .standing_dream_points(thing_id)
+                .await?
+                .into_iter()
+                .filter(|point| scope.matches(point.space.as_deref()))
+                .map(|point| point.id)
+                .collect();
+            night
+                .entry
+                .conclusion
+                .into_iter()
+                .filter(|sentence| {
+                    !sentence.points.is_empty()
+                        && sentence.points.iter().all(|id| standing.contains(id))
+                })
+                .collect()
+        };
+        Ok(Some(ThingDream {
+            at: night.at,
+            decided: night.entry.decided.len(),
+            open: night.entry.open.len(),
+            fresh: night
+                .entry
+                .decided
+                .iter()
+                .chain(&night.entry.open)
+                .cloned()
+                .collect(),
+            conclusion,
+        }))
+    }
+
+    /// Put the conclusion on the night `seq` that [`Self::record_dream`]
+    /// wrote. Nothing changes when that entry is not this thing's night.
+    pub async fn set_dream_conclusion(
+        &self,
+        thing_id: &str,
+        seq: i64,
+        conclusion: &[ThingConclusionSentence],
+    ) -> Result<(), WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT data FROM thing_history
+                  WHERE seq = ?1 AND thing_id = ?2 AND op = 'thing.dream'",
+                libsql::params![seq, thing_id],
+            )
+            .await
+            .map_err(db_err("dream conclusion read"))?;
+        let Some(row) = rows.next().await.map_err(db_err("dream conclusion row"))? else {
+            return Ok(());
+        };
+        let mut data: serde_json::Value =
+            serde_json::from_str(&row.get::<String>(0).unwrap_or_default())
+                .unwrap_or_else(|_| serde_json::json!({}));
+        drop(rows);
+        let Some(object) = data.as_object_mut() else {
+            return Ok(());
+        };
+        object.insert(
+            "conclusion".into(),
+            serde_json::to_value(conclusion).unwrap_or_default(),
+        );
+        conn.execute(
+            "UPDATE thing_history SET data = ?1 WHERE seq = ?2",
+            libsql::params![data.to_string(), seq],
+        )
+        .await
+        .map_err(db_err("dream conclusion write"))?;
+        Ok(())
     }
 
     /// What a thing's newest night not taken back did on the big map
@@ -424,7 +508,8 @@ impl MemoryDB {
     /// Record a night's reading of a thing: the memories it wrote, settled
     /// and open, what that changed on its map, the topics it connected them
     /// to, and that its conversations were read up to their last line. A
-    /// night that found nothing new records only the reading.
+    /// night that found nothing new records only the reading. Returns the
+    /// night's sequence number when it wrote points.
     pub async fn record_dream(
         &self,
         thing_id: &str,
@@ -433,7 +518,7 @@ impl MemoryDB {
         map: &DreamMapChanges,
         links: &[NightLink],
         conversations: &[DueConversation],
-    ) -> Result<(), WenlanError> {
+    ) -> Result<Option<i64>, WenlanError> {
         let changes: Vec<NightChange> = decided
             .iter()
             .chain(open)
@@ -448,6 +533,7 @@ impl MemoryDB {
             .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
             .await
             .map_err(db_err("record dream begin"))?;
+        let mut seq = None;
         if !decided.is_empty() || !open.is_empty() {
             history(
                 &tx,
@@ -459,6 +545,7 @@ impl MemoryDB {
                 serde_json::json!({ "decided": decided, "open": open, "map": map, "changes": changes }),
             )
             .await?;
+            seq = Some(tx.last_insert_rowid());
         }
         for conversation in conversations {
             tx.execute(
@@ -469,7 +556,7 @@ impl MemoryDB {
             .map_err(db_err("record dream read"))?;
         }
         tx.commit().await.map_err(db_err("record dream commit"))?;
-        Ok(())
+        Ok(seq)
     }
 
     /// Attach a point written overnight to the conversation it came from, so

@@ -100,7 +100,7 @@
 .entities-view .entities-chip {
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   color: var(--mem-text-secondary);
   cursor: pointer;
   font-family: var(--mem-font-body);
@@ -186,7 +186,7 @@
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--mem-r-8);
   color: var(--mem-text);
   cursor: pointer;
   display: flex;
@@ -240,7 +240,7 @@
 .entities-view .entity-row-card {
   align-items: flex-start;
   background: var(--mem-card-surface);
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   flex-direction: column;
   gap: 8px;
   min-height: 112px;

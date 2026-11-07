@@ -27,6 +27,58 @@ $reservation = $null
 $StdoutLog = $null
 $StderrLog = $null
 
+function Get-SmokeDiagnostics {
+    param($DaemonProcess, [string]$StdoutPath, [string]$StderrPath)
+    $exit = if ($DaemonProcess) {
+        if ($DaemonProcess.HasExited) { "exit=$($DaemonProcess.ExitCode)" } else { "still-running" }
+    } else { "not-started" }
+    $stdout = if ($StdoutPath -and (Test-Path -LiteralPath $StdoutPath)) {
+        try { (Get-Content -LiteralPath $StdoutPath -Tail 40) -join "`n" }
+        catch { "<unreadable: $($_.Exception.Message)>" }
+    } else { "<missing>" }
+    $stderr = if ($StderrPath -and (Test-Path -LiteralPath $StderrPath)) {
+        try { (Get-Content -LiteralPath $StderrPath -Tail 40) -join "`n" }
+        catch { "<unreadable: $($_.Exception.Message)>" }
+    } else { "<missing>" }
+    return "daemon=$exit`nstdout:`n$stdout`nstderr:`n$stderr"
+}
+
+function Wait-EmbeddingModelReady {
+    param([string]$BaseUrl, [int]$TimeoutSeconds, $DaemonProcess)
+    $deadline = (Get-Date).ToUniversalTime().AddSeconds($TimeoutSeconds)
+    $lastStatus = '<no /api/status response>'
+    $lastRequestError = '<none>'
+    $failure = 'timed out waiting for the embedding model'
+    while ((Get-Date).ToUniversalTime() -lt $deadline) {
+        if ($DaemonProcess.HasExited) {
+            $failure = 'scratch daemon exited before the embedding model became ready'
+            break
+        }
+        try {
+            $status = Invoke-RestMethod -Uri "$BaseUrl/api/status" -TimeoutSec 1
+        }
+        catch {
+            $lastRequestError = "request error: $($_.Exception.Message) body=$($_.ErrorDetails.Message)"
+            Start-Sleep -Seconds 1
+            continue
+        }
+        $lastStatus = $status | ConvertTo-Json -Compress -Depth 10
+        $model = $status.embedding_model
+        $stateProperty = if ($null -ne $model) { $model.PSObject.Properties['state'] } else { $null }
+        if ($null -eq $stateProperty -or $stateProperty.Value -isnot [string]) {
+            $failure = 'malformed /api/status embedding_model.state'
+            break
+        }
+        if ($stateProperty.Value -ceq 'ready') { return }
+        if ($stateProperty.Value -cne 'unavailable') {
+            $failure = "unknown /api/status embedding_model.state '$($stateProperty.Value)'"
+            break
+        }
+        Start-Sleep -Seconds 1
+    }
+    throw "embedding model did not become ready: $failure; last_status=$lastStatus; last_request_error=$lastRequestError"
+}
+
 try {
     $DataDir = New-Item -ItemType Directory -Path "$env:TEMP\origin-smoke-$([System.Guid]::NewGuid())"
     $reservation = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port)
@@ -66,12 +118,7 @@ try {
         catch {}
         Start-Sleep -Seconds 1
     }
-    if (-not $healthy) {
-        $exit = if ($proc.HasExited) { "exit=$($proc.ExitCode)" } else { "still-running" }
-        $stdout = if (Test-Path -LiteralPath $StdoutLog) { (Get-Content -LiteralPath $StdoutLog -Tail 40) -join "`n" } else { "<missing>" }
-        $stderr = if (Test-Path -LiteralPath $StderrLog) { (Get-Content -LiteralPath $StderrLog -Tail 40) -join "`n" } else { "<missing>" }
-        throw "daemon did not become healthy ($exit)`nstdout:`n$stdout`nstderr:`n$stderr"
-    }
+    if (-not $healthy) { throw 'daemon did not become healthy' }
 
     $LoadedVulkanModules = @(
         Get-Process -Id $proc.Id -Module |
@@ -93,7 +140,7 @@ try {
     }
     Write-Host "    loaded exact Vulkan loader: $($LoadedVulkanModules[0])"
 
-    Write-Host "==> Store a memory"
+    Write-Host "==> Verify scratch paths and embedding readiness"
     $knowledge = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/knowledge/path"
     $runtime = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health"
     if (-not $runtime.data_root -or [IO.Path]::GetFullPath($runtime.data_root) -ine [IO.Path]::GetFullPath($DataDir.FullName)) {
@@ -102,6 +149,10 @@ try {
     if ([IO.Path]::GetFullPath($knowledge.path) -ine [IO.Path]::GetFullPath($pages)) {
         throw "daemon is not using the scratch knowledge directory"
     }
+    Write-Host "==> Waiting for /api/status embedding_model.state=ready"
+    Wait-EmbeddingModelReady -BaseUrl "http://127.0.0.1:$Port" `
+        -TimeoutSeconds $HealthTimeoutSeconds -DaemonProcess $proc
+    Write-Host "==> Store a memory"
     if ($proc.HasExited) { throw 'scratch daemon exited before the store request' }
     try {
         $StoreBody = @{
@@ -121,7 +172,7 @@ try {
         # (HttpResponseMessage); pwsh 7 dropped GetResponseStream().
         $body = $_.ErrorDetails.Message
         $status = $_.Exception.Response.StatusCode.value__
-        throw "store failed: status=$status body=$body"
+        throw "store failed: status=$status body=$body error=$($_.Exception.Message)"
     }
 
     Write-Host "==> Semantic search with no lexical overlap"
@@ -129,12 +180,17 @@ try {
         query = "blue lamp adjusts ocean timepieces"
         limit = 3
     } | ConvertTo-Json
-    $search = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/memory/search" -Method POST `
-        -ContentType "application/json" `
-        -Body $SearchBody
-
-    if (($search | ConvertTo-Json -Depth 10) -notmatch [regex]::Escape($Marker)) {
-        throw "semantic search did not return the vector-only marker $Marker"
+    try {
+        $search = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/memory/search" -Method POST `
+            -ContentType "application/json" `
+            -Body $SearchBody
+    }
+    catch {
+        throw "semantic search request failed: $($_.Exception.Message) body=$($_.ErrorDetails.Message)"
+    }
+    $searchResponse = $search | ConvertTo-Json -Compress -Depth 10
+    if ($searchResponse -notmatch [regex]::Escape($Marker)) {
+        throw "semantic search did not return the vector-only marker $Marker; response=$searchResponse"
     }
 
     $LoadedOrtModules = @(
@@ -154,6 +210,11 @@ try {
     }
     Write-Host "    loaded exact ORT module: $($LoadedOrtModules[0])"
     Write-Host "==> PASS"
+}
+catch {
+    $failure = $_.Exception.Message
+    $diagnostics = Get-SmokeDiagnostics -DaemonProcess $proc -StdoutPath $StdoutLog -StderrPath $StderrLog
+    throw "$failure`n$diagnostics"
 }
 finally {
     if ($reservation) { $reservation.Stop() }

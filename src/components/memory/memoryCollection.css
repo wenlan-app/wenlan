@@ -8,7 +8,7 @@
   min-width: 0;
   overflow: visible;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--mem-r-10);
   background: var(--mem-card-surface);
   transition: background-color 150ms ease;
 }

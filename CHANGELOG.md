@@ -1,5 +1,70 @@
 # Changelog
 
+## [0.21.0](https://github.com/wenlan-app/wenlan/compare/v0.20.7...v0.21.0) (2026-11-07)
+
+
+### Features
+
+* **app:** "what you're working on" comes from the conversations themselves ([#1142](https://github.com/wenlan-app/wenlan/issues/1142)) ([24c0e09](https://github.com/wenlan-app/wenlan/commit/24c0e098522eb2e9eb6b7f6d1d03ed4f571a2f93))
+* **app:** a quote found in search can be continued in its AI tool (UX-FIND-3) ([#1144](https://github.com/wenlan-app/wenlan/issues/1144)) ([c5785b7](https://github.com/wenlan-app/wenlan/commit/c5785b7dc3f9bc278b12c863960345d0cee9d8a3))
+* **app:** a thing quiet for a week leaves home, and a card can be hidden ([#1138](https://github.com/wenlan-app/wenlan/issues/1138)) ([4e9576a](https://github.com/wenlan-app/wenlan/commit/4e9576a6a5150d9451b8542566af770682d9ecae))
+* **app:** a thing quiet for two weeks leaves "what you're working on" ([#1133](https://github.com/wenlan-app/wenlan/issues/1133)) ([02612b4](https://github.com/wenlan-app/wenlan/commit/02612b41b911f81b8f83773397f8912f87832041))
+* **app:** Activity flags unreachable sources, every destination sits on the left, and home rows hide their scrollbar ([#1128](https://github.com/wenlan-app/wenlan/issues/1128)) ([db8982c](https://github.com/wenlan-app/wenlan/commit/db8982c8e99258e590e74cd0431bb57bb6ccde0f))
+* **app:** sources leave the navigation, a source shows which pages cite it, and a whole conversation reads like the AI tool ([#1125](https://github.com/wenlan-app/wenlan/issues/1125)) ([3251769](https://github.com/wenlan-app/wenlan/commit/3251769daab98069e19144af7316a06df5d26690))
+* **claims:** let any qualified model run the source check ([#1175](https://github.com/wenlan-app/wenlan/issues/1175)) ([edf70b8](https://github.com/wenlan-app/wenlan/commit/edf70b87a253396f478d384895e9f60c2a2465a6))
+* **claims:** let every configured model run the source check ([#1178](https://github.com/wenlan-app/wenlan/issues/1178)) ([0d59813](https://github.com/wenlan-app/wenlan/commit/0d59813a51937d3ab6c493e55dfd831e2f10902c))
+* **core:** every support judge qualifies at runtime, qwen3-4b included ([#1159](https://github.com/wenlan-app/wenlan/issues/1159)) ([94e1b8d](https://github.com/wenlan-app/wenlan/commit/94e1b8d6309e3be2414531bfa55c0de849534e60))
+* **core:** let any on-device model that passes the M5 batch judge support ([#1155](https://github.com/wenlan-app/wenlan/issues/1155)) ([0c814bc](https://github.com/wenlan-app/wenlan/commit/0c814bce71e132557cfe749e6926e681ebac57ce))
+* **core:** Qwen 3.5 4B becomes the default small local model ([#1163](https://github.com/wenlan-app/wenlan/issues/1163)) ([19bca31](https://github.com/wenlan-app/wenlan/commit/19bca315ba5dc00d41b22f22d64bcc089015a7e3))
+* **pages:** a page file deleted in the folder archives its page ([#1139](https://github.com/wenlan-app/wenlan/issues/1139)) ([c57eb8b](https://github.com/wenlan-app/wenlan/commit/c57eb8b392f175591fbc7dae35a02e5bac0c3581))
+* **pages:** a page update writes its file before the database ([#1141](https://github.com/wenlan-app/wenlan/issues/1141)) ([c97e8ed](https://github.com/wenlan-app/wenlan/commit/c97e8ed4281a2eb9e5fae3159c8a4df77de30802))
+* **pages:** follow pages moved or renamed in the folder outside Wenlan ([#1136](https://github.com/wenlan-app/wenlan/issues/1136)) ([e598586](https://github.com/wenlan-app/wenlan/commit/e598586c0bb277aefbcd96261a564a3ef6975a82))
+* **pages:** notes already in the pages folder become pages ([#1137](https://github.com/wenlan-app/wenlan/issues/1137)) ([f639f77](https://github.com/wenlan-app/wenlan/commit/f639f77ac9780f49fe403c0678283b23caeb827c))
+* **research:** connect Zotero sources to reading and review ([#1162](https://github.com/wenlan-app/wenlan/issues/1162)) ([f555326](https://github.com/wenlan-app/wenlan/commit/f555326c87de63fa121b572760ecfe667f0b8a24))
+* **scheduler:** background work waits for a plugged-in, idle, cool computer and stops mid-lap (UX-QUIET-1) ([#1164](https://github.com/wenlan-app/wenlan/issues/1164)) ([6b18cc3](https://github.com/wenlan-app/wenlan/commit/6b18cc3194de8abee9f54e55d97a6f4f453c9f3a))
+* **steep:** unify knowledge maintenance with on-demand skill loading ([#1140](https://github.com/wenlan-app/wenlan/issues/1140)) ([320b006](https://github.com/wenlan-app/wenlan/commit/320b0068426c9ea092554915e785df88813949f6))
+* **storage:** every write reaches a file log before the database commits ([#1146](https://github.com/wenlan-app/wenlan/issues/1146)) ([d59596c](https://github.com/wenlan-app/wenlan/commit/d59596ca12a57c33e79a9c0eaef98bd9cedd9654))
+* **store:** keep the graph, judge scores, feedback and enrichment record in the file copy ([#1134](https://github.com/wenlan-app/wenlan/issues/1134)) ([6c8570f](https://github.com/wenlan-app/wenlan/commit/6c8570ff9513d25a837a3a1f329330f7c7d9e077))
+* **store:** rebuild a missing database from the file copy at start ([#1129](https://github.com/wenlan-app/wenlan/issues/1129)) ([4ca0e07](https://github.com/wenlan-app/wenlan/commit/4ca0e071ea2e2e968b74afb2d1674f641b43cd7f))
+* **store:** refresh the file copy in place within minutes of a change ([#1126](https://github.com/wenlan-app/wenlan/issues/1126)) ([ad26113](https://github.com/wenlan-app/wenlan/commit/ad2611353739f3514eac87754d702ca8516a6685))
+* **things:** a conversation the person moved steers the next grouping (UX-THING-2) ([#1145](https://github.com/wenlan-app/wenlan/issues/1145)) ([147142d](https://github.com/wenlan-app/wenlan/commit/147142d506a850bcf1e7eb0f27cc9945167acdaf))
+* **things:** connect each night's points to the big map (UX-CHAT-5) ([#1168](https://github.com/wenlan-app/wenlan/issues/1168)) ([ed2f2dc](https://github.com/wenlan-app/wenlan/commit/ed2f2dcf873c8415219c7205fb5d81c72d02e6f9))
+* **things:** each night, what a piece of work settled is steeped into long-term memory (UX-CHAT-5) ([#1149](https://github.com/wenlan-app/wenlan/issues/1149)) ([35efea3](https://github.com/wenlan-app/wenlan/commit/35efea3870618043bcb92564b306bf08025fbbff))
+* **things:** merging two things is only a proposal you press (UX-THING-3) ([#1148](https://github.com/wenlan-app/wenlan/issues/1148)) ([5de54f3](https://github.com/wenlan-app/wenlan/commit/5de54f3745eafe1718c63b8fc6d2d3d9a07ba7b7))
+* **things:** the big map keeps its places and shows each thing round its night's points (UX-GRAPH-1, UX-CHAT-5, UX-THING-1) ([#1150](https://github.com/wenlan-app/wenlan/issues/1150)) ([65cdf61](https://github.com/wenlan-app/wenlan/commit/65cdf61ed338ccc3c0859d6edebf0ad850244cb0))
+
+
+### Bug Fixes
+
+* **app:** a picked quiet thing's points show their sentences where they sit (UX-CHAT-5) ([#1180](https://github.com/wenlan-app/wenlan/issues/1180)) ([91bd2a4](https://github.com/wenlan-app/wenlan/commit/91bd2a4940286794a0c5912b1d78823f81e365d3))
+* **app:** changed sources stay off Home, on the pages that cite them (UX-HOME-4) ([#1182](https://github.com/wenlan-app/wenlan/issues/1182)) ([38cb504](https://github.com/wenlan-app/wenlan/commit/38cb504a6d330a20d5f6a4d740c4c03996d4de65))
+* **app:** even heading spacing and a visible scrollbar on wide code blocks ([#1122](https://github.com/wenlan-app/wenlan/issues/1122)) ([5639330](https://github.com/wenlan-app/wenlan/commit/56393303d390dbc025d95b7f3358ba878167ec83))
+* **app:** home shows only your own work, led by the newest thing, nothing cut (UX-HOME-6) ([#1183](https://github.com/wenlan-app/wenlan/issues/1183)) ([83e51e2](https://github.com/wenlan-app/wenlan/commit/83e51e2394f0df92bda23cfae2226ea469e4ba89))
+* **core:** citation backfill keeps the page's own line and paragraph breaks ([#1171](https://github.com/wenlan-app/wenlan/issues/1171)) ([16c6247](https://github.com/wenlan-app/wenlan/commit/16c62470bce4c4a8eca1197d74c840761476d718))
+* **core:** citation backfill sends only what fits the model's window ([#1167](https://github.com/wenlan-app/wenlan/issues/1167)) ([3a80dc3](https://github.com/wenlan-app/wenlan/commit/3a80dc3769140c354d7be170f2a34ad8434bff66))
+* **core:** give the M5 judge an explicit 180 s batch timeout ([#1157](https://github.com/wenlan-app/wenlan/issues/1157)) ([2cebf2f](https://github.com/wenlan-app/wenlan/commit/2cebf2f0c90277617538a36d4088eb64b541e3fa))
+* **core:** give whole-page model requests a 180 s budget instead of the 30 s default ([#1161](https://github.com/wenlan-app/wenlan/issues/1161)) ([bab0b31](https://github.com/wenlan-app/wenlan/commit/bab0b3138104103abcf54ef5f554315092fca23b))
+* **core:** rename old page files, keep citations on link updates, keep archived entity links ([#1165](https://github.com/wenlan-app/wenlan/issues/1165)) ([b85d3d0](https://github.com/wenlan-app/wenlan/commit/b85d3d0ca4e444350043f2f430f99b0ff3eb5506))
+* **deps:** stop libsql closing every connection twice (libsql 0.10.0) ([#1160](https://github.com/wenlan-app/wenlan/issues/1160)) ([67a2089](https://github.com/wenlan-app/wenlan/commit/67a208984ebf36915516c9b74b1ea89378fb83d8))
+* **engine:** on-device models stop dropping Chinese characters and stop garbling or cutting off page rewrites ([#1151](https://github.com/wenlan-app/wenlan/issues/1151)) ([0dd37d9](https://github.com/wenlan-app/wenlan/commit/0dd37d9383ffee1ab45d2944d166c4fa4e4039dd))
+* keep ~/.wenlan/bin aligned with the app bundle ([#1131](https://github.com/wenlan-app/wenlan/issues/1131)) ([dfe523d](https://github.com/wenlan-app/wenlan/commit/dfe523d6244db81e80320e669352e8d9df861ab8))
+* **kg:** give unfiled memories a main topic that is still shown ([#1170](https://github.com/wenlan-app/wenlan/issues/1170)) ([153f289](https://github.com/wenlan-app/wenlan/commit/153f289863d9aca96ff66a7b0cacf22aa00ccbf4))
+* **kg:** stop filing everything under one hub topic, grow only similar pages, and clean old links once ([#1166](https://github.com/wenlan-app/wenlan/issues/1166)) ([23d346b](https://github.com/wenlan-app/wenlan/commit/23d346b589e7fde560cd0d34d5a14c538397b31b))
+* **kg:** take hub links off again in daily housekeeping ([#1176](https://github.com/wenlan-app/wenlan/issues/1176)) ([1ab12d5](https://github.com/wenlan-app/wenlan/commit/1ab12d57654e82cf123a14d17354aca583dc0e35))
+* log why the daemon refused a request, and give freshly edited pages their citations first ([#1158](https://github.com/wenlan-app/wenlan/issues/1158)) ([4904c51](https://github.com/wenlan-app/wenlan/commit/4904c519ccdfb9dba4096c906cdc325e67cb8614))
+* make first launch usable and find Windows desktop Codex ([#1186](https://github.com/wenlan-app/wenlan/issues/1186)) ([f5094a0](https://github.com/wenlan-app/wenlan/commit/f5094a001d663ed26282429a44bb652246719a45))
+* **page-growth:** send the sources related to the new memory, not every source the page cites ([#1153](https://github.com/wenlan-app/wenlan/issues/1153)) ([f3a8f24](https://github.com/wenlan-app/wenlan/commit/f3a8f24c4a62b7170fbc996cd2f84a58fcd10891))
+* **pages:** adopt hashes of old page files that page_history proves are Wenlan's ([#1172](https://github.com/wenlan-app/wenlan/issues/1172)) ([499d0f6](https://github.com/wenlan-app/wenlan/commit/499d0f63270f2fc64a401e33e3580bd0d094be7a))
+* **pages:** don't compare the summary when adopting an earlier page render ([#1177](https://github.com/wenlan-app/wenlan/issues/1177)) ([61b0766](https://github.com/wenlan-app/wenlan/commit/61b0766b7e1cb7f17c74dc4ea7d60a32436b775d))
+* **pages:** every machine rewrite is refused when it shrinks, cuts off, repeats or garbles a page ([#1156](https://github.com/wenlan-app/wenlan/issues/1156)) ([7141b3d](https://github.com/wenlan-app/wenlan/commit/7141b3d662b0515fcf8215ffa2e2d0483b9a160b))
+* **pages:** old records of lost pages no longer hold real deletions ([#1152](https://github.com/wenlan-app/wenlan/issues/1152)) ([109943c](https://github.com/wenlan-app/wenlan/commit/109943cf7eefa261758fcdffab54cec607b27101))
+* run the one-time old-data cleanups and keep backfilled page files in sync ([#1169](https://github.com/wenlan-app/wenlan/issues/1169)) ([0371bb1](https://github.com/wenlan-app/wenlan/commit/0371bb1b7edb2bf7a2eda87b51ea170c426ce505))
+* **scheduler:** background work may use up to 20% of idle time on this Mac, cloud models rest only the floor ([8017998](https://github.com/wenlan-app/wenlan/commit/801799839f2588baae41676effc1b7ecc09df614))
+* **scheduler:** background work may use up to 20% of idle time, cloud models rest only the floor ([#1154](https://github.com/wenlan-app/wenlan/issues/1154)) ([8017998](https://github.com/wenlan-app/wenlan/commit/801799839f2588baae41676effc1b7ecc09df614))
+* **setup:** allow opening the workspace when the daemon fails ([#1181](https://github.com/wenlan-app/wenlan/issues/1181)) ([80b0518](https://github.com/wenlan-app/wenlan/commit/80b0518ef71a5e4cfa9f236648e530fcb6d27acd))
+* **store:** close the gaps the file-copy review found ([#1135](https://github.com/wenlan-app/wenlan/issues/1135)) ([1ff5d8c](https://github.com/wenlan-app/wenlan/commit/1ff5d8ce83db3dc2a383b9cf149e937c01f05377))
+* **store:** keep a pending memory revision in the file copy ([#1132](https://github.com/wenlan-app/wenlan/issues/1132)) ([cb41761](https://github.com/wenlan-app/wenlan/commit/cb41761db4357605373278d9c3949c2cd56195bd))
+
 ## [0.20.7](https://github.com/wenlan-app/wenlan/compare/v0.20.6...v0.20.7) (2026-11-02)
 
 

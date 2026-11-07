@@ -35,6 +35,13 @@ const INVOKE_LITERAL = /invoke[A-Za-z]*(?:<[^>]*>)?\(\s*"([a-z0-9_]+)"/g;
  * Adding to it is a deliberate act, and reviewable as one.
  */
 const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
+  "active_theme_image",
+  "check_theme_draft",
+  "get_theme",
+  "import_theme_image",
+  "list_themes",
+  "open_themes_folder",
+  "theme_image",
   // Zotero needs a real local library and the scoped daemon attachment cache.
   // Fixture-only Review must not pretend a real connection or import succeeded.
   "list_zotero_collections",

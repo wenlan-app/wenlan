@@ -129,6 +129,11 @@
         "reshape-knowledge.md",
         "rebuild-pages.md"
       ]
+    },
+    {
+      "name": "theme",
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/theme.md"
     }
   ]
 }

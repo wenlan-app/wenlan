@@ -93,7 +93,7 @@ const labelStyle: React.CSSProperties = {
 const buttonStyle: React.CSSProperties = {
   fontFamily: "var(--mem-font-body)",
   fontSize: "var(--mem-text-control)",
-  borderRadius: 8,
+  borderRadius: "var(--mem-r-8)",
   padding: "8px 15px",
   cursor: "pointer",
   border: "1px solid var(--mem-border)",

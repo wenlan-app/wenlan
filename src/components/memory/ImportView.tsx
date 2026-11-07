@@ -56,7 +56,7 @@ const TYPE_BADGE_STYLES: Record<string, { bg: string; text: string }> = {
   fact: { bg: "color-mix(in srgb, var(--mem-accent-glow) 12%, transparent)", text: "var(--mem-accent-glow)" },
   decision: { bg: "color-mix(in srgb, var(--mem-accent-amber) 15%, transparent)", text: "var(--mem-accent-amber)" },
   lesson: { bg: "color-mix(in srgb, var(--mem-accent-sage) 15%, transparent)", text: "var(--mem-accent-sage)" },
-  gotcha: { bg: "color-mix(in srgb, #ef4444 15%, transparent)", text: "#ef4444" },
+  gotcha: { bg: "color-mix(in srgb, var(--mem-signal-red) 15%, transparent)", text: "var(--mem-signal-red)" },
   goal: { bg: "color-mix(in srgb, var(--mem-accent-sage) 15%, transparent)", text: "var(--mem-accent-sage)" },
 };
 
@@ -286,7 +286,7 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
                   style={{
                     fontFamily: "var(--mem-font-body)",
                     color: promptCopied ? "var(--mem-accent-warm)" : "var(--mem-accent-indigo)",
-                    backgroundColor: promptCopied ? "rgba(251, 191, 36, 0.15)" : "rgba(123, 123, 232, 0.1)",
+                    backgroundColor: promptCopied ? "color-mix(in srgb, var(--mem-signal-yellow) 15%, transparent)" : "color-mix(in srgb, var(--mem-signal-indigo) 10%, transparent)",
                   }}
                 >
                   {promptCopied ? t("importView.copied") : t("importView.copyPrompt")}
@@ -360,7 +360,7 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
           </button>
           <input ref={fileRef} type="file" accept=".txt,.csv,.json" className="hidden" aria-label={t("importView.uploadFile")} onChange={handleFileUpload} />
           {error && (
-            <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "12px", color: "#ef4444" }}>
+            <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "12px", color: "var(--mem-signal-red)" }}>
               {error}
             </span>
           )}
@@ -469,12 +469,12 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
           <div className="flex items-center gap-3 mb-4">
             <div
               className="w-10 h-10 rounded-full flex items-center justify-center"
-              style={{ backgroundColor: "rgba(99, 102, 241, 0.15)" }}
+              style={{ backgroundColor: "color-mix(in srgb, var(--mem-signal-violet) 15%, transparent)" }}
             >
               <svg
                 className="w-5 h-5"
                 fill="none"
-                stroke="rgb(99, 102, 241)"
+                stroke="var(--mem-signal-violet)"
                 viewBox="0 0 24 24"
                 strokeWidth="2"
               >

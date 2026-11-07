@@ -74,7 +74,7 @@ export function DropZone({ onFileSelected, onPathSelected, disabled = false }: D
       aria-busy={disabled}
       style={{
         border: `1.5px dashed ${isDragging ? "var(--mem-accent-indigo)" : "var(--mem-border)"}`,
-        borderRadius: "10px",
+        borderRadius: "var(--mem-r-10)",
         padding: "28px 20px",
         textAlign: "center",
         transition: "all 0.2s ease",
@@ -90,7 +90,7 @@ export function DropZone({ onFileSelected, onPathSelected, disabled = false }: D
           justifyContent: "center",
           width: 36,
           height: 36,
-          borderRadius: 8,
+          borderRadius: "var(--mem-r-8)",
           background: isDragging ? "var(--mem-accent-indigo)" : "var(--mem-hover-strong)",
           color: isDragging ? "var(--mem-text-on-accent)" : "var(--mem-text-tertiary)",
           transition: "all 0.2s ease",

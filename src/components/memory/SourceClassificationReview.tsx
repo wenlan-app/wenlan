@@ -15,7 +15,7 @@ export function SourceClassificationReview({ changes, editing, onChange }: {
   ];
   return <div style={{ display: "grid", gap: 12 }}>
     {editing && <p>{t("selectedSources.classificationEditHint")}</p>}
-    {changes.map((change, index) => <section key={`${change.source}:${change.source_id}`} style={{ border: "1px solid var(--mem-border)", borderRadius: 8, padding: 12 }}>
+    {changes.map((change, index) => <section key={`${change.source}:${change.source_id}`} style={{ border: "1px solid var(--mem-border)", borderRadius: "var(--mem-r-8)", padding: 12 }}>
       <strong>{change.title || change.source_id}</strong>
       <p>{t("selectedSources.classificationBefore")}: {change.before_tags?.join(", ") || t("selectedSources.classificationNone")}</p>
       {fields.map(({ field, label }) => <label key={field} style={{ display: "block" }}>

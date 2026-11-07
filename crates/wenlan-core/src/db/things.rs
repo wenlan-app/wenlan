@@ -1009,7 +1009,7 @@ impl MemoryDB {
                 .then_with(|| a.source_id.cmp(&b.source_id))
         });
         memories.truncate(THING_DETAIL_CAP);
-        let dream = self.thing_dream(&thing.id).await?;
+        let dream = self.thing_dream_in(&thing.id, scope).await?;
         let open_points = self
             .dream_points(&thing.id)
             .await?

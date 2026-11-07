@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { SettingsSection } from "./settings/SettingsSidebar";
 import { SETTINGS_GROUPS } from "./settings/SettingsSidebar";
 import GeneralSection from "./settings/sections/GeneralSection";
+import AppearanceSection from "./settings/sections/AppearanceSection";
 import SourcesSection from "./settings/sections/SourcesSection";
 import AgentsSection from "./settings/sections/AgentsSection";
 import IntelligenceSection from "./settings/sections/IntelligenceSection";
@@ -46,6 +47,7 @@ export default function SettingsPage({
   const content = (
     <>
       {section === "general" && <GeneralSection />}
+      {section === "appearance" && <AppearanceSection />}
       {section === "sources" && <SourcesSection onImport={onImport} onOpenLibrary={onOpenLibrary} />}
       {section === "agents" && <AgentsSection onSetupAgent={onSetupAgent} currentSpace={currentSpace} />}
       {section === "intelligence" && <IntelligenceSection delay={0} />}
@@ -69,6 +71,7 @@ export default function SettingsPage({
     <SettingsView
       title={activeGroup ? t(activeGroup.labelKey) : t("settings.title")}
       backButton={backButton}
+      wide={section === "appearance"}
     >
       {content}
     </SettingsView>

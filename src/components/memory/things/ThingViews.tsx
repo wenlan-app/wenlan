@@ -63,6 +63,13 @@ export function ThingViews({
     writeView(next);
   };
   const points = pointsOf(thing);
+  // The first paragraph is what the work has come to, as the newest night
+  // wrote it from the points below; until a night writes one, where it
+  // stands (UX-VIEW-6).
+  const sentences = (thing.dream?.conclusion ?? []).map((sentence) => withStop(sentence.text));
+  // Chinese and Japanese sentences run on without a space.
+  const conclusion = sentences.join(sentences.some((text) => /[⺀-￿]$/.test(text)) ? "" : " ");
+  const lead = conclusion || thing.status_line;
   const open = new Set(thing.open_points ?? []);
   // What last night steeped is marked new while the page says "last night".
   const fresh = new Set(thing.dream && steepedToday(thing.dream.at) ? thing.dream.fresh ?? [] : []);
@@ -101,7 +108,7 @@ export function ThingViews({
       {notice}
       {view === "short" ? (
         <div className="thing-short" data-testid="thing-short">
-          {thing.status_line ? <p className="thing-detail-where">{thing.status_line}</p> : null}
+          {lead ? <p className="thing-detail-where" data-testid="thing-lead">{lead}</p> : null}
           {mapQuery.isPending ? null : tree ? (
             <TreeRecap
               tree={tree}
@@ -115,7 +122,7 @@ export function ThingViews({
             RECAP_GROUPS.map((group) => (
               <RecapGroup key={group.key} group={group} fresh={fresh} points={points.filter((point) => groupOf(point, open) === group.key)} />
             ))
-          ) : thing.status_line ? null : (
+          ) : lead ? null : (
             <p className="thing-detail-empty">{t("thing.noPoints")}</p>
           )}
         </div>

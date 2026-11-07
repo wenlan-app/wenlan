@@ -13,7 +13,7 @@
 .basis-updates__group {
   padding: 10px 12px;
   border: 1px solid var(--mem-border);
-  border-radius: 9px;
+  border-radius: var(--mem-r-9);
   background: var(--mem-surface);
 }
 
@@ -61,7 +61,7 @@
 .basis-updates__link {
   padding: 5px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--mem-r-6);
   background: transparent;
   color: var(--mem-text);
   font: 600 13px/1.4 var(--mem-font-body);

@@ -120,6 +120,20 @@ pub struct ThingDream {
     /// The memories that night wrote, so the page can mark them as new.
     #[serde(default)]
     pub fresh: Vec<String>,
+    /// What the work has come to, as that night wrote it from the thing's
+    /// standing points: the first paragraph of its page (the whole
+    /// experience, step 3; UX-VIEW-6). Only sentences whose every point still
+    /// stands and is in the caller's scope. Older daemons leave it out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conclusion: Vec<ThingConclusionSentence>,
+}
+
+/// One sentence of a thing's conclusion and the points it rests on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingConclusionSentence {
+    pub text: String,
+    /// The memories (`source_id`) of the points it rests on; never empty.
+    pub points: Vec<String>,
 }
 
 /// A point a night wrote for a thing that still stands: not taken back, not

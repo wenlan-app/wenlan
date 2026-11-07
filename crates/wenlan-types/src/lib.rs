@@ -49,6 +49,7 @@ pub mod space_context;
 pub mod steep;
 pub mod steep_new;
 pub mod system_info;
+pub mod theme;
 pub mod things;
 pub mod zotero;
 
@@ -127,12 +128,12 @@ pub use steep_new::{
 };
 pub use things::{
     NightLinkMade, NightLinksBackfill, NightLinksBackfillUndo, NightsUndo, NightsUndoRequest,
-    SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingActor, ThingDetailResponse,
-    ThingDream, ThingLastNight, ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapOp,
-    ThingMapOpsRequest, ThingMapOpsResponse, ThingMapProposal, ThingMapResponse, ThingMapSource,
-    ThingMapState, ThingMergeRequest, ThingMoveRequest, ThingNightPoint, ThingNightPoints,
-    ThingNightPointsResponse, ThingPageEntry, ThingPageVia, ThingRef, ThingRenameRequest,
-    ThingSessionEntry, ThingSummary, ThingsResponse, THING_QUIET_AFTER_SECS,
+    SavedIn, SavedInRequest, SavedInResponse, SavedPageChange, ThingActor, ThingConclusionSentence,
+    ThingDetailResponse, ThingDream, ThingLastNight, ThingMapAuthor, ThingMapEdge, ThingMapNode,
+    ThingMapOp, ThingMapOpsRequest, ThingMapOpsResponse, ThingMapProposal, ThingMapResponse,
+    ThingMapSource, ThingMapState, ThingMergeRequest, ThingMoveRequest, ThingNightPoint,
+    ThingNightPoints, ThingNightPointsResponse, ThingPageEntry, ThingPageVia, ThingRef,
+    ThingRenameRequest, ThingSessionEntry, ThingSummary, ThingsResponse, THING_QUIET_AFTER_SECS,
 };
 
 use serde::{Deserialize, Serialize};
