@@ -398,8 +398,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // thing's map one more. Conversation search and a conversation's
     // lines add two more. Protected relation creation adds one EntitySpace-scoped
     // route; the organization MCP integration covers its endpoint and source gates.
-    // Every thing's night points for the big map adds one more scoped reader.
-    assert_eq!(rows.len(), 105);
+    // Every thing's night points for the big map adds one more scoped reader,
+    // and the conversation lines a memory was said in one more.
+    assert_eq!(rows.len(), 106);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -410,7 +411,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        81
+        82
     );
     assert_eq!(
         rows.iter()
