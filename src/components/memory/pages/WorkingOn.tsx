@@ -174,8 +174,19 @@ export function WorkingOn({
         <h2 id="wiki-working-on-title">{t("pages.overview.workingOnTitle")}</h2>
         {steeped.length > 0 ? (
           <p className="wiki-working-on-steeped" data-testid="wiki-working-on-steeped">
-            <SteepMoon />
-            <span className="wiki-working-on-steeped-label">{t(overnight ? "pages.overview.steepedOvernight" : "pages.overview.steepedToday")}</span>
+            {/* UX-GRAPH-6: the moon and its words play last night on the big
+                map; the line gains no extra word for it. */}
+            {onReplayNight ? (
+              <button type="button" className="wiki-working-on-steeped-replay" title={t("pages.overview.steepedReplay")} aria-label={t("pages.overview.steepedReplay")} onClick={onReplayNight}>
+                <SteepMoon />
+                <span className="wiki-working-on-steeped-label">{t(overnight ? "pages.overview.steepedOvernight" : "pages.overview.steepedToday")}</span>
+              </button>
+            ) : (
+              <>
+                <SteepMoon />
+                <span className="wiki-working-on-steeped-label">{t(overnight ? "pages.overview.steepedOvernight" : "pages.overview.steepedToday")}</span>
+              </>
+            )}
             <span className="wiki-working-on-steeped-names">
               {steeped.map((thing, index) => (
                 <Fragment key={thing.id}>
@@ -190,12 +201,6 @@ export function WorkingOn({
                 </button>
               ) : null}
             </span>
-            {onReplayNight ? (
-              <>
-                <span className="wiki-working-on-steeped-sep" aria-hidden="true">·</span>
-                <button type="button" className="wiki-working-on-steeped-replay" onClick={onReplayNight}>{t("pages.overview.steepedReplay")}</button>
-              </>
-            ) : null}
           </p>
         ) : null}
         {more ? (
