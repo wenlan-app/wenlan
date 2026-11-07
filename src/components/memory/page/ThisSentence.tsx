@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { flagPageSentence, recheckPageSentence, type PageSentence } from "../../../lib/tauri";
 import { leadingWeakReason } from "../editor/sentenceAuthorship";
+import { SaidLines } from "./SaidLines";
 import "./thisSentence.css";
 
 interface ThisSentenceProps {
@@ -69,6 +70,11 @@ export function ThisSentence({ pageId, sentence, onFixMyself, disabled }: ThisSe
   }, [aiQueued, proposalCount, pageId]);
   if (!sentence || sentence.author === "original") return null;
   const weak = leadingWeakReason(sentence.weak ?? []);
+  // The memories it cites; the daemon finds which lines of their
+  // conversation said the same thing (UX-WHO-6).
+  const memories = (sentence.citations ?? [])
+    .filter((citation) => citation.source_kind === "memory")
+    .map((citation) => citation.locator);
   return (
     <section className="this-sentence" aria-labelledby="this-sentence-title" data-testid="this-sentence">
       <h3 id="this-sentence-title" className="this-sentence-title">{t("thisSentence.title")}</h3>
@@ -86,6 +92,7 @@ export function ThisSentence({ pageId, sentence, onFixMyself, disabled }: ThisSe
           {t("thisSentence.weak", { reason: t(`weakReason.${weak}`) })}
         </p>
       ) : null}
+      {memories.length > 0 ? <SaidLines sourceIds={memories} /> : null}
       {recheck.isSuccess && recheck.variables === sentence.hash && !weak ? (
         <p className="this-sentence-line" role="status">{t("thisSentence.recheckedOk")}</p>
       ) : null}

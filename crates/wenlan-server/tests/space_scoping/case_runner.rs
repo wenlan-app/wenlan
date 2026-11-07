@@ -404,7 +404,8 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // disconnect-metadata contracts; their exact identities are enumerated.
     // Refinery queue is scoped for research payloads while preserving legacy
     // generic proposals; this moves one existing key from Global to scoped.
-    assert_eq!(rows.len(), 131);
+    // The conversation lines a memory was said in adds one more scoped reader.
+    assert_eq!(rows.len(), 132);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -415,7 +416,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        105
+        106
     );
     assert_eq!(
         rows.iter()

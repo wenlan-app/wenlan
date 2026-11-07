@@ -18,6 +18,16 @@ use wenlan_types::{
     SessionReadEntry, SessionReadKind, SessionRef, UpsertSessionRequest,
 };
 
+/// One memory's conversation, save time and words, for
+/// [`MemoryDB::memory_said_anchor`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaidAnchor {
+    pub session_id: String,
+    /// Unix seconds.
+    pub saved_at: i64,
+    pub text: String,
+}
+
 /// Most memories and notes `GET /api/sessions/{id}` returns for one session.
 const SESSION_DETAIL_CAP: i64 = 200;
 /// Longest accepted metadata value, in bytes. Paths and remotes are short.
@@ -724,6 +734,62 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("get_session row: {e}")))?
             .map(|row| session_from_row(&row)))
+    }
+
+    /// What finding a memory's conversation lines needs (UX-WHO-6): the
+    /// conversation it was saved in, when it was first saved, and its words.
+    /// `None` when the memory is unknown, out of `scope`, or was not saved in
+    /// a conversation.
+    pub async fn memory_said_anchor(
+        &self,
+        source_id: &str,
+        scope: &ReadScope,
+    ) -> Result<Option<SaidAnchor>, WenlanError> {
+        let mut conditions = vec![
+            "source = 'memory'".to_string(),
+            "COALESCE(pending_revision, 0) = 0".to_string(),
+            "source_id = ?".to_string(),
+            not_hidden_by_superseder(scope, "memories"),
+        ];
+        let mut values = vec![libsql::Value::Text(source_id.to_string())];
+        push_read_scope_filter_folded(scope, "space", &mut conditions, &mut values);
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT MAX(session_id), MIN(COALESCE(created_at, last_modified)),
+                            GROUP_CONCAT(COALESCE(authored_content, content), char(10)), COUNT(*)
+                       FROM (SELECT session_id, created_at, last_modified, authored_content, content
+                               FROM memories
+                              WHERE {}
+                              ORDER BY COALESCE(chunk_index, 0))",
+                    conditions.join(" AND ")
+                ),
+                libsql::params_from_iter(values),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("memory said anchor: {e}")))?;
+        let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("memory said anchor row: {e}")))?
+        else {
+            return Ok(None);
+        };
+        if row.get::<i64>(3).unwrap_or(0) == 0 {
+            return Ok(None);
+        }
+        let Some(session_id) = row.get::<Option<String>>(0).unwrap_or(None) else {
+            return Ok(None);
+        };
+        Ok(Some(SaidAnchor {
+            session_id,
+            saved_at: row.get::<i64>(1).unwrap_or(0),
+            text: row
+                .get::<Option<String>>(2)
+                .unwrap_or(None)
+                .unwrap_or_default(),
+        }))
     }
 
     /// `GET /api/sessions/{id}`: the session and what it wrote inside `scope`,
