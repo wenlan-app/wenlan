@@ -277,11 +277,11 @@ fn manifest_counts_match_the_spec() {
     // Research adds 22 exact HTTP routes (19 source/run/decision readers and
     // receipts, plus three Page-bearing version-export routes) and five MCP
     // tools. Declaration/handler inventory tests independently check the set.
-    // Then 307 after the four `/api/themes` routes (custom app themes; local
+    // Then 310 after the seven `/api/themes` routes (custom app themes; local
     // appearance settings, no memory or page content) and 52 tools with `theme`.
     assert_eq!(
         HTTP_READERS.len(),
-        307,
+        310,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 52, "#[tool( declarations");
@@ -292,7 +292,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        319,
+        322,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -300,7 +300,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        302,
+        305,
         "main builder entries"
     );
     assert_eq!(
@@ -483,7 +483,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        299 // Existing 273 plus 22 research workflow routes and 4 custom-theme routes, all with no page markers.
+        302 // Existing 273 plus 22 research workflow routes and 7 custom-theme routes, all with no page markers.
     );
 }
 

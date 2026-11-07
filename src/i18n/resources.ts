@@ -1,3 +1,4 @@
+import { enAppearance, hansAppearance, hantAppearance } from "../components/memory/settings/sections/appearanceCopy";
 import { enZoteroDisconnect, hansZoteroDisconnect, hantZoteroDisconnect } from "../components/memory/sources/zoteroDisconnectCopy";
 import { enResearchDispute, hansResearchDispute, hantResearchDispute } from "../components/memory/researchDisputeCopy";
 import { enSourceLifecycle, hansSourceLifecycle, hantSourceLifecycle } from "../components/memory/sources/sourceLifecycleCopy";
@@ -32,6 +33,7 @@ const en = {
   detailInfo: {"details": "Details", "additional": "Additional information", "relatedMemories": "Related memories", "relatedMemoriesHint": "Search matches that may be related, not confirmed connections."},
   memoryAutosave: {"empty": "Add some text before leaving. Your draft is still here.", "failed": "Changes could not be saved. Your draft is still here.", "conflict": "This memory changed elsewhere. Your draft is still here.", "retry": "Retry saving", "compare": "View current version", "latest": "Current version", "loadLatest": "Use current version", "discard": "Replace your unsaved draft with the current version?", "saving": "Saving…", "deleted": "This memory was deleted elsewhere.", "discardDraft": "Discard draft", "discardDeleted": "Discard this unsaved draft? Copy any text you want to keep first."},
   knowledgeCheck: enKnowledgeCheck,
+  appearance: enAppearance,
   noteReview: {
     "pending_one": "{{count}} item needs review",
     "pending_other": "{{count}} items need review",
@@ -1433,7 +1435,11 @@ const en = {
     groups: {
       general: {
         label: "General",
-        hint: "Profile, startup, and appearance",
+        hint: "Profile, startup, and language",
+      },
+      appearance: {
+        label: "Appearance",
+        hint: "Themes, colors, and images",
       },
       intelligence: {
         label: "Intelligence",
@@ -3285,6 +3291,7 @@ const zhHans = {
   detailInfo: {"details": "详细信息", "additional": "补充信息", "relatedMemories": "相关记忆", "relatedMemoriesHint": "根据搜索找到的可能相关内容，并非已确认的关联。"},
   memoryAutosave: {"empty": "请填写内容后再离开。草稿仍保留在这里。", "failed": "更改未能保存，草稿仍保留在这里。", "conflict": "这条记忆已在别处更改，草稿仍保留在这里。", "retry": "重试保存", "compare": "查看当前版本", "latest": "当前版本", "loadLatest": "使用当前版本", "discard": "要用当前版本替换尚未保存的草稿吗？", "saving": "正在保存…", "deleted": "这条记忆已在别处删除。", "discardDraft": "舍弃草稿", "discardDeleted": "要舍弃尚未保存的草稿吗？请先复制要保留的文字。"},
   knowledgeCheck: hansKnowledgeCheck,
+  appearance: hansAppearance,
   noteReview: {
     "pending_one": "有 {{count}} 项待审阅",
     "pending_other": "有 {{count}} 项待审阅",
@@ -4658,7 +4665,11 @@ const zhHans = {
     groups: {
       general: {
         label: "通用",
-        hint: "个人资料、启动和外观",
+        hint: "个人资料、启动和语言",
+      },
+      appearance: {
+        label: "外观",
+        hint: "主题、颜色和图片",
       },
       intelligence: {
         label: "智能",
@@ -6477,6 +6488,7 @@ const zhHant = {
   detailInfo: {"details": "詳細資訊", "additional": "補充資訊", "relatedMemories": "相關記憶", "relatedMemoriesHint": "依搜尋找到的可能相關內容，並非已確認的關聯。"},
   memoryAutosave: {"empty": "請填寫內容後再離開。草稿仍保留在這裡。", "failed": "更改未能儲存，草稿仍保留在這裡。", "conflict": "這則記憶已在別處更改，草稿仍保留在這裡。", "retry": "重試儲存", "compare": "查看目前版本", "latest": "目前版本", "loadLatest": "使用目前版本", "discard": "要用目前版本取代尚未儲存的草稿嗎？", "saving": "正在儲存…", "deleted": "這則記憶已在別處刪除。", "discardDraft": "捨棄草稿", "discardDeleted": "要捨棄尚未儲存的草稿嗎？請先複製要保留的文字。"},
   knowledgeCheck: hantKnowledgeCheck,
+  appearance: hantAppearance,
   noteReview: {
     "pending_one": "有 {{count}} 項待審閱",
     "pending_other": "有 {{count}} 項待審閱",
@@ -7850,7 +7862,11 @@ const zhHant = {
     groups: {
       general: {
         label: "一般",
-        hint: "個人資料、啟動和外觀",
+        hint: "個人資料、啟動和語言",
+      },
+      appearance: {
+        label: "外觀",
+        hint: "主題、顏色和圖片",
       },
       intelligence: {
         label: "智慧",

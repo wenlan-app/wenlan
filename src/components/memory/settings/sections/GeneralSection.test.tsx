@@ -145,7 +145,8 @@ async function clickRunAtLoginOnce(): Promise<HTMLElement> {
 // a `rows` Card (Photo + Display name), so scope to the card that contains
 // "Language" — unique to the App section — rather than every `.divide-y`.
 describe("GeneralSection app card merge", () => {
-  it("renders run-at-login, theme, and language inside a single rows Card", async () => {
+  // The theme picker moved to Settings > Appearance with custom themes.
+  it("renders run-at-login and language inside a single rows Card", async () => {
     renderGeneralSection();
 
     await screen.findByLabelText("Language");
@@ -157,8 +158,8 @@ describe("GeneralSection app card merge", () => {
 
     const merged = rowsCards[0];
     expect(merged.textContent).toContain("Run Wenlan in background at login");
-    expect(merged.textContent).toContain("Theme");
     expect(merged.textContent).toContain("Language");
+    expect(merged.textContent).not.toContain("Theme");
   });
 });
 

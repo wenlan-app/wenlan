@@ -2,6 +2,7 @@
 import { useSyncExternalStore } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { readPreference, writePreference } from "./preferenceStorage";
+import { applyCustomTokens, customThemeBase, onCustomThemeChange } from "./customTheme";
 
 export type Theme = "system" | "light" | "dark";
 
@@ -21,12 +22,19 @@ function resolveTheme(theme: Theme): "light" | "dark" {
     : "light";
 }
 
-/** Apply resolved theme to <html data-theme="..."> */
+/**
+ * Apply the resolved theme to <html data-theme="...">. A custom theme picks
+ * its own base (dark or light) and sets its tokens first, so whatever
+ * re-reads colors when `data-theme` changes sees the new values.
+ */
 export function applyTheme(theme?: Theme) {
   const t = theme ?? current;
-  const resolved = resolveTheme(t);
+  const resolved = customThemeBase() ?? resolveTheme(t);
+  applyCustomTokens();
   document.documentElement.setAttribute("data-theme", resolved);
 }
+
+onCustomThemeChange(() => applyTheme());
 
 export function getTheme(): Theme {
   return current;

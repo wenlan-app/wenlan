@@ -8,6 +8,10 @@
   container-type: inline-size;
 }
 
+.settings-view--wide {
+  --collection-reading-width: 1240px;
+}
+
 .settings-view-content {
   display: flex;
   min-width: 0;

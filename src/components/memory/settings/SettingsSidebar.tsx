@@ -17,10 +17,12 @@ export type SettingsSection =
   | "agents"
   | "intelligence"
   | "diagnostics"
-  | "general";
+  | "general"
+  | "appearance";
 
 type SettingsGroupLabelKey =
   | "settings.groups.general.label"
+  | "settings.groups.appearance.label"
   | "settings.groups.intelligence.label"
   | "settings.groups.diagnostics.label"
   | "settings.groups.agents.label"
@@ -28,6 +30,7 @@ type SettingsGroupLabelKey =
 
 type SettingsGroupHintKey =
   | "settings.groups.general.hint"
+  | "settings.groups.appearance.hint"
   | "settings.groups.intelligence.hint"
   | "settings.groups.diagnostics.hint"
   | "settings.groups.agents.hint"
@@ -60,6 +63,19 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3" />
         <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+      </svg>
+    ),
+  },
+  {
+    id: "appearance",
+    labelKey: "settings.groups.appearance.label",
+    hintKey: "settings.groups.appearance.hint",
+    icon: (
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 3a9 9 0 100 18c1.1 0 1.7-.9 1.7-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 004-4c0-4.4-4-8-9-8z" />
+        <circle cx="7.5" cy="11.5" r="1" />
+        <circle cx="10.5" cy="7.5" r="1" />
+        <circle cx="15.5" cy="7.5" r="1" />
       </svg>
     ),
   },

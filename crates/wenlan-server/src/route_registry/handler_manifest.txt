@@ -100,9 +100,12 @@ main|get|/api/status|wenlan_server::routes::handle_status
 main|get|/api/telemetry|wenlan_server::telemetry_routes::handle_get_telemetry
 main|put|/api/telemetry|wenlan_server::telemetry_routes::handle_update_telemetry
 main|get|/api/themes|wenlan_server::theme_routes::handle_list_themes
+main|post|/api/themes|wenlan_server::theme_routes::handle_create_theme
 main|get|/api/themes/active|wenlan_server::theme_routes::handle_get_active_theme
 main|put|/api/themes/active|wenlan_server::theme_routes::handle_set_active_theme
 main|post|/api/themes/check|wenlan_server::theme_routes::handle_check_theme
+main|get|/api/themes/{id}|wenlan_server::theme_routes::handle_get_theme
+main|put|/api/themes/{id}|wenlan_server::theme_routes::handle_save_theme
 main|get|/api/suggest-tags|wenlan_server::activity_tag_routes::handle_suggest_tags
 main|get|/api/tags|wenlan_server::activity_tag_routes::handle_list_tags
 main|get|/ws/updates|wenlan_server::websocket::handle_ws_upgrade

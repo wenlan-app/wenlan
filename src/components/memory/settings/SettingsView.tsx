@@ -4,13 +4,15 @@ import { CollectionFrame } from "../CollectionLayout";
 import { SectionHeader, Card } from "./primitives";
 import "./settingsView.css";
 
-export function SettingsView({ title, backButton, children }: {
+export function SettingsView({ title, backButton, wide, children }: {
   title: string;
   backButton?: ReactNode;
+  /** Use the full width, for a section with a side-by-side preview. */
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
-    <CollectionFrame className="settings-view settings-page">
+    <CollectionFrame className={`settings-view settings-page${wide ? " settings-view--wide" : ""}`}>
       <div className="settings-view-content">
         <header className="settings-view-heading">
           {backButton}

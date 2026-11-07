@@ -174,7 +174,9 @@ fn images_must_be_real_images_inside_the_theme_folder() {
 fn theme_ids_are_folder_safe() {
     assert!(valid_theme_id("night-bunny"));
     assert!(valid_theme_id("2026"));
-    for bad in ["", "Night", "../x", "a/b", "-x", ".hidden", "x y"] {
+    for bad in [
+        "", "active", "check", "Night", "../x", "a/b", "-x", ".hidden", "x y",
+    ] {
         assert!(!valid_theme_id(bad), "{bad}");
     }
 }
@@ -254,4 +256,69 @@ fn known_tokens_cover_every_slot_and_derived_token() {
         assert!(known.contains(token), "{token}");
         assert!(slot(slot_name).is_some(), "{slot_name}");
     }
+}
+
+#[test]
+fn new_themes_start_from_built_in_colors_and_get_free_folder_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let first = create_theme(root, "Night Bunny!", ThemeBase::Dark).unwrap();
+    assert_eq!(first.id, "night-bunny");
+    assert_eq!(first.theme.colors.len(), SLOTS.len());
+    assert_eq!(first.theme.colors["background"], "#191C24");
+    assert!(first.problems.is_empty());
+    let second = create_theme(root, "Night Bunny", ThemeBase::Light).unwrap();
+    assert_eq!(second.id, "night-bunny-2");
+    assert_eq!(second.theme.colors["background"], "#FCFCFB");
+    let unnamed_ascii = create_theme(root, "夜晚兔子", ThemeBase::Dark).unwrap();
+    assert_eq!(unnamed_ascii.id, "theme");
+    assert_eq!(unnamed_ascii.theme.name, "夜晚兔子");
+    assert!(create_theme(root, "  ", ThemeBase::Dark).is_err());
+    let listed = list_themes(root);
+    let card = listed
+        .themes
+        .iter()
+        .find(|t| t.id == "night-bunny")
+        .unwrap();
+    assert_eq!(card.swatch["background"], "#191C24");
+    assert_eq!(card.swatch.len(), 4);
+    let read = read_theme(root, "night-bunny").unwrap();
+    assert_eq!(read.theme, first.theme);
+}
+
+#[test]
+fn saving_refuses_a_failing_theme_and_keeps_the_old_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let mut detail = create_theme(root, "Paper", ThemeBase::Light).unwrap();
+    let before = std::fs::read(root.join("paper/theme.json")).unwrap();
+    detail.theme.colors.insert("text".into(), "#FCFCFB".into());
+    let problems = save_theme(root, "paper", &detail.theme).unwrap_err();
+    assert!(
+        problems.iter().any(|p| p.field.contains("text")),
+        "{problems:?}"
+    );
+    assert_eq!(
+        std::fs::read(root.join("paper/theme.json")).unwrap(),
+        before
+    );
+
+    let (problems, tokens) = check_unsaved(root, "paper", &detail.theme);
+    assert!(!problems.is_empty());
+    assert!(tokens.is_empty());
+
+    detail
+        .theme
+        .colors
+        .insert("accent".into(), "#4A3FB0".into());
+    detail.theme.colors.insert("text".into(), "#1A1A2E".into());
+    let (problems, tokens) = check_unsaved(root, "paper", &detail.theme);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(tokens["--mem-accent-indigo"], "#4A3FB0");
+    save_theme(root, "paper", &detail.theme).unwrap();
+    assert_eq!(
+        read_theme(root, "paper").unwrap().theme.colors["accent"],
+        "#4A3FB0"
+    );
+    assert!(save_theme(root, "../x", &detail.theme).is_err());
 }
