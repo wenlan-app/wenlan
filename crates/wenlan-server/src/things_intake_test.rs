@@ -91,6 +91,7 @@ fn conv(id: &str, said: &[&str], minutes_ago: i64) -> FoundConversation {
         last_at: now - minutes_ago * 60,
         automated: false,
         on_behalf: false,
+        touched: Vec::new(),
     }
 }
 
