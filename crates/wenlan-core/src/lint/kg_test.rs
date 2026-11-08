@@ -289,6 +289,48 @@ async fn ux_graph_8_archived_main_topics_are_advised_and_refiled_not_deleted() {
     );
 }
 
+/// UX-GRAPH-9: an alias a vector merge added to a topic of a different type
+/// than the mention is counted as advice, and detaching it clears the count.
+#[tokio::test]
+async fn ux_graph_9_auto_aliases_on_a_topic_of_another_type_are_advised() {
+    let (db, _tmp) = test_db().await;
+    let topic = db
+        .store_entity("Tumtum Tree Grove", "concept", None, Some("test"), None)
+        .await
+        .unwrap();
+    for alias in ["grove person", "grove concept"] {
+        db.add_entity_alias(alias, &topic, "auto").await.unwrap();
+    }
+    db.test_primary_session()
+        .await
+        .execute(
+            "INSERT INTO entity_alias_sources (entity_id, alias, source, mention_type, created_at)
+             VALUES (?1, 'grove person', 'auto', 'person', 1),
+                    (?1, 'grove concept', 'auto', 'concept', 1)",
+            libsql::params![topic.as_str()],
+        )
+        .await
+        .unwrap();
+
+    let result = check(&run(&db, None, test_config(true)).await, ADVISORY).clone();
+    assert_eq!(result.outcome(), LintOutcome::Pass);
+    assert_eq!(
+        metric(&result, LintMetricCode::KgAutoAliasTypeMismatches),
+        1,
+        "only the alias whose mention had another type is counted"
+    );
+
+    assert!(db
+        .detach_entity_alias(&topic, "grove person")
+        .await
+        .unwrap());
+    let result = check(&run(&db, None, test_config(true)).await, ADVISORY).clone();
+    assert_eq!(
+        metric(&result, LintMetricCode::KgAutoAliasTypeMismatches),
+        0
+    );
+}
+
 #[tokio::test]
 async fn full_population_is_validated_while_opaque_evidence_is_capped() {
     let (db, _tmp) = test_db().await;

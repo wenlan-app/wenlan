@@ -1135,6 +1135,8 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::evaluate_support_on` | `private` | no | no | — | — |
 | `core/db/claim_derivation.rs::load_linked_memory_chunks` | `private` | no | no | — | — |
 | `core/db/claim_derivation.rs::page_text_is_cut_off` | `private` | no | no | — | — |
+| `core/db/entity_alias_sources.rs::detach_entity_alias` | `pub` | no | no | — | — |
+| `core/db/entity_alias_sources.rs::record_auto_alias_on` | `pub(super)` | no | no | — | — |
 | `core/db/export_reads.rs::export_page_rows` | `pub(crate)` | no | no | — | — |
 | `core/db/kg_quality_diagnostics.rs::list_contradiction_observation_counts` | `pub(crate)` | no | no | — | — |
 | `core/db/kg_quality_duplicate_candidates.rs::duplicate_name_groups_for_merge_candidates` | `pub(crate)` | no | no | — | — |
@@ -1259,6 +1261,7 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::finalize_page_support` | `pub` | no | no | — | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::reconcile_supported_pages` | `pub` | no | **yes** | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::run_leased_page_linked_truth_promotion` | `pub(super)` | no | no | — | `core/db/claim_derivation.rs::derive_leased_page_claims`, `core/db/claim_derivation.rs::load_linked_memory_chunks`, `core/db/claim_derivation.rs::page_text_is_cut_off` |
+| `core/db/entity_alias_sources.rs::record_auto_alias` | `pub(super)` | no | no | — | `core/db/entity_alias_sources.rs::record_auto_alias_on` |
 | `core/db/night_links.rs::night_topics` | `pub` | no | **yes** | `server/things_intake.rs::connect_old_night_points`, `server/things_intake.rs::dream_with` | `core/db/night_links.rs::offerable_topics` |
 | `core/db/page_basis.rs::apply_card_mark` | `private` | no | no | — | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::basis_diff_in_scope` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_basis_diff` | `core/db/page_basis.rs::load_facts` |

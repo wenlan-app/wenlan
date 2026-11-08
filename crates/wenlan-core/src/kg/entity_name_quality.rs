@@ -17,9 +17,11 @@
 //!   test-fixture string. These are safe to archive in bulk.
 //! * **Review** is for names that merely *look* suspicious: bare version
 //!   strings, one- and two-character Latin names, URLs, slash-bearing names
-//!   with no strong path marker, and bare Markdown filenames. The write path
-//!   declines to create them and logs, but a bulk cleanup must not archive
-//!   them without a human looking.
+//!   with no strong path marker, bare Markdown filenames, names that look like
+//!   code (`a::b`, `config.reranker_mode`, `WENLAN_HOST`, `--nocapture`,
+//!   `#1157`, `PR #12`, `owner/repo#12`), and phrases of five or more words
+//!   (UX-GRAPH-9). The write path declines to create them and logs, but a bulk
+//!   cleanup must not archive them without a human looking.
 //!
 //! A name is **never** rejected merely for being short, containing digits,
 //! containing punctuation, or containing a dot or a slash. Those signals feed
@@ -103,6 +105,16 @@ pub enum Reason {
     /// "README.md"). Documents are often referred to by their filename, so a
     /// human decides; these must never be bulk-archived.
     DocumentFilename,
+    /// A code identifier, a command-line flag, or an issue number rather than
+    /// a name: a `::` path ("FixedSizeStrategy::MAX_CHARS"), dot-joined
+    /// lowercase identifiers with an underscore ("config.reranker_mode"), an
+    /// ALL_CAPS_WITH_UNDERSCORE constant ("WENLAN_HOST"), a leading `--` or
+    /// `#` ("--nocapture", "#1157"), "PR #12", or "owner/repo#12". Hostnames
+    /// ("relay.wenlan.app") have no underscore and are not caught.
+    LooksLikeCode,
+    /// Five or more words: a phrase or a clause ("daemon or CLI write paths"),
+    /// not the name of one thing.
+    LongPhrase,
 }
 
 impl Reason {
@@ -120,6 +132,8 @@ impl Reason {
             Reason::VeryShortName => "very_short_name",
             Reason::AmbiguousSlashes => "ambiguous_slashes",
             Reason::DocumentFilename => "document_filename",
+            Reason::LooksLikeCode => "looks_like_code",
+            Reason::LongPhrase => "long_phrase",
         }
     }
 
@@ -137,7 +151,9 @@ impl Reason {
             | Reason::BareVersion
             | Reason::VeryShortName
             | Reason::AmbiguousSlashes
-            | Reason::DocumentFilename => Tier::Review,
+            | Reason::DocumentFilename
+            | Reason::LooksLikeCode
+            | Reason::LongPhrase => Tier::Review,
         }
     }
 }
@@ -530,6 +546,98 @@ fn is_test_fixture(name: &str) -> bool {
         || FIXTURE_ANYWHERE.iter().any(|p| lower.contains(p))
 }
 
+/// "PR #12", "pr#12", "origin-mcp pr #7": the word `pr`, optional spaces,
+/// `#`, and digits. "PRs #118/#119" does not match: the `s` ends the word.
+fn has_pr_number(lower: &str) -> bool {
+    let bytes = lower.as_bytes();
+    let mut start = 0;
+    while let Some(found) = lower[start..].find("pr") {
+        let at = start + found;
+        start = at + 2;
+        if at > 0 && bytes[at - 1].is_ascii_alphanumeric() {
+            continue;
+        }
+        let rest = lower[at + 2..].trim_start();
+        if let Some(number) = rest.strip_prefix('#') {
+            if number.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// One whitespace-free token made of lowercase identifier segments joined by
+/// dots, at least one of them carrying an underscore: `config.reranker_mode`.
+/// The underscore is what separates code from a hostname (`relay.wenlan.app`,
+/// `nowledge.ai`) or a dotted product name (`llama.cpp`), none of which may
+/// contain one.
+fn is_dotted_identifier(name: &str) -> bool {
+    let segments: Vec<&str> = name.split('.').collect();
+    segments.len() >= 2
+        && segments.iter().all(|segment| {
+            segment
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        })
+        && segments.iter().any(|segment| segment.contains('_'))
+}
+
+/// `WENLAN_HOST`, `EVAL_ALLOW_WIPE`: uppercase letters, digits and
+/// underscores only, with at least two underscore-separated parts that hold a
+/// letter, so `X86_64` is not a constant.
+fn is_constant_name(name: &str) -> bool {
+    name.contains('_')
+        && name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && name
+            .split('_')
+            .filter(|part| part.chars().any(|c| c.is_ascii_uppercase()))
+            .count()
+            >= 2
+}
+
+/// A code identifier, a flag, or an issue number (UX-GRAPH-9). See
+/// [`Reason::LooksLikeCode`].
+fn looks_like_code(name: &str) -> bool {
+    if name.contains("::") {
+        return true;
+    }
+    if name.starts_with("--") || name.starts_with('#') {
+        return true;
+    }
+    let lower = name.to_lowercase();
+    if has_pr_number(&lower) {
+        return true;
+    }
+    if name.contains(char::is_whitespace) {
+        return false;
+    }
+    // owner/repo#12
+    if let Some((repo, number)) = name.rsplit_once('#') {
+        if repo.contains('/') && !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) {
+            return true;
+        }
+    }
+    is_dotted_identifier(name) || is_constant_name(name)
+}
+
+/// Five or more words. Only words with a letter or digit count, so "&" in
+/// "AuthN/AuthZ & On-Chain Identity" does not. Scripts written without spaces
+/// are never long by this count.
+fn is_long_phrase(name: &str) -> bool {
+    name.split_whitespace()
+        .filter(|word| word.chars().any(char::is_alphanumeric))
+        .count()
+        >= 5
+}
+
 /// The verdict for one name. Pure: no logging, no counters, no I/O.
 ///
 /// Order matters. URLs are checked before the path rules so a URL is reviewed
@@ -571,6 +679,12 @@ pub fn assess(name: &str) -> Verdict {
     }
     if is_document_filename(name) {
         return Verdict::Review(Reason::DocumentFilename);
+    }
+    if looks_like_code(name) {
+        return Verdict::Review(Reason::LooksLikeCode);
+    }
+    if is_long_phrase(name) {
+        return Verdict::Review(Reason::LongPhrase);
     }
     if is_very_short(name) {
         return Verdict::Review(Reason::VeryShortName);
@@ -825,6 +939,52 @@ mod tests {
         }
     }
 
+    /// UX-GRAPH-9: the November junk topics that looked like code, an issue
+    /// number, or a clause go to review, never to reject.
+    #[test]
+    fn ux_graph_9_code_shaped_names_and_long_phrases_go_to_review() {
+        let cases: &[(&str, Reason)] = &[
+            ("#1157", Reason::LooksLikeCode),
+            ("FixedSizeStrategy::MAX_CHARS", Reason::LooksLikeCode),
+            ("drift_guard::r4_test_support_test", Reason::LooksLikeCode),
+            ("config.reranker_mode", Reason::LooksLikeCode),
+            ("WENLAN_HOST", Reason::LooksLikeCode),
+            ("EVAL_ALLOW_WIPE", Reason::LooksLikeCode),
+            ("--nocapture", Reason::LooksLikeCode),
+            ("PR #12", Reason::LooksLikeCode),
+            ("pr#7", Reason::LooksLikeCode),
+            ("origin-mcp pr #7", Reason::LooksLikeCode),
+            ("7xuanlu/wenlan#12", Reason::LooksLikeCode),
+            ("daemon or CLI write paths", Reason::LongPhrase),
+            ("daemon or CLI write paths for x", Reason::LongPhrase),
+        ];
+        for (name, expected) in cases {
+            assert_eq!(
+                assess(name),
+                Verdict::Review(*expected),
+                "expected {name:?} to be sent to review as {expected}"
+            );
+            assert_eq!(expected.tier(), Tier::Review);
+        }
+        // Near misses stay accepted: a hostname, a four-word name, an
+        // architecture tag, plural PRs, and words that only end in "pr".
+        for name in [
+            "relay.wenlan.app",
+            "www.wenlan.app",
+            "space fixes",
+            "CI's fmt job",
+            "Bill & Melinda Gates Foundation",
+            "X86_64",
+            "PRs #118/#119",
+            "C#",
+            "print",
+            "sprint #3",
+            "IPR #2",
+        ] {
+            assert_eq!(assess(name), Verdict::Accept, "{name:?} must be accepted");
+        }
+    }
+
     #[test]
     fn trims_before_judging() {
         assert_eq!(reason_of("  types.rs  "), Some(Reason::SourceFilename));
@@ -839,6 +999,8 @@ mod tests {
             (Reason::TestFixture, Tier::Reject),
             (Reason::Url, Tier::Review),
             (Reason::VeryShortName, Tier::Review),
+            (Reason::LooksLikeCode, Tier::Review),
+            (Reason::LongPhrase, Tier::Review),
         ] {
             assert_eq!(reason.tier(), tier, "{reason} tier");
         }

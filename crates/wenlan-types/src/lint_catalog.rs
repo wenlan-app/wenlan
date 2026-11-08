@@ -59,6 +59,11 @@ pub enum LintMetricCode {
     KgArchivedPrimaryMemories,
     /// Memories with topic links but none to a shown topic.
     KgSourcesWithoutActiveTopic,
+    /// Aliases a vector merge added (UX-GRAPH-9) whose mention was of a
+    /// different type than the topic it was merged into: an env var that
+    /// absorbed a project, an app that absorbed a website. Advisory; a
+    /// person detaches the wrong ones.
+    KgAutoAliasTypeMismatches,
     KgServingStatus,
     KgSweepStatus,
     KgProviderReadiness,

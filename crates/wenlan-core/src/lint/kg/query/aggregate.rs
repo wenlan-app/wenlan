@@ -134,9 +134,18 @@ pub(super) async fn advisory_metrics(
                      JOIN entity_page_map epm ON epm.entity_id = s.entity_id
                      JOIN pages p ON p.id = epm.page_id
                     WHERE s.memory_id = o.memory_id
-                      AND p.kind = 'entity' AND p.status = 'active'))",
+                      AND p.kind = 'entity' AND p.status = 'active')),
+             -- UX-GRAPH-9: auto aliases still on a shown topic whose type
+             -- differs from the type the mention was extracted with.
+             (SELECT COUNT(*) FROM entity_alias_sources eas
+                JOIN entity_page_map epm ON epm.entity_id = eas.entity_id
+                JOIN pages p ON p.id = epm.page_id
+               WHERE eas.source = 'auto' AND eas.mention_type IS NOT NULL
+                 AND p.kind = 'entity' AND p.status = 'active'
+                 AND LOWER(TRIM(eas.mention_type)) <> LOWER(TRIM(COALESCE(p.entity_type, '')))
+                 AND EXISTS (SELECT 1 FROM json_each(p.aliases) a WHERE a.value = eas.alias))",
         libsql::params::Params::None,
-        2,
+        3,
     )
     .await?;
     Ok(vec![
@@ -145,6 +154,7 @@ pub(super) async fn advisory_metrics(
         metric(LintMetricCode::KgSemanticSuspicions, values[2]),
         metric(LintMetricCode::KgArchivedPrimaryMemories, filing[0]),
         metric(LintMetricCode::KgSourcesWithoutActiveTopic, filing[1]),
+        metric(LintMetricCode::KgAutoAliasTypeMismatches, filing[2]),
     ])
 }
 

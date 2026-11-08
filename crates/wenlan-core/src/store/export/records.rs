@@ -27,6 +27,8 @@
 //!   page growth) each memory has had, at which version. Their results are
 //!   in the memory, entity and page files; without this record a restore
 //!   would run every step again over every memory.
+//! - `entity_alias_sources`: which topic aliases a vector merge added and
+//!   which ones a person detached (UX-GRAPH-9).
 
 use super::settings::write_tables;
 use super::{ExportDirs, Manifest};
@@ -50,6 +52,7 @@ pub const RECORD_TABLES: &[&str] = &[
     "entailment_cache",
     "eval_signals",
     "enrichment_steps",
+    "entity_alias_sources",
 ];
 
 /// Writes one file per record table; returns how many rows they hold.
