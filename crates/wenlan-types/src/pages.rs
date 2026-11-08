@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 
 pub const PAGE_PENDING_REBUILD_MESSAGE: &str = "evidence updated, prose rebuild pending";
 
+/// Error-code prefix for an Accept or Dismiss of a page revision card that a
+/// newer proposal for the same page replaced. Nothing is applied; the newer
+/// card is the one to review. The error text is
+/// `page_revision_replaced: <plain-language reason>`.
+pub const PAGE_REVISION_REPLACED: &str = "page_revision_replaced";
+
 /// A compiled knowledge page — structured, cross-referenced, backed by source memories.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Page {

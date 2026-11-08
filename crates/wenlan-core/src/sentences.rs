@@ -194,6 +194,21 @@ pub async fn page_authorship(
     ))
 }
 
+/// Does `page` hold a sentence the person wrote, edited or accepted? A forced
+/// rebuild of such a page waits as one whole-page revision card even when no
+/// ownership flag is set. Original (imported) text and text of unknown origin
+/// do not count: the sentence gate keeps those in place and regenerates the
+/// AI's sentences around them, with no card (`sentence_gate`).
+pub(crate) async fn holds_person_sentences(
+    db: &MemoryDB,
+    page: &Page,
+) -> Result<bool, WenlanError> {
+    Ok(page_authorship(db, page)
+        .await?
+        .iter()
+        .any(|row| row.author == SentenceAuthor::Person))
+}
+
 /// The machine-write gate. The plan is `None` when the write lands as
 /// written: nothing the person owns is touched. The flag says the page holds protected sentences at all, which a
 /// forced rebuild uses to keep the page marked as the person's.
@@ -225,10 +240,15 @@ pub(crate) async fn sentence_gate(
             .zip(&reasons)
             .filter_map(|(unit, reason)| Some((unit.hash.as_str(), (*reason)?)))
             .collect();
-        plan.proposals.retain_mut(|proposal| {
-            proposal.reason = by_hash.get(proposal.sentence_hash.as_str()).copied();
-            proposal.reason.is_some()
-        });
+        let (proposals, dropped) = std::mem::take(&mut plan.proposals)
+            .into_iter()
+            .map(|mut proposal| {
+                proposal.reason = by_hash.get(proposal.sentence_hash.as_str()).copied();
+                proposal
+            })
+            .partition(|proposal| proposal.reason.is_some());
+        plan.proposals = proposals;
+        plan.dropped = dropped;
     }
     Ok((plan, !owned.is_empty()))
 }
@@ -351,9 +371,40 @@ fn proposals_from(entries: &[HistoryEntry], page_id: &str) -> Vec<SentencePropos
         .collect()
 }
 
+/// What staging a gate plan did: the proposals it added, and every change the
+/// write wanted that did not land, for the caller to report.
+pub(crate) struct StagedGate {
+    pub ids: Vec<String>,
+    pub not_applied: Vec<wenlan_types::responses::EditNotApplied>,
+}
+
+/// Every change of `plan` that did not land, before anything is staged: the
+/// proposals carry no id yet. Used when staging them failed.
+pub(crate) fn gate_not_applied(plan: &GatePlan) -> Vec<wenlan_types::responses::EditNotApplied> {
+    plan.proposals
+        .iter()
+        .chain(&plan.dropped)
+        .map(|proposal| not_applied(proposal, None))
+        .collect()
+}
+
+fn not_applied(
+    proposal: &authorship::PlannedProposal,
+    proposal_id: Option<String>,
+) -> wenlan_types::responses::EditNotApplied {
+    wenlan_types::responses::EditNotApplied {
+        sentence_hash: proposal.sentence_hash.clone(),
+        before: proposal.before.clone(),
+        after: proposal.after.clone(),
+        proposal_id,
+    }
+}
+
 /// Stage the proposals of a gate plan against the version they now apply to:
 /// the kept sentences are unchanged in it. A pending proposal with the same
-/// sentence and text is not staged twice. Returns the proposal ids.
+/// sentence and text is not staged twice; the report names the one already
+/// waiting. Returns the new proposal ids and the report of every change that
+/// did not land, the dropped rewordings included.
 pub(crate) async fn stage_gate_proposals(
     db: &MemoryDB,
     page_id: &str,
@@ -361,12 +412,12 @@ pub(crate) async fn stage_gate_proposals(
     plan: &GatePlan,
     edited_by: &str,
     agent: Option<&str>,
-) -> Result<Vec<String>, WenlanError> {
+) -> Result<StagedGate, WenlanError> {
     let existing = proposals_from(&db.list_sentence_history("page", page_id).await?, page_id);
-    let pending: HashSet<(&str, &str)> = existing
+    let pending: HashMap<(&str, &str), &str> = existing
         .iter()
         .filter(|p| p.status == SentenceProposalStatus::Pending)
-        .map(|p| (p.sentence_hash.as_str(), p.after.as_str()))
+        .map(|p| ((p.sentence_hash.as_str(), p.after.as_str()), p.id.as_str()))
         .collect();
     let actor = HistoryActor {
         kind: ActorKind::Ai,
@@ -376,8 +427,12 @@ pub(crate) async fn stage_gate_proposals(
     };
     let tx = format!("tx_{}", uuid::Uuid::new_v4().simple());
     let mut ids = Vec::new();
+    let mut report = Vec::new();
     for proposal in &plan.proposals {
-        if pending.contains(&(proposal.sentence_hash.as_str(), proposal.after.as_str())) {
+        if let Some(waiting) =
+            pending.get(&(proposal.sentence_hash.as_str(), proposal.after.as_str()))
+        {
+            report.push(not_applied(proposal, Some((*waiting).to_string())));
             continue;
         }
         let id = format!("sp_{}", uuid::Uuid::new_v4().simple());
@@ -395,9 +450,18 @@ pub(crate) async fn stage_gate_proposals(
             proposal.reason,
         )
         .await?;
+        report.push(not_applied(proposal, Some(id.clone())));
         ids.push(id);
     }
-    Ok(ids)
+    report.extend(
+        plan.dropped
+            .iter()
+            .map(|proposal| not_applied(proposal, None)),
+    );
+    Ok(StagedGate {
+        ids,
+        not_applied: report,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

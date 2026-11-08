@@ -7,15 +7,17 @@
 //! them as HTTP and decides who may call what. Reads and rechecks answer only
 //! for a page the caller can see in its Space and under its truth grant; any
 //! other page reads as absent. Accepting, rejecting and flagging are the
-//! person's, and so is undoing an AI write: an agent (a request with
-//! `x-agent-name`) is refused, as it is for
-//! accepting a vault note proposal. Proposing is what an agent does instead
-//! of rewriting the person's sentence.
+//! person's, and so is undoing an AI write: only the app's marked person
+//! request may make them (`memory_routes::caller_is_person`); an agent, or
+//! any request without the marker, is refused, as it is for accepting a
+//! whole-page revision card. Proposing is what an agent does instead of
+//! rewriting the person's sentence.
 //!
 //! The HTTP contract is pinned in `tests/sentence_route_contracts.rs`.
 //!
 //! All of it is additive to the whole-page revision cards
-//! (`/api/memory/revision/{id}/accept`), which keep working as before.
+//! (`/api/memory/revision/{id}/accept`), which only the app's marked
+//! person request may accept (`memory_routes::require_person_to_accept`).
 
 use std::sync::Arc;
 
@@ -90,9 +92,10 @@ async fn require_visible_page(
     }
 }
 
-/// Accept, reject and 「不對」 are the person's decisions.
+/// Accept, reject and 「不對」 are the person's decisions: only a request
+/// carrying the app's person marker and no agent name makes them (UX-WHO-2).
 fn require_person(headers: &HeaderMap) -> Result<(), ServerError> {
-    if extract_agent_name(headers, None) != "unknown" {
+    if !crate::memory_routes::caller_is_person(headers) {
         return Err(ServerError::ValidationError(
             "sentence_needs_the_person: only the person can decide on their sentences".into(),
         ));

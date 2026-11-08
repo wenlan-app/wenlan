@@ -1,14 +1,15 @@
 ---
 name: curate
 description: >
-  Power-user audit of Wenlan's pending surfaces: accept or dismiss pending
-  revisions (conflicts/merges), or audit pending captures (not yet confirmed).
+  Power-user audit of Wenlan's pending surfaces: show pending revisions
+  (conflicts/merges) for the person to accept in the Wenlan app, dismiss the
+  ones they turn down, or audit pending captures (not yet confirmed).
   Most users want `/brief` for revisions; that handles the daily flow. Use
   `/wenlan curate` only for explicit deep-walk audits after bulk imports, or to walk
   the full queue rather than the top 3 shown in /brief.
   Invoked as `/wenlan curate captures`, `/wenlan curate revisions`, or `/wenlan curate refinements`.
 argument-hint: "captures | revisions | refinements"
-allowed-tools: ["Bash", "AskUserQuestion", "mcp__plugin_wenlan_wenlan__list_pending", "mcp__plugin_wenlan_wenlan__confirm_memory", "mcp__plugin_wenlan_wenlan__forget", "mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__list_refinements", "mcp__plugin_wenlan_wenlan__accept_refinement", "mcp__plugin_wenlan_wenlan__reject_refinement"]
+allowed-tools: ["Bash", "AskUserQuestion", "mcp__plugin_wenlan_wenlan__list_pending", "mcp__plugin_wenlan_wenlan__confirm_memory", "mcp__plugin_wenlan_wenlan__forget", "mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__list_refinements", "mcp__plugin_wenlan_wenlan__reject_refinement"]
 user-invocable: false
 ---
 
@@ -16,11 +17,17 @@ user-invocable: false
 
 Power-user audit lever. Most users do not need /wenlan curate in daily flow:
 
-- **Pending revisions** surface in `/brief` automatically (top 3 with inline accept/dismiss).
+- **Pending revisions** surface in `/brief` automatically (top 3; the person accepts them in the Wenlan app).
 - **Pending captures from this session** surface in `/handoff`'s preview block (top 3).
 - **Orphan wikilinks** can be inspected while steep processes a requested knowledge arrangement; they are not pending revisions.
 
 Use /wenlan curate only when you want the deep walk those skills intentionally do not force.
+
+**Only the person accepts a card, in the Wenlan app.** A pending revision or a
+review proposal is a card. You never accept one: the daemon refuses an accept
+from any AI tool, and so does the `wenlan` CLI. Show the cards, tell
+the person they wait in the app, and dismiss or reject one only when the person
+says so.
 
 **Captures are meant to decay.** A capture lands pending (not yet confirmed) and, if nothing
 ever conflicts with it, it quietly fades — that is by design, not a backlog you owe the
@@ -62,7 +69,7 @@ That prints a JSON array; each element is ONE logical revision (the CLI already
 groups the per-chunk rows and joins their text, so you never see a mid-sentence
 fragment):
 
-- `revision_source_id` — the staged revision; the **action key** for accept/dismiss.
+- `revision_source_id` — the staged revision; the **action key** for dismiss.
   Keying on this (not the target) means the *named* revision is acted on even when
   several compete for one memory.
 - `target_source_id` — the memory this revision would replace (context only).
@@ -81,24 +88,23 @@ makes the picker feel slow (each retry is a model turn) and is failure-prone
 (quoting, sandboxed temp paths); the model reads JSON natively, so go from CLI
 output to card directly.
 
-**Show the diff so the user isn't approving blind.** Put `diff` verbatim into the
-`preview` field of the **Accept** option — `AskUserQuestion` renders `preview` in a
+**Show the diff so the user isn't deciding blind.** Put `diff` verbatim into the
+`preview` field of the **Leave for the app** option — `AskUserQuestion` renders `preview` in a
 monospace box and switches to a side-by-side layout, so it reads like a git diff.
 If `diff` is `null`, omit the preview and keep `content` as the question. Don't
 reformat the diff — it's already card-ready and length-bounded for the picker.
 
 Walk it as native cards (≤4 per card). Per revision, options:
 
-- **Accept** → the revision replaces the original memory. (carries the `diff` preview)
+- **Leave for the app** → nothing: it keeps waiting in the Wenlan app, where the
+  person accepts it. (carries the `diff` preview)
 - **Dismiss** → it was NOT an edit: unstage the false revision link and keep BOTH
   memories as independent rows. (Non-destructive — nothing is deleted. To delete a
   genuinely unwanted capture, use `/wenlan curate captures` → Reject.)
-- **Skip** → nothing.
 
-After the card returns, apply the picks in ONE Bash call (skips run nothing):
+After the card returns, apply the picks in ONE Bash call (Leave for the app runs nothing):
 
 ```
-"$W" curate accept <revision_source_id>      # for each Accept
 "$W" curate dismiss <revision_source_id>     # for each Dismiss
 ```
 
@@ -137,13 +143,12 @@ items. Include each proposal id, action, confidence, and bounded payload
 summary. The action set includes `vocab_promote`, so vocabulary promotion
 candidates stay discoverable.
 
-Perform no mutation until the user gives an unambiguous item-level accept or
-reject decision. Use native cards with one question per proposal:
+Only the person accepts a proposal, in the Wenlan app. Perform no mutation
+until the user gives an unambiguous item-level reject decision. Use native
+cards with one question per proposal:
 
-- **Accept** → `mcp__plugin_wenlan_wenlan__accept_refinement(id="<proposal-id>")`
-  (also pass `space` when accepting `cross_space_discovery`).
+- **Leave for the app** → nothing: the person accepts it in the Wenlan app.
 - **Reject** → `mcp__plugin_wenlan_wenlan__reject_refinement(id="<proposal-id>")`.
-- **Skip** → nothing.
 
 Skip or cancel is a no-op. A generic accept does not apply
 `lint_repair_review`; route that action through `/wenlan lint repair` instead. Apply
@@ -166,5 +171,5 @@ batch.
 
 ## Cost
 
-Read-only until the user picks an action in a card. Revisions go through the
+Read-only until the user picks dismiss or reject in a card. Revisions go through the
 local `wenlan` CLI (daemon round-trip ~milliseconds, no LLM). Cheap.

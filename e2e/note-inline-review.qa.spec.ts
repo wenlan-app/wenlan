@@ -14,7 +14,7 @@ async function start(page:Page,mode='pending',locale:'en'|'zh-Hant'|'zh-Hans'='e
  const runtime=await installTauriMock(page,{locale,rawActions:[],fixture,localStorage:{'wenlan-theme':theme},failures:mode==='partial-error'?[{command:'list_refinements',message:'offline',times:1}]:mode==='error'?[{command:'list_pending_revisions',message:'offline',times:1}]:[]});
  await page.addInitScript(()=>{const orig=window.__wenlanTauriInvoke;const resolved=new Set<string>();(window as any).__reviewWrites=[];window.__wenlanTauriInvoke=async(command,args)=>{
   if(command==='dismiss_pending_revision'||command==='accept_pending_revision'){const id=(args as any).sourceId;(window as any).__reviewWrites.push({command,id});resolved.add(id);return {target_source_id:id,revision_source_id:'revision-current',wrote:true};}
-  const result=await orig(command,args);if(command==='list_pending_revisions'&&Array.isArray(result))return result.filter(v=>!resolved.has(v.target_source_id)).slice(0,(args as any)?.limit??50);return result;
+  const result=await orig(command,args);if(command==='list_pending_revisions'&&Array.isArray(result))return result.filter(v=>!resolved.has(v.target_source_id)&&!resolved.has(v.revision_source_id)).slice(0,(args as any)?.limit??50);return result;
  };});
  await page.goto('/');await openWikiNote(page,'Fixture architecture');await expect(group(page).locator('.cm-content[role=textbox]')).toBeVisible();await page.evaluate(()=>document.fonts.ready);return {runtime,errors,tr:resources[locale].translation};
 }

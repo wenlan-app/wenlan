@@ -63,12 +63,14 @@ const get = (p: string, headers?: Record<string, string>) => http("GET", p, unde
 const post = (p: string, b: unknown = {}, headers?: Record<string, string>) => http("POST", p, b, headers);
 const put = (p: string, b: unknown = {}) => http("PUT", p, b);
 const del = (p: string) => http("DELETE", p);
-// The marker app/src/api.rs sends on the person's own delete and archive
-// gestures (`wenlan_types::requests::CALLER_HEADER`). Without it the daemon
-// treats the caller as an AI tool: it archives instead of deleting, and
-// refuses to remove a page the person wrote.
+// The marker app/src/api.rs sends on the person's own gestures: deleting and
+// archiving, accepting a revision card, answering a sentence or map proposal,
+// and correcting a thing (`wenlan_types::requests::CALLER_HEADER`). Without it
+// the daemon treats the caller as an AI tool: it archives instead of deleting,
+// refuses to remove a page the person wrote, and refuses those answers.
 const AS_PERSON = { "x-wenlan-caller": "person" };
-const patch = (p: string, b: unknown = {}) => http("PATCH", p, b);
+const patch = (p: string, b: unknown = {}, headers?: Record<string, string>) =>
+  http("PATCH", p, b, headers);
 
 // M5 truth axes: the same two-header marker app/src/api.rs attaches on its
 // `*_explicit_browse` client methods. Only ever pass this to a route the
@@ -844,17 +846,17 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     put(`/api/pages/${enc(a.pageId)}/review-required`, { required: a.required }),
   get_page_sentences: (a) => get(`/api/pages/${enc(a.pageId)}/sentences`),
   accept_sentence_proposal: (a) =>
-    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/accept`, {}),
+    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/accept`, {}, AS_PERSON),
   reject_sentence_proposal: (a) =>
-    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/reject`, {}),
+    post(`/api/pages/${enc(a.pageId)}/sentences/proposals/${enc(a.proposalId)}/reject`, {}, AS_PERSON),
   revert_page_sentences: (a) =>
-    post(`/api/pages/${enc(a.pageId)}/sentences/revert`, { version: a.version }),
+    post(`/api/pages/${enc(a.pageId)}/sentences/revert`, { version: a.version }, AS_PERSON),
   flag_page_sentence: (a) =>
     post(`/api/pages/${enc(a.pageId)}/sentences/flag`, {
       sentence_hash: a.sentenceHash,
       ...(a.askAi ? { ask_ai: true } : {}),
       ...(a.why ? { why: a.why } : {}),
-    }),
+    }, AS_PERSON),
   recheck_page_sentence: (a) =>
     post(`/api/pages/${enc(a.pageId)}/sentences/recheck`, { sentence_hash: a.sentenceHash }),
   get_source_annotation: (a) => get(`/api/source-annotations${qs({
@@ -1257,23 +1259,26 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       .then((r) => r?.hits ?? []).catch(() => []),
   get_conversation_lines: (a) => get(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/lines`),
   get_memory_said: (a) => get(`/api/memories/${enc(String(a?.sourceId ?? ""))}/said`),
-  rename_thing: (a) => patch(`/api/things/${enc(String(a?.id ?? ""))}`, { title: a?.title }),
-  hide_thing: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/hide`, {}),
+  rename_thing: (a) =>
+    patch(`/api/things/${enc(String(a?.id ?? ""))}`, { title: a?.title }, AS_PERSON),
+  hide_thing: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/hide`, {}, AS_PERSON),
   answer_thing_merge: (a) =>
     post(`/api/things/${enc(String(a?.id ?? ""))}/${a?.merge ? "merge" : "keep-apart"}`, {
       other_thing_id: a?.otherId,
-    }),
-  undo_thing_dream: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/dream/undo`, {}),
-  undo_nights: (a) => post("/api/things/nights/undo", { since: Number(a?.since ?? 0) }),
+    }, AS_PERSON),
+  undo_thing_dream: (a) =>
+    post(`/api/things/${enc(String(a?.id ?? ""))}/dream/undo`, {}, AS_PERSON),
+  undo_nights: (a) =>
+    post("/api/things/nights/undo", { since: Number(a?.since ?? 0) }, AS_PERSON),
   answer_thing_map_proposal: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/map/ops`, {
     expected_revision: Number(a?.revision ?? 0),
     ops: [{ op: a?.accept ? "accept" : "reject", proposal_id: String(a?.proposalId ?? "") }],
-  }),
+  }, AS_PERSON),
   move_session_thing: (a) => post(`/api/sessions/${enc(String(a?.sessionId ?? ""))}/things/move`, {
     from_thing_id: a?.fromThingId,
     ...(a?.toThingId == null ? {} : { to_thing_id: a.toThingId }),
     ...(a?.newTitle == null ? {} : { new_title: a.newTitle }),
-  }),
+  }, AS_PERSON),
   // A Space bound to a git repository. The daemon runs git and gh itself, so
   // the preview passes these straight through.
   get_repo_wiki: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`),
@@ -1347,7 +1352,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // Review-only pass: POST /api/distill with an empty body never creates pages.
   distill_review: () => post("/api/distill", {}),
   list_new_material: () => get("/api/steep/new?limit=200"),
-  accept_pending_revision: (a) => http("POST", `/api/memory/revision/${enc(a.sourceId)}/accept`, a.edit),
+  accept_pending_revision: (a) =>
+    http("POST", `/api/memory/revision/${enc(a.sourceId)}/accept`, a.edit, AS_PERSON),
   dismiss_pending_revision: (a) => post(`/api/memory/revision/${enc(a.sourceId)}/dismiss`),
   accept_refinement: (a) => post(`/api/refinery/queue/${enc(a.id)}/accept`),
   reject_refinement: (a) => post(`/api/refinery/queue/${enc(a.id)}/reject`),

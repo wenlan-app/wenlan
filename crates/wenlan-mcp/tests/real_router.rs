@@ -20,7 +20,7 @@ use wenlan_mcp::{
         TransportMode, WenlanMcpServer, WritePageParams,
     },
 };
-use wenlan_types::{RawDocument, RevisionAcceptResponse, RevisionDismissResponse};
+use wenlan_types::{RawDocument, RevisionDismissResponse};
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -126,8 +126,10 @@ async fn activity_count(db: &MemoryDB, action: &str, agent: &str) -> usize {
 
 // ── tests ──────────────────────────────────────────────────────────────────
 
+/// UX-WHO-2: an AI tool cannot accept a card. Against the real router the
+/// revision stays pending and nothing is recorded as accepted.
 #[tokio::test]
-async fn accept_revision_aligns_with_real_router() {
+async fn ux_who_2_accept_revision_leaves_the_card_waiting_for_the_person() {
     let (base_url, db) = boot_test_server().await;
     seed_pending_revision(&db, "mem_real_acc", "mem_real_acc_rev").await;
 
@@ -139,14 +141,18 @@ async fn accept_revision_aligns_with_real_router() {
         .await
         .unwrap();
 
-    let body = text_of(&result);
-    let parsed: RevisionAcceptResponse = serde_json::from_str(&body).unwrap();
-    assert_eq!(parsed.target_source_id, "mem_real_acc");
-    assert_eq!(parsed.revision_source_id, "mem_real_acc_rev");
-
+    assert_eq!(result.is_error, Some(true));
+    assert!(text_of(&result).contains("only the person can accept"));
+    let pending = db.list_pending_revisions(50).await.unwrap();
+    assert!(
+        pending
+            .iter()
+            .any(|item| item.revision_source_id == "mem_real_acc_rev"),
+        "the revision must still wait for the person: {pending:?}"
+    );
     assert_eq!(
         activity_count(&db, "revision_accept", "test-agent").await,
-        1
+        0
     );
 }
 

@@ -5,12 +5,14 @@
 //!   - missing ids return HTTP 404 (Shape A/B/C)
 //!   - re-call returns HTTP 404 (row consumed after first approve/dismiss)
 //!   - x-agent-name header threads into agent_activity rows
+//!   - only the person (the app marked request) can accept a revision
 
 mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
+use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
 use wenlan_types::{ContradictionDismissResponse, RevisionAcceptResponse, RevisionDismissResponse};
 
 async fn body_as_json<T: serde::de::DeserializeOwned>(response: axum::http::Response<Body>) -> T {
@@ -67,7 +69,7 @@ async fn accept_revision_succeeds_and_returns_typed_response() {
             Request::builder()
                 .method("POST")
                 .uri("/api/memory/revision/mem_ar1_target/accept")
-                .header("x-agent-name", "test-agent")
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -91,7 +93,7 @@ async fn accept_revision_accepts_revision_source_id() {
             Request::builder()
                 .method("POST")
                 .uri("/api/memory/revision/mem_ar_rev_id_rev/accept")
-                .header("x-agent-name", "test-agent")
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -113,7 +115,7 @@ async fn accept_revision_returns_404_on_missing_target() {
             Request::builder()
                 .method("POST")
                 .uri("/api/memory/revision/mem_missing/accept")
-                .header("x-agent-name", "test-agent")
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -133,7 +135,7 @@ async fn accept_revision_returns_404_on_re_call() {
             Request::builder()
                 .method("POST")
                 .uri("/api/memory/revision/mem_ar2_target/accept")
-                .header("x-agent-name", "test-agent")
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -146,7 +148,7 @@ async fn accept_revision_returns_404_on_re_call() {
             Request::builder()
                 .method("POST")
                 .uri("/api/memory/revision/mem_ar2_target/accept")
-                .header("x-agent-name", "test-agent")
+                .header(CALLER_HEADER, PERSON_CALLER_VALUE)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -155,24 +157,65 @@ async fn accept_revision_returns_404_on_re_call() {
     assert_eq!(second.status(), StatusCode::NOT_FOUND);
 }
 
+/// UX-WHO-2: only the person accepts a card. Any request that names an AI
+/// agent, or does not carry the app's person marker, is refused with
+/// `card_needs_the_person`; the card stays waiting and nothing is logged.
+/// The app's marked request accepts it.
 #[tokio::test]
-async fn accept_revision_threads_x_agent_name() {
+async fn ux_who_2_an_ai_caller_cannot_accept_a_revision_the_app_can() {
     let (router, _tmp, db) = common::test_app().await;
     seed_pending_revision_in_test_app(&db, "mem_ar3_target", "mem_ar3_rev").await;
-    router
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/memory/revision/mem_ar3_target/accept")
-                .header("x-agent-name", "openai-test")
-                .body(Body::empty())
-                .unwrap(),
-        )
+    let accept = |headers: &[(&str, &str)]| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/api/memory/revision/mem_ar3_target/accept");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+    for headers in [
+        vec![("x-agent-name", "openai-test")],
+        vec![],
+        vec![
+            (CALLER_HEADER, PERSON_CALLER_VALUE),
+            ("x-agent-name", "openai-test"),
+        ],
+        vec![(CALLER_HEADER, "agent")],
+    ] {
+        let response = router.clone().oneshot(accept(&headers)).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{headers:?}"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(
+            body.contains("card_needs_the_person"),
+            "{headers:?}: {body}"
+        );
+        assert_eq!(
+            db.list_pending_revisions(10).await.unwrap().len(),
+            1,
+            "{headers:?}"
+        );
+    }
+    assert_eq!(
+        common::count_activity_for_action_and_agent(&db, "revision_accept", "openai-test").await,
+        0
+    );
+
+    let response = router
+        .oneshot(accept(&[(CALLER_HEADER, PERSON_CALLER_VALUE)]))
         .await
         .unwrap();
-    let count =
-        common::count_activity_for_action_and_agent(&db, "revision_accept", "openai-test").await;
-    assert_eq!(count, 1);
+    assert_eq!(response.status(), StatusCode::OK);
+    let parsed: RevisionAcceptResponse = body_as_json(response).await;
+    assert_eq!(parsed.target_source_id, "mem_ar3_target");
+    assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
 }
 
 // ── dismiss_pending_revision HTTP tests ─────────────────────────────────────

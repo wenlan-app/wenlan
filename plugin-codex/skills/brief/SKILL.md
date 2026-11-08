@@ -5,7 +5,7 @@ description: >
   topic, appends separately labeled related context from the same Space.
   Invoked as `/brief [topic]` when resuming work or asking to catch up.
 argument-hint: "[topic]"
-allowed-tools: ["Bash", "mcp__wenlan__brief", "mcp__wenlan__list_pending_revisions", "mcp__wenlan__accept_revision", "mcp__wenlan__dismiss_revision"]
+allowed-tools: ["Bash", "mcp__wenlan__brief", "mcp__wenlan__list_pending_revisions", "mcp__wenlan__dismiss_revision"]
 user-invocable: true
 ---
 
@@ -71,11 +71,10 @@ mcp__wenlan__list_pending_revisions(limit=10)
 
 If empty, say nothing. If the call fails, emit one warning and keep the Brief.
 If non-empty, show at most the top three with `target_source_id`,
-`revision_content`, and source agent. Never auto-action them.
+`revision_content`, and source agent. Never auto-action them. Only the person
+accepts a revision, in the Wenlan app: say they wait there. You never accept one.
 
-- accept:
-  `mcp__wenlan__accept_revision(target_source_id="<id>")`
-- dismiss:
+- dismiss, when the person turns one down:
   `mcp__wenlan__dismiss_revision(target_source_id="<id>")`
 - skip: no call
 

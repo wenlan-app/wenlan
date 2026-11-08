@@ -666,7 +666,7 @@ impl MemoryDB {
 /// The body a pending page card stores, resolved as
 /// `pending_memory_revision_payload` resolves it for an accept: chunk zero's
 /// `content`, or the whole staged body when the card spans several rows.
-async fn staged_card_body_on(
+pub(super) async fn staged_card_body_on(
     conn: &libsql::Connection,
     card_id: &str,
 ) -> Result<Option<String>, WenlanError> {
