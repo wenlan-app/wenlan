@@ -13007,6 +13007,28 @@ mod tests {
     }
 
     #[test]
+    fn ux_art_4_the_ai_keeps_a_diagram_of_the_work_without_being_asked() {
+        let server = make_server(TransportMode::Stdio, "test", None);
+        let tools = server.visible_tools();
+        let keep = tools
+            .iter()
+            .find(|tool| tool.name == "keep_original")
+            .and_then(|tool| tool.description.as_deref())
+            .expect("keep_original is visible over stdio");
+        for words in [
+            "unasked when it shows how the work is structured",
+            "the user builds on it",
+            "skip throwaway sketches",
+            "a text drawing in your reply",
+        ] {
+            assert!(
+                keep.contains(words),
+                "keep_original description lost {words:?}"
+            );
+        }
+    }
+
+    #[test]
     fn visible_tool_descriptions_stay_within_budget() {
         let total: usize = make_server(TransportMode::Stdio, "test", None)
             .visible_tools()
