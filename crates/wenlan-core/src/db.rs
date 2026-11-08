@@ -61415,6 +61415,34 @@ impl MemoryDB {
         }
     }
 
+    /// Records who wrote a page's `version` in its changelog when the write
+    /// itself kept none (a page created here from another member's shared
+    /// version), so the page's "last edited by" names them. Only while the
+    /// page is still at that version; returns whether it was recorded.
+    pub async fn record_page_writer(
+        &self,
+        page_id: &str,
+        version: i64,
+        edited_by: &str,
+    ) -> Result<bool, WenlanError> {
+        let existing = self.get_page_changelog(page_id).await?;
+        let entry = serde_json::json!({
+            "version": version,
+            "at": chrono::Utc::now().timestamp(),
+            "edited_by": edited_by,
+        });
+        let changelog = append_changelog_entry(&existing, entry, 20)?;
+        let conn = self.conn.lock().await;
+        let affected = conn
+            .execute(
+                "UPDATE pages SET changelog = ?1 WHERE id = ?2 AND version = ?3",
+                libsql::params![changelog, page_id, version],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("record_page_writer: {e}")))?;
+        Ok(affected > 0)
+    }
+
     /// Update a memory's content in-place for topic-key upsert.
     ///
     /// Workflow:

@@ -695,6 +695,11 @@ async fn another_members_sentences_are_kept_from_this_ai_but_not_from_this_perso
         b.history(&id).await[0].edited_by,
         format!("shared_ai:{}", a.member_id())
     );
+    // The page's rows name who wrote it, from the first version on.
+    assert_eq!(
+        b.page(&id).await.unwrap().last_edited_by,
+        Some(format!("shared_ai:{}", a.member_id()))
+    );
     a.edit(&id, "The venue is the old mill. We booked it for June.")
         .await;
     a.sync(&folder).await;

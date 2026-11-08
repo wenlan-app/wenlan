@@ -1330,6 +1330,9 @@ impl Pass<'_> {
         }
         // A page made under another title is shared under it next pass.
         let page = self.reload(id).await?;
+        // A create keeps no changelog; record the member so the page's rows
+        // say who wrote it.
+        self.db.record_page_writer(id, page.version, &agent).await?;
         Ok(Some(if title == head.page.title {
             page.version
         } else {
