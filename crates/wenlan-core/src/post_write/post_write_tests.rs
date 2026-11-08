@@ -6951,12 +6951,14 @@ async fn create_entity_minhash_merges_abbreviation() {
             !second.wrote,
             "resolved-existing must not write a new entity"
         );
-        // A "minhash" alias must have been recorded for the second name.
-        let resolved = db
-            .resolve_entity_by_alias(&"Vorpalblade Jabberwock Ino".to_lowercase())
-            .await
-            .unwrap();
-        assert_eq!(resolved, Some(first.id));
+        // UX-GRAPH-9: the alias the minhash step added is recorded as auto,
+        // like a vector merge's, so it is on the topic but not an exact match.
+        let alias = "Vorpalblade Jabberwock Ino".to_lowercase();
+        assert_eq!(
+            db.entity_alias_source(&first.id, &alias).await.unwrap(),
+            Some("auto".to_string())
+        );
+        assert_eq!(db.resolve_entity_by_alias(&alias).await.unwrap(), None);
     })
     .await;
 }

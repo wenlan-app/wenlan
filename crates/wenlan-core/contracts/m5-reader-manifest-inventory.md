@@ -1261,7 +1261,7 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::finalize_page_support` | `pub` | no | no | — | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::reconcile_supported_pages` | `pub` | no | **yes** | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::run_leased_page_linked_truth_promotion` | `pub(super)` | no | no | — | `core/db/claim_derivation.rs::derive_leased_page_claims`, `core/db/claim_derivation.rs::load_linked_memory_chunks`, `core/db/claim_derivation.rs::page_text_is_cut_off` |
-| `core/db/entity_alias_sources.rs::record_auto_alias` | `pub(super)` | no | no | — | `core/db/entity_alias_sources.rs::record_auto_alias_on` |
+| `core/db/entity_alias_sources.rs::add_auto_alias` | `pub(super)` | no | no | — | `core/db/entity_alias_sources.rs::record_auto_alias_on` |
 | `core/db/night_links.rs::night_topics` | `pub` | no | **yes** | `server/things_intake.rs::connect_old_night_points`, `server/things_intake.rs::dream_with` | `core/db/night_links.rs::offerable_topics` |
 | `core/db/page_basis.rs::apply_card_mark` | `private` | no | no | — | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::basis_diff_in_scope` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_basis_diff` | `core/db/page_basis.rs::load_facts` |
@@ -1408,6 +1408,7 @@ carrying the authority of agreement.
 | `core/db/citation_provenance.rs::set_source_lifecycle` | `pub` | no | **yes** | `server/source_lifecycle_routes.rs::write` | `core/db/citation_provenance.rs::capture_kind_on` |
 | `core/db/claim_derivation.rs::publish_and_finish_promotion` | `private` | no | no | — | `core/db/claim_derivation.rs::evaluate_page_support`, `core/db/claim_derivation.rs::finalize_page_support` |
 | `core/db/claim_derivation.rs::run_page_linked_truth_promotion_turn` | `pub` | no | **yes** | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/claim_derivation.rs::run_leased_page_linked_truth_promotion` |
+| `core/db/entity_alias_sources.rs::add_auto_alias_logged` | `pub(super)` | no | no | — | `core/db/entity_alias_sources.rs::add_auto_alias` |
 | `core/db/okf_concepts.rs::refresh_okf_concept_linkers` | `pub` | no | **yes** | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `core/db.rs::get_page` |
 | `core/db/page_basis.rs::apply_basis_write_on_conn` | `pub(super)` | no | no | — | `core/db/page_basis.rs::apply_card_mark`, `core/db/page_basis.rs::confirm_page_basis_on_conn`, `core/db/page_basis.rs::confirm_snapshot_entry_on_conn`, `core/db/page_basis.rs::mark_page_basis_on_conn` |
 | `core/db/page_basis.rs::basis_diff` | `pub` | no | no | — | `core/db/page_basis.rs::basis_diff_in_scope` |

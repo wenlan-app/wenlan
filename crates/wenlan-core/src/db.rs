@@ -37355,10 +37355,13 @@ impl MemoryDB {
         // Step 2.5: deterministic MinHash/LSH near-dedup (T16, opt-in).
         if crate::db::entity_minhash_enabled() {
             if let Some(cand_id) = self.minhash_resolve_candidate(name, entity_type).await? {
-                let _ = self
-                    .add_entity_alias(&name_lower, &cand_id, "minhash")
-                    .await;
-                return Ok((cand_id, false));
+                // UX-GRAPH-9: like the vector step, a detached name is never
+                // merged back, and the alias this adds is recorded as auto.
+                if !self.alias_detached(&cand_id, &name_lower).await? {
+                    self.add_auto_alias_logged(&cand_id, &name_lower, entity_type)
+                        .await;
+                    return Ok((cand_id, false));
+                }
             }
         }
 
@@ -37379,13 +37382,10 @@ impl MemoryDB {
                 && crate::retrieval::dedup::has_high_entropy(name)
                 && !self.alias_detached(&result.entity.id, &name_lower).await?
             {
-                let _ = self
-                    .add_entity_alias(&name_lower, &result.entity.id, "auto")
-                    .await;
                 // Recorded as auto, so the next mention is checked again
                 // instead of resolving here as an exact alias.
-                self.record_auto_alias(&result.entity.id, &name_lower, entity_type)
-                    .await?;
+                self.add_auto_alias_logged(&result.entity.id, &name_lower, entity_type)
+                    .await;
                 return Ok((result.entity.id, false));
             }
         }
@@ -37670,8 +37670,17 @@ impl MemoryDB {
         entity_id: &str,
         _source: &str,
     ) -> Result<(), WenlanError> {
-        let now_iso = chrono::Utc::now().to_rfc3339();
         let conn = self.conn.lock().await;
+        Self::add_alias_on(&conn, alias, entity_id).await
+    }
+
+    /// [`Self::add_entity_alias`] for callers already holding the connection.
+    async fn add_alias_on(
+        conn: &libsql::Connection,
+        alias: &str,
+        entity_id: &str,
+    ) -> Result<(), WenlanError> {
+        let now_iso = chrono::Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE pages SET
                 aliases = (SELECT json_group_array(value) FROM (
@@ -38469,7 +38478,19 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("merge_entities_preview edges: {e}")))?;
 
-        let aliases_added = aliases_gained(canonical_aliases_json, loser_aliases_json, &loser_name);
+        // UX-GRAPH-9: the same names the merge leaves out, so the preview
+        // reports what the merge will add.
+        let canonical_detached = Self::detached_aliases_on(&conn, canonical_id).await?;
+        let (loser_aliases_json, loser_name_lower) = entity_alias_sources::without_detached(
+            loser_aliases_json,
+            loser_name.to_lowercase(),
+            &canonical_detached,
+        );
+        let aliases_added = aliases_gained(
+            canonical_aliases_json,
+            loser_aliases_json,
+            &loser_name_lower,
+        );
 
         Ok(MergePreview {
             canonical_id: canonical_id.to_string(),
@@ -39055,6 +39076,21 @@ impl MemoryDB {
                 // 2c sub-step 3 item 5: entity_type is now the pre-computed
                 // `final_entity_type` (item 4's `entities` subquery bridge
                 // retired with the rest of the entities writes in this item).
+                //
+                // UX-GRAPH-9: a name a person detached from the canonical is
+                // left out, whether it was the loser's alias or its own name,
+                // so a merge never re-attaches it.
+                let canonical_detached =
+                    Self::detached_aliases_on(&conn, canonical_id).await?;
+                let (loser_aliases_json, loser_name_lower) =
+                    entity_alias_sources::without_detached(
+                        loser_aliases_json,
+                        alias_name
+                            .as_deref()
+                            .map(|n| n.to_lowercase())
+                            .unwrap_or_default(),
+                        &canonical_detached,
+                    );
                 conn.execute(
                     "UPDATE pages SET
                     entity_type = ?5,
@@ -39072,10 +39108,7 @@ impl MemoryDB {
                     libsql::params![
                         canonical_id.to_string(),
                         loser_aliases_json.clone(),
-                        alias_name
-                            .as_deref()
-                            .map(|n| n.to_lowercase())
-                            .unwrap_or_default(),
+                        loser_name_lower.clone(),
                         now_iso.clone(),
                         final_entity_type.clone(),
                     ],
@@ -39096,10 +39129,7 @@ impl MemoryDB {
                     alias_id,
                     canonical_id,
                     &canonical_aliases_before,
-                    &alias_name
-                        .as_deref()
-                        .map(|n| n.to_lowercase())
-                        .unwrap_or_default(),
+                    &loser_name_lower,
                 )
                 .await?;
 
@@ -39115,7 +39145,7 @@ impl MemoryDB {
                 let aliases_added = aliases_gained(
                     canonical_aliases_json.clone(),
                     loser_aliases_json,
-                    alias_name.as_deref().unwrap_or(""),
+                    &loser_name_lower,
                 );
 
                 Ok((generation_updates, observations_moved, aliases_added))
@@ -41961,9 +41991,9 @@ impl MemoryDB {
                 &prepared_entities
             {
                 let mut resolved: Option<String> = None;
-                // UX-GRAPH-9: set when the vector step below chose the topic,
-                // so the alias it adds is recorded as auto.
-                let mut resolved_by_vector = false;
+                // UX-GRAPH-9: set when the minhash or vector step below chose
+                // the topic, so the alias it adds is recorded as auto.
+                let mut resolved_by_similarity = false;
 
                 // G6 Stage 2 PR 2c sub-step 3 item 4: page-payload lookup,
                 // same JSON-containment + deterministic tie-break as
@@ -42069,8 +42099,12 @@ impl MemoryDB {
                                 ))
                             })?
                             .is_some()
+                            // UX-GRAPH-9: a name a person detached from this
+                            // topic is never merged back into it.
+                            && !Self::alias_detached_on(&conn, candidate_id, lower).await?
                         {
                             resolved = Some(candidate_id.clone());
+                            resolved_by_similarity = true;
                         }
                     }
                 }
@@ -42116,7 +42150,7 @@ impl MemoryDB {
                             // user-facing create path keeps apart.
                             if distance < 0.1 && crate::retrieval::dedup::has_high_entropy(name) {
                                 resolved = row.get::<String>(0).ok();
-                                resolved_by_vector = resolved.is_some();
+                                resolved_by_similarity = resolved.is_some();
                             }
                         }
                     }
@@ -42126,7 +42160,7 @@ impl MemoryDB {
                     if let Some(candidate) = resolved.as_deref() {
                         if Self::alias_detached_on(&conn, candidate, lower).await? {
                             resolved = None;
-                            resolved_by_vector = false;
+                            resolved_by_similarity = false;
                         }
                     }
                 }
@@ -42207,7 +42241,7 @@ impl MemoryDB {
                 .map_err(|e| {
                     WenlanError::VectorDb(format!("entity enrichment alias shadow: {e}"))
                 })?;
-                if resolved_by_vector {
+                if resolved_by_similarity {
                     Self::record_auto_alias_on(&conn, &entity_id, lower, entity_type).await?;
                 }
 

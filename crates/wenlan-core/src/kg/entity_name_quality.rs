@@ -20,7 +20,7 @@
 //!   with no strong path marker, bare Markdown filenames, names that look like
 //!   code (`a::b`, `config.reranker_mode`, `WENLAN_HOST`, `--nocapture`,
 //!   `#1157`, `PR #12`, `owner/repo#12`), and phrases of five or more words
-//!   (UX-GRAPH-9). The write path declines to create them and logs, but a bulk
+//!   that are not a Title Case name (UX-GRAPH-9). The write path declines to create them and logs, but a bulk
 //!   cleanup must not archive them without a human looking.
 //!
 //! A name is **never** rejected merely for being short, containing digits,
@@ -112,8 +112,8 @@ pub enum Reason {
     /// `#` ("--nocapture", "#1157"), "PR #12", or "owner/repo#12". Hostnames
     /// ("relay.wenlan.app") have no underscore and are not caught.
     LooksLikeCode,
-    /// Five or more words: a phrase or a clause ("daemon or CLI write paths"),
-    /// not the name of one thing.
+    /// Five or more words that are not a Title Case name: a phrase or a
+    /// clause ("daemon or CLI write paths"), not the name of one thing.
     LongPhrase,
 }
 
@@ -628,14 +628,37 @@ fn looks_like_code(name: &str) -> bool {
     is_dotted_identifier(name) || is_constant_name(name)
 }
 
-/// Five or more words. Only words with a letter or digit count, so "&" in
-/// "AuthN/AuthZ & On-Chain Identity" does not. Scripts written without spaces
-/// are never long by this count.
+/// Small words a Title Case name keeps in lower case: "The Lord of the
+/// Rings", "Mohammed bin Salman Al Saud", "Ludwig van Beethoven".
+const TITLE_CONNECTORS: &[&str] = &[
+    "of", "the", "and", "for", "de", "da", "di", "van", "von", "bin", "al", "la", "le", "du", "y",
+];
+
+/// Five or more words that are not a Title Case name. Only words with a
+/// letter or digit count, so "&" in "AuthN/AuthZ & On-Chain Identity" does
+/// not. Scripts written without spaces are never long by this count.
+///
+/// A Title Case name is one where every counted word starts (at its first
+/// letter or digit) with an upper-case letter or a digit, or is one of
+/// [`TITLE_CONNECTORS`]: real names of people, works and institutions run
+/// long ("University of California, San Diego"), sentences do not look like
+/// that ("daemon or CLI write paths").
 fn is_long_phrase(name: &str) -> bool {
-    name.split_whitespace()
+    let words: Vec<&str> = name
+        .split_whitespace()
         .filter(|word| word.chars().any(char::is_alphanumeric))
-        .count()
-        >= 5
+        .collect();
+    if words.len() < 5 {
+        return false;
+    }
+    let title_case = words.iter().all(|word| {
+        TITLE_CONNECTORS.contains(word)
+            || word
+                .chars()
+                .find(|c| c.is_alphanumeric())
+                .is_some_and(|c| c.is_uppercase() || c.is_ascii_digit())
+    });
+    !title_case
 }
 
 /// The verdict for one name. Pure: no logging, no counters, no I/O.
@@ -957,6 +980,8 @@ mod tests {
             ("7xuanlu/wenlan#12", Reason::LooksLikeCode),
             ("daemon or CLI write paths", Reason::LongPhrase),
             ("daemon or CLI write paths for x", Reason::LongPhrase),
+            ("Daemon or CLI Write Paths", Reason::LongPhrase),
+            ("rules about what NOT to save", Reason::LongPhrase),
         ];
         for (name, expected) in cases {
             assert_eq!(
@@ -967,8 +992,13 @@ mod tests {
             assert_eq!(expected.tier(), Tier::Review);
         }
         // Near misses stay accepted: a hostname, a four-word name, an
-        // architecture tag, plural PRs, and words that only end in "pr".
+        // architecture tag, plural PRs, words that only end in "pr", and
+        // long Title Case names of people, works and institutions.
         for name in [
+            "Mohammed bin Salman Al Saud",
+            "The Lord of the Rings",
+            "University of California, San Diego",
+            "Ludwig van Beethoven Symphony No. 9",
             "relay.wenlan.app",
             "www.wenlan.app",
             "space fixes",

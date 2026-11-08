@@ -302,10 +302,7 @@ async fn ux_graph_9_ambient_lane_does_not_double_claim_an_auto_alias() {
         .await
         .unwrap();
     let near = NEAR.to_lowercase();
-    db.add_entity_alias(&near, &other, "auto").await.unwrap();
-    db.record_auto_alias(&other, &near, "concept")
-        .await
-        .unwrap();
+    db.add_auto_alias(&other, &near, "concept").await.unwrap();
     assert_eq!(
         db.entity_alias_source(&other, NEAR).await.unwrap(),
         Some(source::AUTO.to_string())
@@ -368,10 +365,7 @@ async fn ux_graph_9_merge_keeps_auto_aliases_auto_and_the_merged_name_exact() {
         .store_entity("Slithy Tove Burrow", "concept", None, Some("test"), None)
         .await
         .unwrap();
-    db.add_entity_alias("borogove nest", &loser, "auto")
-        .await
-        .unwrap();
-    db.record_auto_alias(&loser, "borogove nest", "concept")
+    db.add_auto_alias(&loser, "borogove nest", "concept")
         .await
         .unwrap();
     // A stray auto row for the loser's own name, so the merge has to clear it.
@@ -449,6 +443,8 @@ async fn ux_graph_9_both_write_lanes_refuse_code_shaped_names_and_long_phrases()
     insert_memory(&db, "mem_code").await;
     let mut names: Vec<(&str, &str)> = refused.iter().map(|name| (*name, "concept")).collect();
     names.push(("relay.wenlan.app", "concept"));
+    // A long Title Case name is a real name, not a sentence.
+    names.push(("The Lord of the Rings", "concept"));
     assert!(db
         .commit_entity_enrichment_at_version(
             "mem_code",
@@ -465,5 +461,167 @@ async fn ux_graph_9_both_write_lanes_refuse_code_shaped_names_and_long_phrases()
         .into_iter()
         .map(|e| e.name)
         .collect();
-    assert_eq!(stored, vec!["relay.wenlan.app".to_string()]);
+    let mut stored = stored;
+    stored.sort();
+    assert_eq!(
+        stored,
+        vec![
+            "The Lord of the Rings".to_string(),
+            "relay.wenlan.app".to_string()
+        ]
+    );
+}
+
+#[tokio::test]
+async fn ux_graph_9_merge_never_reattaches_a_name_detached_from_the_canonical() {
+    let (db, _dir) = test_db().await;
+    let canonical = db
+        .store_entity("Tumtum Tree Grove", "concept", None, Some("test"), None)
+        .await
+        .unwrap();
+    // The person takes two names off the canonical: one a later topic will
+    // carry as an alias, one that will be that topic's own name.
+    for name in ["borogove nest", "slithy tove burrow"] {
+        db.add_entity_alias(name, &canonical, "auto").await.unwrap();
+        assert!(db.detach_entity_alias(&canonical, name).await.unwrap());
+    }
+    let loser = db
+        .store_entity("Slithy Tove Burrow", "concept", None, Some("test"), None)
+        .await
+        .unwrap();
+    db.add_auto_alias(&loser, "borogove nest", "concept")
+        .await
+        .unwrap();
+    db.add_entity_alias("mome rath", &loser, "auto")
+        .await
+        .unwrap();
+
+    let preview = db.merge_entities_preview(&canonical, &loser).await.unwrap();
+    assert_eq!(preview.aliases_added, vec!["mome rath".to_string()]);
+    db.merge_entities(&canonical, &loser).await.unwrap();
+
+    let aliases = aliases_of(&db, &canonical).await;
+    assert!(aliases.contains(&"mome rath".to_string()));
+    for name in ["borogove nest", "slithy tove burrow"] {
+        assert!(
+            !aliases.contains(&name.to_string()),
+            "{name} was detached from the canonical and must stay off it"
+        );
+        assert_eq!(
+            db.entity_alias_source(&canonical, name).await.unwrap(),
+            Some(source::DETACHED.to_string())
+        );
+        assert_eq!(db.resolve_entity_by_alias(name).await.unwrap(), None);
+    }
+}
+
+#[tokio::test]
+async fn ux_graph_9_a_failed_auto_alias_write_leaves_no_alias_behind() {
+    let (db, _dir) = test_db().await;
+    let (topic_id, created) = db
+        .resolve_or_create_entity(TOPIC, "project", None, Some("test"), None)
+        .await
+        .unwrap();
+    assert!(created);
+    assert_pair_merges_by_vector(&db, &topic_id).await;
+    // Recording the source fails after the alias UPDATE has run.
+    db.conn
+        .lock()
+        .await
+        .execute(
+            "CREATE TRIGGER fail_alias_source BEFORE INSERT ON entity_alias_sources
+             BEGIN SELECT RAISE(ABORT, 'injected alias source failure'); END",
+            (),
+        )
+        .await
+        .unwrap();
+
+    let (merged_id, created) = db
+        .resolve_or_create_entity(NEAR, "project", None, Some("test"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        merged_id, topic_id,
+        "the mention still resolves to the topic"
+    );
+    assert!(!created);
+    assert!(
+        !aliases_of(&db, &topic_id)
+            .await
+            .contains(&NEAR.to_lowercase()),
+        "an alias without its auto source would be an exact match for good"
+    );
+    assert_eq!(db.resolve_entity_by_alias(NEAR).await.unwrap(), None);
+}
+
+/// Names the minhash step joins (the fixture `create_entity_minhash_merges_
+/// abbreviation` uses), with the near one detached from the topic first.
+const MINHASH_TOPIC: &str = "Vorpalblade Jabberwock Inc";
+const MINHASH_NEAR: &str = "Vorpalblade Jabberwock Ino";
+
+async fn minhash_topic_with_near_detached(db: &MemoryDB) -> String {
+    let (topic_id, created) = db
+        .resolve_or_create_entity(MINHASH_TOPIC, "project", None, Some("test"), None)
+        .await
+        .unwrap();
+    assert!(created);
+    assert_eq!(
+        db.minhash_resolve_candidate(MINHASH_NEAR, "project")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(topic_id.as_str()),
+        "the fixture pair must be joined by the minhash step"
+    );
+    let near = MINHASH_NEAR.to_lowercase();
+    db.add_entity_alias(&near, &topic_id, "auto").await.unwrap();
+    assert!(db.detach_entity_alias(&topic_id, &near).await.unwrap());
+    topic_id
+}
+
+#[tokio::test]
+async fn ux_graph_9_minhash_never_merges_a_detached_name_back() {
+    temp_env::async_with_vars([("WENLAN_ENABLE_ENTITY_MINHASH", Some("1"))], async {
+        let near = MINHASH_NEAR.to_lowercase();
+
+        let (db, _dir) = test_db().await;
+        let topic_id = minhash_topic_with_near_detached(&db).await;
+        let (resolved, created) = db
+            .resolve_or_create_entity(MINHASH_NEAR, "project", None, Some("test"), None)
+            .await
+            .unwrap();
+        assert_ne!(
+            resolved, topic_id,
+            "resolve_or_create_entity merged it back"
+        );
+        assert!(created);
+        assert!(!aliases_of(&db, &topic_id).await.contains(&near));
+
+        let (db, _dir) = test_db().await;
+        let topic_id = minhash_topic_with_near_detached(&db).await;
+        insert_memory(&db, "mem_minhash").await;
+        assert!(db
+            .commit_entity_enrichment_at_version(
+                "mem_minhash",
+                1,
+                &extracted(&[(MINHASH_NEAR, "project")]),
+                "alias source fixture"
+            )
+            .await
+            .unwrap());
+        assert_eq!(
+            scalar(
+                &db,
+                &format!(
+                    "SELECT COUNT(*) FROM memory_entities
+                      WHERE memory_id = 'mem_minhash' AND entity_id = '{topic_id}'"
+                )
+            )
+            .await,
+            0,
+            "the ambient lane merged it back"
+        );
+        assert!(!aliases_of(&db, &topic_id).await.contains(&near));
+    })
+    .await;
 }

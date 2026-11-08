@@ -9,13 +9,14 @@
 //!
 //! `entity_alias_sources` records, per topic and alias, a source:
 //!
-//! - [`source::AUTO`]: added by a vector merge. Resolution never takes it as
+//! - [`source::AUTO`]: added by a vector or minhash merge, because the
+//!   mention read or was spelled like the topic. Resolution never takes it as
 //!   an exact match; the similarity check runs again on every mention. The
 //!   mention's own type is kept, so lint can count auto aliases that point at
 //!   a topic of a different type.
 //! - [`source::DETACHED`]: a person took the alias off the topic
-//!   ([`MemoryDB::detach_entity_alias`]). A vector merge never puts that name
-//!   back on that topic.
+//!   ([`MemoryDB::detach_entity_alias`]). Neither a vector or minhash merge
+//!   nor merging another topic into it puts that name back on that topic.
 //!
 //! An alias with no row is exact or of unknown origin: every alias written
 //! before migration 161, the topic's own name, a person's declared alias and
@@ -28,20 +29,46 @@ use crate::error::WenlanError;
 
 /// Values of `entity_alias_sources.source`.
 pub mod source {
-    /// Added by a vector merge.
+    /// Added by a vector or minhash merge.
     pub const AUTO: &str = "auto";
     /// Taken off the topic by a person.
     pub const DETACHED: &str = "detached";
 }
 
 /// SQL, true when the alias `?{param}` on the entity `epm.entity_id` was
-/// added by a vector merge. Used to keep auto aliases out of exact lookups.
+/// added by a vector or minhash merge. Used to keep auto aliases out of exact lookups.
 pub(crate) fn auto_alias_sql(param: &str) -> String {
     format!(
         "EXISTS (SELECT 1 FROM entity_alias_sources eas
                   WHERE eas.entity_id = epm.entity_id AND eas.alias = {param}
                     AND eas.source = '{}')",
         source::AUTO
+    )
+}
+
+/// A merge's names for the canonical, minus every name a person detached
+/// from it: the loser's alias array (as JSON) and its lowercased name (empty
+/// when detached). A merge never puts a detached name back.
+pub(crate) fn without_detached(
+    loser_aliases_json: Option<String>,
+    loser_name_lower: String,
+    detached: &HashSet<String>,
+) -> (Option<String>, String) {
+    if detached.is_empty() {
+        return (loser_aliases_json, loser_name_lower);
+    }
+    let kept: Vec<String> = parse_pages_aliases(loser_aliases_json)
+        .into_iter()
+        .filter(|alias| !detached.contains(alias))
+        .collect();
+    let name = if detached.contains(&loser_name_lower) {
+        String::new()
+    } else {
+        loser_name_lower
+    };
+    (
+        Some(serde_json::to_string(&kept).unwrap_or_else(|_| "[]".to_string())),
+        name,
     )
 }
 
@@ -78,7 +105,7 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// Marks `alias` on `entity_id` as added by a vector merge, but only when
+    /// Marks `alias` on `entity_id` as added by a similarity merge, but only when
     /// the alias is now on the topic's page (another topic may own it) and
     /// carries no source yet. For callers already holding the connection.
     pub(super) async fn record_auto_alias_on(
@@ -110,15 +137,49 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// [`Self::record_auto_alias_on`], taking the lock.
-    pub(super) async fn record_auto_alias(
+    /// Adds `alias` to `entity_id` (first registration wins, as in
+    /// [`Self::add_entity_alias`]) and records it as auto, in one transaction
+    /// under one lock: the alias never lands without its source, which would
+    /// leave it an exact match for good.
+    pub(super) async fn add_auto_alias(
         &self,
         entity_id: &str,
         alias: &str,
         mention_type: &str,
     ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
-        Self::record_auto_alias_on(&conn, entity_id, alias, mention_type).await
+        conn.execute("BEGIN", ())
+            .await
+            .map_err(db_err("auto alias begin"))?;
+        let result: Result<(), WenlanError> = async {
+            Self::add_alias_on(&conn, alias, entity_id).await?;
+            Self::record_auto_alias_on(&conn, entity_id, alias, mention_type).await
+        }
+        .await;
+        match result {
+            Ok(()) => commit_or_rollback(&conn)
+                .await
+                .map(|_| ())
+                .map_err(db_err("auto alias commit")),
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// [`Self::add_auto_alias`] for the resolver, which keeps the topic it
+    /// matched even when the alias could not be written: nothing was
+    /// written, so the next mention is simply checked again.
+    pub(super) async fn add_auto_alias_logged(
+        &self,
+        entity_id: &str,
+        alias: &str,
+        mention_type: &str,
+    ) {
+        if let Err(e) = self.add_auto_alias(entity_id, alias, mention_type).await {
+            log::warn!("[resolve_or_create_entity] auto alias for {entity_id} not written: {e}");
+        }
     }
 
     /// True when a person detached `alias` from `entity_id`, so a vector
@@ -141,6 +202,28 @@ impl MemoryDB {
             .await
             .map_err(db_err("alias detached row"))?
             .is_some())
+    }
+
+    /// Every alias a person detached from `entity_id`.
+    pub(super) async fn detached_aliases_on(
+        conn: &libsql::Connection,
+        entity_id: &str,
+    ) -> Result<HashSet<String>, WenlanError> {
+        let mut rows = conn
+            .query(
+                "SELECT alias FROM entity_alias_sources WHERE entity_id = ?1 AND source = ?2",
+                libsql::params![entity_id, source::DETACHED],
+            )
+            .await
+            .map_err(db_err("detached aliases"))?;
+        let mut detached = HashSet::new();
+        while let Some(row) = rows.next().await.map_err(db_err("detached aliases row"))? {
+            detached.insert(
+                row.get::<String>(0)
+                    .map_err(db_err("detached aliases alias"))?,
+            );
+        }
+        Ok(detached)
     }
 
     /// [`Self::alias_detached_on`], taking the lock.
@@ -246,8 +329,8 @@ impl MemoryDB {
     }
 
     /// Takes one alias off a topic and remembers that a person did, so a
-    /// later vector merge never attaches the same name to the same topic
-    /// again. Works on an alias of any source. The topic's own name cannot be
+    /// later similarity or topic merge never attaches the same name to the
+    /// same topic again. Works on an alias of any source. The topic's own name cannot be
     /// detached; rename the topic instead. Returns `false` when the topic
     /// does not carry the alias. Memories already linked are not moved.
     pub async fn detach_entity_alias(
