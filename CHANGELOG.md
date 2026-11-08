@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.21.1](https://github.com/wenlan-app/wenlan/compare/v0.21.0...v0.21.1) (2026-11-08)
+
+
+### Features
+
+* **map:** morning line and Replay of last night (UX-GRAPH-5, UX-GRAPH-6) ([#1193](https://github.com/wenlan-app/wenlan/issues/1193)) ([a4f0410](https://github.com/wenlan-app/wenlan/commit/a4f0410a827e24588f67de6bed776436687d124f))
+* open a sentence to see the conversation lines it came from (UX-WHO-6) ([#1190](https://github.com/wenlan-app/wenlan/issues/1190)) ([a60d487](https://github.com/wenlan-app/wenlan/commit/a60d487839854b9b0cfcc82c578850971b6cc3e9))
+* **sources:** make Zotero import easy to find and never a dead end ([#1201](https://github.com/wenlan-app/wenlan/issues/1201)) ([f293a5f](https://github.com/wenlan-app/wenlan/commit/f293a5fdbc1cd93b48b7dbce0ca7dd17a01d5f4c))
+* **sources:** one add-source menu for Zotero, a new Space when there is none, and steps when Zotero is unreachable ([f293a5f](https://github.com/wenlan-app/wenlan/commit/f293a5fdbc1cd93b48b7dbce0ca7dd17a01d5f4c))
+* **theme:** Appearance settings page with live preview and theme images ([#1188](https://github.com/wenlan-app/wenlan/issues/1188)) ([1e9af85](https://github.com/wenlan-app/wenlan/commit/1e9af85100c0a60459a381036225895811680e9e))
+* **theme:** daemon-checked custom themes with MCP tool and agent skill ([#1187](https://github.com/wenlan-app/wenlan/issues/1187)) ([c8c15c2](https://github.com/wenlan-app/wenlan/commit/c8c15c246042477ffde0444ed13df2d61258da79))
+* **things:** a thing's page opens with its conclusion (UX-VIEW-6) ([#1189](https://github.com/wenlan-app/wenlan/issues/1189)) ([499c7a6](https://github.com/wenlan-app/wenlan/commit/499c7a62378c90afe884ee79b37689c34c538d39))
+
+
+### Bug Fixes
+
+* **release:** retry transient Apple ticket lookups ([#1196](https://github.com/wenlan-app/wenlan/issues/1196)) ([c9e8748](https://github.com/wenlan-app/wenlan/commit/c9e87480350089c4d95ea67e6825687b16f84e54))
+* **research:** dispute routes compare the Space header exactly, like the other research routes ([#1200](https://github.com/wenlan-app/wenlan/issues/1200)) ([b090b0f](https://github.com/wenlan-app/wenlan/commit/b090b0f447041d973d01fe08382946a6d2a23fbb))
+
 ## [0.21.0](https://github.com/wenlan-app/wenlan/compare/v0.20.7...v0.21.0) (2026-11-07)
 
 
