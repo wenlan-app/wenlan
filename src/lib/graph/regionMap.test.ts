@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import Graph from "graphology";
 import { layoutRegionMap, nudgeClearOfOthers, placeNewRegionMembers, REGION_ATTR } from "./regionMap";
+import { splitNewRegionsFromCore } from "./atlas";
 import { cartographyScene, fitRegionName, placeRegionLabels, planRegionNamesFirst, REGION_NAME_EDGE_PX, regionNameKeepsEnough } from "./cartography";
 import { readPreviousRegions, readStoredRegions, startRearrange, storeRegions, undoRearrange } from "./positions";
 
@@ -25,6 +26,56 @@ const regionsOf = (g: Graph) => {
   });
   return m;
 };
+
+/** A chain of six bodies, its own component (an island region). */
+function addChain(g: Graph, prefix: string) {
+  for (let i = 0; i < 6; i += 1) g.addNode(`${prefix}${i}`, { label: `${prefix}${i}`, entityType: "concept", size: 3, x: 0, y: 0 });
+  for (let i = 1; i < 6; i += 1) g.addEdge(`${prefix}${i - 1}`, `${prefix}${i}`, { edgeType: "related_to" });
+}
+
+describe("UX-GRAPH-1 new clusters stay apart from kept regions", () => {
+  it("UX-GRAPH-1: a new disconnected cluster never takes a kept island's region", () => {
+    const before = fourGroups();
+    addChain(before, "z");
+    layoutRegionMap(before, { scope: "t", regionCount: { min: 3, max: 6 } });
+    const kept = regionsOf(before);
+    const island = kept.get("z0")!;
+    expect(island).toBeDefined();
+
+    // "m" sorts before "z": by walk order it would be the island's index.
+    const grown = fourGroups();
+    addChain(grown, "z");
+    addChain(grown, "m");
+    layoutRegionMap(grown, { scope: "t", assignOnly: true, stored: kept });
+    const after = regionsOf(grown);
+    for (const [id, key] of kept) expect(after.get(id)).toBe(key);
+    expect(after.get("m0")).toBeDefined();
+    expect(after.get("m0")).not.toBe(island);
+    for (let i = 0; i < 6; i += 1) expect(after.get(`m${i}`)).toBe(after.get("m0"));
+
+    // A fresh layout keys the same island the same way, whatever else is new.
+    const fresh = fourGroups();
+    addChain(fresh, "z");
+    addChain(fresh, "m");
+    layoutRegionMap(fresh, { scope: "t", regionCount: { min: 3, max: 6 } });
+    expect(regionsOf(fresh).get("z0")).toBe(island);
+  });
+
+  it("UX-GRAPH-1: a region with no kept point leaves the core, to be shelved as a new island", () => {
+    const g = fourGroups();
+    addChain(g, "z");
+    addChain(g, "m");
+    layoutRegionMap(g, { scope: "t", regionCount: { min: 3, max: 6 } });
+    const all = g.nodes().sort();
+    const kept = new Set(all.filter((id) => !id.startsWith("m")));
+    const placement = splitNewRegionsFromCore(g, [all], kept);
+    expect(placement).toHaveLength(2);
+    expect(placement[0]!.some((id) => id.startsWith("m"))).toBe(false);
+    expect([...placement[1]!].sort()).toEqual(["m0", "m1", "m2", "m3", "m4", "m5"]);
+    // A cluster with one kept point stays on the core.
+    expect(splitNewRegionsFromCore(g, [all], new Set([...kept, "m3"]))).toHaveLength(1);
+  });
+});
 
 describe("R2 kept regions (round 4)", () => {
   it("keeps every kept body's region when the map grows, and new bodies join by their links", () => {

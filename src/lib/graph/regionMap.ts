@@ -202,6 +202,14 @@ export function layoutRegionMap(graph: Graph, options: RegionMapOptions = {}): R
     }
     componentSize.push(size);
   }
+  // A component's region key comes from its smallest body id, not from the
+  // order the walk met it: a new cluster can never take a kept island's key.
+  const componentLeast: string[] = [];
+  for (const id of bodies) {
+    const index = componentOf.get(id) as number;
+    if (componentLeast[index] === undefined || byId(id, componentLeast[index] as string) < 0) componentLeast[index] = id;
+  }
+  const componentKey = (id: string) => `i:${componentLeast[componentOf.get(id) as number]}`;
   const inMap = (id: string) => (componentSize[componentOf.get(id) as number] ?? 0) >= MIN_COMPONENT;
   const backbone = bodies.filter((id) => inMap(id) && degree(id) >= 2);
   const leafParent = new Map<string, string>();
@@ -332,7 +340,7 @@ export function layoutRegionMap(graph: Graph, options: RegionMapOptions = {}): R
       // Only a super-hub link, or a new component: the hub's region, or a
       // region of its own.
       const hub = superHubs.filter((h) => adj.get(id)?.has(h)).sort(byLeader)[0];
-      const key = superSet.has(id) ? `s:${id}` : hub !== undefined ? (stored.get(hub) ?? `s:${hub}`) : `k:${componentOf.get(id)}`;
+      const key = superSet.has(id) ? `s:${id}` : hub !== undefined ? (stored.get(hub) ?? `s:${hub}`) : componentKey(id);
       regionOf.set(id, key);
       role.set(id, "backbone");
     }
@@ -371,7 +379,7 @@ export function layoutRegionMap(graph: Graph, options: RegionMapOptions = {}): R
     for (const hub of superHubs) regionOf.set(hub, `s:${hub}`);
     for (const id of backbone) {
       if (regionOf.has(id)) continue;
-      regionOf.set(id, `k:${componentOf.get(id)}`);
+      regionOf.set(id, componentKey(id));
     }
     const sizeOf = new Map<string, number>();
     for (const [id, key] of regionOf) sizeOf.set(key, (sizeOf.get(key) ?? 0) + 1 + (leafCount.get(id) ?? 0));

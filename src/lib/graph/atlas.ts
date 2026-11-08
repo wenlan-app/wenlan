@@ -1378,7 +1378,7 @@ const boxHeight = (box: ComponentBox): number => box.maxY - box.minY;
  *  bridge between them, and treating it as one would merge two islands the
  *  moment the memory layer is turned on. `anchorOf` is the satellite plan's
  *  memory -> anchor map. */
-function graphComponents(graph: Graph, anchorOf: Map<string, string>): string[][] {
+function graphComponents(graph: Graph, anchorOf: Map<string, string>, joinRegions = true): string[][] {
   const parent = new Map<string, string>();
   graph.forEachNode((id) => parent.set(id, id));
   const find = (start: string): string => {
@@ -1406,7 +1406,7 @@ function graphComponents(graph: Graph, anchorOf: Map<string, string>): string[][
   // An R2 map: every body in a region is on the base map, one core, however
   // many structural components it spans (round 4).
   let regionRoot: string | undefined;
-  graph.forEachNode((id, attrs) => {
+  if (joinRegions) graph.forEachNode((id, attrs) => {
     if (attrs[REGION_ATTR] === undefined) return;
     if (regionRoot === undefined) {
       regionRoot = id;
@@ -2102,6 +2102,33 @@ function shelveComponentsDetailed(graph: Graph): IslandPlacementReport {
     placement: [core.ids, ...boxes.slice(1).map((box) => box.ids)],
     metrics,
   };
+}
+
+/** An R2 core joins every region into one; on a restore, a structural
+ *  component with a region but no kept body is new to the map (its spots
+ *  are in a fresh layout's frame), so it leaves the core and is shelved as
+ *  a new island at the edge instead of landing on a kept region. */
+export function splitNewRegionsFromCore(
+  graph: Graph,
+  placement: readonly string[][],
+  preservedIds: ReadonlySet<string>,
+): string[][] {
+  if (placement.length === 0) return placement.map((ids) => [...ids]);
+  const anchorOf = new Map(satellitePlan(graph).map((satellite) => [satellite.id, satellite.anchor]));
+  const coreSet = new Set(placement[0]);
+  const moved: string[][] = [];
+  for (const ids of graphComponents(graph, anchorOf, false)) {
+    if (!ids.every((id) => coreSet.has(id))) continue;
+    const bodies = ids.filter((id) => !anchorOf.has(id));
+    if (bodies.length === 0 || bodies.some((id) => preservedIds.has(id))) continue;
+    if (!bodies.some((id) => graph.getNodeAttribute(id, REGION_ATTR) !== undefined)) continue;
+    moved.push(ids);
+  }
+  if (moved.length === 0) return placement.map((ids) => [...ids]);
+  const out = new Set(moved.flat());
+  const core = (placement[0] as string[]).filter((id) => !out.has(id));
+  if (core.length === 0) return placement.map((ids) => [...ids]);
+  return [core, ...placement.slice(1).map((ids) => [...ids]), ...moved];
 }
 
 /** The components shelveComponents would pack, in its order (core first),
@@ -3293,6 +3320,7 @@ export function createAtlasSimulation(
       simNode.y = spot.y;
     }
     const preservedIds = new Set(positions.keys());
+    placement = splitNewRegionsFromCore(graph, placement, preservedIds);
     placeUnrestoredComponents(graph, placement, preservedIds);
     placeNewBesideKept(graph, preservedIds);
     // A thing seen before keeps its kept spot; a new one goes beside what
