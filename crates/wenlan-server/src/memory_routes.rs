@@ -1133,10 +1133,7 @@ async fn handle_store_memory_inner(
     // promise that automatic enrichment will eventually run.
     let runtime_config = wenlan_core::config::load_config();
     let (enrichment, hint) = if !runtime_config.background_ai_enabled() {
-        (
-            "off".to_string(),
-            "Stored. Recall is available now; steeping is On demand, so run /wenlan steep to write pages from it.".to_string(),
-        )
+        ("off".to_string(), on_demand_store_hint(&resolved_agent))
     } else {
         let everyday_pin =
             wenlan_core::refinery::EverydaySource::parse(runtime_config.everyday_source.as_deref());
@@ -1796,6 +1793,21 @@ fn truncate_for_title(content: &str) -> String {
 ///
 /// Unknown callers become `"unknown"` (which the frontend filter hides from the
 /// user-facing dropdown). Honest-unknown beats guessing.
+/// The On-demand store hint, worded for the caller's own tool: Claude Code
+/// calls the plugin with `/wenlan`, Codex with `$wenlan`, and a tool without
+/// the plugin is told what to ask for in plain words.
+fn on_demand_store_hint(agent: &str) -> String {
+    let family = |key: &str| agent == key || agent.starts_with(&format!("{key}-"));
+    let next = if family("codex") {
+        "run $wenlan steep to write pages from it"
+    } else if family("claude-code") {
+        "run /wenlan steep to write pages from it"
+    } else {
+        "ask Wenlan to write pages from it when you want them"
+    };
+    format!("Stored. Recall is available now; steeping is On demand, so {next}.")
+}
+
 pub(crate) fn extract_agent_name(
     headers: &HeaderMap,
     deprecated_body_agent: Option<&str>,
@@ -2363,6 +2375,23 @@ pub async fn handle_list_unconfirmed_memories(
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
     Ok(Json(items))
+}
+
+#[cfg(test)]
+mod on_demand_store_hint_tests {
+    use super::on_demand_store_hint;
+
+    #[test]
+    fn the_hint_names_the_callers_own_command() {
+        assert!(on_demand_store_hint("codex").contains("run $wenlan steep"));
+        assert!(on_demand_store_hint("codex-desktop").contains("run $wenlan steep"));
+        assert!(on_demand_store_hint("claude-code").contains("run /wenlan steep"));
+        let other = on_demand_store_hint("cursor");
+        assert!(other.contains("ask Wenlan to write pages"));
+        assert!(!other.contains("wenlan steep"));
+        // `codexicon` is not Codex.
+        assert!(!on_demand_store_hint("codexicon").contains("$wenlan"));
+    }
 }
 
 #[cfg(test)]

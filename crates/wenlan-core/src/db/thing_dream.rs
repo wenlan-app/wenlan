@@ -156,16 +156,16 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// Migration 157: `conversation_labels.unread_at`, the last line of a
+    /// Migration 158: `conversation_labels.unread_at`, the last line of a
     /// conversation whose transcript was gone when a night came to read it,
     /// and `memories.said_line`, the line the person typed that a night's
     /// point came from (UX-WHO-6). Both columns are added only when missing,
     /// so a crash before the version bump replays cleanly.
-    pub(super) async fn migrate_157_dream_reading(
+    pub(super) async fn migrate_158_dream_reading(
         &self,
         prior_version: i64,
     ) -> Result<(), WenlanError> {
-        self.backup_before_migration(157, prior_version).await?;
+        self.backup_before_migration(158, prior_version).await?;
         let conn = self.conn.lock().await;
         for (table, column) in [
             ("conversation_labels", "unread_at INTEGER"),
@@ -178,23 +178,23 @@ impl MemoryDB {
                     (),
                 )
                 .await
-                .map_err(db_err("m157 columns"))?;
+                .map_err(db_err("m158 columns"))?;
             let has_column = rows
                 .next()
                 .await
-                .map_err(db_err("m157 column row"))?
+                .map_err(db_err("m158 column row"))?
                 .is_some();
             drop(rows);
             if !has_column {
                 conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column}"), ())
                     .await
-                    .map_err(db_err("m157 add column"))?;
+                    .map_err(db_err("m158 add column"))?;
             }
         }
-        conn.execute("PRAGMA user_version = 157", ())
+        conn.execute("PRAGMA user_version = 158", ())
             .await
-            .map_err(db_err("m157 bump"))?;
-        log::info!("[migration] Migration 157 applied: what a night could not read, and where its points came from");
+            .map_err(db_err("m158 bump"))?;
+        log::info!("[migration] Migration 158 applied: what a night could not read, and where its points came from");
         Ok(())
     }
 

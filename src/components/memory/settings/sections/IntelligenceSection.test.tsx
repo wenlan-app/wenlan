@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   setSourcePin: vi.fn(),
   getBackgroundAiEnabled: vi.fn(),
   setBackgroundAiEnabled: vi.fn(),
+  listAgents: vi.fn(async () => []),
 }));
 vi.mock("../../../../lib/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../../lib/tauri")>();
@@ -102,7 +103,7 @@ describe("IntelligenceSection", () => {
     await waitFor(() => expect(onDemand).toBeChecked());
     expect(within(group).getByRole("radio", { name: "Automatic" })).not.toBeChecked();
     expect(screen.queryByRole("button", { name: "Steeping" })).not.toBeInTheDocument();
-    expect(screen.getByText(/run \/wenlan steep/)).toBeInTheDocument();
+    expect(await screen.findByText(/type \/wenlan write my pages/)).toBeInTheDocument();
     // On demand needs no model, so the task rows stay out of the way.
     expect(screen.queryByText("Everyday work")).not.toBeInTheDocument();
   });

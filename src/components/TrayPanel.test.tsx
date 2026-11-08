@@ -60,6 +60,7 @@ const quietDay: Replies = {
   list_note_proposals: [],
   get_background_ai_enabled: true,
   list_new_material: { items: [], total: 0 },
+  list_agents: [],
 };
 
 beforeEach(() => {
@@ -155,7 +156,21 @@ describe("TrayPanel", () => {
     renderPanel();
 
     expect((await screen.findByTestId("tray-panel-steep")).textContent).toBe(
-      "Steeping: On demand, 4 ready, run /wenlan steep",
+      "Steeping: On demand, 4 ready. To finish now, type /wenlan write my pages",
+    );
+  });
+
+  it("words the On demand command for Codex when Codex is the tool in use", async () => {
+    serve({
+      ...quietDay,
+      get_background_ai_enabled: false,
+      list_new_material: { items: [], total: 5, held: 1 },
+      list_agents: [{ name: "codex", agent_type: "codex", created_at: 1, last_seen_at: 2 }],
+    });
+    renderPanel();
+
+    expect((await screen.findByTestId("tray-panel-steep")).textContent).toBe(
+      "Steeping: On demand, 4 ready. To finish now, type $wenlan write my pages",
     );
   });
 

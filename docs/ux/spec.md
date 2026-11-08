@@ -126,12 +126,15 @@ and wait for evidence that people need them.
   questions, small chores (confirming a merge, sending a file), tests and runs
   a program started are left out. Wenlan's everyday model reads each
   conversation; grouping them into things takes a stronger model, which sees
-  only one-line labels: the cloud model when one is set, otherwise the
-  person's own AI tool. A thing is a goal, not a step: a review or a check
-  goes with the goal it served. The grouping model also writes the card's
-  line on where the whole thing stands. Titles and lines follow the app's
+  only one-line labels and the names of the files each conversation changed
+  and the rule ids it named, never the conversations themselves: the cloud
+  model when one is set, otherwise the person's own AI tool. A thing is a
+  goal, not a step: a review or a check goes with the goal it served, and
+  conversations that changed the same files or worked on the same rules
+  usually serve one goal even under different titles. The grouping model
+  also writes the card's line on where the whole thing stands. Titles and lines follow the app's
   language. A space with nothing written to it for a month is not suggested.
-  原文：「正在做的事」直接從你跟 AI 的對話來，不用你記得叫 AI 存（2026-11-02）；選擇卡「用你接的 AI 工具（建議）」（2026-11-03 05:52）；「可以的那做完這個吧」（2026-11-03 05:23）；看了第七版：「有比較像最近在做的事情了」「wenlan-app 老早就沒在用的 space。」（2026-11-03 07:02）
+  原文：「正在做的事」直接從你跟 AI 的對話來，不用你記得叫 AI 存（2026-11-02）；選擇卡「用你接的 AI 工具（建議）」（2026-11-03 05:52）；「可以的那做完這個吧」（2026-11-03 05:23）；看了第七版：「有比較像最近在做的事情了」「wenlan-app 老早就沒在用的 space。」（2026-11-03 07:02）；問改版為什麼還不是一件事之後：「不只是看對話標題，要看裡面實際做了啥」「現有的對話都可以考量到」（2026-11-07）
 - **UX-THING-2** `shipped` After you correct it once, the same case is not
   sorted wrong again.
   原文：改過一次，同樣的情況下次不再分錯。

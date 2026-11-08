@@ -10,6 +10,10 @@
 //! reading the transcripts again.
 //! A conversation that is work becomes an `agent_sessions` row like one that
 //! wrote to Wenlan, so the rest of the app shows it the same way.
+//!
+//! Migration 157 adds `conversation_labels.touched`: the names of the files a
+//! conversation changed and the rule ids it named, as a JSON list, so the
+//! grouping model sorts by what the work is and not only by titles.
 
 use super::sessions::{session_row_id, upsert_session_span};
 use super::MemoryDB;
@@ -52,6 +56,9 @@ const OPEN_THINGS: i64 = 80;
 pub const SPACE_IN_USE_SECS: i64 = 30 * 86_400;
 /// Most news lines shown for one thing.
 const NEWS_PER_THING: usize = 3;
+/// Names of what a thing's conversations worked on shown to the grouping
+/// model, at most.
+const TOUCHED_PER_THING: usize = 12;
 /// The person's newest moves the grouping model sees as examples.
 const CORRECTIONS_SHOWN: i64 = 20;
 
@@ -91,6 +98,68 @@ impl MemoryDB {
             .await
             .map_err(db_err("m154 bump"))?;
         log::info!("[migration] Migration 154 applied: conversation labels");
+        Ok(())
+    }
+
+    /// Migration 157: `conversation_labels.touched`. Checked first, so a
+    /// crash before the version bump replays cleanly. Existing rows start
+    /// empty and fill the next time their transcripts are read.
+    pub(super) async fn migrate_157_conversation_touched(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(157, prior_version).await?;
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM pragma_table_info('conversation_labels') WHERE name = 'touched'",
+                (),
+            )
+            .await
+            .map_err(db_err("m157 labels columns"))?;
+        let has_column = rows
+            .next()
+            .await
+            .map_err(db_err("m157 labels column row"))?
+            .is_some();
+        drop(rows);
+        if !has_column {
+            conn.execute(
+                "ALTER TABLE conversation_labels ADD COLUMN touched TEXT NOT NULL DEFAULT '[]'",
+                (),
+            )
+            .await
+            .map_err(db_err("m157 touched"))?;
+        }
+        conn.execute("PRAGMA user_version = 157", ())
+            .await
+            .map_err(db_err("m157 bump"))?;
+        log::info!("[migration] Migration 157 applied: what each conversation worked on");
+        Ok(())
+    }
+
+    /// Keep what these conversations worked on, for those already read. It
+    /// is read from the transcript on every look, with no model, so a
+    /// conversation labelled before it was kept gets it without being read
+    /// by a model again.
+    pub async fn record_conversation_touched(
+        &self,
+        conversations: &[(String, Vec<String>)],
+    ) -> Result<(), WenlanError> {
+        if conversations.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().await;
+        for (id, touched) in conversations {
+            let touched = serde_json::to_string(touched).unwrap_or_else(|_| "[]".into());
+            conn.execute(
+                "UPDATE conversation_labels SET touched = ?2
+                  WHERE session_id = ?1 AND touched <> ?2",
+                libsql::params![id.as_str(), touched],
+            )
+            .await
+            .map_err(db_err("conversation touched"))?;
+        }
         Ok(())
     }
 
@@ -152,12 +221,12 @@ impl MemoryDB {
         tx.execute(
             "INSERT INTO conversation_labels
                 (session_id, tool, external_id, last_at, work, title, about, status, space,
-                 labeled_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 labeled_at, touched)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(session_id) DO UPDATE SET
                 last_at = excluded.last_at, work = excluded.work, title = excluded.title,
                 about = excluded.about, status = excluded.status, space = excluded.space,
-                labeled_at = excluded.labeled_at,
+                labeled_at = excluded.labeled_at, touched = excluded.touched,
                 grouped_at = CASE WHEN excluded.work = 1 AND conversation_labels.work = 0
                                   THEN NULL ELSE conversation_labels.grouped_at END",
             libsql::params![
@@ -170,7 +239,8 @@ impl MemoryDB {
                 label.about.as_str(),
                 label.status.as_str(),
                 label.space.as_str(),
-                now
+                now,
+                serde_json::to_string(&found.touched).unwrap_or_else(|_| "[]".into())
             ],
         )
         .await
@@ -245,7 +315,8 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT l.session_id, l.title, l.about, l.space, l.status FROM conversation_labels l
+                "SELECT l.session_id, l.title, l.about, l.space, l.status, l.touched
+                   FROM conversation_labels l
                    JOIN agent_sessions a ON a.id = l.session_id
                   WHERE l.work = 1 AND l.grouped_at IS NULL AND l.last_at >= ?1
                     AND NOT EXISTS (SELECT 1 FROM thing_sessions ts
@@ -271,6 +342,7 @@ impl MemoryDB {
                 about: row.get::<String>(2).unwrap_or_default(),
                 space: row.get::<String>(3).unwrap_or_default(),
                 status: row.get::<String>(4).unwrap_or_default(),
+                touched: touched_list(row.get::<String>(5).ok().as_deref()),
             });
         }
         Ok(out)
@@ -324,6 +396,7 @@ impl MemoryDB {
                     .or(row.get::<Option<String>>(5).unwrap_or(None))
                     .unwrap_or_default(),
                 news: Vec::new(),
+                touched: Vec::new(),
             });
         }
         drop(rows);
@@ -351,6 +424,35 @@ impl MemoryDB {
                     out[i].news.push(row.get::<String>(1).unwrap_or_default());
                 }
             }
+        }
+        drop(rows);
+        // What its conversations worked on, most often first, so a new
+        // conversation that changes the same files can join it.
+        let mut rows = conn
+            .query(
+                "SELECT ts.thing_id, l.touched FROM thing_sessions ts
+                   JOIN conversation_labels l ON l.session_id = ts.session_id
+                  WHERE l.work = 1 AND l.touched <> '[]'",
+                (),
+            )
+            .await
+            .map_err(db_err("intake touched"))?;
+        let mut counts: Vec<HashMap<String, usize>> = vec![HashMap::new(); out.len()];
+        while let Some(row) = rows.next().await.map_err(db_err("intake touched row"))? {
+            if let Some(&i) = at.get(&row.get::<String>(0).unwrap_or_default()) {
+                for name in touched_list(row.get::<String>(1).ok().as_deref()) {
+                    *counts[i].entry(name).or_default() += 1;
+                }
+            }
+        }
+        for (thing, counts) in out.iter_mut().zip(counts) {
+            let mut all: Vec<(String, usize)> = counts.into_iter().collect();
+            all.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            thing.touched = all
+                .into_iter()
+                .take(TOUCHED_PER_THING)
+                .map(|(name, _)| name)
+                .collect();
         }
         Ok(out)
     }
@@ -541,3 +643,10 @@ impl MemoryDB {
 #[cfg(test)]
 #[path = "intake_test.rs"]
 mod tests;
+
+/// A stored `touched` JSON list; anything unreadable is empty.
+fn touched_list(stored: Option<&str>) -> Vec<String> {
+    stored
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .unwrap_or_default()
+}
