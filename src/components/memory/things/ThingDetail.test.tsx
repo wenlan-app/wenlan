@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { answerThingMapProposal, answerThingMerge, getMemorySaid, getThing, undoThingDream, getThingMap, listThings, moveSessionThing, renameThing, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
+import { answerThingMapProposal, answerThingMerge, getMemorySaid, getThing, undoThingDream, getThingMap, listThings, moveSessionThing, renameThing, undoThingTidy, type ThingDetail as ThingRecord, type ThingMap } from "../../../lib/tauri";
 import { ThingDetail } from "./ThingDetail";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
@@ -16,6 +16,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   undoThingDream: vi.fn(),
   answerThingMapProposal: vi.fn(),
   getMemorySaid: vi.fn(),
+  undoThingTidy: vi.fn(),
 }));
 
 const now = Math.floor(Date.now() / 1000);
@@ -103,6 +104,28 @@ describe("ThingDetail", () => {
     expect(getMemorySaid).toHaveBeenCalledWith("mem_1");
     fireEvent.click(point);
     expect(within(decided).queryByText("Let's lead with the X wording.")).toBeNull();
+  });
+
+  it("UX-GRAPH-7: an opened point says what a night's tidy took the place of, and Undo puts it back", async () => {
+    vi.mocked(getMemorySaid).mockReset().mockResolvedValue({ session_id: "ses_a", tool: "claude-code", lines: [] });
+    vi.mocked(getThing).mockResolvedValue({
+      ...tagline,
+      tidied: [{ kind: "merge", memory_id: "mem_1", replaced: [
+        { source_id: "mem_a", text: "Use the X wording first." },
+        { source_id: "mem_b", text: "Lead with X." },
+      ] }],
+    });
+    vi.mocked(undoThingTidy).mockReset().mockResolvedValue(tagline);
+    renderThing();
+    const decided = await screen.findByRole("region", { name: "Decided" });
+    // Nothing inline until the point is opened.
+    expect(within(decided).queryByText(/Took the place of/)).toBeNull();
+    fireEvent.click(within(decided).getByRole("button", { name: "Lead with the X wording." }));
+    const tidied = await within(decided).findByRole("group", { name: "Tidied" });
+    expect(tidied).toHaveTextContent("Took the place of: Use the X wording first.");
+    expect(tidied).toHaveTextContent("Took the place of: Lead with X.");
+    fireEvent.click(within(tidied).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(undoThingTidy).toHaveBeenCalledWith("thg_1", "mem_1"));
   });
 
   it("UX-VIEW-6: the page opens with what the work has come to, then how it got there", async () => {

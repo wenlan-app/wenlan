@@ -4,6 +4,7 @@ import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { steepedToday } from "../../../lib/graph/lastNight";
 import { SaidLines } from "../page/SaidLines";
+import { PointTidied } from "./ThingSteeped";
 import {
   answerThingMapProposal,
   getThingMap,
@@ -13,6 +14,7 @@ import {
   type ThingMapProposal,
   type ThingMemory,
   type ThingPage,
+  type ThingTidy,
 } from "../../../lib/tauri";
 
 export type ThingView = "short" | "map";
@@ -93,6 +95,8 @@ export function ThingViews({
   // of the thing still shows, in the group its kind puts it in.
   const onMap = new Set(tree ? [...tree.byId.values()].map(memoryOf).filter((id): id is string => id != null) : []);
   const loose = points.filter((point) => !onMap.has(point.source_id));
+  // What a night's tidy took the place of, by the memory that stands now.
+  const tidied = new Map((thing.tidied ?? []).map((tidy) => [tidy.memory_id, tidy] as const));
   return (
     <>
       <div className="thing-views-bar">
@@ -116,12 +120,14 @@ export function ThingViews({
               fresh={fresh}
               loose={loose}
               open={open}
+              thingId={thing.id}
+              tidied={tidied}
               proposals={mapQuery.data?.proposals ?? []}
               onAnswer={(proposal, accept) => answer.mutate({ proposal, accept })}
             />
           ) : points.length > 0 ? (
             RECAP_GROUPS.map((group) => (
-              <RecapGroup key={group.key} group={group} fresh={fresh} points={points.filter((point) => groupOf(point, open) === group.key)} />
+              <RecapGroup key={group.key} group={group} fresh={fresh} thingId={thing.id} tidied={tidied} points={points.filter((point) => groupOf(point, open) === group.key)} />
             ))
           ) : lead ? null : (
             <p className="thing-detail-empty">{t("thing.noPoints")}</p>
@@ -167,11 +173,15 @@ function RecapGroup({
   group,
   points,
   fresh,
+  thingId,
+  tidied,
 }: {
   readonly group: { readonly key: RecapKey; readonly label: RecapLabel };
   readonly points: readonly ThingMemory[];
   /** Points last night steeped, marked new. */
   readonly fresh: ReadonlySet<string>;
+  readonly thingId: string;
+  readonly tidied: ReadonlyMap<string, ThingTidy>;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -196,7 +206,7 @@ function RecapGroup({
             >
               {withStop(point.title)}
             </button>
-            {openPoint === point.source_id ? <SaidLines sourceIds={[point.source_id]} /> : null}
+            {openPoint === point.source_id ? <OpenedPoint memory={point.source_id} thingId={thingId} tidied={tidied} /> : null}
           </li>
         ))}
       </ul>
@@ -206,6 +216,26 @@ function RecapGroup({
         </button>
       ) : null}
     </section>
+  );
+}
+
+/** What an opened point shows: the lines it came from, and what a night's
+ *  tidy took the place of (UX-VIEW-6, UX-WHO-6, UX-GRAPH-7). */
+function OpenedPoint({
+  memory,
+  thingId,
+  tidied,
+}: {
+  readonly memory: string;
+  readonly thingId: string;
+  readonly tidied: ReadonlyMap<string, ThingTidy>;
+}) {
+  const tidy = tidied.get(memory);
+  return (
+    <>
+      <SaidLines sourceIds={[memory]} />
+      {tidy ? <PointTidied thingId={thingId} tidy={tidy} /> : null}
+    </>
   );
 }
 
@@ -460,6 +490,8 @@ interface RecapItem {
   readonly context: string | null;
   readonly text: string;
   readonly fresh: boolean;
+  /** The memory behind it, which opening the point shows the source of. */
+  readonly memory: string | null;
   readonly proposal?: ThingMapProposal;
 }
 
@@ -468,6 +500,8 @@ function TreeRecap({
   fresh,
   loose,
   open,
+  thingId,
+  tidied,
   proposals,
   onAnswer,
 }: {
@@ -477,6 +511,8 @@ function TreeRecap({
   /** The thing's points no map point holds. */
   readonly loose: readonly ThingMemory[];
   readonly open: ReadonlySet<string>;
+  readonly thingId: string;
+  readonly tidied: ReadonlyMap<string, ThingTidy>;
   /** Changes waiting on the person's points (UX-WHO-2). */
   readonly proposals: readonly ThingMapProposal[];
   readonly onAnswer: (proposal: string, accept: boolean) => void;
@@ -501,14 +537,15 @@ function TreeRecap({
               context: parent && parent.id !== tree.root.id ? parent.label : null,
               text: node.label,
               fresh: memory != null && fresh.has(memory),
+              memory,
               proposal: proposalFor.get(node.id),
             };
           });
         for (const point of loose) {
           if (groupOf(point, open) !== group.key) continue;
-          items.push({ key: point.source_id, context: null, text: point.title, fresh: fresh.has(point.source_id) });
+          items.push({ key: point.source_id, context: null, text: point.title, fresh: fresh.has(point.source_id), memory: point.source_id });
         }
-        return <TreeRecapGroup key={group.key} group={group} items={items} onAnswer={onAnswer} />;
+        return <TreeRecapGroup key={group.key} group={group} items={items} thingId={thingId} tidied={tidied} onAnswer={onAnswer} />;
       })}
     </>
   );
@@ -517,14 +554,19 @@ function TreeRecap({
 function TreeRecapGroup({
   group,
   items,
+  thingId,
+  tidied,
   onAnswer,
 }: {
   readonly group: { readonly key: TreeGroupKey; readonly label: TreeGroupLabel };
   readonly items: readonly RecapItem[];
+  readonly thingId: string;
+  readonly tidied: ReadonlyMap<string, ThingTidy>;
   readonly onAnswer: (proposal: string, accept: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [openPoint, setOpenPoint] = useState<string | null>(null);
   if (items.length === 0) return null;
   const shown = open ? items : items.slice(0, RECAP_SHOWN);
   const hidden = items.length - shown.length;
@@ -535,7 +577,20 @@ function TreeRecapGroup({
         {shown.map((item) => (
           <li key={item.key} data-fresh={item.fresh ? "true" : undefined}>
             {item.context ? <span className="thing-recap-context">{item.context} </span> : null}
-            {withStop(item.text, item.context ?? "")}
+            {item.memory ? (
+              // Opening a point shows the lines it came from (UX-VIEW-6, UX-WHO-6).
+              <button
+                type="button"
+                className="thing-recap-point"
+                aria-expanded={openPoint === item.key}
+                onClick={() => setOpenPoint((current) => (current === item.key ? null : item.key))}
+              >
+                {withStop(item.text, item.context ?? "")}
+              </button>
+            ) : (
+              withStop(item.text, item.context ?? "")
+            )}
+            {item.memory && openPoint === item.key ? <OpenedPoint memory={item.memory} thingId={thingId} tidied={tidied} /> : null}
             {item.proposal ? <ProposalRow proposal={item.proposal} onAnswer={onAnswer} /> : null}
           </li>
         ))}

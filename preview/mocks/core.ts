@@ -207,6 +207,18 @@ export async function invoke(
         open_points: ["mem_home_d"],
         // `&unread=1`: a conversation a night could not read.
         unread: new URLSearchParams(window.location.search).get("unread") === "1" ? 1 : undefined,
+        // `&tidy=1`: a night merged two memories an AI wrote into the second
+        // point; opening it says what it took the place of (UX-GRAPH-7).
+        tidied: new URLSearchParams(window.location.search).get("tidy") === "1"
+          ? [{
+              kind: "merge",
+              memory_id: "mem_home_b",
+              replaced: [
+                { source_id: "mem_home_b1", text: "Keep a single Home button" },
+                { source_id: "mem_home_b2", text: "The sidebar has one way back to Home" },
+              ],
+            }]
+          : undefined,
       };
     }
   }
@@ -247,6 +259,19 @@ export async function invoke(
           "tm-site": { at: HOME_NIGHT, written: ["tm-n-site-3", "tm-n-site-4", "tm-n-site-5"], linked: [{ memory_id: "tm-n-site-2", entity_id: "tm-e15" }, { memory_id: "tm-n-site-4", entity_id: "tm-e15" }] },
           "tm-rel": { at: HOME_NIGHT, written: ["tm-n-rel-2", "tm-n-rel-3"], linked: [{ memory_id: "tm-n-rel-2", entity_id: "tm-e16" }] },
         };
+        // `&tidy=1`: the same night also merged, replaced and updated some of
+        // what an AI wrote (UX-GRAPH-7).
+        if (new URLSearchParams(window.location.search).get("tidy") === "1") {
+          nights["tm-site"] = {
+            ...nights["tm-site"],
+            written: ["tm-n-site-3"],
+            tidied: [
+              { kind: "merge", memory_id: "tm-n-site-4", replaced: ["tm-n-site-4a", "tm-n-site-4b"] },
+              { kind: "update", memory_id: "tm-n-site-5", replaced: ["tm-n-site-5a"] },
+            ],
+          };
+          nights["tm-rel"] = { ...nights["tm-rel"], tidied: [{ kind: "replace", memory_id: "tm-n-rel-2", replaced: ["tm-n-rel-2a"] }] };
+        }
         return THING_MAP_POINTS.map((thing) => (nights[thing.thing_id] ? { ...thing, last_night: nights[thing.thing_id] } : thing));
       }
       if (!quiet) return THING_MAP_POINTS;
