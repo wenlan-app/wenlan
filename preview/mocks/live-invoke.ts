@@ -63,6 +63,11 @@ const get = (p: string, headers?: Record<string, string>) => http("GET", p, unde
 const post = (p: string, b: unknown = {}, headers?: Record<string, string>) => http("POST", p, b, headers);
 const put = (p: string, b: unknown = {}) => http("PUT", p, b);
 const del = (p: string) => http("DELETE", p);
+// The marker app/src/api.rs sends on the person's own delete and archive
+// gestures (`wenlan_types::requests::CALLER_HEADER`). Without it the daemon
+// treats the caller as an AI tool: it archives instead of deleting, and
+// refuses to remove a page the person wrote.
+const AS_PERSON = { "x-wenlan-caller": "person" };
 const patch = (p: string, b: unknown = {}) => http("PATCH", p, b);
 
 // M5 truth axes: the same two-header marker app/src/api.rs attaches on its
@@ -1056,7 +1061,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       PREVIEW_DELETED_PAGE_IDS.add(id);
       return Promise.resolve(null);
     }
-    return del(`/api/pages/${enc(id)}`);
+    return http("DELETE", `/api/pages/${enc(id)}?permanent=true`, undefined, AS_PERSON);
   },
   archive_page: (a) => {
     const id = String(a.id);
@@ -1065,7 +1070,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       PREVIEW_AUTHORED_PAGES.set(id, archiveFixturePage(local));
       return Promise.resolve(null);
     }
-    return post(`/api/pages/${enc(id)}/archive`);
+    return http("POST", `/api/pages/${enc(id)}/archive`, undefined, AS_PERSON);
   },
   list_orphan_links: (a) => get(`/api/pages/orphan-links${qs({ min_count: a?.minCount })}`),
 
@@ -1166,11 +1171,17 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   },
   open_themes_folder: async () => null,
   set_note_ai_changes: (a) =>
-    put(`/api/sources/${enc(a.sourceId)}/ai-changes`, { path: a.path, value: a.value ?? null }),
+    http(
+      "PUT",
+      `/api/sources/${enc(a.sourceId)}/ai-changes`,
+      { path: a.path, value: a.value ?? null },
+      AS_PERSON,
+    ),
   list_note_proposals: async (a) =>
     (await get(a?.sourceId ? `/api/notes/proposals?source_id=${enc(a.sourceId)}` : "/api/notes/proposals")).proposals,
   get_note_proposal: (a) => get(`/api/notes/proposals/${enc(a.id)}`),
-  accept_note_proposal: (a) => post(`/api/notes/proposals/${enc(a.id)}/accept`),
+  accept_note_proposal: (a) =>
+    http("POST", `/api/notes/proposals/${enc(a.id)}/accept`, undefined, AS_PERSON),
   dismiss_note_proposal: async (a) => {
     await del(`/api/notes/proposals/${enc(a.id)}`);
   },
@@ -1383,9 +1394,15 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       PREVIEW_PROBES.delete(sourceId);
       return Promise.resolve({ deleted: true });
     }
-    return del(`/api/memory/delete/${enc(sourceId)}`);
+    return http(
+      "DELETE",
+      `/api/memory/delete/${enc(sourceId)}?permanent=true`,
+      undefined,
+      AS_PERSON,
+    );
   },
-  update_memory_cmd: (a) => put(`/api/memory/${enc(a.sourceId)}/update`, { content: a.content }),
+  update_memory_cmd: (a) =>
+    http("PUT", `/api/memory/${enc(a.sourceId)}/update`, { content: a.content }, AS_PERSON),
   get_activity: () => get("/api/activity"),
   list_onboarding_milestones: () =>
     get("/api/onboarding/milestones").then((r) => r.milestones ?? r),

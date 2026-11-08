@@ -96,7 +96,7 @@ queue.
 | `distill` | Internal MCP operation for page synthesis: process new clusters or target a specific `page_id`. It remains available as a tool; Steep is the user-facing guided workflow. |
 | `list_pending` | List pending captures waiting for review. |
 | `confirm_memory` | Confirm a pending memory by `source_id`. |
-| `forget` | Delete a memory by ID. Destructive. |
+| `forget` | Forget a memory by ID; it leaves recall and pages and can be restored. |
 | `theme` | List, check, apply or reset a custom app theme (colors, fonts, corner roundness, background image, corner sticker) written as `theme.json` in the themes folder. Wenlan checks every value before the app uses it. Local stdio only. |
 | `list_refinements` | Explicitly inspect the daemon's unique proposal queue, including `vocab_promote`; never polled ambiently. |
 | `accept_refinement` | Accept one listed proposal after an unambiguous item-level decision. Local stdio only. |

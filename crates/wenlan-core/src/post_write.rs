@@ -17,6 +17,7 @@ mod entity_graph;
 mod page_create;
 mod page_dispatch;
 mod page_link_rename;
+mod page_removal;
 mod page_revision;
 mod page_update;
 
@@ -29,6 +30,10 @@ pub use self::page_dispatch::{
     create_page, create_page_with_floor, create_page_with_tuning, page_write,
     page_write_with_citation_snapshot, steep_update_page, update_page,
     update_page_at_source_revision, update_page_preserving_sources, PageWrite,
+};
+pub use self::page_removal::{
+    archive_page_as, delete_page_permanently, page_holds_persons_work,
+    page_removal_refusal_message, PageRemovalError, PageRemover,
 };
 pub use self::page_revision::{
     accept_pending_revision, accept_pending_revision_edited_with_knowledge_path,
