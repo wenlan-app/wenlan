@@ -129,7 +129,7 @@
 .atlas-content-secondary-toggle[aria-pressed="true"] { color: var(--mem-accent-indigo); font-weight: 500; }
 
 /* Atlas graph canvas controls */
-.atlas-canvas-shell { --atlas-control-inset: max(40px, calc((100% - 1130px) / 2)); position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--mem-bg); }
+.atlas-canvas-shell { --atlas-control-inset: max(40px, calc((100% - 1130px) / 2)); position: relative; isolation: isolate; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--mem-bg); }
 .atlas-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .atlas-top-controls { position: absolute; z-index: 12; top: 24px; left: var(--atlas-control-inset); display: flex; align-items: center; gap: 8px; width: min(240px, calc(100% - 2 * var(--atlas-control-inset) - 140px)); pointer-events: none; }
 .atlas-back-button { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 1px solid var(--mem-border); border-radius: var(--mem-r-8); background: var(--mem-surface); color: var(--mem-text-secondary); font: 500 14px/1.4 var(--mem-font-body); cursor: pointer; pointer-events: auto; }
