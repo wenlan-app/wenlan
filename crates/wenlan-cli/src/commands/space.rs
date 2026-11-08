@@ -45,8 +45,9 @@ pub enum SpaceCmd {
     /// new page versions there and take the other members' versions. Pages
     /// only; nothing from other Spaces, memories or chats goes into the folder.
     ShareSync {
-        /// Space name. Not called `space`: that id is the global
-        /// `--space` flag, and clap would fill it with this value.
+        // Not called `space`: that id is the global `--space` flag, and
+        // clap would fill it with this value.
+        /// Space name.
         #[arg(value_name = "SPACE")]
         space_name: String,
         /// The shared folder. The first sync adds you to it.
