@@ -35,7 +35,11 @@
 }
 .atlas-rearrange-note button { padding: 0; border: 0; background: none; color: var(--mem-text-secondary); font: 500 12.5px/1.4 var(--mem-font-body); cursor: pointer; white-space: nowrap; }
 .atlas-rearrange-note button:hover { color: var(--mem-text); }
-.atlas-rearrange-note .atlas-rearrange-go { color: var(--mem-accent-indigo); }
+.atlas-rearrange-note .atlas-note-short { display: none; }
+@media (max-width: 560px) {
+  .atlas-rearrange-note .atlas-note-long { display: none; }
+  .atlas-rearrange-note .atlas-note-short { display: inline; }
+}
 .atlas-rearrange-note button:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
 .atlas-cartography-alert { display: inline-flex; align-items: center; padding: 0 2px; color: var(--mem-danger); font: 400 10px/1.4 var(--mem-font-mono); }
 .atlas-icon-button { flex: none; border: none; min-height: 24px; padding: 3px; }
@@ -125,7 +129,7 @@
 .atlas-content-secondary-toggle[aria-pressed="true"] { color: var(--mem-accent-indigo); font-weight: 500; }
 
 /* Atlas graph canvas controls */
-.atlas-canvas-shell { --atlas-control-inset: max(40px, calc((100% - 1130px) / 2)); position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--mem-bg); }
+.atlas-canvas-shell { --atlas-control-inset: max(40px, calc((100% - 1130px) / 2)); position: relative; isolation: isolate; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--mem-bg); }
 .atlas-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .atlas-top-controls { position: absolute; z-index: 12; top: 24px; left: var(--atlas-control-inset); display: flex; align-items: center; gap: 8px; width: min(240px, calc(100% - 2 * var(--atlas-control-inset) - 140px)); pointer-events: none; }
 .atlas-back-button { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 1px solid var(--mem-border); border-radius: var(--mem-r-8); background: var(--mem-surface); color: var(--mem-text-secondary); font: 500 14px/1.4 var(--mem-font-body); cursor: pointer; pointer-events: auto; }
@@ -197,4 +201,11 @@
 @media (max-width: 560px) {
   .atlas-night-line-full { display: none; }
   .atlas-night-line-short { display: inline; }
+}
+
+/* A large first layout runs in the background; the map says so quietly. */
+.atlas-laying-out {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 12;
+  color: var(--mem-text-secondary); font: 400 13px/1.4 var(--mem-font-body);
+  pointer-events: none;
 }

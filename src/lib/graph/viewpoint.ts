@@ -9,7 +9,7 @@ export interface AtlasViewpoint {
   anchors: { id: string; x: number; y: number }[];
 }
 
-export type AtlasFrameMode = "main" | "all";
+export type AtlasFrameMode = "main" | "all" | "core";
 
 export interface AtlasFrameOptions {
   mode?: AtlasFrameMode;
@@ -62,6 +62,15 @@ export function atlasFrameNodeIds(
 ): string[] {
   const visible = graph.nodes().filter((id) => isVisible(id, options.visibleNodeIds));
   if (options.mode === "all") return visible;
+  if (options.mode === "core") {
+    // The core component alone (round 3): the islands packed round it are
+    // left to the edges, so the core fills the opening view.
+    const core = visible.filter((id) => {
+      const attrs = graph.getNodeAttributes(id);
+      return attrs.entityType !== MEMORY_NODE_TYPE && attrs.island === false;
+    });
+    if (core.length > 0) return core;
+  }
 
   const structural = visible.filter(
     (id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE,
@@ -125,8 +134,23 @@ export function frameAtlasView(
   graph: Graph,
   options: AtlasFrameOptions = {},
 ): boolean {
+  const target = atlasFrameState(renderer, graph, options);
+  if (!target) return false;
+  const camera = renderer.getCamera();
+  if (options.duration && options.duration > 0) void camera.animate(target, { duration: options.duration });
+  else camera.setState(target);
+  return true;
+}
+
+/** The camera state frameAtlasView would move to, without moving there;
+ *  null when there is nothing to frame. */
+export function atlasFrameState(
+  renderer: Sigma,
+  graph: Graph,
+  options: AtlasFrameOptions = {},
+): { x: number; y: number; ratio: number; angle: number } | null {
   const ids = options.nodeIds ? options.nodeIds.filter((id) => graph.hasNode(id)) : atlasFrameNodeIds(graph, options);
-  if (ids.length === 0) return false;
+  if (ids.length === 0) return null;
 
   const points = ids.flatMap((id) => {
     const point = renderer.getNodeDisplayData(id);
@@ -134,7 +158,7 @@ export function frameAtlasView(
       ? [{ x: point.x, y: point.y }]
       : [];
   });
-  if (points.length === 0) return false;
+  if (points.length === 0) return null;
 
   const camera = renderer.getCamera();
   const angle = camera.angle;
@@ -213,9 +237,7 @@ export function frameAtlasView(
       target.y = 2 * target.y - landed.y;
     }
   }
-  if (options.duration && options.duration > 0) void camera.animate(target, { duration: options.duration });
-  else camera.setState(target);
-  return true;
+  return target;
 }
 
 /** Physical scale, independent of Sigma's model-dependent normalization. */

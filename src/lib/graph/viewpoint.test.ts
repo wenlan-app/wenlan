@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import Graph from "graphology";
 import type Sigma from "sigma";
-import { atlasFrameNodeIds, captureAtlasViewpoint, frameAtlasView, restoreAtlasViewpoint } from "./viewpoint";
+import { atlasFrameNodeIds, atlasFrameState, captureAtlasViewpoint, frameAtlasView, restoreAtlasViewpoint } from "./viewpoint";
 import { PAGE_NODE_TYPE, MEMORY_NODE_TYPE } from "./model";
 
 function projection(graph: Graph, normalization: number, offset: number) {
@@ -150,5 +150,30 @@ describe("Atlas viewpoint across model rebuilds", () => {
     // A stop moves there over time when asked to.
     frameAtlasView(renderer as unknown as Sigma, graph, { nodeIds: ["a", "b", "far"], insets, duration: 450 });
     expect(animated).toHaveLength(1);
+  });
+
+  it("reads the fit's zoom without moving a zoomed-in camera (the zoom-out limit after a rebuild)", () => {
+    const graph = new Graph();
+    graph.addNode("a", { x: 0, y: 0, entityType: "project", componentId: "main", landmarkLabel: true });
+    graph.addNode("b", { x: 10, y: 0, entityType: "project", componentId: "main", landmarkLabel: false });
+    const camera = {
+      x: 0.3, y: 0.7, angle: 0, ratio: 0.05,
+      getBoundedRatio: (ratio: number) => ratio,
+      setState(state: object) { Object.assign(camera, state); },
+    };
+    const renderer = {
+      getCamera: () => camera,
+      getDimensions: () => ({ width: 1000, height: 600 }),
+      getNodeDisplayData: (id: string) => ({ x: id === "a" ? 0.25 : 0.75, y: 0.5 }),
+      getGraphDimensions: () => ({ width: 10, height: 10 }),
+      getSetting: () => 0,
+    };
+    const fit = atlasFrameState(renderer as unknown as Sigma, graph, { mode: "main", padding: 56 });
+    // Zoomed in, the camera stays put; the fit is far wider than it.
+    expect(camera).toMatchObject({ x: 0.3, y: 0.7, ratio: 0.05 });
+    expect(fit!.ratio).toBeGreaterThan(0.3);
+    frameAtlasView(renderer as unknown as Sigma, graph, { mode: "main", padding: 56 });
+    expect(camera.ratio).toBeCloseTo(fit!.ratio, 9);
+    expect(atlasFrameState(renderer as unknown as Sigma, new Graph(), {})).toBeNull();
   });
 });

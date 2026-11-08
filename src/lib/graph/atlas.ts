@@ -6,10 +6,13 @@ import {
   forceLink,
   forceManyBody,
   forceCollide,
+  forceX,
+  forceY,
   type Simulation,
   type SimulationNodeDatum,
 } from "d3-force";
 import type { GraphModel } from "./model";
+import { layoutRegionMap, nudgeClearOfOthers, REGION_ATTR, REGION_EDGE_ATTR, REGION_ROLE_ATTR, type RegionMapReport } from "./regionMap";
 import {
   MEMORY_NODE_TYPE,
   PAGE_NODE_TYPE,
@@ -291,14 +294,505 @@ function settleTicks(order: number): number {
  * ponytail: still sync FA2. If this ever blocks past ~3s again, the next step
  * is graphology-layout-forceatlas2's worker entry plus a "laying out" state.
  */
-export function runAtlasLayout(graph: Graph): void {
+/** Which core layout the map uses (round 3). r0 is the FA2 the map had before
+ *  (the control); r1 lays the strongest hubs out first as a skeleton and lets
+ *  FA2 fill in round it; r1b is r1 with a smaller skeleton and more gravity. */
+export type AtlasLayoutVariant = "r0" | "r1" | "r1b" | "r2";
+export const DEFAULT_ATLAS_LAYOUT: AtlasLayoutVariant = "r2";
+
+/** Graph attribute the simulation reads: true when the core was laid out by
+ *  the skeleton pass, so the settle holds every body near its layout spot. */
+export const ATLAS_ANCHORED_ATTR = "atlasAnchored";
+/** Node attribute: this node is one of the skeleton hubs (round 3). */
+export const ATLAS_SKELETON_HUB_ATTR = "skeletonHub";
+
+interface SkeletonSettings {
+  hubs: number;
+  gravity: number;
+}
+
+const SKELETON: Record<"r1" | "r1b", SkeletonSettings> = {
+  r1: { hubs: 24, gravity: 1 },
+  r1b: { hubs: 12, gravity: 2 },
+};
+
+/** Graph units per sqrt(member) of a hub's retinue radius. */
+const RETINUE_UNIT = 7;
+/** Room the skeleton ellipse leaves round the retinues: its area is this many
+ *  times their summed discs. */
+const SKELETON_ROOM = 10;
+// The nearest two hubs keep at least this share of the even spacing.
+const HUB_SPACING = 0.6;
+// Core FA2 repulsion; lower keeps members nearer their hubs (round 3).
+const CORE_SCALING_RATIO = 6;
+/** Major / minor axis of the skeleton (and of the island field round it). */
+export const MAP_ASPECT = 1.6;
+
+const byDegreeThenId = (degree: ReadonlyMap<string, number>) => (a: string, b: string): number =>
+  (degree.get(b) ?? 0) - (degree.get(a) ?? 0) || (a < b ? -1 : a > b ? 1 : 0);
+
+/** Visible-dust count and ring radius per anchor at the opening zoom. */
+function dustRings(graph: Graph): Map<string, { count: number; ring: number }> {
+  const rings = new Map<string, { count: number; ring: number }>();
+  const visible = dustVisibleCount(1);
+  for (const satellite of satellitePlan(graph)) {
+    if (satellite.rank >= visible) continue;
+    const entry = rings.get(satellite.anchor) ?? { count: 0, ring: 0 };
+    entry.count += 1;
+    entry.ring = Math.max(entry.ring, satellite.radius);
+    rings.set(satellite.anchor, entry);
+  }
+  return rings;
+}
+
+/** The skeleton's hubs: the best-linked bodies of the largest component,
+ *  with the order they rank in. Null when that component is too small. */
+function skeletonHubsOf(
+  core: Graph,
+  settings: SkeletonSettings,
+): { order: (a: string, b: string) => number; main: string[]; hubs: string[] } | null {
+  const degree = new Map<string, number>();
+  // Hubs rank by links to pages and entities first (the structural degree
+  // applyAtlasHierarchy counts later), then by all links: a page with many
+  // memories would otherwise outrank a cluster of well-linked pages.
+  core.forEachNode((id) => {
+    let structural = 0;
+    for (const n of core.neighbors(id)) if (core.getNodeAttribute(n, "memory") !== true) structural += 1;
+    degree.set(id, core.getNodeAttribute(id, "memory") === true ? core.neighbors(id).length : structural * 1e6 + core.neighbors(id).length);
+  });
+  const order = byDegreeThenId(degree);
+
+  // Largest connected component: the skeleton is drawn from it alone.
+  const seen = new Set<string>();
+  let main: string[] = [];
+  for (const start of core.nodes().sort(order)) {
+    if (seen.has(start)) continue;
+    const component: string[] = [];
+    const stack = [start];
+    seen.add(start);
+    while (stack.length > 0) {
+      const id = stack.pop() as string;
+      component.push(id);
+      for (const next of core.neighbors(id)) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          stack.push(next);
+        }
+      }
+    }
+    if (component.length > main.length) main = component;
+  }
+  if (main.length < 3) return null;
+
+  return { order, main, hubs: [...main].sort(order).slice(0, Math.min(settings.hubs, main.length)) };
+}
+
+/** Edge attribute: how much a structural line is drawn at rest (round 3).
+ *  1 = always (the hubs' maximum spanning tree, and each body's line to the
+ *  body it hangs off); 2 = a hub's second-strongest tie, drawn light from 2x;
+ *  0 = only on hover. Unset (islands, memories, r0) = as before. */
+export const ATLAS_EDGE_TIER_ATTR = "tier";
+/** Ink of a tier-2 line. */
+const EDGE_TIER_LIGHT_ALPHA = 0.45;
+/** Edge attribute: for a body with a huge fan of lines, this line's rank by
+ *  length among them (0 = shortest). Up close only the nearest are drawn;
+ *  the rest show when an end is hovered or focused. */
+export const ATLAS_EDGE_FAN_ATTR = "fanRank";
+/** A body with more lines than this to non-hub bodies has a huge fan. */
+export const FAN_BIG = 40;
+/** Up close, how many of a huge fan's lines are drawn at rest. */
+export const FAN_NEAR_MAX = 16;
+
+/** Rank the core's lines into tiers (ATLAS_EDGE_TIER_ATTR). Deterministic. */
+function markEdgeTiers(graph: Graph, core: Graph, settings: SkeletonSettings): string[] {
+  graph.forEachEdge((key) => {
+    graph.removeEdgeAttribute(key, ATLAS_EDGE_TIER_ATTR);
+    graph.removeEdgeAttribute(key, ATLAS_EDGE_FAN_ATTR);
+  });
+  const picked = skeletonHubsOf(core, settings);
+  if (!picked) return [];
+  const { order, main, hubs } = picked;
+  const inMain = new Set(main);
+  const hubSet = new Set(hubs);
+  const tier = new Map<string, number>();
+  core.forEachEdge((key, _attrs, source, target) => {
+    if (inMain.has(source) && inMain.has(target)) tier.set(key, 0);
+  });
+  // Hub ties with a direct line, weighted as the skeleton weighs them.
+  const neighbourSets = new Map(hubs.map((id) => [id, new Set(core.neighbors(id))]));
+  const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const ties = new Map<string, { a: string; b: string; weight: number }>();
+  core.forEachEdge((_key, _attrs, source, target) => {
+    if (source === target || !hubSet.has(source) || !hubSet.has(target)) return;
+    const k = pairKey(source, target);
+    if (ties.has(k)) return;
+    const setA = neighbourSets.get(source) as Set<string>;
+    const setB = neighbourSets.get(target) as Set<string>;
+    let weight = core.edges(source, target).length;
+    const [small, large] = setA.size < setB.size ? [setA, setB] : [setB, setA];
+    for (const id of small) if (large.has(id)) weight += 1;
+    // Strength per laid-out length: of two ties about as strong, the near one
+    // is drawn, so the tree joins neighbours instead of crossing the map
+    // (a tree of nearest ties has no crossings).
+    const length = Math.max(1, Math.hypot(
+      (core.getNodeAttribute(source, "x") as number) - (core.getNodeAttribute(target, "x") as number),
+      (core.getNodeAttribute(source, "y") as number) - (core.getNodeAttribute(target, "y") as number),
+    ));
+    ties.set(k, { a: source < target ? source : target, b: source < target ? target : source, weight: Math.log2(1 + weight) / length ** 2 });
+  });
+  const byStrength = [...ties.entries()].sort((x, y) => y[1].weight - x[1].weight || (x[0] < y[0] ? -1 : 1));
+  const parent = new Map(hubs.map((id) => [id, id]));
+  const root = (id: string): string => {
+    let at = id;
+    while (parent.get(at) !== at) at = parent.get(at) as string;
+    parent.set(id, at);
+    return at;
+  };
+  const pairTier = new Map<string, number>();
+  for (const [k, { a, b }] of byStrength) {
+    const ra = root(a), rb = root(b);
+    if (ra === rb) continue;
+    parent.set(ra, rb);
+    pairTier.set(k, 1);
+  }
+  // Each hub's second-strongest tie, when the tree did not take it.
+  const perHub = new Map<string, string[]>();
+  for (const [k, { a, b }] of byStrength) {
+    for (const hub of [a, b]) {
+      const list = perHub.get(hub) ?? [];
+      list.push(k);
+      perHub.set(hub, list);
+    }
+  }
+  for (const list of perHub.values()) {
+    for (const k of list.slice(0, 2)) if (!pairTier.has(k)) pairTier.set(k, 2);
+  }
+  // Every other body: one line up, to its nearest neighbour that ranks above
+  // it (its best-ranked neighbour when none does), so it reads as part of
+  // what it sits beside.
+  const lineTo = new Map<string, number>();
+  const at = (id: string) => [core.getNodeAttribute(id, "x") as number, core.getNodeAttribute(id, "y") as number];
+  for (const id of main) {
+    if (hubSet.has(id)) continue;
+    let best: string | undefined;
+    let near: string | undefined;
+    let nearD = Infinity;
+    const [x, y] = at(id);
+    for (const next of core.neighbors(id)) {
+      if (best === undefined || order(next, best) < 0) best = next;
+      if (order(next, id) >= 0) continue;
+      const [nx, ny] = at(next);
+      const d = Math.hypot(nx - x, ny - y);
+      if (d < nearD || (d === nearD && near !== undefined && order(next, near) < 0)) { near = next; nearD = d; }
+    }
+    const up = near ?? best;
+    if (up !== undefined) lineTo.set(pairKey(id, up), 1);
+  }
+  core.forEachEdge((key, _attrs, source, target) => {
+    if (!tier.has(key)) return;
+    const k = pairKey(source, target);
+    // Tier 1 outranks tier 2: a line that is both is drawn in full.
+    tier.set(key, pairTier.get(k) === 1 || lineTo.has(k) ? 1 : pairTier.get(k) === 2 ? 2 : 0);
+  });
+  for (const [key, t] of tier) if (graph.hasEdge(key)) graph.setEdgeAttribute(key, ATLAS_EDGE_TIER_ATTR, t);
+  // A huge fan (one body tied to hundreds) is drawn up close only to its
+  // nearest bodies, so 4x is not a field of lines running off screen.
+  const fanRank = new Map<string, number>();
+  for (const id of main) {
+    const spokes: { key: string; d: number }[] = [];
+    const [x, y] = at(id);
+    core.forEachEdge(id, (key, _attrs, source, target) => {
+      const other = source === id ? target : source;
+      if (other === id || !tier.has(key) || hubSet.has(other)) return;
+      const [ox, oy] = at(other);
+      spokes.push({ key, d: Math.hypot(ox - x, oy - y) });
+    });
+    if (spokes.length <= FAN_BIG) continue;
+    spokes.sort((p, q) => p.d - q.d || (p.key < q.key ? -1 : 1));
+    spokes.forEach(({ key }, rank) => fanRank.set(key, Math.min(rank, fanRank.get(key) ?? Infinity)));
+  }
+  for (const [key, rank] of fanRank) if (graph.hasEdge(key)) graph.setEdgeAttribute(key, ATLAS_EDGE_FAN_ATTR, rank);
+  return hubs;
+}
+
+/** The graph runAtlasLayout lays out: every body a force runs on. */
+function atlasCoreOf(graph: Graph): Graph {
+  const excluded = new Set(nonSimulatedIds(graph));
+  graph.forEachNode((id, attrs) => {
+    if (attrs.entityType === THING_NODE_TYPE) excluded.add(id);
+  });
+  const core = new Graph({ multi: true });
+  graph.forEachNode((id, attrs) => {
+    if (excluded.has(id)) return;
+    core.addNode(id, { x: attrs.x, y: attrs.y, size: attrs.size, memory: attrs.entityType === MEMORY_NODE_TYPE });
+  });
+  graph.forEachEdge((key, _attrs, source, target) => {
+    if (excluded.has(source) || excluded.has(target)) return;
+    core.addEdgeWithKey(key, source, target, {});
+  });
+  return core;
+}
+
+/**
+ * Round 3 core layout: a hub skeleton, then FA2 round it.
+ *
+ * 1. The strongest hubs by structural degree are laid out on their own, as a
+ *    small graph whose links are weighted by direct links plus shared
+ *    neighbours, each hub sized by its retinue. The result is turned onto its
+ *    principal axes and fitted to an ellipse of aspect MAP_ASPECT.
+ * 2. Every other body is seeded beside the neighbour it hangs off, then FA2
+ *    (linlog, sizes respected) runs with the hubs fixed at their skeleton spots.
+ *
+ * Mutates x/y on `core`. Deterministic: no clock, no random.
+ */
+function layoutSkeletonCore(
+  core: Graph,
+  dust: ReadonlyMap<string, { count: number; ring: number }>,
+  settings: SkeletonSettings,
+): void {
+  const picked = skeletonHubsOf(core, settings);
+  if (!picked) return;
+  const { order, main, hubs } = picked;
+  const hubSet = new Set(hubs);
+  // The neighbour a body hangs off: its highest-degree neighbour (satelliteAnchor's rule).
+  const anchorOf = (id: string): string | undefined => {
+    let best: string | undefined;
+    for (const next of core.neighbors(id)) {
+      if (best === undefined || order(next, best) < 0) best = next;
+    }
+    return best;
+  };
+  const members = new Map<string, number>(hubs.map((id) => [id, 0]));
+  for (const id of main) {
+    if (hubSet.has(id)) continue;
+    const anchor = anchorOf(id);
+    if (anchor !== undefined && hubSet.has(anchor)) members.set(anchor, (members.get(anchor) ?? 0) + 1);
+  }
+  const retinue = (id: string) =>
+    Math.max(
+      (core.getNodeAttribute(id, "size") as number) + 4,
+      Math.sqrt((members.get(id) ?? 0) + (dust.get(id)?.count ?? 0) / 4) * RETINUE_UNIT,
+    );
+
+  // 1. Skeleton.
+  const skeleton = new Graph();
+  hubs.forEach((id, index) => {
+    const angle = index * GOLDEN_ANGLE;
+    const radius = 40 * Math.sqrt(index + 1);
+    skeleton.addNode(id, { x: radius * Math.cos(angle), y: radius * Math.sin(angle), size: retinue(id) });
+  });
+  const neighbourSets = new Map(hubs.map((id) => [id, new Set(core.neighbors(id))]));
+  for (let i = 0; i < hubs.length; i += 1) {
+    for (let j = i + 1; j < hubs.length; j += 1) {
+      const a = hubs[i] as string;
+      const b = hubs[j] as string;
+      const setA = neighbourSets.get(a) as Set<string>;
+      const setB = neighbourSets.get(b) as Set<string>;
+      let weight = core.edges(a, b).length;
+      const [small, large] = setA.size < setB.size ? [setA, setB] : [setB, setA];
+      for (const id of small) if (large.has(id)) weight += 1;
+      // Log weight: a tight cluster of hubs that share most neighbours would
+      // otherwise pull into one blob that no name can sit beside.
+      if (weight > 0) skeleton.addEdge(a, b, { weight: Math.log2(1 + weight) });
+    }
+  }
+  forceAtlas2.assign(skeleton, {
+    iterations: 500,
+    getEdgeWeight: "weight",
+    settings: { ...forceAtlas2.inferSettings(skeleton), adjustSizes: true, edgeWeightInfluence: 1, gravity: 1 },
+  });
+
+  // Principal axes, then fit to an ellipse of aspect MAP_ASPECT.
+  let meanX = 0;
+  let meanY = 0;
+  skeleton.forEachNode((_id, attrs) => {
+    meanX += attrs.x;
+    meanY += attrs.y;
+  });
+  meanX /= skeleton.order;
+  meanY /= skeleton.order;
+  let cxx = 0;
+  let cyy = 0;
+  let cxy = 0;
+  skeleton.forEachNode((_id, attrs) => {
+    const dx = attrs.x - meanX;
+    const dy = attrs.y - meanY;
+    cxx += dx * dx;
+    cyy += dy * dy;
+    cxy += dx * dy;
+  });
+  const theta = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const rotated = new Map<string, { u: number; v: number }>();
+  let su = 0;
+  let sv = 0;
+  skeleton.forEachNode((id, attrs) => {
+    const dx = attrs.x - meanX;
+    const dy = attrs.y - meanY;
+    const u = dx * cos + dy * sin;
+    const v = -dx * sin + dy * cos;
+    rotated.set(id, { u, v });
+    su += u * u;
+    sv += v * v;
+  });
+  su = Math.sqrt(su / skeleton.order) || 1;
+  sv = Math.sqrt(sv / skeleton.order) || 1;
+  let retinueArea = 0;
+  for (const id of hubs) retinueArea += retinue(id) ** 2;
+  // Ellipse area pi*a*b = SKELETON_ROOM * sum(pi r^2), b = a / MAP_ASPECT.
+  const semiMajor = Math.sqrt(SKELETON_ROOM * retinueArea * MAP_ASPECT);
+  const semiMinor = semiMajor / MAP_ASPECT;
+  // A uniform ellipse has its semi-axis at about two standard deviations.
+  const spot = new Map<string, { x: number; y: number }>();
+  for (const [id, { u, v }] of rotated) spot.set(id, { x: (u / su) * (semiMajor / 2), y: (v / sv) * (semiMinor / 2) });
+  // Hubs stand apart: no two closer than HUB_SPACING of the even spacing
+  // the ellipse would give them, pushed apart pairwise, in a fixed order.
+  const even = Math.sqrt((Math.PI * semiMajor * semiMinor) / Math.max(hubs.length, 1));
+  const minGap = HUB_SPACING * even;
+  for (let pass = 0; pass < 60; pass += 1) {
+    let moved = false;
+    for (let i = 0; i < hubs.length; i += 1) {
+      for (let j = i + 1; j < hubs.length; j += 1) {
+        const a = spot.get(hubs[i] as string) as { x: number; y: number };
+        const b = spot.get(hubs[j] as string) as { x: number; y: number };
+        const need = Math.max(minGap, retinue(hubs[i] as string) + retinue(hubs[j] as string));
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let d = Math.hypot(dx, dy);
+        if (d >= need) continue;
+        if (d < 1e-6) {
+          const angle = stableAngle(`${hubs[i]}|${hubs[j]}`);
+          dx = Math.cos(angle);
+          dy = Math.sin(angle);
+          d = 1;
+        }
+        const push = (need - d) / 2;
+        a.x -= (dx / d) * push;
+        a.y -= (dy / d) * push;
+        b.x += (dx / d) * push;
+        b.y += (dy / d) * push;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  for (const [id, at] of spot) core.mergeNodeAttributes(id, { x: at.x, y: at.y, fixed: true });
+
+  // 2. Seed every other body beside the placed neighbour it hangs off, in
+  //    breadth-first order out from the hubs, then FA2 round the fixed hubs.
+  const placed = new Set(hubs);
+  let frontier = [...hubs];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    const candidates = new Set<string>();
+    for (const id of frontier) for (const n of core.neighbors(id)) if (!placed.has(n)) candidates.add(n);
+    for (const id of [...candidates].sort(order)) {
+      let best: string | undefined;
+      for (const n of core.neighbors(id)) {
+        if (placed.has(n) && (best === undefined || order(n, best) < 0)) best = n;
+      }
+      if (best === undefined) continue;
+      const angle = stableAngle(id);
+      const reach = (core.getNodeAttribute(best, "size") as number) + (core.getNodeAttribute(id, "size") as number) + 16;
+      core.mergeNodeAttributes(id, {
+        x: (core.getNodeAttribute(best, "x") as number) + reach * Math.cos(angle),
+        y: (core.getNodeAttribute(best, "y") as number) + reach * Math.sin(angle),
+      });
+      placed.add(id);
+      next.push(id);
+    }
+    frontier = next;
+  }
+  // FA2's adjustSizes reads `size`: a hub's disc plus its visible dust ring.
+  // A member's ring stays out, so members sit close to their hubs (round 3).
+  core.forEachNode((id, attrs) => {
+    if (attrs.fixed === true) core.setNodeAttribute(id, "size", Math.max(attrs.size as number, dust.get(id)?.ring ?? 0));
+  });
+  forceAtlas2.assign(core, {
+    iterations: 300,
+    settings: {
+      ...forceAtlas2.inferSettings(core),
+      linLogMode: true,
+      outboundAttractionDistribution: true,
+      adjustSizes: true,
+      strongGravityMode: true,
+      gravity: settings.gravity,
+      scalingRatio: CORE_SCALING_RATIO,
+      barnesHutOptimize: true,
+    },
+  });
+  pullMembersToHubs(core);
+}
+
+/** How far out a member may sit from its hub's ring, as a share of where FA2
+ *  left it (round 3): a member linked to two hubs otherwise settles midway. */
+const MEMBER_PULL = 0.35;
+
+/** Pull each page or entity in toward the nearest hub it links to, keeping
+ *  its direction, so its own line is short and only hub-to-hub lines run far. */
+function pullMembersToHubs(core: Graph): void {
+  const moves: Array<[string, number, number]> = [];
+  core.forEachNode((id, attrs) => {
+    if (attrs.fixed === true || attrs.memory === true) return;
+    const x = attrs.x as number, y = attrs.y as number;
+    let hub: string | null = null;
+    let best = Infinity;
+    for (const n of core.neighbors(id)) {
+      if (core.getNodeAttribute(n, "fixed") !== true) continue;
+      const d = Math.hypot((core.getNodeAttribute(n, "x") as number) - x, (core.getNodeAttribute(n, "y") as number) - y);
+      if (d < best) { best = d; hub = n; }
+    }
+    if (hub === null) return;
+    const hx = core.getNodeAttribute(hub, "x") as number, hy = core.getNodeAttribute(hub, "y") as number;
+    const r0 = (core.getNodeAttribute(hub, "size") as number) + (attrs.size as number) + 8;
+    if (best <= r0) return;
+    const d = r0 + (best - r0) * MEMBER_PULL;
+    moves.push([id, hx + ((x - hx) / best) * d, hy + ((y - hy) / best) * d]);
+  });
+  for (const [id, x, y] of moves) core.mergeNodeAttributes(id, { x, y });
+}
+
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+/** What runAtlasLayout leaves on the graph besides positions, for a map
+ *  whose kept layout is put back instead of laid out again. */
+export function markKeptLayout(graph: Graph, variant: AtlasLayoutVariant = DEFAULT_ATLAS_LAYOUT, scope = "", regions?: ReadonlyMap<string, string>): void {
+  graph.setAttribute(ATLAS_ANCHORED_ATTR, variant !== "r0");
+  if (variant === "r0") return;
+  if (variant === "r2") {
+    markRegionMap(graph, layoutRegionMap(graph, { scope, dustRing: dustRings(graph), assignOnly: true, stored: regions }));
+    return;
+  }
+  const hubs = new Set(markEdgeTiers(graph, atlasCoreOf(graph), SKELETON[variant]));
+  graph.forEachNode((id) => graph.setNodeAttribute(id, ATLAS_SKELETON_HUB_ATTR, hubs.has(id)));
+}
+
+/** Graph attribute: the last R2 layout's report (counts, stage times). */
+export const ATLAS_REGION_REPORT_ATTR = "atlasRegionReport";
+
+/** What an R2 map leaves on the graph besides region attributes: the edge
+ *  tiers (for the fan cap), the held hubs, and the report. */
+function markRegionMap(graph: Graph, report: RegionMapReport): void {
+  markEdgeTiers(graph, atlasCoreOf(graph), SKELETON.r1);
+  graph.forEachNode((id, attrs) => graph.setNodeAttribute(id, ATLAS_SKELETON_HUB_ATTR, attrs[REGION_ROLE_ATTR] === "hub"));
+  graph.setAttribute(ATLAS_ANCHORED_ATTR, true);
+  graph.setAttribute(ATLAS_REGION_REPORT_ATTR, report);
+}
+
+export function runAtlasLayout(graph: Graph, variant: AtlasLayoutVariant = DEFAULT_ATLAS_LAYOUT, scope = "", regions?: ReadonlyMap<string, string>): void {
+  graph.setAttribute(ATLAS_ANCHORED_ATTR, false);
+  if (variant === "r2") {
+    markRegionMap(graph, layoutRegionMap(graph, { scope, dustRing: dustRings(graph), stored: regions }));
+    return;
+  }
   const excluded = new Set(nonSimulatedIds(graph));
   // A thing has no structural link (only its points), so FA2 has nothing to
   // say about it beyond pushing the map around; it is shelved as an island.
   graph.forEachNode((id, attrs) => {
     if (attrs.entityType === THING_NODE_TYPE) excluded.add(id);
   });
-  if (excluded.size === 0) {
+  if (excluded.size === 0 && variant === "r0") {
     forceAtlas2.assign(graph, {
       iterations: layoutIterations(graph.order),
       settings: forceAtlas2.inferSettings(graph),
@@ -309,18 +803,25 @@ export function runAtlasLayout(graph: Graph): void {
   const core = new Graph({ multi: true });
   graph.forEachNode((id, attrs) => {
     if (excluded.has(id)) return;
-    core.addNode(id, { x: attrs.x, y: attrs.y, size: attrs.size });
+    core.addNode(id, { x: attrs.x, y: attrs.y, size: attrs.size, memory: attrs.entityType === MEMORY_NODE_TYPE });
   });
   graph.forEachEdge((key, _attrs, source, target) => {
     if (excluded.has(source) || excluded.has(target)) return;
     core.addEdgeWithKey(key, source, target, {});
   });
   if (core.order === 0) return;
-  forceAtlas2.assign(core, {
-    iterations: layoutIterations(core.order),
-    settings: forceAtlas2.inferSettings(core),
-  });
+  if (variant === "r0") {
+    forceAtlas2.assign(core, {
+      iterations: layoutIterations(core.order),
+      settings: forceAtlas2.inferSettings(core),
+    });
+  } else {
+    layoutSkeletonCore(core, dustRings(graph), SKELETON[variant]);
+    markEdgeTiers(graph, core, SKELETON[variant]);
+    graph.setAttribute(ATLAS_ANCHORED_ATTR, true);
+  }
   core.forEachNode((id, attrs) => {
+    if (variant !== "r0") graph.setNodeAttribute(id, ATLAS_SKELETON_HUB_ATTR, attrs.fixed === true);
     graph.setNodeAttribute(id, "x", attrs.x);
     graph.setNodeAttribute(id, "y", attrs.y);
   });
@@ -682,6 +1183,79 @@ export function annotateDust(graph: Graph, plan: Satellite[]): void {
   for (const [anchor, count] of counts) graph.setNodeAttribute(anchor, "dustCount", count);
 }
 
+/** A memory dot that would sit on another body: folded until its body is
+ *  hovered, like the dots the zoom does not show yet (round 3, B4). */
+export const ATLAS_DUST_CROWDED_ATTR = "dustCrowded";
+/** On an anchor whose ring is crowded: how many of its dots fit (the first
+ *  ones; a ring only grows outward). */
+export const ATLAS_DUST_ROOM_ATTR = "dustRoom";
+/** Clear room kept between a ring's dot and a neighbouring disc, graph units. */
+const DUST_CROWD_GAP = 2;
+
+/** Mark each ring dot that lands on a neighbouring body. Only the dots a zoom
+ *  shows unhovered are checked, against every page and entity disc near
+ *  their anchor. A busy hub with its members packed close keeps its nearest
+ *  dots and folds the rest, so up close its ring never runs through a
+ *  neighbour; the layout itself does not move for them. */
+export function markCrowdedDust(graph: Graph, plan: Satellite[]): void {
+  const shown = dustVisibleCount(Infinity);
+  const ringOf = new Map<string, Satellite[]>();
+  graph.forEachNode((id, attrs) => {
+    if (attrs[ATLAS_DUST_ROOM_ATTR] !== undefined) graph.removeNodeAttribute(id, ATLAS_DUST_ROOM_ATTR);
+  });
+  for (const satellite of plan) {
+    if (graph.hasNode(satellite.id) && graph.getNodeAttribute(satellite.id, ATLAS_DUST_CROWDED_ATTR) !== undefined) {
+      graph.removeNodeAttribute(satellite.id, ATLAS_DUST_CROWDED_ATTR);
+    }
+    if (satellite.rank >= shown) continue;
+    if (graph.getNodeAttribute(satellite.anchor, "entityType") === THING_NODE_TYPE) continue;
+    const ring = ringOf.get(satellite.anchor);
+    if (ring) ring.push(satellite);
+    else ringOf.set(satellite.anchor, [satellite]);
+  }
+  if (ringOf.size === 0) return;
+  const cell = 64;
+  const grid = new Map<string, { id: string; x: number; y: number; r: number }[]>();
+  graph.forEachNode((id, attrs) => {
+    if (attrs.entityType === MEMORY_NODE_TYPE || attrs.entityType === THING_NODE_TYPE || attrs.hidden === true) return;
+    const body = { id, x: attrs.x as number, y: attrs.y as number, r: bodyRadius(attrs) };
+    const key = `${Math.floor(body.x / cell)},${Math.floor(body.y / cell)}`;
+    const list = grid.get(key);
+    if (list) list.push(body);
+    else grid.set(key, [body]);
+  });
+  for (const [anchor, ring] of ringOf) {
+    const ax = graph.getNodeAttribute(anchor, "x") as number;
+    const ay = graph.getNodeAttribute(anchor, "y") as number;
+    let reach = 0;
+    for (const satellite of ring) reach = Math.max(reach, satellite.radius);
+    const span = Math.ceil((reach + cell) / cell);
+    const cx = Math.floor(ax / cell);
+    const cy = Math.floor(ay / cell);
+    // The room the ring has: the nearest neighbour's disc edge, less a gap.
+    let room = Infinity;
+    for (let gx = cx - span; gx <= cx + span; gx += 1) {
+      for (let gy = cy - span; gy <= cy + span; gy += 1) {
+        for (const body of grid.get(`${gx},${gy}`) ?? []) {
+          if (body.id === anchor) continue;
+          room = Math.min(room, Math.hypot(body.x - ax, body.y - ay) - body.r - DUST_CROWD_GAP);
+        }
+      }
+    }
+    let fit = Infinity;
+    for (const satellite of ring) {
+      const size = (graph.getNodeAttribute(satellite.id, "size") as number | undefined) ?? 0;
+      if (satellite.radius + size <= room) continue;
+      fit = Math.min(fit, satellite.rank);
+    }
+    if (fit === Infinity) continue;
+    graph.setNodeAttribute(anchor, ATLAS_DUST_ROOM_ATTR, fit);
+    for (const satellite of ring) {
+      if (satellite.rank >= fit) graph.setNodeAttribute(satellite.id, ATLAS_DUST_CROWDED_ATTR, true);
+    }
+  }
+}
+
 /**
  * How many of an anchor's memories are drawn at a given zoom, as a multiple
  * of the zoom the map opened at (`zoomIn` = mount ratio / current ratio, so 1
@@ -704,6 +1278,9 @@ export function dustVisibleCount(zoomIn: number): number {
  *  complete group. */
 export const HOVER_DUST_MAX = 36;
 
+/** An R2 ring member's dot, as a share of its normal size. */
+const RING_DOT_SCALE = 0.7;
+
 /** How many neighbors a hover names outright (`forceLabel`). Beyond this the
  *  label grid decides, so a hub with dozens of memories stays readable. */
 export const NEIGHBOR_LABEL_MAX = 12;
@@ -722,6 +1299,10 @@ export type AtlasZoomPhase = "overview" | "neighborhood" | "detail";
 export interface LodState {
   dustVisible: number;
   islandsSolid: boolean;
+  /** Islands of fewer than SMALL_ISLAND_BODIES points stay dim longer: at
+   *  2x they are hundreds of loose dots that say nothing yet. Absent means
+   *  the same as islandsSolid (older callers). */
+  smallIslandsSolid?: boolean;
   phase: AtlasZoomPhase;
 }
 
@@ -729,18 +1310,43 @@ export interface LodState {
 export const OPENING_LOD: LodState = {
   dustVisible: dustVisibleCount(1),
   islandsSolid: false,
+  smallIslandsSolid: false,
   phase: "overview",
 };
 
 export function lodFor(zoomIn: number): LodState {
   const phase: AtlasZoomPhase = zoomIn < 2 ? "overview" : zoomIn < 4 ? "neighborhood" : "detail";
-  return { dustVisible: dustVisibleCount(zoomIn), islandsSolid: zoomIn >= ISLANDS_SOLID_ZOOM, phase };
+  return {
+    dustVisible: dustVisibleCount(zoomIn),
+    islandsSolid: zoomIn >= ISLANDS_SOLID_ZOOM,
+    smallIslandsSolid: zoomIn >= SMALL_ISLANDS_SOLID_ZOOM,
+    phase,
+  };
+}
+
+/** An island with fewer bodies than this comes up solid only at the detail
+ *  zoom (SMALL_ISLANDS_SOLID_ZOOM), not with the rest at ISLANDS_SOLID_ZOOM. */
+export const SMALL_ISLAND_BODIES = 4;
+export const SMALL_ISLANDS_SOLID_ZOOM = 4;
+
+/** Whether a node is drawn solid at this zoom: every non-island node is;
+ *  an island node once its island's size tier has come up. */
+export function islandSolid(attrs: Record<string, any>, lod: LodState): boolean {
+  if (attrs.island !== true) return true;
+  const bodies = attrs.islandBodies as number | undefined;
+  if (bodies !== undefined && bodies < SMALL_ISLAND_BODIES) return lod.smallIslandsSolid ?? lod.islandsSolid;
+  return lod.islandsSolid;
 }
 
 /** Clearance between the core's occupied discs and the nearest island, and between any
  *  two islands, in graph units — a moat, so an island never reads as a
  *  peninsula of the core or of its neighbour. */
-export const ISLAND_GAP = 34;
+export const ISLAND_GAP = 20;
+/** Gap between two packed islands (round 3). */
+export const ISLAND_PACK_GAP = 4;
+/** Graph units between neighbouring points of the packing spiral. */
+const SPIRAL_STEP = 6;
+const MAX_SPIRAL_POINTS = 600_000;
 /** Keep pathological geometry from turning placement into an unbounded loop. */
 const MAX_ISLAND_PROBES = 768;
 /** The protection mask is adaptive, but never grows beyond this many cells on
@@ -772,7 +1378,7 @@ const boxHeight = (box: ComponentBox): number => box.maxY - box.minY;
  *  bridge between them, and treating it as one would merge two islands the
  *  moment the memory layer is turned on. `anchorOf` is the satellite plan's
  *  memory -> anchor map. */
-function graphComponents(graph: Graph, anchorOf: Map<string, string>): string[][] {
+function graphComponents(graph: Graph, anchorOf: Map<string, string>, joinRegions = true): string[][] {
   const parent = new Map<string, string>();
   graph.forEachNode((id) => parent.set(id, id));
   const find = (start: string): string => {
@@ -797,6 +1403,19 @@ function graphComponents(graph: Graph, anchorOf: Map<string, string>): string[][
     const b = find(anchor);
     if (a !== b) parent.set(a, b);
   }
+  // An R2 map: every body in a region is on the base map, one core, however
+  // many structural components it spans (round 4).
+  let regionRoot: string | undefined;
+  if (joinRegions) graph.forEachNode((id, attrs) => {
+    if (attrs[REGION_ATTR] === undefined) return;
+    if (regionRoot === undefined) {
+      regionRoot = id;
+      return;
+    }
+    const a = find(id);
+    const b = find(regionRoot);
+    if (a !== b) parent.set(a, b);
+  });
   const groups = new Map<string, string[]>();
   graph.forEachNode((id) => {
     const root = find(id);
@@ -867,7 +1486,9 @@ function newCircleIndex(cellSize = 48): CircleIndex {
 }
 
 function addCircle(index: CircleIndex, circle: Island): void {
-  if (circle.r > MAX_INDEXED_RADIUS) {
+  // A disc wider than a cell (a hub with its ring) is checked directly: kept
+  // in the grid it would widen every query to hundreds of cells.
+  if (circle.r > Math.min(MAX_INDEXED_RADIUS, index.cellSize)) {
     index.oversized.push(circle);
     return;
   }
@@ -1203,21 +1824,6 @@ function islandRandom(seed: number, probe: number, stream: number): number {
   return (value ^ (value >>> 16)) >>> 0;
 }
 
-function islandGaussianCandidate(seed: number, probe: number, sigma: number): { x: number; y: number } {
-  // Start with a Box-Muller field, then smoothly compress rare outliers below.
-  // Clamping u1 avoids log(0); no samples are snapped onto an outer ring.
-  const u1 = Math.max(1e-7, islandRandom(seed, probe, 0) / 4_294_967_296);
-  const u2 = islandRandom(seed, probe, 1) / 4_294_967_296;
-  const gaussianMagnitude = Math.sqrt(-2 * Math.log(u1));
-  // Keep the Gaussian's soft, non-geometric support while compressing rare
-  // six-sigma samples. Without this gentle tail bend, a few late singletons
-  // can dominate fit-to-screen even though no placement fallback occurred.
-  const magnitude = gaussianMagnitude / Math.sqrt(1 + 0.06 * gaussianMagnitude * gaussianMagnitude);
-  const angle = 2 * Math.PI * u2;
-  const skew = (islandRandom(seed, probe, 2) / 4_294_967_296 - 0.5) * 0.18;
-  const x = magnitude * Math.cos(angle) * sigma;
-  return { x, y: (magnitude * Math.sin(angle) + skew * Math.cos(angle)) * sigma };
-}
 
 interface IslandPlan {
   box: ComponentBox;
@@ -1266,8 +1872,19 @@ function coreCollisionIndex(
   return { index, discs: coreDiscs };
 }
 
-function islandPlan(box: ComponentBox, satellites: ReadonlySet<string>): IslandPlan {
-  const r = Math.max(1, Math.hypot(boxWidth(box), boxHeight(box)) / 2);
+function islandPlan(graph: Graph, box: ComponentBox, satellites: ReadonlySet<string>): IslandPlan {
+  // The island's room is the circle round its box centre that holds every
+  // body's disc: for a lone point that is its own disc, not the corner of its
+  // box (round 3, B9: the box corner made the ring of islands 40% wider).
+  const cx = (box.minX + box.maxX) / 2;
+  const cy = (box.minY + box.maxY) / 2;
+  let reach = 0;
+  for (const id of box.ids) {
+    if (satellites.has(id)) continue;
+    const attrs = graph.getNodeAttributes(id);
+    reach = Math.max(reach, Math.hypot((attrs.x as number) - cx, (attrs.y as number) - cy) + bodyRadius(attrs));
+  }
+  const r = Math.max(1, reach);
   return {
     box,
     r,
@@ -1304,52 +1921,67 @@ function placeIslandBoxes(
   }));
   for (const island of existingIslands) addCircle(placedIndex, island);
   const placedIslands = [...existingIslands];
-  const plans = boxesToPlace.map((box) => islandPlan(box, satellites));
-  const totalSpacingSquared = [...existingIslands, ...plans].reduce(
-    (sum, island) => sum + ("spacing" in island ? island.spacing * island.spacing : (island.r + ISLAND_GAP) ** 2),
-    0,
-  );
-  const coreExtent = Math.hypot(boxWidth(core), boxHeight(core)) / 2;
-  const globalSigma = Math.max(96, Math.sqrt(totalSpacingSquared / 2) * 1.08 + coreExtent * 0.22);
+  const plans = boxesToPlace.map((box) => islandPlan(graph, box, satellites));
   let totalProbes = 0;
   let maxProbes = 0;
   let fallbackCount = 0;
-  let placedSpacingSquared = existingIslands.reduce(
-    (sum, island) => sum + (island.r + ISLAND_GAP) ** 2,
-    0,
-  );
 
-  for (const { box, r, spacing, seed } of plans) {
-    // Occupied footprint grows as components are accepted, so each later
-    // group gets a gentle widening even when its first deterministic sample is
-    // rejected. The batch cap keeps every per-island walk bounded.
-    const occupiedSigma = Math.sqrt((placedSpacingSquared + spacing * spacing) / 2) * 1.04;
-    const baseSigma = Math.max(globalSigma, occupiedSigma + coreExtent * 0.12);
+  // Round 3: islands are packed close round the core, biggest first, along
+  // one elliptical golden-angle spiral out from the core's centre: each takes
+  // the first spot clear of the core (ISLAND_GAP) and of the islands already
+  // placed (ISLAND_PACK_GAP). A spiral spot blocked for a zero-radius island
+  // stays blocked (the obstacles only grow), so the walk skips past them.
+  const centreX = (core.minX + core.maxX) / 2;
+  const centreY = (core.minY + core.maxY) / 2;
+  const stretch = Math.sqrt(MAP_ASPECT);
+  const spiralPoint = (k: number) => {
+    const rho = SPIRAL_STEP * Math.sqrt(k);
+    const angle = k * GOLDEN_ANGLE;
+    return { x: centreX + rho * Math.cos(angle) * stretch, y: centreY + (rho * Math.sin(angle)) / stretch };
+  };
+  const clearFor = (x: number, y: number, radius: number) =>
+    !isIslandCenterProtected(protection, x, y, radius) &&
+    clearOfCircles(coreIndex, x, y, radius, ISLAND_GAP) &&
+    clearOfCircles(placedIndex, x, y, radius, ISLAND_PACK_GAP);
+  // One cursor per size class: a spot blocked for the smallest island of a
+  // class is blocked for every island of it, and stays blocked, so the next
+  // island of that class starts its walk where the last one stopped.
+  const cursors = new Map<number, number>();
+  // No island goes inside the core, so the walk starts on the largest
+  // spiral ellipse that still fits well inside the core's box.
+  const innerRho = 0.6 * Math.min(boxWidth(core) / 2 / stretch, (boxHeight(core) / 2) * stretch);
+  let zeroCursor = Math.max(0, Math.floor((innerRho / SPIRAL_STEP) ** 2));
+  plans.sort((a, b) => b.r - a.r || a.seed - b.seed);
+  for (const { box, r, seed } of plans) {
     let candidate: Island | undefined;
+    const sizeClass = Math.floor(Math.log(Math.max(r, 1)) / Math.log(1.15));
+    const classMin = 1.15 ** sizeClass;
     let probes = 0;
-    for (; probes < MAX_ISLAND_PROBES; probes += 1) {
-      const batch = Math.min(12, Math.floor(probes / 32));
-      const point = islandGaussianCandidate(seed, probes, baseSigma * (1 + batch * 0.12));
-      if (
-        !isIslandCenterProtected(protection, point.x, point.y, r) &&
-        clearOfCircles(coreIndex, point.x, point.y, r) &&
-        clearOfCircles(placedIndex, point.x, point.y, r)
-      ) {
+    while (zeroCursor < MAX_SPIRAL_POINTS) {
+      const point = spiralPoint(zeroCursor);
+      if (clearFor(point.x, point.y, 0)) break;
+      zeroCursor += 1;
+    }
+    let k = Math.max(zeroCursor, cursors.get(sizeClass) ?? 0);
+    for (; k < MAX_SPIRAL_POINTS; k += 1) {
+      probes += 1;
+      const point = spiralPoint(k);
+      if (!clearFor(point.x, point.y, classMin)) {
+        continue;
+      }
+      if (clearFor(point.x, point.y, r)) {
         candidate = { ...point, r };
         break;
       }
     }
-    if (candidate) {
-      probes += 1;
-      totalProbes += probes;
-      maxProbes = Math.max(maxProbes, probes);
-    }
+    // Everything before k was blocked for this class (or is now taken).
+    cursors.set(sizeClass, k);
+    totalProbes += probes;
+    maxProbes = Math.max(maxProbes, probes);
     // The bounded probe loop normally finds a slot long before this. A
     // deterministic outer fallback keeps adversarial geometry finite while
     // retaining the same protection and circle-clearance guarantees.
     if (!candidate) {
-      totalProbes += MAX_ISLAND_PROBES;
-      maxProbes = Math.max(maxProbes, MAX_ISLAND_PROBES);
       fallbackCount += 1;
       let reach = r + ISLAND_GAP + 1;
       for (const disc of coreDiscs) {
@@ -1390,7 +2022,6 @@ function placeIslandBoxes(
     const placedPlan = { x: candidate.x, y: candidate.y, r: candidate.r };
     addCircle(placedIndex, placedPlan);
     placedIslands.push(placedPlan);
-    placedSpacingSquared += (candidate.r + ISLAND_GAP) ** 2;
     translateComponent(graph, box, candidate.x - (box.minX + box.maxX) / 2, candidate.y - (box.minY + box.maxY) / 2);
   }
   return {
@@ -1473,6 +2104,47 @@ function shelveComponentsDetailed(graph: Graph): IslandPlacementReport {
   };
 }
 
+/** An R2 core joins every region into one; on a restore, a structural
+ *  component with a region but no kept body is new to the map (its spots
+ *  are in a fresh layout's frame), so it leaves the core and is shelved as
+ *  a new island at the edge instead of landing on a kept region. */
+export function splitNewRegionsFromCore(
+  graph: Graph,
+  placement: readonly string[][],
+  preservedIds: ReadonlySet<string>,
+): string[][] {
+  if (placement.length === 0) return placement.map((ids) => [...ids]);
+  const anchorOf = new Map(satellitePlan(graph).map((satellite) => [satellite.id, satellite.anchor]));
+  const coreSet = new Set(placement[0]);
+  const moved: string[][] = [];
+  for (const ids of graphComponents(graph, anchorOf, false)) {
+    if (!ids.every((id) => coreSet.has(id))) continue;
+    const bodies = ids.filter((id) => !anchorOf.has(id));
+    if (bodies.length === 0 || bodies.some((id) => preservedIds.has(id))) continue;
+    if (!bodies.some((id) => graph.getNodeAttribute(id, REGION_ATTR) !== undefined)) continue;
+    moved.push(ids);
+  }
+  if (moved.length === 0) return placement.map((ids) => [...ids]);
+  const out = new Set(moved.flat());
+  const core = (placement[0] as string[]).filter((id) => !out.has(id));
+  if (core.length === 0) return placement.map((ids) => [...ids]);
+  return [core, ...placement.slice(1).map((ids) => [...ids]), ...moved];
+}
+
+/** The components shelveComponents would pack, in its order (core first),
+ *  without moving anything: for a map whose kept layout is put back as is. */
+function componentPlacement(graph: Graph): string[][] {
+  if (graph.order === 0) return [];
+  const anchorOf = new Map(satellitePlan(graph).map((satellite) => [satellite.id, satellite.anchor]));
+  const satellites = new Set(anchorOf.keys());
+  const weight = (ids: string[]) => ids.filter((id) => !satellites.has(id)).length;
+  return graphComponents(graph, anchorOf).sort((a, b) => {
+    const aKey = a[0] as string;
+    const bKey = b[0] as string;
+    return weight(b) - weight(a) || (aKey < bKey ? -1 : aKey > bKey ? 1 : 0);
+  });
+}
+
 export function shelveComponents(graph: Graph): string[][] {
   return shelveComponentsDetailed(graph).placement;
 }
@@ -1499,6 +2171,177 @@ function stableAngle(id: string): number {
     hash = Math.imul(hash, 16777619);
   }
   return ((hash >>> 0) / 4294967296) * Math.PI * 2;
+}
+
+/** A kept point with this many structural links or more is a hub: it never
+ *  moves, and a group that holds one never moves. */
+export const STALE_HUB_DEGREE = 6;
+/** Graph units. A fresh settle of a 5.5k-point library leaves no leaf farther
+ *  than about 630 from its nearest link (median 33), so a link longer than
+ *  this between kept points is one the forces could not have made: one end
+ *  was kept before the link existed. */
+export const STALE_LEAF_DISTANCE = 700;
+/** The most points one stale group may hold; a bigger region is Rearrange's job. */
+const STALE_GROUP_MAX = 8;
+/** Graph units. A group no wider than this around its centre is as tight as a
+ *  fresh settle makes one (p99 for degree 4-10 is about 107). */
+const STALE_GROUP_RADIUS = 120;
+
+const structuralNeighbors = (graph: Graph, id: string): string[] => {
+  const out: string[] = [];
+  graph.forEachNeighbor(id, (neighbor, attrs) => {
+    if (attrs.entityType === MEMORY_NODE_TYPE || attrs.entityType === THING_NODE_TYPE || attrs.night === true) return;
+    out.push(neighbor);
+  });
+  return out;
+};
+
+const structuralNode = (graph: Graph, id: string): boolean => {
+  if (!graph.hasNode(id)) return false;
+  const attrs = graph.getNodeAttributes(id);
+  return attrs.entityType !== MEMORY_NODE_TYPE && attrs.entityType !== THING_NODE_TYPE && attrs.night !== true;
+};
+
+/**
+ * The kept groups left far from everything they link to (UX-GRAPH-1's one
+ * exception). Kept points joined by links no longer than STALE_LEAF_DISTANCE
+ * form groups. A group moves when it has at most STALE_GROUP_MAX points, no
+ * hub (STALE_HUB_DEGREE), a radius of at most STALE_GROUP_RADIUS, and every
+ * link out of it is longer than STALE_LEAF_DISTANCE: typically points kept
+ * while they were an island and joined to a hub by a later relation. The
+ * whole group moves rigidly, once, to the free side of the point it links to
+ * most, and only when that point sits in a group that cannot move itself.
+ * After the move its links are short, so it joins that group and the rule
+ * does not fire again. Returns the new spot of every point that moves.
+ */
+export function staleKeptGroups(
+  graph: Graph,
+  positions: ReadonlyMap<string, { x: number; y: number }>,
+  maxDistance = STALE_LEAF_DISTANCE,
+): Map<string, { x: number; y: number }> {
+  // A group whose only link is to another stale group moves once that group
+  // has landed beside something that stays, so run to a fixed point here and
+  // a later restore finds nothing to move. Each pass merges every mover into
+  // a group that cannot move, so this ends; the cap is a guard.
+  const moves = new Map<string, { x: number; y: number }>();
+  let current = new Map(positions);
+  for (let pass = 0; pass < 8; pass += 1) {
+    const step = staleKeptGroupsOnce(graph, current, maxDistance);
+    if (step.size === 0) break;
+    for (const [id, spot] of step) moves.set(id, spot);
+    current = new Map([...current, ...step]);
+  }
+  return moves;
+}
+
+function staleKeptGroupsOnce(
+  graph: Graph,
+  positions: ReadonlyMap<string, { x: number; y: number }>,
+  maxDistance: number,
+): Map<string, { x: number; y: number }> {
+  const ids = [...positions.keys()].filter((id) => structuralNode(graph, id)).sort();
+  const parent = new Map(ids.map((id) => [id, id]));
+  const find = (id: string): string => {
+    let root = id;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    while (parent.get(id) !== root) {
+      const next = parent.get(id)!;
+      parent.set(id, root);
+      id = next;
+    }
+    return root;
+  };
+  const near = (a: string, b: string) => {
+    const pa = positions.get(a)!;
+    const pb = positions.get(b)!;
+    return Math.hypot(pa.x - pb.x, pa.y - pb.y) <= maxDistance;
+  };
+  const kept = new Set(ids);
+  const neighborsOf = new Map(ids.map((id) => [id, structuralNeighbors(graph, id)]));
+  for (const id of ids) {
+    for (const other of neighborsOf.get(id)!) {
+      if (!kept.has(other) || !near(id, other)) continue;
+      const a = find(id);
+      const b = find(other);
+      if (a !== b) parent.set(a < b ? b : a, a < b ? a : b);
+    }
+  }
+  const groups = new Map<string, string[]>();
+  for (const id of ids) {
+    const root = find(id);
+    const members = groups.get(root);
+    if (members) members.push(id);
+    else groups.set(root, [id]);
+  }
+  const shape = (members: string[]) => {
+    let cx = 0;
+    let cy = 0;
+    for (const id of members) {
+      cx += positions.get(id)!.x;
+      cy += positions.get(id)!.y;
+    }
+    cx /= members.length;
+    cy /= members.length;
+    let radius = 0;
+    for (const id of members) {
+      const p = positions.get(id)!;
+      radius = Math.max(radius, Math.hypot(p.x - cx, p.y - cy));
+    }
+    return { cx, cy, radius };
+  };
+  const movable = new Map<string, boolean>();
+  for (const [root, members] of groups) {
+    movable.set(root, members.length <= STALE_GROUP_MAX
+      && members.every((id) => neighborsOf.get(id)!.length < STALE_HUB_DEGREE)
+      && shape(members).radius <= STALE_GROUP_RADIUS);
+  }
+  const moves = new Map<string, { x: number; y: number }>();
+  const usedSides = new Map<string, number>();
+  for (const [root, members] of groups) {
+    if (!movable.get(root)) continue;
+    const inGroup = new Set(members);
+    const links = new Map<string, number>();
+    for (const id of members) {
+      for (const other of neighborsOf.get(id)!) {
+        if (kept.has(other) && !inGroup.has(other)) links.set(other, (links.get(other) ?? 0) + 1);
+      }
+    }
+    if (links.size === 0) continue;
+    const degree = (id: string) => neighborsOf.get(id)?.length ?? 0;
+    const target = [...links.keys()].sort((a, b) =>
+      links.get(b)! - links.get(a)! || degree(b) - degree(a) || (a < b ? -1 : 1))[0];
+    if (movable.get(find(target))) continue;
+    const anchor = positions.get(target)!;
+    let ox = 0;
+    let oy = 0;
+    let count = 0;
+    for (const other of neighborsOf.get(target)!) {
+      if (!kept.has(other) || inGroup.has(other)) continue;
+      ox += positions.get(other)!.x;
+      oy += positions.get(other)!.y;
+      count += 1;
+    }
+    let theta = stableAngle(members[0]);
+    if (count > 0) {
+      const dx = anchor.x - ox / count;
+      const dy = anchor.y - oy / count;
+      if (Math.hypot(dx, dy) > 1e-6) theta = Math.atan2(dy, dx);
+    }
+    // Several groups may move beside one point; fan them out around its free side.
+    const nth = usedSides.get(target) ?? 0;
+    usedSides.set(target, nth + 1);
+    theta += (nth % 2 === 0 ? 1 : -1) * Math.ceil(nth / 2) * (Math.PI / 4);
+    const { cx, cy, radius } = shape(members);
+    const targetSize = (graph.getNodeAttribute(target, "size") as number | undefined) ?? 1;
+    const reach = NEW_POINT_GAP + targetSize + Math.max(radius, NEW_POINT_GAP);
+    const dx = anchor.x + Math.cos(theta) * reach - cx;
+    const dy = anchor.y + Math.sin(theta) * reach - cy;
+    for (const id of members) {
+      const p = positions.get(id)!;
+      moves.set(id, { x: p.x + dx, y: p.y + dy });
+    }
+  }
+  return moves;
 }
 
 /**
@@ -1712,7 +2555,10 @@ export interface AtlasSimulation extends Simulation<AtlasSimNode, undefined> {
   /** Restore a previously settled non-memory body without running the shelf
    *  pack again. Used when only the memory layer changed; the saved body map
    *  is authoritative for both graphology and the live force nodes. */
-  restorePositions(positions: ReadonlyMap<string, { x: number; y: number }>): void;
+  /** `unitsPerPx`, when given, is how many graph units one CSS px spans at
+   *  the fit zoom: whatever this call places or moves is then nudged until
+   *  its disc sits clear of every other drawn point's. */
+  restorePositions(positions: ReadonlyMap<string, { x: number; y: number }>, options?: { unitsPerPx?: number }): void;
   /** Put every unheld shelf component back on its slot right now, instead of
    *  over the cooling tail. The release path uses it when there will be no
    *  cooling tail (see shelfAnchorForce's `settle`). */
@@ -1720,6 +2566,9 @@ export interface AtlasSimulation extends Simulation<AtlasSimNode, undefined> {
   /** Re-place every satellite on its anchor now, so a change to a point's
    *  flight (setThingFlight) shows without a tick. */
   placeSatellitesNow(): void;
+  /** On a skeleton-laid map: make the current spot of these bodies (all when
+   *  omitted) the one the settle holds them to, e.g. after a drag. */
+  reanchor(ids?: Iterable<string>): void;
 }
 
 export interface AtlasSimNode extends SimulationNodeDatum {
@@ -1740,6 +2589,9 @@ export interface AtlasSimLink {
  *  its scratch copy or a component would relax to a different shape there
  *  than it holds in the live simulation. */
 const CHARGE_STRENGTH = -40;
+/** Pull back to the layout spot on a skeleton-laid map (round 3). */
+const ANCHOR_STRENGTH = 0.15;
+const ANCHORED_SETTLE_TICKS = 60;
 /** Collide runs at 0.7 rather than 1 so a collision resolves over a few ticks
  *  instead of snapping, which reads calmer. */
 const COLLIDE_STRENGTH = 0.7;
@@ -2023,6 +2875,10 @@ function shelfAnchorForce(): {
         node.vx = (node.vx ?? 0) + (entry.dx * SHELF_RETURN_RATE - entry.vx) / entry.free;
         node.vy = (node.vy ?? 0) + (entry.dy * SHELF_RETURN_RATE - entry.vy) / entry.free;
       }
+      // Round 3: with charge and centre off, a core neighbour follows a hand
+      // on its links alone, so a held island drops its springs too and
+      // follows the same way; they hold it again from the release.
+      if (handOn[anchor.group]) continue;
       node.vx = (node.vx ?? 0) + (anchor.x - (node.x ?? 0)) * SHELF_ANCHOR_STRENGTH * alpha;
       node.vy = (node.vy ?? 0) + (anchor.y - (node.y ?? 0)) * SHELF_ANCHOR_STRENGTH * alpha;
     }
@@ -2164,10 +3020,19 @@ export function relaxShelf(
  *  first drag; settling here means the graph the caller paints is already at
  *  rest, and a drag only flexes it (see round 5 spec). Every tick writes sim
  *  x/y back into the graph (sigma auto-repaints on attr change). */
+export interface AtlasSimulationOptions {
+  /** Every body already sits where it should (a kept layout put back on the
+   *  graph): build the simulation round those spots without settling or
+   *  re-packing, which is most of the cost of opening a large map. */
+  settled?: boolean;
+}
+
 export function createAtlasSimulation(
   graph: Graph,
   onTick?: () => void,
+  options: AtlasSimulationOptions = {},
 ): AtlasSimulation {
+  const settled = options.settled === true;
   const excluded = new Set(nonSimulatedIds(graph));
   const satellites = satellitePlan(graph);
   annotateDust(graph, satellites);
@@ -2270,7 +3135,61 @@ export function createAtlasSimulation(
   // decay at 0.03 when the budget allows it) — see the doc comment above.
   // Budgeted by the nodes the sim owns, not the graph: memories are not
   // simulated, and counting them would change the settle with the layer.
-  sim.tick(settleTicks(nodes.length));
+  // Round 3: a skeleton-laid core is held near its layout spots through the
+  // settle (and after), so the settle only clears overlaps instead of
+  // undoing FA2's shape. A shorter settle is enough for that.
+  const anchored = graph.getAttribute(ATLAS_ANCHORED_ATTR) === true;
+  const spots = new Map<string, { x: number; y: number }>();
+  const anchorX = forceX<AtlasSimNode>((d) => spots.get(d.id)?.x ?? d.x ?? 0).strength(ANCHOR_STRENGTH);
+  const anchorY = forceY<AtlasSimNode>((d) => spots.get(d.id)?.y ?? d.y ?? 0).strength(ANCHOR_STRENGTH);
+  const reanchor = (ids?: Iterable<string>) => {
+    if (!anchored) return;
+    const list = ids ? [...ids].map((id) => simNodeById.get(id)).filter((n): n is AtlasSimNode => n !== undefined) : nodes;
+    for (const node of list) spots.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
+    anchorX.x((d) => spots.get(d.id)?.x ?? d.x ?? 0);
+    anchorY.y((d) => spots.get(d.id)?.y ?? d.y ?? 0);
+  };
+  if (anchored) {
+    for (const node of nodes) spots.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
+    sim.force("anchorX", anchorX).force("anchorY", anchorY);
+  }
+  // The skeleton hubs hold still through the settle: links and charge across
+  // the whole map are stronger than the anchors and would otherwise drag a
+  // tight cluster of hubs back into one blob.
+  const heldHubs = anchored && !settled ? nodes.filter((node) => graph.getNodeAttribute(node.id, ATLAS_SKELETON_HUB_ATTR) === true) : [];
+  for (const node of heldHubs) {
+    node.fx = node.x;
+    node.fy = node.y;
+  }
+  // Round 3: the anchored settle only clears overlaps. Charge and links would
+  // push every member out from its hub (hub-to-member lines 45 -> 106 units
+  // on the calibration map), so they rest until it is done; so does centre.
+  const charge = sim.force("charge") as ReturnType<typeof forceManyBody<AtlasSimNode>> | undefined;
+  const linkForce = sim.force("link") as ReturnType<typeof forceLink<AtlasSimNode, AtlasSimLink>> | undefined;
+  if (anchored) {
+    charge?.strength(0);
+    linkForce?.strength(0);
+    // With the hubs held, re-centring the free nodes slides every member
+    // off its hub; the anchors already hold the map in place.
+    sim.force("center", null);
+    (sim.force("collide") as ReturnType<typeof forceCollide<AtlasSimNode>> | undefined)?.strength(1).iterations(4);
+  }
+  if (!settled) sim.tick(anchored ? ANCHORED_SETTLE_TICKS : settleTicks(nodes.length));
+  // They stay at rest afterwards too: the anchors and collide are then the
+  // whole equilibrium, so a reheat or a drag moves only what it touches
+  // instead of blooming the map (round 3, section 11: no mid-use moves).
+  if (anchored) {
+    (sim.force("collide") as ReturnType<typeof forceCollide<AtlasSimNode>> | undefined)?.strength(COLLIDE_STRENGTH).iterations(1);
+    // Links come back so a dragged point brings its neighbours along (their
+    // rest length is set once the islands are placed, below).
+    linkForce?.strength((link) => linkStrengthFor(link, linkDegree));
+  }
+  for (const node of heldHubs) {
+    node.fx = undefined;
+    node.fy = undefined;
+    graph.setNodeAttribute(node.id, "x", node.x);
+    graph.setNodeAttribute(node.id, "y", node.y);
+  }
 
   // Round 5: the settle leaves every small component on roughly one circle
   // around the core (charge pushes out, forceCenter pulls in, and they
@@ -2278,8 +3197,8 @@ export function createAtlasSimulation(
   // round the core instead (see shelveComponents), then copy those positions
   // back INTO the sim so a later drag flexes the real layout rather than
   // snapping to the ring.
-  let placement = shelveComponents(graph);
-  for (const node of nodes) {
+  let placement = settled ? componentPlacement(graph) : shelveComponents(graph);
+  if (!settled) for (const node of nodes) {
     node.x = graph.getNodeAttribute(node.id, "x") as number;
     node.y = graph.getNodeAttribute(node.id, "y") as number;
   }
@@ -2289,6 +3208,7 @@ export function createAtlasSimulation(
   // component are what spread it; the core is already settled and would only
   // make the pass cost more, so this runs on a shelf-only scratch simulation
   // (see relaxShelf) whose results are copied back onto the sim nodes.
+  if (!settled) {
   relaxShelf(nodes, links, placement, linkDegree);
   for (const node of nodes) {
     graph.setNodeAttribute(node.id, "x", node.x);
@@ -2303,6 +3223,7 @@ export function createAtlasSimulation(
   // A thing whose points link to the map leaves its shelf slot for a spot
   // beside what they link to (UX-CHAT-5); one with no link stays shelved.
   placeThingCentres(graph, satellites);
+  }
   for (const node of nodes) {
     node.x = graph.getNodeAttribute(node.id, "x") as number;
     node.y = graph.getNodeAttribute(node.id, "y") as number;
@@ -2317,11 +3238,30 @@ export function createAtlasSimulation(
   center.setGroups(placement.slice(0, 1));
   center.retarget();
   shelfAnchor.setPlacement(placement.slice(1));
+  reanchor();
+  // Round 3: on an anchored map every link rests at the length it has now,
+  // so links alone move nothing and only a drag pulls neighbours along.
+  if (anchored) {
+    linkForce?.distance((link) => {
+      const s = link.source as AtlasSimNode, t = link.target as AtlasSimNode;
+      return Math.hypot((s.x ?? 0) - (t.x ?? 0), (s.y ?? 0) - (t.y ?? 0));
+    });
+  }
+  placeSatellites(graph, satellites);
+  markCrowdedDust(graph, satellites);
   // Which nodes are islands, for the reducers (dim at the opening view).
   const islandIds = new Set(placement.slice(1).flat());
   graph.forEachNode((id) => {
     graph.setNodeAttribute(id, "island", islandIds.has(id));
   });
+  // Each island's size in pages and entities, for its size tier (islandSolid).
+  for (const group of placement.slice(1)) {
+    const bodies = group.filter((id) => {
+      const attrs = graph.getNodeAttributes(id);
+      return attrs.entityType !== MEMORY_NODE_TYPE && attrs.entityType !== THING_NODE_TYPE && attrs.night !== true;
+    }).length;
+    for (const id of group) graph.setNodeAttribute(id, "islandBodies", bodies);
+  }
 
   // A thing's centre is pinned where it was placed: no force moves a frame,
   // and the discs a drag pushes about are pushed off it (collide), never it
@@ -2348,7 +3288,7 @@ export function createAtlasSimulation(
   atlasSim.setDraggingId = (id: string | null) => {
     draggingId = id;
   };
-  atlasSim.restorePositions = (positions) => {
+  atlasSim.restorePositions = (positions, options = {}) => {
     for (const [id, position] of positions) {
       if (!graph.hasNode(id)) continue;
       // The caller normally supplies only the non-memory body, but keep this
@@ -2368,14 +3308,38 @@ export function createAtlasSimulation(
     // A rebuild can add whole components after this simulation's initial
     // shelf pass. Keep restored survivors fixed, then place only those new
     // components against the restored core and surviving islands.
+    // A small kept group far from everything it links to moves once, beside it;
+    // nothing else moves (UX-GRAPH-1).
+    const moves = staleKeptGroups(graph, positions);
+    for (const [id, spot] of moves) {
+      graph.setNodeAttribute(id, "x", spot.x);
+      graph.setNodeAttribute(id, "y", spot.y);
+      const simNode = simNodeById.get(id);
+      if (!simNode) continue;
+      simNode.x = spot.x;
+      simNode.y = spot.y;
+    }
     const preservedIds = new Set(positions.keys());
+    placement = splitNewRegionsFromCore(graph, placement, preservedIds);
     placeUnrestoredComponents(graph, placement, preservedIds);
     placeNewBesideKept(graph, preservedIds);
     // A thing seen before keeps its kept spot; a new one goes beside what
     // its points link to on the map as it stands now.
     placeThingCentres(graph, satellites, preservedIds);
+    if (options.unitsPerPx) {
+      // What was just placed or moved keeps its drawn size clear of every
+      // point; the kept ones it might touch stay where they are.
+      const placedNow = graph.nodes().filter((id) => !preservedIds.has(id) || moves.has(id));
+      const isMemory = (id: string) => graph.getNodeAttribute(id, "entityType") === MEMORY_NODE_TYPE;
+      for (const id of nudgeClearOfOthers(graph, placedNow, options.unitsPerPx, isMemory)) {
+        const simNode = simNodeById.get(id);
+        if (!simNode) continue;
+        simNode.x = graph.getNodeAttribute(id, "x") as number;
+        simNode.y = graph.getNodeAttribute(id, "y") as number;
+      }
+    }
     for (const node of nodes) {
-      if (preservedIds.has(node.id)) continue;
+      if (preservedIds.has(node.id) && !moves.has(node.id)) continue;
       const x = graph.getNodeAttribute(node.id, "x") as number;
       const y = graph.getNodeAttribute(node.id, "y") as number;
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
@@ -2385,6 +3349,7 @@ export function createAtlasSimulation(
       node.vy = 0;
     }
     pinThings();
+    reanchor();
     // The component membership and placement remain those from the settled
     // graph. Only the actual coordinates and their force targets move.
     center.retarget();
@@ -2401,6 +3366,7 @@ export function createAtlasSimulation(
     writeBack();
   };
   atlasSim.placeSatellitesNow = () => placeSatellites(graph, satellites, draggingId);
+  atlasSim.reanchor = reanchor;
   return atlasSim;
 }
 
@@ -2491,9 +3457,11 @@ export function nodeDisplay(
   // A thing is its frame (AtlasView paints it round the points); its node is
   // only the centre they cluster on.
   if (attrs.entityType === THING_NODE_TYPE) return { ...attrs, hidden: true };
+  // An R2 ring member is placed by its memories, not a link: a smaller dot.
+  if (attrs[REGION_ROLE_ATTR] === "ring") attrs = { ...attrs, size: ((attrs.size as number) ?? 3) * RING_DOT_SCALE };
   const dustRank = attrs.dustRank as number | undefined;
   // A night's points are the thing's whole picture: never folded into a count.
-  if (dustRank !== undefined && dustRank >= lod.dustVisible && attrs.night !== true) {
+  if (dustRank !== undefined && (dustRank >= lod.dustVisible || attrs[ATLAS_DUST_CROWDED_ATTR] === true) && attrs.night !== true) {
     const anchorHovered = state.hovered === attrs.dustOf && dustRank < Math.max(lod.dustVisible, HOVER_DUST_MAX);
     // A picked thing's point is never folded away, wherever it sits.
     const pickedPoint = state.thing !== undefined && state.neighbors.has(nodeId);
@@ -2502,12 +3470,14 @@ export function nodeDisplay(
   let base = attrs;
   // A night's point is the work itself: drawn whole at every zoom, never as
   // part of a dim island.
-  if (attrs.island && !lod.islandsSolid && attrs.night !== true) {
+  if (!islandSolid(attrs, lod) && attrs.night !== true) {
     base = { ...attrs, color: dimFill(attrs.color as string, palette.surface), label: "" };
   }
   // Keep orientation names through the middle zoom range, where ordinary
   // discs have not yet reached Sigma's label-size threshold.
-  if (attrs.landmarkLabel === true && attrs.entityType !== MEMORY_NODE_TYPE) {
+  // At the middle zoom every landmark is offered its name too; AtlasView
+  // keeps the best-linked ones that fit without covering anything.
+  if ((attrs.landmarkLabel === true || (attrs.landmark === true && lod.phase === "neighborhood")) && attrs.entityType !== MEMORY_NODE_TYPE) {
     base = { ...base, forceLabel: true };
   }
   // `landmark` is deliberately checked by key presence as well as value: an
@@ -2518,7 +3488,9 @@ export function nodeDisplay(
       base = {
         ...base,
         size: Math.max((base.size as number) ?? 0, LANDMARK_MIN_SIZE),
-        ...(attrs.landmarkLabel === true ? { forceLabel: true } : {}),
+        // Every landmark is offered its name; AtlasView keeps the
+        // best-linked ones that fit without covering anything.
+        forceLabel: true,
       };
     } else {
       base = {
@@ -2598,11 +3570,41 @@ export function edgeDisplay(
     if (s.dustRank !== undefined || t.dustRank !== undefined) {
       return { ...attrs, hidden: true };
     }
-    if ((s.island || t.island) && !lod.islandsSolid) return { ...attrs, hidden: true };
+    if (!islandSolid(s, lod) || !islandSolid(t, lod)) return { ...attrs, hidden: true };
+    // An R2 map draws by line class (round 4, section 4): at the opening view
+    // each body's one line inside its region; from 2x every line inside a
+    // region plus one bridge per region pair; up close the rest, a big hub
+    // only its nearest. A super-hub's lines wait for hover at every zoom.
+    const regionEdge = attrs[REGION_EDGE_ATTR] as string | undefined;
+    if (regionEdge !== undefined) {
+      if (regionEdge === "super") return { ...attrs, hidden: true };
+      if (lod.phase === "overview") return regionEdge === "forest" ? attrs : { ...attrs, hidden: true };
+      if (lod.phase === "neighborhood") {
+        return regionEdge === "forest" || regionEdge === "intra" || regionEdge === "bridge" ? attrs : { ...attrs, hidden: true };
+      }
+      const fanRank = attrs[ATLAS_EDGE_FAN_ATTR] as number | undefined;
+      if (fanRank !== undefined && fanRank >= FAN_NEAR_MAX) return { ...attrs, hidden: true };
+      return regionEdge === "cross"
+        ? { ...attrs, color: dimFillAt((attrs.color as string) ?? palette.edge, palette.surface, EDGE_TIER_LIGHT_ALPHA) }
+        : attrs;
+    }
     const hierarchyApplied = Object.prototype.hasOwnProperty.call(s, "landmark") || Object.prototype.hasOwnProperty.call(t, "landmark");
     if (hierarchyApplied && lod.phase === "overview" && s.landmark !== true && t.landmark !== true) {
       return { ...attrs, hidden: true };
     }
+  }
+  // Round 3: at rest only the tree of strongest ties is drawn in full, so
+  // long hub-to-hub lines no longer weave a web over the map; the rest shows
+  // on hover (above) or, light, up close.
+  const tier = attrs[ATLAS_EDGE_TIER_ATTR] as number | undefined;
+  // Tier 0 shows only on hover (above), at every zoom: up close its lines
+  // run between bodies far apart and fill the screen (4x median 1800px).
+  if (tier === 0) return { ...attrs, hidden: true };
+  const fan = attrs[ATLAS_EDGE_FAN_ATTR] as number | undefined;
+  if (fan !== undefined && fan >= FAN_NEAR_MAX && lod.phase === "detail") return { ...attrs, hidden: true };
+  if (tier === 2 && lod.phase === "overview") return { ...attrs, hidden: true };
+  if (tier === 2) {
+    return { ...attrs, color: dimFillAt((attrs.color as string) ?? palette.edge, palette.surface, EDGE_TIER_LIGHT_ALPHA) };
   }
   return attrs;
 }
@@ -2645,6 +3647,21 @@ export function drawRadialNodeLabel(
 /** Which side of its dot a label sits on. */
 export type LabelSide = "left" | "right" | "above" | "below";
 
+/** A name's sides in the order they are tried: its usual one, the opposite,
+ *  then the two across. */
+export function labelSidesFrom(preferred: LabelSide): LabelSide[] {
+  switch (preferred) {
+    case "right":
+      return ["right", "left", "above", "below"];
+    case "left":
+      return ["left", "right", "above", "below"];
+    case "above":
+      return ["above", "below", "right", "left"];
+    case "below":
+      return ["below", "above", "right", "left"];
+  }
+}
+
 /** A resolved label position: the canvas anchor plus how the text hangs off it. */
 export interface LabelPlacement {
   x: number;
@@ -2667,6 +3684,25 @@ export function labelAnchor(x: number, y: number, size: number, side: LabelSide,
     case "above":
       return { x, y: y - pad, align: "center", baseline: "bottom" };
   }
+}
+
+/** How much further out the second ring of label spots sits (round 3, section 8). */
+export const LABEL_RING2_PUSH = 14;
+
+/** Every spot a name may try, in order: the four sides beside its dot, the
+ *  four sides one ring further out, then the four corners on that ring. */
+export function labelCandidates(x: number, y: number, size: number, preferred: LabelSide): LabelPlacement[] {
+  const sides = labelSidesFrom(preferred);
+  const out = sides.map((side) => labelAnchor(x, y, size, side));
+  for (const side of sides) out.push(labelAnchor(x, y, size, side, LABEL_RING2_PUSH));
+  const d = (size + 8 + LABEL_RING2_PUSH) * Math.SQRT1_2;
+  out.push(
+    { x: x + d, y: y - d, align: "left", baseline: "bottom" },
+    { x: x - d, y: y - d, align: "right", baseline: "bottom" },
+    { x: x + d, y: y + d, align: "left", baseline: "top" },
+    { x: x - d, y: y + d, align: "right", baseline: "top" },
+  );
+  return out;
 }
 
 /** Paint one label at a resolved placement: the shared 12px face at 85% ink
