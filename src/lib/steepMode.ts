@@ -3,9 +3,6 @@ import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { fillUnsetPinsWithRetry } from "./routingPins";
 import { getBackgroundAiEnabled, setBackgroundAiEnabled } from "./tauri";
 
-/** What the user types in their AI tool to finish all pending steeping. */
-export const STEEP_COMMAND = "/wenlan steep";
-
 /**
  * Steeping has two modes, stored in `background_ai_enabled`: Automatic
  * (true, Wenlan steeps in the background) and On demand (false, the user's AI
