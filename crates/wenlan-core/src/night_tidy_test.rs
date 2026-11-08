@@ -114,3 +114,11 @@ fn each_memory_is_changed_once_and_numbers_compare_by_value() {
     assert_eq!(changes.len(), 1, "{changes:?}");
     assert!(parse_tidy("not json", &items, NOW).is_none());
 }
+
+#[test]
+fn a_date_has_passed_only_once_its_whole_day_is_over() {
+    let day = 1_762_560_000; // 2025-11-08 00:00 UTC
+    assert!(!date_passed(day, day + 3_600), "early that day, anywhere");
+    assert!(!date_passed(day, day + 86_399));
+    assert!(date_passed(day, day + 86_400));
+}

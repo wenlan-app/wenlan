@@ -14,7 +14,7 @@ use super::night_links::NightChange;
 use super::thing_map::DreamMapChanges;
 use super::{not_hidden_by_superseder, not_self_archived, MemoryDB};
 use crate::authorship::{memory_author, MemoryWriter};
-use crate::night_tidy::{TidyItem, MAX_NEIGHBOURS, MAX_TOUCHED, MIN_SIMILARITY};
+use crate::night_tidy::{date_passed, TidyItem, MAX_NEIGHBOURS, MAX_TOUCHED, MIN_SIMILARITY};
 use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use std::collections::HashMap;
@@ -164,7 +164,7 @@ impl MemoryDB {
                       WHERE {} AND m.session_id IN
                             (SELECT session_id FROM thing_sessions WHERE thing_id = ?1)
                         AND (COALESCE(m.created_at, m.last_modified) >= ?2
-                             OR (m.event_date >= ?2 AND m.event_date < ?3))
+                             OR (m.event_date + 86400 >= ?2 AND m.event_date + 86400 <= ?3))
                       ORDER BY COALESCE(m.created_at, m.last_modified) DESC
                       LIMIT ?4",
                     item_columns("m"),
@@ -243,7 +243,7 @@ impl MemoryDB {
                     }
                 }
             }
-            let passed = item.event_date.is_some_and(|at| at < now);
+            let passed = item.event_date.is_some_and(|at| date_passed(at, now));
             if neighbours.is_empty() && !passed {
                 continue;
             }
@@ -260,33 +260,142 @@ impl MemoryDB {
     }
 }
 
+/// Most links of a supersede chain followed when hiding a tidied row.
+const MAX_CHAIN: usize = 16;
+
+/// What [`apply_tidies`] did: the changes to record, and what a tidy wrote
+/// that it could not record (everything it stood for had changed since the
+/// offer), for the caller to forget in the same transaction.
+#[derive(Debug, Default)]
+pub(super) struct AppliedTidies {
+    pub changes: Vec<NightChange>,
+    pub orphans: Vec<String>,
+}
+
+/// The mode of a row still fit to hide at the moment the night records it:
+/// live, not pinned, not a person's own writing. `None` when it is gone or
+/// changed since the offer.
+async fn hideable_mode(
+    tx: &libsql::Transaction,
+    id: &str,
+) -> Result<Option<Option<String>>, WenlanError> {
+    let mut rows = tx
+        .query(
+            "SELECT supersede_mode FROM memories
+              WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
+                AND COALESCE(supersede_mode, '') <> 'evicted'
+                AND COALESCE(pinned, 0) = 0 AND authored_content IS NULL",
+            libsql::params![id],
+        )
+        .await
+        .map_err(db_err("tidy old mode"))?;
+    Ok(rows
+        .next()
+        .await
+        .map_err(db_err("tidy old mode row"))?
+        .map(|row| row.get::<Option<String>>(0).unwrap_or(None)))
+}
+
+/// Whether `id` stands: a live memory not hidden by a tidy.
+async fn stands(tx: &libsql::Transaction, id: &str) -> Result<bool, WenlanError> {
+    let mut rows = tx
+        .query(
+            "SELECT 1 FROM memories
+              WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
+                AND COALESCE(supersede_mode, '') <> 'evicted'",
+            libsql::params![id],
+        )
+        .await
+        .map_err(db_err("tidy stands"))?;
+    Ok(rows
+        .next()
+        .await
+        .map_err(db_err("tidy stands row"))?
+        .is_some())
+}
+
+/// The row `id` hides as its superseder (`supersedes` with mode `'hide'`)
+/// when nothing else live hides it too, with its own mode.
+async fn hidden_only_by(
+    tx: &libsql::Transaction,
+    id: &str,
+) -> Result<Option<(String, Option<String>)>, WenlanError> {
+    let mut rows = tx
+        .query(
+            "SELECT p.source_id, p.supersede_mode FROM memories s
+               JOIN memories p ON p.source = 'memory' AND p.source_id = s.supersedes
+                              AND p.chunk_index = 0
+              WHERE s.source = 'memory' AND s.source_id = ?1 AND s.chunk_index = 0
+                AND s.supersede_mode = 'hide'
+                AND COALESCE(p.supersede_mode, '') <> 'evicted'
+                AND NOT EXISTS (
+                    SELECT 1 FROM memories o
+                     WHERE o.source = 'memory' AND o.supersedes = p.source_id
+                       AND o.source_id <> ?1 AND o.pending_revision = 0
+                       AND o.supersede_mode = 'hide')",
+            libsql::params![id],
+        )
+        .await
+        .map_err(db_err("tidy chain"))?;
+    Ok(rows
+        .next()
+        .await
+        .map_err(db_err("tidy chain row"))?
+        .map(|row| {
+            (
+                row.get::<String>(0).unwrap_or_default(),
+                row.get::<Option<String>>(1).unwrap_or(None),
+            )
+        }))
+}
+
 /// Hide what each tidy takes the place of, inside the night's transaction,
-/// and return the changes to record. A row that is gone or already hidden
-/// is left as it is and not recorded, so Undo never puts back a mode some
-/// other step set.
+/// and return the changes to record. Each row is checked again here, since
+/// the model's call took time: one that is gone, already hidden, pinned or
+/// now the person's own is left as it is and not recorded, so Undo never
+/// puts back a mode some other step set. A replace whose kept memory no
+/// longer stands is dropped.
+///
+/// Hiding a row stops it hiding what it superseded (`supersede_mode` is
+/// also the row's behaviour as a superseder), so those rows are hidden too
+/// and recorded under `also`.
 pub(super) async fn apply_tidies(
     tx: &libsql::Transaction,
     tidied: &[TidyApplied],
-) -> Result<Vec<NightChange>, WenlanError> {
-    let mut changes = Vec::new();
+) -> Result<AppliedTidies, WenlanError> {
+    let mut applied = AppliedTidies::default();
     for tidy in tidied {
-        let mut old = Vec::new();
-        let mut before = Vec::new();
+        if !tidy.wrote && !stands(tx, &tidy.new).await? {
+            continue;
+        }
+        let (mut old, mut before) = (Vec::new(), Vec::new());
+        let (mut also, mut also_before) = (Vec::new(), Vec::new());
         for id in &tidy.old {
-            let mut rows = tx
-                .query(
-                    "SELECT supersede_mode FROM memories
-                      WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
-                        AND COALESCE(supersede_mode, '') <> 'evicted'",
-                    libsql::params![id.as_str()],
-                )
-                .await
-                .map_err(db_err("tidy old mode"))?;
-            let Some(row) = rows.next().await.map_err(db_err("tidy old mode row"))? else {
+            let Some(mode) = hideable_mode(tx, id).await? else {
                 continue;
             };
-            before.push(row.get::<Option<String>>(0).unwrap_or(None));
-            drop(rows);
+            let mut chain = id.clone();
+            for _ in 0..MAX_CHAIN {
+                let Some((prior, prior_mode)) = hidden_only_by(tx, &chain).await? else {
+                    break;
+                };
+                if prior == tidy.new || also.contains(&prior) || tidy.old.contains(&prior) {
+                    break;
+                }
+                also.push(prior.clone());
+                also_before.push(prior_mode);
+                chain = prior;
+            }
+            old.push(id.clone());
+            before.push(mode);
+        }
+        if old.is_empty() {
+            if tidy.wrote {
+                applied.orphans.push(tidy.new.clone());
+            }
+            continue;
+        }
+        for id in old.iter().chain(also.iter()) {
             tx.execute(
                 "UPDATE memories SET supersede_mode = 'evicted'
                   WHERE source = 'memory' AND source_id = ?1",
@@ -294,21 +403,19 @@ pub(super) async fn apply_tidies(
             )
             .await
             .map_err(db_err("tidy hide"))?;
-            old.push(id.clone());
         }
-        if old.is_empty() {
-            continue;
-        }
-        changes.push(NightChange::Tidy {
+        applied.changes.push(NightChange::Tidy {
             how: tidy.how,
             old,
             before,
             new: tidy.new.clone(),
             wrote: tidy.wrote,
             map: tidy.map.clone(),
+            also,
+            also_before,
         });
     }
-    Ok(changes)
+    Ok(applied)
 }
 
 /// Put back what a night's tidies hid, inside its Undo's transaction, and
@@ -329,14 +436,24 @@ pub(super) async fn undo_tidies(
             new,
             wrote: written,
             map,
+            also,
+            also_before,
             ..
         } = change
         else {
             continue;
         };
         super::thing_map::undo_dream_map_in(tx, thing_id, map, now).await?;
-        for (i, id) in old.iter().enumerate() {
-            let mode = before.get(i).cloned().flatten();
+        let put_back = old
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id, before.get(i).cloned().flatten()))
+            .chain(
+                also.iter()
+                    .enumerate()
+                    .map(|(i, id)| (id, also_before.get(i).cloned().flatten())),
+            );
+        for (id, mode) in put_back {
             tx.execute(
                 "UPDATE memories SET supersede_mode = COALESCE(?2, 'hide')
                   WHERE source = 'memory' AND source_id = ?1 AND supersede_mode = 'evicted'",

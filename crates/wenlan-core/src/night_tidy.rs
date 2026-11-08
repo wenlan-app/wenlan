@@ -26,6 +26,13 @@ pub const MIN_SIMILARITY: f32 = 0.85;
 /// Longest text a merge or update may write, in characters.
 pub const MAX_TIDY_CHARS: usize = 400;
 
+/// A memory's date has passed once the whole day is over. `event_date` is
+/// the day's first second in UTC, so a night early on that day, in any
+/// timezone, does not yet count it as past.
+pub fn date_passed(event_date: i64, now: i64) -> bool {
+    event_date + 86_400 <= now
+}
+
 /// A memory offered to the night, as the prompt shows it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TidyItem {
@@ -213,7 +220,7 @@ pub fn parse_tidy(text: &str, items: &[TidyItem], now: i64) -> Option<Vec<TidyCh
                 else {
                     continue;
                 };
-                let Some(at) = items[item].event_date.filter(|at| *at < now) else {
+                let Some(at) = items[item].event_date.filter(|at| date_passed(*at, now)) else {
                     continue;
                 };
                 let date = say_date(at);

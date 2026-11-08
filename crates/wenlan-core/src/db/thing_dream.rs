@@ -579,6 +579,28 @@ impl MemoryDB {
                 let NightChange::Tidy { how, old, new, .. } = change else {
                     continue;
                 };
+                // A later tidy took this one's place: that one is shown.
+                if out.iter().any(|t: &ThingTidy| t.memory_id == new) {
+                    continue;
+                }
+                let mut rows = conn
+                    .query(
+                        "SELECT 1 FROM memories
+                          WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
+                            AND COALESCE(supersede_mode, '') <> 'evicted'",
+                        libsql::params![new.as_str()],
+                    )
+                    .await
+                    .map_err(db_err("tidy stands"))?;
+                let standing = rows
+                    .next()
+                    .await
+                    .map_err(db_err("tidy stands row"))?
+                    .is_some();
+                drop(rows);
+                if !standing {
+                    continue;
+                }
                 let mut replaced = Vec::new();
                 for id in old {
                     let mut rows = conn
@@ -619,8 +641,10 @@ impl MemoryDB {
         memory_id: &str,
     ) -> Result<Option<Vec<String>>, WenlanError> {
         let nights = self.dream_nights(thing_id).await?;
+        // Newest night first, as the page lists them.
         let Some((seq, change)) = nights
             .into_iter()
+            .rev()
             .filter(|(_, undone, _)| !undone)
             .find_map(|(seq, _, night)| {
                 night
@@ -638,6 +662,25 @@ impl MemoryDB {
             .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
             .await
             .map_err(db_err("undo tidy begin"))?;
+        // A later tidy hid what this one wrote: take that one back first.
+        let mut rows = tx
+            .query(
+                "SELECT 1 FROM memories
+                  WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
+                    AND COALESCE(supersede_mode, '') <> 'evicted'",
+                libsql::params![memory_id],
+            )
+            .await
+            .map_err(db_err("undo tidy stands"))?;
+        let standing = rows
+            .next()
+            .await
+            .map_err(db_err("undo tidy stands row"))?
+            .is_some();
+        drop(rows);
+        if !standing {
+            return Ok(None);
+        }
         let forgotten = undo_tidies(&tx, thing_id, std::slice::from_ref(&change)).await?;
         for id in &forgotten {
             self.delete_by_source_id_in_transaction(&tx, "memory", id, false)
@@ -749,7 +792,13 @@ impl MemoryDB {
             .await
             .map_err(db_err("record dream begin"))?;
         let mut seq = None;
-        changes.extend(apply_tidies(&tx, tidied).await?);
+        let applied = apply_tidies(&tx, tidied).await?;
+        changes.extend(applied.changes);
+        // What a tidy wrote but could not record stands for nothing.
+        for id in &applied.orphans {
+            self.delete_by_source_id_in_transaction(&tx, "memory", id, false)
+                .await?;
+        }
         let tidies = changes
             .iter()
             .any(|change| matches!(change, NightChange::Tidy { .. }));

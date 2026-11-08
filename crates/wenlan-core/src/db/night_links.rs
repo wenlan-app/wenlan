@@ -69,6 +69,13 @@ pub enum NightChange {
             skip_serializing_if = "super::thing_map::DreamMapChanges::is_empty"
         )]
         map: super::thing_map::DreamMapChanges,
+        /// Rows an `old` row had hidden as their superseder, hidden too so
+        /// they do not come back once it no longer stands, with their own
+        /// mode before, for undo.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        also: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        also_before: Vec<Option<String>>,
     },
 }
 

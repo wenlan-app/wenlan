@@ -162,7 +162,10 @@ impl MemoryDB {
             let Some(memory) = row_memory(&row) else {
                 continue;
             };
-            if memory.event_date.is_some_and(|at| at < now) {
+            if memory
+                .event_date
+                .is_some_and(|at| crate::night_tidy::date_passed(at, now))
+            {
                 report.passed.push(memory.clone());
             }
             if row.get::<i64>(8).unwrap_or(0) != 0 {

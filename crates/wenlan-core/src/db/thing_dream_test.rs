@@ -1019,3 +1019,116 @@ async fn ux_graph_7_a_night_tidies_only_what_an_ai_wrote_and_undo_puts_it_back()
     assert_eq!(back.supersede_mode, before.supersede_mode);
     assert!(db.get_memory_detail("mem_new").await.unwrap().is_some());
 }
+
+fn replace(old: &str, new: &str) -> crate::db::night_tidy::TidyApplied {
+    crate::db::night_tidy::TidyApplied {
+        how: wenlan_types::NightTidyKind::Replace,
+        old: vec![old.into()],
+        new: new.into(),
+        wrote: false,
+        text: None,
+        map: Default::default(),
+    }
+}
+
+async fn mode(db: &MemoryDB, id: &str) -> String {
+    db.get_memory_detail(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .supersede_mode
+}
+
+/// UX-GRAPH-7: hiding a memory that had hidden an older one keeps the older
+/// one hidden; a memory pinned since the offer, or a replace whose kept
+/// memory is gone, is left alone; a tidy a later night took the place of is
+/// not offered for Undo, and Undo puts everything back.
+#[tokio::test]
+async fn ux_graph_7_a_tidy_keeps_what_it_hid_hidden_and_checks_again_when_it_records() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _notes) = two_things(&db, now).await;
+    let s = "ses_tidy";
+    for (id, text, ago) in [
+        ("mem_p", "Pricing is 5 dollars.", 9_000),
+        ("mem_n", "Pricing is 6 dollars.", 7_000),
+        ("mem_k", "There is no paid plan.", 5_000),
+        ("mem_k2", "There is no paid plan for now.", 3_000),
+        ("mem_pin", "Pricing is set.", 2_000),
+        ("mem_gone", "Pricing was dropped.", 1_000),
+    ] {
+        said_by(&db, id, text, Some("claude-code"), "wenlan", s, ago).await;
+    }
+    {
+        let conn = db.conn.lock().await;
+        for sql in [
+            "UPDATE memories SET supersedes = 'mem_p', supersede_mode = 'hide' WHERE source_id = 'mem_n'",
+            "UPDATE memories SET pinned = 1 WHERE source_id = 'mem_pin'",
+            "UPDATE memories SET supersede_mode = 'evicted' WHERE source_id = 'mem_gone'",
+        ] {
+            conn.execute(sql, ()).await.unwrap();
+        }
+    }
+    let p_before = mode(&db, "mem_p").await;
+
+    db.record_dream_tidied(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+        &[
+            replace("mem_n", "mem_k"),
+            replace("mem_pin", "mem_k"),
+            replace("mem_k", "mem_gone"),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(mode(&db, "mem_n").await, "evicted");
+    assert_eq!(
+        mode(&db, "mem_p").await,
+        "evicted",
+        "what mem_n hid stays hidden"
+    );
+    assert_ne!(
+        mode(&db, "mem_pin").await,
+        "evicted",
+        "pinned since the offer"
+    );
+    assert_ne!(mode(&db, "mem_k").await, "evicted", "its keep was gone");
+    let tidies = db.thing_tidies(&site).await.unwrap();
+    assert_eq!(tidies.len(), 1, "{tidies:?}");
+    assert_eq!(tidies[0].memory_id, "mem_k");
+    assert_eq!(tidies[0].replaced[0].source_id, "mem_n");
+
+    // A later night takes mem_k's place: only that tidy is offered for Undo.
+    db.record_dream_tidied(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+        &[replace("mem_k", "mem_k2")],
+    )
+    .await
+    .unwrap();
+    let tidies = db.thing_tidies(&site).await.unwrap();
+    assert_eq!(
+        tidies
+            .iter()
+            .map(|t| t.memory_id.as_str())
+            .collect::<Vec<_>>(),
+        ["mem_k2"]
+    );
+    assert!(db.undo_tidy(&site, "mem_k").await.unwrap().is_none());
+
+    // Undo, newest first, puts every mode back.
+    db.undo_thing_dream(&site).await.unwrap();
+    assert_ne!(mode(&db, "mem_k").await, "evicted");
+    assert_eq!(db.undo_tidy(&site, "mem_k").await.unwrap(), Some(vec![]));
+    assert_eq!(mode(&db, "mem_n").await, "hide");
+    assert_eq!(mode(&db, "mem_p").await, p_before);
+}
