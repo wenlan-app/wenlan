@@ -11,7 +11,9 @@
 //! ```
 //!
 //! Grouping uses the first of Claude Code and Codex installed, as the daemon
-//! does when no cloud model is set.
+//! does when no cloud model is set. `COMPARE=1` also groups the same labels
+//! a second time with what each conversation worked on hidden, into
+//! `things-titles-only.json`, to compare with titles alone.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -29,6 +31,7 @@ struct Thing {
     last: i64,
     tools: BTreeSet<String>,
     parts: Vec<String>,
+    touched: Vec<String>,
 }
 
 fn env(name: &str) -> String {
@@ -43,6 +46,7 @@ async fn main() {
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .collect();
+    let compare = std::env::var("COMPARE").is_ok_and(|v| v == "1");
     let language = intake::language_name(std::env::var("UI_LANGUAGE").ok().as_deref());
     let label: Arc<dyn LlmProvider> = Arc::new(OpenAICompatibleProvider::new_with_key(
         env("LABEL_URL"),
@@ -87,6 +91,7 @@ async fn main() {
                     about: l.about.clone(),
                     space: l.space.clone(),
                     status: l.status.clone(),
+                    touched: conv.touched.clone(),
                 },
                 l,
                 conv.last_at,
@@ -97,8 +102,42 @@ async fn main() {
         }
     }
 
-    // Oldest first, in the daemon's batches, each seeing the things so far.
     work.sort_by_key(|w| w.2);
+    let runs: &[(&str, bool)] = if compare {
+        &[("things.json", false), ("things-titles-only.json", true)]
+    } else {
+        &[("things.json", false)]
+    };
+    std::fs::create_dir_all(&things_out).unwrap();
+    for &(file, titles_only) in runs {
+        let mut work = work.clone();
+        if titles_only {
+            for w in &mut work {
+                w.0.touched.clear();
+            }
+        }
+        let (things, left_out) = group_all(group.as_ref(), &work, language).await;
+        write_things(
+            &things_out.join(file),
+            found_count,
+            &kept,
+            &dropped,
+            &work,
+            things,
+            left_out,
+            &skipped,
+        );
+    }
+}
+
+type Work = (Pending, intake::Label, i64, String);
+
+/// Oldest first, in the daemon's batches, each seeing the things so far.
+async fn group_all(
+    group: &dyn LlmProvider,
+    work: &[Work],
+    language: &str,
+) -> (Vec<Thing>, Vec<String>) {
     let mut things: Vec<Thing> = Vec::new();
     let mut left_out: Vec<String> = Vec::new();
     for batch in work.chunks(60) {
@@ -112,6 +151,7 @@ async fn main() {
                 about: t.about.clone(),
                 space: t.space.clone(),
                 news: Vec::new(),
+                touched: t.touched.iter().take(12).cloned().collect(),
             })
             .collect();
         let answer = group
@@ -132,6 +172,11 @@ async fn main() {
             let t = &mut things[thing];
             t.tools.insert(tool.clone());
             t.parts.push(p.title.clone());
+            for name in &p.touched {
+                if !t.touched.contains(name) {
+                    t.touched.push(name.clone());
+                }
+            }
             if *at >= t.last {
                 t.last = *at;
                 t.about = l.about.clone();
@@ -155,6 +200,7 @@ async fn main() {
                 last: 0,
                 tools: BTreeSet::new(),
                 parts: Vec::new(),
+                touched: Vec::new(),
             });
             let i = things.len() - 1;
             for &c in members {
@@ -174,6 +220,20 @@ async fn main() {
         eprintln!("grouped {} conversations", pending.len());
     }
 
+    (things, left_out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_things(
+    path: &std::path::Path,
+    found_count: usize,
+    kept: &[intake::FoundConversation],
+    dropped: &intake::Dropped,
+    work: &[Work],
+    mut things: Vec<Thing>,
+    left_out: Vec<String>,
+    skipped: &[String],
+) {
     things.sort_by_key(|t| std::cmp::Reverse(t.last));
     let json = serde_json::json!({
         "found": found_count,
@@ -189,15 +249,6 @@ async fn main() {
         "left_out": left_out,
         "skipped": skipped,
     });
-    std::fs::create_dir_all(&things_out).unwrap();
-    std::fs::write(
-        things_out.join("things.json"),
-        serde_json::to_string_pretty(&json).unwrap(),
-    )
-    .unwrap();
-    eprintln!(
-        "{} things; wrote {}",
-        things.len(),
-        things_out.join("things.json").display()
-    );
+    std::fs::write(path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    eprintln!("{} things; wrote {}", things.len(), path.display());
 }
