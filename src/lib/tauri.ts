@@ -1076,6 +1076,8 @@ export interface ThingDetail extends ThingSummary {
   };
   /** Points steeped from it that are still open. */
   open_points?: string[];
+  /** Its conversations that went on but could not be read overnight. */
+  unread?: number;
 }
 
 /** Where a point on a thing's map stands; apart from its kind, since an

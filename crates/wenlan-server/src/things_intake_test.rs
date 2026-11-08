@@ -665,3 +665,83 @@ async fn ux_chat_5_old_points_are_connected_once_and_can_be_taken_back() {
     assert_eq!(db.undo_night_links_backfill().await.unwrap(), 1);
     assert_eq!(unlinked(&db, &thing).await, ["mem_0", "mem_1"]);
 }
+
+/// Trust audit F6, F7: a night reads the conversations it can find and keeps
+/// the line each point came from; one whose transcript is gone is not
+/// marked read, and the thing's page can say so.
+#[tokio::test]
+async fn ux_chat_5_a_night_keeps_its_lines_and_says_what_it_could_not_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    db.create_space("wenlan", None, false).await.unwrap();
+    let a = conv(
+        "a",
+        &["resume first pass", "keep the resume to one page"],
+        90,
+    );
+    let gone = conv("gone", &["make the header centred", "yes"], 80);
+    let label = Scripted::new(&[
+        r#"{"work": true, "title": "Tailor resume", "space": "wenlan", "about": "a", "status": "s"}"#,
+        r#"{"work": true, "title": "Tailor resume", "space": "wenlan", "about": "b", "status": "s"}"#,
+    ]);
+    let group = Scripted::new(&[
+        r#"{"new": [{"title": "Tailor resume", "conversations": ["C0", "C1"], "now": "Going"}]}"#,
+        r#"{"points": [
+            {"text": "The resume stays one page.", "settled": true, "from": "C0", "line": "L1"},
+            {"text": "Merged in PR #43.", "settled": true, "from": "C0", "line": "L0"}
+        ]}"#,
+        r#"{"conclusion": []}"#,
+    ]);
+    let models = IntakeModels {
+        label: label.clone(),
+        group: group.clone(),
+    };
+    let mut backoff = Backoff::default();
+    look_with(
+        &db,
+        vec![a.clone(), gone.clone()],
+        &models,
+        "English",
+        &mut backoff,
+    )
+    .await
+    .unwrap();
+    let thing = db.list_things(&ReadScope::Global, None).await.unwrap()[0].clone();
+    let now = chrono::Utc::now().timestamp();
+    let due = db
+        .things_to_dream(dream_quiet_since(now, 3), 10)
+        .await
+        .unwrap();
+    assert_eq!(due[0].conversations.len(), 2);
+    // Only a's transcript is still there.
+    let by_session: HashMap<String, FoundConversation> =
+        [(found_session_id(&a).unwrap(), a.clone())].into();
+    let keep = Keep(&db, Default::default());
+    let done = dream_with(&db, &due, &by_session, group.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+    assert_eq!(done, (1, 1), "the point with a number in it is dropped");
+    let asked = group.prompts.lock().unwrap()[1].clone();
+    assert!(asked.contains("L1: keep the resume to one page"), "{asked}");
+
+    let anchor = db
+        .memory_said_anchor("mem_0", &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(anchor.line.as_deref(), Some("keep the resume to one page"));
+    // The gone conversation waits, and the page says it could not be read.
+    assert!(db
+        .things_to_dream(dream_quiet_since(now, 3), 10)
+        .await
+        .unwrap()
+        .is_empty());
+    let detail = db
+        .get_thing_detail(&thing.id, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.unread, 1);
+}
