@@ -49,7 +49,8 @@ pub mod writer {
     pub const REFILE: &str = "refile_archived_primaries";
     /// Undoing a logged topic change.
     pub const UNDO: &str = "undo_topic_change";
-    /// Restoring an archived topic, which undoes the re-filing its archive did.
+    /// Restoring an archived topic, which undoes the re-filing done because
+    /// it was archived.
     pub const RESTORE: &str = "restore_entity";
 }
 
@@ -59,7 +60,8 @@ pub mod reason {
     pub const TOPIC_ARCHIVED: &str = "topic_archived";
     /// A repair found the main topic already archived.
     pub const ARCHIVED_PRIMARY: &str = "archived_primary";
-    /// The topic came back, so the re-filing its archive did was undone.
+    /// The topic came back, so a re-filing done because it was archived
+    /// was undone.
     pub const TOPIC_RESTORED: &str = "topic_restored";
     /// The main topic moved off a hub topic onto a specific one.
     pub const HUB_PRIMARY: &str = "hub_primary";
@@ -273,9 +275,9 @@ impl MemoryDB {
     }
 
     /// The topic a memory should be filed under from the links it already
-    /// has: its first shown link that is not a hub, else its first shown
-    /// hub link, else none. `excluding` is left out (the topic being
-    /// archived).
+    /// has: its first shown link that is not a hub, else none. A hub is never
+    /// a main topic, even when it is the only shown link (same rule as
+    /// `commit_kg`). `excluding` is left out (the topic being archived).
     pub(super) async fn first_active_topic_on(
         conn: &libsql::Connection,
         memory_id: &str,
@@ -286,10 +288,10 @@ impl MemoryDB {
             .map(|i| format!("?{i}"))
             .collect::<Vec<_>>()
             .join(",");
-        let hub_order = if hubs.is_empty() {
+        let not_hub = if hubs.is_empty() {
             String::new()
         } else {
-            format!("o.entity_id IN ({marks}), ")
+            format!("AND o.entity_id NOT IN ({marks})")
         };
         let mut params = vec![
             libsql::Value::Text(memory_id.to_string()),
@@ -305,7 +307,8 @@ impl MemoryDB {
                       WHERE o.memory_id = ?1
                         AND (?2 IS NULL OR o.entity_id <> ?2)
                         AND {ACTIVE_LINK_SQL}
-                      ORDER BY {hub_order}o.rowid LIMIT 1"
+                        {not_hub}
+                      ORDER BY o.rowid LIMIT 1"
                 ),
                 params,
             )
@@ -476,10 +479,15 @@ impl MemoryDB {
         Ok(moved)
     }
 
-    /// Undo, for a topic that came back, the re-filing its archive did:
-    /// each memory still where that re-filing left it goes back to the
-    /// topic. A memory filed elsewhere since keeps where it is. Returns how
-    /// many went back.
+    /// Undo, for a topic that came back, every re-filing done because it was
+    /// archived: its own archive's, and the repair passes' that found it
+    /// archived. A memory goes back to the topic when it is still where the
+    /// re-filing left it, or when it now has no main topic or an archived
+    /// one (a person can set neither, so nothing is overridden -- this is
+    /// how a chain of archives, Alpha then the topic Alpha's memories moved
+    /// to, comes undone). A memory a person or writer filed under another
+    /// shown topic since keeps where it is. Each move back is logged.
+    /// Returns how many went back.
     pub(super) async fn undo_archive_refiles_on(
         conn: &libsql::Connection,
         entity_id: &str,
@@ -487,9 +495,9 @@ impl MemoryDB {
         let mut rows = conn
             .query(
                 "SELECT id, memory_id, new_entity_id FROM memory_topic_changes
-                  WHERE old_entity_id = ?1 AND reason = ?2 AND undone_by IS NULL
+                  WHERE old_entity_id = ?1 AND reason IN (?2, ?3) AND undone_by IS NULL
                   ORDER BY id DESC",
-                libsql::params![entity_id, reason::TOPIC_ARCHIVED],
+                libsql::params![entity_id, reason::TOPIC_ARCHIVED, reason::ARCHIVED_PRIMARY],
             )
             .await
             .map_err(db_err("undo archive refiles"))?;
@@ -514,7 +522,14 @@ impl MemoryDB {
             let Some(current) = Self::primary_topic_on(conn, &memory).await? else {
                 continue;
             };
-            if current != filed_to {
+            if current.as_deref() == Some(entity_id) {
+                continue;
+            }
+            let unshown = match current.as_deref() {
+                None => true,
+                Some(now) => !Self::entity_is_active_on(conn, now).await?,
+            };
+            if current != filed_to && !unshown {
                 continue;
             }
             conn.execute(
@@ -544,7 +559,7 @@ impl MemoryDB {
     }
 
     /// Move every memory whose main topic is archived onto its first shown
-    /// topic (a specific one before a hub), or clear it when it has none, so
+    /// topic that is not a hub, or clear it when it has none, so
     /// it is eligible to be linked again. Every move is logged under
     /// `writer`. Links are left as they are.
     pub async fn refile_archived_primaries(

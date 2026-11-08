@@ -40008,7 +40008,9 @@ impl MemoryDB {
             Self::append_page_history(conn, &page_id, "restore", now.timestamp())
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("restore_entity history: {e}")))?;
-            // The memories its archive re-filed come back (UX-GRAPH-8).
+            // The memories re-filed because it was archived -- by its own
+            // archive or by a repair pass -- come back (UX-GRAPH-8). The
+            // #708 auto-restore runs through here too.
             Self::undo_archive_refiles_on(conn, entity_id).await?;
 
             let mut rows = conn
@@ -42668,6 +42670,7 @@ impl MemoryDB {
         source_id: &str,
         expected_version: i64,
         entity_id: &str,
+        file_under: bool,
     ) -> Result<bool, WenlanError> {
         let now = chrono::Utc::now().timestamp();
         let conn = self.conn.lock().await;
@@ -42731,15 +42734,18 @@ impl MemoryDB {
                 entity_establish_min_memories(),
             )
             .await?;
-            // The guard above checked the entity is shown.
-            Self::set_primary_topic_on(
-                &conn,
-                source_id,
-                Some(entity_id),
-                topic_filing::writer::ENTITY_LINK,
-                topic_filing::reason::LINKED,
-            )
-            .await?;
+            // The guard above checked the entity is shown. A hub is linked
+            // but never made the main topic (UX-GRAPH-8).
+            if file_under {
+                Self::set_primary_topic_on(
+                    &conn,
+                    source_id,
+                    Some(entity_id),
+                    topic_filing::writer::ENTITY_LINK,
+                    topic_filing::reason::LINKED,
+                )
+                .await?;
+            }
 
             for (step, status) in [("entity_link", "ok"), ("entity_extract", "ok")] {
                 conn.execute(
@@ -43040,18 +43046,21 @@ impl MemoryDB {
 
         if let Some(mut entity_id) = existing_entity_id {
             // The candidate query may pick a shown hub link before a
-            // specific one; the specific one is the main topic (UX-GRAPH-8).
+            // specific one; the specific one is the main topic, and a
+            // memory linked only to hubs gets none (UX-GRAPH-8).
+            let mut file_under = true;
             if self
                 .hub_entity_ids(&[&entity_id])
                 .await?
                 .contains(&entity_id)
             {
-                if let Some(specific) = self.first_active_topic(&source_id).await? {
-                    entity_id = specific;
+                match self.first_active_topic(&source_id).await? {
+                    Some(specific) => entity_id = specific,
+                    None => file_under = false,
                 }
             }
             if !self
-                .commit_entity_link_at_version(&source_id, expected_version, &entity_id)
+                .commit_entity_link_at_version(&source_id, expected_version, &entity_id, file_under)
                 .await?
             {
                 log::info!(
@@ -43111,6 +43120,7 @@ impl MemoryDB {
                                 &source_id,
                                 expected_version,
                                 &entity.entity.id,
+                                true,
                             )
                             .await?
                         {
