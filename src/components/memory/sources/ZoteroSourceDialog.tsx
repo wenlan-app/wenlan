@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { addZoteroSource, listSpaces, listZoteroCollections, listZoteroItems, syncRegisteredSource, type SyncStats } from "../../../lib/tauri";
+import { addZoteroSource, createSpace, listSpaces, listZoteroCollections, listZoteroItems, syncRegisteredSource, type SyncStats } from "../../../lib/tauri";
 import SourceDialog from "./SourceDialog";
 import "./ZoteroSourceDialog.css";
 
@@ -18,6 +18,12 @@ export default function ZoteroSourceDialog({ onClose, fixedSpace }: { onClose: (
     queryFn: () => listZoteroItems(collectionKey, serverId!), enabled: chooseArticles && !!collectionKey && !!serverId, retry: false });
   const authoritative = !!serverId && items.isSuccess && items.data.complete && items.data.server_id === serverId && items.data.collection_key === collectionKey;
   const [space, setSpace] = useState(fixedSpace ?? "");
+  // With no Space yet the import would have nowhere to go, so the dialog
+  // offers a new one, named after the collection until the person renames it.
+  const needsNewSpace = fixedSpace === undefined && spaces.isSuccess && spaces.data.length === 0;
+  const [newSpaceName, setNewSpaceName] = useState<string | null>(null);
+  const collectionName = collections.data?.collections.find(item => item.key === collectionKey)?.name ?? "";
+  const newSpace = (newSpaceName ?? collectionName).trim();
   useEffect(() => { setSelectedItems([]); }, [serverId]);
   useEffect(() => {
     if (!authoritative) return;
@@ -36,9 +42,15 @@ export default function ZoteroSourceDialog({ onClose, fixedSpace }: { onClose: (
     mutationFn: async () => {
       setError(null); setResult(null);
       if (chooseArticles && (!authoritative || selectedItems.length === 0 || selectedItems.some(key => !items.data?.items.some(item => item.key === key)))) throw new Error(t("zoteroSource.articlesFailed"));
+      let destination = space;
+      if (needsNewSpace) {
+        destination = (await createSpace(newSpace)).name;
+        setSpace(destination);
+        await client.invalidateQueries({ queryKey: ["spaces"] });
+      }
       const registered = chooseArticles
-        ? await addZoteroSource(collectionKey, serverId ?? null, space, selectedItems)
-        : await addZoteroSource(collectionKey, serverId ?? null, space);
+        ? await addZoteroSource(collectionKey, serverId ?? null, destination, selectedItems)
+        : await addZoteroSource(collectionKey, serverId ?? null, destination);
       await client.invalidateQueries({ queryKey: ["registeredSources"] });
       const stats = await syncRegisteredSource(registered.id);
       return stats;
@@ -53,14 +65,23 @@ export default function ZoteroSourceDialog({ onClose, fixedSpace }: { onClose: (
     },
     onError: (cause) => setError(cause instanceof Error ? cause.message : String(cause)),
   });
-  const ready = !!collectionKey && !!space && !connect.isPending &&
+  const ready = !!collectionKey && (needsNewSpace ? !!newSpace : !!space) && !connect.isPending &&
     (!chooseArticles || (authoritative && selectedItems.length > 0 && selectedItems.every(key => items.data?.items.some(item => item.key === key))));
   return <SourceDialog title={t("zoteroSource.title")} onClose={onClose}>
     <p>{t("zoteroSource.description")}</p>
-    <div className="source-dialog-status" role={collections.isError ? "alert" : "status"}>
-      {collections.isPending ? t("zoteroSource.checking") : collections.isError ? t("zoteroSource.offline") : t("zoteroSource.connected")}
-      {collections.isError && <button type="button" className="page-editor-action" onClick={() => void collections.refetch()}>{t("sourceAccess.retry")}</button>}
-    </div>
+    {collections.isError ? <div className="source-dialog-status zotero-offline" role="alert">
+      <p>{t("zoteroSource.offline")}</p>
+      {/* Say what to do, not only what failed: Zotero has to be open and let
+          other apps on this computer talk to it. */}
+      <ol>
+        <li>{t("zoteroSource.offlineStepOpen")}</li>
+        <li>{t("zoteroSource.offlineStepAllow")}</li>
+        <li>{t("zoteroSource.offlineStepRetry")}</li>
+      </ol>
+      <button type="button" className="page-editor-action" disabled={collections.isFetching} onClick={() => void collections.refetch()}>{t("sourceAccess.retry")}</button>
+    </div> : <div className="source-dialog-status" role="status">
+      {collections.isPending ? t("zoteroSource.checking") : t("zoteroSource.connected")}
+    </div>}
     {collections.isSuccess && <label>{t("zoteroSource.collection")}<select disabled={connect.isPending} value={collectionKey} onChange={e => { setCollectionKey(e.target.value); setSelectedItems([]); setResult(null); setError(null); }}>
       {collections.data.collections.map(item => <option key={item.key} value={item.key}>{item.name} ({item.item_count})</option>)}
     </select></label>}
@@ -80,7 +101,10 @@ export default function ZoteroSourceDialog({ onClose, fixedSpace }: { onClose: (
             </div>}</>}
       </div>}
     </div>}
-    {!fixedSpace && <label>{t("zoteroSource.destination")}<select disabled={connect.isPending} value={space} onChange={e => { setSpace(e.target.value); setResult(null); setError(null); }}>
+    {/* Where to put it only matters once Zotero answers. */}
+    {!collections.isSuccess ? null : needsNewSpace ? <label>{t("zoteroSource.noSpaces")}<input type="text" aria-label={t("zoteroSource.newSpaceName")} disabled={connect.isPending} value={newSpaceName ?? collectionName}
+      placeholder={t("zoteroSource.newSpaceName")} onChange={e => { setNewSpaceName(e.target.value); setResult(null); setError(null); }} /></label>
+    : !fixedSpace && <label>{t("zoteroSource.destination")}<select disabled={connect.isPending} value={space} onChange={e => { setSpace(e.target.value); setResult(null); setError(null); }}>
       {(spaces.data ?? []).map(item => <option key={item.id} value={item.name}>{item.name}</option>)}
     </select></label>}
     {collections.isSuccess && collections.data.collections.length === 0 && <p role="status">{t("zoteroSource.noCollections")}</p>}

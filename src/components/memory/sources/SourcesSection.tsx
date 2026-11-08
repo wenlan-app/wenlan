@@ -9,8 +9,7 @@ import {
   type RegisteredSource,
 } from "../../../lib/tauri";
 import { folderName } from "../../../lib/dateFormat";
-import AddSourceDialog from "./AddSourceDialog";
-import ZoteroSourceDialog from "./ZoteroSourceDialog";
+import AddSourceMenu from "./AddSourceMenu";
 import ZoteroDisconnectDialog from "./ZoteroDisconnectDialog";
 import { FolderImportOrganize } from "./FolderImportOrganize";
 import { Button } from "../settings/primitives";
@@ -28,7 +27,6 @@ export default function SourcesSection() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [zoteroDialogOpen, setZoteroDialogOpen] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<RegisteredSource | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [justSyncedId, setJustSyncedId] = useState<string | null>(null);
@@ -279,25 +277,12 @@ export default function SourcesSection() {
             </svg>
             {t("settings.sources.addSource")}
           </button>
-          <button type="button" onClick={() => setZoteroDialogOpen(true)} className="inline-flex w-full items-center justify-center rounded-[var(--mem-radius-lg)] py-1.5 text-xs text-[var(--mem-text-tertiary)] hover:text-[var(--mem-accent-indigo)]">
-            {t("zoteroSource.connectAction")}
-          </button>
         </div>
       )}
 
-      {sources.length === 0 && <button type="button" onClick={() => setZoteroDialogOpen(true)} className="block mx-auto -mt-2 text-xs text-[var(--mem-text-tertiary)] hover:text-[var(--mem-accent-indigo)]">{t("zoteroSource.connectAction")}</button>}
-
-      {/* Add Source Dialog */}
-      {dialogOpen && (
-        <AddSourceDialog
-          onClose={() => setDialogOpen(false)}
-          onSuccess={() => {
-            setDialogOpen(false);
-            queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
-          }}
-        />
-      )}
-      {zoteroDialogOpen && <ZoteroSourceDialog onClose={() => setZoteroDialogOpen(false)} />}
+      {/* One way in for every kind of source, Zotero included: the same
+          menu the Sources library opens. */}
+      {dialogOpen && <AddSourceMenu onClose={() => setDialogOpen(false)} />}
 
       {/* Remove Confirmation Dialog */}
       {confirmRemove?.source_type === "zotero" && <ZoteroDisconnectDialog id={confirmRemove.id} onClose={() => setConfirmRemove(null)} />}

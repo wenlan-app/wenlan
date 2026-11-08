@@ -33,7 +33,7 @@ describe("Space pages and sources", () => {
   it("offers Zotero import into the current Space without loading a destination list", async () => {
     workspace();
     fireEvent.click(await screen.findByRole("tab", { name: "Sources" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Add Zotero collection" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Import from Zotero" }));
     await screen.findByText("Connected to local Zotero");
     await waitFor(() => expect(screen.getByLabelText("Collection")).toHaveValue("A1"));
     fireEvent.click(screen.getByRole("button", { name: "Import collection" }));

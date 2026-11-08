@@ -4,3 +4,6 @@
 .source-dialog .zotero-article-list label { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; margin: 8px 0; line-height: 1.4; }
 .source-dialog .zotero-article-list input { width: auto; flex: 0 0 auto; margin: 3px 0 0; padding: 0; }
 .source-dialog .zotero-article-list span { min-width: 0; overflow-wrap: anywhere; }
+.source-dialog .zotero-offline p { margin: 8px 0 4px; color: var(--mem-text); }
+.source-dialog .zotero-offline ol { margin: 0 0 12px; padding-left: 20px; list-style: decimal; font-size: 13px; line-height: 1.6; color: var(--mem-text-secondary); }
+.source-dialog .zotero-offline li + li { margin-top: 4px; }

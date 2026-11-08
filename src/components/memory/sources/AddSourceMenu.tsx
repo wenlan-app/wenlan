@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowsClockwise, ChatsCircle, ClipboardText, DownloadSimple, FileZip } from "@phosphor-icons/react";
+import { ArrowsClockwise, Books, ChatsCircle, ClipboardText, DownloadSimple, FileZip } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -15,6 +15,7 @@ import {
 } from "../../../lib/tauri";
 import { detectVault } from "../../../lib/vaultDetection";
 import AddWebSourceDialog from "./AddWebSourceDialog";
+import ZoteroSourceDialog from "./ZoteroSourceDialog";
 import { ImportFlow } from "../../ChatImport/ImportFlow";
 import SourceDialog from "./SourceDialog";
 import { SourceTypeIcon } from "./SourceTypeIcon";
@@ -38,6 +39,7 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [showWeb, setShowWeb] = useState(false);
+  const [showZotero, setShowZotero] = useState(false);
   const [showChats, setShowChats] = useState(start === "chats");
   // Quick or full: asked first wherever the quick way exists.
   const [fullChats, setFullChats] = useState(onQuickChats === undefined);
@@ -143,6 +145,7 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
     {failure && <div role="alert" className="source-dialog-error">{t("sourceAccess.addFailed")}<p>{failure}</p></div>}
   </SourceDialog>;
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
+  if (showZotero) return <ZoteroSourceDialog onClose={onClose} />;
   // Past AI chats use the same import as Settings, so a new user can bring
   // earlier decisions in from the home without hunting for it.
   // The two ways are offered side by side: one is done in a minute and
@@ -190,7 +193,8 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   return <SourceDialog title={title ?? t("sourceAccess.addTitle")} lead={t("sourceAccess.addLead")} onClose={onClose}>
     {!ready && <div role="status"><p>{t("sourceAccess.upgrade")}</p><button className="page-editor-action" type="button" onClick={() => openFile("https://wenlan.app")}>{t("sourceAccess.update")}</button></div>}
     {/* Past AI chats first: everyone who uses an AI tool has them. Then an
-        Obsidian vault, a folder, files; a link with its text, Logseq last. */}
+        Obsidian vault, a folder, files; a link with its text, a Zotero
+        library, Logseq last. */}
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
       <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>
     </button>
@@ -205,6 +209,9 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
     </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowWeb(true)}>
       <SourceTypeIcon kind="webpage" /><span className="source-add-option-copy"><strong>{t("sourceAccess.web")}</strong><span>{t("sourceAccess.webHint")}</span></span>
+    </button>
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowZotero(true)}>
+      <Books aria-hidden="true" size={20} weight="regular" data-resource-icon="zotero" /><span className="source-add-option-copy"><strong>{t("sourceAccess.zotero")}</strong><span>{t("sourceAccess.zoteroHint")}</span></span>
     </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("logseq")}>
       <SourceTypeIcon kind="logseq" /><span className="source-add-option-copy"><strong>{t("sourceAccess.logseq")}</strong><span>{t("sourceAccess.logseqHint")}</span></span>
