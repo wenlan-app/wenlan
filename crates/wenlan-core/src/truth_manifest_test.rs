@@ -285,9 +285,11 @@ fn manifest_counts_match_the_spec() {
     // since a time; two counts only).
     // Then 313 after POST `/api/spaces/{name}/shared/sync` (one sync pass of
     // a shared Space's folder; counts only).
+    // Then 314 after GET `/api/spaces/{name}/shared` (how a Space is shared
+    // and its last sync pass; no page text).
     assert_eq!(
         HTTP_READERS.len(),
-        313,
+        314,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 52, "#[tool( declarations");
@@ -298,7 +300,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        325,
+        326,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -306,7 +308,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        308,
+        309,
         "main builder entries"
     );
     assert_eq!(
@@ -489,7 +491,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        305 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo and the shared Space sync, all with no page markers.
+        306 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo and the shared Space sync and status, all with no page markers.
     );
 }
 

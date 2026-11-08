@@ -94,6 +94,7 @@ main|get|/api/zotero/documents|wenlan_server::source_routes::zotero_sync::handle
 main|get|/api/zotero/pdf|wenlan_server::source_routes::zotero_sync::handle_get_pdf
 main|get|/api/spaces|wenlan_server::spaces_routes::handle_list_spaces
 main|get|/api/spaces/default|wenlan_server::spaces_routes::handle_get_default_space
+main|get|/api/spaces/{name}/shared|wenlan_server::spaces_routes::handle_shared_status
 main|get|/api/spaces/{name}/wiki/github|wenlan_server::repo_wiki_routes::handle_github_status
 main|get|/api/spaces/{name}/wiki/repo|wenlan_server::repo_wiki_routes::handle_get_binding
 main|get|/api/spaces/{name}/wiki/suggest|wenlan_server::repo_wiki_routes::handle_suggest

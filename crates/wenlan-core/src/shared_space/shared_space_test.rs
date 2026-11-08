@@ -17,6 +17,7 @@ fn meta(parent: Option<&str>, body: &str, member: &str, ts: &str) -> VersionMeta
             agent: None,
         },
         ts: ts.to_string(),
+        archived: false,
     }
 }
 
@@ -75,6 +76,43 @@ fn version_file_reads_back_as_written() {
     let plain = crate::store::format::page::parse(&text, "").unwrap();
     assert_eq!(plain.body, file.body);
     assert!(plain.other.contains_key("shared"));
+}
+
+#[test]
+fn an_archive_and_a_rename_are_versions_of_their_own() {
+    let live = stored(
+        "page_1",
+        "Table 1.",
+        meta(None, "Table 1.", "m1", "2026-11-08T12:00:00.000Z"),
+    );
+    assert!(!live.meta.archived);
+    let mut archived_meta = meta(
+        Some(&live.sha),
+        "Table 1.",
+        "m1",
+        "2026-11-08T12:01:00.000Z",
+    );
+    archived_meta.archived = true;
+    let archived = stored("page_1", "Table 1.", archived_meta);
+    assert!(archived.meta.archived);
+    let text = version::render(&archived.page, &archived.meta);
+    assert!(text.contains("archived: true"), "{text}");
+    assert_eq!(live.meta.body_digest, archived.meta.body_digest);
+    assert_ne!(live.state(), archived.state(), "same body, archived");
+
+    let mut renamed = page("page_1", "Table 1.");
+    renamed.title = "Seats".to_string();
+    let renamed_meta = meta(
+        Some(&live.sha),
+        "Table 1.",
+        "m1",
+        "2026-11-08T12:02:00.000Z",
+    );
+    let text = version::render(&renamed, &renamed_meta);
+    let name = format!("{}.md", version::sha256_hex(text.as_bytes()));
+    let renamed = version::parse(&name, text.as_bytes()).unwrap();
+    assert_eq!(renamed.page.title, "Seats");
+    assert_ne!(live.state(), renamed.state(), "same body, new title");
 }
 
 #[test]

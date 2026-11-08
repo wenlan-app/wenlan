@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `POST /api/spaces/{name}/shared/sync`: one sync pass of a Space with its
-//! shared folder. The pass itself is tested in `wenlan_core::shared_space`;
-//! this pins the route's contract.
+//! shared folder, and `GET /api/spaces/{name}/shared`: how it is shared and
+//! its last pass. The pass itself is tested in `wenlan_core::shared_space`;
+//! this pins the routes' contract.
 
 mod common;
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use tower::ServiceExt;
-use wenlan_types::shared_space::{SharedSyncCounts, SharedSyncRequest};
+use wenlan_types::shared_space::{SharedSyncCounts, SharedSyncRequest, SharedSyncStatus};
 
 async fn post_sync(
     router: &common::AppRouter,
@@ -23,6 +24,26 @@ async fn post_sync(
                 .uri(format!("/api/spaces/{space}/shared/sync"))
                 .header("content-type", "application/json")
                 .body(Body::from(serde_json::to_vec(req).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap()
+        .to_vec();
+    (status, bytes)
+}
+
+async fn get_status(router: &common::AppRouter, space: &str) -> (StatusCode, Vec<u8>) {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/api/spaces/{space}/shared"))
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
@@ -59,6 +80,8 @@ async fn shared_sync_writes_the_space_pages_and_returns_counts() {
 
     let (status, _) = post_sync(&router, "Nowhere", &req).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = get_status(&router, "Wedding").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "not shared yet");
     let relative = SharedSyncRequest {
         folder: "shared".to_string(),
         ..req.clone()
@@ -90,6 +113,15 @@ async fn shared_sync_writes_the_space_pages_and_returns_counts() {
         .join("pages")
         .join(&page);
     assert_eq!(std::fs::read_dir(versions).unwrap().count(), 1);
+
+    let (status, body) = get_status(&router, "Wedding").await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let shared: SharedSyncStatus = serde_json::from_slice(&body).unwrap();
+    assert_eq!(shared.member_name, "Qi-Xuan");
+    assert_eq!(shared.folder, req.folder);
+    let last = shared.last.expect("the route's pass is the last one");
+    assert_eq!(last.counts, counts);
+    assert_eq!(last.paused, None);
 
     let (status, body) = post_sync(&router, "Wedding", &req).await;
     assert_eq!(status, StatusCode::OK);

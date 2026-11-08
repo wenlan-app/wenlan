@@ -187,6 +187,7 @@ pub(crate) fn register_extended(router: TrackedRouter<SharedState>) -> TrackedRo
         .route("/api/spaces/reorder", post(handle_reorder_space))
         .route("/api/spaces/{name}/star", post(handle_toggle_space_starred))
         .route("/api/spaces/{name}/shared/sync", post(handle_shared_sync))
+        .route("/api/spaces/{name}/shared", get(handle_shared_status))
         .route(
             "/api/documents/{source_id}/space",
             post(handle_set_document_space),
@@ -235,6 +236,29 @@ pub async fn handle_shared_sync(
     )
     .await?;
     Ok(Json(counts))
+}
+
+/// GET /api/spaces/{name}/shared — how this Wenlan shares the Space (its
+/// folder and member name) and the last sync pass since the daemon started:
+/// when, the counts, and why it is paused if it is. 404 when the Space is
+/// not shared from here.
+pub async fn handle_shared_status(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(name): Path<String>,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncStatus>, ServerError> {
+    let db = {
+        let s = state.read().await;
+        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let space = db
+        .registered_space_or_none(Some(&name))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .ok_or_else(|| ServerError::NotFound(format!("no Space named {name:?}")))?;
+    let settings = wenlan_core::shared_space::settings_path();
+    wenlan_core::shared_space::share_status_at(&settings, &space)?
+        .map(Json)
+        .ok_or_else(|| ServerError::NotFound(format!("the Space {name:?} is not shared")))
 }
 
 // =====================================================================

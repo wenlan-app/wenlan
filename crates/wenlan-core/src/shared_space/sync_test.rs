@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use wenlan_types::requests::{CreateConceptRequest, UpdatePageRequest};
-use wenlan_types::shared_space::SharedSyncCounts;
+use wenlan_types::shared_space::{SharedSyncCounts, SharedSyncRun};
 use wenlan_types::WriteSpaceTarget;
 
 use super::*;
@@ -100,6 +100,36 @@ impl Member {
         .await
         .unwrap();
         assert!(result.wrote, "edit of {id} did not land");
+    }
+
+    /// The daemon's pass of every shared Space, as the scheduler runs it.
+    async fn auto(&self) -> SharedSyncRun {
+        sync_shared_spaces(&self.db, &self.settings(), None)
+            .await
+            .into_iter()
+            .find(|(space, _)| space == SPACE)
+            .expect("the shared Space had a pass")
+            .1
+    }
+
+    async fn page(&self, id: &str) -> Option<Page> {
+        self.db.get_page(id).await.unwrap()
+    }
+
+    async fn rename(&self, id: &str, title: &str) {
+        let page = self.page(id).await.unwrap();
+        self.db
+            .rename_page(id, title, page.version, &ReadScope::Global, None)
+            .await
+            .unwrap();
+    }
+
+    async fn restore(&self, id: &str) {
+        let page = self.page(id).await.unwrap();
+        self.db
+            .restore_page(id, None, page.version, &ReadScope::Global)
+            .await
+            .unwrap();
     }
 
     async fn content(&self, id: &str) -> String {
@@ -420,11 +450,17 @@ async fn a_rebuilt_database_takes_the_same_pages_without_new_versions() {
     let second = a
         .write("Venue", "The old mill.", SPACE.to_string().into())
         .await;
+    let archived = a
+        .write("Old plan", "Beach wedding.", SPACE.to_string().into())
+        .await;
     a.sync(&folder).await;
     b.sync(&folder).await;
     b.edit(&second, "The old mill, by the river.").await;
     b.sync(&folder).await;
     a.sync(&folder).await;
+    a.db.archive_page(&archived).await.unwrap();
+    a.sync(&folder).await;
+    b.sync(&folder).await;
     let versions = version_count(&folder);
     let member = b.member_id();
 
@@ -442,6 +478,10 @@ async fn a_rebuilt_database_takes_the_same_pages_without_new_versions() {
     assert_eq!(b.content(&first).await, a.content(&first).await);
     assert_eq!(b.content(&second).await, "The old mill, by the river.");
     assert_eq!(a.content(&second).await, "The old mill, by the river.");
+    assert!(
+        b.page(&archived).await.is_none(),
+        "a page archived in the folder is not made again"
+    );
     assert_eq!(version_count(&folder), versions, "no version written twice");
     assert_eq!(
         b.member_id(),
@@ -489,4 +529,342 @@ async fn a_page_here_in_another_space_is_never_written_over_or_shared() {
         .map(|(_, bytes)| String::from_utf8(bytes).unwrap())
         .collect();
     assert!(!all.contains("Private budget notes."));
+}
+
+/// Sync both members until neither writes anything (at most five rounds).
+async fn settle(a: &Member, b: &Member, folder: &Path) {
+    for _ in 0..5 {
+        let (got_a, got_b) = (a.sync(folder).await, b.sync(folder).await);
+        if got_a == zero() && got_b == zero() {
+            return;
+        }
+    }
+    panic!("the two members did not settle");
+}
+
+fn counts(exported: u32, applied: u32) -> SharedSyncCounts {
+    SharedSyncCounts {
+        exported,
+        applied,
+        ..zero()
+    }
+}
+
+#[tokio::test]
+async fn the_daemon_pass_takes_a_change_without_the_route_and_idle_passes_write_nothing() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Cake", "Lemon or chocolate.", SPACE.to_string().into())
+        .await;
+    // Sharing starts with the route; from then on the daemon's pass runs.
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    a.edit(&id, "Lemon, three tiers.").await;
+    let run = a.auto().await;
+    assert_eq!(run.counts, counts(1, 0), "{run:?}");
+    assert_eq!(run.paused, None);
+    let run = b.auto().await;
+    assert_eq!(run.counts, counts(0, 1), "{run:?}");
+    assert_eq!(b.content(&id).await, "Lemon, three tiers.");
+    for _ in 0..2 {
+        assert_eq!(a.auto().await.counts, zero());
+        assert_eq!(b.auto().await.counts, zero());
+    }
+    // The last pass is kept for the app to show.
+    let status = share_status_at(&b.settings(), SPACE).unwrap().unwrap();
+    assert_eq!(status.member_name, "Ana");
+    assert_eq!(status.folder, folder.to_string_lossy());
+    let last = status.last.expect("a pass ran");
+    assert_eq!((last.counts, last.paused), (zero(), None));
+    assert!(share_status_at(&b.settings(), "Private").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_missing_folder_pauses_the_space_and_nothing_is_archived_or_deleted() {
+    let place = tempfile::tempdir().unwrap();
+    let folder = place.path().join("Wedding (shared)");
+    let away = place.path().join("unplugged");
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let first = a
+        .write("Guests", "Ana, Ben.", SPACE.to_string().into())
+        .await;
+    let second = a
+        .write("Venue", "The old mill.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    // The drive is unplugged: the folder is not there.
+    std::fs::rename(&folder, &away).unwrap();
+    a.edit(&first, "Ana, Ben, Cleo.").await;
+    for member in [&a, &b, &a, &b] {
+        let run = member.auto().await;
+        assert_eq!(run.counts, zero(), "{run:?}");
+        assert!(run.paused.is_some(), "{run:?}");
+    }
+    assert!(!folder.exists(), "a paused pass never makes the folder");
+    let paused = share_status_at(&b.settings(), SPACE).unwrap().unwrap();
+    assert!(paused.last.unwrap().paused.is_some());
+    for member in [&a, &b] {
+        for id in [&first, &second] {
+            let page = member.page(id).await.expect("still here");
+            assert_eq!(page.status, "active");
+        }
+    }
+
+    // It is back: the pass carries on where it was.
+    std::fs::rename(&away, &folder).unwrap();
+    let run = a.auto().await;
+    assert_eq!((run.counts, run.paused), (counts(1, 0), None));
+    let run = b.auto().await;
+    assert_eq!((run.counts, run.paused), (counts(0, 1), None));
+    assert_eq!(b.content(&first).await, "Ana, Ben, Cleo.");
+    assert_eq!(b.page(&second).await.unwrap().status, "active");
+    assert_eq!(a.auto().await.counts, zero());
+    assert_eq!(b.auto().await.counts, zero());
+}
+
+#[tokio::test]
+async fn another_members_sentences_are_kept_from_this_ai_but_not_from_this_person() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    // A's AI tool writes the page, then A adds a line in person.
+    let id = crate::post_write::create_page(
+        &a.db,
+        CreateConceptRequest {
+            title: "Venue".to_string(),
+            content: "The venue is the old mill.".to_string(),
+            summary: None,
+            entity_id: None,
+            space: SPACE.to_string().into(),
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".to_string()),
+            workspace: None,
+        },
+        "claude-code",
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+    assert_eq!(
+        b.history(&id).await[0].edited_by,
+        format!("shared_ai:{}", a.member_id())
+    );
+    a.edit(&id, "The venue is the old mill. We booked it for June.")
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    let page = b.page(&id).await.unwrap();
+    let rows = crate::sentences::page_authorship(&b.db, &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.author, row.shared))
+            .collect::<Vec<_>>(),
+        [
+            (wenlan_types::authorship::SentenceAuthor::Ai, true),
+            (wenlan_types::authorship::SentenceAuthor::Person, true),
+        ]
+    );
+    let view = crate::sentences::page_sentences(&b.db, &id).await.unwrap();
+    assert!(view.sentences.iter().all(|sentence| sentence.protected));
+
+    // B's AI tool rewrites the page: A's sentences, its AI's included, stay;
+    // the sentence it adds lands.
+    let ai_write = |content: &'static str, version: i64| {
+        crate::post_write::update_page(
+            &b.db,
+            &id,
+            UpdatePageRequest {
+                content: content.to_string(),
+                source_memory_ids: Vec::new(),
+                expected_version: Some(version),
+                caller_id: None,
+                operation_id: None,
+            },
+            "agent_refresh",
+            false,
+            None,
+            None,
+        )
+    };
+    let result = ai_write(
+        "The venue is a barn. We booked it for May. Parking is free.",
+        page.version,
+    )
+    .await
+    .unwrap();
+    assert!(result.wrote, "{result:?}");
+    let content = b.content(&id).await;
+    assert!(
+        content.starts_with("The venue is the old mill. We booked it for June."),
+        "{content}"
+    );
+    assert!(content.contains("Parking is free."), "{content}");
+    // Its own sentence is the AI's to change, as before.
+    let page = b.page(&id).await.unwrap();
+    ai_write(
+        "The venue is the old mill. We booked it for June. Parking costs five euros.",
+        page.version,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        b.content(&id).await,
+        "The venue is the old mill. We booked it for June. Parking costs five euros."
+    );
+
+    // B in person can change A's sentence; the line is then B's.
+    b.edit(
+        &id,
+        "The venue is the old mill by the river. We booked it for June. Parking costs five euros.",
+    )
+    .await;
+    let page = b.page(&id).await.unwrap();
+    let rows = crate::sentences::page_authorship(&b.db, &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        (rows[0].author, rows[0].shared),
+        (wenlan_types::authorship::SentenceAuthor::Person, false)
+    );
+    assert!(rows[1].shared, "A's other line is still A's");
+    settle(&a, &b, &folder).await;
+    assert_eq!(a.content(&id).await, b.content(&id).await);
+}
+
+#[tokio::test]
+async fn a_rename_on_either_side_reaches_the_other() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Menu", "Fish or pasta.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    a.rename(&id, "Dinner menu").await;
+    assert_eq!(a.sync(&folder).await, counts(1, 0));
+    assert_eq!(b.sync(&folder).await, counts(0, 1));
+    assert_eq!(b.page(&id).await.unwrap().title, "Dinner menu");
+    assert_eq!(b.content(&id).await, "Fish or pasta.");
+
+    b.rename(&id, "Wedding dinner").await;
+    assert_eq!(b.sync(&folder).await, counts(1, 0));
+    assert_eq!(a.sync(&folder).await, counts(0, 1));
+    assert_eq!(a.page(&id).await.unwrap().title, "Wedding dinner");
+    assert_eq!(a.sync(&folder).await, zero());
+    assert_eq!(b.sync(&folder).await, zero());
+}
+
+#[tokio::test]
+async fn a_title_taken_here_gets_the_writers_name_and_both_pages_stay() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    // Each makes a page called Budget before either has the other's.
+    let mine = a
+        .write("Budget", "Venue 4000.", SPACE.to_string().into())
+        .await;
+    let hers = b
+        .write("Budget", "Flowers 300.", SPACE.to_string().into())
+        .await;
+    settle(&a, &b, &folder).await;
+
+    for member in [&a, &b] {
+        let pages = member
+            .db
+            .list_pages_by_space("active", Some(SPACE), 100, 0)
+            .await
+            .unwrap();
+        assert_eq!(pages.len(), 2, "no page lost or merged");
+        assert_eq!(member.content(&mine).await, "Venue 4000.");
+        assert_eq!(member.content(&hers).await, "Flowers 300.");
+        assert_eq!(member.page(&mine).await.unwrap().title, "Budget (Qi-Xuan)");
+        assert_eq!(member.page(&hers).await.unwrap().title, "Budget (Ana)");
+    }
+}
+
+#[tokio::test]
+async fn an_archive_reaches_the_other_member_and_a_restore_brings_it_back() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Hotel", "Rooms for twelve.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    a.db.archive_page(&id).await.unwrap();
+    assert_eq!(a.sync(&folder).await, counts(1, 0));
+    assert_eq!(b.sync(&folder).await, counts(0, 1));
+    let page = b.page(&id).await.unwrap();
+    assert_eq!(page.status, "archived");
+    assert_eq!(page.content, "Rooms for twelve.");
+    assert_eq!(a.sync(&folder).await, zero());
+    assert_eq!(b.sync(&folder).await, zero());
+
+    // Restored on B (the archive came from A): back on A too.
+    b.restore(&id).await;
+    assert_eq!(b.sync(&folder).await, counts(1, 0));
+    assert_eq!(a.sync(&folder).await, counts(0, 1));
+    assert_eq!(a.page(&id).await.unwrap().status, "active");
+    assert_eq!(a.content(&id).await, "Rooms for twelve.");
+    assert_eq!(a.sync(&folder).await, zero());
+    assert_eq!(b.sync(&folder).await, zero());
+}
+
+#[tokio::test]
+async fn a_page_deleted_here_is_not_made_again_and_is_archived_for_the_others() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Band", "The Swing Trio.", SPACE.to_string().into())
+        .await;
+    a.sync(&folder).await;
+    b.sync(&folder).await;
+
+    b.db.delete_page(&id).await.unwrap();
+    assert_eq!(b.sync(&folder).await, counts(1, 0), "B writes an archive");
+    assert!(b.page(&id).await.is_none(), "not made again on B");
+    assert_eq!(a.sync(&folder).await, counts(0, 1));
+    let page = a.page(&id).await.unwrap();
+    assert_eq!(page.status, "archived", "archived, not gone, on A");
+    assert_eq!(page.content, "The Swing Trio.");
+    for _ in 0..2 {
+        assert_eq!(b.sync(&folder).await, zero());
+        assert_eq!(a.sync(&folder).await, zero());
+    }
+    assert!(b.page(&id).await.is_none());
+
+    // A restores it: back on both.
+    a.restore(&id).await;
+    assert_eq!(a.sync(&folder).await, counts(1, 0));
+    assert_eq!(b.sync(&folder).await, counts(0, 1));
+    let page = b.page(&id).await.expect("back on B");
+    assert_eq!(
+        (page.status.as_str(), page.content.as_str()),
+        ("active", "The Swing Trio.")
+    );
+    assert_eq!(a.sync(&folder).await, zero());
+    assert_eq!(b.sync(&folder).await, zero());
 }

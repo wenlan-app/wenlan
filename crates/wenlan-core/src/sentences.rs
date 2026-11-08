@@ -207,7 +207,7 @@ pub(crate) async fn sentence_gate(
     let owned: HashSet<usize> = rows
         .iter()
         .enumerate()
-        .filter(|(_, row)| authorship::is_protected(row.author, guard))
+        .filter(|(_, row)| authorship::row_is_protected(row, guard))
         .map(|(idx, _)| idx)
         .collect();
     // The lock protects every sentence, the AI's own included.
@@ -533,7 +533,7 @@ async fn propose_as(
     let protected = page.review_required
         || rows
             .get(idx)
-            .is_some_and(|row| authorship::is_protected(row.author, guarded(&page)));
+            .is_some_and(|row| authorship::row_is_protected(row, guarded(&page)));
     if protected {
         let citations = unit_citations(db, &page, &units).await?;
         let weak = weak_reasons(&citations[idx], false);
@@ -903,7 +903,7 @@ pub async fn page_sentences(
                 since_version: row.since_version,
                 confidence: row.confidence,
                 accepted: row.accepted,
-                protected: authorship::is_protected(row.author, guard),
+                protected: authorship::row_is_protected(row, guard),
                 evidence: evidence_of(&citations),
                 weak: weak_reasons(&citations, needs_citation(row, unit, guard)),
                 citations,

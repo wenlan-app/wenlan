@@ -22,11 +22,17 @@
 //!     agent: <AI tool, when kind is ai and it is known>
 //!   ts: <when it was written; for display, and to pick between two
 //!        versions written at the same time>
+//!   archived: true   (only on a version that archives the page)
 //! ---
 //! ```
 //!
-//! `parent` is left out on a page's first version and `merged` when it is
-//! empty. The file is named by the sha256 of its bytes, so a file that is
+//! A version's content is its title (the page's own `title` key), its body
+//! and whether it archives the page ([`State`]): a rename is a new version
+//! even when the body is the same, and so is an archive (a tombstone that
+//! keeps the last title and body, so a restore brings them back).
+//!
+//! `parent` is left out on a page's first version, `merged` when it is
+//! empty and `archived` when it is false. The file is named by the sha256 of its bytes, so a file that is
 //! still arriving, or was changed, does not match its name and is skipped
 //! until it is whole.
 
@@ -83,6 +89,16 @@ pub struct VersionMeta {
     pub body_digest: String,
     pub author: Author,
     pub ts: String,
+    /// The version archives the page.
+    pub archived: bool,
+}
+
+/// What two versions, or a version and the page here, are compared by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct State {
+    pub title: String,
+    pub body_digest: String,
+    pub archived: bool,
 }
 
 /// A version read from the folder.
@@ -93,6 +109,16 @@ pub struct PageVersion {
     pub meta: VersionMeta,
     /// The page as written, without the `shared` key.
     pub page: PageFile,
+}
+
+impl PageVersion {
+    pub fn state(&self) -> State {
+        State {
+            title: self.page.title.clone(),
+            body_digest: self.meta.body_digest.clone(),
+            archived: self.meta.archived,
+        }
+    }
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -153,6 +179,9 @@ pub fn render(page: &PageFile, meta: &VersionMeta) -> String {
     shared.insert(key("body_digest"), text(&meta.body_digest));
     shared.insert(key("author"), serde_yaml::Value::Mapping(author));
     shared.insert(key("ts"), text(&meta.ts));
+    if meta.archived {
+        shared.insert(key("archived"), serde_yaml::Value::Bool(true));
+    }
 
     let mut page = page.clone();
     page.other.shift_remove(SHARED_KEY);
@@ -215,6 +244,11 @@ pub fn parse(name: &str, bytes: &[u8]) -> Result<PageVersion, WenlanError> {
             .ok_or_else(|| invalid(format!("{name}: no body_digest")))?,
         author,
         ts: scalar(&shared, "ts").unwrap_or_default(),
+        archived: match shared.get("archived") {
+            None => false,
+            Some(serde_yaml::Value::Bool(archived)) => *archived,
+            Some(_) => return Err(invalid(format!("{name}: archived is not true or false"))),
+        },
     };
     if meta.body_digest != body_digest(&page.body) {
         return Err(invalid(format!("{name}: body does not match body_digest")));

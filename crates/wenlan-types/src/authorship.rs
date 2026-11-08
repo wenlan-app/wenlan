@@ -77,6 +77,11 @@ pub struct SentenceAuthorship {
     /// The person accepted this sentence from an AI proposal (「你點頭的」).
     #[serde(default, skip_serializing_if = "is_false")]
     pub accepted: bool,
+    /// Another member of a shared Space wrote it, in person or through
+    /// their AI tool, and nobody here has changed it since. Protected like
+    /// the person's own sentences: an AI here may only propose a change.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub shared: bool,
 }
 
 /// What an AI may change on a page. One rule for every page, plus the page's

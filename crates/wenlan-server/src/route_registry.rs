@@ -480,6 +480,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // Space's pages into the folder and takes other members' versions, and
     // returns counts only.
     "/api/spaces/{name}/shared/sync",
+    // How a Space is shared and its last sync pass: the folder, the member
+    // name, when, counts and why it is paused. No page text.
+    "/api/spaces/{name}/shared",
     // Setting up a daily update on GitHub: which settings the repository
     // has, as booleans, and the last run's links. A token goes to GitHub
     // and is never returned.

@@ -1381,8 +1381,9 @@ async fn update_page_db_impl(
 
             // Sentence gate. A machine write that reaches this point would
             // land, so it lands only on the AI's sentences: every sentence
-            // that is the person's (and, on a human-owned or review-locked
-            // page, every sentence of unknown origin) that the write changed
+            // that is the person's or another shared-Space member's (and, on
+            // a human-owned or review-locked page, every sentence of unknown
+            // origin) that the write changed
             // or dropped is kept as it is and staged as a `sentence.propose`
             // entry instead. This is what replaced the version-checked agent
             // write landing outright on a human-owned page, and a forced

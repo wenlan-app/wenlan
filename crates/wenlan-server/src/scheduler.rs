@@ -1595,6 +1595,18 @@ pub fn spawn_scheduler(
             if let Some(note_limit) = obsidian_note_limit {
                 sync_obsidian_sources(&shared, &db, note_limit).await;
             }
+            // Shared Spaces: one pass of each with its shared folder, under
+            // the same gate as the vaults above (the pages it takes are
+            // embedded as they are written). A Space whose pass the route is
+            // running is skipped; a folder that is not there pauses it.
+            if directory_scope.is_some() {
+                wenlan_core::shared_space::sync_shared_spaces(
+                    &db,
+                    &wenlan_core::shared_space::settings_path(),
+                    Some(knowledge_path.as_path()),
+                )
+                .await;
+            }
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
             }
