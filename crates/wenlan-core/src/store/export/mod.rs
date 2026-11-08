@@ -233,6 +233,9 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
             "content_hash",
             // New, learned or confirmed: the nightly promotion reads it.
             "stability",
+            // The line a night's point came from (UX-WHO-6): the transcript
+            // may be gone, so nothing can work it out again.
+            "said_line",
         ],
     ),
     // A quick capture's `content` (the tidied text) is also cache: its
