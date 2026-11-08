@@ -1,6 +1,6 @@
 {
   "name": "wenlan",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "description": "Wenlan CLI and daemon: a living wiki your AI tools write, keep current, and cite.",
   "keywords": [
     "ai-memory",
