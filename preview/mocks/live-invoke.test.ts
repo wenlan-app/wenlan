@@ -372,9 +372,14 @@ describe("liveInvoke authored Page preview", () => {
 
     await liveInvoke("delete_page", { id: "remote-page" });
 
+    // The app's Delete is the person's own gesture: a permanent delete that
+    // carries the person marker (UX-WHO-7).
     expect(fetch).toHaveBeenCalledWith(
-      "/daemon/api/pages/remote-page",
-      expect.objectContaining({ method: "DELETE" }),
+      "/daemon/api/pages/remote-page?permanent=true",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "x-wenlan-caller": "person" }),
+      }),
     );
   });
 
