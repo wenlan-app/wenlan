@@ -45,8 +45,10 @@ pub enum SpaceCmd {
     /// new page versions there and take the other members' versions. Pages
     /// only; nothing from other Spaces, memories or chats goes into the folder.
     ShareSync {
-        /// Space name.
-        space: String,
+        /// Space name. Not called `space`: that id is the global
+        /// `--space` flag, and clap would fill it with this value.
+        #[arg(value_name = "SPACE")]
+        space_name: String,
         /// The shared folder. The first sync adds you to it.
         #[arg(long)]
         folder: std::path::PathBuf,
@@ -71,10 +73,10 @@ pub async fn run(
         SpaceCmd::Move { from, to } => move_cmd(client, format, quiet, &from, &to).await,
         SpaceCmd::Show { name } => show(client, format, quiet, &name).await,
         SpaceCmd::ShareSync {
-            space,
+            space_name,
             folder,
             name,
-        } => share_sync(client, format, quiet, &space, &folder, &name).await,
+        } => share_sync(client, format, quiet, &space_name, &folder, &name).await,
     }
 }
 

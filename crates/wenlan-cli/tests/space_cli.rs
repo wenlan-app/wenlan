@@ -6,6 +6,7 @@
 //! the daemon-backed Default clear surface.
 
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 
 fn cli() -> Command {
     let mut command = Command::cargo_bin("wenlan").expect("origin binary built");
@@ -73,4 +74,25 @@ fn spaces_share_sync_needs_a_folder_and_a_name() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("--name"));
+}
+
+/// The Space argument once shared clap's id with the global `--space` flag, so
+/// every real `share-sync` call failed with "--space/--all-spaces are not
+/// supported by this command" before reaching the daemon.
+#[test]
+fn spaces_share_sync_space_argument_is_not_taken_for_the_global_space_flag() {
+    cli()
+        .env("WENLAN_HOST", "http://127.0.0.1:9")
+        .args([
+            "spaces",
+            "share-sync",
+            "Wedding",
+            "--folder",
+            "/tmp/shared",
+            "--name",
+            "Ana",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--space/--all-spaces").not());
 }
