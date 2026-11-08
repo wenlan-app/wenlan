@@ -289,9 +289,13 @@ fn manifest_counts_match_the_spec() {
     // a shared Space's folder; counts only).
     // Then 315 after GET `/api/spaces/{name}/shared` (how a Space is shared
     // and its last sync pass; no page text).
+    // Then 321 after the rest of sharing: DELETE `/api/spaces/{name}/shared`,
+    // POST `/api/pages/{id}/shared/sync`, GET and DELETE
+    // `/api/pages/{id}/shared`, GET `/api/shared` and POST
+    // `/api/shared/folder` (receipts, names and counts; no page text).
     assert_eq!(
         HTTP_READERS.len(),
-        315,
+        321,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 52, "#[tool( declarations");
@@ -302,7 +306,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        327,
+        333,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -310,7 +314,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        310,
+        316,
         "main builder entries"
     );
     assert_eq!(
@@ -493,7 +497,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        307 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore and the shared Space sync and status, all with no page markers.
+        313 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore and the 8 sharing routes, all with no page markers.
     );
 }
 

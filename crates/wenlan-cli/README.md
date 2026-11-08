@@ -554,7 +554,7 @@ Arguments:
 Share a Space's pages through a folder a sync tool (Google Drive, iCloud) keeps the same on each member's computer: write this Space's new page versions there and take the other members' versions. Pages only; nothing from other Spaces, memories or chats goes into the folder.
 
 ```text
-wenlan spaces share-sync [OPTIONS] --folder <FOLDER> --name <NAME> <SPACE>
+wenlan spaces share-sync [OPTIONS] --folder <FOLDER> <SPACE>
 ```
 
 Arguments:
@@ -564,7 +564,7 @@ Arguments:
 Options:
 
 - `--folder <FOLDER>`: The shared folder. The first sync adds you to it.
-- `--name <NAME>`: The name the other members see for you.
+- `--name <NAME>`: The name the other members see for you. Left out, your display name in Settings.
 
 ### `wenlan wiki`
 

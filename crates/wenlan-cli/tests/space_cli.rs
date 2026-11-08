@@ -63,17 +63,14 @@ fn global_agent_and_space_options_are_visible() {
 }
 
 #[test]
-fn spaces_share_sync_needs_a_folder_and_a_name() {
+fn spaces_share_sync_needs_a_folder() {
+    // `--name` may be left out: the daemon then uses the profile's display
+    // name.
     cli()
         .args(["spaces", "share-sync", "Wedding", "--name", "Ana"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("--folder"));
-    cli()
-        .args(["spaces", "share-sync", "Wedding", "--folder", "/tmp/shared"])
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("--name"));
 }
 
 /// The Space argument once shared clap's id with the global `--space` flag, so

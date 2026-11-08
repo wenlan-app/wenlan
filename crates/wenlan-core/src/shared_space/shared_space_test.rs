@@ -446,12 +446,13 @@ fn settings_keep_the_member_id_and_space_file_adds_members() {
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("data/shared-spaces.json");
     let folder = dir.path().join("shared");
-    let first = join_at(&settings, "Wedding", &folder, "Qi-Xuan").unwrap();
-    let again = join_at(&settings, "Wedding", &folder, "Qi-Xuan L").unwrap();
+    let wedding = Scope::Space("Wedding".into());
+    let first = join_at(&settings, &wedding, &folder, "Qi-Xuan").unwrap();
+    let again = join_at(&settings, &wedding, &folder, "Qi-Xuan L").unwrap();
     assert_eq!(first.member_id, again.member_id);
     assert_eq!(again.member_name, "Qi-Xuan L");
     assert_eq!(
-        share_settings_at(&settings, "Wedding").unwrap(),
+        share_settings_at(&settings, &wedding).unwrap(),
         Some(again.clone())
     );
     assert!(version::is_safe_id(&first.member_id));
@@ -464,8 +465,8 @@ fn settings_keep_the_member_id_and_space_file_adds_members() {
         id: "her".to_string(),
         name: "Ana".to_string(),
     };
-    ensure_space_file(&folder, "Wedding", &me).unwrap();
-    let file = ensure_space_file(&folder, "婚禮", &her).unwrap();
+    ensure_space_file(&folder, &wedding, "Wedding", &me).unwrap();
+    let file = ensure_space_file(&folder, &Scope::Space("婚禮".into()), "婚禮", &her).unwrap();
     assert_eq!(file.format, FORMAT);
     assert_eq!(file.space, "Wedding", "the first member names the Space");
     assert_eq!(file.members, vec![me, her]);
@@ -479,5 +480,5 @@ fn settings_keep_the_member_id_and_space_file_adds_members() {
         br#"{"format":2,"space":"x","members":[]}"#,
     )
     .unwrap();
-    assert!(ensure_space_file(&folder, "Wedding", &file.members[0]).is_err());
+    assert!(ensure_space_file(&folder, &wedding, "Wedding", &file.members[0]).is_err());
 }

@@ -41,7 +41,7 @@ impl Member {
     }
 
     fn member_id(&self) -> String {
-        share_settings_at(&self.settings(), SPACE)
+        share_settings_at(&self.settings(), &space())
             .unwrap()
             .unwrap()
             .member_id
@@ -51,7 +51,7 @@ impl Member {
         sync_space(
             &self.db,
             SyncTarget {
-                space: SPACE,
+                scope: &space(),
                 folder,
                 member_name: self.name,
                 settings_path: &self.settings(),
@@ -60,6 +60,25 @@ impl Member {
         )
         .await
         .unwrap()
+    }
+
+    async fn share(&self, scope: &Scope, folder: &Path) -> Result<SharedSyncCounts, WenlanError> {
+        sync_space(
+            &self.db,
+            SyncTarget {
+                scope,
+                folder,
+                member_name: self.name,
+                settings_path: &self.settings(),
+                knowledge_path: None,
+            },
+        )
+        .await
+    }
+
+    /// Every automatic pass, by scope key.
+    async fn auto_all(&self, person_name: Option<&str>) -> Vec<(String, SharedSyncRun)> {
+        sync_shared_spaces(&self.db, &self.settings(), None, person_name).await
     }
 
     async fn write(&self, title: &str, content: &str, space: WriteSpaceTarget) -> String {
@@ -104,7 +123,7 @@ impl Member {
 
     /// The daemon's pass of every shared Space, as the scheduler runs it.
     async fn auto(&self) -> SharedSyncRun {
-        sync_shared_spaces(&self.db, &self.settings(), None)
+        sync_shared_spaces(&self.db, &self.settings(), None, None)
             .await
             .into_iter()
             .find(|(space, _)| space == SPACE)
@@ -139,6 +158,10 @@ impl Member {
     async fn history(&self, id: &str) -> Vec<crate::db::PageHistoryEntry> {
         self.db.list_page_history(id, 100).await.unwrap()
     }
+}
+
+fn space() -> Scope {
+    Scope::Space(SPACE.to_string())
 }
 
 fn zero() -> SharedSyncCounts {
@@ -531,6 +554,14 @@ async fn a_page_here_in_another_space_is_never_written_over_or_shared() {
     assert!(!all.contains("Private budget notes."));
 }
 
+/// Every file in the folder, as one text.
+fn walk(folder: &Path) -> String {
+    folder_files(folder)
+        .into_iter()
+        .map(|(_, bytes)| String::from_utf8(bytes).unwrap())
+        .collect()
+}
+
 /// Sync both members until neither writes anything (at most five rounds).
 async fn settle(a: &Member, b: &Member, folder: &Path) {
     for _ in 0..5 {
@@ -575,12 +606,16 @@ async fn the_daemon_pass_takes_a_change_without_the_route_and_idle_passes_write_
         assert_eq!(b.auto().await.counts, zero());
     }
     // The last pass is kept for the app to show.
-    let status = share_status_at(&b.settings(), SPACE).unwrap().unwrap();
+    let status = share_status_at(&b.settings(), &space()).unwrap().unwrap();
     assert_eq!(status.member_name, "Ana");
     assert_eq!(status.folder, folder.to_string_lossy());
     let last = status.last.expect("a pass ran");
     assert_eq!((last.counts, last.paused), (zero(), None));
-    assert!(share_status_at(&b.settings(), "Private").unwrap().is_none());
+    assert!(
+        share_status_at(&b.settings(), &Scope::Space("Private".into()))
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -608,7 +643,7 @@ async fn a_missing_folder_pauses_the_space_and_nothing_is_archived_or_deleted() 
         assert!(run.paused.is_some(), "{run:?}");
     }
     assert!(!folder.exists(), "a paused pass never makes the folder");
-    let paused = share_status_at(&b.settings(), SPACE).unwrap().unwrap();
+    let paused = share_status_at(&b.settings(), &space()).unwrap().unwrap();
     assert!(paused.last.unwrap().paused.is_some());
     for member in [&a, &b] {
         for id in [&first, &second] {
@@ -867,4 +902,192 @@ async fn a_page_deleted_here_is_not_made_again_and_is_archived_for_the_others() 
     );
     assert_eq!(a.sync(&folder).await, zero());
     assert_eq!(b.sync(&folder).await, zero());
+}
+
+#[tokio::test]
+async fn one_page_is_shared_alone_and_lands_with_no_space() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().join("Venue (shared)");
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let venue = a
+        .write(
+            "Venue",
+            "The old mill, 150 seats.",
+            "Private".to_string().into(),
+        )
+        .await;
+    let other = a
+        .write(
+            "Budget",
+            "Not for anyone else.",
+            "Private".to_string().into(),
+        )
+        .await;
+    let page = Scope::Page(venue.clone());
+
+    assert_eq!(a.share(&page, &folder).await.unwrap(), counts(1, 0));
+    let peek = peek_folder(&folder)
+        .unwrap()
+        .expect("the folder shares something");
+    assert_eq!(peek.kind, wenlan_types::shared_space::SharedKind::Page);
+    assert_eq!(peek.name, "Venue");
+    assert_eq!(peek.page_id.as_deref(), Some(venue.as_str()));
+    assert_eq!(peek.members.len(), 1);
+
+    // B joins with the page id the folder names; B has no such page yet.
+    assert_eq!(b.share(&page, &folder).await.unwrap(), counts(0, 1));
+    let here = b.page(&venue).await.expect("made on B");
+    assert_eq!(here.content, "The old mill, 150 seats.");
+    assert_eq!(here.space, None, "no Space on B");
+    assert!(b.page(&other).await.is_none(), "only the shared page");
+    let text = walk(&folder);
+    assert!(
+        !text.contains("Not for anyone else."),
+        "the other page never leaves A"
+    );
+
+    // Both ways, by the daemon's pass.
+    b.edit(&venue, "The old mill, 120 to 150 seats.").await;
+    let run = b.auto_all(None).await;
+    assert_eq!(run.len(), 1);
+    assert_eq!(run[0].0, format!("page:{venue}"));
+    assert_eq!(run[0].1.counts, counts(1, 0), "{run:?}");
+    let run = a.auto_all(None).await;
+    assert_eq!(run[0].1.counts, counts(0, 1), "{run:?}");
+    assert_eq!(a.content(&venue).await, "The old mill, 120 to 150 seats.");
+    assert_eq!(
+        a.page(&venue).await.unwrap().space.as_deref(),
+        Some("Private"),
+        "A keeps it in its own Space"
+    );
+    let status = share_status_at(&a.settings(), &page).unwrap().unwrap();
+    assert_eq!(status.kind, wenlan_types::shared_space::SharedKind::Page);
+    assert_eq!(status.target, venue);
+    let mut names: Vec<_> = status.members.iter().map(|m| m.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["Ana", "Qi-Xuan"]);
+}
+
+#[tokio::test]
+async fn a_folder_is_used_only_for_what_it_shares() {
+    let place = tempfile::tempdir().unwrap();
+    let space_folder = place.path().join("Wedding");
+    let page_folder = place.path().join("Venue");
+    let a = Member::new("Qi-Xuan").await;
+    let venue = a
+        .write("Venue", "The old mill.", "Private".to_string().into())
+        .await;
+    let guests = a
+        .write("Guests", "Ana, Ben.", "Private".to_string().into())
+        .await;
+    a.sync(&space_folder).await;
+    a.share(&Scope::Page(venue.clone()), &page_folder)
+        .await
+        .unwrap();
+
+    let error = a
+        .share(&Scope::Page(guests.clone()), &page_folder)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("another page"), "{error}");
+    let error = a
+        .share(&Scope::Page(guests.clone()), &space_folder)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("whole Space"), "{error}");
+    let error = a
+        .share(&Scope::Space("Private".into()), &page_folder)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("one page"), "{error}");
+    // A page that is neither here nor the folder's cannot be joined.
+    let error = a
+        .share(&Scope::Page("nothere".into()), &page_folder)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, WenlanError::NotFound(_)), "{error}");
+}
+
+#[tokio::test]
+async fn a_page_of_a_shared_space_is_not_shared_alone_and_sharing_its_space_takes_it_over() {
+    let place = tempfile::tempdir().unwrap();
+    let a = Member::new("Qi-Xuan").await;
+    let inside = a.write("Cake", "Lemon.", SPACE.to_string().into()).await;
+    let later = a
+        .write("Venue", "The old mill.", "Private".to_string().into())
+        .await;
+    a.sync(&place.path().join("Wedding")).await;
+    let error = a
+        .share(&Scope::Page(inside.clone()), &place.path().join("Cake"))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("shared already"), "{error}");
+
+    // Shared alone first, then its whole Space: it goes on with the Space.
+    a.share(&Scope::Page(later.clone()), &place.path().join("Venue"))
+        .await
+        .unwrap();
+    a.share(
+        &Scope::Space("Private".into()),
+        &place.path().join("Private"),
+    )
+    .await
+    .unwrap();
+    assert!(
+        share_settings_at(&a.settings(), &Scope::Page(later.clone()))
+            .unwrap()
+            .is_none()
+    );
+    let keys: Vec<_> = a
+        .auto_all(None)
+        .await
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    assert_eq!(keys, ["Private", SPACE]);
+}
+
+#[tokio::test]
+async fn leaving_stops_the_passes_and_keeps_everything() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    let id = a.write("Cake", "Lemon.", SPACE.to_string().into()).await;
+    a.sync(&folder).await;
+    assert!(leave_at(&a.settings(), &space()).unwrap());
+    assert!(!leave_at(&a.settings(), &space()).unwrap());
+    assert!(a.auto_all(None).await.is_empty());
+    assert!(a.page(&id).await.is_some());
+    assert!(
+        walk(&folder).contains("Lemon."),
+        "the folder keeps what was shared"
+    );
+}
+
+#[tokio::test]
+async fn the_profile_name_is_what_the_others_see() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().to_path_buf();
+    let a = Member::new("Qi-Xuan").await;
+    a.sync(&folder).await;
+    a.auto_all(Some("  Qi-Xuan Lu ")).await;
+    let status = share_status_at(&a.settings(), &space()).unwrap().unwrap();
+    assert_eq!(status.member_name, "Qi-Xuan Lu");
+    assert_eq!(
+        status.members,
+        vec![wenlan_types::shared_space::SharedMember {
+            id: status.member_id.clone(),
+            name: "Qi-Xuan Lu".into()
+        }]
+    );
+    // An empty profile name changes nothing.
+    a.auto_all(Some(" ")).await;
+    assert_eq!(
+        share_status_at(&a.settings(), &space())
+            .unwrap()
+            .unwrap()
+            .member_name,
+        "Qi-Xuan Lu"
+    );
 }

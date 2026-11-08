@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Sharing a Space's pages through a folder (v1: pages only).
+//! Sharing a Space's pages, or one page, through a folder (v1: pages only).
 //!
-//! Each member runs their own Wenlan. The Space is shared through a folder
-//! that a sync tool (Google Drive, iCloud) keeps the same on every member's
-//! computer:
+//! Each member runs their own Wenlan. A Space, or one page ([`Scope`]), is
+//! shared through a folder that a sync tool (Google Drive, iCloud) keeps the
+//! same on every member's computer:
 //!
 //! ```text
-//! <folder>/space.json                                  {"format":1,"space":…,"members":[{"id":…,"name":…}]}
+//! <folder>/space.json                                  {"format":1,"space":…,"page":…,"members":[{"id":…,"name":…}]}
 //! <folder>/members/<member_id>/pages/<page_id>/<sha256>.md   one file per page version
 //! ```
+//!
+//! `page` is there only when the folder shares one page: its id. `space` is
+//! then the page's title when it was first shared, for showing only. Each
+//! member keeps a shared page in whichever Space they like (a member who
+//! joins has it with no Space); moving it never stops the sharing.
 //!
 //! A member's Wenlan writes only under its own `members/<member_id>/` (and
 //! adds itself to `space.json` the first time). It reads every member's
 //! versions and works out each page's latest version (`version::head`) on
-//! its own. Nothing but the shared Space's pages goes into the folder: no
-//! memories, no other Space, no page without a Space, and the sources block
+//! its own. Nothing but the shared Space's pages (or the one shared page)
+//! goes into the folder: no memories, no other page, and the sources block
 //! is rewritten first (`rewrite`).
 //!
 //! A version's content is the page's title, body and whether it is
@@ -59,9 +64,9 @@
 //! an AI here can only propose a change to them. The person here can still
 //! edit them, and that line is then theirs.
 //!
-//! This Wenlan's member id, name and folder for each shared Space are kept in
-//! `shared-spaces.json` under the data root, outside the database, so a
-//! rebuilt database stays the same member.
+//! This Wenlan's member id, name and folder for each shared Space and page
+//! are kept in `shared-spaces.json` under the data root, outside the
+//! database, so a rebuilt database stays the same member.
 
 pub mod rewrite;
 pub mod version;
@@ -91,6 +96,26 @@ pub const SETTINGS_FILE: &str = "shared-spaces.json";
 /// then `:` and their member id.
 pub const SHARED_PERSON: &str = "shared_person";
 pub const SHARED_AI: &str = "shared_ai";
+
+/// What a folder shares.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Scope {
+    /// Every page of the Space with this name here.
+    Space(String),
+    /// One page, by id, in whichever Space it is here.
+    Page(String),
+}
+
+impl Scope {
+    /// The key its pass and what it last held are kept under. A Space keeps
+    /// its name, as before pages could be shared alone.
+    pub fn key(&self) -> String {
+        match self {
+            Scope::Space(name) => name.clone(),
+            Scope::Page(id) => format!("page:{id}"),
+        }
+    }
+}
 
 /// Who wrote a version that came from another member, from its
 /// `page_history.edited_by`: `shared_person:<member>` or
@@ -128,6 +153,40 @@ pub struct ShareSettings {
 struct SettingsStore {
     #[serde(default)]
     spaces: BTreeMap<String, ShareSettings>,
+    /// Pages shared alone, by page id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pages: BTreeMap<String, ShareSettings>,
+}
+
+impl SettingsStore {
+    fn entries(&mut self, scope: &Scope) -> (&mut BTreeMap<String, ShareSettings>, String) {
+        match scope {
+            Scope::Space(name) => (&mut self.spaces, name.clone()),
+            Scope::Page(id) => (&mut self.pages, id.clone()),
+        }
+    }
+
+    fn all(self) -> Vec<(Scope, ShareSettings)> {
+        self.spaces
+            .into_iter()
+            .map(|(name, settings)| (Scope::Space(name), settings))
+            .chain(
+                self.pages
+                    .into_iter()
+                    .map(|(id, settings)| (Scope::Page(id), settings)),
+            )
+            .collect()
+    }
+}
+
+/// The name this person set in their profile, if any: what the others see.
+pub async fn person_name(db: &MemoryDB) -> Result<Option<String>, WenlanError> {
+    Ok(db
+        .get_profile()
+        .await?
+        .and_then(|profile| profile.display_name)
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty()))
 }
 
 /// `shared-spaces.json` under the data root.
@@ -143,19 +202,24 @@ fn read_settings(path: &Path) -> Result<SettingsStore, WenlanError> {
     }
 }
 
-/// This Wenlan's settings for `space`, if it shares it.
-pub fn share_settings_at(path: &Path, space: &str) -> Result<Option<ShareSettings>, WenlanError> {
-    Ok(read_settings(path)?.spaces.remove(space))
+/// This Wenlan's settings for `scope`, if it shares it.
+pub fn share_settings_at(path: &Path, scope: &Scope) -> Result<Option<ShareSettings>, WenlanError> {
+    let mut store = read_settings(path)?;
+    let (entries, key) = store.entries(scope);
+    Ok(entries.remove(&key))
 }
 
-/// Records that this Wenlan shares `space` through `folder` as
-/// `member_name`. The member id is made once and kept.
-pub fn join_at(
+/// Everything this Wenlan shares, Spaces first.
+pub fn shares_at(path: &Path) -> Result<Vec<(Scope, ShareSettings)>, WenlanError> {
+    Ok(read_settings(path)?.all())
+}
+
+/// Takes the settings file, changes it under its lock with `change`, and
+/// writes it back when `change` returns true.
+fn change_settings<T>(
     path: &Path,
-    space: &str,
-    folder: &Path,
-    member_name: &str,
-) -> Result<ShareSettings, WenlanError> {
+    change: impl FnOnce(&mut SettingsStore) -> (bool, T),
+) -> Result<T, WenlanError> {
     use std::io::Write;
     let parent = path
         .parent()
@@ -169,28 +233,57 @@ pub fn join_at(
         .open(path.with_extension("lock"))?;
     fs2::FileExt::lock_exclusive(&lock)?;
     let mut store = read_settings(path)?;
-    let folder = folder.to_string_lossy().into_owned();
-    let settings = match store.spaces.get(space) {
-        Some(existing) => ShareSettings {
-            member_id: existing.member_id.clone(),
-            member_name: member_name.to_string(),
-            folder,
-        },
-        None => ShareSettings {
-            member_id: uuid::Uuid::new_v4().simple().to_string(),
-            member_name: member_name.to_string(),
-            folder,
-        },
-    };
-    if store.spaces.get(space) != Some(&settings) {
-        store.spaces.insert(space.to_string(), settings.clone());
+    let (changed, out) = change(&mut store);
+    if changed {
         let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
         tmp.write_all(serde_json::to_string_pretty(&store)?.as_bytes())?;
         tmp.flush()?;
         tmp.persist(path)
             .map_err(|error| WenlanError::Io(error.error))?;
     }
-    Ok(settings)
+    Ok(out)
+}
+
+/// Stops sharing `scope` from here: this Wenlan forgets the folder and
+/// stops its passes. The pages here and everything in the folder stay as
+/// they are. Returns whether it was shared.
+pub fn leave_at(path: &Path, scope: &Scope) -> Result<bool, WenlanError> {
+    change_settings(path, |store| {
+        let (entries, key) = store.entries(scope);
+        let removed = entries.remove(&key).is_some();
+        (removed, removed)
+    })
+}
+
+/// Records that this Wenlan shares `scope` through `folder` as
+/// `member_name`. The member id is made once and kept.
+pub fn join_at(
+    path: &Path,
+    scope: &Scope,
+    folder: &Path,
+    member_name: &str,
+) -> Result<ShareSettings, WenlanError> {
+    let folder = folder.to_string_lossy().into_owned();
+    change_settings(path, |store| {
+        let (entries, key) = store.entries(scope);
+        let settings = match entries.get(&key) {
+            Some(existing) => ShareSettings {
+                member_id: existing.member_id.clone(),
+                member_name: member_name.to_string(),
+                folder: folder.clone(),
+            },
+            None => ShareSettings {
+                member_id: uuid::Uuid::new_v4().simple().to_string(),
+                member_name: member_name.to_string(),
+                folder,
+            },
+        };
+        let changed = entries.get(&key) != Some(&settings);
+        if changed {
+            entries.insert(key, settings.clone());
+        }
+        (changed, settings)
+    })
 }
 
 // ===== space.json =====
@@ -204,30 +297,37 @@ pub struct SpaceMember {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpaceFile {
     pub format: u32,
+    /// The Space's name, or the shared page's title when it was first
+    /// shared.
     pub space: String,
+    /// The shared page's id when the folder shares one page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
     pub members: Vec<SpaceMember>,
 }
 
-/// Reads `space.json`, making it when the folder has none, and adds this
-/// member (or their new name). A file this code cannot read is left as it
-/// is and refused.
-pub fn ensure_space_file(
-    folder: &Path,
-    space: &str,
-    me: &SpaceMember,
-) -> Result<SpaceFile, WenlanError> {
-    use std::io::Write;
-    std::fs::create_dir_all(folder)?;
+impl SpaceFile {
+    /// What the folder shares, with `space` naming the Space here.
+    fn scope_check(&self, scope: &Scope) -> Result<(), String> {
+        match (scope, self.page.as_deref()) {
+            (Scope::Space(_), None) => Ok(()),
+            (Scope::Page(id), Some(page)) if page == id => Ok(()),
+            (Scope::Space(_), Some(_)) => Err("it shares one page, not a Space".into()),
+            (Scope::Page(_), None) => Err("it shares a whole Space, not this page".into()),
+            (Scope::Page(_), Some(_)) => Err("it shares another page".into()),
+        }
+    }
+}
+
+/// `space.json` of `folder`: `None` when the folder has none. A file this
+/// code cannot read is an error.
+pub fn read_space_file(folder: &Path) -> Result<Option<SpaceFile>, WenlanError> {
     let path = folder.join(SPACE_FILE);
-    let mut file = match std::fs::read(&path) {
+    let file = match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice::<SpaceFile>(&bytes).map_err(|error| {
             WenlanError::Validation(format!("{} is not a shared Space: {error}", path.display()))
         })?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => SpaceFile {
-            format: FORMAT,
-            space: space.to_string(),
-            members: Vec::new(),
-        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     if file.format != FORMAT {
@@ -237,6 +337,40 @@ pub fn ensure_space_file(
             file.format
         )));
     }
+    Ok(Some(file))
+}
+
+/// Reads `space.json`, making it when the folder has none (`name` is the
+/// Space's name or the page's title), and adds this member (or their new
+/// name). A file this code cannot read, or one that shares something else
+/// than `scope`, is left as it is and refused.
+pub fn ensure_space_file(
+    folder: &Path,
+    scope: &Scope,
+    name: &str,
+    me: &SpaceMember,
+) -> Result<SpaceFile, WenlanError> {
+    use std::io::Write;
+    std::fs::create_dir_all(folder)?;
+    let path = folder.join(SPACE_FILE);
+    let mut file = match read_space_file(folder)? {
+        Some(file) => file,
+        None => SpaceFile {
+            format: FORMAT,
+            space: name.to_string(),
+            page: match scope {
+                Scope::Space(_) => None,
+                Scope::Page(id) => Some(id.clone()),
+            },
+            members: Vec::new(),
+        },
+    };
+    file.scope_check(scope).map_err(|reason| {
+        WenlanError::Validation(format!(
+            "{} cannot be used here: {reason}",
+            folder.display()
+        ))
+    })?;
     let before = file.clone();
     match file.members.iter_mut().find(|member| member.id == me.id) {
         Some(member) => member.name = me.name.clone(),
@@ -271,12 +405,13 @@ struct Held {
     version: Option<i64>,
 }
 
-fn held_key(space: &str) -> String {
-    format!("shared_space.held:{space}")
+fn held_key(key: &str) -> String {
+    format!("shared_space.held:{key}")
 }
 
-async fn read_held(db: &MemoryDB, space: &str) -> Result<BTreeMap<String, Held>, WenlanError> {
-    let Some(raw) = db.get_app_metadata(&held_key(space)).await? else {
+async fn read_held(db: &MemoryDB, key: &str) -> Result<BTreeMap<String, Held>, WenlanError> {
+    let space = key;
+    let Some(raw) = db.get_app_metadata(&held_key(key)).await? else {
         return Ok(BTreeMap::new());
     };
     Ok(serde_json::from_str(&raw).unwrap_or_else(|error| {
@@ -294,14 +429,14 @@ struct SpaceRun {
     last: std::sync::Mutex<Option<SharedSyncRun>>,
 }
 
-/// One entry per shared Space of each Wenlan (its settings file).
+/// One entry per shared Space or page of each Wenlan (its settings file).
 type Runs = HashMap<(PathBuf, String), Arc<SpaceRun>>;
 static RUNS: LazyLock<std::sync::Mutex<Runs>> = LazyLock::new(Default::default);
 
-fn space_run(settings_path: &Path, space: &str) -> Arc<SpaceRun> {
+fn space_run(settings_path: &Path, key: &str) -> Arc<SpaceRun> {
     RUNS.lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .entry((settings_path.to_path_buf(), space.to_string()))
+        .entry((settings_path.to_path_buf(), key.to_string()))
         .or_default()
         .clone()
 }
@@ -364,24 +499,89 @@ fn finish(run: &SpaceRun, space: &str, outcome: Outcome) -> SharedSyncRun {
     next
 }
 
-/// How this Wenlan shares `space` and its last pass since the daemon
-/// started; `None` when it does not share it.
+/// How this Wenlan shares `scope` and its last pass since the daemon
+/// started; `None` when it does not share it. The members are read from
+/// the folder's `space.json`; when it cannot be read, this member only.
 pub fn share_status_at(
     settings_path: &Path,
-    space: &str,
+    scope: &Scope,
 ) -> Result<Option<SharedSyncStatus>, WenlanError> {
-    let Some(settings) = share_settings_at(settings_path, space)? else {
+    let Some(settings) = share_settings_at(settings_path, scope)? else {
         return Ok(None);
     };
-    let last = space_run(settings_path, space)
+    Ok(Some(status_of(settings_path, scope, settings)))
+}
+
+fn status_of(settings_path: &Path, scope: &Scope, settings: ShareSettings) -> SharedSyncStatus {
+    let last = space_run(settings_path, &scope.key())
         .last
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    Ok(Some(SharedSyncStatus {
+    let members = read_space_file(Path::new(&settings.folder))
+        .ok()
+        .flatten()
+        .map(|file| file.members)
+        .filter(|members| !members.is_empty())
+        .unwrap_or_else(|| {
+            vec![SpaceMember {
+                id: settings.member_id.clone(),
+                name: settings.member_name.clone(),
+            }]
+        });
+    SharedSyncStatus {
+        kind: match scope {
+            Scope::Space(_) => wenlan_types::shared_space::SharedKind::Space,
+            Scope::Page(_) => wenlan_types::shared_space::SharedKind::Page,
+        },
+        target: match scope {
+            Scope::Space(name) | Scope::Page(name) => name.clone(),
+        },
         folder: settings.folder,
+        member_id: settings.member_id,
         member_name: settings.member_name,
+        members: members
+            .into_iter()
+            .map(|member| wenlan_types::shared_space::SharedMember {
+                id: member.id,
+                name: member.name,
+            })
+            .collect(),
         last,
+    }
+}
+
+/// Everything this Wenlan shares, with each one's members and last pass.
+pub fn share_statuses_at(settings_path: &Path) -> Result<Vec<SharedSyncStatus>, WenlanError> {
+    Ok(shares_at(settings_path)?
+        .into_iter()
+        .map(|(scope, settings)| status_of(settings_path, &scope, settings))
+        .collect())
+}
+
+/// What a folder shares, for joining it: `None` when it shares nothing yet.
+pub fn peek_folder(
+    folder: &Path,
+) -> Result<Option<wenlan_types::shared_space::SharedFolder>, WenlanError> {
+    let Some(file) = read_space_file(folder)? else {
+        return Ok(None);
+    };
+    Ok(Some(wenlan_types::shared_space::SharedFolder {
+        kind: if file.page.is_some() {
+            wenlan_types::shared_space::SharedKind::Page
+        } else {
+            wenlan_types::shared_space::SharedKind::Space
+        },
+        name: file.space,
+        page_id: file.page,
+        members: file
+            .members
+            .into_iter()
+            .map(|member| wenlan_types::shared_space::SharedMember {
+                id: member.id,
+                name: member.name,
+            })
+            .collect(),
     }))
 }
 
@@ -389,8 +589,8 @@ pub fn share_status_at(
 
 /// Where a sync pass reads and writes.
 pub struct SyncTarget<'a> {
-    /// The local Space, as stored in `pages.space`.
-    pub space: &'a str,
+    /// The local Space (as stored in `pages.space`), or the page.
+    pub scope: &'a Scope,
     pub folder: &'a Path,
     pub member_name: &'a str,
     /// `shared-spaces.json`; [`settings_path`] in the daemon.
@@ -399,20 +599,69 @@ pub struct SyncTarget<'a> {
     pub knowledge_path: Option<&'a Path>,
 }
 
-/// One sync pass of `target.space` with its folder (see the module docs),
+/// One sync pass of `target.scope` with its folder (see the module docs),
 /// asked for by the person. The first one makes the folder's `space.json`
 /// (or adds this member to it) and remembers the folder. It waits for a
-/// pass of the same Space that is already running.
+/// pass of the same Space or page that is already running.
+///
+/// A page is shared alone only when its Space is not shared from here, and
+/// it must be here or be the page the folder shares (joining it). Sharing a
+/// Space stops sharing alone the pages of it that were.
 pub async fn sync_space(
     db: &MemoryDB,
     target: SyncTarget<'_>,
 ) -> Result<SharedSyncCounts, WenlanError> {
-    let space = target.space.trim();
-    if space.is_empty() || space == UNFILED_SPACE_ID || space == "uncategorized" {
-        return Err(WenlanError::Validation(
-            "only a named Space can be shared".into(),
-        ));
-    }
+    let scope = match target.scope {
+        Scope::Space(name) => {
+            let space = name.trim();
+            if space.is_empty() || space == UNFILED_SPACE_ID || space == "uncategorized" {
+                return Err(WenlanError::Validation(
+                    "only a named Space can be shared".into(),
+                ));
+            }
+            Scope::Space(space.to_string())
+        }
+        Scope::Page(id) => {
+            if !version::is_safe_id(id) {
+                return Err(WenlanError::Validation(format!(
+                    "page id {id} cannot name a folder"
+                )));
+            }
+            match db.get_page(id).await? {
+                Some(page) => {
+                    if let Some(space) = page
+                        .space
+                        .as_deref()
+                        .filter(|space| *space != UNFILED_SPACE_ID)
+                    {
+                        if share_settings_at(
+                            target.settings_path,
+                            &Scope::Space(space.to_string()),
+                        )?
+                        .is_some()
+                        {
+                            return Err(WenlanError::Validation(format!(
+                                "the page is in {space}, which is shared already"
+                            )));
+                        }
+                    }
+                }
+                None => {
+                    let folder = target.folder.to_path_buf();
+                    let shares = tokio::task::spawn_blocking(move || read_space_file(&folder))
+                        .await
+                        .map_err(|error| {
+                            WenlanError::Generic(format!("shared folder task: {error}"))
+                        })??
+                        .is_some_and(|file| file.page.as_deref() == Some(id.as_str()));
+                    if !shares {
+                        return Err(WenlanError::NotFound(format!("page {id}")));
+                    }
+                }
+            }
+            target.scope.clone()
+        }
+    };
     let member_name = target.member_name.trim();
     if member_name.is_empty() {
         return Err(WenlanError::Validation("a member name is required".into()));
@@ -423,16 +672,20 @@ pub async fn sync_space(
             target.folder.display()
         )));
     }
-    let run = space_run(target.settings_path, space);
+    let key = scope.key();
+    let run = space_run(target.settings_path, &key);
     let _pass = run.lock.lock().await;
     let result = async {
-        let settings = join_at(target.settings_path, space, target.folder, member_name)?;
-        pass(db, space, &settings, target.knowledge_path).await
+        let settings = join_at(target.settings_path, &scope, target.folder, member_name)?;
+        if let Scope::Space(space) = &scope {
+            stop_page_shares_in(db, target.settings_path, space).await?;
+        }
+        pass(db, &scope, &settings, target.knowledge_path).await
     }
     .await;
     finish(
         &run,
-        space,
+        &key,
         match &result {
             Ok(counts) => Outcome::Done(*counts),
             Err(error) => Outcome::Failed(error.to_string()),
@@ -441,18 +694,42 @@ pub async fn sync_space(
     result
 }
 
+/// Stops sharing alone the pages of `space`, now that the whole Space is
+/// shared: they go on in the Space's folder.
+async fn stop_page_shares_in(
+    db: &MemoryDB,
+    settings_path: &Path,
+    space: &str,
+) -> Result<(), WenlanError> {
+    for (scope, _) in shares_at(settings_path)? {
+        let Scope::Page(id) = &scope else { continue };
+        if db
+            .get_page(id)
+            .await?
+            .is_some_and(|page| page.space.as_deref() == Some(space))
+        {
+            log::info!("[shared_space] page {id} is shared with all of {space} now; stopped sharing it alone");
+            leave_at(settings_path, &scope)?;
+        }
+    }
+    Ok(())
+}
+
 /// The daemon's automatic pass (about every 30 seconds): one sync pass of
-/// every Space in `shared-spaces.json`. A Space whose pass is already
-/// running is left to it. A Space whose folder is not there or cannot be
-/// read is paused: nothing here is changed, and the next pass that finds
-/// the folder carries on. Returns each Space's result.
+/// every Space and page in `shared-spaces.json`. One whose pass is already
+/// running is left to it. One whose folder is not there or cannot be read
+/// is paused: nothing here is changed, and the next pass that finds the
+/// folder carries on. `person_name` is the name in this Wenlan's profile:
+/// when it is set and differs, every share takes it. Returns each one's
+/// result, by [`Scope::key`].
 pub async fn sync_shared_spaces(
     db: &MemoryDB,
     settings_path: &Path,
     knowledge_path: Option<&Path>,
+    person_name: Option<&str>,
 ) -> Vec<(String, SharedSyncRun)> {
-    let store = match read_settings(settings_path) {
-        Ok(store) => store,
+    let shares = match shares_at(settings_path) {
+        Ok(shares) => shares,
         Err(error) => {
             log::warn!(
                 "[shared_space] {} cannot be read: {error}",
@@ -461,34 +738,44 @@ pub async fn sync_shared_spaces(
             return Vec::new();
         }
     };
+    let person_name = person_name.map(str::trim).filter(|name| !name.is_empty());
     let mut out = Vec::new();
-    for (space, settings) in store.spaces {
-        let run = space_run(settings_path, &space);
+    for (scope, mut settings) in shares {
+        let key = scope.key();
+        let run = space_run(settings_path, &key);
         let Ok(_pass) = run.lock.try_lock() else {
-            log::debug!("[shared_space] {space}: a pass is already running");
+            log::debug!("[shared_space] {key}: a pass is already running");
             continue;
         };
-        let outcome = match ready(db, &space, &settings).await {
+        if let Some(name) = person_name.filter(|name| *name != settings.member_name) {
+            match join_at(settings_path, &scope, Path::new(&settings.folder), name) {
+                Ok(renamed) => settings = renamed,
+                Err(error) => log::warn!("[shared_space] {key}: name not changed: {error}"),
+            }
+        }
+        let outcome = match ready(db, &scope, &settings).await {
             Err(reason) => Outcome::Paused(reason),
-            Ok(()) => match pass(db, &space, &settings, knowledge_path).await {
+            Ok(()) => match pass(db, &scope, &settings, knowledge_path).await {
                 Ok(counts) => Outcome::Done(counts),
                 Err(error) => Outcome::Failed(error.to_string()),
             },
         };
-        out.push((space.clone(), finish(&run, &space, outcome)));
+        out.push((key.clone(), finish(&run, &key, outcome)));
     }
     out
 }
 
-/// Whether an automatic pass of `space` may read and write its folder. A
+/// Whether an automatic pass of `scope` may read and write its folder. A
 /// folder that is not there (a drive unplugged, a cloud folder not mounted)
 /// or has no readable `space.json` yet is never made here: an empty folder
 /// would look like every other member's pages had gone.
-async fn ready(db: &MemoryDB, space: &str, settings: &ShareSettings) -> Result<(), String> {
-    match db.registered_space_or_none(Some(space)).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return Err(format!("there is no Space named {space} here")),
-        Err(error) => return Err(error.to_string()),
+async fn ready(db: &MemoryDB, scope: &Scope, settings: &ShareSettings) -> Result<(), String> {
+    if let Scope::Space(space) = scope {
+        match db.registered_space_or_none(Some(space)).await {
+            Ok(Some(_)) => {}
+            Ok(None) => return Err(format!("there is no Space named {space} here")),
+            Err(error) => return Err(error.to_string()),
+        }
     }
     let folder = PathBuf::from(&settings.folder);
     tokio::task::spawn_blocking(move || folder_ready(&folder))
@@ -544,7 +831,11 @@ fn newest_with<'a>(versions: &'a [PageVersion], state: &version::State) -> Optio
 /// What one pass reads once and every page uses.
 struct Pass<'a> {
     db: &'a MemoryDB,
-    space: &'a str,
+    scope: &'a Scope,
+    /// The Space new pages are made in and titles are kept apart in: the
+    /// shared Space, or the shared page's Space here (none when it is not
+    /// here yet).
+    space: String,
     settings: &'a ShareSettings,
     folder: PathBuf,
     knowledge_path: Option<&'a Path>,
@@ -554,10 +845,10 @@ struct Pass<'a> {
     names: HashMap<String, String>,
 }
 
-/// One pass of `space` with the folder in `settings`.
+/// One pass of `scope` with the folder in `settings`.
 async fn pass(
     db: &MemoryDB,
-    space: &str,
+    scope: &Scope,
     settings: &ShareSettings,
     knowledge_path: Option<&Path>,
 ) -> Result<SharedSyncCounts, WenlanError> {
@@ -566,37 +857,69 @@ async fn pass(
         id: settings.member_id.clone(),
         name: settings.member_name.clone(),
     };
+
+    let mut local: HashMap<String, Page> = HashMap::new();
+    let space = match scope {
+        Scope::Space(space) => {
+            for status in ["active", "archived"] {
+                for page in db
+                    .list_pages_by_space(status, Some(space), 1_000_000, 0)
+                    .await?
+                {
+                    if page.space.as_deref() == Some(space.as_str()) {
+                        local.insert(page.id.clone(), page);
+                    }
+                }
+            }
+            space.clone()
+        }
+        Scope::Page(id) => match db.get_page(id).await? {
+            Some(page) if matches!(page.status.as_str(), "active" | "archived") => {
+                let space = page
+                    .space
+                    .clone()
+                    .unwrap_or_else(|| UNFILED_SPACE_ID.to_string());
+                local.insert(page.id.clone(), page);
+                space
+            }
+            _ => UNFILED_SPACE_ID.to_string(),
+        },
+    };
+    let name = match scope {
+        Scope::Space(space) => space.clone(),
+        Scope::Page(id) => local
+            .get(id)
+            .map(|page| page.title.clone())
+            .unwrap_or_else(|| id.clone()),
+    };
+
     let space_file = {
         let folder = folder.clone();
-        let space = space.to_string();
-        tokio::task::spawn_blocking(move || ensure_space_file(&folder, &space, &me))
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || ensure_space_file(&folder, &scope, &name, &me))
             .await
             .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))??
     };
-    let read = {
+    let mut read = {
         let folder = folder.clone();
         tokio::task::spawn_blocking(move || version::read_folder(&folder))
             .await
             .map_err(|error| WenlanError::Generic(format!("shared folder task: {error}")))?
     };
+    if let Scope::Page(id) = scope {
+        // A page folder holds that page only; anything else in it is not
+        // taken.
+        read.pages.retain(|page, _| page == id);
+    }
     let mut counts = SharedSyncCounts {
         skipped: read.skipped,
         ..SharedSyncCounts::default()
     };
 
-    let mut local: HashMap<String, Page> = HashMap::new();
-    for status in ["active", "archived"] {
-        for page in db
-            .list_pages_by_space(status, Some(space), 1_000_000, 0)
-            .await?
-        {
-            if page.space.as_deref() == Some(space) {
-                local.insert(page.id.clone(), page);
-            }
-        }
-    }
+    let key = scope.key();
     let ctx = Pass {
         db,
+        scope,
         space,
         settings,
         folder,
@@ -611,7 +934,7 @@ async fn pass(
             .map(|member| (member.id, member.name))
             .collect(),
     };
-    let mut held = read_held(db, space).await?;
+    let mut held = read_held(db, &key).await?;
 
     let ids: BTreeSet<&str> = local
         .keys()
@@ -642,22 +965,22 @@ async fn pass(
         // pass, so it is kept at once; the rest once at the end (forgetting
         // an apply only means comparing by content next pass).
         if unsaved && counts.exported != exported {
-            save_held(db, space, &held).await?;
+            save_held(db, &key, &held).await?;
             unsaved = false;
         }
     }
     if unsaved {
-        save_held(db, space, &held).await?;
+        save_held(db, &key, &held).await?;
     }
     Ok(counts)
 }
 
 async fn save_held(
     db: &MemoryDB,
-    space: &str,
+    key: &str,
     held: &BTreeMap<String, Held>,
 ) -> Result<(), WenlanError> {
-    db.set_app_metadata(&held_key(space), &serde_json::to_string(held)?)
+    db.set_app_metadata(&held_key(key), &serde_json::to_string(held)?)
         .await
 }
 
@@ -766,7 +1089,7 @@ impl Pass<'_> {
         if self.db.get_page(id).await?.is_some() {
             log::warn!(
                 "[shared_space] {id} is in the folder but here it is not a page of {}; left as it is",
-                self.space
+                self.scope.key()
             );
             counts.skipped += 1;
             return Ok(None);
@@ -831,10 +1154,10 @@ impl Pass<'_> {
     ) -> Result<String, WenlanError> {
         let taken: HashSet<String> = self
             .db
-            .list_pages_by_space("active", Some(self.space), 1_000_000, 0)
+            .list_pages_by_space("active", Some(&self.space), 1_000_000, 0)
             .await?
             .into_iter()
-            .filter(|page| page.id != id && page.space.as_deref() == Some(self.space))
+            .filter(|page| page.id != id && page.space.as_deref() == Some(self.space.as_str()))
             .map(|page| MemoryDB::page_title_key(&page.title))
             .collect();
         if !taken.contains(&MemoryDB::page_title_key(wanted)) {
@@ -977,7 +1300,12 @@ impl Pass<'_> {
                 content: head.page.body.clone(),
                 summary: None,
                 entity_id: None,
-                space: Some(self.space.to_string()).into(),
+                space: match self.scope {
+                    Scope::Space(space) => Some(space.clone()).into(),
+                    // A page shared alone is made with no Space; the person
+                    // moves it where they like.
+                    Scope::Page(_) => wenlan_types::space_context::WriteSpaceTarget::Uncategorized,
+                },
                 source_memory_ids: Vec::new(),
                 creation_kind: Some("authored".to_string()),
                 workspace: None,

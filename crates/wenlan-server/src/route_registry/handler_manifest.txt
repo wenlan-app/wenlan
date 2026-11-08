@@ -326,3 +326,9 @@ main|get|/api/pages/{id}/export-versions|wenlan_server::page_export_routes::vers
 main|get|/api/pages/{id}/export-bundles/{bundle_id}|wenlan_server::page_export_routes::bundle
 main|post|/api/research/runs/{id}/read-source|wenlan_server::research_routes::read_source
 main|get|/api/zotero/sources/{id}/disconnect-preview|wenlan_server::source_routes::zotero_sync::handle_disconnect_preview
+main|delete|/api/spaces/{name}/shared|wenlan_server::spaces_routes::handle_shared_leave
+main|post|/api/pages/{id}/shared/sync|wenlan_server::spaces_routes::handle_page_shared_sync
+main|get|/api/pages/{id}/shared|wenlan_server::spaces_routes::handle_page_shared_status
+main|delete|/api/pages/{id}/shared|wenlan_server::spaces_routes::handle_page_shared_leave
+main|get|/api/shared|wenlan_server::spaces_routes::handle_shared_list
+main|post|/api/shared/folder|wenlan_server::spaces_routes::handle_shared_folder

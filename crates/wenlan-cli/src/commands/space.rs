@@ -53,9 +53,10 @@ pub enum SpaceCmd {
         /// The shared folder. The first sync adds you to it.
         #[arg(long)]
         folder: std::path::PathBuf,
-        /// The name the other members see for you.
+        /// The name the other members see for you. Left out, your display
+        /// name in Settings.
         #[arg(long)]
-        name: String,
+        name: Option<String>,
     },
 }
 
@@ -77,7 +78,7 @@ pub async fn run(
             space_name,
             folder,
             name,
-        } => share_sync(client, format, quiet, &space_name, &folder, &name).await,
+        } => share_sync(client, format, quiet, &space_name, &folder, name.as_deref()).await,
     }
 }
 
@@ -243,7 +244,7 @@ async fn share_sync(
     quiet: bool,
     space: &str,
     folder: &std::path::Path,
-    name: &str,
+    name: Option<&str>,
 ) -> Result<()> {
     // The daemon may run in another folder; it needs the whole path.
     let folder = std::path::absolute(folder)?;
@@ -252,7 +253,7 @@ async fn share_sync(
             space,
             &wenlan_types::shared_space::SharedSyncRequest {
                 folder: folder.to_string_lossy().into_owned(),
-                member_name: name.to_string(),
+                member_name: name.map(str::to_string),
             },
         )
         .await?;

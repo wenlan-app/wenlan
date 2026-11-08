@@ -187,11 +187,122 @@ pub(crate) fn register_extended(router: TrackedRouter<SharedState>) -> TrackedRo
         .route("/api/spaces/reorder", post(handle_reorder_space))
         .route("/api/spaces/{name}/star", post(handle_toggle_space_starred))
         .route("/api/spaces/{name}/shared/sync", post(handle_shared_sync))
-        .route("/api/spaces/{name}/shared", get(handle_shared_status))
+        .route(
+            "/api/spaces/{name}/shared",
+            get(handle_shared_status).delete(handle_shared_leave),
+        )
+        .route("/api/pages/{id}/shared/sync", post(handle_page_shared_sync))
+        .route(
+            "/api/pages/{id}/shared",
+            get(handle_page_shared_status).delete(handle_page_shared_leave),
+        )
+        .route("/api/shared", get(handle_shared_list))
+        .route("/api/shared/folder", post(handle_shared_folder))
         .route(
             "/api/documents/{source_id}/space",
             post(handle_set_document_space),
         )
+}
+
+/// The name other members see for this person: the one asked for, else
+/// the profile's.
+async fn shared_member_name(
+    db: &wenlan_core::db::MemoryDB,
+    asked: Option<&str>,
+) -> Result<String, ServerError> {
+    if let Some(name) = asked.map(str::trim).filter(|name| !name.is_empty()) {
+        return Ok(name.to_string());
+    }
+    wenlan_core::shared_space::person_name(db)
+        .await?
+        .ok_or_else(|| {
+            ServerError::ValidationError(
+                "no name to show the others: set a display name in Settings".into(),
+            )
+        })
+}
+
+fn shared_folder_path(folder: &str) -> Result<std::path::PathBuf, ServerError> {
+    let path = std::path::PathBuf::from(folder.trim());
+    if !path.is_absolute() {
+        return Err(ServerError::ValidationError(format!(
+            "folder must be an absolute path (got {folder:?})"
+        )));
+    }
+    Ok(path)
+}
+
+async fn shared_sync(
+    state: &Arc<RwLock<ServerState>>,
+    scope: wenlan_core::shared_space::Scope,
+    req: wenlan_types::shared_space::SharedSyncRequest,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncCounts>, ServerError> {
+    let (db, page_root) = {
+        let s = state.read().await;
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.lint_config.page_root().map(std::path::Path::to_path_buf),
+        )
+    };
+    let folder = shared_folder_path(&req.folder)?;
+    let member_name = shared_member_name(&db, req.member_name.as_deref()).await?;
+    let scope = match scope {
+        wenlan_core::shared_space::Scope::Space(name) => wenlan_core::shared_space::Scope::Space(
+            db.registered_space_or_none(Some(&name))
+                .await
+                .map_err(|e| ServerError::Internal(e.to_string()))?
+                .ok_or_else(|| ServerError::NotFound(format!("no Space named {name:?}")))?,
+        ),
+        page => page,
+    };
+    let settings = wenlan_core::shared_space::settings_path();
+    let counts = wenlan_core::shared_space::sync_space(
+        &db,
+        wenlan_core::shared_space::SyncTarget {
+            scope: &scope,
+            folder: &folder,
+            member_name: &member_name,
+            settings_path: &settings,
+            knowledge_path: page_root.as_deref(),
+        },
+    )
+    .await?;
+    Ok(Json(counts))
+}
+
+async fn space_scope(
+    state: &Arc<RwLock<ServerState>>,
+    name: &str,
+) -> Result<wenlan_core::shared_space::Scope, ServerError> {
+    let db = {
+        let s = state.read().await;
+        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let space = db
+        .registered_space_or_none(Some(name))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .ok_or_else(|| ServerError::NotFound(format!("no Space named {name:?}")))?;
+    Ok(wenlan_core::shared_space::Scope::Space(space))
+}
+
+fn shared_status(
+    scope: &wenlan_core::shared_space::Scope,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncStatus>, ServerError> {
+    let settings = wenlan_core::shared_space::settings_path();
+    wenlan_core::shared_space::share_status_at(&settings, scope)?
+        .map(Json)
+        .ok_or_else(|| ServerError::NotFound("not shared from here".into()))
+}
+
+fn shared_leave(
+    scope: &wenlan_core::shared_space::Scope,
+) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
+    let settings = wenlan_core::shared_space::settings_path();
+    if !wenlan_core::shared_space::leave_at(&settings, scope)? {
+        return Err(ServerError::NotFound("not shared from here".into()));
+    }
+    Ok(Json(wenlan_types::responses::SuccessResponse { ok: true }))
 }
 
 /// POST /api/spaces/{name}/shared/sync — one sync pass of the Space's pages
@@ -204,61 +315,78 @@ pub async fn handle_shared_sync(
     Path(name): Path<String>,
     Json(req): Json<wenlan_types::shared_space::SharedSyncRequest>,
 ) -> Result<Json<wenlan_types::shared_space::SharedSyncCounts>, ServerError> {
-    let (db, page_root) = {
-        let s = state.read().await;
-        (
-            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
-            s.lint_config.page_root().map(std::path::Path::to_path_buf),
-        )
-    };
-    let space = db
-        .registered_space_or_none(Some(&name))
-        .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?
-        .ok_or_else(|| ServerError::NotFound(format!("no Space named {name:?}")))?;
-    let folder = std::path::PathBuf::from(req.folder.trim());
-    if !folder.is_absolute() {
-        return Err(ServerError::ValidationError(format!(
-            "folder must be an absolute path (got {:?})",
-            req.folder
-        )));
-    }
-    let settings = wenlan_core::shared_space::settings_path();
-    let counts = wenlan_core::shared_space::sync_space(
-        &db,
-        wenlan_core::shared_space::SyncTarget {
-            space: &space,
-            folder: &folder,
-            member_name: &req.member_name,
-            settings_path: &settings,
-            knowledge_path: page_root.as_deref(),
-        },
-    )
-    .await?;
-    Ok(Json(counts))
+    shared_sync(&state, wenlan_core::shared_space::Scope::Space(name), req).await
 }
 
 /// GET /api/spaces/{name}/shared — how this Wenlan shares the Space (its
-/// folder and member name) and the last sync pass since the daemon started:
+/// folder, member names) and the last sync pass since the daemon started:
 /// when, the counts, and why it is paused if it is. 404 when the Space is
 /// not shared from here.
 pub async fn handle_shared_status(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(name): Path<String>,
 ) -> Result<Json<wenlan_types::shared_space::SharedSyncStatus>, ServerError> {
-    let db = {
-        let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
-    };
-    let space = db
-        .registered_space_or_none(Some(&name))
-        .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?
-        .ok_or_else(|| ServerError::NotFound(format!("no Space named {name:?}")))?;
+    shared_status(&space_scope(&state, &name).await?)
+}
+
+/// DELETE /api/spaces/{name}/shared — stops sharing the Space from here.
+/// The pages here and everything in the folder stay as they are.
+pub async fn handle_shared_leave(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(name): Path<String>,
+) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
+    shared_leave(&space_scope(&state, &name).await?)
+}
+
+/// POST /api/pages/{id}/shared/sync — one sync pass of one page shared
+/// alone. The page is here, or it is the page the folder shares (joining
+/// it: it is made here with no Space). Returns counts only.
+pub async fn handle_page_shared_sync(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(id): Path<String>,
+    Json(req): Json<wenlan_types::shared_space::SharedSyncRequest>,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncCounts>, ServerError> {
+    shared_sync(&state, wenlan_core::shared_space::Scope::Page(id), req).await
+}
+
+/// GET /api/pages/{id}/shared — how this Wenlan shares one page alone.
+pub async fn handle_page_shared_status(
+    Path(id): Path<String>,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncStatus>, ServerError> {
+    shared_status(&wenlan_core::shared_space::Scope::Page(id))
+}
+
+/// DELETE /api/pages/{id}/shared — stops sharing one page from here.
+pub async fn handle_page_shared_leave(
+    Path(id): Path<String>,
+) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
+    shared_leave(&wenlan_core::shared_space::Scope::Page(id))
+}
+
+/// GET /api/shared — every Space and page this Wenlan shares, with their
+/// member names and last pass. No page text.
+pub async fn handle_shared_list(
+) -> Result<Json<wenlan_types::shared_space::SharedListResponse>, ServerError> {
     let settings = wenlan_core::shared_space::settings_path();
-    wenlan_core::shared_space::share_status_at(&settings, &space)?
-        .map(Json)
-        .ok_or_else(|| ServerError::NotFound(format!("the Space {name:?} is not shared")))
+    Ok(Json(wenlan_types::shared_space::SharedListResponse {
+        shares: wenlan_core::shared_space::share_statuses_at(&settings)?,
+    }))
+}
+
+/// POST /api/shared/folder — what a folder shares (a Space or one page,
+/// its name and member names), before joining it. `shared` is null when
+/// the folder shares nothing yet.
+pub async fn handle_shared_folder(
+    Json(req): Json<wenlan_types::shared_space::SharedFolderRequest>,
+) -> Result<Json<wenlan_types::shared_space::SharedFolderResponse>, ServerError> {
+    let folder = shared_folder_path(&req.folder)?;
+    let shared =
+        tokio::task::spawn_blocking(move || wenlan_core::shared_space::peek_folder(&folder))
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))??;
+    Ok(Json(wenlan_types::shared_space::SharedFolderResponse {
+        shared,
+    }))
 }
 
 // =====================================================================
