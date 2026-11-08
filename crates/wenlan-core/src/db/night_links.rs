@@ -245,9 +245,19 @@ impl MemoryDB {
             }
         };
         if current.is_none() {
-            self.update_memory_entity_id(memory, entity).await?;
+            self.update_memory_entity_id_as(
+                memory,
+                entity,
+                super::topic_filing::writer::NIGHT_LINKS,
+            )
+            .await?;
         } else {
-            self.link_memory_entities(memory, &[entity]).await?;
+            self.link_memory_entities_as(
+                memory,
+                &[entity],
+                super::topic_filing::writer::NIGHT_LINKS,
+            )
+            .await?;
         }
         Ok(Some(NightLink {
             memory: memory.to_string(),

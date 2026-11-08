@@ -322,6 +322,14 @@ and wait for evidence that people need them.
   night, and each one is shown on the big map and can be undone. How it looks
   is designed as a whole and agreed before it is built.
   原文：合併、取代、更新由 AI 自己做，可以還原，在大圖上看得到（2026-11-05「可以的，以上」）。
+- **UX-GRAPH-8** `shipped` A memory is filed under the topics it is about. It
+  is never filed under a topic you archived, and never under a topic so common
+  that it is linked to a large share of everything; a memory that names only
+  such a topic stays unfiled until a real one fits. Archiving a topic moves its
+  memories to another shown topic they are linked to, or leaves them unfiled,
+  and restoring the topic puts them back. Every move of a memory's main topic
+  records who moved it, why and when, and can be undone.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：記憶的主題看內容決定，歸錯可以查、可以退回）
 
 ## Finding things
 

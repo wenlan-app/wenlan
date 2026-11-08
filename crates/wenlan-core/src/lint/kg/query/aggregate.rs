@@ -117,10 +117,34 @@ pub(super) async fn advisory_metrics(
         3,
     )
     .await?;
+    // UX-GRAPH-8: how many memories are filed under a topic the person
+    // archived, and how many have topic links but none still shown. Both
+    // are advisory: `refile_archived_primaries` (run daily) moves the first
+    // group to a shown topic or clears the main topic, and deletes nothing.
+    let filing = scalar_row(
+        context,
+        "SELECT
+             (SELECT COUNT(DISTINCT m.source_id) FROM memories m
+                JOIN entity_page_map epm ON epm.entity_id = m.entity_id
+                JOIN pages p ON p.id = epm.page_id
+               WHERE p.kind = 'entity' AND p.status = 'archived'),
+             (SELECT COUNT(DISTINCT o.memory_id) FROM memory_entities o
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM memory_entities s
+                     JOIN entity_page_map epm ON epm.entity_id = s.entity_id
+                     JOIN pages p ON p.id = epm.page_id
+                    WHERE s.memory_id = o.memory_id
+                      AND p.kind = 'entity' AND p.status = 'active'))",
+        libsql::params::Params::None,
+        2,
+    )
+    .await?;
     Ok(vec![
         metric(LintMetricCode::KgDuplicateEntityNames, values[0]),
         metric(LintMetricCode::KgHubEntities, values[1]),
         metric(LintMetricCode::KgSemanticSuspicions, values[2]),
+        metric(LintMetricCode::KgArchivedPrimaryMemories, filing[0]),
+        metric(LintMetricCode::KgSourcesWithoutActiveTopic, filing[1]),
     ])
 }
 

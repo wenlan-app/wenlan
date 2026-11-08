@@ -31,8 +31,12 @@ pub async fn reweave_entity_links(
                 continue;
             }
             if entity.distance < entity_link_distance as f32 {
-                db.update_memory_entity_id(source_id, &entity.entity.id)
-                    .await?;
+                db.update_memory_entity_id_as(
+                    source_id,
+                    &entity.entity.id,
+                    crate::db::topic_filing::writer::REWEAVE,
+                )
+                .await?;
                 linked += 1;
                 break;
             }

@@ -3237,9 +3237,12 @@ fn repository_module_graph_matches_r4_25_group_6_census() {
     // seeds memories with two more: a primary session and one execute.
     // The archived-entity link tests in lint and repair add eleven more,
     // and the hub-topic, recap-race and citation re-arm tests fifteen more.
+    // UX-GRAPH-8 topic filing adds eleven: the renamed hub-topic commit test
+    // reads the link writer back (ten calls in place of six), the archived-
+    // topic commit test adds five, and the archived-main-topic lint test two.
     assert_eq!(
         analysis.support_calls.len(),
-        1236,
+        1247,
         "PR-D integration must expose the frozen 967 support calls, the 6 PR-D test identities, \
          the 5 M5 derivation-marker fixture calls, the 10 M6 shadow-promoter fixture calls, \
          the 7 G6 BindPageLink repair-test calls (G6 Stage 2 PR 2b, item 3: \

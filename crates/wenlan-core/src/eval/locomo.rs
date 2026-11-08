@@ -1848,7 +1848,9 @@ pub async fn populate_memory_entities_sweep(
             .unwrap_or_default();
             if !ents.is_empty() {
                 let refs: Vec<&str> = ents.iter().map(|s| s.as_str()).collect();
-                let _ = db.link_memory_entities(&sid, &refs).await;
+                let _ = db
+                    .link_memory_entities_as(&sid, &refs, crate::db::topic_filing::writer::EVAL)
+                    .await;
                 linked += 1;
             }
             attempted.insert(sid);
