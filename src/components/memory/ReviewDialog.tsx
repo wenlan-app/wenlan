@@ -10,6 +10,7 @@ import {
   daemonErrorMessage,
   isPageRevisionBasisRefused,
   isPageRevisionOutdated,
+  isPageRevisionReplaced,
   getEntityDetail,
   getMemoryDetail,
   getPage,
@@ -917,7 +918,7 @@ export default function ReviewDialog({
     setResolveError(null);
     setResolvingLocally(true);
     let outdated = false;
-    let discardedNotice: "review.revisionOutdated" | "review.revisionBasisRefused" = "review.revisionOutdated";
+    let discardedNotice: "review.revisionOutdated" | "review.revisionBasisRefused" | "review.revisionReplaced" = "review.revisionOutdated";
     try {
       const resolution = await onResolve(approve && item.kind === "revision" && revisionDraft
         ? { item: { ...item, content: revisionDraft.expectedContent }, approve, edited_content: revisionDraft.content }
@@ -934,11 +935,15 @@ export default function ReviewDialog({
         return;
       }
       // The page moved after this revision was proposed, or a page the change
-      // relied on is gone; either way the daemon discarded the card. Say so
-      // and move on, the way a resolved card would.
+      // relied on is gone; either way the daemon discarded the card. Or a
+      // newer proposal for the same page replaced it (with or without the
+      // person's edits, nothing was applied). Say so and move on, the way a
+      // resolved card would.
+      const replaced = item.kind === "revision" && isPageRevisionReplaced(error);
       const basisRefused = revisionDraft === undefined && item.kind === "revision" && isPageRevisionBasisRefused(error);
       if (basisRefused) discardedNotice = "review.revisionBasisRefused";
-      outdated = basisRefused || (revisionDraft === undefined && item.kind === "revision" && isPageRevisionOutdated(error));
+      if (replaced) discardedNotice = "review.revisionReplaced";
+      outdated = replaced || basisRefused || (revisionDraft === undefined && item.kind === "revision" && isPageRevisionOutdated(error));
       if (
         !outdated &&
         resolveRequestRef.current === requestId &&

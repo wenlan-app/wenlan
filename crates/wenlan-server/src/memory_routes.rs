@@ -1737,12 +1737,70 @@ pub async fn handle_reclassify_memory(
 
 // ===== Pending Revision Endpoints =====
 
+/// The refusal an AI tool gets when it tries to accept a card.
+pub(crate) const CARD_NEEDS_THE_PERSON: &str =
+    "card_needs_the_person: only the person can accept a card. Ask them to accept it in the \
+     Wenlan app; you may still propose changes or dismiss a card";
+
+/// Accepting a card (a pending revision, or a review proposal) is the
+/// person's decision, made in the Wenlan app. An AI tool proposes; it never
+/// accepts. Every request that is not [`caller_is_person`] is refused.
+pub(crate) fn require_person_to_accept(headers: &HeaderMap) -> Result<(), ServerError> {
+    if !caller_is_person(headers) {
+        return Err(ServerError::ValidationError(CARD_NEEDS_THE_PERSON.into()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod caller_is_person_tests {
+    use super::{caller_is_person, require_person_to_accept, CARD_NEEDS_THE_PERSON};
+    use axum::http::{HeaderMap, HeaderValue};
+    use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
+
+    fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, HeaderValue::from_static(value));
+        }
+        map
+    }
+
+    /// UX-WHO-2: only the person accepts a card. The marker alone (or with an
+    /// empty agent name) is the person; any agent name, a missing marker, or
+    /// another marker value is an AI tool and is refused.
+    #[test]
+    fn ux_who_2_only_the_marked_request_with_no_agent_name_is_the_person() {
+        for person in [
+            headers(&[(CALLER_HEADER, PERSON_CALLER_VALUE)]),
+            headers(&[(CALLER_HEADER, PERSON_CALLER_VALUE), ("x-agent-name", " ")]),
+        ] {
+            assert!(caller_is_person(&person), "{person:?}");
+            assert!(require_person_to_accept(&person).is_ok());
+        }
+        for ai in [
+            headers(&[]),
+            headers(&[("x-agent-name", "claude-code")]),
+            headers(&[
+                (CALLER_HEADER, PERSON_CALLER_VALUE),
+                ("x-agent-name", "claude-code"),
+            ]),
+            headers(&[(CALLER_HEADER, "agent")]),
+        ] {
+            assert!(!caller_is_person(&ai), "{ai:?}");
+            let refusal = require_person_to_accept(&ai).unwrap_err().to_string();
+            assert!(refusal.contains(CARD_NEEDS_THE_PERSON), "{refusal}");
+        }
+    }
+}
+
 pub async fn handle_accept_revision(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: axum::http::HeaderMap,
     Path(id): Path<String>,
     body: axum::body::Bytes,
 ) -> Result<Json<wenlan_types::RevisionAcceptResponse>, ServerError> {
+    require_person_to_accept(&headers)?;
     let db = {
         let s = state.read().await;
         s.db.as_ref().ok_or(ServerError::DbNotInitialized)?.clone()
@@ -4021,6 +4079,10 @@ mod gated_store_tests {
                 Request::builder()
                     .method("POST")
                     .uri(format!("/api/memory/revision/{}/accept", parsed.source_id))
+                    .header(
+                        wenlan_types::requests::CALLER_HEADER,
+                        wenlan_types::requests::PERSON_CALLER_VALUE,
+                    )
                     .header("content-type", "application/json")
                     .body(Body::from("{}"))
                     .unwrap(),
@@ -5005,6 +5067,10 @@ mod dismiss_revision_tests {
                         Request::builder()
                             .method("POST")
                             .uri("/api/memory/revision/accept_http_card/accept")
+                            .header(
+                                wenlan_types::requests::CALLER_HEADER,
+                                wenlan_types::requests::PERSON_CALLER_VALUE,
+                            )
                             .header("content-type", "application/json")
                             .body(Body::from(invalid))
                             .unwrap(),
@@ -5027,6 +5093,10 @@ mod dismiss_revision_tests {
                     Request::builder()
                         .method("POST")
                         .uri("/api/memory/revision/accept_http_card/accept")
+                        .header(
+                            wenlan_types::requests::CALLER_HEADER,
+                            wenlan_types::requests::PERSON_CALLER_VALUE,
+                        )
                         .header("content-type", "application/json")
                         .body(Body::from(body))
                         .unwrap(),

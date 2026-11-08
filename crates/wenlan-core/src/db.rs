@@ -96,6 +96,7 @@ mod citation_sources;
 pub mod conversations;
 pub mod intake;
 pub mod night_links;
+pub mod revision_cards;
 mod scoped_entities;
 mod scoped_pages;
 pub mod sentence_history;

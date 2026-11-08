@@ -124,7 +124,7 @@ pub async fn accept_research_classification(
     }
     client(&state)
         .await
-        .post_json(
+        .post_json_as_person(
             &path,
             &serde_json::json!({"action":"classification_edit","changes":changes}),
         )

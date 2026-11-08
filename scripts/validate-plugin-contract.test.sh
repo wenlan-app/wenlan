@@ -130,11 +130,11 @@ assert_rejects "codex curate refinements explicit-only drift" \
     "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/curate.md"
 
 assert_rejects "claude curate refinements mutation gate drift" \
-    perl -0pi -e 's/Perform no mutation until the user gives an unambiguous item-level accept or\s+reject decision\./Apply likely decisions immediately./' \
+    perl -0pi -e 's/Perform no mutation\s+until the user gives an unambiguous item-level reject decision\./Apply likely decisions immediately./' \
     "$TMPDIR_TEST/root/plugin/skills/curate/SKILL.md"
 
 assert_rejects "codex curate refinements mutation gate drift" \
-    perl -0pi -e 's/Perform no mutation until the user gives an unambiguous item-level accept or\s+reject decision\./Apply likely decisions immediately./' \
+    perl -0pi -e 's/Perform no mutation\s+until the user gives an unambiguous item-level reject decision\./Apply likely decisions immediately./' \
     "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/curate.md"
 
 assert_rejects "claude curate refinements skip drift" \
@@ -145,8 +145,24 @@ assert_rejects "codex curate refinements skip drift" \
     perl -0pi -e 's/Skip or cancel is a no-op\./Skip accepts the proposal./' \
     "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/curate.md"
 
-assert_rejects "claude curate missing refinement accept permission" \
-    perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__accept_refinement"//' \
+assert_rejects "claude curate missing refinement reject permission" \
+    perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__reject_refinement"//' \
+    "$TMPDIR_TEST/root/plugin/skills/curate/SKILL.md"
+
+assert_rejects "claude curate hands the AI the accept tool" \
+    perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__reject_refinement"/, "mcp__plugin_wenlan_wenlan__accept_refinement", "mcp__plugin_wenlan_wenlan__reject_refinement"/' \
+    "$TMPDIR_TEST/root/plugin/skills/curate/SKILL.md"
+
+assert_rejects "claude brief tells the AI to accept a revision" \
+    perl -0pi -e 's/- dismiss, when the person turns one down:/- accept: `mcp__plugin_wenlan_wenlan__accept_revision(target_source_id="<id>")`\n- dismiss, when the person turns one down:/' \
+    "$TMPDIR_TEST/root/plugin/skills/brief/SKILL.md"
+
+assert_rejects "codex curate tells the AI to accept from the CLI" \
+    perl -0pi -e 's/curate dismiss <revision_source_id>/curate accept <revision_source_id>/' \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/curate.md"
+
+assert_rejects "claude curate drops the person-only accept rule" \
+    perl -0pi -e 's/Only the person accepts a proposal, in the Wenlan app\.//' \
     "$TMPDIR_TEST/root/plugin/skills/curate/SKILL.md"
 
 assert_rejects "claude curate missing existing capture permission" \

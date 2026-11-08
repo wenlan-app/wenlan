@@ -59,13 +59,16 @@ impl Drop for ScratchVault {
 
 #[derive(Clone, Copy)]
 enum Caller {
-    /// The app: no headers.
+    /// The app: its person marker, no agent name.
     Person,
+    /// A request with neither the person marker nor an agent name: an AI
+    /// tool that did not say who it is, never the person (UX-WHO-2).
+    Unmarked,
     /// An automatic agent read: these routes serve automatic callers only.
     Reader,
     /// An agent writing, named by `x-agent-name`.
     Agent(&'static str),
-    /// The app, scoped to one Space.
+    /// The app, scoped to one Space, with its person marker.
     InSpace(&'static str),
 }
 
@@ -81,10 +84,21 @@ async fn call(
         request = request.header("content-type", "application/json");
     }
     match caller {
-        Caller::Person => {}
+        Caller::Person => {
+            request = request.header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+        }
+        Caller::Unmarked => {}
         Caller::Reader => request = request.header("x-agent-name", "thing-route-contract"),
         Caller::Agent(name) => request = request.header("x-agent-name", name),
-        Caller::InSpace(space) => request = request.header("x-wenlan-space", space),
+        Caller::InSpace(space) => {
+            request = request.header("x-wenlan-space", space).header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+        }
     }
     let response = router
         .clone()
@@ -277,6 +291,52 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(typed::<ThingMapResponse>(body), proposed.map);
 
+    // UX-WHO-2: only the app's marked person request answers the proposal.
+    // An agent and a request with no marker at all are refused and change
+    // nothing; the marked person's Accept lands the change.
+    let answer = json!({ "expected_revision": 3, "ops": [
+        { "op": "accept", "proposal_id": proposed.map.proposals[0].id },
+    ]});
+    for refused in [Caller::Agent("codex"), Caller::Unmarked] {
+        let (status, body) = call(
+            &router,
+            Method::POST,
+            &ops_uri,
+            Some(answer.clone()),
+            refused,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert!(
+            body.to_string()
+                .contains("only the person answers a proposal"),
+            "{body}"
+        );
+    }
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/things/{}/map", thing.id),
+        None,
+        Caller::Reader,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(typed::<ThingMapResponse>(body), proposed.map);
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &ops_uri,
+        Some(answer),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let answered: ThingMapOpsResponse = typed(body);
+    assert_eq!(answered.map.revision, 4);
+    assert!(answered.map.proposals.is_empty());
+    assert_eq!(answered.map.nodes[1].state, Some(ThingMapState::Dropped));
+
     // Another Space does not see it; an unknown thing is absent.
     let (status, _) = call(
         &router,
@@ -330,6 +390,19 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
         status,
         StatusCode::UNPROCESSABLE_ENTITY,
         "only the person renames"
+    );
+    let (status, _) = call(
+        &router,
+        Method::PATCH,
+        &rename,
+        Some(json!({ "title": "From an unmarked caller" })),
+        Caller::Unmarked,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "no agent name is not the person"
     );
     let (status, _) = call(
         &router,

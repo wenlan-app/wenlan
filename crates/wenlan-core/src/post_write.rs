@@ -31,6 +31,7 @@ pub use self::page_dispatch::{
     page_write_with_citation_snapshot, steep_update_page, update_page,
     update_page_at_source_revision, update_page_preserving_sources, PageWrite,
 };
+pub(crate) use self::page_link_rename::LINK_RENAME_WRITER;
 pub use self::page_removal::{
     archive_page_as, delete_page_permanently, page_holds_persons_work,
     page_removal_refusal_message, PageRemovalError, PageRemover,
@@ -163,6 +164,12 @@ pub struct WriteResult {
     /// landed only on the AI's sentences. Absent when it staged none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sentence_proposals: Vec<String>,
+    /// Every change the write wanted to make to a sentence it may not change
+    /// (the person's, or any sentence on a locked page), whether it now waits
+    /// as one of `sentence_proposals` or was dropped as a rewording. The
+    /// caller reports these: the write did not do all it was asked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edits_not_applied: Vec<wenlan_types::responses::EditNotApplied>,
 }
 
 /// The distinguishable ends of a page write.
