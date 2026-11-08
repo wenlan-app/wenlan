@@ -84,7 +84,7 @@ pub fn ai_edit_mode(page: &Page) -> AiEditMode {
 }
 
 /// A page whose unknown-origin sentences are protected like the person's.
-fn guarded(page: &Page) -> bool {
+pub(crate) fn guarded(page: &Page) -> bool {
     crate::post_write::page_is_human_owned(page) || page.review_required
 }
 

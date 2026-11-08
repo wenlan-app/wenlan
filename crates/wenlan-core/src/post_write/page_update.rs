@@ -1475,10 +1475,12 @@ async fn update_page_db_impl(
                     )));
                 }
             }
-            // Damage guard: a machine rewrite that brings in broken
-            // characters, a chat preamble or a repeated paragraph does not
-            // land, and neither does an LLM rewrite that stops mid-sentence.
-            // Only what this write introduced counts.
+            // Damage guard (UX-WHO-8): a machine rewrite that brings in
+            // broken characters, a chat preamble or a repeated paragraph does
+            // not land. A background pass is also refused when it stops
+            // mid-sentence, leaves half a link or loses most of the page's
+            // CJK text; an agent's write (a translation the person asked for)
+            // is not. Only what this write introduced counts.
             if writer.is_llm_rewrite() || matches!(writer, Writer::Agent(_)) {
                 if let Some(reason) = crate::retrieval::integrity::rewrite_damage(
                     &current.content,

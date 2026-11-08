@@ -24,8 +24,8 @@ pub use folders::{
     move_projected_page, note_missing_pages, note_person_file, origin_id_line,
     page_file_still_gone, pending_adoptions, person_page_files, read_knowledge_markdown,
     reclaim_returned_page, record_person_note, restamp_person_note, stamp_person_note,
-    unstamp_person_note, validate_knowledge_folder_path, KnowledgeFolderEntry, MissingPages,
-    PersonPageFile, MASS_MISSING_FLOOR, MISSING_SETTLE_SECS,
+    unstamp_person_note, validate_knowledge_folder_path, wenlan_page_digests, KnowledgeFolderEntry,
+    MissingPages, PersonPageFile, MASS_MISSING_FLOOR, MISSING_SETTLE_SECS,
 };
 
 const KNOWLEDGE_STATE_SCHEMA_V2: u32 = 2;
@@ -6215,6 +6215,84 @@ impl ProjectionCapabilities {
 /// without duplicating it.
 pub fn render_markdown_for(page: &Page) -> String {
     render_markdown(page)
+}
+
+/// For the nightly trust scan: files of pages Wenlan writes itself that the
+/// page watcher or the writer would read as edited outside Wenlan although
+/// nothing shows anyone edited them. A file holding today's text of its
+/// page, or bytes other than the ones Wenlan recorded, is left out: the
+/// first is read correctly, the second may be a real edit. Read only: it
+/// takes no lock, repairs nothing and writes nothing.
+pub async fn outside_edit_suspects(
+    path: &Path,
+    database: &crate::db::MemoryDB,
+    pages: &[Page],
+) -> Result<Vec<wenlan_types::trust_scan::OutsideEditFlag>, WenlanError> {
+    use crate::export::provenance::{
+        page_body_from_projection, same_page_text_ignoring_save_noise,
+    };
+    use wenlan_types::trust_scan::{OutsideEditFlag, OutsideEditReason, PageRef};
+    let mut found = Vec::new();
+    {
+        let root = folders::read_root(path)?;
+        let control = root.open_dir_nofollow(".wenlan")?;
+        let state = folders::read_state_strict(&control)?;
+        for page in pages {
+            let Some(entry) = state.pages.get(&page.id) else {
+                continue;
+            };
+            if entry.person_frontmatter.is_some() {
+                continue;
+            }
+            let Ok(bytes) = read_projected_file(&root, &entry.file) else {
+                continue;
+            };
+            let Ok(raw) = std::str::from_utf8(&bytes) else {
+                continue;
+            };
+            let (fm, _) = crate::sources::obsidian::extract_frontmatter(raw);
+            if fm.get_str("origin_id") != Some(page.id.as_str()) {
+                continue;
+            }
+            if same_page_text_ignoring_save_noise(
+                &page_body_from_projection(raw),
+                &page_body_from_projection(&render_markdown(page)),
+            ) {
+                continue;
+            }
+            let file_version = projected_origin_version(&fm);
+            let reason = match entry.content_sha256.as_deref() {
+                Some(recorded) if recorded == projection_digest(&bytes) => {
+                    OutsideEditReason::StoredChecksumMatches
+                }
+                None if file_version >= 1 && file_version < page.version => {
+                    OutsideEditReason::NoChecksumFileBehind
+                }
+                _ => continue,
+            };
+            found.push(OutsideEditFlag {
+                page: PageRef {
+                    page_id: page.id.clone(),
+                    title: page.title.clone(),
+                    kind: page.kind.clone(),
+                },
+                file: entry.file.clone(),
+                file_version,
+                page_version: page.version,
+                reason,
+                history_has_file_version: false,
+            });
+        }
+    }
+    for flag in &mut found {
+        if flag.reason == OutsideEditReason::NoChecksumFileBehind {
+            flag.history_has_file_version = database
+                .get_page_history_at(&flag.page.page_id, flag.file_version)
+                .await?
+                .is_some();
+        }
+    }
+    Ok(found)
 }
 
 /// The `state.json` entry `write_page` records for `page` at `file`, as JSON.

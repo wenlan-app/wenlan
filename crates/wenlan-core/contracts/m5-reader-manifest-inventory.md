@@ -542,6 +542,8 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | Method | Path | Builder | Page-bearing | Class | Marker-shape | Adapter | Evidence |
 |---|---|---|---|---|---|---|---|
 | `GET` | `/api/activity` | main | no | not_applicable | `none` | — | no prose fields |
+| `GET` | `/api/trust/scan` | main | yes | automatic | `none` | `handle_trust_scan` | DamagedPage.excerpt, PageRef.title |
+| `POST` | `/api/pages/{id}/citations/requeue` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/activities` | main | yes | automatic | `none` | `handle_list_activities` | AgentActivityRow.detail = title={page.title} |
 | `GET` | `/api/agents` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `POST` | `/api/agents` | main | no | not_applicable | `none` | — | AgentResponse carries no page prose |
@@ -1180,6 +1182,8 @@ carrying the authority of agreement.
 | `core/db/steep_new.rs::notes_sharing_entities` | `pub(crate)` | no | no | — | — |
 | `core/db/steep_new.rs::notes_titled` | `pub(crate)` | no | no | — | — |
 | `core/db/steep_new.rs::recent_notes` | `pub(crate)` | no | no | — | — |
+| `core/db/trust_scan.rs::trust_scan_pages` | `pub` | no | no | — | — |
+| `core/db/trust_scan.rs::trust_scan_previous_versions` | `pub` | no | no | — | — |
 | `core/db/truth_exposure.rs::conflict_identity_snapshot` | `pub` | no | **yes** | `server/page_routes.rs::visible_conflict_identity` | — |
 | `core/db/truth_exposure.rs::page_truth_states_on_conn` | `pub(super)` | no | no | — | — |
 | `core/lint/deep.rs::observation_duplicates` | `private` | no | no | — | — |
@@ -1325,6 +1329,7 @@ carrying the authority of agreement.
 | `core/synthesis/distill.rs::resolve_distill_target` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/db.rs::resolve_entity_by_name` |
 | `core/synthesis/overview.rs::refresh_overview_page` | `pub` | no | no | — | `core/db.rs::find_active_machine_overview_id` |
 | `core/synthesis/wikilinks.rs::resolve_against_pages` | `pub` | no | no | — | `core/db.rs::find_unique_active_page_id_by_title_scoped` |
+| `core/trust_scan.rs::run_trust_scan` | `pub` | no | no | — | `core/db/trust_scan.rs::trust_scan_pages`, `core/db/trust_scan.rs::trust_scan_previous_versions` |
 | `server/cmd_backfill.rs::run` | `pub` | yes | no | — | `core/db.rs::find_stale_archived_pages` |
 | `server/entity_graph_routes.rs::handle_create_entity` | `pub` | no | no | — | `core/db.rs::get_entity_detail` |
 | `server/entity_graph_routes.rs::handle_create_relation_preserving` | `pub` | no | no | — | `core/db/scoped_entities.rs::get_entity_detail_scoped` |
@@ -1531,6 +1536,8 @@ carrying the authority of agreement.
 | `core/synthesis/overview.rs::qualifying_top_evidence` | `private` | no | no | — | `core/db.rs::list_pages` |
 | `core/synthesis/overview.rs::refresh_existing_overview_page` | `private` | no | no | — | `core/db.rs::get_page`, `core/synthesis/distill.rs::refresh_page_with_candidate_sources` |
 | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` | `pub` | no | **yes** | `server/refinery_routes.rs::handle_accept_refinement` | `core/db.rs::accept_page_merge`, `core/db.rs::merge_entities` |
+| `core/trust_scan.rs::in_person_sentences` | `private` | no | no | — | `core/db.rs::get_page_browse` |
+| `core/trust_scan.rs::run_and_store` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/trust_scan.rs::run_trust_scan` |
 | `core/truth_adapter.rs::verdicts` | `private` | no | no | — | `core/db/truth_exposure.rs::page_truth_states` |
 | `server/brief_routes.rs::handle_read_brief` | `pub` | no | **yes** | `server/routes.rs::handle_context` | `core/db.rs::search_memory` |
 | `server/entity_graph_routes.rs::handle_add_entity_alias` | `pub` | no | no | — | `core/db.rs::add_entity_alias_in_scope` |
@@ -1725,7 +1732,7 @@ carrying the authority of agreement.
 | `server/routes.rs::handle_context` | `pub` | no | no | — | `server/brief_routes.rs::handle_read_brief` |
 | `server/routes.rs::handle_search` | `pub` | no | no | — | `server/routes.rs::handle_search_inner` |
 | `server/scheduler.rs::fire_steep_phase` | `private` | no | no | `server/scheduler.rs::fire_steep_phase_safe` | `core/refinery/mod.rs::run_periodic_steep_phase_with_api` |
-| `server/scheduler.rs::spawn_scheduler` | `pub` | no | **yes** | `server/main.rs::run_daemon` | `server/scheduler.rs::fire_maintenance_stage_safe` |
+| `server/scheduler.rs::spawn_scheduler` | `pub` | no | **yes** | `server/main.rs::run_daemon` | `core/trust_scan.rs::run_and_store`, `server/scheduler.rs::fire_maintenance_stage_safe` |
 | `server/scheduler/ambient.rs::run_ambient_job` | `pub(super)` | no | no | `server/scheduler/ambient.rs::run_ambient_job_safe` | `core/post_ingest.rs::run_page_growth_slice` |
 | `server/sentence_routes.rs::handle_accept_sentence_proposal` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_flag_sentence` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |

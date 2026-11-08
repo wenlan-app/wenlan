@@ -124,6 +124,7 @@ pub mod thing_dream;
 pub mod thing_map;
 pub mod thing_merge;
 pub mod things;
+pub mod trust_scan;
 mod truth_exposure;
 mod zotero_membership;
 mod zotero_scope_impacts;
@@ -269,6 +270,8 @@ mod thing_map_test;
 mod thing_merge_test;
 #[cfg(test)]
 mod things_test;
+#[cfg(test)]
+mod trust_scan_test;
 #[cfg(test)]
 mod tx_rollback_test;
 
@@ -1587,7 +1590,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 158;
+pub const SCHEMA_VERSION: u32 = 159;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10868,6 +10871,15 @@ impl MemoryDB {
             }
             if version < 158 {
                 self.migrate_158_dream_reading(version).await?;
+            }
+
+            // Migration 159 keeps the latest nightly trust scan report.
+            // See db/trust_scan.rs.
+            if ceiling < 159 {
+                return Ok(());
+            }
+            if version < 159 {
+                self.migrate_159_trust_scan_reports(version).await?;
             }
         }
 
@@ -59964,82 +59976,11 @@ impl MemoryDB {
         })?;
 
         let cleanup_result: Result<usize, WenlanError> = async {
-            let mut affected_pages: HashMap<String, HashSet<String>> = HashMap::new();
-            // G6 Stage 2 PR 2b: the orphan inventory used to scan
-            // `page_sources` -- it's frozen now (no PR writes new rows past
-            // this point), so a memory deleted after the flip would mint no
-            // fresh legacy row and this sweep would never see the orphan.
-            // Scans `edges` directly instead.
-            let mut orphan_rows = conn
-                .query(
-                    "SELECT src_id, dst_id
-                     FROM edges
-                     WHERE edge_type = 'cites' AND src_kind = 'page' AND dst_kind = 'memory'
-                       AND valid_until IS NULL
-                       AND NOT EXISTS (
-                           SELECT 1 FROM memories m
-                           WHERE m.source != 'episode'
-                             AND (m.source_id = edges.dst_id OR m.id = edges.dst_id)
-                       )",
-                    (),
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("cleanup_orphaned_page_sources inventory: {e}"))
-                })?;
-            while let Some(row) = orphan_rows.next().await.map_err(|e| {
-                WenlanError::VectorDb(format!("cleanup_orphaned_page_sources inventory row: {e}"))
-            })? {
-                let page_id = row.get::<String>(0).map_err(|e| {
-                    WenlanError::VectorDb(format!("cleanup_orphaned_page_sources page id: {e}"))
-                })?;
-                let locator = row.get::<String>(1).map_err(|e| {
-                    WenlanError::VectorDb(format!("cleanup_orphaned_page_sources locator: {e}"))
-                })?;
-                affected_pages.entry(page_id).or_default().insert(locator);
-            }
-            drop(orphan_rows);
-
-            // Legacy JSON may contain provenance that never received a join row.
-            // Inventory it independently so JSON-only ghosts cannot survive the
-            // canonical orphan sweep.
-            let mut json_orphan_rows = conn
-                .query(
-                    "SELECT p.id, CAST(legacy_source.value AS TEXT)
-                     FROM pages p,
-                          json_each(COALESCE(p.source_memory_ids, '[]')) legacy_source
-                     WHERE NOT EXISTS (
-                         SELECT 1 FROM memories m
-                         WHERE m.source != 'episode'
-                           AND (m.source_id = CAST(legacy_source.value AS TEXT)
-                                OR m.id = CAST(legacy_source.value AS TEXT))
-                     )",
-                    (),
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources JSON inventory: {e}"
-                    ))
-                })?;
-            while let Some(row) = json_orphan_rows.next().await.map_err(|e| {
-                WenlanError::VectorDb(format!(
-                    "cleanup_orphaned_page_sources JSON inventory row: {e}"
-                ))
-            })? {
-                let page_id = row.get::<String>(0).map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources JSON page id: {e}"
-                    ))
-                })?;
-                let locator = row.get::<String>(1).map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources JSON locator: {e}"
-                    ))
-                })?;
-                affected_pages.entry(page_id).or_default().insert(locator);
-            }
-            drop(json_orphan_rows);
+            // The inventory is shared with the nightly trust scan, so its
+            // report names exactly what this sweep removes. It scans `edges`
+            // (G6 Stage 2 PR 2b: `page_sources` is frozen) and the legacy JSON
+            // list independently, so JSON-only ghosts cannot survive.
+            let affected_pages = trust_scan::orphan_source_inventory(&conn).await?.pages;
 
             // G6 Stage 2 PR 2b: the `page_sources`/`page_evidence` DELETE
             // sweeps that used to run here stop -- both tables are frozen.

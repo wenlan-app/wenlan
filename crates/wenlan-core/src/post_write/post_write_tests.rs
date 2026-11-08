@@ -7294,6 +7294,75 @@ async fn update_page_damage_guard_refuses_damaged_machine_rewrites() {
 }
 
 #[tokio::test]
+async fn ux_who_8_update_page_refuses_a_background_cjk_loss_but_lets_an_agent_translation_land() {
+    let _lock = env_lock().await;
+    std::env::remove_var("WENLAN_MERGE_SHRINK_GUARD");
+    let (db, _dir) = test_db().await;
+    let mem_id = "mem-dg-cjk";
+    let zh = "混合搜尋把關鍵字和向量的結果合在一起，再依照和問題的距離重新排序，這樣找到的內容比較準確。";
+    seed_memory(&db, mem_id, zh).await;
+    let page_id = seed_page(&db, mem_id, zh).await;
+    let english = "Hybrid search fuses keyword and vector results, then reranks them by how close each one is to the question, so what it finds is more accurate.";
+    let request = |content: &str| UpdatePageRequest {
+        content: content.to_string(),
+        source_memory_ids: vec![mem_id.to_string()],
+        expected_version: None,
+        caller_id: None,
+        operation_id: None,
+    };
+
+    // A background pass that answers in English is refused.
+    let result = update_page(
+        &db,
+        &page_id,
+        request(english),
+        "page_growth",
+        false,
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(&result, Err(WenlanError::Validation(m)) if m.contains("Chinese, Japanese or Korean")),
+        "page_growth losing the Chinese must be refused: {result:?}"
+    );
+    // An agent write that adds broken characters is refused too.
+    let broken = zh.replacen("搜尋", "搜\u{FFFD}", 1);
+    let result = update_page(
+        &db,
+        &page_id,
+        request(&broken),
+        "agent_refresh",
+        false,
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(&result, Err(WenlanError::Validation(m)) if m.contains("broken characters")),
+        "an agent write adding U+FFFD must be refused: {result:?}"
+    );
+    assert_eq!(db.get_page(&page_id).await.unwrap().unwrap().content, zh);
+
+    // The translation the person asked their AI tool for lands.
+    update_page(
+        &db,
+        &page_id,
+        request(english),
+        "agent_refresh",
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db.get_page(&page_id).await.unwrap().unwrap().content,
+        english
+    );
+}
+
+#[tokio::test]
 async fn update_page_shrink_guard_skips_human_edits() {
     let _lock = env_lock().await;
     // Guard ON + human edited_by: guard never fires, update goes through

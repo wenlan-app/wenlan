@@ -216,6 +216,11 @@ and wait for evidence that people need them.
   thing, it says so instead of guessing. Finding the lines is not checking
   them, so they never look verified.
   原文：「可以。3.」（2026-11-06 15:47 PT，回覆：文澜寫出一句「我們決定一次發 0.21」，你點一下，就能看到原對話裡哪幾句這樣說過）
+- **UX-WHO-8** `shipped` An AI write never leaves a page broken: cut off,
+  half a link, broken characters, or a background pass losing the Chinese
+  text. Such a write is refused and the page stays as it was; damage already
+  there is reported each night, and nothing is repaired until you approve it.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 寫入不能把頁弄壞；已經壞的每晚列出來，等你同意才修）
 
 ## While you chat (in your own AI tool)
 
