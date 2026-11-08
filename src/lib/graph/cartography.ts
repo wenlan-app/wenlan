@@ -838,24 +838,48 @@ export function planRegionNamesFirst(
   viewport: { width: number; height: number },
   blocked: (box: { left: number; right: number; top: number; bottom: number }) => boolean,
 ): PlannedRegionName[] {
-  type Disc = { x: number; y: number; r: number };
+  type Disc = { x: number; y: number; r: number; region: number };
+  type Box = { left: number; right: number; top: number; bottom: number };
   const planned: PlannedRegionName[] = [];
   const step = REGION_NAME_SEARCH_STEP_PX / 2;
-  const discsOf = scene.regions.map((region) =>
-    [region.hub, ...region.otherMembers].map((m) => ({ ...project(m), r: m.size })),
-  );
-  const gapTo = (box: { left: number; right: number; top: number; bottom: number }, discs: Disc[]) => {
-    let best = Infinity;
-    for (const d of discs) {
-      const dx = Math.max(box.left - d.x, 0, d.x - box.right);
-      const dy = Math.max(box.top - d.y, 0, d.y - box.bottom);
-      best = Math.min(best, Math.max(0, Math.hypot(dx, dy) - d.r));
+  // Every region's points on one grid, so a name's edge test looks only at
+  // the points near it (not every point on the map, for every spot tried).
+  const cell = REGION_NAME_GRID_PX;
+  const grid = new Map<number, Disc[]>();
+  const cellKey = (cx: number, cy: number) => cx * 65_536 + cy;
+  let maxR = 0;
+  for (const [index, region] of scene.regions.entries()) {
+    for (const m of [region.hub, ...region.otherMembers]) {
+      const at = project(m);
+      const disc = { x: at.x, y: at.y, r: m.size, region: index };
+      maxR = Math.max(maxR, disc.r);
+      const k = cellKey(Math.floor(at.x / cell), Math.floor(at.y / cell));
+      const list = grid.get(k);
+      if (list) list.push(disc);
+      else grid.set(k, [disc]);
     }
-    return best;
+  }
+  /** Whether a name in `box` sits on region `index` or right at its edge,
+   *  and no nearer to another region's points than to its own. Only points
+   *  within REGION_NAME_EDGE_PX of the box can decide it. */
+  const onItsRegion = (box: Box, index: number) => {
+    const reach = REGION_NAME_EDGE_PX + maxR;
+    let mine = Infinity;
+    let others = Infinity;
+    for (let cx = Math.floor((box.left - reach) / cell); cx <= Math.floor((box.right + reach) / cell); cx += 1) {
+      for (let cy = Math.floor((box.top - reach) / cell); cy <= Math.floor((box.bottom + reach) / cell); cy += 1) {
+        for (const d of grid.get(cellKey(cx, cy)) ?? []) {
+          const dx = Math.max(box.left - d.x, 0, d.x - box.right);
+          const dy = Math.max(box.top - d.y, 0, d.y - box.bottom);
+          const gap = Math.max(0, Math.hypot(dx, dy) - d.r);
+          if (d.region === index) mine = Math.min(mine, gap);
+          else others = Math.min(others, gap);
+        }
+      }
+    }
+    return mine <= REGION_NAME_EDGE_PX && others >= mine;
   };
   for (const [index, region] of scene.regions.entries()) {
-    const own = discsOf[index]!;
-    const others = discsOf.flatMap((list, j) => (j === index ? [] : list));
     const { bounds } = region;
     const corners = [
       project({ x: bounds.minX, y: bounds.minY }),
@@ -887,13 +911,15 @@ export function planRegionNamesFirst(
         top: p.y - size / 2,
         bottom: p.y + size / 2,
       });
+      let tries = 0;
       const fits = (p: { x: number; y: number }) => {
+        tries += 1;
         const b = boxAround(p);
         if (b.left < 0 || b.top < 0 || b.right > viewport.width || b.bottom > viewport.height) return false;
         if (planned.some((o) => o.box.left < b.right + LABEL_BOX_PAD && b.left - LABEL_BOX_PAD < o.box.right && o.box.top < b.bottom + LABEL_BOX_PAD && b.top - LABEL_BOX_PAD < o.box.bottom)) return false;
-        const mine = gapTo(b, own);
-        if (mine > REGION_NAME_EDGE_PX || gapTo(b, others) < mine) return false;
-        return !blocked(b);
+        // Most spots are on a point: that test is cheap, so it goes first.
+        if (blocked(b)) return false;
+        return onItsRegion(b, index);
       };
       const gap = size / 2 + LABEL_BOX_PAD + 2;
       let at = [
@@ -904,17 +930,48 @@ export function planRegionNamesFirst(
         { x: centroid.x, y: bottom + gap },
       ].find(fits);
       if (!at) {
-        // Anywhere on the region or just past its edge, nearest its middle.
+        // Anywhere on the region or just past its edge, nearest its middle:
+        // the spots go out from the middle, and the search gives up after
+        // REGION_NAME_SEARCH_TRIES of them (a name that finds no room there
+        // tries a shorter one, or is left off).
         const reach = REGION_NAME_EDGE_PX + size;
         const yFrom = Math.max(top - reach, size / 2), yTo = Math.min(bottom + reach, viewport.height - size / 2);
         const xFrom = Math.max(left - halfWidth, halfWidth), xTo = Math.min(right + halfWidth, viewport.width - halfWidth);
-        let bestDistance = Infinity;
-        for (let y = yFrom; y <= yTo; y += step) {
-          for (let x = xFrom; x <= xTo; x += step) {
-            const distance = Math.hypot(x - centroid.x, y - centroid.y);
-            if (distance >= bestDistance || !fits({ x, y })) continue;
-            at = { x, y };
-            bestDistance = distance;
+        // The search grid, walked in square rings out from the spot nearest
+        // the middle; a spot found in one ring is kept unless a later ring
+        // still holds a nearer one.
+        const columns = Math.floor((xTo - xFrom) / step), rows = Math.floor((yTo - yFrom) / step);
+        if (columns >= 0 && rows >= 0) {
+          const ci = Math.min(columns, Math.max(0, Math.round((centroid.x - xFrom) / step)));
+          const cj = Math.min(rows, Math.max(0, Math.round((centroid.y - yFrom) / step)));
+          const rings = Math.max(ci, columns - ci, cj, rows - cj);
+          let bestDistance = Infinity;
+          tries = 0;
+          for (let k = 0; k <= rings && tries < REGION_NAME_SEARCH_TRIES && (k - 1) * step < bestDistance; k += 1) {
+            const ring: { x: number; y: number; d: number }[] = [];
+            const add = (i: number, j: number) => {
+              if (i < 0 || j < 0 || i > columns || j > rows) return;
+              const x = xFrom + i * step, y = yFrom + j * step;
+              ring.push({ x, y, d: Math.hypot(x - centroid.x, y - centroid.y) });
+            };
+            if (k === 0) add(ci, cj);
+            for (let i = ci - k; k > 0 && i <= ci + k; i += 1) {
+              add(i, cj - k);
+              add(i, cj + k);
+            }
+            for (let j = cj - k + 1; k > 0 && j <= cj + k - 1; j += 1) {
+              add(ci - k, j);
+              add(ci + k, j);
+            }
+            ring.sort((a, b) => a.d - b.d || a.y - b.y || a.x - b.x);
+            for (const spot of ring) {
+              if (spot.d >= bestDistance) break;
+              if (tries >= REGION_NAME_SEARCH_TRIES) break;
+              if (!fits(spot)) continue;
+              at = { x: spot.x, y: spot.y };
+              bestDistance = spot.d;
+              break;
+            }
           }
         }
       }
@@ -961,6 +1018,10 @@ export function drawPlannedRegionNames(ctx: CanvasRenderingContext2D, names: rea
 
 /** Grid step, in CSS px, when a region name searches its area for free ground. */
 const REGION_NAME_SEARCH_STEP_PX = 10;
+/** The grid, in CSS px, a names-first plan files the region points on. */
+const REGION_NAME_GRID_PX = 32;
+/** The most spots a names-first region name tries past its first five. */
+export const REGION_NAME_SEARCH_TRIES = 2500;
 
 /** Halo stroke around a place name, in CSS px — ground-coloured, so the name
  *  stays legible over the nodes it sits among. */

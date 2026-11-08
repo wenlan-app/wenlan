@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import Graph from "graphology";
 import { layoutRegionMap, nudgeClearOfOthers, placeNewRegionMembers, REGION_ATTR } from "./regionMap";
 import { splitNewRegionsFromCore } from "./atlas";
-import { cartographyScene, fitRegionName, placeRegionLabels, planRegionNamesFirst, REGION_NAME_EDGE_PX, regionNameKeepsEnough } from "./cartography";
+import { cartographyScene, fitRegionName, placeRegionLabels, planRegionNamesFirst, REGION_NAME_EDGE_PX, REGION_NAME_SEARCH_TRIES, regionNameKeepsEnough } from "./cartography";
 import { readPreviousRegions, readStoredRegions, startRearrange, storeRegions, undoRearrange } from "./positions";
 
 /** Four dense groups of twelve, tied by a line or two each. */
@@ -220,6 +220,49 @@ describe("R2 names and new points (round 6)", () => {
     expect(names).toHaveLength(1);
     expect(names[0]!.name).toBe("pt1");
     expect(names[0]!.hubId).toBe("p1");
+  });
+
+  it("UX-GRAPH-1: a region name gives up after a capped search, so one frame stays cheap", () => {
+    // One region spread over a large map, and no room anywhere: every try fails.
+    const g = new Graph({ type: "undirected" });
+    const communities = new Map<string, string>();
+    for (let i = 0; i < 400; i += 1) {
+      const id = `p${i}`;
+      g.addNode(id, { label: `point ${i}`, entityType: "concept", size: 4, x: 40 + 96 * (i % 20), y: 40 + 96 * Math.floor(i / 20) });
+      communities.set(id, "c0");
+      if (i > 0) g.addEdge("p0", id);
+    }
+    let calls = 0;
+    const started = performance.now();
+    const names = planRegionNamesFirst(cartographyScene(g, communities), project, measure, { width: 2000, height: 2000 }, () => {
+      calls += 1;
+      return true;
+    });
+    expect(names).toHaveLength(0);
+    // Four tries of the name, each its five set spots and the capped search.
+    expect(calls).toBeLessThanOrEqual(4 * (5 + REGION_NAME_SEARCH_TRIES));
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
+  it("UX-GRAPH-1: a name tests the cheap blocked check before its region-edge check", () => {
+    const g = new Graph({ type: "undirected" });
+    const communities = new Map<string, string>();
+    for (let i = 0; i < 6; i += 1) {
+      g.addNode(`p${i}`, { label: "hub", entityType: "concept", size: 4, x: 100 + 12 * i, y: 100 });
+      communities.set(`p${i}`, "c0");
+      if (i > 0) g.addEdge("p0", `p${i}`);
+    }
+    // A box away from every point fails the edge check; blocked is asked first.
+    let awayFromPoints = 0;
+    planRegionNamesFirst(cartographyScene(g, communities), project, measure, { width: 400, height: 300 }, (box) => {
+      const gap = Math.min(...g.nodes().map((id) => {
+        const x = g.getNodeAttribute(id, "x") as number, y = g.getNodeAttribute(id, "y") as number;
+        return Math.hypot(Math.max(box.left - x, 0, x - box.right), Math.max(box.top - y, 0, y - box.bottom)) - 4;
+      }));
+      if (gap > REGION_NAME_EDGE_PX) awayFromPoints += 1;
+      return true;
+    });
+    expect(awayFromPoints).toBeGreaterThan(0);
   });
 
   it("keeps every name at its own region, never in free ground elsewhere", () => {
