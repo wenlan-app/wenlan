@@ -216,6 +216,11 @@ and wait for evidence that people need them.
   thing, it says so instead of guessing. Finding the lines is not checking
   them, so they never look verified.
   原文：「可以。3.」（2026-11-06 15:47 PT，回覆：文澜寫出一句「我們決定一次發 0.21」，你點一下，就能看到原對話裡哪幾句這樣說過）
+- **UX-WHO-7** `shipped` An AI tool's delete never destroys: a page is
+  archived with its history and a memory is forgotten; both can be restored,
+  and only the person can delete for good. Every removal is listed in Activity
+  with who did it.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單第 12、13 條：「刪除改成封存，你寫的頁 AI 不能刪，留下紀錄」「沒名字的請求當成 AI；刪除先進可還原的垃圾桶」）
 
 ## While you chat (in your own AI tool)
 

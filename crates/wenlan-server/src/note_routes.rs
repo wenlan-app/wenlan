@@ -39,10 +39,12 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         )
 }
 
-/// Settings and accepting a change are the person's, never an AI tool's: a
-/// request that names an agent is refused.
+/// Settings and accepting a change are the person's, never an AI tool's. Only
+/// the person's own request, from the app, passes
+/// (`memory_routes::caller_is_person`); one that names an agent, or names none
+/// and carries no person marker, is refused.
 fn require_person(headers: &HeaderMap) -> Result<(), ServerError> {
-    if extract_agent_name(headers, None) != "unknown" {
+    if !crate::memory_routes::caller_is_person(headers) {
         return Err(ServerError::ValidationError("note_needs_the_person".into()));
     }
     Ok(())
@@ -269,14 +271,30 @@ pub async fn handle_accept_note_proposal(
 mod tests;
 
 /// Refuses an AI tool's change to a memory read from one of the person's
-/// vault notes: forgetting it, replacing it, or editing it. The note is the
-/// person's file, so the only way for an AI to change it is a proposal the
-/// person accepts. Requests from the app (no agent name) pass.
+/// vault notes: replacing it or editing it. The note is the person's file, so
+/// the only way for an AI to change it is a proposal the person accepts.
+/// Only the person's own request, from the app, passes
+/// (`memory_routes::caller_is_person`); one with no agent name and no person
+/// marker is refused like any AI tool's, as forgetting such a memory is.
 pub(crate) fn refuse_ai_change_to_note(
     headers: &HeaderMap,
     memory_source_id: &str,
 ) -> Result<(), ServerError> {
-    if extract_agent_name(headers, None) == "unknown" {
+    refuse_change_to_note(
+        crate::memory_routes::caller_is_person(headers),
+        memory_source_id,
+    )
+}
+
+/// Refuses a change to a memory read from one of the person's vault notes
+/// unless `is_person`. Every caller passes
+/// `memory_routes::caller_is_person`, so a request with no agent name is
+/// refused like any AI tool's.
+pub(crate) fn refuse_change_to_note(
+    is_person: bool,
+    memory_source_id: &str,
+) -> Result<(), ServerError> {
+    if is_person {
         return Ok(());
     }
     let from_vault = wenlan_core::config::load_config()
