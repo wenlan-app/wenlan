@@ -67,6 +67,8 @@ pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
 mod page_restore;
+mod removal;
+pub use removal::{ForgetOutcome, PageRemovalAudit};
 pub(crate) mod rebuild_writes;
 pub use page_restore::{restore_refusal_message, RestorePageError};
 mod page_summary_backfill;
@@ -94,6 +96,7 @@ mod citation_sources;
 pub mod conversations;
 pub mod intake;
 pub mod night_links;
+pub mod revision_cards;
 mod scoped_entities;
 mod scoped_pages;
 pub mod sentence_history;
@@ -126,6 +129,7 @@ pub mod thing_merge;
 pub mod things;
 pub mod topic_filing;
 use topic_filing::ACTIVE_LINK_SQL;
+pub mod trust_scan;
 mod truth_exposure;
 mod zotero_membership;
 mod zotero_scope_impacts;
@@ -273,6 +277,8 @@ mod thing_merge_test;
 mod things_test;
 #[cfg(test)]
 mod topic_filing_test;
+#[cfg(test)]
+mod trust_scan_test;
 #[cfg(test)]
 mod tx_rollback_test;
 
@@ -10876,9 +10882,17 @@ impl MemoryDB {
                 self.migrate_158_dream_reading(version).await?;
             }
 
+            // Migration 159 keeps the latest nightly trust scan report.
+            // See db/trust_scan.rs.
+            if ceiling < 159 {
+                return Ok(());
+            }
+            if version < 159 {
+                self.migrate_159_trust_scan_reports(version).await?;
+            }
+
             // Migration 160: who wrote each topic link, and the log of
-            // main-topic changes. See db/topic_filing.rs. (159 is taken by
-            // another change; this block runs after it once both land.)
+            // main-topic changes. See db/topic_filing.rs.
             if ceiling < 160 {
                 return Ok(());
             }
@@ -56838,12 +56852,86 @@ impl MemoryDB {
         id: &str,
         expected_version: Option<i64>,
     ) -> Result<Option<i64>, WenlanError> {
+        self.archive_page_recorded(id, expected_version, None).await
+    }
+
+    /// [`Self::archive_page_versioned`] (or, with `expected_version`,
+    /// [`Self::archive_page_at_version`]) that also writes `audit` to
+    /// `agent_activity` as a `page_archive` row, in the same transaction as
+    /// the archive: a page is never archived without its record. Nothing is
+    /// recorded when nothing changed.
+    pub async fn archive_page_recorded(
+        &self,
+        id: &str,
+        expected_version: Option<i64>,
+        audit: Option<PageRemovalAudit<'_>>,
+    ) -> Result<Option<i64>, WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute("BEGIN", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page begin: {e}")))?;
+        let result = async {
+            let version = Self::archive_page_on_conn(&conn, id, expected_version).await?;
+            if let (Some(version), Some(audit)) = (version, audit) {
+                Self::record_page_removal_on_conn(&conn, id, "page_archive", version, audit)
+                    .await?;
+            }
+            Ok::<_, WenlanError>(version)
+        }
+        .await;
+        match result {
+            Ok(version) => {
+                commit_or_rollback(&conn)
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("archive_page commit: {e}")))?;
+                Ok(version)
+            }
+            Err(error) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Write one `agent_activity` row for a page archive or delete: who asked
+    /// (`audit.agent`), the page id, and its title and version in `detail`.
+    async fn record_page_removal_on_conn(
+        conn: &libsql::Connection,
+        id: &str,
+        action: &str,
+        version: i64,
+        audit: PageRemovalAudit<'_>,
+    ) -> Result<(), WenlanError> {
+        let verb = if action == "page_delete" {
+            "deleted"
+        } else {
+            "archived"
+        };
+        let detail = format!("{verb} \"{}\" at version {version}", audit.title);
+        Self::log_agent_activity_on_connection(
+            conn,
+            audit.agent,
+            action,
+            std::slice::from_ref(&id.to_string()),
+            None,
+            &detail,
+            chrono::Utc::now().timestamp(),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| WenlanError::VectorDb(format!("{action} activity: {e}")))
+    }
+
+    async fn archive_page_on_conn(
+        conn: &libsql::Connection,
+        id: &str,
+        expected_version: Option<i64>,
+    ) -> Result<Option<i64>, WenlanError> {
         let now = chrono::Utc::now();
         let now_rfc3339 = now.to_rfc3339();
         let now_ts = now.timestamp();
-        let conn = self.conn.lock().await;
-        Self::reject_entity_shadow_page_on_conn(&conn, id).await?;
-        Self::reject_page_draft_on_conn(&conn, id).await?;
+        Self::reject_entity_shadow_page_on_conn(conn, id).await?;
+        Self::reject_page_draft_on_conn(conn, id).await?;
         let affected = match expected_version {
             None => {
                 conn.execute(
@@ -56868,7 +56956,7 @@ impl MemoryDB {
         if affected != 1 {
             return Ok(None);
         }
-        Self::append_page_history(&conn, id, "archive", now_ts)
+        Self::append_page_history(conn, id, "archive", now_ts)
             .await
             .map_err(|e| WenlanError::VectorDb(format!("archive_page history: {e}")))?;
         // Same connection guard as the update, so no other write lands between.
@@ -57445,6 +57533,17 @@ impl MemoryDB {
     }
 
     pub async fn delete_page(&self, id: &str) -> Result<(), WenlanError> {
+        self.delete_page_recorded(id, None).await
+    }
+
+    /// [`Self::delete_page`] that also writes `audit` to `agent_activity` as
+    /// a `page_delete` row (with the version the page had), in the same
+    /// transaction as the delete. A missing page records nothing.
+    pub async fn delete_page_recorded(
+        &self,
+        id: &str,
+        audit: Option<PageRemovalAudit<'_>>,
+    ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         Self::reject_entity_shadow_page_on_conn(&conn, id).await?;
         Self::reject_page_draft_on_conn(&conn, id).await?;
@@ -57452,6 +57551,29 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("delete_page begin: {e}")))?;
         let result = async {
+            if let Some(audit) = audit {
+                let mut rows = conn
+                    .query(
+                        "SELECT version FROM pages WHERE id = ?1",
+                        libsql::params![id],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("delete_page version: {e}")))?;
+                let version = rows
+                    .next()
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("delete_page version row: {e}")))?
+                    .map(|row| row.get::<i64>(0))
+                    .transpose()
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!("delete_page version value: {e}"))
+                    })?;
+                drop(rows);
+                if let Some(version) = version {
+                    Self::record_page_removal_on_conn(&conn, id, "page_delete", version, audit)
+                        .await?;
+                }
+            }
             // Dual-write (G6 Stage 0): the FK CASCADE below drops this page's
             // page_sources/page_evidence/page_links rows, and inbound
             // page_links lose their target (NULL targets derive no edge), so
@@ -60103,82 +60225,11 @@ impl MemoryDB {
         })?;
 
         let cleanup_result: Result<usize, WenlanError> = async {
-            let mut affected_pages: HashMap<String, HashSet<String>> = HashMap::new();
-            // G6 Stage 2 PR 2b: the orphan inventory used to scan
-            // `page_sources` -- it's frozen now (no PR writes new rows past
-            // this point), so a memory deleted after the flip would mint no
-            // fresh legacy row and this sweep would never see the orphan.
-            // Scans `edges` directly instead.
-            let mut orphan_rows = conn
-                .query(
-                    "SELECT src_id, dst_id
-                     FROM edges
-                     WHERE edge_type = 'cites' AND src_kind = 'page' AND dst_kind = 'memory'
-                       AND valid_until IS NULL
-                       AND NOT EXISTS (
-                           SELECT 1 FROM memories m
-                           WHERE m.source != 'episode'
-                             AND (m.source_id = edges.dst_id OR m.id = edges.dst_id)
-                       )",
-                    (),
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("cleanup_orphaned_page_sources inventory: {e}"))
-                })?;
-            while let Some(row) = orphan_rows.next().await.map_err(|e| {
-                WenlanError::VectorDb(format!("cleanup_orphaned_page_sources inventory row: {e}"))
-            })? {
-                let page_id = row.get::<String>(0).map_err(|e| {
-                    WenlanError::VectorDb(format!("cleanup_orphaned_page_sources page id: {e}"))
-                })?;
-                let locator = row.get::<String>(1).map_err(|e| {
-                    WenlanError::VectorDb(format!("cleanup_orphaned_page_sources locator: {e}"))
-                })?;
-                affected_pages.entry(page_id).or_default().insert(locator);
-            }
-            drop(orphan_rows);
-
-            // Legacy JSON may contain provenance that never received a join row.
-            // Inventory it independently so JSON-only ghosts cannot survive the
-            // canonical orphan sweep.
-            let mut json_orphan_rows = conn
-                .query(
-                    "SELECT p.id, CAST(legacy_source.value AS TEXT)
-                     FROM pages p,
-                          json_each(COALESCE(p.source_memory_ids, '[]')) legacy_source
-                     WHERE NOT EXISTS (
-                         SELECT 1 FROM memories m
-                         WHERE m.source != 'episode'
-                           AND (m.source_id = CAST(legacy_source.value AS TEXT)
-                                OR m.id = CAST(legacy_source.value AS TEXT))
-                     )",
-                    (),
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources JSON inventory: {e}"
-                    ))
-                })?;
-            while let Some(row) = json_orphan_rows.next().await.map_err(|e| {
-                WenlanError::VectorDb(format!(
-                    "cleanup_orphaned_page_sources JSON inventory row: {e}"
-                ))
-            })? {
-                let page_id = row.get::<String>(0).map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources JSON page id: {e}"
-                    ))
-                })?;
-                let locator = row.get::<String>(1).map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources JSON locator: {e}"
-                    ))
-                })?;
-                affected_pages.entry(page_id).or_default().insert(locator);
-            }
-            drop(json_orphan_rows);
+            // The inventory is shared with the nightly trust scan, so its
+            // report names exactly what this sweep removes. It scans `edges`
+            // (G6 Stage 2 PR 2b: `page_sources` is frozen) and the legacy JSON
+            // list independently, so JSON-only ghosts cannot survive.
+            let affected_pages = trust_scan::orphan_source_inventory(&conn).await?.pages;
 
             // G6 Stage 2 PR 2b: the `page_sources`/`page_evidence` DELETE
             // sweeps that used to run here stop -- both tables are frozen.

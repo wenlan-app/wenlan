@@ -405,12 +405,13 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // Refinery queue is scoped for research payloads while preserving legacy
     // generic proposals; this moves one existing key from Global to scoped.
     // The conversation lines a memory was said in adds one more scoped reader.
-    assert_eq!(rows.len(), 132);
+    // The nightly trust scan report adds one Global reader.
+    assert_eq!(rows.len(), 133);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
             .count(),
-        26
+        27
     );
     assert_eq!(
         rows.iter()
@@ -454,7 +455,7 @@ pub fn assert_global_executed_keys(executed: impl IntoIterator<Item = (Method, &
     let executed = executed.into_iter().collect::<Vec<_>>();
     let unique = executed.iter().copied().collect::<BTreeSet<_>>();
 
-    assert_eq!(expected.len(), 26, "Global route catalog count drifted");
+    assert_eq!(expected.len(), 27, "Global route catalog count drifted");
     assert_eq!(
         unique.len(),
         executed.len(),

@@ -45,7 +45,8 @@ pub enum CurateAction {
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
     },
-    /// Accept a revision: replace the original memory with the revised text.
+    /// Not available here: only the person accepts a revision, in the Wenlan
+    /// app. Prints where to accept it and exits with an error.
     Accept {
         /// `revision_source_id` of the revision (from the list output).
         revision_source_id: String,
@@ -59,6 +60,16 @@ pub enum CurateAction {
 
 const DEFAULT_LIMIT: usize = 20;
 
+/// Why `wenlan curate accept` does nothing: accepting a card is the person's
+/// decision, made in the Wenlan app. The daemon refuses an accept from any
+/// tool, so the CLI says so before asking it.
+fn accept_refusal(revision_source_id: &str) -> String {
+    format!(
+        "only the person can accept a revision, in the Wenlan app: revision {revision_source_id} \
+         is still waiting there. To turn it down, run `wenlan curate dismiss {revision_source_id}`."
+    )
+}
+
 pub async fn run(
     client: &WenlanClient,
     format: ResolvedFormat,
@@ -70,19 +81,7 @@ pub async fn run(
     }) {
         CurateAction::Revisions { limit } => list_revisions(client, format, quiet, limit).await,
         CurateAction::Accept { revision_source_id } => {
-            let resp = client.accept_revision(&revision_source_id).await?;
-            if quiet {
-                return Ok(());
-            }
-            match format {
-                ResolvedFormat::Json => print_json(&resp)?,
-                ResolvedFormat::Table => println!(
-                    "{} revision for {}",
-                    if resp.wrote { "accepted" } else { "no-op" },
-                    resp.target_source_id
-                ),
-            }
-            Ok(())
+            anyhow::bail!("{}", accept_refusal(&revision_source_id))
         }
         CurateAction::Dismiss { revision_source_id } => {
             let resp = client.dismiss_revision(&revision_source_id).await?;
@@ -162,7 +161,7 @@ fn print_table(groups: &[GroupedRevision]) {
             println!("      grounded in {path}");
         }
     }
-    println!("accept/dismiss: wenlan curate accept|dismiss <revision_source_id>");
+    println!("accept: in the Wenlan app · dismiss: wenlan curate dismiss <revision_source_id>");
 }
 
 /// Turn `PendingRevisionItem` rows into one `GroupedRevision` each.
@@ -337,5 +336,38 @@ mod tests {
             old_line.chars().count() <= "OLD: ".len() + BLOCK_CHARS + 1,
             "old line bounded: {old_line}"
         );
+    }
+
+    /// UX-WHO-2: only the person accepts a card, in the app. `curate accept`
+    /// refuses with where to go, and never asks the daemon.
+    #[tokio::test]
+    async fn ux_who_2_curate_accept_refuses_and_points_to_the_app() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let client = WenlanClient::for_test(&base_url);
+
+        let error = run(
+            &client,
+            ResolvedFormat::Json,
+            false,
+            Some(CurateAction::Accept {
+                revision_source_id: "mem_abc".into(),
+            }),
+        )
+        .await
+        .expect_err("accept is the person's, in the app");
+
+        let message = error.to_string();
+        assert!(message.contains("only the person can accept"), "{message}");
+        assert!(message.contains("Wenlan app"), "{message}");
+        assert!(
+            message.contains("wenlan curate dismiss mem_abc"),
+            "{message}"
+        );
+        let reached_daemon =
+            tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept())
+                .await
+                .is_ok();
+        assert!(!reached_daemon, "curate accept must not call the daemon");
     }
 }

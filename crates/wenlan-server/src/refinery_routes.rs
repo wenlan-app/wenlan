@@ -195,6 +195,7 @@ pub async fn handle_accept_refinement(
     Path(id): Path<String>,
     body: Bytes,
 ) -> Result<Json<AcceptRefinementResponse>, ServerError> {
+    crate::memory_routes::require_person_to_accept(&headers)?;
     let agent = extract_agent_name(&headers, None);
 
     let (db, maintenance_coordinator) = {
@@ -610,6 +611,12 @@ mod research_scope_tests {
                     Request::builder()
                         .method("POST")
                         .uri(format!("/api/refinery/queue/foreign/{action}"))
+                        // The person's marker, so the lookup (not the
+                        // person-only accept gate) answers.
+                        .header(
+                            wenlan_types::requests::CALLER_HEADER,
+                            wenlan_types::requests::PERSON_CALLER_VALUE,
+                        )
                         .header("x-wenlan-space", "B")
                         .header("content-type", "application/json")
                         .body(Body::from(body))

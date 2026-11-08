@@ -2,11 +2,17 @@
 
 Power-user audit lever. Most users do not need $wenlan curate in daily flow:
 
-- **Pending revisions** surface in `/brief` automatically (top 3 with inline accept/dismiss).
+- **Pending revisions** surface in `/brief` automatically (top 3; the person accepts them in the Wenlan app).
 - **Pending captures from this session** surface in `/handoff`'s preview block (top 3).
 - **Orphan wikilinks** can be inspected while steep processes a requested knowledge arrangement; they are not pending revisions.
 
 Use $wenlan curate only when you want the deep walk those skills intentionally do not force.
+
+**Only the person accepts a card, in the Wenlan app.** A pending revision or a
+review proposal is a card. You never accept one: the daemon refuses an accept
+from any AI tool, and so does the `wenlan` CLI. Show the cards, tell
+the person they wait in the app, and dismiss or reject one only when the person
+says so.
 
 **Captures are meant to decay.** A capture lands pending (not yet confirmed) and, if nothing
 ever conflicts with it, it quietly fades — that is by design, not a backlog you owe the
@@ -24,7 +30,7 @@ Render at most four items at a time. Number every item. Ask for explicit action
 syntax:
 
 ```text
-1 accept
+1 accept   (captures only; a revision or proposal waits for the person in the app)
 2 dismiss
 3 skip
 4 edit: <replacement text>
@@ -47,7 +53,7 @@ That prints a JSON array; each element is ONE logical revision (the CLI already
 groups the per-chunk rows and joins their text, so you never see a mid-sentence
 fragment):
 
-- `revision_source_id` — the staged revision; the **action key** for accept/dismiss.
+- `revision_source_id` — the staged revision; the **action key** for dismiss.
   Keying on this (not the target) means the *named* revision is acted on even when
   several compete for one memory.
 - `target_source_id` — the memory this revision would replace (context only).
@@ -62,7 +68,7 @@ fragment):
 `jq`/`python`/`awk` to reshape first. That extra round-trip is slow (each retry
 is a model turn) and failure-prone (quoting, sandboxed temp paths).
 
-**Show the diff so the user isn't approving blind.** Print `diff` verbatim under
+**Show the diff so the user isn't deciding blind.** Print `diff` verbatim under
 each item. If `diff` is `null`, print `content` and say the original is
 unavailable. Don't reformat the diff; it's already length-bounded.
 
@@ -77,19 +83,18 @@ Pending revisions:
    diff:
    <diff or "(original unavailable)">
 
-Reply with: 1 accept, 1 dismiss, 1 skip
+Reply with: 1 dismiss, 1 leave
 ```
 
-- `accept` → the revision replaces the original memory.
+- `leave` → nothing: it keeps waiting in the Wenlan app, where the person
+  accepts it.
 - `dismiss` → it was NOT an edit: unstage the false revision link and keep BOTH
   memories as independent rows. (Non-destructive — nothing is deleted. To delete a
   genuinely unwanted capture, use `$wenlan curate captures` → reject.)
-- `skip` → nothing.
 
-Apply only explicit actions, in ONE Bash call (skips run nothing):
+Apply only explicit actions, in ONE Bash call (leave runs nothing):
 
 ```
-"$W" curate accept <revision_source_id>      # for each Accept
 "$W" curate dismiss <revision_source_id>     # for each Dismiss
 ```
 
@@ -132,13 +137,12 @@ items. Include each proposal id, action, confidence, and bounded payload
 summary. The action set includes `vocab_promote`, so vocabulary promotion
 candidates stay discoverable.
 
-Perform no mutation until the user gives an unambiguous item-level accept or
-reject decision. Apply only numbered item decisions:
+Only the person accepts a proposal, in the Wenlan app. Perform no mutation
+until the user gives an unambiguous item-level reject decision. Use native
+numbered item decisions only:
 
-- `accept` → `mcp__wenlan__accept_refinement(id="<proposal-id>")`
-  (also pass `space` when accepting `cross_space_discovery`).
+- `leave` → nothing: the person accepts it in the Wenlan app.
 - `reject` → `mcp__wenlan__reject_refinement(id="<proposal-id>")`.
-- `skip` → nothing.
 
 Skip or cancel is a no-op. A generic accept does not apply
 `lint_repair_review`; route that action through `$wenlan lint repair` instead. Apply

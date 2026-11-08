@@ -383,7 +383,7 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // Fetches external public text, never reads the user's source store.
     "/api/webpage/fetch",
     "/api/import/memories", "/api/import/chat-export", "/api/memory/store", "/api/memory/confirm/{source_id}",
-    "/api/memory/delete/{source_id}", "/api/memory/reclassify/{source_id}", "/api/memory/revision/{id}/accept",
+    "/api/memory/delete/{source_id}", "/api/memory/restore/{source_id}", "/api/memory/reclassify/{source_id}", "/api/memory/revision/{id}/accept",
     "/api/memory/revision/{id}/dismiss", "/api/memory/contradiction/{source_id}/dismiss", "/api/memory/entities",
     "/api/memory/relations", "/api/memory/observations", "/api/memory/link-entity", "/api/spaces/{name}",
     "/api/spaces/{from}/move-to/{to}", "/api/pages/{id}/archive", "/api/pages/{id}/review",
@@ -450,6 +450,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // arrives later as a proposal, and the sentence reads and proposals are
     // in the sensitive catalog instead.
     "/api/pages/{id}/sentences/flag",
+    // Re-queueing one page's citation backfill returns its id and whether it
+    // had given up; the trust scan report is in the sensitive catalog.
+    "/api/pages/{id}/citations/requeue",
     // Undoing one AI write's sentence changes returns counts and the new
     // version only; re-reading the page is a sensitive read.
     "/api/pages/{id}/sentences/revert",

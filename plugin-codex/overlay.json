@@ -57,7 +57,7 @@
           "syntax:",
           "",
           "```text",
-          "1 accept",
+          "1 accept   (captures only; a revision or proposal waits for the person in the app)",
           "2 dismiss",
           "3 skip",
           "4 edit: <replacement text>",
@@ -98,14 +98,14 @@
         },
         {
           "from": [
-            "**Show the diff so the user isn't approving blind.** Put `diff` verbatim into the",
-            "`preview` field of the **Accept** option — `AskUserQuestion` renders `preview` in a",
+            "**Show the diff so the user isn't deciding blind.** Put `diff` verbatim into the",
+            "`preview` field of the **Leave for the app** option — `AskUserQuestion` renders `preview` in a",
             "monospace box and switches to a side-by-side layout, so it reads like a git diff.",
             "If `diff` is `null`, omit the preview and keep `content` as the question. Don't",
             "reformat the diff — it's already card-ready and length-bounded for the picker."
           ],
           "to": [
-            "**Show the diff so the user isn't approving blind.** Print `diff` verbatim under",
+            "**Show the diff so the user isn't deciding blind.** Print `diff` verbatim under",
             "each item. If `diff` is `null`, print `content` and say the original is",
             "unavailable. Don't reformat the diff; it's already length-bounded."
           ]
@@ -114,13 +114,13 @@
           "from": [
             "Walk it as native cards (≤4 per card). Per revision, options:",
             "",
-            "- **Accept** → the revision replaces the original memory. (carries the `diff` preview)",
+            "- **Leave for the app** → nothing: it keeps waiting in the Wenlan app, where the",
+            "  person accepts it. (carries the `diff` preview)",
             "- **Dismiss** → it was NOT an edit: unstage the false revision link and keep BOTH",
             "  memories as independent rows. (Non-destructive — nothing is deleted. To delete a",
             "  genuinely unwanted capture, use `/wenlan curate captures` → Reject.)",
-            "- **Skip** → nothing.",
             "",
-            "After the card returns, apply the picks in ONE Bash call (skips run nothing):"
+            "After the card returns, apply the picks in ONE Bash call (Leave for the app runs nothing):"
           ],
           "to": [
             "Render up to four revisions, numbered:",
@@ -134,16 +134,16 @@
             "   diff:",
             "   <diff or \"(original unavailable)\">",
             "",
-            "Reply with: 1 accept, 1 dismiss, 1 skip",
+            "Reply with: 1 dismiss, 1 leave",
             "```",
             "",
-            "- `accept` → the revision replaces the original memory.",
+            "- `leave` → nothing: it keeps waiting in the Wenlan app, where the person",
+            "  accepts it.",
             "- `dismiss` → it was NOT an edit: unstage the false revision link and keep BOTH",
             "  memories as independent rows. (Non-destructive — nothing is deleted. To delete a",
             "  genuinely unwanted capture, use `/wenlan curate captures` → reject.)",
-            "- `skip` → nothing.",
             "",
-            "Apply only explicit actions, in ONE Bash call (skips run nothing):"
+            "Apply only explicit actions, in ONE Bash call (leave runs nothing):"
           ]
         },
         {
@@ -178,24 +178,20 @@
         },
         {
           "from": [
-            "reject decision. Use native cards with one question per proposal:"
+            "cards with one question per proposal:"
           ],
           "to": [
-            "reject decision. Apply only numbered item decisions:"
+            "numbered item decisions only:"
           ]
         },
         {
           "from": [
-            "- **Accept** → `mcp__plugin_wenlan_wenlan__accept_refinement(id=\"<proposal-id>\")`",
-            "  (also pass `space` when accepting `cross_space_discovery`).",
-            "- **Reject** → `mcp__plugin_wenlan_wenlan__reject_refinement(id=\"<proposal-id>\")`.",
-            "- **Skip** → nothing."
+            "- **Leave for the app** → nothing: the person accepts it in the Wenlan app.",
+            "- **Reject** → `mcp__plugin_wenlan_wenlan__reject_refinement(id=\"<proposal-id>\")`."
           ],
           "to": [
-            "- `accept` → `mcp__wenlan__accept_refinement(id=\"<proposal-id>\")`",
-            "  (also pass `space` when accepting `cross_space_discovery`).",
-            "- `reject` → `mcp__wenlan__reject_refinement(id=\"<proposal-id>\")`.",
-            "- `skip` → nothing."
+            "- `leave` → nothing: the person accepts it in the Wenlan app.",
+            "- `reject` → `mcp__wenlan__reject_refinement(id=\"<proposal-id>\")`."
           ]
         }
       ]

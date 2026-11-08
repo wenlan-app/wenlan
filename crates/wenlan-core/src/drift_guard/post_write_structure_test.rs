@@ -9,6 +9,7 @@ const CHILDREN: &[&str] = &[
     "page_create",
     "page_dispatch",
     "page_link_rename",
+    "page_removal",
     "page_revision",
     "page_update",
 ];
@@ -511,6 +512,7 @@ fn post_write_structure_guard_rejects_missing_or_public_final_boundary() {
 mod page_create;
 mod page_dispatch;
 mod page_link_rename;
+mod page_removal;
 mod page_revision;
 mod page_update;
 #[cfg(test)]
@@ -632,6 +634,7 @@ fn post_write_facade_contract_compiles_and_preserves_result_shape() {
         acknowledged: false,
         outcome: crate::post_write::WriteOutcome::Unchanged,
         sentence_proposals: Vec::new(),
+        edits_not_applied: Vec::new(),
     };
     let serialized = serde_json::to_value(result).expect("serialize stable WriteResult facade");
     assert_eq!(

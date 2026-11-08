@@ -1,8 +1,8 @@
 ---
 name: forget
 description: >
-  Delete a memory from Wenlan by ID. Destructive and cannot be undone —
-  prefer `/capture` with `supersedes` for corrections. Invoked as
+  Forget a memory in Wenlan by ID: it leaves recall and pages, and it can
+  be restored. Prefer `/capture` with `supersedes` for corrections. Invoked as
   `/wenlan forget <source_id>`.
 argument-hint: "<source_id>"
 allowed-tools: ["Bash", "mcp__plugin_wenlan_wenlan__forget", "mcp__plugin_wenlan_wenlan__recall"]
@@ -11,12 +11,15 @@ user-invocable: false
 
 # /wenlan forget
 
-Permanently delete a memory by its `source_id`.
+Forget a memory by its `source_id`. Wenlan keeps it out of recall and pages,
+and it can be restored.
 
 ## Safety
 
-This cannot be undone by Wenlan. Prefer `/capture` with `supersedes` pointing
-at the old memory when history should be preserved.
+An AI tool's forget does not destroy the memory; only the user can, in the app.
+A memory read from the user's own note is refused: propose the change to the
+note instead. Prefer `/capture` with `supersedes` pointing at the old memory
+when history should be preserved.
 
 Always confirm with the user before calling forget, unless the same user message
 already includes an exact id and an unambiguous delete instruction (for example

@@ -322,6 +322,24 @@ describe("ReviewDialog page-target revision card", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("explains and moves on when a newer proposal replaced the card (UX-WHO-2)", async () => {
+    const onResolve = vi.fn().mockRejectedValue(
+      new Error(
+        'HTTP 409: {"error":"page_revision_replaced: revision card y for page x was replaced by a newer one (z); nothing was applied. Review the newer card."}',
+      ),
+    );
+    const dialog = await openDialog(pageItem, { onResolve });
+    await within(dialog).findByRole("heading", { name: PAGE_TITLE });
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+    expect(
+      await screen.findByText(i18n.t("review.revisionReplaced")),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(i18n.t("review.revisionOutdated"))).toBeNull();
+    expect(onResolve).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("offers Open page (not Open memory) and opens the page itself", async () => {
     const onOpenPage = vi.fn();
     const onOpenMemory = vi.fn();

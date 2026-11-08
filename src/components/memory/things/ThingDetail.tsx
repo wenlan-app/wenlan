@@ -218,7 +218,8 @@ function ConversationRow({
       void queryClient.invalidateQueries({ queryKey: THINGS_QUERY_KEY });
     },
   });
-  const title = session.title?.trim() || t("thing.untitledConversation");
+  // No title and no words of the person to name it: name the AI tool it was in.
+  const title = session.title?.trim() || t("thing.conversationIn", { tool: sessionToolLabel(session.tool) });
   const otherThings = (others.data ?? []).filter((candidate) => candidate.id !== thing.id);
   return (
     <li className="thing-detail-row">

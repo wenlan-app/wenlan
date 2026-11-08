@@ -12,7 +12,7 @@ use wenlan_core::db::MemoryDB;
 use wenlan_core::truth_contract::{CONTRACT_HEADER, INTENT_HEADER};
 use wenlan_server::{router::build_router, state::ServerState};
 use wenlan_types::responses::{
-    ConfirmResponse, DeleteResponse, ListMemoriesResponse, MemoryStatsResponse,
+    ConfirmResponse, ForgetMemoryResponse, ListMemoriesResponse, MemoryStatsResponse,
     NurtureCardsResponse, ReclassifyMemoryResponse, SearchMemoryResponse, StoreMemoryResponse,
     SuccessResponse, VersionChainResponse,
 };
@@ -150,6 +150,13 @@ async fn request_bytes(
     }
     if let Some(space) = space {
         request = request.header("x-wenlan-space", space);
+    }
+    if case.uri.ends_with("/accept") {
+        // Only the person accepts a card: these probes come from the app.
+        request = request.header(
+            wenlan_types::requests::CALLER_HEADER,
+            wenlan_types::requests::PERSON_CALLER_VALUE,
+        );
     }
     if marked {
         request = request
@@ -489,7 +496,7 @@ async fn memory_core_routes_preserve_typed_contracts() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(missing.error, "memory not found");
 
-    let (status, deleted): (StatusCode, DeleteResponse) = request_typed(
+    let (status, deleted): (StatusCode, ForgetMemoryResponse) = request_typed(
         &router,
         Method::DELETE,
         "/api/memory/delete/core-delete",
@@ -499,6 +506,7 @@ async fn memory_core_routes_preserve_typed_contracts() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(deleted.deleted);
+    assert!(deleted.restorable, "an AI tool's delete forgets the memory");
 
     for case in core_routes() {
         let (status, bytes) = request_bytes(&router, &case, true, None).await;

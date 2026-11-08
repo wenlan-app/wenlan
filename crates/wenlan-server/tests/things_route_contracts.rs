@@ -59,13 +59,16 @@ impl Drop for ScratchVault {
 
 #[derive(Clone, Copy)]
 enum Caller {
-    /// The app: no headers.
+    /// The app: its person marker, no agent name.
     Person,
+    /// A request with neither the person marker nor an agent name: an AI
+    /// tool that did not say who it is, never the person (UX-WHO-2).
+    Unmarked,
     /// An automatic agent read: these routes serve automatic callers only.
     Reader,
     /// An agent writing, named by `x-agent-name`.
     Agent(&'static str),
-    /// The app, scoped to one Space.
+    /// The app, scoped to one Space, with its person marker.
     InSpace(&'static str),
 }
 
@@ -81,10 +84,21 @@ async fn call(
         request = request.header("content-type", "application/json");
     }
     match caller {
-        Caller::Person => {}
+        Caller::Person => {
+            request = request.header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+        }
+        Caller::Unmarked => {}
         Caller::Reader => request = request.header("x-agent-name", "thing-route-contract"),
         Caller::Agent(name) => request = request.header("x-agent-name", name),
-        Caller::InSpace(space) => request = request.header("x-wenlan-space", space),
+        Caller::InSpace(space) => {
+            request = request.header("x-wenlan-space", space).header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+        }
     }
     let response = router
         .clone()
@@ -277,6 +291,52 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(typed::<ThingMapResponse>(body), proposed.map);
 
+    // UX-WHO-2: only the app's marked person request answers the proposal.
+    // An agent and a request with no marker at all are refused and change
+    // nothing; the marked person's Accept lands the change.
+    let answer = json!({ "expected_revision": 3, "ops": [
+        { "op": "accept", "proposal_id": proposed.map.proposals[0].id },
+    ]});
+    for refused in [Caller::Agent("codex"), Caller::Unmarked] {
+        let (status, body) = call(
+            &router,
+            Method::POST,
+            &ops_uri,
+            Some(answer.clone()),
+            refused,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert!(
+            body.to_string()
+                .contains("only the person answers a proposal"),
+            "{body}"
+        );
+    }
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/things/{}/map", thing.id),
+        None,
+        Caller::Reader,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(typed::<ThingMapResponse>(body), proposed.map);
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        &ops_uri,
+        Some(answer),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let answered: ThingMapOpsResponse = typed(body);
+    assert_eq!(answered.map.revision, 4);
+    assert!(answered.map.proposals.is_empty());
+    assert_eq!(answered.map.nodes[1].state, Some(ThingMapState::Dropped));
+
     // Another Space does not see it; an unknown thing is absent.
     let (status, _) = call(
         &router,
@@ -330,6 +390,19 @@ async fn ux_thing_1_a_conversation_is_in_a_thing_you_can_see_and_change_in_one_s
         status,
         StatusCode::UNPROCESSABLE_ENTITY,
         "only the person renames"
+    );
+    let (status, _) = call(
+        &router,
+        Method::PATCH,
+        &rename,
+        Some(json!({ "title": "From an unmarked caller" })),
+        Caller::Unmarked,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "no agent name is not the person"
     );
     let (status, _) = call(
         &router,
@@ -973,4 +1046,102 @@ async fn ux_who_6_a_memory_opens_to_the_lines_it_was_said_in() {
     )
     .await;
     assert_ne!(status, StatusCode::OK, "the lines are for the person");
+}
+
+#[tokio::test]
+async fn an_untitled_conversation_is_named_by_what_the_person_said_first_for_the_person_only() {
+    let _guard = data_dir_lock().lock().await;
+    let vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+
+    let projects = vault._tmp.path().join(".claude/projects/-untitled");
+    std::fs::create_dir_all(&projects).unwrap();
+    let transcript = projects.join("untitled.jsonl");
+    std::fs::write(
+        &transcript,
+        [
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"},"timestamp":"2026-11-01T10:00:00Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":"Why does this card say untitled?"},"timestamp":"2026-11-01T10:00:01Z"}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Let me look."}]},"timestamp":"2026-11-01T10:00:05Z"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    // No title from the tool, and no ai-title in the transcript.
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({
+            "session": "claude-code:untitled",
+            "transcript_path": transcript.to_str().unwrap(),
+        })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let session_id = body["id"].as_str().unwrap().to_string();
+    db.sort_sessions_into_things().await.unwrap();
+
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/sessions/{session_id}"),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let detail = typed::<SessionDetailResponse>(body);
+    assert_eq!(
+        detail.session.title.as_deref(),
+        Some("Why does this card say untitled?")
+    );
+    let thing_id = detail
+        .things
+        .first()
+        .expect("sorted into a thing")
+        .id
+        .clone();
+
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/things/{thing_id}"),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let thing = typed::<ThingDetailResponse>(body);
+    assert_eq!(
+        thing.sessions[0].title.as_deref(),
+        Some("Why does this card say untitled?")
+    );
+
+    // The app reads it with no agent name, as it reads the conversation's
+    // lines; an AI tool never gets the person's words as a title (UX-FIND-1).
+    let (_, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/things/{thing_id}"),
+        None,
+        Caller::Unmarked,
+    )
+    .await;
+    assert!(body
+        .to_string()
+        .contains("Why does this card say untitled?"));
+
+    for uri in [
+        format!("/api/sessions/{session_id}"),
+        format!("/api/things/{thing_id}"),
+    ] {
+        let (status, body) = call(&router, Method::GET, &uri, None, Caller::Reader).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        assert!(
+            !body.to_string().contains("Why does this card"),
+            "{uri} leaked the person's words: {body}"
+        );
+    }
 }
