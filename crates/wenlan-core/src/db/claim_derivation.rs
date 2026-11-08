@@ -513,6 +513,60 @@ const REASON_EVIDENCE_REBOUND: &str =
 const REASON_RECONCILE_UNPROVEN: &str =
     "the stored support verdict no longer survives re-evaluation; this page needs re-derivation";
 
+/// Why a page was demoted when some claim on it was supported only by a judge
+/// that has since been replaced (a `draining` registry row). Only the active
+/// judge's verdicts count, so the page waits for that judge to recheck it.
+///
+/// Interpolated into SQL by [`support_demotion_statements`]: no single quotes.
+pub(super) const REASON_JUDGE_REPLACED: &str =
+    "support came only from a replaced judge; the current judge needs to recheck this page";
+
+/// Why a page whose text ends mid-sentence is never supported. The last
+/// sentence is a fragment, so no verdict about the page as written can hold.
+///
+/// Interpolated into SQL by [`support_demotion_statements`]: no single quotes.
+pub(super) const REASON_TEXT_CUT_OFF: &str =
+    "page text is cut off: it ends mid-sentence, so it cannot be checked as supported";
+
+/// SQL predicate: the page version named by `page_id` / `page_version` has a
+/// claim whose ONLY qualifying support comes from a replaced judge.
+///
+/// "Qualifying" is the same bar evaluation uses — a live, numerically scored
+/// edge at or above its judge's registered threshold. A `draining` judge's
+/// edges are kept as audit records but no longer count, so a claim in this
+/// state is one the active judge has to look at again. The aliases are
+/// prefixed so the predicate can sit inside queries that already use
+/// `pvc` / `e` / `j`.
+fn replaced_judge_only_claim(page_id: &str, page_version: &str) -> String {
+    let qualifying_edge = |state: &str| {
+        format!(
+            "SELECT 1 FROM edges rje
+               JOIN claim_judge_eligibility rjj
+                 ON rjj.model_id = json_extract(rje.payload, '$.model_id')
+                AND rjj.model_version = json_extract(rje.payload, '$.model_version')
+                AND rjj.prompt_version = json_extract(rje.payload, '$.prompt_version')
+              WHERE rje.edge_type = 'supports'
+                AND rje.src_kind = 'claim_revision'
+                AND rje.src_id = rjc.claim_revision_id
+                AND rje.valid_until IS NULL
+                AND rje.superseded_by IS NULL
+                AND rjj.state = '{state}'
+                AND json_type(rje.payload, '$.score') IN ('integer', 'real')
+                AND json_extract(rje.payload, '$.score') >= rjj.threshold"
+        )
+    };
+    format!(
+        "EXISTS (
+             SELECT 1 FROM page_version_claims rjc
+              WHERE rjc.page_id = {page_id} AND rjc.page_version = {page_version}
+                AND EXISTS ({draining})
+                AND NOT EXISTS ({active})
+         )",
+        draining = qualifying_edge("draining"),
+        active = qualifying_edge("active"),
+    )
+}
+
 /// `app_metadata` key holding how far the current reconciliation pass has got.
 ///
 /// A page ID (the last one re-proved), the empty string (a pass has begun and
@@ -524,7 +578,9 @@ pub(super) const SUPPORT_RECONCILE_FRONTIER_KEY: &str = "support_reconcile_front
 /// was proved under. Bump the first component whenever reconciliation semantics
 /// change without changing the extractor or threshold.
 const SUPPORT_RECONCILE_RULESET_KEY: &str = "support_reconcile_ruleset";
-const SUPPORT_RECONCILE_RULESET_VERSION: i64 = 2;
+/// 3: only an `active` judge's edges count; a replaced (`draining`) judge's
+/// no longer do, and a cut-off page is never supported.
+const SUPPORT_RECONCILE_RULESET_VERSION: i64 = 3;
 
 /// The frontier value meaning the pass finished. Not a page ID, and it cannot
 /// collide with one: page IDs are `page_`-prefixed and never contain a space.
@@ -632,7 +688,9 @@ const DRIFTED_SUPPORTED_PAGES: &str = "
                      AND e.src_id = pvc.claim_revision_id
                      AND e.valid_until IS NULL
                      AND e.superseded_by IS NULL
-                     AND j.state IN ('active', 'draining')
+                     -- Only the active judge's verdicts count. A replaced
+                     -- (draining) judge's edges stay as audit records.
+                     AND j.state = 'active'
                      AND json_type(e.payload, '$.score') IN ('integer', 'real')
                      AND json_extract(e.payload, '$.score') >= j.threshold
               )
@@ -875,10 +933,45 @@ impl MemoryDB {
                          SELECT d.drifted_page_id, d.drifted_page_version
                            FROM ({DRIFTED_SUPPORTED_PAGES}) d
                      ),
+                     -- A claim supported only by a replaced (draining) judge
+                     -- needs the active judge's verdict, whatever the page's
+                     -- stored status. Drift covers supported pages; this arm
+                     -- is the one that reaches the rest, which activation
+                     -- used to skip. It terminates: a run leased under the
+                     -- current eligibility generation leaves its job `done`
+                     -- with that generation, and this arm only takes jobs
+                     -- finished under an older one (or pages with no job).
+                     recheck_candidates(page_id, page_version) AS (
+                         SELECT p.id, p.version
+                           FROM pages p
+                          WHERE p.status = 'active'
+                            AND p.kind <> 'entity'
+                            AND {replaced_only}
+                            AND (
+                                NOT EXISTS (
+                                    SELECT 1 FROM claim_derivation_jobs j
+                                     WHERE j.page_id = p.id
+                                       AND j.page_version = p.version
+                                )
+                                OR EXISTS (
+                                    SELECT 1 FROM claim_derivation_jobs j
+                                     WHERE j.page_id = p.id
+                                       AND j.page_version = p.version
+                                       AND j.status = 'done'
+                                       AND j.eligibility_generation < (
+                                           SELECT g.last_generation
+                                             FROM claim_judge_eligibility_generation g
+                                            WHERE g.id = 1
+                                       )
+                                )
+                            )
+                     ),
                      candidate_pages(page_id, page_version) AS (
                          SELECT page_id, page_version FROM stale_candidates
                          UNION
                          SELECT page_id, page_version FROM drift_candidates
+                         UNION
+                         SELECT page_id, page_version FROM recheck_candidates
                      )
                      SELECT c.page_id,
                             c.page_version,
@@ -889,7 +982,8 @@ impl MemoryDB {
                             )
                        FROM candidate_pages c
                       ORDER BY c.page_id, c.page_version
-                      LIMIT ?2"
+                      LIMIT ?2",
+                    replaced_only = replaced_judge_only_claim("p.id", "p.version"),
                 ),
                 libsql::params![EXTRACTOR_VERSION, limit],
             )
@@ -945,11 +1039,19 @@ impl MemoryDB {
         // asserting the evidence backs the prose without asserting that it does
         // not, which is the honest state when the bar moved under a stored
         // verdict.
+        //
+        // The reason names the cause a person can act on: a page that drifted
+        // only because its judge was replaced says so, rather than reading as
+        // evidence that stopped clearing the bar.
         conn.execute(
-            "UPDATE page_truth_state
+            &format!(
+                "UPDATE page_truth_state
                     SET support_status = 'provisional',
-                        provisional_reason = 'supporting evidence no longer clears the \
-                                              threshold; this page needs re-derivation',
+                        provisional_reason = CASE
+                            WHEN {replaced_only} THEN ?2
+                            ELSE 'supporting evidence no longer clears the \
+                                  threshold; this page needs re-derivation'
+                        END,
                         evaluated_at = NULL,
                         updated_at = ?1
                   WHERE support_status = 'supported'
@@ -958,7 +1060,12 @@ impl MemoryDB {
                           FROM claim_derivation_sweep_batch
                          WHERE needs_demotion = 1
                     )",
-            libsql::params![now],
+                replaced_only = replaced_judge_only_claim(
+                    "page_truth_state.page_id",
+                    "page_truth_state.page_version"
+                ),
+            ),
+            libsql::params![now, REASON_JUDGE_REPLACED],
         )
         .await
         .map_err(|error| WenlanError::VectorDb(format!("derivation drift demotion: {error}")))?;
@@ -1747,16 +1854,23 @@ impl MemoryDB {
 
             let now = chrono::Utc::now().timestamp();
             tx.execute(
-                "INSERT INTO claim_derivation_jobs
+                &format!(
+                    "INSERT INTO claim_derivation_jobs
                      (job_id, page_id, page_version, status, attempts, created_at, updated_at)
                  SELECT p.id || ':' || p.version, p.id, p.version,
                         'pending', 0, ?1, ?1
                    FROM pages p
-                   JOIN page_truth_state t
+                   LEFT JOIN page_truth_state t
                      ON t.page_id = p.id AND t.page_version = p.version
                   WHERE p.status = 'active'
                     AND p.kind <> 'entity'
-                    AND t.support_status = 'supported'
+                    AND (
+                        t.support_status = 'supported'
+                        -- The judge drained just above no longer counts, so a
+                        -- claim it alone supported needs this judge's verdict
+                        -- even on a page that is not currently supported.
+                        OR {replaced_only}
+                    )
                  ON CONFLICT(job_id) DO UPDATE SET
                      status = 'pending',
                      lease_owner = NULL,
@@ -1765,6 +1879,8 @@ impl MemoryDB {
                      last_error = NULL,
                      updated_at = ?1
                  WHERE claim_derivation_jobs.status IN ('done', 'parked')",
+                    replaced_only = replaced_judge_only_claim("p.id", "p.version"),
+                ),
                 libsql::params![now],
             )
             .await
@@ -2590,6 +2706,19 @@ impl MemoryDB {
             DerivationWrite::Written => {}
         }
 
+        // A page that ends mid-sentence can never be supported, and its last
+        // "claim" is a fragment no judge can rule on. Derivation above still
+        // ran, so the marker exists and the stale sweep does not requeue the
+        // page forever; judging is skipped entirely, so nothing from this page
+        // reaches the model and no edge on its claims is touched. Evaluation
+        // lands on `Unevaluated` with [`REASON_TEXT_CUT_OFF`].
+        if self
+            .page_text_is_cut_off(&job.page_id, job.page_version)
+            .await?
+        {
+            return self.publish_and_finish_promotion(job, owner).await;
+        }
+
         let Some(mut chunks) = self.load_linked_memory_chunks(job, owner).await? else {
             return Ok(PromotionTurn::Requeued {
                 page_id: job.page_id.clone(),
@@ -2766,6 +2895,46 @@ impl MemoryDB {
             .await?;
         }
 
+        self.publish_and_finish_promotion(job, owner).await
+    }
+
+    /// Whether the exact page version's text ends mid-sentence.
+    ///
+    /// A page that is gone or moved reads `false`; evaluation reports that
+    /// case itself as `NoPublish`.
+    async fn page_text_is_cut_off(
+        &self,
+        page_id: &str,
+        page_version: i64,
+    ) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT content FROM pages WHERE id = ?1 AND version = ?2 AND status = 'active'",
+                libsql::params![page_id, page_version],
+            )
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("cut-off page read: {error}")))?;
+        let Some(row) = rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("cut-off page row: {error}")))?
+        else {
+            return Ok(false);
+        };
+        let content: String = row
+            .get(0)
+            .map_err(|error| WenlanError::VectorDb(format!("cut-off page decode: {error}")))?;
+        Ok(crate::retrieval::integrity::looks_cut_off(&content))
+    }
+
+    /// The last phase of a promotion run: evaluate, publish under the lease,
+    /// and mark the job done.
+    async fn publish_and_finish_promotion(
+        &self,
+        job: &DerivationJob,
+        owner: &str,
+    ) -> Result<PromotionTurn, WenlanError> {
         let outcome = self
             .evaluate_page_support(&job.page_id, job.page_version)
             .await?;
@@ -3129,10 +3298,12 @@ impl MemoryDB {
                 // some OTHER run owns it; the reconciler finding that the
                 // current state cannot be re-derived is exactly the case where
                 // continuing to assert `supported` is the unearned claim.
-                if Self::evaluate_support_on(&conn, page_id, *page_version).await?
-                    != SupportOutcome::Supported
-                {
-                    failing.push(page_id.clone());
+                let outcome = Self::evaluate_support_on(&conn, page_id, *page_version).await?;
+                if outcome != SupportOutcome::Supported {
+                    let reason =
+                        Self::reconcile_demotion_reason(&conn, page_id, *page_version, &outcome)
+                            .await?;
+                    failing.push((page_id.clone(), reason));
                 }
             }
 
@@ -3150,10 +3321,8 @@ impl MemoryDB {
                         WenlanError::VectorDb(format!("support reconcile begin: {error}"))
                     })?;
                 let demoted = async {
-                    for page_id in &failing {
-                        for statement in
-                            support_demotion_statements("SELECT ?1", REASON_RECONCILE_UNPROVEN)
-                        {
+                    for (page_id, reason) in &failing {
+                        for statement in support_demotion_statements("SELECT ?1", reason) {
                             tx.execute(&statement, libsql::params![page_id.as_str()])
                                 .await
                                 .map_err(|error| {
@@ -3196,6 +3365,53 @@ impl MemoryDB {
         Ok(SupportReconcilePass {
             demoted: failing,
             complete,
+        })
+    }
+
+    /// The stored reason for a page reconciliation could not re-prove.
+    ///
+    /// The generic reason is true of every failure but tells a person nothing
+    /// they can act on. Two causes are worth naming: text that is cut off, and
+    /// a claim whose only qualifying support came from a judge that has since
+    /// been replaced. Every value is a constant with no single quote, because
+    /// [`support_demotion_statements`] interpolates it into SQL.
+    async fn reconcile_demotion_reason(
+        conn: &libsql::Connection,
+        page_id: &str,
+        page_version: i64,
+        outcome: &SupportOutcome,
+    ) -> Result<&'static str, WenlanError> {
+        if matches!(
+            outcome,
+            SupportOutcome::Unevaluated { reason } if reason == REASON_TEXT_CUT_OFF
+        ) {
+            return Ok(REASON_TEXT_CUT_OFF);
+        }
+        let mut rows = conn
+            .query(
+                &format!("SELECT {}", replaced_judge_only_claim("?1", "?2")),
+                libsql::params![page_id, page_version],
+            )
+            .await
+            .map_err(|error| {
+                WenlanError::VectorDb(format!("support reconcile replaced judge: {error}"))
+            })?;
+        let replaced = rows
+            .next()
+            .await
+            .map_err(|error| {
+                WenlanError::VectorDb(format!("support reconcile replaced judge row: {error}"))
+            })?
+            .map(|row| row.get::<i64>(0))
+            .transpose()
+            .map_err(|error| {
+                WenlanError::VectorDb(format!("support reconcile replaced judge decode: {error}"))
+            })?
+            .unwrap_or(0);
+        Ok(if replaced == 1 {
+            REASON_JUDGE_REPLACED
+        } else {
+            REASON_RECONCILE_UNPROVEN
         })
     }
 
@@ -3916,7 +4132,7 @@ impl MemoryDB {
         page_id: &str,
         page_version: i64,
     ) -> Result<SupportOutcome, WenlanError> {
-        let (live_version, live_digest) = {
+        let (live_version, live_digest, live_cut_off) = {
             let mut rows = conn
                 .query(
                     "SELECT version, content FROM pages WHERE id = ?1 AND status = 'active'",
@@ -3942,6 +4158,7 @@ impl MemoryDB {
             (
                 version,
                 crate::provenance::revision_content_digest(&content),
+                crate::retrieval::integrity::looks_cut_off(&content),
             )
         };
 
@@ -3951,6 +4168,18 @@ impl MemoryDB {
         if live_version != page_version {
             return Ok(SupportOutcome::NoPublish {
                 reason: format!("page {page_id} moved to version {live_version} mid-derivation"),
+            });
+        }
+
+        // Text that stops mid-sentence is not a finished page, and whatever its
+        // complete sentences rest on, the page as written cannot be supported.
+        // Ahead of every evidence check so the stored reason names the cause a
+        // person can fix. `Unevaluated`, not `Refuted`: this is a fact about
+        // the page text, not a verdict about the evidence, so the page keeps
+        // its file.
+        if live_cut_off {
+            return Ok(SupportOutcome::Unevaluated {
+                reason: REASON_TEXT_CUT_OFF.to_string(),
             });
         }
 
@@ -4179,6 +4408,38 @@ impl MemoryDB {
             mut unregistered,
             mut invalid_locator,
         ) = (0i64, 0i64, 0i64, 0i64, 0i64, 0i64);
+        let mut awaiting_recheck = 0i64;
+        // Whether the run in force was leased before the current judge took
+        // over. Only then can a replaced judge's verdict be the last word on a
+        // claim; a run leased under the current generation was judged by the
+        // active judge, and its conclusions stand on their own.
+        let run_predates_current_judge: bool = {
+            let mut rows = conn
+                .query(
+                    "SELECT COALESCE((
+                         SELECT j.eligibility_generation FROM claim_derivation_jobs j
+                          WHERE j.page_id = ?1 AND j.page_version = ?2
+                     ), 0) < COALESCE((
+                         SELECT g.last_generation FROM claim_judge_eligibility_generation g
+                          WHERE g.id = 1
+                     ), 0)",
+                    libsql::params![page_id, page_version],
+                )
+                .await
+                .map_err(|error| WenlanError::VectorDb(format!("support judge era: {error}")))?;
+            rows.next()
+                .await
+                .map_err(|error| {
+                    WenlanError::VectorDb(format!("support judge era decode: {error}"))
+                })?
+                .map(|row| row.get::<i64>(0))
+                .transpose()
+                .map_err(|error| {
+                    WenlanError::VectorDb(format!("support judge era decode: {error}"))
+                })?
+                .unwrap_or(0)
+                == 1
+        };
         let mut first_invalid_locator_reason = None;
         for claim_revision_id in &claim_revision_ids {
             // The candidate's LOCATION comes out of the payload alongside the
@@ -4206,7 +4467,11 @@ impl MemoryDB {
                             AND e.src_id = ?1
                             AND e.valid_until IS NULL
                             AND e.superseded_by IS NULL
-                            AND j.state IN ('active', 'draining')
+                            -- Only the active judge's verdicts count. A
+                            -- replaced (draining) judge's edges stay on record
+                            -- for audit, and the sweep queues the claim for
+                            -- the active judge to recheck.
+                            AND j.state = 'active'
                             AND json_type(e.payload, '$.score') IN ('integer', 'real')
                             AND json_extract(e.payload, '$.score') >= j.threshold",
                         libsql::params![claim_revision_id.clone()],
@@ -4415,6 +4680,53 @@ impl MemoryDB {
                 continue;
             }
 
+            // A claim whose qualifying support came only from a replaced judge,
+            // in a run that predates the current judge, has not been ruled on
+            // under the judge in force, so it is neither judged short nor
+            // refuted. It waits for the active judge.
+            let replaced_judge_only: i64 = if !run_predates_current_judge {
+                0
+            } else {
+                let mut rows = conn
+                    .query(
+                        "SELECT EXISTS (
+                             SELECT 1 FROM edges e
+                               JOIN claim_judge_eligibility j
+                                 ON j.model_id = json_extract(e.payload, '$.model_id')
+                                AND j.model_version = json_extract(e.payload, '$.model_version')
+                                AND j.prompt_version = json_extract(e.payload, '$.prompt_version')
+                              WHERE e.edge_type = 'supports'
+                                AND e.src_kind = 'claim_revision'
+                                AND e.src_id = ?1
+                                AND e.valid_until IS NULL
+                                AND e.superseded_by IS NULL
+                                AND j.state = 'draining'
+                                AND json_type(e.payload, '$.score') IN ('integer', 'real')
+                                AND json_extract(e.payload, '$.score') >= j.threshold
+                         )",
+                        libsql::params![claim_revision_id.clone()],
+                    )
+                    .await
+                    .map_err(|error| {
+                        WenlanError::VectorDb(format!("support replaced-judge scan: {error}"))
+                    })?;
+                rows.next()
+                    .await
+                    .map_err(|error| {
+                        WenlanError::VectorDb(format!("support replaced-judge decode: {error}"))
+                    })?
+                    .map(|row| row.get::<i64>(0))
+                    .transpose()
+                    .map_err(|error| {
+                        WenlanError::VectorDb(format!("support replaced-judge decode: {error}"))
+                    })?
+                    .unwrap_or(0)
+            };
+            if replaced_judge_only == 1 {
+                awaiting_recheck += 1;
+                continue;
+            }
+
             if attempts.is_empty() {
                 never_judged += 1;
             } else {
@@ -4482,6 +4794,16 @@ impl MemoryDB {
                     "unaccounted evidence: {unregistered} of {inventory_count} claim(s) have a \
                      live support candidate this run never weighed"
                 ),
+            });
+        }
+
+        // Ranked with never-judged and above judged-short for the same reason:
+        // a claim only the replaced judge supported has no verdict under the
+        // judge in force, and calling it `Refuted` would cost the page its file
+        // for a model switch rather than a fact about the page.
+        if awaiting_recheck > 0 {
+            return Ok(SupportOutcome::Unevaluated {
+                reason: REASON_JUDGE_REPLACED.to_string(),
             });
         }
 

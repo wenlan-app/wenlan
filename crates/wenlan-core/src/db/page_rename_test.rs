@@ -28,7 +28,7 @@ async fn fixture() -> Fixture {
                  (id,title,summary,content,space,source_memory_ids,version,status,embedding,
                   created_at,last_compiled,last_modified,workspace,creation_kind,review_status)
              VALUES
-                 ('page-rename','Old title','Stable summary','Keep [[Linked page]] body','work',
+                 ('page-rename','Old title','Stable summary','Keep [[Linked page]] body.','work',
                   '[\"memory-a\"]',7,'active',NULL,'2026-01-01T00:00:00Z',
                   '2026-01-02T00:00:00Z','2026-01-03T00:00:00Z','work','distilled','confirmed'),
                  ('page-collision','Other','Other summary','Other body','work','[]',1,'active',

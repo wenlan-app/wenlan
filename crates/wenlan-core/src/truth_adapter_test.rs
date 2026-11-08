@@ -27,7 +27,7 @@ async fn db_with_truth_rows() -> (MemoryDB, tempfile::TempDir) {
             id,
             id,
             None,
-            "the body prose",
+            "the body prose.",
             None,
             None,
             &[],
@@ -43,7 +43,7 @@ async fn db_with_truth_rows() -> (MemoryDB, tempfile::TempDir) {
         // digest here has to be the real one for the page's real body -- a
         // review of anything else is a review of text that is not on the page,
         // and `page_truth_states` will not count it.
-        let digest = crate::provenance::revision_content_digest("the body prose");
+        let digest = crate::provenance::revision_content_digest("the body prose.");
         conn.execute(
             &format!(
                 "INSERT INTO page_truth_state
@@ -94,7 +94,7 @@ async fn db_with_truth_rows() -> (MemoryDB, tempfile::TempDir) {
                  VALUES (?1, 1, ?2, ?3, 1, 0)",
                 libsql::params![
                     id,
-                    crate::provenance::revision_content_digest("the body prose"),
+                    crate::provenance::revision_content_digest("the body prose."),
                     crate::db::EXTRACTOR_VERSION
                 ],
             )
@@ -200,7 +200,7 @@ fn page(id: &str) -> Page {
         id: id.to_string(),
         title: format!("Title of {id}"),
         summary: Some("a summary".to_string()),
-        content: "the body prose".to_string(),
+        content: "the body prose.".to_string(),
         entity_id: None,
         space: None,
         source_memory_ids: vec!["mem_1".to_string()],
@@ -249,7 +249,7 @@ async fn every_adapter_is_pass_through_at_generation_zero() {
         .unwrap();
     assert_eq!(kept.len(), 3, "filter_pages dropped a page at generation 0");
     assert!(
-        kept.iter().all(|p| p.content == "the body prose"),
+        kept.iter().all(|p| p.content == "the body prose."),
         "filter_pages reduced a page at generation 0"
     );
     assert!(
@@ -293,7 +293,7 @@ async fn an_automatic_reader_loses_unsupported_pages_entirely() {
     let ids: Vec<&str> = kept.iter().map(|p| p.id.as_str()).collect();
     assert_eq!(ids, vec!["p1"]);
     assert_eq!(
-        kept[0].content, "the body prose",
+        kept[0].content, "the body prose.",
         "a supported page must come through untouched"
     );
 }
@@ -310,7 +310,7 @@ async fn a_collection_grant_reduces_rather_than_drops_and_carries_both_axes() {
     assert_eq!(kept.len(), 3, "a collection grant lists every page");
 
     let p1 = kept.iter().find(|p| p.id == "p1").unwrap();
-    assert_eq!(p1.content, "the body prose", "p1 is supported: untouched");
+    assert_eq!(p1.content, "the body prose.", "p1 is supported: untouched");
     assert!(p1.truth.is_none(), "a full page is not an entry");
 
     for id in ["p2", "p3"] {
@@ -363,7 +363,7 @@ async fn a_named_grant_opens_only_the_page_the_call_named() {
         vec!["p1", "p2"],
         "p3 is just as unsupported as p2 and was never named"
     );
-    assert_eq!(kept[1].content, "the body prose", "the named page opens");
+    assert_eq!(kept[1].content, "the body prose.", "the named page opens");
 }
 
 /// The other half of what `NamedPages` is defined to be: "Full prose, both
@@ -388,7 +388,7 @@ async fn a_named_grant_carries_both_axes_for_exactly_the_named_pages() {
 
     let p1 = kept.iter().find(|p| p.id == "p1").unwrap();
     assert_eq!(
-        p1.content, "the body prose",
+        p1.content, "the body prose.",
         "a named page keeps every prose field"
     );
     assert_eq!(
@@ -402,7 +402,7 @@ async fn a_named_grant_carries_both_axes_for_exactly_the_named_pages() {
 
     let p2 = kept.iter().find(|p| p.id == "p2").unwrap();
     assert_eq!(
-        p2.content, "the body prose",
+        p2.content, "the body prose.",
         "an unsupported page the call named still opens in full"
     );
     assert_eq!(
@@ -496,7 +496,7 @@ async fn the_by_id_reader_carries_both_axes_for_the_page_it_named() {
     .unwrap()
     .expect("a named unsupported page opens");
 
-    assert_eq!(opened.content, "the body prose");
+    assert_eq!(opened.content, "the body prose.");
     assert_eq!(
         opened
             .truth
