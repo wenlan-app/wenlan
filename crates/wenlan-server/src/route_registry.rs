@@ -383,7 +383,7 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // Fetches external public text, never reads the user's source store.
     "/api/webpage/fetch",
     "/api/import/memories", "/api/import/chat-export", "/api/memory/store", "/api/memory/confirm/{source_id}",
-    "/api/memory/delete/{source_id}", "/api/memory/reclassify/{source_id}", "/api/memory/revision/{id}/accept",
+    "/api/memory/delete/{source_id}", "/api/memory/restore/{source_id}", "/api/memory/reclassify/{source_id}", "/api/memory/revision/{id}/accept",
     "/api/memory/revision/{id}/dismiss", "/api/memory/contradiction/{source_id}/dismiss", "/api/memory/entities",
     "/api/memory/relations", "/api/memory/observations", "/api/memory/link-entity", "/api/spaces/{name}",
     "/api/spaces/{from}/move-to/{to}", "/api/pages/{id}/archive", "/api/pages/{id}/review",

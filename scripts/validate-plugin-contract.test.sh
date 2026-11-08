@@ -114,7 +114,7 @@ assert_rejects "claude skill copied into codex" \
     "$TMPDIR_TEST/root/plugin/skills/handoff"
 
 assert_rejects "missing destructive confirmation wording" \
-    perl -0pi -e 's/cannot be undone/cannot be reversed/' \
+    perl -0pi -e 's/does not destroy the memory/destroys the memory/' \
     "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/forget.md"
 
 assert_rejects "missing curate ambiguity guardrail" \
@@ -174,7 +174,7 @@ assert_rejects "codex overlay no longer matches the Claude skill" \
     "$TMPDIR_TEST/root/plugin/skills/setup/SKILL.md"
 
 assert_rejects "codex skill carries a Claude-only token" \
-    perl -0pi -e 's/Permanently delete a memory by its `source_id`\./Permanently delete a memory by its `source_id` (never via AskUserQuestion)./' \
+    perl -0pi -e 's/Forget a memory by its `source_id`\./Forget a memory by its `source_id` (never via AskUserQuestion)./' \
     "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/forget.md"
 
 assert_rejects "codex background-consent command drift" \

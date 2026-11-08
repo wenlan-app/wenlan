@@ -61,7 +61,8 @@ impl Drop for ScratchVault {
 
 #[derive(Clone, Copy)]
 enum Caller {
-    /// The app: no headers.
+    /// The app, for a gesture of the person: no agent name, and the
+    /// person marker.
     Person,
     /// An agent reading with the explicit-intent marker the read routes want.
     Reader,
@@ -81,7 +82,12 @@ async fn call(
         request = request.header("content-type", "application/json");
     }
     match caller {
-        Caller::Person => {}
+        Caller::Person => {
+            request = request.header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+        }
         Caller::Reader => {
             request = request
                 .header(INTENT_HEADER, "explicit")
@@ -861,7 +867,7 @@ async fn acceptance_9_deleting_a_note_removes_its_code_bases() {
     let (status, body) = call(
         &router,
         Method::DELETE,
-        &format!("/api/pages/{id}"),
+        &format!("/api/pages/{id}?permanent=true"),
         None,
         Caller::Person,
     )

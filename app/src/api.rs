@@ -787,6 +787,34 @@ impl WenlanClient {
             .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
+    /// [`Self::put_json`] with the person marker; see
+    /// [`Self::delete_path_as_person`].
+    pub async fn put_json_as_person<Req: Serialize, Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &Req,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .put(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP PUT {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP PUT {} returned {}: {}", path, status, text));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
     pub async fn patch_json<Req: Serialize, Resp: DeserializeOwned>(
         &self,
         path: &str,
@@ -818,6 +846,64 @@ impl WenlanClient {
             .map_err(|e| format!("HTTP DELETE {}: {}", path, e))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP DELETE {} returned {}", path, resp.status()));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
+    /// [`Self::delete_path`] for a delete the person asked for with their
+    /// own gesture: it carries the person marker
+    /// (`wenlan_types::requests::CALLER_HEADER`), without which the daemon
+    /// treats the request as an AI tool's. Only call it from a command the
+    /// person triggers directly, never from background work.
+    pub async fn delete_path_as_person<Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .delete(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .send()
+            .await
+            .map_err(|e| format!("HTTP DELETE {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!(
+                "HTTP DELETE {} returned {}: {}",
+                path, status, text
+            ));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
+    /// [`Self::post_empty`] with the person marker; see
+    /// [`Self::delete_path_as_person`].
+    pub async fn post_empty_as_person<Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .post(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .send()
+            .await
+            .map_err(|e| format!("HTTP POST {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP POST {} returned {}: {}", path, status, text));
         }
         resp.json()
             .await

@@ -18,8 +18,8 @@ use wenlan_types::import::PendingImport;
 use wenlan_types::memory::{IndexedFileInfo, SearchResult};
 use wenlan_types::memory::{MemoryItem, RejectionRecord};
 use wenlan_types::responses::{
-    ConfirmResponse, CreateRelationResponse, DeleteResponse, ListMemoriesResponse,
-    MemoryDetailResponse, SearchMemoryResponse, StoreMemoryResponse,
+    ConfirmResponse, CreateRelationResponse, DeleteResponse, ForgetMemoryResponse,
+    ListMemoriesResponse, MemoryDetailResponse, SearchMemoryResponse, StoreMemoryResponse,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -609,7 +609,10 @@ async fn t5_memory_type_hint_preserved_without_forcing_domain() {
 #[tokio::test]
 async fn t8_forget_roundtrip() {
     let (deleted_mock, deleted_client) = setup().await;
-    let deleted_response = DeleteResponse { deleted: true };
+    let deleted_response = ForgetMemoryResponse {
+        deleted: true,
+        restorable: true,
+    };
     Mock::given(method("DELETE"))
         .and(path("/api/memory/delete/mem_xyz"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&deleted_response))
@@ -623,10 +626,16 @@ async fn t8_forget_roundtrip() {
         .expect("forget_impl failed for deleted=true");
 
     let deleted_text = text_of(&deleted_result);
-    assert_eq!(deleted_text, "Memory deleted");
+    assert_eq!(
+        deleted_text,
+        "Memory forgotten: it is out of search and pages, and can be restored"
+    );
 
     let (missing_mock, missing_client) = setup().await;
-    let missing_response = DeleteResponse { deleted: false };
+    let missing_response = ForgetMemoryResponse {
+        deleted: false,
+        restorable: false,
+    };
     Mock::given(method("DELETE"))
         .and(path("/api/memory/delete/mem_missing"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&missing_response))

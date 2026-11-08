@@ -38,7 +38,7 @@ CODEX_RESOLVER_LOCATOR = (
 )
 CODEX_REQUIRED_GUARDRAILS = {
     "forget": [
-        "cannot be undone",
+        "does not destroy the memory",
         "delete <id>",
         "Always confirm with the user before calling forget",
     ],
