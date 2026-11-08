@@ -52,7 +52,7 @@ import {
   todayStartSeconds,
   type ReplayStop,
 } from "../../lib/graph/lastNight";
-import { GHOST_STROKE, ghostAt, ghostPhase, ghostRests, ghostsMoving, RING_RADII, swellOf, type ReplayGhost } from "../../lib/graph/tidyGhosts";
+import { GHOST_STROKE, ghostAt, ghostPhase, ghostRests, ghostsMoving, swellOf, type ReplayGhost } from "../../lib/graph/tidyGhosts";
 import type { Entity, KnowledgeGraph, ThingNightPoints } from "../../lib/tauri";
 import {
   buildKnowledgeGraphModel,
@@ -2136,8 +2136,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     }
 
     // Replay's tidies (UX-GRAPH-7): each ghost a hollow ring in the colour
-    // of what it slides into, placed from where that is on screen now, so
-    // a camera move carries them along. Drawn over everything, then gone.
+    // of what stands now, placed from where that is on screen now, so a
+    // camera move carries them along. Drawn over everything, then gone.
     const drawGhosts = () => {
       const run = replayRef.current;
       if (!run || run.ghosts.length === 0) return;
@@ -2148,32 +2148,24 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       ctx.lineWidth = GHOST_STROKE;
       for (const ghost of run.ghosts) {
         const phase = ghostPhase(ghost, now - ghost.startAt);
-        if (phase.alpha <= 0 && phase.ring === null) continue;
+        if (phase.alpha <= 0) continue;
         const thing = renderer.getNodeDisplayData(ghost.thing);
         const centre = thing ? renderer.framedGraphToViewport(thing) : null;
         const shown = ghost.tidy.survivor ? renderer.getNodeDisplayData(ghost.tidy.survivor) : undefined;
         const standing = shown && !shown.hidden ? shown : null;
         // Filtered off the map: no motion, as the line does not count it.
-        // A replace whose kept memory is not drawn goes into the thing.
+        // A replace whose kept memory is not drawn is pushed off the thing.
         if (!standing && (ghost.tidy.kind !== "replace" || !centre)) continue;
         const at = standing ? renderer.framedGraphToViewport(standing) : centre!;
         const radius = standing ? renderer.scaleSize(standing.size) / swellOf([ghost], ghost.tidy.survivor!, now) : GHOST_FALLBACK_RADIUS;
-        const color = standing?.color ?? paletteRef.current.memory;
-        if (phase.alpha > 0) {
-          ctx.strokeStyle = color;
-          ctx.globalAlpha = phase.alpha;
-          for (const rest of ghostRests(standing ? at : null, centre, radius, ghost.tidy.ghosts)) {
-            const spot = ghostAt(rest, at, phase.slide);
-            ctx.beginPath();
-            ctx.arc(spot.x, spot.y, radius, 0, Math.PI * 2);
-            ctx.stroke();
-          }
-        }
-        if (phase.ring !== null) {
-          ctx.strokeStyle = paletteRef.current.bridge;
-          ctx.globalAlpha = 0.6 * (1 - phase.ring);
+        // An update's old version spreads out in the bridge colour, so it
+        // never reads as a replace's ghost.
+        ctx.strokeStyle = ghost.tidy.kind === "update" ? paletteRef.current.bridge : standing?.color ?? paletteRef.current.memory;
+        ctx.globalAlpha = phase.alpha;
+        for (const rest of ghostRests(standing ? at : null, centre, radius, ghost.tidy.ghosts)) {
+          const spot = ghostAt(rest, at, phase.slide);
           ctx.beginPath();
-          ctx.arc(at.x, at.y, radius * (1 + (RING_RADII - 1) * phase.ring), 0, Math.PI * 2);
+          ctx.arc(spot.x, spot.y, radius * phase.scale, 0, Math.PI * 2);
           ctx.stroke();
         }
       }

@@ -115,13 +115,13 @@ describe("Replay's stops (UX-GRAPH-6)", () => {
 
   it("takes about a second more for a stop that tidied", () => {
     expect(tidyMs(0)).toBe(0);
-    expect(tidyMs(1)).toBe(200 + 450);
-    expect(tidyMs(3)).toBe(200 + 450 + 2 * 110);
+    expect(tidyMs(1)).toBe(200 + 600);
+    expect(tidyMs(3)).toBe(200 + 600 + 2 * 110);
     const plain = thing("a", { at: at(3), written: ["a1"] });
     const tidied = thing("a", { at: at(3), written: ["a1"] });
     tidied.last_night!.tidied = [{ kind: "update", memory_id: "a1", replaced: ["o1"] }];
     const extra = replayMs(replayStops([tidied], () => true)) - replayMs(replayStops([plain], () => true));
-    expect(extra).toBe(200 + 450 + 450);
+    expect(extra).toBe(200 + 600 + 450);
   });
 
   it("stops at five things at most", () => {

@@ -141,12 +141,11 @@ export const REPLAY_TIMING = {
   holdGrown: 600,
   /** A tidy's ghosts fading in beside what stands now (UX-GRAPH-7). */
   ghostFade: 200,
-  /** The ghosts sliding into it. */
-  ghostSlide: 450,
+  /** The ghosts moving: a merge's sliding in, a replace's pushed away, an
+   *  update's spreading out from the dot. */
+  ghostSlide: 600,
   /** What stands now taking them in: one soft swell, during the look after. */
   swell: 150,
-  /** An update's ring widening out and fading, after the swell. */
-  ring: 350,
   /** Looking at what was tidied. */
   holdTidied: 450,
   /** Points flying out to their topics. */
