@@ -24,6 +24,7 @@ import {
   captureAtlasViewpoint,
   frameAtlasView,
   restoreAtlasViewpoint,
+  atlasFrameState,
   type AtlasFrameMode,
   type AtlasViewpoint,
 } from "../../lib/graph/viewpoint";
@@ -2178,7 +2179,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const restored = saved?.scope === spaceFilter && restoreAtlasViewpoint(renderer, graph, saved.view);
     // The opening view keeps the toolbar's band clear: no frame starts
     // under the search field (UX-CHAT-5).
-    if (!restored) frameAtlasView(renderer, graph, { mode: "core", visibleNodeIds, padding: 56, insets: ATLAS_CONTROL_INSETS });
+    const openingFrame = { mode: "core" as const, visibleNodeIds, padding: 56, insets: ATLAS_CONTROL_INSETS };
+    if (!restored) frameAtlasView(renderer, graph, openingFrame);
     // Zoom level of detail, relative to THIS opening view: how much memory
     // dust each anchor shows, and whether the islands are solid yet (see
     // atlas.ts's lodFor). The reducers only re-run on refresh(), not on a
@@ -2216,7 +2218,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     lodRef.current = OPENING_LOD;
     // Zooming out past twice the opening view only shrinks the map to a
     // blob with its counts stacked on it; stop there.
-    renderer.setSetting("maxCameraRatio", mountRatio * MAX_ZOOM_OUT);
+    // Measured from the fit, not the live camera: a rebuild that restored a
+    // zoomed-in view must still let you zoom out past the whole map.
+    const fitRatio = restored ? atlasFrameState(renderer, graph, openingFrame)?.ratio ?? mountRatio : mountRatio;
+    renderer.setSetting("maxCameraRatio", Math.max(fitRatio, mountRatio) * MAX_ZOOM_OUT);
     const applyLabelLod = (phase: LodState["phase"]) => {
       const lod = LABEL_LOD[phase];
       renderer.setSetting("labelRenderedSizeThreshold", lod.threshold);
