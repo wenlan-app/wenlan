@@ -481,7 +481,10 @@ impl MemoryDB {
                                       AND e.src_id = pvc.claim_revision_id
                                       AND e.valid_until IS NULL
                                       AND e.superseded_by IS NULL
-                                      AND j.state IN ('active', 'draining')
+                                      -- Only the active judge counts; a
+                                      -- replaced (draining) judge's edges are
+                                      -- audit records awaiting its recheck.
+                                      AND j.state = 'active'
                                       AND json_type(e.payload, '$.score') IN ('integer', 'real')
                                       AND json_extract(e.payload, '$.score') >= j.threshold
                                )
@@ -597,6 +600,17 @@ impl MemoryDB {
                     // edge whose exact judge triple is eligible at its current
                     // threshold; the stored row remains a reconciliation receipt.
                     ("supported", _) if live_support_eligible != 1 => {
+                        crate::truth_contract::Support::Unevaluated
+                    }
+                    // Text that stops mid-sentence is never served as
+                    // supported, whatever was stored before the rule existed.
+                    // Evaluation refuses the same page with the same test, so
+                    // the reader is never the lenient side.
+                    ("supported", _)
+                        if live_content
+                            .as_deref()
+                            .is_some_and(crate::retrieval::integrity::looks_cut_off) =>
+                    {
                         crate::truth_contract::Support::Unevaluated
                     }
                     ("supported", _) => crate::truth_contract::Support::Supported,
