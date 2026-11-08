@@ -72,7 +72,7 @@ import {
   THING_NODE_TYPE,
 } from "../../lib/graph/model";
 import type { GraphLayers, GraphModel, GraphNode } from "../../lib/graph/model";
-import type { AtlasLayoutReply, AtlasLayoutRequest } from "../../lib/graph/atlasLayout.worker";
+import type { AtlasLayoutReply, AtlasLayoutRequest } from "../../lib/graph/atlasLayoutJob";
 import {
   buildAtlasGraph,
   applyAtlasHierarchy,
@@ -125,6 +125,7 @@ import {
   readSeenNightPoints,
   readStoredPositions,
   readStoredRegions,
+  readPreviousPositions,
   readPreviousRegions,
   storeRegions,
   readThingsApart,
@@ -175,6 +176,11 @@ class ScreenSpaceEdgeProgram extends EdgeRectangleProgram {
 const EMPTY_CARTOGRAPHY: Map<string, SpaceCartography> = new Map();
 /** How far past the opening view the map may zoom out (camera ratio). */
 const MAX_ZOOM_OUT = 2;
+/** How many bodies a kept layout may be missing and still be put straight
+ *  back (the new ones placed beside it) instead of laid out again. */
+export function keptMissingAllowance(bodies: number): number {
+  return Math.max(5, Math.ceil(bodies * 0.02));
+}
 /** Label thresholds per zoom phase: the smallest rendered disc (px) that
  *  may carry a name, and the label grid's cell (px). The overview keeps the
  *  landmarks' names only. */
@@ -398,7 +404,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   const rearrangeRef = useRef<"fresh" | "undo" | null>(null);
   // A large fresh layout runs in a worker; its spots come back here and the
   // map is built again from them (round 3 polish).
-  const workerLayoutRef = useRef<{ model: GraphModel; version: number; variant: AtlasLayoutVariant; positions: Map<string, { x: number; y: number }>; blockedMs: number; totalMs: number; report?: unknown } | null>(null);
+  const workerLayoutRef = useRef<{ model: GraphModel; version: number; variant: AtlasLayoutVariant; positions: Map<string, { x: number; y: number }>; regions?: Map<string, string>; blockedMs: number; totalMs: number; report?: unknown } | null>(null);
   const [layingOut, setLayingOut] = useState(false);
   const [workerLayouts, setWorkerLayouts] = useState(0);
   const workerFailedRef = useRef(false);
@@ -1221,40 +1227,57 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     }
     // R2 (round 4): each body keeps the region it was in; only Rearrange works
     // the regions out again (its undo brings the old ones back).
-    const regionsAtStart: ReadonlyMap<string, string> | undefined = layoutVariant !== "r2"
-      || rearrangeRef.current === "fresh"
-      || readLayoutVersion(spaceFilter) < ATLAS_LAYOUT_VERSION
-      ? undefined
-      : rearrangeRef.current === "undo" ? readPreviousRegions(spaceFilter) : readStoredRegions(spaceFilter);
-    // A map opened again with every body on its kept spot is not laid out
-    // again: the kept spots go straight back (most of the cost of opening a
-    // large map was a fresh layout that the kept one then replaced).
+    const undoing = rearrangeRef.current === "undo";
+    const regionsAtStart: ReadonlyMap<string, string> | undefined = (() => {
+      if (layoutVariant !== "r2" || rearrangeRef.current === "fresh") return undefined;
+      if (undoing) return readPreviousRegions(spaceFilter);
+      if (readLayoutVersion(spaceFilter) < ATLAS_LAYOUT_VERSION) return undefined;
+      const stored = readStoredRegions(spaceFilter);
+      return stored.size > 0 ? stored : regionLayoutRef.current ?? stored;
+    })();
+    // A map opened again with its bodies on their kept spots is not laid out
+    // again: the kept spots go straight back, and the few bodies new since
+    // are placed beside what they link to (most of the cost of opening a
+    // large map was a fresh layout that the kept one then replaced). An undo
+    // or Put back always goes straight to the layout it brings back.
     const keptAtStart = (() => {
-      if (rearrangeRef.current) return null;
-      if (layoutVariant !== "r0" && readLayoutVersion(spaceFilter) < ATLAS_LAYOUT_VERSION) return null;
+      if (rearrangeRef.current === "fresh") return null;
+      if (!undoing && layoutVariant !== "r0" && readLayoutVersion(spaceFilter) < ATLAS_LAYOUT_VERSION) return null;
       const prior = viewpointRef.current;
-      const stored = prior?.scope === spaceFilter ? prior.body : readStoredPositions(spaceFilter);
+      const stored = undoing ? readPreviousPositions(spaceFilter) : prior?.scope === spaceFilter ? prior.body : readStoredPositions(spaceFilter);
+      if (stored.size === 0) return null;
       const apartNow = readThingsApart();
       let bodies = 0;
+      let missing = 0;
       for (const id of graph.nodes()) {
         if (graph.getNodeAttribute(id, "entityType") === MEMORY_NODE_TYPE) continue;
         bodies += 1;
-        if (!stored.has(id)) return null;
+        if (!stored.has(id)) {
+          missing += 1;
+          continue;
+        }
         const isApart = apartNow ? apartNow.has(id) : thingIdOf(id) !== null;
         if (isApart && thingLinkedBodies(graph, id).length > 0) return null;
       }
-      return bodies > 0 ? stored : null;
+      if (bodies === 0 || missing === bodies) return null;
+      return undoing || missing <= keptMissingAllowance(bodies) ? stored : null;
     })();
+    // Put back to a layout from before regions: it comes back as it was,
+    // without regions, until the next Rearrange.
+    const regionless = layoutVariant === "r2" && keptAtStart !== null && (regionsAtStart?.size ?? 0) === 0;
     const job = workerLayoutRef.current;
     const fromWorker = !keptAtStart && job && job.model === visibleModel && job.version === layoutVersion && job.variant === layoutVariant
       ? job.positions
       : null;
     const placed = keptAtStart ?? fromWorker;
+    // A layout run that will not end in a worker reply clears the note.
+    setLayingOut(false);
     if (placed) {
       for (const [id, spot] of placed) {
         if (graph.hasNode(id)) graph.mergeNodeAttributes(id, { x: spot.x, y: spot.y });
       }
-      markKeptLayout(graph, layoutVariant, spaceFilter ?? "", regionsAtStart);
+      // The worker worked the regions out already; they are not found again.
+      markKeptLayout(graph, regionless ? "r1" : layoutVariant, spaceFilter ?? "", fromWorker ? job?.regions : regionsAtStart);
     } else if (graph.order >= WORKER_LAYOUT_MIN_NODES && typeof Worker !== "undefined" && !workerFailedRef.current) {
       // A large fresh layout takes seconds: run it off the main thread and
       // say so quietly, then build the map again from its spots.
@@ -1269,6 +1292,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           version: layoutVersion,
           variant: layoutVariant,
           positions: new Map(event.data.positions.map(([id, x, y]) => [id, { x, y }])),
+          ...(event.data.regions ? { regions: new Map(event.data.regions) } : {}),
           report: event.data.report,
           blockedMs,
           totalMs: performance.now() - layoutStartedAt,
@@ -1291,6 +1315,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       return () => {
         live = false;
         worker.terminate();
+        setLayingOut(false);
       };
     } else runAtlasLayout(graph, layoutVariant, spaceFilter ?? "", regionsAtStart);
     graphRef.current = graph;
@@ -1304,7 +1329,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     }
     // An R2 map names its own regions (round 4): the paint reads them from
     // the layout instead of the cartography communities.
-    if (layoutVariant === "r2") {
+    if (layoutVariant === "r2" && !regionless) {
       const regionMembers = new Map<string, string>();
       graph.forEachNode((id, attrs) => {
         if (typeof attrs.region === "string") regionMembers.set(id, attrs.region);
@@ -1312,7 +1337,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       regionLayoutRef.current = regionMembers;
       setLaidRegionCount(new Set(regionMembers.values()).size);
       communitiesRef.current = regionMembers;
-      (window as unknown as Record<string, unknown>).__ATLAS_REGIONS = {
+      if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__ATLAS_REGIONS = {
         report: fromWorker ? job?.report : graph.getAttribute("atlasRegionReport"),
         regions: graph.getAttribute("atlasRegions"),
       };
@@ -1331,9 +1356,10 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       sceneDirtyRef.current = true;
       sigmaRef.current?.refresh();
     }, { settled: placed !== null });
-    (window as unknown as Record<string, unknown>).__ATLAS_LAYOUT = {
+    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__ATLAS_LAYOUT = {
       variant: layoutVariant,
       kept: keptAtStart !== null,
+      regionless,
       worker: fromWorker !== null,
       layoutMs: Math.round(performance.now() - layoutStartedAt + (fromWorker ? job!.blockedMs : 0)),
       ...(fromWorker ? { workerTotalMs: Math.round(job!.totalMs) } : {}),

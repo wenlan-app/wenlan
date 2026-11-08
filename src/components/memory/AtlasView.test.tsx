@@ -162,7 +162,7 @@ import type {
   KnowledgeGraph,
   ThingNightPoints,
 } from "../../lib/tauri";
-import AtlasView, { WORKING_STORAGE_KEY } from "./AtlasView";
+import AtlasView, { keptMissingAllowance, WORKING_STORAGE_KEY } from "./AtlasView";
 import { THINGS_APART_STORAGE_KEY } from "../../lib/graph/positions";
 import { ATLAS_CONTROL_INSETS } from "../../lib/graph/viewpoint";
 
@@ -2977,4 +2977,104 @@ describe("AtlasView", () => {
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(4));
     expect(at("e2")).toEqual([123, 45]);
   });
+
+  /** A star of `count` entities around e0, linked so every one is drawn. */
+  function mockStar(count: number) {
+    const ids = Array.from({ length: count }, (_, i) => `e${i}`);
+    const entities = ids.map((id) => makeEntity({ id, name: `N${id}` }));
+    mockListEntities.mockResolvedValue(entities);
+    mockGetEntityDetail.mockImplementation(async (id: string) => ({
+      entity: entities.find((e) => e.id === id)!,
+      observations: [],
+      relations: id === "e0"
+        ? ids.slice(1).map((other, i) => ({
+          id: `rel-${i}`, relation_type: "knows", direction: "outgoing" as const, entity_id: other,
+          entity_name: `N${other}`, entity_type: "person", source_agent: null, created_at: 1,
+        }))
+        : [],
+    }));
+    return ids;
+  }
+  const atlasLayout = () => (window as unknown as { __ATLAS_LAYOUT?: { kept: boolean; regionless: boolean } }).__ATLAS_LAYOUT;
+
+  it("UX-GRAPH-1: a map with a few new points goes straight back to its kept spots, without a fresh layout", async () => {
+    const ids = mockStar(40);
+    const first = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    expect(atlasLayout()?.kept).toBe(false);
+    first.unmount();
+    cleanup();
+
+    // Two new points (within the allowance): the kept layout is put back.
+    mockStar(42);
+    const second = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    expect(atlasLayout()?.kept).toBe(true);
+    expect(latestGraph().hasNode("e41")).toBe(true);
+    second.unmount();
+    cleanup();
+
+    // Many new points at once: laid out again.
+    mockStar(42 + keptMissingAllowance(42) + 1);
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    expect(atlasLayout()?.kept).toBe(false);
+    expect(ids).toHaveLength(40);
+  });
+
+  it("UX-GRAPH-1: Put back to a layout from before regions brings it back without regions", async () => {
+    window.localStorage.setItem("atlas.exp.layout", "r2");
+    mockStar(12);
+    const first = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    first.unmount();
+    cleanup();
+    // The layout an undo brings back had no regions.
+    const spots = window.localStorage.getItem("atlas.positions.*")!;
+    window.localStorage.setItem("atlas.positions.previous.*", spots);
+    window.localStorage.removeItem("atlas.regions.previous.*");
+
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "Rearrange" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Rearrange" })).getByRole("button", { name: "Rearrange" }));
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    expect(window.localStorage.getItem("atlas.regions.*")).not.toBeNull();
+    // Rearranging kept the region-less layout as the one to put back.
+    window.localStorage.removeItem("atlas.regions.previous.*");
+    const done = screen.getByRole("status", { name: "Rearrange" });
+    fireEvent.click(within(done).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(4));
+    expect(atlasLayout()).toMatchObject({ kept: true, regionless: true });
+    expect(latestGraph().getNodeAttribute("e1", "region")).toBeUndefined();
+    expect(window.localStorage.getItem("atlas.regions.*")).toBeNull();
+  });
+
+  it("UX-GRAPH-1: the laying-out note clears when a worker run is cut short by a smaller map", async () => {
+    const posted: unknown[] = [];
+    vi.stubGlobal("Worker", class {
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      postMessage(data: unknown) { posted.push(data); }
+      terminate() {}
+    });
+    try {
+      withMemoryLayerOn();
+      const ids = mockStar(1450);
+      mockMemories(
+        Array.from({ length: 100 }, (_, i) => makeMemory({ source_id: `m${i}`, title: `Memory ${i}` })),
+        Array.from({ length: 100 }, (_, i) => ({ memory_id: `m${i}`, entity_id: ids[i % ids.length]! })),
+      );
+      renderWithQuery(<AtlasView />);
+      await waitFor(() => expect(posted).toHaveLength(1));
+      expect(screen.getByText(i18n.t("atlas.layingOut"))).toBeInTheDocument();
+      // Memories off: the map falls under the worker size and is laid out here.
+      fireEvent.click(displayControl("Memories"));
+      await waitFor(() => expect(capturedSigmaInstances.length).toBeGreaterThan(0));
+      await waitFor(() => expect(screen.queryByText(i18n.t("atlas.layingOut"))).toBeNull());
+      expect(posted).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 30_000);
 });

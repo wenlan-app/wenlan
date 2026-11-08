@@ -90,11 +90,8 @@ export function undoRearrange(scope: string | null): void {
   writeRegions(PREVIOUS_REGIONS_STORAGE_PREFIX, scope, null);
 }
 
-/** The undo is offered once; any later choice drops it. */
-export function dropRearrangeUndo(scope: string | null): void {
-  write(PREVIOUS_POSITIONS_STORAGE_PREFIX, scope, null);
-  writeRegions(PREVIOUS_REGIONS_STORAGE_PREFIX, scope, null);
-}
+/** The layout an undo (or Put back) would bring back. */
+export const readPreviousPositions = (scope: string | null) => read(PREVIOUS_POSITIONS_STORAGE_PREFIX, scope);
 
 // Round 4 (R2): which region each body belongs to is kept per scope beside
 // its spot, so opening the map again, or the map growing, never moves a

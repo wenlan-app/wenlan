@@ -9,6 +9,7 @@ import {
   readNightOffsets,
   readSeenNightPoints,
   readStoredPositions,
+  readPreviousPositions,
   startRearrange,
   storeNightOffsets,
   storePositions,
@@ -35,6 +36,7 @@ describe("kept map layout (UX-GRAPH-1)", () => {
 
     startRearrange(null);
     expect(readStoredPositions(null).size).toBe(0);
+    expect(readPreviousPositions(null).get("p1")).toEqual({ x: 1, y: 2 });
     expect(canUndoRearrange(null)).toBe(true);
     undoRearrange(null);
     expect(readStoredPositions(null).get("p1")).toEqual({ x: 1, y: 2 });
