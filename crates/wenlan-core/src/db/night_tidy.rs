@@ -125,6 +125,18 @@ impl MemoryDB {
     /// What a thing's night may tidy at `now` (see the module docs). Empty
     /// when nothing has a neighbour or a passed date.
     pub async fn tidy_offer(&self, thing_id: &str, now: i64) -> Result<TidyOffer, WenlanError> {
+        self.tidy_offer_since(thing_id, None, now).await
+    }
+
+    /// [`Self::tidy_offer`] looking back to `since` instead of the thing's
+    /// last night: the dry run on a database copy asks what a week of
+    /// nights would have offered.
+    pub async fn tidy_offer_since(
+        &self,
+        thing_id: &str,
+        since: Option<i64>,
+        now: i64,
+    ) -> Result<TidyOffer, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
@@ -133,12 +145,13 @@ impl MemoryDB {
             )
             .await
             .map_err(db_err("tidy last night"))?;
-        let since = match rows.next().await.map_err(db_err("tidy last night row"))? {
+        let since_last = match rows.next().await.map_err(db_err("tidy last night row"))? {
             Some(row) => row.get::<Option<i64>>(0).unwrap_or(None),
             None => None,
         }
         .unwrap_or(now - FIRST_NIGHT_SECS);
         drop(rows);
+        let since = since.unwrap_or(since_last);
         let mut rows = conn
             .query(
                 &format!(

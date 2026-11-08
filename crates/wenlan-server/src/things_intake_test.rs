@@ -823,3 +823,116 @@ async fn ux_chat_5_a_night_keeps_its_lines_and_says_what_it_could_not_read() {
         .unwrap();
     assert_eq!(detail.unread, 1);
 }
+
+/// The dry run of UX-GRAPH-7 on a copy of a real database: what a week of
+/// nights would have tidied, asked of the same model a night uses, written to
+/// a report. Nothing is applied. Run on a copy only:
+/// `WENLAN_TIDY_DRY_DIR=<copy's data dir> WENLAN_TIDY_DRY_REPORT=<file>
+/// cargo test -p wenlan-server --lib -- --ignored tidy_dry_run`
+#[tokio::test]
+#[ignore = "needs a database copy and the person's AI tool"]
+async fn tidy_dry_run() {
+    let dir = std::env::var("WENLAN_TIDY_DRY_DIR").expect("WENLAN_TIDY_DRY_DIR");
+    let report = std::env::var("WENLAN_TIDY_DRY_REPORT").expect("WENLAN_TIDY_DRY_REPORT");
+    let days: i64 = std::env::var("WENLAN_TIDY_DRY_DAYS")
+        .ok()
+        .and_then(|d| d.parse().ok())
+        .unwrap_or(7);
+    let db = MemoryDB::new(std::path::Path::new(&dir), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let model = wenlan_core::agent_cli_llm::AgentCliProvider::find().expect("an AI tool CLI");
+    let now = chrono::Utc::now().timestamp();
+    let since = now - days * 86_400;
+    let things = db.list_things(&ReadScope::Global, None).await.unwrap();
+    let mut out = format!(
+        "# Night tidy dry run\n\nLooked back {days} days over {} things. Nothing was applied.\n\n",
+        things.len()
+    );
+    let (mut offered, mut asked, mut counts) = (0usize, 0usize, [0usize; 3]);
+    let mut samples = String::new();
+    for thing in &things {
+        let title = thing.title.clone().unwrap_or_else(|| "(untitled)".into());
+        let offer = db
+            .tidy_offer_since(&thing.id, Some(since), now)
+            .await
+            .unwrap();
+        offered += offer.items.len();
+        if offer.groups.is_empty() {
+            continue;
+        }
+        asked += 1;
+        let started = std::time::Instant::now();
+        let answer = model
+            .generate(LlmRequest {
+                system_prompt: Some(
+                    "You tidy the memories an AI keeps for a person, changing only what you are sure of. Answer with JSON only."
+                        .into(),
+                ),
+                user_prompt: night_tidy::tidy_prompt(&offer.items, &offer.groups, now),
+                max_tokens: 1_500,
+                temperature: 0.0,
+                label: Some("things_tidy_dry_run".into()),
+                timeout_secs: Some(300),
+            })
+            .await;
+        let secs = started.elapsed().as_secs();
+        let changes = match answer {
+            Ok(answer) => night_tidy::parse_tidy(&answer, &offer.items, now).unwrap_or_default(),
+            Err(error) => {
+                samples.push_str(&format!("- {}: the call failed ({error})\n", title));
+                continue;
+            }
+        };
+        samples.push_str(&format!(
+            "\n## {} ({} groups, {} memories, {secs}s)\n",
+            title,
+            offer.groups.len(),
+            offer.items.len()
+        ));
+        if changes.is_empty() {
+            samples.push_str("Nothing to tidy.\n");
+        }
+        for change in changes {
+            let text = |i: usize| offer.items[i].text.replace('\n', " ");
+            match change {
+                night_tidy::TidyChange::Merge {
+                    items: [a, b],
+                    text: merged,
+                } => {
+                    counts[0] += 1;
+                    samples.push_str(&format!(
+                        "- Merge\n  - was: {}\n  - was: {}\n  - now: {merged}\n",
+                        text(a),
+                        text(b)
+                    ));
+                }
+                night_tidy::TidyChange::Replace { keep, drop } => {
+                    counts[1] += 1;
+                    samples.push_str(&format!(
+                        "- Replace\n  - hidden: {}\n  - kept: {}\n",
+                        text(drop),
+                        text(keep)
+                    ));
+                }
+                night_tidy::TidyChange::Update {
+                    item,
+                    text: updated,
+                } => {
+                    counts[2] += 1;
+                    samples.push_str(&format!(
+                        "- Update\n  - was: {}\n  - now: {updated}\n",
+                        text(item)
+                    ));
+                }
+            }
+        }
+    }
+    out.push_str(&format!(
+        "AI-written memories looked at: {offered}. Things asked: {asked}.\n\n\
+Would merge {}, replace {}, update {}.\n",
+        counts[0], counts[1], counts[2]
+    ));
+    out.push_str(&samples);
+    std::fs::write(&report, out).unwrap();
+}
