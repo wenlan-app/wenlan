@@ -24,6 +24,14 @@ const HISTORY_SCAN: i64 = 1_000;
 pub fn kind_of_edit(edited_by: &str) -> PageHistoryKind {
     match edited_by {
         "manual_edit" | "fs_edit" | "restore" | "person_create" => PageHistoryKind::PersonEdit,
+        // Another member of a shared Space, in person.
+        _ if matches!(
+            crate::shared_space::shared_writer(edited_by),
+            Some((crate::shared_space::version::AuthorKind::Person, _))
+        ) =>
+        {
+            PageHistoryKind::PersonEdit
+        }
         _ => PageHistoryKind::AiEdit,
     }
 }

@@ -378,6 +378,14 @@ pub enum VersionAuthor {
 /// `legacy_authored` when that can no longer be told (see
 /// `sentences::birth_kind`).
 pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
+    // A version another member of a shared Space wrote: that member, or
+    // their AI tool (`shared_person:<member>`, `shared_ai:<member>`).
+    if let Some((kind, _member)) = crate::shared_space::shared_writer(edited_by) {
+        return match kind {
+            crate::shared_space::version::AuthorKind::Person => VersionAuthor::Person,
+            crate::shared_space::version::AuthorKind::Ai => VersionAuthor::Ai,
+        };
+    }
     match edited_by {
         // A person in the app or the vault, a card or proposal the person
         // accepted, a version the person restored, a draft the person

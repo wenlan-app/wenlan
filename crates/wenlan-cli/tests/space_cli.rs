@@ -26,6 +26,7 @@ fn spaces_subcommands_help_exits_zero() {
         &["spaces", "default", "--help"][..],
         &["spaces", "move", "--help"][..],
         &["spaces", "show", "--help"][..],
+        &["spaces", "share-sync", "--help"][..],
     ] {
         cli().args(args).assert().success();
     }
@@ -58,4 +59,18 @@ fn global_agent_and_space_options_are_visible() {
         .stdout(predicates::str::contains("--agent-name"))
         .stdout(predicates::str::contains("--all-spaces"))
         .stdout(predicates::str::contains("--space"));
+}
+
+#[test]
+fn spaces_share_sync_needs_a_folder_and_a_name() {
+    cli()
+        .args(["spaces", "share-sync", "Wedding", "--name", "Ana"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--folder"));
+    cli()
+        .args(["spaces", "share-sync", "Wedding", "--folder", "/tmp/shared"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--name"));
 }

@@ -7410,6 +7410,9 @@ const WRITER_TABLE: &[(&str, bool, bool, bool)] = &[
     ("refinery_merge", true, true, true),
     ("agent_refresh", true, true, false),
     ("link_rename", true, true, false),
+    // Another member's version of a shared Space page lands as written.
+    ("shared_person:member1", false, true, false),
+    ("shared_ai:member1", false, true, false),
     // Persisted in `page_history.edited_by` / `pages.changelog` but never
     // routed through the write gate today — these paths write via the db
     // layer (db.rs `create`/`migration_84`, citations.rs, revision accept).

@@ -476,6 +476,10 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/spaces/{name}/wiki/repo", "/api/spaces/{name}/wiki/suggest",
     "/api/spaces/{name}/wiki/publish", "/api/spaces/{name}/wiki/run",
     "/api/spaces/{name}/wiki/docs",
+    // One sync pass of a Space with its shared folder: it writes that
+    // Space's pages into the folder and takes other members' versions, and
+    // returns counts only.
+    "/api/spaces/{name}/shared/sync",
     // Setting up a daily update on GitHub: which settings the repository
     // has, as booleans, and the last run's links. A token goes to GitHub
     // and is never returned.

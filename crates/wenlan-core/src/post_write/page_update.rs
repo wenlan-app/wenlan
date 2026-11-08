@@ -62,6 +62,11 @@ impl<'a> Writer<'a> {
             "page_growth" => Writer::Pipeline(PipelineStage::PageGrowth),
             "refinery_merge" => Writer::Pipeline(PipelineStage::RefineryMerge),
             "link_rename" => Writer::Pipeline(PipelineStage::LinkRename),
+            // Another member's version of a shared page, already written
+            // there by that member (or their AI tool, which that member's
+            // Wenlan let land). Taking it here is copying a page someone
+            // saved, so it lands as written like a person's save.
+            other if crate::shared_space::shared_writer(other).is_some() => Writer::Human(other),
             other => Writer::Pipeline(PipelineStage::Unknown(other)),
         }
     }

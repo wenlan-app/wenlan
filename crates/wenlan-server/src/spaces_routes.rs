@@ -186,10 +186,55 @@ pub(crate) fn register_extended(router: TrackedRouter<SharedState>) -> TrackedRo
         .route("/api/spaces/{name}/confirm", post(handle_confirm_space))
         .route("/api/spaces/reorder", post(handle_reorder_space))
         .route("/api/spaces/{name}/star", post(handle_toggle_space_starred))
+        .route("/api/spaces/{name}/shared/sync", post(handle_shared_sync))
         .route(
             "/api/documents/{source_id}/space",
             post(handle_set_document_space),
         )
+}
+
+/// POST /api/spaces/{name}/shared/sync — one sync pass of the Space's pages
+/// with its shared folder (`wenlan_core::shared_space`). The first call
+/// adds this person to the folder's `space.json` and remembers the folder.
+/// Which pages are shared is decided by each page's own Space, never by a
+/// request header. Returns counts only.
+pub async fn handle_shared_sync(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(name): Path<String>,
+    Json(req): Json<wenlan_types::shared_space::SharedSyncRequest>,
+) -> Result<Json<wenlan_types::shared_space::SharedSyncCounts>, ServerError> {
+    let (db, page_root) = {
+        let s = state.read().await;
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.lint_config.page_root().map(std::path::Path::to_path_buf),
+        )
+    };
+    let space = db
+        .registered_space_or_none(Some(&name))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .ok_or_else(|| ServerError::NotFound(format!("no Space named {name:?}")))?;
+    let folder = std::path::PathBuf::from(req.folder.trim());
+    if !folder.is_absolute() {
+        return Err(ServerError::ValidationError(format!(
+            "folder must be an absolute path (got {:?})",
+            req.folder
+        )));
+    }
+    let settings = wenlan_core::shared_space::settings_path();
+    let counts = wenlan_core::shared_space::sync_space(
+        &db,
+        wenlan_core::shared_space::SyncTarget {
+            space: &space,
+            folder: &folder,
+            member_name: &req.member_name,
+            settings_path: &settings,
+            knowledge_path: page_root.as_deref(),
+        },
+    )
+    .await?;
+    Ok(Json(counts))
 }
 
 // =====================================================================

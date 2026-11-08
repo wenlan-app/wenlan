@@ -478,7 +478,7 @@ Options:
 
 ### `wenlan spaces`
 
-Manage Spaces, the separate wikis Wenlan keeps (list, add, default, move, show).
+Manage Spaces, the separate wikis Wenlan keeps (list, add, default, move, show, share-sync).
 
 ```text
 wenlan spaces [OPTIONS] <COMMAND>
@@ -548,6 +548,23 @@ wenlan spaces show [OPTIONS] <NAME>
 Arguments:
 
 - `<NAME>`: Space name.
+
+#### `wenlan spaces share-sync`
+
+Share a Space's pages through a folder a sync tool (Google Drive, iCloud) keeps the same on each member's computer: write this Space's new page versions there and take the other members' versions. Pages only; nothing from other Spaces, memories or chats goes into the folder.
+
+```text
+wenlan spaces share-sync [OPTIONS] --folder <FOLDER> --name <NAME> <SPACE>
+```
+
+Arguments:
+
+- `<SPACE>`: Space name.
+
+Options:
+
+- `--folder <FOLDER>`: The shared folder. The first sync adds you to it.
+- `--name <NAME>`: The name the other members see for you.
 
 ### `wenlan wiki`
 

@@ -227,6 +227,7 @@ main|post|/api/spaces/reorder|wenlan_server::spaces_routes::handle_reorder_space
 main|post|/api/spaces/{from}/move-to/{to}|wenlan_server::spaces_routes::handle_move_space
 main|post|/api/spaces/{name}/confirm|wenlan_server::spaces_routes::handle_confirm_space
 main|post|/api/spaces/{name}/pin|wenlan_server::spaces_routes::handle_pin_space
+main|post|/api/spaces/{name}/shared/sync|wenlan_server::spaces_routes::handle_shared_sync
 main|post|/api/spaces/{name}/star|wenlan_server::spaces_routes::handle_toggle_space_starred
 main|post|/api/spaces/{name}/wiki/docs|wenlan_server::repo_wiki_routes::handle_docs
 main|post|/api/spaces/{name}/wiki/github|wenlan_server::repo_wiki_routes::handle_github_setup

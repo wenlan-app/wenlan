@@ -19133,12 +19133,15 @@ pub struct BackupReceipt {
 /// The `page_history.edited_by` of a page's first version. An authored page
 /// records who made it, so a later edit by the person never makes the AI
 /// tool's sentences theirs: `person_create` for the person in the app (no
-/// agent name), `agent_create` for an AI tool. Other pages, and internal
-/// callers that name no actor, keep `create`.
-fn create_label(creation_kind: &str, actor: &str) -> &'static str {
+/// agent name), `agent_create` for an AI tool. A page another member of a
+/// shared Space wrote keeps that member (`shared_person:<member>`,
+/// `shared_ai:<member>`). Other pages, and internal callers that name no
+/// actor, keep `create`.
+fn create_label<'a>(creation_kind: &str, actor: &'a str) -> &'a str {
     match (creation_kind, actor) {
         ("authored", "unknown") => "person_create",
         ("authored", "") => "create",
+        ("authored", shared) if crate::shared_space::shared_writer(shared).is_some() => shared,
         ("authored", _) => "agent_create",
         _ => "create",
     }

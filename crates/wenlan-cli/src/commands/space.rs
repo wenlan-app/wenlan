@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! `wenlan spaces list/add/default/move/show` — manage memory spaces.
+//! `wenlan spaces list/add/default/move/show/share-sync` — manage memory spaces.
 
 use anyhow::Result;
 use clap::Subcommand;
@@ -40,6 +40,20 @@ pub enum SpaceCmd {
         /// Space name.
         name: String,
     },
+    /// Share a Space's pages through a folder a sync tool (Google Drive,
+    /// iCloud) keeps the same on each member's computer: write this Space's
+    /// new page versions there and take the other members' versions. Pages
+    /// only; nothing from other Spaces, memories or chats goes into the folder.
+    ShareSync {
+        /// Space name.
+        space: String,
+        /// The shared folder. The first sync adds you to it.
+        #[arg(long)]
+        folder: std::path::PathBuf,
+        /// The name the other members see for you.
+        #[arg(long)]
+        name: String,
+    },
 }
 
 pub async fn run(
@@ -56,6 +70,11 @@ pub async fn run(
         }
         SpaceCmd::Move { from, to } => move_cmd(client, format, quiet, &from, &to).await,
         SpaceCmd::Show { name } => show(client, format, quiet, &name).await,
+        SpaceCmd::ShareSync {
+            space,
+            folder,
+            name,
+        } => share_sync(client, format, quiet, &space, &folder, &name).await,
     }
 }
 
@@ -210,6 +229,45 @@ async fn show(
             if space.is_default {
                 println!("Default:        yes");
             }
+        }
+    }
+    Ok(())
+}
+
+async fn share_sync(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    space: &str,
+    folder: &std::path::Path,
+    name: &str,
+) -> Result<()> {
+    // The daemon may run in another folder; it needs the whole path.
+    let folder = std::path::absolute(folder)?;
+    let counts = client
+        .shared_sync(
+            space,
+            &wenlan_types::shared_space::SharedSyncRequest {
+                folder: folder.to_string_lossy().into_owned(),
+                member_name: name.to_string(),
+            },
+        )
+        .await?;
+    if quiet {
+        return Ok(());
+    }
+    match format {
+        ResolvedFormat::Json => crate::output::print_json(&counts)?,
+        ResolvedFormat::Table => {
+            println!(
+                "Synced '{}' with {}: {} written to the folder, {} taken from it, {} edited at the same time, {} skipped.",
+                space,
+                folder.display(),
+                counts.exported,
+                counts.applied,
+                counts.conflicts,
+                counts.skipped
+            );
         }
     }
     Ok(())
