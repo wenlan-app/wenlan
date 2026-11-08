@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
 import Graph from "graphology";
 import { layoutRegionMap, nudgeClearOfOthers, placeNewRegionMembers, REGION_ATTR } from "./regionMap";
