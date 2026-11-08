@@ -227,6 +227,7 @@ pub async fn global_routes_enforce_scope_contracts() {
         ("/api/memory/rejections", "/api/memory/rejections"),
         ("/api/capture-stats", "/api/capture-stats"),
         ("/api/activity", "/api/activity"),
+        ("/api/trust/scan", "/api/trust/scan"),
         ("/api/decisions/domains", "/api/decisions/domains"),
         ("/api/snapshots", "/api/snapshots"),
         ("/api/palace/layout", "/api/palace/layout"),

@@ -58,8 +58,14 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/memories/{source_id}/said", get(handle_memory_said))
 }
 
+/// Whether this caller may read the person's words in a conversation: the
+/// app, which sends no agent name. Every AI tool names itself (UX-FIND-1).
+pub(crate) fn may_read_conversation_words(headers: &HeaderMap) -> bool {
+    extract_agent_name(headers, None) == "unknown"
+}
+
 fn require_person(headers: &HeaderMap) -> Result<(), ServerError> {
-    if extract_agent_name(headers, None) != "unknown" {
+    if !may_read_conversation_words(headers) {
         return Err(ServerError::ValidationError(
             "conversation_words_are_for_the_person: only the app reads a conversation's words"
                 .into(),
@@ -174,7 +180,8 @@ fn around(
     (before, after)
 }
 
-/// The stored title, else the one Claude Code wrote into its transcript.
+/// The stored title, else the one Claude Code wrote into its transcript, else
+/// the first thing the person said in it.
 fn conversation_title(session: &wenlan_types::AgentSession) -> Option<String> {
     if let Some(title) = session
         .title
@@ -188,7 +195,9 @@ fn conversation_title(session: &wenlan_types::AgentSession) -> Option<String> {
         return None;
     }
     let path = std::path::Path::new(session.transcript_path.as_deref()?);
+    // Only the person reads these lines, so their first words may name it.
     wenlan_core::db::sessions::last_ai_title(path)
+        .or_else(|| wenlan_core::transcript_lines::first_said(&session.tool, path))
 }
 
 /// GET /api/sessions/{id}/lines

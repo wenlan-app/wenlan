@@ -1092,6 +1092,30 @@ pub struct PageWriteResponse {
     /// Their ids are listed by `GET /api/pages/{id}/sentences`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sentence_proposals: Vec<String>,
+    /// Every change this write wanted to make that did not land because the
+    /// sentence is the person's (or the page is locked): the sentence stays as
+    /// it was. One entry per sentence; a change whose facts changed also
+    /// waits as a sentence proposal (`proposal_id`), a rewording is dropped.
+    /// Absent when every change landed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edits_not_applied: Vec<EditNotApplied>,
+}
+
+/// One change a machine write wanted to make to a sentence it may not change.
+/// The sentence stays on the page as `before`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditNotApplied {
+    /// The sentence's hash, as `GET /api/pages/{id}/sentences` lists it.
+    pub sentence_hash: String,
+    /// The sentence as it stays on the page.
+    pub before: String,
+    /// What the write wanted instead. Empty when it would have deleted the
+    /// sentence.
+    pub after: String,
+    /// The sentence proposal that now waits for the person. `None` when the
+    /// change was only a rewording, which is never proposed: it was dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.

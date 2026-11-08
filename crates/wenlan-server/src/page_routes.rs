@@ -2442,6 +2442,7 @@ async fn handle_refresh_page_inner(
                     "Wait for the revision card to be reviewed before writing this page again."
                         .to_string(),
                 sentence_proposals: Vec::new(),
+                edits_not_applied: Vec::new(),
             },
         ));
     }
@@ -2561,8 +2562,14 @@ async fn handle_refresh_page_inner(
         )
         .await
     };
+    let not_applied = edits_not_applied_warning(&result.edits_not_applied);
     let next_step = if result.gated {
         "Wait for the revision card to be reviewed before writing this page again."
+    } else if !result.edits_not_applied.is_empty() {
+        "Not every change landed: the person's text was preserved. The changes listed in \
+         edits_not_applied touch the person's sentences, which stay as they were. Tell the \
+         person; changes with a proposal_id wait for them to accept in the Wenlan app. Read \
+         the page before proposing another change, and do not rewrite those sentences again."
     } else if !result.sentence_proposals.is_empty() {
         "Some sentences are the person's: your changes to them wait as sentence proposals \
          for the person to accept. Do not rewrite them again."
@@ -2594,13 +2601,60 @@ async fn handle_refresh_page_inner(
                 Vec::new()
             }
             .into_iter()
+            .chain(not_applied)
             .chain(wenlan_core::diagrams::diagram_warnings(&diagram_content))
             .collect(),
             citations: citations_summary,
             link_targets,
             next_step: next_step.to_string(),
             sentence_proposals: result.sentence_proposals,
+            edits_not_applied: result.edits_not_applied,
         },
+    ))
+}
+
+/// The longest piece of a sentence a warning quotes.
+const NOT_APPLIED_QUOTE_CHARS: usize = 120;
+/// How many sentences a warning quotes; the rest are counted.
+const NOT_APPLIED_QUOTED: usize = 5;
+
+/// One plain line saying which changes of a write did not land because they
+/// touch the person's sentences: how many, and which sentences. `None` when
+/// every change landed. The full list is `edits_not_applied`.
+pub(crate) fn edits_not_applied_warning(
+    edits: &[wenlan_types::responses::EditNotApplied],
+) -> Option<String> {
+    if edits.is_empty() {
+        return None;
+    }
+    let quote = |text: &str| -> String {
+        let clipped: String = text.chars().take(NOT_APPLIED_QUOTE_CHARS).collect();
+        if clipped.len() < text.len() {
+            format!("\"{clipped}…\"")
+        } else {
+            format!("\"{clipped}\"")
+        }
+    };
+    let mut parts: Vec<String> = edits
+        .iter()
+        .take(NOT_APPLIED_QUOTED)
+        .map(|edit| {
+            let what = match (&edit.proposal_id, edit.after.is_empty()) {
+                (Some(id), _) => format!("waits as proposal {id}"),
+                (None, true) => "a deletion, dropped".to_string(),
+                (None, false) => "a rewording, dropped".to_string(),
+            };
+            format!("{} ({what})", quote(&edit.before))
+        })
+        .collect();
+    if edits.len() > NOT_APPLIED_QUOTED {
+        parts.push(format!("and {} more", edits.len() - NOT_APPLIED_QUOTED));
+    }
+    Some(format!(
+        "{} change(s) were not applied because they touch the person's sentences, which \
+         were kept as written: {}",
+        edits.len(),
+        parts.join("; ")
     ))
 }
 

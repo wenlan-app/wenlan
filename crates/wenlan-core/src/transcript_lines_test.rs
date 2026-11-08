@@ -113,3 +113,41 @@ fn ux_find_2_reads_only_files_where_claude_code_keeps_transcripts() {
     assert_eq!(conversation_lines("claude-code", &inside).unwrap().len(), 3);
     std::fs::remove_dir_all(&root).ok();
 }
+
+#[test]
+fn first_said_names_an_untitled_conversation_by_the_persons_first_words() {
+    let root = std::env::temp_dir().join(format!("wenlan-first-said-{}", std::process::id()));
+    let dir = root.join(".claude").join("projects").join("-repo");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t.jsonl");
+    // Injected and meta turns are skipped; the first thing typed names it.
+    std::fs::write(&path, TRANSCRIPT).unwrap();
+    assert_eq!(
+        first_said("claude-code", &path).as_deref(),
+        Some("Should we stay near Gion?")
+    );
+    // A long, multi-line first message becomes one short line.
+    let long = format!(
+        "{}\n",
+        serde_json::json!({
+            "type": "user",
+            "message": {"role": "user", "content": format!("這種 untitled\n\n  在下面{}", "很可疑".repeat(30))}
+        })
+    );
+    std::fs::write(&path, long).unwrap();
+    let name = first_said("claude-code", &path).unwrap();
+    assert!(name.starts_with("這種 untitled 在下面很可疑"), "{name}");
+    assert!(!name.contains('\n'));
+    assert_eq!(name.chars().count(), 61, "60 characters and a cut mark");
+    assert!(name.ends_with('…'));
+    // Nothing the person said, an unread format, or a missing file: no name.
+    std::fs::write(
+        &path,
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hi."}]}}"#,
+    )
+    .unwrap();
+    assert_eq!(first_said("claude-code", &path), None);
+    assert_eq!(first_said("claude-desktop", &path), None);
+    std::fs::remove_dir_all(&root).ok();
+    assert_eq!(first_said("claude-code", &path), None);
+}

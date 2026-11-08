@@ -1346,11 +1346,13 @@ pub enum RefreshReason {
     /// Written as `distill`.
     Explicit,
     /// User-forced Re-distill ([`force_redistill_single`]). Written as
-    /// `distill`, but the page's own `user_edited` flag does not gate the
-    /// write: the new body lands in place and releases that flag and the
-    /// page's staleness in the same UPDATE. Nothing is released when no body
-    /// lands (provider failure, cancellation, discarded or unavailable
-    /// output). Authored pages still get a revision card.
+    /// `distill`. A page that holds anything the person wrote or edited (an
+    /// authored or `user_edited` page, or any sentence the person wrote or
+    /// accepted) is never rewritten by it: the new body waits as the page's
+    /// one open revision card and the page stays as it was. Only a page with
+    /// no person text takes the body in place, releasing its staleness in
+    /// the same UPDATE. Nothing is released when no body lands (provider
+    /// failure, cancellation, discarded or unavailable output).
     UserForced,
 }
 
@@ -5088,11 +5090,10 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
     }
 
     #[tokio::test]
-    async fn force_redistill_keeps_the_persons_prose_and_drops_a_rewording_of_it() {
-        // The page's whole body is the person's own prose. A forced rebuild
-        // regenerates only the AI's sentences and the page stays theirs. The
-        // person's sentence carries no citation whose facts changed, so the
-        // rebuild's rewording of it is not even a proposal.
+    async fn force_redistill_of_a_page_the_person_edited_waits_as_a_card_and_leaves_the_page() {
+        // UX-WHO-2: the page's whole body is the person's own prose. A forced
+        // rebuild must not replace it: the rebuild waits as one card for the
+        // person and the page stays exactly as they left it.
         let (db, _db_dir) = crate::db::tests::test_db().await;
         let db = Arc::new(db);
         seed_protected_page(&db, "page_forced").await;
@@ -5110,28 +5111,23 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         .await
         .unwrap();
 
-        assert!(!outcome.gated, "user_edited alone must not stage a card");
+        assert!(
+            outcome.gated,
+            "a forced rebuild of the person's page waits as a card"
+        );
         assert_eq!(
             *provider.observed.lock().await,
             vec![(true, Some("source_updated".to_string()))],
             "edit protection must hold while generation is in flight"
         );
         let after = db.get_page("page_forced").await.unwrap().unwrap();
-        assert!(
-            after.content.contains(FORCED_USER_PROSE),
-            "the person's sentence is kept: {}",
-            after.content
-        );
+        assert_eq!(after.content, before.content, "the page is left as it was");
+        assert_eq!(after.version, before.version, "nothing landed");
         assert!(after.user_edited, "the page is still the person's");
-        assert!(after.version <= before.version + 1, "at most one write");
-        assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
-        let view = crate::sentences::page_sentences(&db, "page_forced")
-            .await
-            .unwrap();
-        assert!(
-            view.proposals.is_empty(),
-            "a rewording of the person's sentence is not proposed: {:?}",
-            view.proposals
+        assert_eq!(
+            db.list_pending_revisions(10).await.unwrap().len(),
+            1,
+            "one card waits for the person"
         );
     }
 

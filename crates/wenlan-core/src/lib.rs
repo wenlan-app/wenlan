@@ -105,6 +105,7 @@ pub(crate) mod test_log;
 pub mod theme;
 pub mod topic_match;
 pub mod transcript_lines;
+pub mod trust_scan;
 pub mod truth_adapter;
 pub mod truth_contract;
 pub mod truth_manifest;
