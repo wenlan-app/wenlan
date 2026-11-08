@@ -236,6 +236,59 @@ async fn duplicate_names_hubs_and_semantic_suspicion_are_advisory_only() {
     assert_eq!(metric(&result, LintMetricCode::KgSemanticSuspicions), 1);
 }
 
+/// UX-GRAPH-8: memories filed under an archived topic, and memories with no
+/// shown topic left, are counted as advice; the re-filing repair moves the
+/// first group and deletes no link.
+#[tokio::test]
+async fn ux_graph_8_archived_main_topics_are_advised_and_refiled_not_deleted() {
+    let (db, _tmp) = test_db().await;
+    for id in ["shown", "gone"] {
+        db.test_seed_entity_shadow_page(crate::db::TestEntity::new(id, id, "concept"))
+            .await
+            .unwrap();
+    }
+    for id in ["m-gone", "m-shown"] {
+        insert_memory(&db, id, None).await;
+    }
+    db.test_primary_session()
+        .await
+        .execute_batch(
+            "INSERT INTO memory_entities (memory_id,entity_id) VALUES
+                 ('m-gone','gone'), ('m-shown','shown');
+             UPDATE memories SET entity_id = 'gone' WHERE source_id = 'm-gone';
+             UPDATE memories SET entity_id = 'shown' WHERE source_id = 'm-shown';
+             UPDATE pages SET status = 'archived'
+              WHERE id = (SELECT page_id FROM entity_page_map WHERE entity_id = 'gone');",
+        )
+        .await
+        .unwrap();
+
+    let result = check(&run(&db, None, test_config(true)).await, ADVISORY).clone();
+    assert_eq!(result.outcome(), LintOutcome::Pass);
+    assert_eq!(
+        metric(&result, LintMetricCode::KgArchivedPrimaryMemories),
+        1
+    );
+    assert_eq!(
+        metric(&result, LintMetricCode::KgSourcesWithoutActiveTopic),
+        1
+    );
+
+    let report = db.refile_archived_primaries("lint_repair").await.unwrap();
+    assert_eq!(report.unfiled, 1);
+
+    let result = check(&run(&db, None, test_config(true)).await, ADVISORY).clone();
+    assert_eq!(
+        metric(&result, LintMetricCode::KgArchivedPrimaryMemories),
+        0
+    );
+    assert_eq!(
+        metric(&result, LintMetricCode::KgSourcesWithoutActiveTopic),
+        1,
+        "the link to the archived topic is kept"
+    );
+}
+
 #[tokio::test]
 async fn full_population_is_validated_while_opaque_evidence_is_capped() {
     let (db, _tmp) = test_db().await;

@@ -54,6 +54,11 @@ pub enum LintMetricCode {
     KgDuplicateEntityNames,
     KgHubEntities,
     KgSemanticSuspicions,
+    /// Memories whose main topic is an archived topic (UX-GRAPH-8). The
+    /// repair re-files them; nothing is deleted.
+    KgArchivedPrimaryMemories,
+    /// Memories with topic links but none to a shown topic.
+    KgSourcesWithoutActiveTopic,
     KgServingStatus,
     KgSweepStatus,
     KgProviderReadiness,

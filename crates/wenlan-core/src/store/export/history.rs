@@ -138,6 +138,12 @@ pub const HISTORY_TABLES: &[HistoryTable] = &[
     ),
     table("thing_history", Log::Main, None, Some("ts")),
     table(
+        "memory_topic_changes",
+        Log::Main,
+        Some("memory.topic_change"),
+        Some("created_at"),
+    ),
+    table(
         "session_reads",
         Log::Reads,
         Some("session.read"),
@@ -614,6 +620,10 @@ fn entry_of(
         }
         "enrichment_origin" | "access_log" => {
             entry.target = text_of(&row, "source_id").map(|id| Target::new("memory", id));
+            None
+        }
+        "memory_topic_changes" => {
+            entry.target = text_of(&row, "memory_id").map(|id| Target::new("memory", id));
             None
         }
         "thing_history" => {
