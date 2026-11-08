@@ -125,6 +125,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     // The fixture has no AI conversations: no note lists one, no id resolves.
     case "get_page_sessions": return { sessions: [] };
     case "get_session_detail": return null;
+    // No fixture page keeps an original.
+    case "get_page_original": return null;
     case "get_conversation_lines": throw new TauriMockArgumentError(command, "sessionId");
     // No memory in the fixture was saved in a conversation.
     case "get_memory_said": throw new TauriMockArgumentError(command, "sourceId");

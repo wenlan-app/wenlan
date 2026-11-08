@@ -372,15 +372,19 @@ and wait for evidence that people need them.
 
 ## What AI tools made (HTML, images)
 
-- **UX-ART-1** `planned` Saved HTML opens in Wenlan looking exactly like the
+- **UX-ART-1** `shipped` Saved HTML opens in Wenlan looking exactly like the
   original.
   原文：存進來的 HTML 在文瀾打開，跟原本一樣。
-- **UX-ART-2** `planned` It is a page with its source: which conversation, and
+- **UX-ART-2** `shipped` It is a page with its source: which conversation, and
   when.
   原文：它是一頁，帶出處：哪段對話、什麼時候。
-- **UX-ART-3** `planned` The AI never rewrites it. If the facts change later, it
+- **UX-ART-3** `shipped` The AI never rewrites it. If the facts change later, it
   only adds a note.
   原文：AI 不改寫它；後來事實變了，只加註記。
+- **UX-ART-4** `shipped` When the AI draws a plan, a flow or an architecture,
+  or a diagram you keep building on, it keeps it in Wenlan without being asked.
+  Throwaway sketches are not kept. A text drawing (ASCII) counts.
+  原文：有用的图自己存：画出计划、流程、架构，或你接着用的图，AI 自己存；随手小草图不存。eli5 的 ASCII 图也算。（2026-11-08 22:26）
 
 ## Adding to Wenlan
 

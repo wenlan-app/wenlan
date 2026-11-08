@@ -5,7 +5,7 @@
 #      (when Claude Code provides one), so the `wenlan` CLI and the MCP server
 #      the agent starts from Bash see it. Plain assignment: PowerShell reads it too.
 #   2. Prints one context line so the agent passes `session` on `capture`,
-#      `write_page` and `update_brief`.
+#      `write_page`, `keep_original` and `update_brief`.
 # Reads the hook JSON from stdin without jq. Never blocks (always exit 0) and
 # stays silent when the session id is missing or not a plain id.
 set -u
@@ -34,5 +34,5 @@ if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
   { printf 'export WENLAN_SESSION=%s\n' "$session" >>"$CLAUDE_ENV_FILE"; } 2>/dev/null || true
 fi
 
-printf 'Wenlan session: %s. Pass it as session when you call capture, write_page or update_brief.\n' "$session"
+printf 'Wenlan session: %s. Pass it as session when you call capture, write_page, keep_original or update_brief.\n' "$session"
 exit 0

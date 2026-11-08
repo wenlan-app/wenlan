@@ -110,11 +110,15 @@ pub fn original_page_body(
     file: &str,
 ) -> String {
     let vendor = conv.vendor.display_name();
-    let chat = conv
+    let chat = match conv
         .title
         .as_deref()
-        .filter(|t| !t.trim().is_empty())
-        .unwrap_or("Untitled chat");
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        Some(title) => format!("the {vendor} chat \"{title}\""),
+        None => format!("a {vendor} chat"),
+    };
     let url = conv.vendor.conversation_url(&conv.external_id);
     let when = artifact
         .created_at
@@ -122,22 +126,33 @@ pub fn original_page_body(
         .map(|t| format!(", written {}", t.format("%Y-%m-%d %H:%M UTC")))
         .unwrap_or_default();
     let mut body = format!(
-        "Kept from the {vendor} chat \"{chat}\" ([open in {vendor}]({url})){when}. \
+        "Kept from {chat} ([open in {vendor}]({url})){when}. \
          Original file: `{file}`.\n\n"
     );
-    if artifact.is_markdown() {
-        body.push_str(artifact.content.trim_end());
+    push_original(
+        &mut body,
+        &artifact.content,
+        artifact.is_markdown(),
+        artifact.fence_language(),
+    );
+    body
+}
+
+/// The original itself: Markdown as it is, anything else in a fenced block
+/// the app shows as the page it was (HTML and SVG) or as code.
+fn push_original(body: &mut String, content: &str, markdown: bool, language: &str) {
+    if markdown {
+        body.push_str(content.trim_end());
     } else {
-        let fence = fence_for(&artifact.content);
+        let fence = fence_for(content);
         body.push_str(&fence);
-        body.push_str(artifact.fence_language());
+        body.push_str(language);
         body.push('\n');
-        body.push_str(artifact.content.trim_end_matches('\n'));
+        body.push_str(content.trim_end_matches('\n'));
         body.push('\n');
         body.push_str(&fence);
     }
     body.push('\n');
-    body
 }
 
 /// A title no other note has, so the same-title rule never attaches this
@@ -147,25 +162,36 @@ async fn unused_title(
     conv: &ParsedConversation,
     artifact: &ParsedArtifact,
 ) -> Result<String, WenlanError> {
+    let vendor = conv.vendor.display_name();
+    let chat = conv
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty());
     let base = artifact
         .title
         .as_deref()
         .map(str::trim)
         .filter(|t| !t.is_empty())
-        .unwrap_or("Untitled artifact")
-        .to_string();
-    let chat = conv
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .unwrap_or("chat");
-    let mut candidates = vec![
-        base.clone(),
-        format!("{base} ({} {chat})", conv.vendor.display_name()),
-    ];
-    candidates
-        .extend((2..=20).map(|n| format!("{base} ({} {chat} {n})", conv.vendor.display_name())));
+        .map(str::to_string)
+        .or_else(|| chat.map(str::to_string))
+        .unwrap_or_else(|| format!("{vendor} artifact"));
+    let context = format!("{vendor} {}", chat.unwrap_or("chat"));
+    if let Some(title) = first_unused_title(db, &base, &context).await? {
+        return Ok(title);
+    }
+    Ok(format!("{base} ({})", safe_segment(&artifact.id)))
+}
+
+/// `base`, else `base (<context>)`, else `base (<context> 2)` up to 20, or
+/// `None` when every one is taken.
+async fn first_unused_title(
+    db: &MemoryDB,
+    base: &str,
+    context: &str,
+) -> Result<Option<String>, WenlanError> {
+    let mut candidates = vec![base.to_string(), format!("{base} ({context})")];
+    candidates.extend((2..=20).map(|n| format!("{base} ({context} {n})")));
     for candidate in &candidates {
         let taken = crate::page_titles::strict_same_title_note(
             db,
@@ -176,10 +202,10 @@ async fn unused_title(
         )
         .await?;
         if taken.is_none() {
-            return Ok(candidate.clone());
+            return Ok(Some(candidate.clone()));
         }
     }
-    Ok(format!("{base} ({})", safe_segment(&artifact.id)))
+    Ok(None)
 }
 
 #[derive(serde::Serialize)]
@@ -310,6 +336,232 @@ pub async fn keep_conversation_originals(
         serde_json::to_vec_pretty(&manifest)?.as_slice(),
     )?;
     Ok(kept)
+}
+
+/// What an AI tool made in a live session that it asks Wenlan to keep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionOriginalFormat {
+    Html,
+    Svg,
+    Markdown,
+}
+
+impl SessionOriginalFormat {
+    /// The format for a file name or a kind the caller named.
+    pub fn from_name(name: &str) -> Option<Self> {
+        let lower = name.trim().to_ascii_lowercase();
+        let ext = lower.rsplit('.').next().unwrap_or(&lower);
+        match ext {
+            "html" | "htm" | "text/html" => Some(Self::Html),
+            "svg" | "image/svg+xml" => Some(Self::Svg),
+            "md" | "markdown" | "text/markdown" => Some(Self::Markdown),
+            _ => None,
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Html => "html",
+            Self::Svg => "svg",
+            Self::Markdown => "md",
+        }
+    }
+
+    fn kind(self) -> &'static str {
+        match self {
+            Self::Html => "text/html",
+            Self::Svg => "image/svg+xml",
+            Self::Markdown => "text/markdown",
+        }
+    }
+}
+
+/// One thing an AI tool made in a live session, to keep as an original.
+#[derive(Debug, Clone)]
+pub struct SessionOriginal<'a> {
+    /// The session that made it; `None` when the caller named none.
+    pub session: Option<&'a wenlan_types::sessions::SessionRef>,
+    pub title: &'a str,
+    pub content: &'a str,
+    pub format: SessionOriginalFormat,
+    /// The Space the page lands in, already resolved by the caller.
+    pub space: wenlan_types::WriteSpaceTarget,
+    /// The resolved Space name, for the page's workspace axis.
+    pub workspace: Option<String>,
+    /// Memories the page cites: the diagram's structure as text, kept in the
+    /// session so the night's tidy and later sessions read it, not the HTML.
+    pub source_memory_ids: Vec<String>,
+}
+
+/// The id a session original's content gets: a prefix of its SHA-256.
+fn content_id(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(content.as_bytes()))[..16].to_string()
+}
+
+/// The page this session already kept for exactly this content, if any.
+pub async fn find_session_original(
+    db: &MemoryDB,
+    session: Option<&wenlan_types::sessions::SessionRef>,
+    content: &str,
+) -> Result<Option<KeptOriginal>, WenlanError> {
+    let (vendor, conversation_id) = session_key(session);
+    let artifact_id = content_id(content);
+    let Some(record) = db
+        .originals_for_conversation(&vendor, &conversation_id)
+        .await?
+        .into_iter()
+        .find(|record| record.artifact_id == artifact_id)
+    else {
+        return Ok(None);
+    };
+    // Only a page that still exists counts as kept.
+    if db.get_page(&record.page_id).await?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(KeptOriginal {
+        artifact_id,
+        page_id: record.page_id,
+        file_path: record.file_path,
+    }))
+}
+
+fn session_key(session: Option<&wenlan_types::sessions::SessionRef>) -> (String, String) {
+    match session {
+        Some(session) => (session.tool.clone(), session.external_id.clone()),
+        None => ("agent".to_string(), "no-session".to_string()),
+    }
+}
+
+/// The largest original a session may keep (a self-contained HTML page with
+/// inline data is rarely more than a few MB).
+pub const MAX_SESSION_ORIGINAL_BYTES: usize = 10 * 1024 * 1024;
+
+/// How a session's tool is named in a page's first line.
+fn session_tool_name(tool: &str) -> String {
+    match tool {
+        "claude-code" => "Claude Code".to_string(),
+        "codex" => "Codex".to_string(),
+        "claude" => "Claude".to_string(),
+        "chatgpt" => "ChatGPT".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Keep what an AI tool made in a live session (UX-ART-1..3): the file as it
+/// is under `originals/<tool>/<session>/`, one `original` page that shows it,
+/// and a row in `originals`. The page names the session and when it was
+/// kept; the session itself is stamped on the page's history by the caller.
+/// Keeping the same content again in the same session returns the page it
+/// already has, so a retry never makes a second copy. A changed version is
+/// new content and gets its own page; the first one stays as it was.
+pub async fn keep_session_original(
+    db: &MemoryDB,
+    data_root: &Path,
+    knowledge_path: Option<&Path>,
+    input: SessionOriginal<'_>,
+) -> Result<(KeptOriginal, bool), WenlanError> {
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err(WenlanError::Validation("original_title_missing".into()));
+    }
+    if input.content.trim().is_empty() {
+        return Err(WenlanError::Validation("original_empty".into()));
+    }
+    if input.content.len() > MAX_SESSION_ORIGINAL_BYTES {
+        return Err(WenlanError::Validation("original_too_large".into()));
+    }
+    let (vendor, conversation_id) = session_key(input.session);
+    if let Some(kept) = find_session_original(db, input.session, input.content).await? {
+        return Ok((kept, false));
+    }
+    let mut artifact_id = content_id(input.content);
+    // A row whose page was destroyed keeps its id, so the new copy takes another.
+    if db
+        .originals_for_conversation(&vendor, &conversation_id)
+        .await?
+        .iter()
+        .any(|record| record.artifact_id == artifact_id)
+    {
+        artifact_id = format!("{artifact_id}-{}", uuid::Uuid::new_v4().simple());
+    }
+    let dir_rel = format!(
+        "{ORIGINALS_DIR}/{}/{}",
+        safe_segment(&vendor),
+        safe_segment(&conversation_id)
+    );
+    std::fs::create_dir_all(data_root.join(&dir_rel))?;
+    let file_rel = format!("{dir_rel}/{artifact_id}.{}", input.format.extension());
+    write_atomically(&data_root.join(&file_rel), input.content.as_bytes())?;
+
+    let now = chrono::Utc::now();
+    let tool = session_tool_name(&vendor);
+    let from = if input.session.is_some() {
+        format!("Saved from a {tool} session")
+    } else {
+        "Saved by an AI tool".to_string()
+    };
+    let mut body = format!(
+        "{from}, {}. Original file: `{file_rel}`.\n\n",
+        now.format("%Y-%m-%d %H:%M UTC")
+    );
+    let language = match input.format {
+        SessionOriginalFormat::Html => "html",
+        SessionOriginalFormat::Svg => "svg",
+        SessionOriginalFormat::Markdown => "markdown",
+    };
+    push_original(
+        &mut body,
+        input.content,
+        input.format == SessionOriginalFormat::Markdown,
+        language,
+    );
+    let page_title = first_unused_title(db, title, &format!("{tool} {}", now.format("%Y-%m-%d")))
+        .await?
+        .unwrap_or_else(|| format!("{title} ({artifact_id})"));
+    let created = crate::post_write::create_page(
+        db,
+        CreateConceptRequest {
+            title: page_title,
+            content: body,
+            summary: None,
+            entity_id: None,
+            space: input.space,
+            source_memory_ids: input.source_memory_ids,
+            creation_kind: Some(ORIGINAL_CREATION_KIND.to_string()),
+            workspace: input.workspace,
+        },
+        "agent",
+        knowledge_path,
+    )
+    .await?;
+    if !created.wrote {
+        return Err(WenlanError::Validation(format!(
+            "original from {vendor} session {conversation_id} did not get its own page: {}",
+            created.warnings.join("; ")
+        )));
+    }
+    db.insert_original(&OriginalRecord {
+        page_id: created.id.clone(),
+        vendor,
+        conversation_id,
+        artifact_id: artifact_id.clone(),
+        kind: input.format.kind().to_string(),
+        title: Some(title.to_string()),
+        file_path: file_rel.clone(),
+        conversation_url: String::new(),
+        written_at: Some(now.timestamp()),
+        imported_at: now.timestamp(),
+    })
+    .await?;
+    Ok((
+        KeptOriginal {
+            artifact_id,
+            page_id: created.id,
+            file_path: file_rel,
+        },
+        true,
+    ))
 }
 
 /// Where `page_id`'s original came from, or `None` for a page that was not
