@@ -12,7 +12,7 @@ import {
   restartDaemon,
   type Page,
 } from "../lib/tauri";
-import { STEEP_COMMAND } from "../lib/steepMode";
+import { useAskAiCommand } from "./memory/askAi/AskAiHint";
 import { isKnowledgePage, listAllActivePages } from "./memory/pages/listAllPages";
 import "./TrayPanel.css";
 
@@ -164,14 +164,15 @@ export default function TrayPanel() {
   const noteEdits = notesWithPendingEdits(noteProposals.data ?? []);
   const waiting = Math.max(0, (material.data?.total ?? 0) - (material.data?.held ?? 0));
 
+  // Worded for the AI tool the user last used; null until the tools are read.
+  const steepCommand = useAskAiCommand("steep");
   let steepLine: string | null = null;
   if (automatic.isSuccess && material.isSuccess) {
     if (automatic.data) {
       steepLine = waiting > 0 ? t("trayPanel.steepAutoQueued", { count: waiting }) : t("trayPanel.steepAutoDone");
     } else {
-      steepLine = waiting > 0
-        ? t("trayPanel.steepOnDemandReady", { count: waiting, command: STEEP_COMMAND })
-        : t("trayPanel.steepOnDemandDone");
+      if (waiting === 0) steepLine = t("trayPanel.steepOnDemandDone");
+      else if (steepCommand !== null) steepLine = t("trayPanel.steepOnDemandReady", { count: waiting, command: steepCommand });
     }
   }
 
@@ -252,7 +253,7 @@ export default function TrayPanel() {
             </div>
           )}
 
-          {steepLine && <p className="tray-panel-quiet" data-testid="tray-panel-steep">{steepLine}</p>}
+          {steepLine && <p className="tray-panel-quiet tray-panel-steep" data-testid="tray-panel-steep">{steepLine}</p>}
         </>
       )}
 
