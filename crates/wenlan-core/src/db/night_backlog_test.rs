@@ -274,3 +274,145 @@ async fn backlog_dry_run() {
     ));
     std::fs::write(&path, out).unwrap();
 }
+
+async fn mode(db: &MemoryDB, id: &str) -> Option<String> {
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT supersede_mode FROM memories WHERE source_id = ?1 AND chunk_index = 0",
+            libsql::params![id],
+        )
+        .await
+        .unwrap();
+    rows.next()
+        .await
+        .unwrap()
+        .and_then(|row| row.get::<Option<String>>(0).unwrap())
+}
+
+async fn one(db: &MemoryDB, sql: &str) -> i64 {
+    let conn = db.conn.lock().await;
+    let mut rows = conn.query(sql, ()).await.unwrap();
+    rows.next()
+        .await
+        .unwrap()
+        .map(|row| row.get::<i64>(0).unwrap())
+        .unwrap_or(-1)
+}
+
+/// UX-GRAPH-7: the one-time pass hides later copies behind the earliest,
+/// never a person's or unknown writer's or a thing's point, stands an
+/// update's new memory for the old, expires stale checks, takes old night
+/// points off the review list, runs once, and Undo takes all of it back.
+#[tokio::test]
+async fn ux_graph_7_the_old_memory_pass_runs_once_and_undo_takes_it_all_back() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    for (id, agent, at) in [
+        ("mem_a", Some("claude-code"), now - 9_000),
+        ("mem_b", Some("obsidian"), now - 5_000),
+        ("mem_b2", Some("claude-code"), now - 4_000),
+        ("mem_c", None, now - 1_000),
+        ("mem_old", Some("claude-code"), now - 8_000),
+        ("mem_new", Some("wenlan"), now),
+    ] {
+        remember(
+            &db,
+            id,
+            &format!("{id} says something."),
+            agent,
+            "wenlan",
+            at,
+        )
+        .await;
+    }
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET confirmed = 0 WHERE source_id = 'mem_a'",
+            (),
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "INSERT INTO refinement_queue (id, action, source_ids, status)
+             VALUES ('r1', 'detect_contradiction', '[]', 'pending'),
+                    ('r3', 'detect_contradiction', '[]', 'awaiting_review')",
+            (),
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "INSERT INTO thing_map_nodes (thing_id, id, parent_id, rank, kind, label, by, sources, created_at, updated_at)
+             VALUES ('thg_1', 'n1', NULL, 1, 'point', 'x', 'ai', '[{\"session_id\":\"s\",\"memory_id\":\"mem_a\"}]', 0, 0)",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    let plan = BacklogPlan {
+        // mem_b2 stands behind mem_b, which stands behind mem_a; mem_c has
+        // no writer; mem_a is a thing's point and is only ever kept.
+        hide: vec![
+            ("mem_a".into(), "mem_b".into()),
+            ("mem_b".into(), "mem_b2".into()),
+            ("mem_a".into(), "mem_c".into()),
+            ("mem_b".into(), "mem_a".into()),
+        ],
+        updated: vec![("mem_old".into(), "mem_new".into())],
+    };
+    let pass = db.apply_backlog(&plan).await.unwrap();
+    assert_eq!((pass.merged(), pass.updated()), (2, 1), "{pass:?}");
+    assert_eq!(mode(&db, "mem_b").await.as_deref(), Some("evicted"));
+    assert_eq!(mode(&db, "mem_b2").await.as_deref(), Some("evicted"));
+    assert_eq!(mode(&db, "mem_old").await.as_deref(), Some("evicted"));
+    assert_ne!(mode(&db, "mem_c").await.as_deref(), Some("evicted"));
+    assert_ne!(mode(&db, "mem_a").await.as_deref(), Some("evicted"));
+    assert_eq!(pass.expired, ["r1"]);
+    assert_eq!(
+        one(
+            &db,
+            "SELECT COUNT(*) FROM refinement_queue WHERE status = 'awaiting_review'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(pass.confirmed, ["mem_a"]);
+    assert_eq!(db.backlog_pass().await.unwrap(), Some(pass.clone()));
+    assert!(db.apply_backlog(&plan).await.is_err(), "it runs once");
+
+    let undone = db.undo_backlog().await.unwrap().unwrap();
+    assert_eq!(undone, pass);
+    for id in ["mem_b", "mem_b2", "mem_old"] {
+        assert_ne!(mode(&db, id).await.as_deref(), Some("evicted"), "{id}");
+    }
+    assert_eq!(
+        one(
+            &db,
+            "SELECT COUNT(*) FROM memories WHERE source_id = 'mem_new'"
+        )
+        .await,
+        0,
+        "what the pass wrote is forgotten"
+    );
+    assert_eq!(
+        one(
+            &db,
+            "SELECT COUNT(*) FROM refinement_queue WHERE status = 'pending'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        one(
+            &db,
+            "SELECT confirmed FROM memories WHERE source_id = 'mem_a' AND chunk_index = 0"
+        )
+        .await,
+        0
+    );
+    assert_eq!(db.backlog_pass().await.unwrap(), None);
+    assert!(db.undo_backlog().await.unwrap().is_none());
+    // It can run again after Undo.
+    assert!(db.apply_backlog(&plan).await.is_ok());
+}
