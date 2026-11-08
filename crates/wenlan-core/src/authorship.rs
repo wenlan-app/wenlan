@@ -413,6 +413,50 @@ pub fn is_protected(author: SentenceAuthor, guarded: bool) -> bool {
     }
 }
 
+/// What a memory row says about who wrote it, as [`memory_author`] reads it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MemoryWriter<'a> {
+    pub source_id: &'a str,
+    /// `memories.source_agent`: the tool that saved the row.
+    pub source_agent: Option<&'a str>,
+    /// `memories.origin_class`.
+    pub origin_class: Option<&'a str>,
+    /// `memories.authored_content` is set: the person typed it in the app.
+    pub authored: bool,
+}
+
+/// Who wrote a memory, derived from the columns every row already has.
+/// Nothing is stored, so the rule can't drift from the data.
+///
+/// Measured on the owner's database copy (11-08, 3,905 memories): nothing
+/// recorded the person's own writing (`authored_content` empty, nothing
+/// pinned), `confirmed` only says someone said yes, and `source_agent` is the
+/// one signal that names a writer. So, in order:
+///
+/// - typed in the app (`authored_content`) is the person's;
+/// - a document or vault import, or a chat import (`import_` ids, both the
+///   raw turns and the points taken from them), is [`SentenceAuthor::Original`];
+/// - any other row a tool saved is the AI's;
+/// - a row nothing names (no tool) is [`SentenceAuthor::Unknown`], protected
+///   like the person's: a missed merge costs nothing, a wrong one hides a fact.
+pub fn memory_author(writer: MemoryWriter<'_>) -> SentenceAuthor {
+    if writer.authored {
+        return SentenceAuthor::Person;
+    }
+    let agent = writer.source_agent.map(str::trim).unwrap_or("");
+    if writer.origin_class == Some("document_ingest")
+        || crate::origin::is_document_ingest_source_agent(agent)
+        || writer.source_id.starts_with("import_")
+    {
+        return SentenceAuthor::Original;
+    }
+    if agent.is_empty() {
+        SentenceAuthor::Unknown
+    } else {
+        SentenceAuthor::Ai
+    }
+}
+
 /// One page version as the derivation reads it, oldest first.
 #[derive(Debug, Clone, Copy)]
 pub struct VersionText<'a> {

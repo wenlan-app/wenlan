@@ -968,7 +968,30 @@ impl MemoryDB {
         }
         let now = chrono::Utc::now().timestamp();
         let conn = self.conn.lock().await;
-        let mut map = read_map(&conn, thing_id).await?;
+        let tx = conn
+            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+            .await
+            .map_err(db_err("thing map begin"))?;
+        undo_dream_map_in(&tx, thing_id, changes, now).await?;
+        tx.commit().await.map_err(db_err("thing map commit"))?;
+        Ok(())
+    }
+}
+
+/// [`MemoryDB::undo_dream_map`] on a connection the caller holds, so a
+/// night's Undo can take its map changes back in the same transaction as
+/// the rest of the night. The caller owns the transaction.
+pub(super) async fn undo_dream_map_in(
+    conn: &libsql::Connection,
+    thing_id: &str,
+    changes: &DreamMapChanges,
+    now: i64,
+) -> Result<(), WenlanError> {
+    {
+        if changes.is_empty() {
+            return Ok(());
+        }
+        let mut map = read_map(conn, thing_id).await?;
         let before = (map.nodes.len(), map.proposals.len());
         let mut touched = false;
         map.proposals.retain(|p| !changes.proposals.contains(&p.id));
@@ -995,7 +1018,7 @@ impl MemoryDB {
         }
         if touched || before != (map.nodes.len(), map.proposals.len()) {
             map.revision += 1;
-            write_map(&conn, thing_id, &map, now).await?;
+            write_rows(conn, thing_id, &map, now).await?;
         }
         Ok(())
     }

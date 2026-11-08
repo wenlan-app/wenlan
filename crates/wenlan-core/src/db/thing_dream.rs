@@ -520,8 +520,7 @@ impl MemoryDB {
     /// The person takes back a whole night on the big map (UX-GRAPH-5):
     /// the newest night of every thing in `scope` that ran at or after
     /// `since`, each as its own page's Undo does. Returns how many things'
-    /// nights were taken back and the memories they wrote, for the caller to
-    /// forget.
+    /// nights were taken back and the memories they wrote, now forgotten.
     pub async fn undo_nights_since(
         &self,
         scope: &ReadScope,
@@ -728,8 +727,9 @@ impl MemoryDB {
 
     /// The person takes back the newest night of a thing that was not taken
     /// back yet, what it changed on the thing's map, and the topics it
-    /// connected its points to. Returns the memories it wrote, for the caller
-    /// to forget; empty when there is nothing to take back. Its conversations are not read again for the
+    /// connected its points to, and forgets the memories it wrote, all in one
+    /// transaction so an Undo is never left half done (trust audit F14).
+    /// Returns those memories; empty when there is nothing to take back. Its conversations are not read again for the
     /// same lines.
     pub async fn undo_thing_dream(&self, thing_id: &str) -> Result<Vec<String>, WenlanError> {
         let nights = self.dream_nights(thing_id).await?;
@@ -757,11 +757,14 @@ impl MemoryDB {
         )
         .await?;
         remove_night_links(&tx, &night.entry.changes).await?;
-        tx.commit().await.map_err(db_err("undo dream commit"))?;
-        drop(conn);
-        self.undo_dream_map(thing_id, &night.entry.map).await?;
+        super::thing_map::undo_dream_map_in(&tx, thing_id, &night.entry.map, now).await?;
         let mut ids = night.entry.decided;
         ids.extend(night.entry.open);
+        for id in &ids {
+            self.delete_by_source_id_in_transaction(&tx, "memory", id, false)
+                .await?;
+        }
+        tx.commit().await.map_err(db_err("undo dream commit"))?;
         Ok(ids)
     }
 }

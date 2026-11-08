@@ -445,9 +445,7 @@ pub async fn handle_undo_thing_dream(
     require_person(&headers)?;
     let db = open_db(&state).await?;
     let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
-    for memory in db.undo_thing_dream(&id).await? {
-        db.delete_by_source_id("memory", &memory).await?;
-    }
+    db.undo_thing_dream(&id).await?;
     Ok(Json(summary(&db, &scope, &id).await?))
 }
 
@@ -466,9 +464,6 @@ pub async fn handle_undo_nights(
     let db = open_db(&state).await?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     let (things, memories) = db.undo_nights_since(&scope, request.since).await?;
-    for memory in &memories {
-        db.delete_by_source_id("memory", memory).await?;
-    }
     Ok(Json(wenlan_types::NightsUndo {
         things,
         points: memories.len(),

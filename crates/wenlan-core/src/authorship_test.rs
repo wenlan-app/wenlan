@@ -423,3 +423,49 @@ fn sentence_changes_pair_a_rewrite_and_keep_the_old_text() {
         ]
     );
 }
+
+fn writer<'a>(source_id: &'a str, agent: Option<&'a str>) -> MemoryWriter<'a> {
+    MemoryWriter {
+        source_id,
+        source_agent: agent,
+        ..Default::default()
+    }
+}
+
+/// A night may change only what an AI wrote. The rule reads the columns every
+/// memory has, in the order the owner's data showed they can be trusted.
+#[test]
+fn a_memory_s_writer_comes_from_the_tool_that_saved_it() {
+    assert_eq!(memory_author(writer("mem_1", Some("claude-code"))), Ai);
+    assert_eq!(memory_author(writer("mem_2", Some("wenlan"))), Ai);
+    assert_eq!(memory_author(writer("mem_3", Some("refinery"))), Ai);
+    // Imports are the original text, never the AI's to rewrite.
+    assert_eq!(memory_author(writer("obs_1", Some("obsidian"))), Original);
+    assert_eq!(memory_author(writer("doc_1", Some(" Folder"))), Original);
+    assert_eq!(
+        memory_author(writer("import_chatgpt_abc_0", None)),
+        Original
+    );
+    assert_eq!(
+        memory_author(writer("import_batch_0_1", Some("chatgpt"))),
+        Original
+    );
+    assert_eq!(
+        memory_author(MemoryWriter {
+            origin_class: Some("document_ingest"),
+            ..writer("x", Some("claude-code"))
+        }),
+        Original
+    );
+    // Typed in the app wins over the tool that carried it.
+    assert_eq!(
+        memory_author(MemoryWriter {
+            authored: true,
+            ..writer("mem_4", Some("claude-code"))
+        }),
+        Person
+    );
+    // Nothing names a writer: protected, like the person's.
+    assert_eq!(memory_author(writer("mem_5", None)), Unknown);
+    assert_eq!(memory_author(writer("mem_6", Some("  "))), Unknown);
+}

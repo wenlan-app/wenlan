@@ -581,20 +581,14 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
     assert_eq!(db.dream_points(&thing).await.unwrap().len(), 3);
     assert_eq!(unlinked(&db, &thing).await, ["mem_2", "mem_1"]);
 
-    // Taking the night back removes the link, before anything is forgotten.
+    // Taking the night back removes its links and forgets its points in
+    // the same step (F14): nothing of the night is left on the thing.
     let forget = db.undo_thing_dream(&thing).await.unwrap();
     assert_eq!(forget.len(), 3);
-    db.record_dream(
-        &thing,
-        &["mem_0".into()],
-        &[],
-        &Default::default(),
-        &[],
-        &[],
-    )
-    .await
-    .unwrap();
-    assert_eq!(unlinked(&db, &thing).await, ["mem_0"]);
+    assert!(db.dream_points(&thing).await.unwrap().is_empty());
+    for id in &forget {
+        assert!(db.get_memory_detail(id).await.unwrap().is_none(), "{id}");
+    }
 }
 
 /// UX-CHAT-5: old points are connected through the same path, once. A model

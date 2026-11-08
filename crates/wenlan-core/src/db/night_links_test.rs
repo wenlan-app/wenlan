@@ -246,10 +246,12 @@ async fn ux_chat_5_undoing_a_night_removes_its_links() {
     .await
     .unwrap();
 
+    // Taking the night back forgets its points in the same step (F14), so
+    // nothing is left half undone; the night's own link goes first.
     let forget = db.undo_thing_dream(&site).await.unwrap();
     assert_eq!(forget, ["mem_a", "mem_b"]);
-    assert_eq!(links_of(&db, "mem_a").await, [other_work.as_str()]);
-    assert_eq!(main_topic(&db, "mem_a").await, Some(other_work));
+    assert!(links_of(&db, "mem_a").await.is_empty());
+    assert!(db.get_memory_detail("mem_a").await.unwrap().is_none());
 }
 
 /// One record: a night writes what it made into `changes`; every kind can be
