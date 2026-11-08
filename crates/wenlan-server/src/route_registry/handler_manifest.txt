@@ -141,6 +141,7 @@ main|post|/api/memory/link-entity|wenlan_server::entity_graph_routes::handle_lin
 main|post|/api/memory/list|wenlan_server::memory_routes::handle_list_memories
 main|post|/api/memory/observations|wenlan_server::entity_graph_routes::handle_add_observation
 main|post|/api/memory/reclassify/{source_id}|wenlan_server::memory_routes::handle_reclassify_memory
+main|post|/api/memory/restore/{source_id}|wenlan_server::memory_routes::handle_restore_memory
 main|post|/api/memory/relations|wenlan_server::entity_graph_routes::handle_create_relation
 main|post|/api/memory/relations/preserve|wenlan_server::entity_graph_routes::handle_create_relation_preserving
 main|post|/api/memory/revision/{id}/accept|wenlan_server::memory_routes::handle_accept_revision

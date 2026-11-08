@@ -215,11 +215,17 @@ async fn a_deleted_pages_former_id_carries_no_sentinel_anywhere() {
     let (state, _db, _tmp) = db_state().await;
     let id = seed_sentinel_page(&state).await;
 
+    // Only the person, in the app, deletes a page for good; any other DELETE
+    // archives it, and refuses a page the person wrote, like this one.
     let delete_response = send(
         &state,
         Request::builder()
             .method("DELETE")
-            .uri(format!("/api/pages/{id}"))
+            .uri(format!("/api/pages/{id}?permanent=true"))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
             .body(Body::empty())
             .unwrap(),
     )

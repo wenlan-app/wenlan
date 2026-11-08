@@ -18,7 +18,8 @@ use wenlan_types::requests::{
 };
 use wenlan_types::responses::{
     CreatePageResponse, MovePageResponse, OkfConceptRef, PageDraftResponse, PageInventoryEntry,
-    PageInventoryResponse, PageProjectionStatus, PageReadResponse,
+    PageInventoryResponse, PageProjectionStatus, PageReadResponse, PageRemovalResponse,
+    PageRemovalStatus,
 };
 use wenlan_types::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};
 
@@ -545,10 +546,16 @@ static PAGE_LIFECYCLE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(()
 /// keeps posing as an active page. A failed move does not undo the archive:
 /// the response reports `projection_status: pending` and the next daemon start
 /// retries the move.
+///
+/// An AI tool (any request that is not the person's, see
+/// `memory_routes::caller_is_person`) may not archive a page holding the
+/// person's work (UX-WHO-2). Every archive is recorded in `agent_activity`.
 pub async fn handle_archive_page(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ServerError> {
+) -> Result<Json<PageRemovalResponse>, ServerError> {
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -556,36 +563,90 @@ pub async fn handle_archive_page(
             s.lint_config.page_root().map(std::path::Path::to_path_buf),
         )
     };
+    let agent = extract_agent_name(&headers, None);
+    let remover = page_remover(&headers, &agent);
+    archive_page_for(&db, page_root, &id, remover, header_space.as_deref()).await
+}
+
+/// Who asks to archive or delete a page: the person only when the request
+/// carries the app's person marker and no agent name.
+fn page_remover<'a>(
+    headers: &HeaderMap,
+    agent: &'a str,
+) -> wenlan_core::post_write::PageRemover<'a> {
+    if crate::memory_routes::caller_is_person(headers) {
+        wenlan_core::post_write::PageRemover::Person
+    } else {
+        wenlan_core::post_write::PageRemover::Ai(agent)
+    }
+}
+
+fn page_removal_error(error: wenlan_core::post_write::PageRemovalError, id: &str) -> ServerError {
+    use wenlan_core::post_write::PageRemovalError;
+    match error {
+        PageRemovalError::NotFound => page_outside_scope(id),
+        PageRemovalError::Refused(code) => ServerError::Structured {
+            status: axum::http::StatusCode::FORBIDDEN,
+            body: serde_json::json!({
+                "code": code,
+                "error": wenlan_core::post_write::page_removal_refusal_message(code),
+            }),
+        },
+        PageRemovalError::Failed(error) => ServerError::from(error),
+    }
+}
+
+/// The archive both `POST /archive` and `DELETE` run.
+async fn archive_page_for(
+    db: &Arc<wenlan_core::db::MemoryDB>,
+    page_root: Option<std::path::PathBuf>,
+    id: &str,
+    remover: wenlan_core::post_write::PageRemover<'_>,
+    header_space: Option<&str>,
+) -> Result<Json<PageRemovalResponse>, ServerError> {
     // Checked here, not left to the core fence, so the refusal can carry the
     // entity id as a field. The core fence still stands behind it for every
     // caller that does not come through this route.
-    reject_entity_page_mutation(&db, &id).await?;
+    reject_entity_page_mutation(db, id).await?;
+    let scope = crate::read_scope::effective_read_scope(db, None, header_space).await?;
     let _lifecycle = PAGE_LIFECYCLE.lock().await;
-    let archived_version = db
-        .archive_page_versioned(&id)
+    let archived_version = wenlan_core::post_write::archive_page_as(db, id, remover, &scope)
         .await
-        .map_err(ServerError::from)?;
-    let mut body = serde_json::json!({"status": "archived"});
+        .map_err(|error| page_removal_error(error, id))?;
+    let mut body = PageRemovalResponse {
+        status: PageRemovalStatus::Archived,
+        restorable: archived_version.is_some(),
+        version: archived_version,
+        projection_status: None,
+        projection_error: None,
+    };
     // Only the call that archived the page moves its file, only while the
     // page is still archived at the version this archive produced, and only
     // files no newer than it. The lifecycle lock keeps a restore out until
     // the move is done. A page that was already archived keeps whatever the
     // startup sweep does.
     if let Some((root, version)) = page_root.zip(archived_version) {
-        let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
+        let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, db);
         match projection
-            .archive_page_if_still_archived(&db, &id, version)
+            .archive_page_if_still_archived(db, id, version)
             .await
         {
-            Ok(_) => body["projection_status"] = serde_json::json!(PageProjectionStatus::Synced),
+            Ok(_) => body.projection_status = Some(PageProjectionStatus::Synced),
             Err(error) => {
                 tracing::warn!(
                     "[page] archived {id} but its file stays in the pages folder: {error}"
                 );
-                body["projection_status"] = serde_json::json!(PageProjectionStatus::Pending);
-                body["projection_error"] = serde_json::json!(error.to_string());
+                body.projection_status = Some(PageProjectionStatus::Pending);
+                body.projection_error = Some(error.to_string());
             }
         }
+    }
+    // A page that was already archived can still be restored.
+    if archived_version.is_none() {
+        body.restorable = db
+            .get_page(id)
+            .await?
+            .is_some_and(|page| page.status == "archived");
     }
     Ok(Json(body))
 }
@@ -690,32 +751,59 @@ fn restore_error(error: wenlan_core::db::RestorePageError) -> ServerError {
     }
 }
 
+/// `?permanent=true` on `DELETE /api/pages/{id}`.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct DeletePageQuery {
+    #[serde(default)]
+    pub permanent: bool,
+}
+
 /// DELETE /api/pages/{id}
 ///
-/// Removes both the DB row and the projected `<pages dir>/<slug>.md`
-/// file. DB-first so a transient md removal failure leaves a stale file
-/// (cheap to clean up) rather than a stranded DB row (invisible to the
-/// user). The md side failing is logged but not surfaced as an error —
-/// the caller's intent (delete the page) succeeded as far as queries
-/// are concerned.
+/// Archives the page, as `POST /api/pages/{id}/archive` does: its history
+/// stays and `POST /api/pages/{id}/restore` brings it back. The response says
+/// `status: archived, restorable: true`. A page id that does not exist gets
+/// 404, with or without `?permanent=true`.
+///
+/// `?permanent=true` removes the DB row, its history, and the projected
+/// `<pages dir>/<slug>.md` file for good. Only the person, in the app, may
+/// ask for it (the app's person marker and no agent name); anything else gets
+/// 403 `permanent_delete_needs_person`. DB-first so a transient md removal
+/// failure leaves a stale file (cheap to clean up) rather than a stranded DB
+/// row (invisible to the user). Both are recorded in `agent_activity`.
 pub async fn handle_delete_page(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ServerError> {
-    let db = {
+    axum::extract::Query(query): axum::extract::Query<DeletePageQuery>,
+) -> Result<Json<PageRemovalResponse>, ServerError> {
+    let (db, page_root) = {
         let s = state.read().await;
-        s.db.as_ref()
-            .cloned()
-            .ok_or(ServerError::DbNotInitialized)?
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            s.lint_config.page_root().map(std::path::Path::to_path_buf),
+        )
     };
+    // An entity's page is not a row in the pages table: its refusal, which
+    // names the entity, comes before the not-found check.
+    reject_entity_page_mutation(&db, &id).await?;
+    if db.get_page(&id).await?.is_none() {
+        return Err(ServerError::NotFound(format!("page {id} not found")));
+    }
+    let agent = extract_agent_name(&headers, None);
+    let remover = page_remover(&headers, &agent);
+    if !query.permanent {
+        return archive_page_for(&db, page_root, &id, remover, header_space.as_deref()).await;
+    }
 
     let knowledge_path = wenlan_core::config::load_config().knowledge_path_or_default();
     let projection =
         wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(knowledge_path, &db);
-    // Same as archive: refuse an entity's page here so the response can name
-    // the entity and carry its id.
-    reject_entity_page_mutation(&db, &id).await?;
-    db.delete_page(&id).await.map_err(ServerError::from)?;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    wenlan_core::post_write::delete_page_permanently(&db, &id, remover, &scope)
+        .await
+        .map_err(|error| page_removal_error(error, &id))?;
 
     if let Err(e) = projection.remove_page(&id) {
         tracing::warn!(
@@ -725,7 +813,13 @@ pub async fn handle_delete_page(
         );
     }
 
-    Ok(Json(serde_json::json!({"status": "deleted"})))
+    Ok(Json(PageRemovalResponse {
+        status: PageRemovalStatus::Deleted,
+        restorable: false,
+        version: None,
+        projection_status: None,
+        projection_error: None,
+    }))
 }
 
 /// POST /api/pages/search
