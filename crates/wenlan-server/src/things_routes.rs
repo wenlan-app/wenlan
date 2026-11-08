@@ -4,8 +4,10 @@
 //! The rules live in `wenlan_core::db::things`; this module frames them as
 //! HTTP. Reads answer only for what the caller's Space may see, and page
 //! titles pass the caller's truth grant. Renaming a thing and moving a
-//! conversation are the person's corrections: an agent (a request with
-//! `x-agent-name`) is refused, since the daemon already sorts for the AI.
+//! conversation are the person's corrections: only the app's marked person
+//! request may make them (`memory_routes::caller_is_person`); an agent, or
+//! any request without the marker, is refused, since the daemon already
+//! sorts for the AI.
 
 use std::sync::Arc;
 
@@ -21,7 +23,6 @@ use wenlan_types::{
 };
 
 use crate::error::ServerError;
-use crate::memory_routes::extract_agent_name;
 use crate::route_registry::{get, post, TrackedRouter};
 use crate::space_header::SpaceHeader;
 use crate::state::SharedState;
@@ -62,7 +63,7 @@ async fn open_db(state: &SharedState) -> Result<Arc<MemoryDB>, ServerError> {
 }
 
 fn require_person(headers: &HeaderMap) -> Result<(), ServerError> {
-    if extract_agent_name(headers, None) != "unknown" {
+    if !crate::memory_routes::caller_is_person(headers) {
         return Err(ServerError::ValidationError(
             "thing_needs_the_person: only the person renames or hides things and moves conversations".into(),
         ));
@@ -200,10 +201,11 @@ pub async fn handle_get_thing_map(
 /// POST /api/things/{id}/map/ops
 ///
 /// Change the map: ops apply in order, all or none, against the revision the
-/// caller read (409 otherwise). An agent (a request with `x-agent-name`)
-/// writes as the AI, and its changes to points the person wrote wait as
-/// proposals (UX-WHO-2); anyone else is the person, who also answers
-/// proposals. 404 when the thing is unknown or out of scope, 422 for a bad op.
+/// caller read (409 otherwise). Only the app's marked person request
+/// (`memory_routes::caller_is_person`) writes as the person, who also answers
+/// proposals; every other caller, named or not, writes as the AI, and its
+/// changes to points the person wrote wait as proposals (UX-WHO-2). 404 when
+/// the thing is unknown or out of scope, 422 for a bad op.
 pub async fn handle_thing_map_ops(
     State(state): State<SharedState>,
     SpaceHeader(header_space): SpaceHeader,
@@ -211,7 +213,7 @@ pub async fn handle_thing_map_ops(
     Path(id): Path<String>,
     Json(request): Json<ThingMapOpsRequest>,
 ) -> Result<Json<ThingMapOpsResponse>, ServerError> {
-    let by = if extract_agent_name(&headers, None) == "unknown" {
+    let by = if crate::memory_routes::caller_is_person(&headers) {
         ThingMapAuthor::You
     } else {
         ThingMapAuthor::Ai

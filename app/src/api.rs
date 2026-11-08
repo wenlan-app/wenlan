@@ -837,6 +837,34 @@ impl WenlanClient {
             .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
+    /// [`Self::patch_json`] with the person marker; see
+    /// [`Self::delete_path_as_person`].
+    pub async fn patch_json_as_person<Req: Serialize, Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &Req,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .patch(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP PATCH {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP PATCH {} returned {}: {}", path, status, text));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
     pub async fn delete_path<Resp: DeserializeOwned>(&self, path: &str) -> Result<Resp, String> {
         let resp = self
             .client
@@ -1992,15 +2020,15 @@ impl WenlanClient {
     }
 
     /// `POST /api/things/{id}/map/ops`: the person answers a proposal on the
-    /// thing's map (UX-WHO-2). Sent without an agent name, so the daemon
-    /// takes it as the person's.
+    /// thing's map (UX-WHO-2). Carries the person marker, without which the
+    /// daemon takes the request as an AI tool's and refuses the answer.
     pub async fn answer_thing_map_proposal(
         &self,
         id: &str,
         request: wenlan_types::ThingMapOpsRequest,
     ) -> Result<wenlan_types::ThingMapOpsResponse, String> {
         let path = format!("/api/things/{}/map/ops", percent_encode_path_segment(id));
-        self.post_json(&path, &request).await
+        self.post_json_as_person(&path, &request).await
     }
 
     /// `GET /api/conversations/search`: sentences from conversations with
@@ -2042,21 +2070,21 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
-    /// `PATCH /api/things/{id}`: the person renames a thing.
+    /// `PATCH /api/things/{id}`: the person renames a thing (person marker).
     pub async fn rename_thing(
         &self,
         id: &str,
         title: String,
     ) -> Result<wenlan_types::ThingSummary, String> {
         let path = format!("/api/things/{}", percent_encode_path_segment(id));
-        self.patch_json(&path, &wenlan_types::ThingRenameRequest { title })
+        self.patch_json_as_person(&path, &wenlan_types::ThingRenameRequest { title })
             .await
     }
 
     /// `POST /api/things/{id}/hide`: the person takes a thing off home.
     pub async fn hide_thing(&self, id: &str) -> Result<wenlan_types::ThingSummary, String> {
         let path = format!("/api/things/{}/hide", percent_encode_path_segment(id));
-        self.post_empty(&path).await
+        self.post_empty_as_person(&path).await
     }
 
     /// `POST /api/things/{id}/merge` or `/keep-apart`: the person answers a
@@ -2075,7 +2103,7 @@ impl WenlanClient {
         let request = wenlan_types::ThingMergeRequest {
             other_thing_id: other.to_string(),
         };
-        self.post_json(&path, &request).await
+        self.post_json_as_person(&path, &request).await
     }
 
     /// `POST /api/things/{id}/dream/undo`: the person takes back the newest
@@ -2083,14 +2111,14 @@ impl WenlanClient {
     /// (UX-CHAT-5).
     pub async fn undo_thing_dream(&self, id: &str) -> Result<wenlan_types::ThingSummary, String> {
         let path = format!("/api/things/{}/dream/undo", percent_encode_path_segment(id));
-        self.post_empty(&path).await
+        self.post_empty_as_person(&path).await
     }
 
     /// `POST /api/things/nights/undo`: the person takes back the whole night
     /// on the big map, every thing whose newest night ran at or after `since`
     /// (UX-GRAPH-5).
     pub async fn undo_nights(&self, since: i64) -> Result<wenlan_types::NightsUndo, String> {
-        self.post_json(
+        self.post_json_as_person(
             "/api/things/nights/undo",
             &wenlan_types::NightsUndoRequest { since },
         )
@@ -2108,7 +2136,7 @@ impl WenlanClient {
             "/api/sessions/{}/things/move",
             percent_encode_path_segment(session_id)
         );
-        self.post_json(&path, &request).await
+        self.post_json_as_person(&path, &request).await
     }
 
     /// `GET /api/pages/{id}/sessions`.
@@ -2160,8 +2188,8 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
-    /// The person takes one sentence proposal. The app never sends an agent
-    /// name, so the daemon counts this as the person's decision.
+    /// The person takes one sentence proposal. Carries the person marker,
+    /// without which the daemon refuses it as an AI tool's (UX-WHO-2).
     pub async fn accept_sentence_proposal(
         &self,
         page_id: &str,
@@ -2172,15 +2200,15 @@ impl WenlanClient {
             percent_encode_path_segment(page_id),
             percent_encode_path_segment(proposal_id)
         );
-        self.post_json(
+        self.post_json_as_person(
             &path,
             &wenlan_types::authorship::SentenceDecisionRequest::default(),
         )
         .await
     }
 
-    /// The person undoes one AI write's sentence changes. The app never sends
-    /// an agent name, so the daemon counts this as the person's undo.
+    /// The person undoes one AI write's sentence changes. Carries the person
+    /// marker, without which the daemon refuses it as an AI tool's.
     pub async fn revert_page_sentences(
         &self,
         page_id: &str,
@@ -2190,7 +2218,7 @@ impl WenlanClient {
             "/api/pages/{}/sentences/revert",
             percent_encode_path_segment(page_id)
         );
-        self.post_json(
+        self.post_json_as_person(
             &path,
             &wenlan_types::authorship::SentenceRevertRequest { version },
         )
@@ -2198,7 +2226,8 @@ impl WenlanClient {
     }
 
     /// The person says 「不對」 about one sentence; with `ask_ai` the daemon
-    /// has the AI propose a fix, which lands only on accept.
+    /// has the AI propose a fix, which lands only on accept. Carries the
+    /// person marker.
     pub async fn flag_page_sentence(
         &self,
         page_id: &str,
@@ -2210,7 +2239,7 @@ impl WenlanClient {
             "/api/pages/{}/sentences/flag",
             percent_encode_path_segment(page_id)
         );
-        self.post_json(
+        self.post_json_as_person(
             &path,
             &wenlan_types::authorship::SentenceFlagRequest {
                 sentence_hash: sentence_hash.to_string(),
@@ -2241,6 +2270,7 @@ impl WenlanClient {
     }
 
     /// The person turns one sentence proposal down; the sentence stays.
+    /// Carries the person marker.
     pub async fn reject_sentence_proposal(
         &self,
         page_id: &str,
@@ -2251,7 +2281,7 @@ impl WenlanClient {
             percent_encode_path_segment(page_id),
             percent_encode_path_segment(proposal_id)
         );
-        self.post_json(
+        self.post_json_as_person(
             &path,
             &wenlan_types::authorship::SentenceDecisionRequest::default(),
         )

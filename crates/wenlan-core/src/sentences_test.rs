@@ -611,45 +611,205 @@ async fn a_forced_rebuild_over_the_persons_sentences_waits_as_a_card_and_leaves_
     assert_eq!(after.content, before.content, "the page is left as it was");
 }
 
-/// A page has at most one open card of a kind: a second proposal for the
-/// same page updates the open card, which then holds the newest content.
+/// The open cards of page `id`, from the review queue.
+async fn open_cards(db: &MemoryDB, id: &str) -> Vec<wenlan_types::responses::PendingRevisionItem> {
+    db.list_pending_revisions(50)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|item| item.target_source_id == id)
+        .collect()
+}
+
+/// UX-WHO-2: a page has at most one open card of a kind, and a card id names
+/// the one body it was staged with. A second proposal is staged under a new
+/// id and retires the first; an Accept of the first id is refused and
+/// changes nothing; the first card's content is kept, not deleted.
 #[tokio::test]
-async fn a_second_proposal_updates_the_open_card_instead_of_adding_one() {
+async fn ux_who_2_a_second_proposal_replaces_the_open_card_and_a_stale_accept_changes_nothing() {
     let (db, _dir) = test_db().await;
-    page_with_my_line(&db, "p").await;
+    let before = page_with_my_line(&db, "p").await;
     let first = forced_rebuild(&db, "p", REBUILT).await;
+    let first_id = first.revision_card_id.clone().expect("a first card");
+    let first_body = db
+        .get_memory_contents(std::slice::from_ref(&first_id))
+        .await
+        .unwrap();
     let newer = "Tokio is a runtime for async Rust. Workers steal queued tasks.";
     let second = forced_rebuild(&db, "p", newer).await;
 
     assert_eq!(second.outcome, WriteOutcome::Gated);
-    assert_eq!(
-        second.revision_card_id, first.revision_card_id,
-        "the second proposal reuses the open card"
-    );
-    let open: Vec<_> = db
-        .list_pending_revisions(50)
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|item| item.target_source_id == "p")
-        .collect();
+    let second_id = second.revision_card_id.clone().expect("a second card");
+    assert_ne!(second_id, first_id, "the newer proposal gets its own id");
+
+    let open = open_cards(&db, "p").await;
     assert_eq!(open.len(), 1, "one open card, not two: {open:?}");
-    // The card carries the proposal plus the person's kept lines; what
-    // matters here is that the newest proposal replaced the first.
-    let card = &open[0].revision_content;
+    assert_eq!(open[0].revision_source_id, second_id);
     assert!(
-        card.starts_with(newer),
-        "the card holds the newest content: {card}"
-    );
-    assert!(
-        !card.contains("Tokio is an async runtime."),
-        "the first proposal is gone: {card}"
+        open[0].revision_content.starts_with(newer),
+        "the open card holds the newest content: {}",
+        open[0].revision_content
     );
     assert!(db
         .list_duplicate_open_revision_cards()
         .await
         .unwrap()
         .is_empty());
+
+    // The old card is retired, not deleted: its body is still stored.
+    let replaced = db
+        .replaced_page_card(&first_id)
+        .await
+        .unwrap()
+        .expect("the first card is marked replaced");
+    assert_eq!(replaced.page_id, "p");
+    assert_eq!(replaced.replaced_by, second_id);
+    assert_eq!(
+        db.get_memory_contents(std::slice::from_ref(&first_id))
+            .await
+            .unwrap(),
+        first_body,
+        "the replaced card keeps its content"
+    );
+    assert!(first_body[0].starts_with("Tokio is an async runtime."));
+
+    // Accepting the stale id is refused and changes nothing.
+    let error = crate::post_write::accept_pending_revision(&db, &first_id, "you")
+        .await
+        .expect_err("a replaced card cannot be accepted");
+    let message = error.to_string();
+    assert!(
+        matches!(error, WenlanError::Conflict(_)),
+        "a conflict: {message}"
+    );
+    assert!(
+        message.contains(wenlan_types::PAGE_REVISION_REPLACED) && message.contains(&second_id),
+        "says it was replaced and by which card: {message}"
+    );
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content, "the page is left as it was");
+    assert_eq!(after.version, before.version);
+    let open = open_cards(&db, "p").await;
+    assert_eq!(open.len(), 1, "the newer card still waits: {open:?}");
+    assert_eq!(open[0].revision_source_id, second_id);
+
+    // Dismissing the stale id is refused the same way.
+    let error = crate::post_write::dismiss_pending_revision(&db, &first_id, "you")
+        .await
+        .expect_err("a replaced card cannot be dismissed");
+    assert!(error
+        .to_string()
+        .contains(wenlan_types::PAGE_REVISION_REPLACED));
+    assert_eq!(open_cards(&db, "p").await.len(), 1);
+}
+
+/// UX-WHO-2: a card whose body the upsert stores in another form (an email
+/// address is redacted) is still recognised as untouched, so a newer
+/// proposal replaces it instead of adding a second open card.
+#[tokio::test]
+async fn ux_who_2_a_card_with_redacted_text_is_replaced_not_doubled() {
+    let (db, _dir) = test_db().await;
+    page_with_my_line(&db, "p").await;
+    let with_email = "Tokio is an async runtime. Ask alice@example.com about workers.";
+    let first = forced_rebuild(&db, "p", with_email).await;
+    let first_id = first.revision_card_id.clone().expect("a first card");
+    let stored = db
+        .get_memory_contents(std::slice::from_ref(&first_id))
+        .await
+        .unwrap();
+    assert!(
+        !stored[0].contains("alice@example.com"),
+        "the stored body is redacted: {}",
+        stored[0]
+    );
+
+    let second = forced_rebuild(&db, "p", REBUILT).await;
+    let second_id = second.revision_card_id.clone().expect("a second card");
+    assert_ne!(second_id, first_id);
+    let open = open_cards(&db, "p").await;
+    assert_eq!(open.len(), 1, "one open card, not two: {open:?}");
+    assert_eq!(open[0].revision_source_id, second_id);
+    assert!(db.replaced_page_card(&first_id).await.unwrap().is_some());
+}
+
+/// UX-WHO-2: a forced rebuild that comes back identical, from the same
+/// sources, proposes nothing: no card and no write.
+#[tokio::test]
+async fn ux_who_2_an_identical_forced_rebuild_stages_no_card_and_writes_nothing() {
+    let (db, _dir) = test_db().await;
+    let before = page_with_my_line(&db, "p").await;
+    let result = forced_rebuild(&db, "p", &before.content).await;
+
+    assert_eq!(result.outcome, WriteOutcome::Unchanged, "{result:?}");
+    assert!(!result.wrote);
+    assert!(result.revision_card_id.is_none());
+    assert!(open_cards(&db, "p").await.is_empty());
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.version, before.version);
+}
+
+/// UX-WHO-2: a rewrite from sources that, once the person's lines are kept,
+/// leaves the page exactly as it is proposes nothing: no card, no write.
+#[tokio::test]
+async fn ux_who_2_a_rewrite_that_equals_the_page_once_kept_lines_return_stages_no_card() {
+    let (db, _dir) = test_db().await;
+    ai_page(&db, "p", None).await;
+    let mine = format!("{AI_BODY}\n\nI prefer the current-thread runtime.");
+    assert!(write(&db, "p", &mine, "manual_edit", None).await.wrote);
+    let before = db.get_page("p").await.unwrap().unwrap();
+    // The AI's rewrite drops the person's line; keeping it gives the page back.
+    let result = write(&db, "p", AI_BODY, "distill", None).await;
+
+    assert_eq!(result.outcome, WriteOutcome::Unchanged, "{result:?}");
+    assert!(!result.wrote);
+    assert!(result.revision_card_id.is_none());
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("proposes no change")),
+        "{:?}",
+        result.warnings
+    );
+    assert!(open_cards(&db, "p").await.is_empty());
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.version, before.version);
+}
+
+/// UX-WHO-2: Original (imported) text alone does not make the page the
+/// person's to decide on: a forced rebuild of a page with only AI and
+/// Original sentences lands in place, and the Original sentence is kept.
+#[tokio::test]
+async fn ux_who_2_original_text_alone_does_not_turn_a_forced_rebuild_into_a_card() {
+    let (db, _dir) = test_db().await;
+    ai_page(&db, "p", None).await;
+    let imported = format!("{AI_BODY} The import says hello.");
+    assert!(write(&db, "p", &imported, "chat_import", None).await.wrote);
+    // No ownership flag: only the sentences can make this page the person's.
+    db.execute_batch_for_test("UPDATE pages SET user_edited = 0 WHERE id = 'p'")
+        .await;
+    let page = db.get_page("p").await.unwrap().unwrap();
+    assert!(!crate::post_write::page_is_human_owned(&page));
+    let view = page_sentences(&db, "p").await.unwrap();
+    assert!(
+        authors(&view).contains(&SentenceAuthor::Original),
+        "{:?}",
+        authors(&view)
+    );
+    assert!(!authors(&view).contains(&SentenceAuthor::Person));
+    assert!(!holds_person_sentences(&db, &page).await.unwrap());
+
+    let result = forced_rebuild(&db, "p", REBUILT).await;
+    assert!(result.wrote, "{result:?}");
+    assert!(result.revision_card_id.is_none());
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert!(
+        after.content.contains("The import says hello."),
+        "the Original sentence is kept: {}",
+        after.content
+    );
 }
 
 /// A page only the AI wrote is still rebuilt in place by a forced rebuild.

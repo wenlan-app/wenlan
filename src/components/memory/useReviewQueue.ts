@@ -10,6 +10,7 @@ import {
   dismissPendingRevision,
   isPageRevisionBasisRefused,
   isPageRevisionOutdated,
+  isPageRevisionReplaced,
   listPendingRevisions,
   listRefinements,
   listUnconfirmedMemories,
@@ -238,11 +239,14 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
       classification_changes?: ClassificationChange[];
     }) => {
       if (item.kind === "revision") {
+        // Always the card's own id, never the page's: a page id resolves to
+        // whichever card is open now, which may be a newer proposal than the
+        // one on screen. A replaced card's id is refused instead.
         return approve
           ? edited_content === undefined
-            ? acceptPendingRevision(item.targetSourceId)
+            ? acceptPendingRevision(item.revisionSourceId)
             : acceptPendingRevision(item.revisionSourceId, { expected_content: item.content, content: edited_content })
-          : dismissPendingRevision(item.targetSourceId);
+          : dismissPendingRevision(item.revisionSourceId);
       }
       if (item.kind === "capture") {
         // Curate semantics: confirm keeps the memory, "dismiss" forgets it.
@@ -269,8 +273,12 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
     onError: (error, { item, edited_content }) => {
       // The daemon discards a page revision card that can no longer apply.
       // Drop it here too, so neither the queue nor the page banner keeps
-      // offering a card that is already gone.
-      if (edited_content !== undefined || item.kind !== "revision" || !(isPageRevisionOutdated(error) || isPageRevisionBasisRefused(error))) return;
+      // offering a card that is already gone. A card a newer proposal
+      // replaced is gone too, edited or not; the refetch brings in the newer
+      // one.
+      if (item.kind !== "revision") return;
+      const replaced = isPageRevisionReplaced(error);
+      if (!replaced && (edited_content !== undefined || !(isPageRevisionOutdated(error) || isPageRevisionBasisRefused(error)))) return;
       queryClient.setQueriesData<PendingRevisionItem[]>(
         { queryKey: REVISIONS_KEY },
         (old) =>

@@ -7854,9 +7854,15 @@ async fn review_lock_stages_agent_and_pipeline_writes_but_not_human_edits() {
         pipeline.gated && !pipeline.wrote,
         "the lock gates pipeline writers"
     );
-    // A page has one open card: the pipeline proposal updates the agent's.
-    assert_eq!(pipeline.revision_card_id, agent.revision_card_id);
-    assert_eq!(db.list_pending_revisions(10).await.unwrap().len(), 1);
+    // A page has one open card: the pipeline proposal replaces the agent's
+    // under its own id.
+    assert_ne!(pipeline.revision_card_id, agent.revision_card_id);
+    let open = db.list_pending_revisions(10).await.unwrap();
+    assert_eq!(open.len(), 1, "{open:?}");
+    assert_eq!(
+        Some(&open[0].revision_source_id),
+        pipeline.revision_card_id.as_ref()
+    );
     assert_eq!(
         db.get_page("page_locked").await.unwrap().unwrap().content,
         locked.content

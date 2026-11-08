@@ -474,13 +474,15 @@ async fn stage_page_revision_card_inner(
             matches!(Writer::classify(edited_by), Writer::Pipeline(_)).then(|| "wenlan".to_string())
         });
 
-    // A page has at most one open card of a kind: a new proposal takes the
-    // open card's id, so the replacing upsert below puts the newest content
-    // on that card instead of adding another beside it. A card bound to a
-    // research write keeps its own id (its adoption fence names it), and a
-    // card the person changed after staging is never overwritten
-    // (`open_page_write_card_id` checks its `proposal_digest`).
-    // A link card keeps its own lifecycle (`page_link_rename`).
+    // A page has at most one open card of a kind: a new proposal is staged
+    // under a new id and the open card it replaces is retired once the new
+    // one is written (below), so an id always names the one body it was
+    // staged with and an Accept of the old card can never land this newer
+    // body unseen. A card bound to a research write is never retired by
+    // another proposal (its adoption fence names it), nor is a card the
+    // person changed after staging (`open_page_write_card_id` checks its
+    // `proposal_digest`). A link card keeps its own lifecycle
+    // (`page_link_rename`).
     let open_card = match research_write {
         None if !matches!(
             Writer::classify(edited_by),
@@ -491,18 +493,19 @@ async fn stage_page_revision_card_inner(
         }
         _ => None,
     };
-    let updates_open_card = open_card.is_some();
-    let revision_card_id = open_card.unwrap_or_else(|| {
-        format!(
-            "mem_{}",
-            uuid::Uuid::new_v4()
-                .to_string()
-                .replace('-', "")
-                .chars()
-                .take(12)
-                .collect::<String>()
-        )
-    });
+    let replaces_open_card = open_card.is_some();
+    let revision_card_id = format!(
+        "mem_{}",
+        uuid::Uuid::new_v4()
+            .to_string()
+            .replace('-', "")
+            .chars()
+            .take(12)
+            .collect::<String>()
+    );
+    // One timestamp for the row and its digest: the upsert grounds relative
+    // dates against `last_modified`.
+    let staged_at = chrono::Utc::now().timestamp();
     // Why this write needed review, so the card can say so: the review lock
     // first, then Wenlan's own background lanes, else the page has the
     // person's edits. A locked page the person wrote is `authored` (pages
@@ -539,9 +542,12 @@ async fn stage_page_revision_card_inner(
         "edited_by": edited_by,
         "source_memory_ids": source_memory_ids,
         "review_reason": review_reason,
-        // The body as staged, so a later proposal can tell an untouched card
-        // (safe to replace) from one the person changed.
-        "proposal_digest": crate::provenance::revision_content_digest(content),
+        // The body as stored (PII redacted, dates grounded, as the upsert
+        // writes it), so a later proposal can tell an untouched card (safe
+        // to replace) from one the person changed.
+        "proposal_digest": crate::provenance::revision_content_digest(
+            &crate::db::revision_cards::stored_card_body(content, staged_at)
+        ),
     });
     // Only an update-from-sources card carries the notes it was written from.
     if let Some(snapshot) = basis_snapshot {
@@ -574,7 +580,7 @@ async fn stage_page_revision_card_inner(
         source_id: revision_card_id.clone(),
         title,
         content: content.to_string(),
-        last_modified: chrono::Utc::now().timestamp(),
+        last_modified: staged_at,
         memory_type: Some("fact".to_string()),
         space: page.space.clone().or_else(|| page.workspace.clone()),
         source_agent: proposer.clone(),
@@ -591,10 +597,10 @@ async fn stage_page_revision_card_inner(
         basis_confirm: None,
         id: page.id.clone(),
         attached_to: None,
-        warnings: if updates_open_card {
+        warnings: if replaces_open_card {
             vec![
-                "human-owned page; updated its open revision card with this content instead of \
-                 overwriting the page or adding a second card"
+                "human-owned page; staged a revision card that replaces the page's open card \
+                 instead of overwriting the page or adding a second card"
                     .to_string(),
             ]
         } else {
@@ -661,6 +667,31 @@ async fn stage_page_revision_card_inner(
                 .map(Some);
         }
         (Err(error), _) => return Err(error),
+    }
+    // Retire the card this one replaces only now that the new card is
+    // written: a failure in between leaves two open cards, which the nightly
+    // scan reports, never a page with none.
+    if let Some(old_card_id) = open_card.as_deref() {
+        match db
+            .retire_replaced_page_card(
+                old_card_id,
+                &revision_card_id,
+                proposer.as_deref().unwrap_or(edited_by),
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => log::info!(
+                "[page_revision_card] open card {old_card_id} of page {} changed before it \
+                 could be replaced; left it open beside {revision_card_id}",
+                page.id
+            ),
+            Err(e) => log::warn!(
+                "[page_revision_card] retiring replaced card {old_card_id} of page {} \
+                 failed: {e}",
+                page.id
+            ),
+        }
     }
     if let Err(e) = db
         .log_agent_activity(
@@ -1299,9 +1330,10 @@ async fn update_page_db_impl(
                 )
                 .await?;
             // A forced rebuild of a page no flag marks as the person's still
-            // waits as a card when the page holds their sentences (a card
-            // they accepted, original text): replacing those is theirs to
-            // decide, whatever the flags say.
+            // waits as a card when the page holds their sentences (ones they
+            // wrote, edited or accepted): replacing those is theirs to
+            // decide, whatever the flags say. Original (imported) text alone
+            // does not make a card; the sentence gate below keeps it in place.
             let forced_over_person_text = user_forced
                 && writer.is_machine()
                 && !page_is_human_owned(&current)
@@ -1363,6 +1395,57 @@ async fn update_page_db_impl(
                     log::info!(
                         "[update_page] {page_id}: kept {restored} line(s) the user wrote in the revision card"
                     );
+                }
+                // A card that would leave the page exactly as it is (the
+                // rewrite came back identical once the person's lines were
+                // kept) proposes nothing: no card, and the compile is
+                // acknowledged like any no-op. A card that changes only the
+                // sources, or carries notes, citations or a research write to
+                // record on accept, is still a change, and is staged.
+                let proposes_nothing = card_content == current.content
+                    && staged_marks.is_empty()
+                    && basis.citation_snapshots.is_empty()
+                    && basis.research_write.is_none()
+                    && citations.is_none()
+                    && current
+                        .source_memory_ids
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<std::collections::HashSet<_>>()
+                        == source_refs
+                            .iter()
+                            .copied()
+                            .collect::<std::collections::HashSet<_>>();
+                if proposes_nothing {
+                    if require_stale || user_forced {
+                        let _ = match page_fence {
+                            Some(fence) => {
+                                db.clear_page_staleness_at_fence(page_id, current.version, fence)
+                                    .await?
+                            }
+                            None => {
+                                db.clear_page_staleness_at_source_revision(
+                                    page_id,
+                                    current.version,
+                                    expected_source_revision,
+                                )
+                                .await?
+                            }
+                        };
+                    }
+                    return terminal_result_with_receipt(
+                        db,
+                        retry.as_ref(),
+                        no_op(
+                            WriteOutcome::Unchanged,
+                            vec![
+                                "the rewrite proposes no change to this page; no revision card \
+                                 staged"
+                                    .to_string(),
+                            ],
+                        ),
+                    )
+                    .await;
                 }
                 let result = match page_fence {
                     Some(fence) => match stage_page_revision_card_at_fence(

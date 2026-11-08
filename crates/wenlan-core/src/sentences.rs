@@ -194,19 +194,19 @@ pub async fn page_authorship(
     ))
 }
 
-/// Does `page` hold a sentence a machine may not change without the person's
-/// say: one they wrote, edited or accepted, or original text (and, on a
-/// guarded page, one of unknown origin)? A forced rebuild of such a page waits
-/// as a revision card even when no ownership flag is set.
+/// Does `page` hold a sentence the person wrote, edited or accepted? A forced
+/// rebuild of such a page waits as one whole-page revision card even when no
+/// ownership flag is set. Original (imported) text and text of unknown origin
+/// do not count: the sentence gate keeps those in place and regenerates the
+/// AI's sentences around them, with no card (`sentence_gate`).
 pub(crate) async fn holds_person_sentences(
     db: &MemoryDB,
     page: &Page,
 ) -> Result<bool, WenlanError> {
-    let guard = guarded(page);
     Ok(page_authorship(db, page)
         .await?
         .iter()
-        .any(|row| authorship::is_protected(row.author, guard)))
+        .any(|row| row.author == SentenceAuthor::Person))
 }
 
 /// The machine-write gate. The plan is `None` when the write lands as

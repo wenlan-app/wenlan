@@ -2305,6 +2305,13 @@ export function isPageRevisionOutdated(error: unknown): boolean {
   return daemonErrorMessage(error)?.startsWith("page_revision_outdated") ?? false;
 }
 
+/** True when the daemon refused a page revision card because a newer
+ * proposal for the same page replaced it. Nothing was applied; the newer card
+ * is in the queue instead, so the old one can never be accepted. */
+export function isPageRevisionReplaced(error: unknown): boolean {
+  return daemonErrorMessage(error)?.startsWith("page_revision_replaced") ?? false;
+}
+
 /** True when the daemon refused a page revision card because a page the
  * change relied on (a basis) was archived, deleted or moved since. The daemon
  * has already discarded the card and left the page unchanged. */

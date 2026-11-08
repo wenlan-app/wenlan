@@ -2961,8 +2961,9 @@ mod redistill_contract_tests {
     }
 
     /// Forcing Re-distill never overrides an authored page: its verified
-    /// rebuild goes on the page's one open revision card, and the page keeps
-    /// its body, version, and `user_edited` flag.
+    /// rebuild waits as a new revision card that replaces the page's open
+    /// one (UX-WHO-2), and the page keeps its body, version, and
+    /// `user_edited` flag.
     async fn authored_page_stages_card_and_keeps_edit_protection(route: RebuildRoute) {
         let (app, state, db, page_id, card_id, before, _tmp) =
             seeded_protected_page_with_source(Some("authored")).await;
@@ -2998,11 +2999,17 @@ mod redistill_contract_tests {
             "{route:?}: authored page keeps user_edited"
         );
         assert!(
-            after.pending_card,
-            "{route:?}: the earlier card stays pending"
+            !after.pending_card,
+            "{route:?}: the earlier card is replaced, not left pending"
         );
-        // A page has one open card: the forced rebuild updates the earlier
-        // card with its content instead of adding a second one.
+        let replaced = db
+            .replaced_page_card(&card_id)
+            .await
+            .expect("read replaced card")
+            .expect("the earlier card is marked replaced, not deleted");
+        assert_eq!(replaced.page_id, page_id);
+        // A page has one open card: the forced rebuild is staged under its
+        // own id and retires the earlier card instead of adding a second one.
         let staged: Vec<_> = db
             .list_pending_revisions(100)
             .await
@@ -3015,9 +3022,13 @@ mod redistill_contract_tests {
             1,
             "{route:?}: the page keeps exactly one open card: {staged:?}"
         );
-        assert_eq!(
+        assert_ne!(
             staged[0].revision_source_id, card_id,
-            "{route:?}: the rebuild updates the earlier card"
+            "{route:?}: the rebuild gets its own card id"
+        );
+        assert_eq!(
+            staged[0].revision_source_id, replaced.replaced_by,
+            "{route:?}: the earlier card names the card that replaced it"
         );
         assert_eq!(
             staged[0].revision_content, format!("{VERIFIED_REBUILD_BODY}\n\n{USER_PROSE}"),
