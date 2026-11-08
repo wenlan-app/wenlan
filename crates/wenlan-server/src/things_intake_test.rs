@@ -9,29 +9,45 @@ use wenlan_core::llm_provider::{LlmBackend, LlmError};
 use wenlan_core::read_scope::ReadScope;
 
 /// Answers in turn from a list, and keeps the prompts it was given.
+/// Answers in order. A night's tidy call (UX-GRAPH-7) depends on how alike
+/// the embedder finds memories, which differs between a machine with the
+/// model and one without, so tidy calls are kept apart: they take the first
+/// scripted `{"changes": ...}` answer, or nothing to tidy, and their prompts
+/// go to `tidy_prompts`.
 struct Scripted {
     answers: Mutex<Vec<String>>,
     prompts: Mutex<Vec<String>>,
+    tidy_prompts: Mutex<Vec<String>>,
 }
 
 impl Scripted {
     fn new(answers: &[&str]) -> Arc<Self> {
         Arc::new(Self {
-            answers: Mutex::new(answers.iter().rev().map(|a| a.to_string()).collect()),
+            answers: Mutex::new(answers.iter().map(|a| a.to_string()).collect()),
             prompts: Mutex::new(Vec::new()),
+            tidy_prompts: Mutex::new(Vec::new()),
         })
     }
+}
+
+fn is_tidy_answer(answer: &str) -> bool {
+    answer.trim_start().starts_with(r#"{"changes""#)
 }
 
 #[async_trait]
 impl LlmProvider for Scripted {
     async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+        let tidy = request.label.as_deref() == Some("things_tidy");
+        let mut answers = self.answers.lock().unwrap();
+        let at = answers.iter().position(|a| is_tidy_answer(a) == tidy);
+        if tidy {
+            self.tidy_prompts.lock().unwrap().push(request.user_prompt);
+            return Ok(at
+                .map(|i| answers.remove(i))
+                .unwrap_or_else(|| r#"{"changes": []}"#.to_string()));
+        }
         self.prompts.lock().unwrap().push(request.user_prompt);
-        self.answers
-            .lock()
-            .unwrap()
-            .pop()
-            .ok_or(LlmError::NotAvailable)
+        at.map(|i| answers.remove(i)).ok_or(LlmError::NotAvailable)
     }
     fn is_available(&self) -> bool {
         true
@@ -347,7 +363,6 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
             {"text": "", "settled": true, "from": "C0"},
             {"text": "A point from nowhere.", "settled": true, "from": "C9"}
         ]}"#,
-        r#"{"changes": []}"#,
         r#"{"conclusion": [
             {"text": "The tagline is settled; a pricing page is still open.", "points": ["P0", "P1"]},
             {"text": "Nothing backs this.", "points": []}
@@ -355,7 +370,6 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
         r#"{"points": [
             {"text": "The site gets no pricing page for now.", "settled": true, "from": "C0", "replaces": "P1"}
         ]}"#,
-        r#"{"changes": []}"#,
         "not json",
     ]);
     let models = IntakeModels {
@@ -414,11 +428,7 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
     assert_eq!((dream.decided, dream.open), (1, 1));
     // UX-VIEW-6: then the page's first paragraph, from every standing point;
     // the sentence nothing backs is dropped.
-    // UX-GRAPH-7: before it, the night asks whether alike memories an AI
-    // wrote need tidying; this one needs nothing.
-    let tidy = group.prompts.lock().unwrap()[2].clone();
-    assert!(tidy.contains("Group 1:"), "{tidy}");
-    let concluded = group.prompts.lock().unwrap()[3].clone();
+    let concluded = group.prompts.lock().unwrap()[2].clone();
     assert!(concluded.contains("P1 (open): Whether the site gets a pricing page is still open."));
     assert_eq!(dream.conclusion.len(), 1);
     assert_eq!(
@@ -469,7 +479,7 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
         .await
         .unwrap();
     assert_eq!(done, (1, 1));
-    let asked = group.prompts.lock().unwrap()[4].clone();
+    let asked = group.prompts.lock().unwrap()[3].clone();
     assert!(asked.contains("P1 (open): Whether the site gets a pricing page is still open."));
     let kept: Vec<String> = db
         .dream_points(&thing.id)
@@ -565,14 +575,11 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
     db.store_entity("GitHub", "tool", Some("wenlan"), None, Some(1.0))
         .await
         .unwrap();
-    let group = Scripted::new(&[
-        r#"{"points": [
+    let group = Scripted::new(&[r#"{"points": [
         {"text": "The repository stays private.", "settled": true, "from": "C0", "topic": "T0"},
         {"text": "Which plan comes first is open.", "settled": false, "from": "C0", "topic": null},
         {"text": "Named a topic that is not there.", "settled": true, "from": "C0", "topic": "T9"}
-    ]}"#,
-        r#"{"changes": []}"#,
-    ]);
+    ]}"#]);
     let keep = Keep(&db, Default::default());
     let due = db
         .things_to_dream(chrono::Utc::now().timestamp(), 10)
@@ -582,8 +589,8 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
         .await
         .unwrap();
     assert_eq!(done, (1, 3));
-    // One call for points and topics; then the tidy, and the conclusion.
-    assert_eq!(group.prompts.lock().unwrap().len(), 3, "one call");
+    // One call for points and topics; the second writes the conclusion.
+    assert_eq!(group.prompts.lock().unwrap().len(), 2, "one call");
     let asked = group.prompts.lock().unwrap()[0].clone();
     assert!(asked.contains("T0: GitHub"), "{asked}");
 
@@ -618,7 +625,7 @@ async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
     let group = Scripted::new(&[
         r#"{"points": [
         {"text": "The repository stays private.", "settled": true, "from": "C0"},
-        {"text": "The repository is kept private.", "settled": true, "from": "C0"}
+        {"text": "The repository stays private for now.", "settled": true, "from": "C0"}
     ]}"#,
         r#"{"changes": [
         {"do": "merge", "memories": ["M0", "M1"], "text": "The repository stays private."}
@@ -632,8 +639,11 @@ async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
     dream_with(&db, &due, &found, group.as_ref(), "English", &keep)
         .await
         .unwrap();
-    let tidy = group.prompts.lock().unwrap()[1].clone();
-    assert!(tidy.contains("The repository is kept private."), "{tidy}");
+    let tidy = group.tidy_prompts.lock().unwrap()[0].clone();
+    assert!(
+        tidy.contains("The repository stays private for now."),
+        "{tidy}"
+    );
 
     // The two are hidden and kept; the merged one is the thing's point.
     let points: Vec<String> = db
@@ -697,7 +707,7 @@ async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
         texts,
         [
             "The repository stays private.",
-            "The repository is kept private."
+            "The repository stays private for now."
         ]
     );
     let listed: Vec<&str> = detail
@@ -721,7 +731,7 @@ async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
     assert_eq!(
         back,
         [
-            "The repository is kept private.",
+            "The repository stays private for now.",
             "The repository stays private."
         ]
     );

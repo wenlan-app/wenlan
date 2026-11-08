@@ -928,7 +928,7 @@ async fn ux_graph_7_a_night_tidies_only_what_an_ai_wrote_and_undo_puts_it_back()
     said_by(
         &db,
         "mem_new",
-        "The site has no pricing page now.",
+        "The site has a pricing page now.",
         Some("codex"),
         "wenlan",
         s,
