@@ -341,17 +341,21 @@ pub async fn dream_with(
             .iter()
             .filter_map(|c| found.get(&c.session_id).map(|f| (c, f.clone())))
             .collect();
-        if conversations.is_empty() {
-            db.record_dream(
-                &thing.thing_id,
-                &[],
-                &[],
-                &Default::default(),
-                &[],
-                &thing.conversations,
-            )
+        // A conversation whose transcript is gone is not marked read: it
+        // waits until it goes on again, and the thing's page says it could
+        // not be read (trust audit F6).
+        let gone: Vec<wenlan_core::db::thing_dream::DueConversation> = thing
+            .conversations
+            .iter()
+            .filter(|c| !found.contains_key(&c.session_id))
+            .cloned()
+            .collect();
+        db.mark_dream_unread(&gone)
             .await
             .map_err(|e| e.to_string())?;
+        let read_conversations: Vec<wenlan_core::db::thing_dream::DueConversation> =
+            conversations.iter().map(|(c, _)| (*c).clone()).collect();
+        if conversations.is_empty() {
             continue;
         }
         let prior = db
@@ -377,6 +381,7 @@ pub async fn dream_with(
             })
             .collect();
         let read: Vec<FoundConversation> = conversations.iter().map(|(_, f)| f.clone()).collect();
+        let lines = intake::dream_lines(&read);
         // The topics a point can connect to. Without a list the night still
         // keeps its points; they stay under their thing.
         let mut spaces: Vec<String> = conversations
@@ -442,12 +447,34 @@ pub async fn dream_with(
         let mut on_map = Vec::new();
         let mut links = Vec::new();
         for point in points {
-            let (from, _) = &conversations[point.from];
-            let space = if from.space.is_empty() {
-                WriteSpaceTarget::Inherit
+            let (from, found_from) = &conversations[point.from];
+            // The Space its label named; else the conversation's or the
+            // thing's own; only then the default (trust audit F4).
+            let point_space = if from.space.is_empty() {
+                let in_repo = found_from
+                    .cwd
+                    .as_deref()
+                    .and_then(intake::repo_root_of)
+                    .is_some();
+                db.dream_point_space(&thing.thing_id, &from.session_id, in_repo)
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::warn!("[things] a point's Space for {}: {error}", thing.thing_id);
+                        None
+                    })
             } else {
-                WriteSpaceTarget::Named(from.space.clone())
+                Some(from.space.clone())
             };
+            let space = match &point_space {
+                Some(space) => WriteSpaceTarget::Named(space.clone()),
+                None => WriteSpaceTarget::Inherit,
+            };
+            // The line it came from, only when it is in its own conversation.
+            let line = point
+                .line
+                .and_then(|n| lines.get(n))
+                .filter(|(owner, _)| *owner == point.from)
+                .map(|(_, text)| text.clone());
             let request = StoreMemoryRequest {
                 content: point.text.clone(),
                 memory_type: Some(if point.decided { "decision" } else { "fact" }.into()),
@@ -473,16 +500,15 @@ pub async fn dream_with(
                     continue;
                 }
             };
-            db.attach_dream_point(&id, &from.session_id)
+            db.attach_dream_point(&id, &from.session_id, line.as_deref())
                 .await
                 .map_err(|e| e.to_string())?;
             // Its topic, within its own Space. A link that fails leaves the
             // point under its thing; it does not lose the night.
-            let point_space = (!from.space.is_empty()).then_some(from.space.as_str());
             if let Some(topic) = point
                 .topic
                 .map(|t| &topics[t])
-                .filter(|t| t.fits(point_space))
+                .filter(|t| t.fits(point_space.as_deref()))
             {
                 match db.link_night_point(&id, &topic.entity_id).await {
                     Ok(link) => links.extend(link),
@@ -525,7 +551,7 @@ pub async fn dream_with(
                 &open,
                 &changed,
                 &links,
-                &thing.conversations,
+                &read_conversations,
             )
             .await
             .map_err(|e| e.to_string())?;

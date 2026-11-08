@@ -132,11 +132,28 @@ async fn a_refused_call_is_recorded_as_such() {
 /// `p1` supported, `p2` provisional, `p3` with no truth row at all -- the
 /// post-migration shape, where most pages have no row yet.
 async fn db_with_truth_rows() -> (MemoryDB, tempfile::TempDir) {
+    db_with_truth_rows_and_p1_prose("").await
+}
+
+/// [`db_with_truth_rows`] with p1 holding `p1_prose` from the start, so its
+/// marker and support substrate describe that text. Rewriting the prose after
+/// seeding would trip the support-invalidation triggers instead.
+async fn db_with_truth_rows_and_p1_prose(p1_prose: &str) -> (MemoryDB, tempfile::TempDir) {
     let (db, temp) = test_db().await;
     for id in ["p1", "p2", "p3"] {
-        db.insert_page(id, id, None, "", None, None, &[], "2026-07-27T00:00:00Z")
-            .await
-            .unwrap();
+        let content = if id == "p1" { p1_prose } else { "" };
+        db.insert_page(
+            id,
+            id,
+            None,
+            content,
+            None,
+            None,
+            &[],
+            "2026-07-27T00:00:00Z",
+        )
+        .await
+        .unwrap();
     }
     {
         let conn = db.conn.lock().await;
@@ -516,8 +533,15 @@ async fn raising_the_live_threshold_is_visible_on_the_next_read() {
     assert_eq!(stored_support_status(&conn, "p1").await, "supported");
 }
 
+/// Policy change (2026-11, UX-WHO-5). This test used to be
+/// `a_draining_judge_remains_eligible_on_the_next_read` and asserted
+/// `Supported`: a replaced judge's edges kept counting while it drained. They
+/// no longer do — only the active judge's verdicts count — so the very next
+/// read stops asserting the stored `supported`. The stored row is untouched
+/// (reconciliation demotes it with its own reason), and the page lands on
+/// `Unevaluated`, not `Unsupported`, so it keeps its file.
 #[tokio::test]
-async fn a_draining_judge_remains_eligible_on_the_next_read() {
+async fn a_draining_judge_is_unevaluated_on_the_next_read() {
     let (db, _tmp) = db_with_truth_rows().await;
     {
         let conn = db.conn.lock().await;
@@ -533,10 +557,40 @@ async fn a_draining_judge_remains_eligible_on_the_next_read() {
 
     assert_eq!(
         db.page_truth_states(&ids(&["p1"])).await.unwrap()["p1"].support,
-        crate::truth_contract::Support::Supported
+        crate::truth_contract::Support::Unevaluated
     );
     let conn = db.conn.lock().await;
     assert_eq!(stored_support_status(&conn, "p1").await, "supported");
+}
+
+/// UX-WHO-5. Weakening: let a stored `supported` stand on text that stops
+/// mid-sentence.
+///
+/// Every §1 condition holds here — the marker matches the live text and the
+/// active judge's edge clears its threshold — yet the page is a fragment, so
+/// the read must not call it verified. It reads `Unevaluated`, not
+/// `Unsupported`, so it keeps its file. The control shows the same substrate
+/// with a finished last sentence still reads `Supported`.
+#[tokio::test]
+async fn ux_who_5_cut_off_page_is_unevaluated_on_the_next_read() {
+    let (db, _tmp) =
+        db_with_truth_rows_and_p1_prose("Welcome the new hire. Then follow the steps for welcome,")
+            .await;
+    assert_eq!(
+        db.page_truth_states(&ids(&["p1"])).await.unwrap()["p1"].support,
+        crate::truth_contract::Support::Unevaluated
+    );
+    let conn = db.conn.lock().await;
+    assert_eq!(stored_support_status(&conn, "p1").await, "supported");
+    drop(conn);
+
+    let (control, _control_tmp) =
+        db_with_truth_rows_and_p1_prose("Welcome the new hire. Then follow the steps.").await;
+    assert_eq!(
+        control.page_truth_states(&ids(&["p1"])).await.unwrap()["p1"].support,
+        crate::truth_contract::Support::Supported,
+        "the same substrate with a finished last sentence still reads supported"
+    );
 }
 
 #[tokio::test]
@@ -1272,7 +1326,7 @@ async fn an_edit_after_a_review_retires_the_review() {
 async fn an_unreviewed_page_is_unaffected_by_the_digest_check() {
     let (db, _tmp) = test_db().await;
     let page = "page_00000000-0000-4000-8000-0000000000b2";
-    db.create_page_draft_with_id(page, "A Page", "prose", None, None)
+    db.create_page_draft_with_id(page, "A Page", "prose.", None, None)
         .await
         .unwrap();
     {
@@ -1292,7 +1346,7 @@ async fn an_unreviewed_page_is_unaffected_by_the_digest_check() {
              VALUES (?1, 1, ?2, ?3, 1, 1700000000)",
             libsql::params![
                 page,
-                crate::provenance::revision_content_digest("prose"),
+                crate::provenance::revision_content_digest("prose."),
                 crate::db::EXTRACTOR_VERSION
             ],
         )

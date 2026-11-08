@@ -289,9 +289,12 @@ and wait for evidence that people need them.
 
 ## The big map
 
-- **UX-GRAPH-1** `shipped` The same point is in the same place every time you
-  open it. Rearranging asks you first and can be undone.
-  原文：同一個點，兩次打開位置一樣；要重排先問你，能退回。
+- **UX-GRAPH-1** `shipped` The map first lays related topics out as named
+  regions, kept apart from each other, with small islands at the edge. After
+  that, opening it does not rearrange it, and something new goes next to the
+  region it belongs to. The first time the map switches to the new layout, a
+  note in the corner says so and lets you put the old one back.
+  原文：地圖先把相近的主題排成一塊塊有名字的區域、區域彼此分開、小島靠邊，之後打開不重排，新東西就近放進它所屬的區域。第一次換成新排法時，角落會說一聲、能放回去。
 - **UX-GRAPH-2** `planned` Three zoom levels (this thing, nearby, everything)
   with continuous motion; points do not jump.
   原文：拉遠三段：這件事 → 附近 → 全部，畫面連續，點不跳位置。

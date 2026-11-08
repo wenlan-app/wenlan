@@ -1587,7 +1587,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 157;
+pub const SCHEMA_VERSION: u32 = 158;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10860,6 +10860,15 @@ impl MemoryDB {
             if version < 157 {
                 self.migrate_157_conversation_touched(version).await?;
             }
+
+            // Migration 158: a conversation whose transcript was gone, and
+            // the line a night's point came from. See db/thing_dream.rs.
+            if ceiling < 158 {
+                return Ok(());
+            }
+            if version < 158 {
+                self.migrate_158_dream_reading(version).await?;
+            }
         }
 
         // Private M4 builds could already have stamped user_version=95 before
@@ -14819,6 +14828,9 @@ impl MemoryDB {
             // joins it, so install the idempotent fail-closed DDL before that
             // first query rather than relying on the later version bump.
             Self::ensure_judge_eligibility_tables(&tx).await?;
+            // The sweep's replaced-judge recheck reads this job column, which
+            // 110 introduced. Same reasoning as the registry DDL above.
+            Self::ensure_job_eligibility_generation_column(&tx).await?;
             Self::ensure_claim_derivation_triggers(&tx).await?;
             Self::ensure_support_invalidation_triggers(&tx).await?;
             tx.commit()
@@ -15051,6 +15063,28 @@ impl MemoryDB {
             .map_err(|error| WenlanError::VectorDb(format!("m110 begin: {error}")))?;
 
         Self::ensure_judge_eligibility_tables(&tx).await?;
+        Self::ensure_job_eligibility_generation_column(&tx).await?;
+
+        tx.commit()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("m110 commit: {error}")))?;
+        conn.execute("PRAGMA user_version = 110", ())
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("m110 bump: {error}")))?;
+        log::info!("[migration] Migration 110 applied: M5 judge eligibility safety fence");
+        Ok(())
+    }
+
+    /// Idempotently add `claim_derivation_jobs.eligibility_generation`.
+    ///
+    /// Migration 110 introduced the column, but migration 105's backlog sweep
+    /// reads it too (a job finished under an older eligibility generation is
+    /// rechecked when a replaced judge's verdicts were its only support), and
+    /// a real database can reach 105 from any version 98..104, before 110 has
+    /// run. Both call this; on a fresh table the column is already there.
+    async fn ensure_job_eligibility_generation_column(
+        tx: &libsql::Transaction,
+    ) -> Result<(), WenlanError> {
         let has_eligibility_generation: i64 = {
             let mut rows = tx
                 .query(
@@ -15059,15 +15093,13 @@ impl MemoryDB {
                     (),
                 )
                 .await
-                .map_err(|error| {
-                    WenlanError::VectorDb(format!("m110 job column probe: {error}"))
-                })?;
+                .map_err(|error| WenlanError::VectorDb(format!("job column probe: {error}")))?;
             rows.next()
                 .await
-                .map_err(|error| WenlanError::VectorDb(format!("m110 job column row: {error}")))?
+                .map_err(|error| WenlanError::VectorDb(format!("job column row: {error}")))?
                 .map(|row| row.get::<i64>(0))
                 .transpose()
-                .map_err(|error| WenlanError::VectorDb(format!("m110 job column decode: {error}")))?
+                .map_err(|error| WenlanError::VectorDb(format!("job column decode: {error}")))?
                 .unwrap_or(0)
         };
         if has_eligibility_generation == 0 {
@@ -15078,17 +15110,9 @@ impl MemoryDB {
             )
             .await
             .map_err(|error| {
-                WenlanError::VectorDb(format!("m110 job eligibility generation: {error}"))
+                WenlanError::VectorDb(format!("job eligibility generation: {error}"))
             })?;
         }
-
-        tx.commit()
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m110 commit: {error}")))?;
-        conn.execute("PRAGMA user_version = 110", ())
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("m110 bump: {error}")))?;
-        log::info!("[migration] Migration 110 applied: M5 judge eligibility safety fence");
         Ok(())
     }
 

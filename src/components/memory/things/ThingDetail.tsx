@@ -10,7 +10,7 @@ import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
 import { THINGS_QUERY_KEY } from "../pages/WorkingOn";
 import { hasToolMark, ToolMark } from "../assets/toolMarks";
 import { ThingMergeProposal } from "./ThingMergeProposal";
-import { ThingSteeped } from "./ThingSteeped";
+import { ThingSteeped, ThingUnread } from "./ThingSteeped";
 import { ThingViews } from "./ThingViews";
 import "./thingDetail.css";
 
@@ -77,6 +77,7 @@ export function ThingDetail({ thingId, onBack, onOpenPage, onOpenThing, onOpenGr
           notice={
             <>
               <ThingSteeped thing={thing} queryKey={thingQueryKey(thing.id)} onOpenGraph={onOpenGraph ? () => onOpenGraph(thing.id) : undefined} />
+              <ThingUnread thing={thing} />
               <ThingMergeProposal thing={thing} queryKey={thingQueryKey(thing.id)} />
             </>
           }

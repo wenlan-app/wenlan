@@ -17,7 +17,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use wenlan_core::db::conversations::SearchableConversation;
-use wenlan_core::said_lines::said_lines;
+use wenlan_core::said_lines::{quoted_line, said_lines};
 use wenlan_core::transcript_lines::{
     conversation_lines, excerpt, head, line_matches, search_terms, tail,
 };
@@ -270,7 +270,14 @@ pub async fn handle_memory_said(
     let (title, lines) = tokio::task::spawn_blocking(move || {
         let path = std::path::PathBuf::from(session.transcript_path.clone().unwrap_or_default());
         let lines = conversation_lines(&session.tool, &path).map(|lines| {
-            said_lines(&anchor.text, anchor.saved_at, &lines)
+            // A night's point names the line it came from; the words it
+            // shares with the conversation are only a fallback (UX-WHO-6).
+            anchor
+                .line
+                .as_deref()
+                .and_then(|quoted| quoted_line(quoted, &lines))
+                .map(|index| vec![index])
+                .unwrap_or_else(|| said_lines(&anchor.text, anchor.saved_at, &lines))
                 .into_iter()
                 .map(|index| {
                     let mut line = lines[index].clone();

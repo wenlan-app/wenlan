@@ -319,7 +319,9 @@ export interface Region {
   bounds: { minX: number; maxX: number; minY: number; maxY: number };
   /** True when every member is an island node (see atlas.ts's
    *  shelveComponents) — the name is held back while the islands are dim. */
-  island: boolean;
+  island: boolean;  /** Other members, best-linked first: a short stand-in name when the
+   *  region's own name cannot be shown long enough to recognise. */
+  alternates?: { id: string; name: string }[];
 }
 
 /**
@@ -341,7 +343,9 @@ export function communityRegions(graph: Graph, communities: Map<string, string>)
   const regions: Region[] = [];
   for (const ids of members.values()) {
     if (ids.length < MIN_REGION_SIZE) continue;
-    const hubId = regionLeader(
+    // An R2 region names itself after the hub its layout chose (round 4).
+    const laidHub = ids.find((id) => graph.getNodeAttribute(id, "regionRole") === "hub");
+    const hubId = laidHub ?? regionLeader(
       ids.map((id) => ({
         id,
         name: graph.getNodeAttribute(id, "label") as string,
@@ -383,6 +387,11 @@ export function communityRegions(graph: Graph, communities: Map<string, string>)
       centroid: { x: sumX / ids.length, y: sumY / ids.length },
       bounds,
       island,
+      alternates: ids
+        .filter((id) => id !== hubId && typeof graph.getNodeAttribute(id, "label") === "string")
+        .sort((a, b) => graph.degree(b) - graph.degree(a) || (a < b ? -1 : 1))
+        .slice(0, 8)
+        .map((id) => ({ id, name: graph.getNodeAttribute(id, "label") as string })),
     });
   }
   return regions.sort((a, b) => b.memberCount - a.memberCount || (a.name < b.name ? -1 : 1));
@@ -645,6 +654,7 @@ export function placeRegionLabels(
   viewport?: { width: number; height: number },
   labelledNodes?: ReadonlySet<string>,
   occupiedLabels: ReadonlyArray<{ left: number; right: number; top: number; bottom: number }> = [],
+  blocked?: (box: { left: number; right: number; top: number; bottom: number }) => boolean,
 ): PlacedLabel[] {
   const placed: PlacedLabel[] = [];
   const boxes = [...occupiedLabels];
@@ -704,19 +714,314 @@ export function placeRegionLabels(
     ) {
       continue;
     }
-    const overlaps = boxes.some(
+    const overlaps = (b: typeof box) => boxes.some(
       (other) =>
-        other.left < box.right + LABEL_BOX_PAD &&
-        box.left - LABEL_BOX_PAD < other.right &&
-        other.top < box.bottom + LABEL_BOX_PAD &&
-        box.top - LABEL_BOX_PAD < other.bottom,
+        other.left < b.right + LABEL_BOX_PAD &&
+        b.left - LABEL_BOX_PAD < other.right &&
+        other.top < b.bottom + LABEL_BOX_PAD &&
+        b.top - LABEL_BOX_PAD < other.bottom,
     );
-    if (overlaps) continue;
+    if (blocked) {
+      // Round 4 (R2): a name never covers a point or a point's name. Where
+      // its first spot is taken it tries the free ground round its region,
+      // and goes unnamed for this view rather than cover anything.
+      const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys);
+      const hub = project(region.hub);
+      const gap = size / 2 + LABEL_BOX_PAD + 2;
+      const spots = [
+        at,
+        { x: hub.x, y: hub.y - region.hub.size - LABEL_BOX_PAD - size / 2 },
+        { x: centroid.x, y: top - gap },
+        { x: centroid.x, y: bottom + gap },
+        { x: hub.x, y: hub.y + region.hub.size + LABEL_BOX_PAD + size / 2 },
+        { x: left - halfWidth - 4, y: centroid.y },
+        { x: right + halfWidth + 4, y: centroid.y },
+        { x: centroid.x, y: centroid.y },
+        { x: centroid.x, y: (top + centroid.y) / 2 },
+        { x: centroid.x, y: (bottom + centroid.y) / 2 },
+      ];
+      const inView = (b: typeof box) =>
+        !viewport || (b.left >= 0 && b.right <= viewport.width && b.top >= 0 && b.bottom <= viewport.height);
+      const fits = (p: { x: number; y: number }) => {
+        const b = boxAround(p);
+        return inView(b) && !overlaps(b) && !blocked(b);
+      };
+      let free = spots.find(fits);
+      if (!free) {
+        // None of the usual spots is clear: take the clear spot nearest the
+        // region's middle, searching its box and a little round it.
+        const step = REGION_NAME_SEARCH_STEP_PX;
+        let best: { x: number; y: number } | undefined;
+        let bestDistance = Infinity;
+        const yFrom = Math.max(top - size, size / 2), yTo = Math.min(bottom + size, (viewport?.height ?? Infinity) - size / 2);
+        const xFrom = Math.max(left - halfWidth / 2, halfWidth), xTo = Math.min(right + halfWidth / 2, (viewport?.width ?? Infinity) - halfWidth);
+        for (let y = yFrom; y <= yTo; y += step) {
+          for (let x = xFrom; x <= xTo; x += step) {
+            const distance = Math.hypot(x - centroid.x, y - centroid.y);
+            if (distance >= bestDistance || !fits({ x, y })) continue;
+            best = { x, y };
+            bestDistance = distance;
+          }
+        }
+        free = best;
+      }
+      if (!free) continue;
+      at = free;
+      box = boxAround(free);
+    } else if (overlaps(box)) continue;
     boxes.push(box);
     placed.push({ name: region.name, x: at.x, y: at.y, size });
   }
   return placed;
 }
+
+/** A region name placed before the point names (R2 overview), with its box. */
+export interface PlannedRegionName extends PlacedLabel {
+  /** The hub the region is named after: its own point name is left off. */
+  hubId: string;
+  box: { left: number; right: number; top: number; bottom: number };
+}
+
+/** How close, in CSS px, a names-first region name must come to one of its
+ *  own region's points: it sits on its region or right at its edge. */
+export const REGION_NAME_EDGE_PX = 10;
+/** Widest a names-first region name may run, in CSS px; longer ones end in "…". */
+export const REGION_NAME_MAX_WIDTH_PX = 220;
+/** The tries a names-first region name gets, in order: full width, then
+ *  shorter and a size smaller. It never moves further from its region. */
+const REGION_NAME_TIERS = [
+  { maxWidth: REGION_NAME_MAX_WIDTH_PX, shrink: 0 },
+  { maxWidth: 150, shrink: 0 },
+  { maxWidth: 110, shrink: 1 },
+  { maxWidth: 80, shrink: 2 },
+];
+
+/** Shorten `text` with an ellipsis until `measure` fits it in `maxWidth`.
+ *  The start of the name is always what stays. */
+export function fitRegionName(text: string, size: number, maxWidth: number, measure: (text: string, size: number) => number): string {
+  if (measure(text, size) <= maxWidth) return text;
+  let cut = text.length;
+  while (cut > 1 && measure(`${text.slice(0, cut).trimEnd()}…`, size) > maxWidth) cut -= 1;
+  return `${text.slice(0, cut).trimEnd()}…`;
+}
+
+/** Whether a shortened name still says enough to recognise: its first two
+ *  whole words (or the whole of a shorter name), or, in a script written
+ *  without spaces, its first four characters. */
+export function regionNameKeepsEnough(full: string, shown: string): boolean {
+  if (shown === full) return true;
+  const kept = shown.replace(/…$/, "").trimEnd();
+  const words = full.trim().split(/\s+/);
+  if (words.length > 1) {
+    const need = words.slice(0, 2).join(" ");
+    return kept.length >= need.length && kept.startsWith(need);
+  }
+  return [...kept].length >= 4;
+}
+
+/**
+ * R2 at overview zoom: the region names are the map's landmarks, so they are
+ * placed BEFORE any point name and the point names give way to them. Every
+ * region is tried, largest first; a name keeps off `blocked` (every drawn
+ * point, the controls) and off the names already placed.
+ * A name sits on its own region or right at its edge: within
+ * REGION_NAME_EDGE_PX of one of its own points and no nearer to another
+ * region's points than to its own, so it never drifts off to free ground
+ * elsewhere. A crowded region tries a shorter, then a smaller name; a name
+ * cut so short that its first words are gone is swapped for the full name
+ * of the region's best-linked point that fits.
+ */
+export function planRegionNamesFirst(
+  scene: CartographyScene,
+  project: (pos: { x: number; y: number }) => { x: number; y: number },
+  measure: (text: string, size: number) => number,
+  viewport: { width: number; height: number },
+  blocked: (box: { left: number; right: number; top: number; bottom: number }) => boolean,
+): PlannedRegionName[] {
+  type Disc = { x: number; y: number; r: number; region: number };
+  type Box = { left: number; right: number; top: number; bottom: number };
+  const planned: PlannedRegionName[] = [];
+  const step = REGION_NAME_SEARCH_STEP_PX / 2;
+  // Every region's points on one grid, so a name's edge test looks only at
+  // the points near it (not every point on the map, for every spot tried).
+  const cell = REGION_NAME_GRID_PX;
+  const grid = new Map<number, Disc[]>();
+  const cellKey = (cx: number, cy: number) => cx * 65_536 + cy;
+  let maxR = 0;
+  for (const [index, region] of scene.regions.entries()) {
+    for (const m of [region.hub, ...region.otherMembers]) {
+      const at = project(m);
+      const disc = { x: at.x, y: at.y, r: m.size, region: index };
+      maxR = Math.max(maxR, disc.r);
+      const k = cellKey(Math.floor(at.x / cell), Math.floor(at.y / cell));
+      const list = grid.get(k);
+      if (list) list.push(disc);
+      else grid.set(k, [disc]);
+    }
+  }
+  /** Whether a name in `box` sits on region `index` or right at its edge,
+   *  and no nearer to another region's points than to its own. Only points
+   *  within REGION_NAME_EDGE_PX of the box can decide it. */
+  const onItsRegion = (box: Box, index: number) => {
+    const reach = REGION_NAME_EDGE_PX + maxR;
+    let mine = Infinity;
+    let others = Infinity;
+    for (let cx = Math.floor((box.left - reach) / cell); cx <= Math.floor((box.right + reach) / cell); cx += 1) {
+      for (let cy = Math.floor((box.top - reach) / cell); cy <= Math.floor((box.bottom + reach) / cell); cy += 1) {
+        for (const d of grid.get(cellKey(cx, cy)) ?? []) {
+          const dx = Math.max(box.left - d.x, 0, d.x - box.right);
+          const dy = Math.max(box.top - d.y, 0, d.y - box.bottom);
+          const gap = Math.max(0, Math.hypot(dx, dy) - d.r);
+          if (d.region === index) mine = Math.min(mine, gap);
+          else others = Math.min(others, gap);
+        }
+      }
+    }
+    return mine <= REGION_NAME_EDGE_PX && others >= mine;
+  };
+  for (const [index, region] of scene.regions.entries()) {
+    const { bounds } = region;
+    const corners = [
+      project({ x: bounds.minX, y: bounds.minY }),
+      project({ x: bounds.maxX, y: bounds.minY }),
+      project({ x: bounds.minX, y: bounds.maxY }),
+      project({ x: bounds.maxX, y: bounds.maxY }),
+    ];
+    const left = Math.min(...corners.map((p) => p.x)), right = Math.max(...corners.map((p) => p.x));
+    const top = Math.min(...corners.map((p) => p.y)), bottom = Math.max(...corners.map((p) => p.y));
+    if (right < 0 || left > viewport.width || bottom < 0 || top > viewport.height) continue;
+    const centroid = project(region.centroid);
+    const hub = project(region.hub);
+    const baseSize = planned.length === 0 ? 15 : 12;
+    let placed: PlannedRegionName | undefined;
+    for (const tier of REGION_NAME_TIERS) {
+      const size = baseSize - tier.shrink;
+      let name = fitRegionName(region.name, size, tier.maxWidth, measure);
+      let namedAfter = region.hub.id;
+      if (!regionNameKeepsEnough(region.name, name)) {
+        const swap = (region.alternates ?? []).find((a) => measure(a.name, size) <= tier.maxWidth);
+        if (!swap) continue;
+        name = swap.name;
+        namedAfter = swap.id;
+      }
+      const halfWidth = measure(name, size) / 2;
+      const boxAround = (p: { x: number; y: number }) => ({
+        left: p.x - halfWidth,
+        right: p.x + halfWidth,
+        top: p.y - size / 2,
+        bottom: p.y + size / 2,
+      });
+      let tries = 0;
+      const fits = (p: { x: number; y: number }) => {
+        tries += 1;
+        const b = boxAround(p);
+        if (b.left < 0 || b.top < 0 || b.right > viewport.width || b.bottom > viewport.height) return false;
+        if (planned.some((o) => o.box.left < b.right + LABEL_BOX_PAD && b.left - LABEL_BOX_PAD < o.box.right && o.box.top < b.bottom + LABEL_BOX_PAD && b.top - LABEL_BOX_PAD < o.box.bottom)) return false;
+        // Most spots are on a point: that test is cheap, so it goes first.
+        if (blocked(b)) return false;
+        return onItsRegion(b, index);
+      };
+      const gap = size / 2 + LABEL_BOX_PAD + 2;
+      let at = [
+        { x: centroid.x, y: centroid.y - Math.min(REGION_NAME_LIFT_MAX_PX, Math.max(REGION_NAME_LIFT_MIN_PX, REGION_NAME_LIFT_FRACTION * (bottom - top))) },
+        { x: hub.x, y: hub.y - region.hub.size - LABEL_BOX_PAD - size / 2 },
+        { x: hub.x, y: hub.y + region.hub.size + LABEL_BOX_PAD + size / 2 },
+        { x: centroid.x, y: top - gap },
+        { x: centroid.x, y: bottom + gap },
+      ].find(fits);
+      if (!at) {
+        // Anywhere on the region or just past its edge, nearest its middle:
+        // the spots go out from the middle, and the search gives up after
+        // REGION_NAME_SEARCH_TRIES of them (a name that finds no room there
+        // tries a shorter one, or is left off).
+        const reach = REGION_NAME_EDGE_PX + size;
+        const yFrom = Math.max(top - reach, size / 2), yTo = Math.min(bottom + reach, viewport.height - size / 2);
+        const xFrom = Math.max(left - halfWidth, halfWidth), xTo = Math.min(right + halfWidth, viewport.width - halfWidth);
+        // The search grid, walked in square rings out from the spot nearest
+        // the middle; a spot found in one ring is kept unless a later ring
+        // still holds a nearer one.
+        const columns = Math.floor((xTo - xFrom) / step), rows = Math.floor((yTo - yFrom) / step);
+        if (columns >= 0 && rows >= 0) {
+          const ci = Math.min(columns, Math.max(0, Math.round((centroid.x - xFrom) / step)));
+          const cj = Math.min(rows, Math.max(0, Math.round((centroid.y - yFrom) / step)));
+          const rings = Math.max(ci, columns - ci, cj, rows - cj);
+          let bestDistance = Infinity;
+          tries = 0;
+          for (let k = 0; k <= rings && tries < REGION_NAME_SEARCH_TRIES && (k - 1) * step < bestDistance; k += 1) {
+            const ring: { x: number; y: number; d: number }[] = [];
+            const add = (i: number, j: number) => {
+              if (i < 0 || j < 0 || i > columns || j > rows) return;
+              const x = xFrom + i * step, y = yFrom + j * step;
+              ring.push({ x, y, d: Math.hypot(x - centroid.x, y - centroid.y) });
+            };
+            if (k === 0) add(ci, cj);
+            for (let i = ci - k; k > 0 && i <= ci + k; i += 1) {
+              add(i, cj - k);
+              add(i, cj + k);
+            }
+            for (let j = cj - k + 1; k > 0 && j <= cj + k - 1; j += 1) {
+              add(ci - k, j);
+              add(ci + k, j);
+            }
+            ring.sort((a, b) => a.d - b.d || a.y - b.y || a.x - b.x);
+            for (const spot of ring) {
+              if (spot.d >= bestDistance) break;
+              if (tries >= REGION_NAME_SEARCH_TRIES) break;
+              if (!fits(spot)) continue;
+              at = { x: spot.x, y: spot.y };
+              bestDistance = spot.d;
+              break;
+            }
+          }
+        }
+      }
+      if (!at) continue;
+      placed = { name, x: at.x, y: at.y, size, hubId: namedAfter, box: boxAround(at) };
+      break;
+    }
+    if (placed) planned.push(placed);
+  }
+  return planned;
+}
+
+/** The measure drawRegionNames uses, for planning names on another context. */
+export function regionNameMeasure(ctx: CanvasRenderingContext2D): (text: string, size: number) => number {
+  return (text, size) => {
+    const font = ctx.font;
+    ctx.font = regionLabelFont(size);
+    ctx.letterSpacing = regionLabelTracking(size);
+    const width = ctx.measureText(text).width;
+    ctx.letterSpacing = "0px";
+    ctx.font = font;
+    return width;
+  };
+}
+
+/** Paint names already placed by planRegionNamesFirst. */
+export function drawPlannedRegionNames(ctx: CanvasRenderingContext2D, names: readonly PlacedLabel[], palette: GraphPalette): void {
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = LABEL_HALO_WIDTH;
+  ctx.strokeStyle = palette.surface;
+  ctx.fillStyle = palette.labelMuted;
+  for (const label of names) {
+    ctx.font = regionLabelFont(label.size);
+    ctx.letterSpacing = regionLabelTracking(label.size);
+    ctx.strokeText(label.name, label.x, label.y);
+    ctx.fillText(label.name, label.x, label.y);
+    ctx.letterSpacing = "0px";
+  }
+  ctx.restore();
+}
+
+/** Grid step, in CSS px, when a region name searches its area for free ground. */
+const REGION_NAME_SEARCH_STEP_PX = 10;
+/** The grid, in CSS px, a names-first plan files the region points on. */
+const REGION_NAME_GRID_PX = 32;
+/** The most spots a names-first region name tries past its first five. */
+export const REGION_NAME_SEARCH_TRIES = 2500;
 
 /** Halo stroke around a place name, in CSS px — ground-coloured, so the name
  *  stays legible over the nodes it sits among. */
@@ -736,6 +1041,7 @@ export function drawRegionNames(
   viewport?: { width: number; height: number },
   labelledNodes?: ReadonlySet<string>,
   occupiedLabels: ReadonlyArray<{ left: number; right: number; top: number; bottom: number }> = [],
+  blocked?: (box: { left: number; right: number; top: number; bottom: number }) => boolean,
 ): void {
   const measure = (text: string, size: number): number => {
     ctx.font = regionLabelFont(size);
@@ -751,7 +1057,7 @@ export function drawRegionNames(
   ctx.lineWidth = LABEL_HALO_WIDTH;
   ctx.strokeStyle = palette.surface;
   ctx.fillStyle = palette.labelMuted;
-  for (const label of placeRegionLabels(scene, project, measure, viewport, labelledNodes, occupiedLabels)) {
+  for (const label of placeRegionLabels(scene, project, measure, viewport, labelledNodes, occupiedLabels, blocked)) {
     ctx.font = regionLabelFont(label.size);
     // Same tracking the measurement used; jsdom's mock ctx simply ignores it.
     ctx.letterSpacing = regionLabelTracking(label.size);

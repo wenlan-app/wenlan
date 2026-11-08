@@ -259,12 +259,17 @@ async fn install_triggers(db: &MemoryDB) {
     tx.commit().await.unwrap();
 }
 
+/// Page text is a finished sentence. Text that stops mid-sentence is never
+/// supported (`looks_cut_off`), so a fixture ending without punctuation would
+/// test the cut-off rule instead of the condition each test names.
+const PAGE_PROSE: &str = "prose.";
+
 async fn add_page(db: &MemoryDB, id: &str) {
     db.insert_page(
         id,
         id,
         None,
-        "prose",
+        PAGE_PROSE,
         None,
         None,
         &[],
@@ -1559,11 +1564,20 @@ async fn an_unregistered_judge_cannot_make_a_page_supported() {
     ));
 }
 
-/// Rolling upgrades keep old evidence live while its judge drains. Treating
-/// draining as retired would mass-demote pages before replacement judgments
-/// have had time to arrive.
+/// Policy change (2026-11, UX-WHO-5). This test used to be
+/// `a_draining_judge_remains_eligible_for_existing_support` and asserted the
+/// opposite: a replaced judge's edges kept counting while it drained, so that
+/// a model switch would not demote pages before the new judge had caught up.
+/// In practice "while it drains" was forever — a draining verdict was only
+/// replaced when the new judge wrote an edge on the same span at or above its
+/// threshold, so a weaker-model pass kept a page supported indefinitely.
+///
+/// Now only the active judge's verdicts count. The draining edge stays on
+/// record (it is not retracted here), and the claim is queued for the active
+/// judge to recheck. Not `Refuted`: nobody has judged this claim under the
+/// current rules, so the page keeps its file.
 #[tokio::test]
-async fn a_draining_judge_remains_eligible_for_existing_support() {
+async fn a_draining_judge_no_longer_supports_existing_edges() {
     let (db, _temp) = db_with_queue().await;
     add_page(&db, "p1").await;
     let revisions = derive_page(&db, "p1", 1).await;
@@ -1573,8 +1587,30 @@ async fn a_draining_judge_remains_eligible_for_existing_support() {
 
     assert_eq!(
         db.evaluate_page_support("p1", 1).await.unwrap(),
-        SupportOutcome::Supported
+        SupportOutcome::Unevaluated {
+            reason: super::claim_derivation::REASON_JUDGE_REPLACED.to_string()
+        }
     );
+    assert_eq!(
+        live_support_edge_count(&db, &revisions[0]).await,
+        1,
+        "the draining judge's edge is an audit record and must stay live"
+    );
+}
+
+/// Live (not retracted, not superseded) support edges on one claim revision.
+async fn live_support_edge_count(db: &MemoryDB, claim_revision_id: &str) -> i64 {
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM edges
+              WHERE edge_type = 'supports' AND src_kind = 'claim_revision'
+                AND src_id = ?1 AND valid_until IS NULL AND superseded_by IS NULL",
+            libsql::params![claim_revision_id],
+        )
+        .await
+        .unwrap();
+    rows.next().await.unwrap().unwrap().get(0).unwrap()
 }
 
 #[tokio::test]
@@ -1634,7 +1670,12 @@ async fn eligibility_generation_change_between_lease_and_finalize_writes_nothing
     assert_eq!(outcome, SupportOutcome::Supported);
     let before = truth_row(&db, "p1").await;
 
-    let changed_generation = set_test_judge_eligibility(&db, "draining", SUPPORT_THRESHOLD).await;
+    // Re-registering the same active judge at the same threshold advances the
+    // generation without changing any verdict. This used to move the judge to
+    // `draining`, which reached the same verdict only while draining edges
+    // still counted; they no longer do (UX-WHO-5), so the same-verdict case
+    // has to come from an eligibility change that keeps the judge active.
+    let changed_generation = set_test_judge_eligibility(&db, "active", SUPPORT_THRESHOLD).await;
     assert!(changed_generation > job.eligibility_generation);
     assert_eq!(test_eligibility_generation(&db).await, changed_generation);
     assert_eq!(
@@ -1673,9 +1714,9 @@ async fn an_unfiled_page_can_be_supported_by_unfiled_evidence() {
     let (db, _temp) = db_with_queue().await;
     // `add_page` passes no space, so the page is unfiled — the case at issue.
     add_page(&db, "uf1").await;
-    let base = crate::provenance::revision_content_digest("prose");
+    let base = crate::provenance::revision_content_digest(PAGE_PROSE);
     let minted = db
-        .mint_human_edit_delta("uf1", 1, &base, &format!("prose\n{ADDED}"))
+        .mint_human_edit_delta("uf1", 1, &base, &format!("{PAGE_PROSE}\n{ADDED}"))
         .await
         .unwrap()
         .expect("the scenario needs a real delta to cite");
@@ -4148,6 +4189,12 @@ struct ProducerJudge {
     saw_unlocked_db: AtomicBool,
     /// Set when any request left the timeout to the runtime's 30 s default.
     saw_default_timeout: AtomicBool,
+    /// The score for every ordinary item.
+    score: f64,
+    /// Items whose claim contains this text score 0.05 instead.
+    short_claim: Option<&'static str>,
+    /// Every claim text this judge was asked about, in order.
+    seen_claims: std::sync::Mutex<Vec<String>>,
     conn: Arc<tokio::sync::Mutex<libsql::Connection>>,
 }
 
@@ -4172,6 +4219,9 @@ impl ProducerJudge {
             calls: AtomicUsize::new(0),
             saw_unlocked_db: AtomicBool::new(true),
             saw_default_timeout: AtomicBool::new(false),
+            score: 0.95,
+            short_claim: None,
+            seen_claims: std::sync::Mutex::new(Vec::new()),
             conn: Arc::clone(&db.conn),
         }
     }
@@ -4208,12 +4258,15 @@ impl LlmProvider for ProducerJudge {
             .iter()
             .map(|item| {
                 let item_id = item["item_id"].as_str().unwrap();
+                let claim = item["claim"].as_str().unwrap_or_default();
+                self.seen_claims.lock().unwrap().push(claim.to_string());
                 let negative_qualification_case =
                     item_id.starts_with('N') && item_id.contains("-copy-");
-                let score = if self.qualifying && negative_qualification_case {
+                let short = self.short_claim.is_some_and(|text| claim.contains(text));
+                let score = if (self.qualifying && negative_qualification_case) || short {
                     0.05
                 } else {
-                    0.95
+                    self.score
                 };
                 serde_json::json!({ "item_id": item_id, "score": score })
             })
@@ -6135,4 +6188,378 @@ async fn producer_retires_stale_support_edges_after_the_cited_chunk_is_rewritten
         Some("done".to_string()),
         "nothing parks"
     );
+}
+
+// ---------------------------------------------------------------------------
+// UX-WHO-5: a verdict from a replaced judge, or about cut-off text, cannot
+// make a page look verified.
+// ---------------------------------------------------------------------------
+
+/// The stored reason a page is provisional.
+async fn provisional_reason(db: &MemoryDB, page_id: &str) -> Option<String> {
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT provisional_reason FROM page_truth_state WHERE page_id = ?1",
+            libsql::params![page_id],
+        )
+        .await
+        .unwrap();
+    rows.next()
+        .await
+        .unwrap()
+        .and_then(|row| row.get::<Option<String>>(0).unwrap())
+}
+
+/// Weakening: let a `draining` judge's edge count again anywhere — evaluation,
+/// the read surface, or startup reconciliation.
+///
+/// The page was published `supported` by the judge in force. Once that judge
+/// is replaced, its edge is an audit record: evaluation no longer reaches
+/// `Supported`, the next read stops asserting it, and reconciliation demotes
+/// the stored row with a reason that names the replaced judge and queues the
+/// page for the active judge. The edge itself stays live.
+#[tokio::test]
+async fn ux_who_5_draining_only_support_no_longer_counts() {
+    let (db, _temp) = db_with_queue().await;
+    add_page(&db, "p1").await;
+    let revisions = derive_page(&db, "p1", 1).await;
+    support_claim(&db, "p1", &revisions[0], 0.9).await;
+    publish_supported(&db, "p1").await;
+
+    set_test_judge_eligibility(&db, "draining", SUPPORT_THRESHOLD).await;
+
+    assert_ne!(
+        db.evaluate_page_support("p1", 1).await.unwrap(),
+        SupportOutcome::Supported,
+        "a replaced judge's verdict must not support a page"
+    );
+    assert_eq!(
+        exposed_support(&db, "p1").await,
+        crate::truth_contract::Support::Unevaluated,
+        "the read surface must stop asserting support at once"
+    );
+
+    assert_eq!(db.reconcile_supported_pages(100).await.unwrap().demoted, 1);
+    assert_eq!(
+        truth_row(&db, "p1").await.unwrap(),
+        ("provisional".to_string(), None, 0),
+        "demoted to provisional and unevaluated, so the page keeps its file"
+    );
+    assert_eq!(
+        provisional_reason(&db, "p1").await.as_deref(),
+        Some(super::claim_derivation::REASON_JUDGE_REPLACED)
+    );
+    assert_eq!(
+        job_for(&db, "p1").await.map(|(_, status, _)| status),
+        Some("pending".to_string()),
+        "the demotion queues the page for the active judge"
+    );
+    assert_eq!(
+        live_support_edge_count(&db, &revisions[0]).await,
+        1,
+        "the draining edge is kept as an audit record"
+    );
+}
+
+/// The same rule through the drift sweep, which reaches a supported page
+/// between reconciliation passes. Its stored reason must name the replaced
+/// judge rather than read as evidence that stopped clearing the bar.
+#[tokio::test]
+async fn ux_who_5_drift_sweep_demotes_draining_only_support_with_its_reason() {
+    let (db, _temp) = db_with_queue().await;
+    add_page(&db, "p1").await;
+    let revisions = derive_page(&db, "p1", 1).await;
+    support_claim(&db, "p1", &revisions[0], 0.9).await;
+    publish_supported(&db, "p1").await;
+
+    set_test_judge_eligibility(&db, "draining", SUPPORT_THRESHOLD).await;
+
+    assert_eq!(db.enqueue_stale_derivation_jobs(100).await.unwrap(), 1);
+    assert_eq!(truth_row(&db, "p1").await.unwrap().0, "provisional");
+    assert_eq!(
+        provisional_reason(&db, "p1").await.as_deref(),
+        Some(super::claim_derivation::REASON_JUDGE_REPLACED)
+    );
+    assert_eq!(
+        job_for(&db, "p1").await.map(|(_, status, _)| status),
+        Some("pending".to_string())
+    );
+}
+
+/// A two-claim page the old judge left provisional: it supported "Alpha" and
+/// judged "Beta" short. Returns the page id.
+async fn page_left_provisional_by_old_judge(db: &MemoryDB) -> &'static str {
+    let page_id = "rejudge-page";
+    add_producer_memory(
+        db,
+        "rejudge-evidence",
+        "The Alpha project launched successfully. Beta shipped late.",
+        "space-a",
+        "folder",
+    )
+    .await;
+    add_producer_page(
+        db,
+        page_id,
+        "The Alpha project launched successfully. Beta shipped late.",
+        "space-a",
+    )
+    .await;
+    link_page_evidence(db, page_id, "rejudge-evidence").await;
+    let old_judge = ProducerJudge {
+        model_version: "old-weights",
+        short_claim: Some("Beta"),
+        ..ProducerJudge::pinned(db)
+    };
+    assert!(matches!(
+        db.run_page_linked_truth_promotion_turn(&old_judge, "producer-worker")
+            .await
+            .unwrap(),
+        PromotionTurn::Completed { .. }
+    ));
+    let (status, evaluated_at, _) = truth_row(db, page_id).await.unwrap();
+    assert_eq!(status, "provisional", "Beta was judged short");
+    assert!(evaluated_at.is_some());
+    assert_eq!(
+        job_for(db, page_id).await.map(|(_, status, _)| status),
+        Some("done".to_string())
+    );
+    page_id
+}
+
+/// How many cached judgments exist under one model version.
+async fn cached_scores_for(db: &MemoryDB, model_version: &str) -> i64 {
+    let conn = db.conn.lock().await;
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*) FROM entailment_cache WHERE model_version = ?1",
+            libsql::params![model_version],
+        )
+        .await
+        .unwrap();
+    rows.next().await.unwrap().unwrap().get(0).unwrap()
+}
+
+/// Weakening: requeue only `supported` pages when a judge is replaced.
+///
+/// That was the selection that skipped the claim. A page that was NOT
+/// supported can still hold a claim whose only qualifying support came from
+/// the replaced judge, and that claim then counts for nothing and is never
+/// looked at again. Switching judges must put it in front of the new judge,
+/// and the loop must end once the new judge has ruled.
+#[tokio::test]
+async fn ux_who_5_draining_only_claim_is_rejudged_by_the_active_judge() {
+    let (db, _temp) = db_with_queue().await;
+    let page_id = page_left_provisional_by_old_judge(&db).await;
+
+    let new_judge = ProducerJudge {
+        score: 0.05,
+        ..ProducerJudge::pinned(&db)
+    };
+    let turn = db
+        .run_page_linked_truth_promotion_turn(&new_judge, "producer-worker")
+        .await
+        .unwrap();
+    assert!(
+        matches!(&turn, PromotionTurn::Completed { page_id: id, .. } if id == page_id),
+        "the switch must queue the draining-only claim for the new judge: {turn:?}"
+    );
+    assert!(
+        new_judge
+            .seen_claims
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|claim| claim.contains("Alpha")),
+        "the active judge must be asked about the claim only the old judge supported"
+    );
+    assert!(cached_scores_for(&db, M5_PRODUCTION_JUDGE_MODEL_VERSION).await > 0);
+    let (status, evaluated_at, _) = truth_row(&db, page_id).await.unwrap();
+    assert_eq!(status, "provisional");
+    assert!(
+        evaluated_at.is_some(),
+        "the active judge's own verdict stands: judged short, not waiting on a recheck"
+    );
+    assert_ne!(
+        provisional_reason(&db, page_id).await.as_deref(),
+        Some(super::claim_derivation::REASON_JUDGE_REPLACED)
+    );
+
+    // Terminates: the new judge ruled, so nothing is queued again — not by
+    // the next turn, and not by the sweep.
+    assert_eq!(
+        db.run_page_linked_truth_promotion_turn(&new_judge, "producer-worker")
+            .await
+            .unwrap(),
+        PromotionTurn::Idle
+    );
+    assert_eq!(db.enqueue_stale_derivation_jobs(100).await.unwrap(), 0);
+}
+
+/// Weakening: let the sweep skip a draining-only claim on a page that is not
+/// supported.
+///
+/// This is the state a vault upgraded from the old rule is already in: the
+/// judge was switched, activation requeued only supported pages, and this
+/// page's job finished under the older eligibility generation. The sweep is
+/// the only thing that can reach it.
+#[tokio::test]
+async fn ux_who_5_sweep_requeues_a_draining_only_claim_left_by_an_earlier_switch() {
+    let (db, _temp) = db_with_queue().await;
+    let page_id = page_left_provisional_by_old_judge(&db).await;
+    let finished_under = test_eligibility_generation(&db).await;
+
+    // The switch as the old activation performed it: drain the old judge,
+    // activate the new one, and leave the provisional page's job alone.
+    let new_judge = ProducerJudge {
+        score: 0.05,
+        ..ProducerJudge::pinned(&db)
+    };
+    let snapshot = crate::claim_judge::snapshot_m5_claim_judge(&new_judge).unwrap();
+    assert!(db
+        .activate_approved_m5_claim_judge(&snapshot)
+        .await
+        .unwrap());
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE claim_derivation_jobs
+                SET status = 'done', eligibility_generation = ?2
+              WHERE page_id = ?1",
+            libsql::params![page_id, finished_under],
+        )
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(db.enqueue_stale_derivation_jobs(100).await.unwrap(), 1);
+    assert_eq!(
+        job_for(&db, page_id).await.map(|(_, status, _)| status),
+        Some("pending".to_string())
+    );
+    assert!(matches!(
+        db.run_page_linked_truth_promotion_turn(&new_judge, "producer-worker")
+            .await
+            .unwrap(),
+        PromotionTurn::Completed { .. }
+    ));
+    assert!(new_judge.calls.load(Ordering::SeqCst) > 0);
+    assert_eq!(
+        db.enqueue_stale_derivation_jobs(100).await.unwrap(),
+        0,
+        "once the active judge has ruled, the sweep leaves the page alone"
+    );
+}
+
+/// Weakening: evaluate a cut-off page like any other.
+///
+/// Every claim has a qualifying edge from the active judge, which is what
+/// used to make page_900d9b9a and page_3ca1be8a read as supported. Text that
+/// stops mid-sentence is not a finished page; it lands on `Unevaluated` with a
+/// plain reason, never `Supported`, and reconciliation demotes a stored
+/// `supported` with the same reason.
+#[tokio::test]
+async fn ux_who_5_cut_off_page_is_not_supported() {
+    let (db, _temp) = db_with_queue().await;
+    db.insert_page(
+        "cut",
+        "cut",
+        None,
+        "Welcome the new hire. Then follow the steps for welcome,",
+        None,
+        None,
+        &[],
+        "2026-07-27T00:00:00Z",
+    )
+    .await
+    .unwrap();
+    let revisions = derive_page(&db, "cut", 1).await;
+    support_claim(&db, "cut", &revisions[0], 0.9).await;
+    let job = lease_page(&db, "cut", 1, "worker").await;
+    let outcome = db.evaluate_page_support("cut", 1).await.unwrap();
+    assert_eq!(
+        outcome,
+        SupportOutcome::Unevaluated {
+            reason: super::claim_derivation::REASON_TEXT_CUT_OFF.to_string()
+        }
+    );
+    assert!(db
+        .finalize_page_support("cut", 1, &job, "worker", &outcome)
+        .await
+        .unwrap());
+    assert_eq!(
+        truth_row(&db, "cut").await.unwrap(),
+        ("provisional".to_string(), None, 0)
+    );
+
+    // A `supported` stored before this rule existed is demoted, with the
+    // cut-off reason rather than the generic one.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE page_truth_state SET support_status = 'supported', evaluated_at = 1
+              WHERE page_id = 'cut'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        exposed_support(&db, "cut").await,
+        crate::truth_contract::Support::Unevaluated
+    );
+    assert_eq!(db.reconcile_supported_pages(100).await.unwrap().demoted, 1);
+    assert_eq!(
+        provisional_reason(&db, "cut").await.as_deref(),
+        Some(super::claim_derivation::REASON_TEXT_CUT_OFF)
+    );
+}
+
+/// Weakening: send a cut-off page's claims to the judge.
+///
+/// The production worker still derives the page, so its marker exists and the
+/// stale sweep does not requeue it forever, but the judge is never called, so
+/// the fragment never reaches it. The page publishes provisional with the
+/// cut-off reason and the job finishes.
+#[tokio::test]
+async fn ux_who_5_cut_off_page_is_not_sent_to_the_judge() {
+    let (db, _temp) = db_with_queue().await;
+    let evidence = "The Alpha project launched successfully.";
+    add_producer_memory(&db, "cut-evidence", evidence, "space-a", "folder").await;
+    add_producer_page(
+        &db,
+        "cut-page",
+        "The Alpha project launched successfully. Then the steps for welcome,",
+        "space-a",
+    )
+    .await;
+    link_page_evidence(&db, "cut-page", "cut-evidence").await;
+    let judge = ProducerJudge::pinned(&db);
+
+    assert!(matches!(
+        db.run_page_linked_truth_promotion_turn(&judge, "producer-worker")
+            .await
+            .unwrap(),
+        PromotionTurn::Completed { .. }
+    ));
+    assert_eq!(
+        judge.calls.load(Ordering::SeqCst),
+        0,
+        "nothing from a cut-off page reaches the judge: {:?}",
+        judge.seen_claims.lock().unwrap()
+    );
+    assert_eq!(
+        truth_row(&db, "cut-page").await.unwrap(),
+        ("provisional".to_string(), None, 0)
+    );
+    assert_eq!(
+        provisional_reason(&db, "cut-page").await.as_deref(),
+        Some(super::claim_derivation::REASON_TEXT_CUT_OFF)
+    );
+    assert_eq!(
+        job_for(&db, "cut-page").await.map(|(_, status, _)| status),
+        Some("done".to_string())
+    );
+    assert_eq!(db.enqueue_stale_derivation_jobs(100).await.unwrap(), 0);
 }

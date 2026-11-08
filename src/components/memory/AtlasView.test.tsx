@@ -30,6 +30,12 @@ vi.mock("sigma/rendering", () => ({
 /** The mock viewport. Tests that watch the names of a far component widen
  *  it (see graphToViewport below). */
 let mockDimensions = { width: 400, height: 600 };
+/** Pins a test to the R1 layout, whose regions are the cartography
+ *  communities (R2, the default, names its own). */
+function useR1Layout() {
+  window.localStorage.setItem("atlas.exp.layout", "r1");
+}
+
 vi.mock("sigma", () => {
   class MouseCaptorMock {
     handlers = new Map<string, (payload: any) => void>();
@@ -57,6 +63,9 @@ vi.mock("sigma", () => {
     }
     getMouseCaptor() {
       return this.mouseCaptor;
+    }
+    getGraph() {
+      return this.graph;
     }
     // 100-unit graph span in a 400px-min-dim container: the fill-aware
     // default density is 0.6 * 400 / 100 = 2.4 px/unit (inside the [1.5, 3]
@@ -114,6 +123,9 @@ vi.mock("sigma", () => {
       off: vi.fn(),
     };
     scaleSize(size: number) { return size; }
+    // The label guard projects display data; the mock's display spots carry
+    // no size, so they add no discs to it.
+    framedGraphToViewport(coords: { x: number; y: number }) { return coords; }
     getCamera() {
       return this.camera;
     }
@@ -150,7 +162,7 @@ import type {
   KnowledgeGraph,
   ThingNightPoints,
 } from "../../lib/tauri";
-import AtlasView, { WORKING_STORAGE_KEY } from "./AtlasView";
+import AtlasView, { keptMissingAllowance, WORKING_STORAGE_KEY } from "./AtlasView";
 import { THINGS_APART_STORAGE_KEY } from "../../lib/graph/positions";
 import { ATLAS_CONTROL_INSETS } from "../../lib/graph/viewpoint";
 
@@ -425,6 +437,7 @@ describe("AtlasView", () => {
 
   beforeEach(async () => {
     await i18n.changeLanguage("en");
+    window.localStorage.removeItem("atlas.exp.layout");
     vi.clearAllMocks();
     vi.mocked(listThingNightPoints).mockReset();
     capturedSigmaInstances.length = 0;
@@ -1603,6 +1616,8 @@ describe("AtlasView", () => {
   }
 
   it("names an island small group only once the view is zoomed in enough for the islands to come up solid", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockStarWithSmallStar();
     mockDimensions = { width: 2000, height: 1200 }; // the island sits out on the rim; keep it in view
 
@@ -1811,6 +1826,8 @@ describe("AtlasView", () => {
   }
 
   it("shows the artifact count line — entities · regions — in the toolbar", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockTwoTriangles();
 
     renderWithQuery(<AtlasView />);
@@ -2305,6 +2322,8 @@ describe("AtlasView", () => {
   }
 
   it("paints names when Regions is enabled through the refresh path, without a second draw", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockTwoTrianglesInSpace();
     mockDimensions = { width: 2000, height: 1200 }; // both triangles in view, like a real fit
     // The helper canvases only exist once the mount effect has run, so stub
@@ -2331,6 +2350,8 @@ describe("AtlasView", () => {
   });
 
   it("re-renders the place names when a space's cartography status changes, without a full remount", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockTwoTrianglesInSpace();
     mockDimensions = { width: 2000, height: 1200 }; // both triangles in view, like a real fit
     // Starts on the default (empty) fallback climb: two 3-cliques joined by
@@ -2756,6 +2777,8 @@ describe("AtlasView", () => {
   });
 
   it("gives each layer a chip whose pressed state matches what is drawn", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockPairWithPages();
 
     renderWithQuery(<AtlasView />);
@@ -2886,7 +2909,7 @@ describe("AtlasView", () => {
     expect(screen.queryByRole("dialog", { name: "Bob" })).not.toBeInTheDocument();
   });
 
-  it("UX-GRAPH-1: the same point is in the same place when the map opens again; rearranging asks first and can be undone", async () => {
+  it("UX-GRAPH-1: opening the map again does not rearrange it, something new goes next to what it links to, and the map has no Rearrange button", async () => {
     const relation = (id: string, target: string, name: string) => ({
       id,
       relation_type: "knows",
@@ -2934,24 +2957,127 @@ describe("AtlasView", () => {
     const [newX, newY] = at("e6");
     expect(Math.hypot(newX - hubX, newY - hubY)).toBeLessThan(40);
 
-    // Rearranging asks first; cancelling changes nothing.
-    fireEvent.click(screen.getByRole("button", { name: "Rearrange" }));
-    const ask = screen.getByRole("dialog", { name: "Rearrange" });
-    expect(ask).toHaveTextContent("Every point will move to a new place.");
-    fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("dialog", { name: "Rearrange" })).toBeNull();
-    expect(capturedSigmaInstances).toHaveLength(2);
-
-    fireEvent.click(screen.getByRole("button", { name: "Rearrange" }));
-    fireEvent.click(within(screen.getByRole("dialog", { name: "Rearrange" })).getByRole("button", { name: "Rearrange" }));
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
-    expect(at("e2")).not.toEqual([123, 45]);
-    const done = screen.getByRole("status", { name: "Rearrange" });
-    expect(done).toHaveTextContent("Rearranged.");
-
-    // Undo puts the earlier layout back.
-    fireEvent.click(within(done).getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(4));
-    expect(at("e2")).toEqual([123, 45]);
+    // Nothing on the map rearranges it by hand.
+    expect(screen.queryByRole("button", { name: /rearrange/i })).toBeNull();
   });
+
+  /** A star of `count` entities around e0, linked so every one is drawn. */
+  function mockStar(count: number) {
+    const ids = Array.from({ length: count }, (_, i) => `e${i}`);
+    const entities = ids.map((id) => makeEntity({ id, name: `N${id}` }));
+    mockListEntities.mockResolvedValue(entities);
+    mockGetEntityDetail.mockImplementation(async (id: string) => ({
+      entity: entities.find((e) => e.id === id)!,
+      observations: [],
+      relations: id === "e0"
+        ? ids.slice(1).map((other, i) => ({
+          id: `rel-${i}`, relation_type: "knows", direction: "outgoing" as const, entity_id: other,
+          entity_name: `N${other}`, entity_type: "person", source_agent: null, created_at: 1,
+        }))
+        : [],
+    }));
+    return ids;
+  }
+  const atlasLayout = () => (window as unknown as { __ATLAS_LAYOUT?: { kept: boolean; regionless: boolean } }).__ATLAS_LAYOUT;
+
+  it("UX-GRAPH-1: the first time the map switches to the new layout, a corner note says so and Put back brings the old one back", async () => {
+    mockStar(12);
+    const first = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    first.unmount();
+    cleanup();
+    // A layout kept from before the current layout version, with one point moved by hand.
+    const key = "atlas.positions.*";
+    const kept = JSON.parse(window.localStorage.getItem(key)!) as Record<string, [number, number]>;
+    kept.e3 = [321, -54];
+    window.localStorage.setItem(key, JSON.stringify(kept));
+    window.localStorage.setItem("atlas.layout.version.*", "1");
+
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    const note = await screen.findByRole("status", { name: "Rebalanced" });
+    expect(note).toHaveTextContent("The map was rebalanced");
+    expect([latestGraph().getNodeAttribute("e3", "x"), latestGraph().getNodeAttribute("e3", "y")]).not.toEqual([321, -54]);
+
+    fireEvent.click(within(note).getByRole("button", { name: "Put back" }));
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    expect([latestGraph().getNodeAttribute("e3", "x"), latestGraph().getNodeAttribute("e3", "y")]).toEqual([321, -54]);
+    expect(atlasLayout()?.kept).toBe(true);
+  });
+
+  it("UX-GRAPH-1: a map with a few new points goes straight back to its kept spots, without a fresh layout", async () => {
+    const ids = mockStar(40);
+    const first = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    expect(atlasLayout()?.kept).toBe(false);
+    first.unmount();
+    cleanup();
+
+    // Two new points (within the allowance): the kept layout is put back.
+    mockStar(42);
+    const second = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    expect(atlasLayout()?.kept).toBe(true);
+    expect(latestGraph().hasNode("e41")).toBe(true);
+    second.unmount();
+    cleanup();
+
+    // Many new points at once: laid out again.
+    mockStar(42 + keptMissingAllowance(42) + 1);
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    expect(atlasLayout()?.kept).toBe(false);
+    expect(ids).toHaveLength(40);
+  });
+
+  it("UX-GRAPH-1: Put back to a layout from before regions brings it back without regions", async () => {
+    window.localStorage.setItem("atlas.exp.layout", "r2");
+    mockStar(12);
+    const first = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    first.unmount();
+    cleanup();
+    // A layout kept from before regions and before the current layout version.
+    window.localStorage.removeItem("atlas.regions.*");
+    window.localStorage.setItem("atlas.layout.version.*", "1");
+
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    expect(window.localStorage.getItem("atlas.regions.*")).not.toBeNull();
+    // The rebalance kept the region-less layout as the one to put back.
+    const done = await screen.findByRole("status", { name: "Rebalanced" });
+    fireEvent.click(within(done).getByRole("button", { name: "Put back" }));
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    expect(atlasLayout()).toMatchObject({ kept: true, regionless: true });
+    expect(latestGraph().getNodeAttribute("e1", "region")).toBeUndefined();
+    expect(window.localStorage.getItem("atlas.regions.*")).toBeNull();
+  });
+
+  it("UX-GRAPH-1: the laying-out note clears when a worker run is cut short by a smaller map", async () => {
+    const posted: unknown[] = [];
+    vi.stubGlobal("Worker", class {
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      postMessage(data: unknown) { posted.push(data); }
+      terminate() {}
+    });
+    try {
+      withMemoryLayerOn();
+      const ids = mockStar(1450);
+      mockMemories(
+        Array.from({ length: 100 }, (_, i) => makeMemory({ source_id: `m${i}`, title: `Memory ${i}` })),
+        Array.from({ length: 100 }, (_, i) => ({ memory_id: `m${i}`, entity_id: ids[i % ids.length]! })),
+      );
+      renderWithQuery(<AtlasView />);
+      await waitFor(() => expect(posted).toHaveLength(1));
+      expect(screen.getByText(i18n.t("atlas.layingOut"))).toBeInTheDocument();
+      // Memories off: the map falls under the worker size and is laid out here.
+      fireEvent.click(displayControl("Memories"));
+      await waitFor(() => expect(capturedSigmaInstances.length).toBeGreaterThan(0));
+      await waitFor(() => expect(screen.queryByText(i18n.t("atlas.layingOut"))).toBeNull());
+      expect(posted).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 30_000);
 });

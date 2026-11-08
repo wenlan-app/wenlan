@@ -156,6 +156,48 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Migration 158: `conversation_labels.unread_at`, the last line of a
+    /// conversation whose transcript was gone when a night came to read it,
+    /// and `memories.said_line`, the line the person typed that a night's
+    /// point came from (UX-WHO-6). Both columns are added only when missing,
+    /// so a crash before the version bump replays cleanly.
+    pub(super) async fn migrate_158_dream_reading(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(158, prior_version).await?;
+        let conn = self.conn.lock().await;
+        for (table, column) in [
+            ("conversation_labels", "unread_at INTEGER"),
+            ("memories", "said_line TEXT"),
+        ] {
+            let name = column.split(' ').next().unwrap_or_default();
+            let mut rows = conn
+                .query(
+                    &format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{name}'"),
+                    (),
+                )
+                .await
+                .map_err(db_err("m158 columns"))?;
+            let has_column = rows
+                .next()
+                .await
+                .map_err(db_err("m158 column row"))?
+                .is_some();
+            drop(rows);
+            if !has_column {
+                conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column}"), ())
+                    .await
+                    .map_err(db_err("m158 add column"))?;
+            }
+        }
+        conn.execute("PRAGMA user_version = 158", ())
+            .await
+            .map_err(db_err("m158 bump"))?;
+        log::info!("[migration] Migration 158 applied: what a night could not read, and where its points came from");
+        Ok(())
+    }
+
     /// Things whose conversations went on since they were last read for
     /// points, newest first, at most `limit`. Only conversations whose last
     /// line is at or before `quiet_since` count, so one still going on waits.
@@ -173,6 +215,7 @@ impl MemoryDB {
                    JOIN things t ON t.id = ts.thing_id
                   WHERE cl.work = 1 AND t.merged_into IS NULL AND t.title IS NOT NULL
                     AND (cl.dreamed_at IS NULL OR cl.last_at > cl.dreamed_at)
+                    AND (cl.unread_at IS NULL OR cl.last_at > cl.unread_at)
                     AND cl.last_at <= ?1
                   ORDER BY cl.last_at DESC, cl.session_id",
                 libsql::params![quiet_since],
@@ -562,20 +605,125 @@ impl MemoryDB {
     /// Attach a point written overnight to the conversation it came from, so
     /// the thing's page lists it, without counting as activity in that
     /// conversation: a night's reading must not keep a thing on home.
+    ///
+    /// A point is Wenlan's own writing: it is marked so (`source_agent`
+    /// `wenlan`) and not put in the review list, since the person sees it on
+    /// the thing and is asked about a conflict there (UX-CHAT-5). `line` is
+    /// what the person typed that it came from, when the model named one.
     pub async fn attach_dream_point(
         &self,
         source_id: &str,
         session_id: &str,
+        line: Option<&str>,
     ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute(
-            "UPDATE memories SET session_id = ?1
+            "UPDATE memories SET session_id = ?1, confirmed = 1,
+                    source_agent = COALESCE(source_agent, 'wenlan'), said_line = ?3
               WHERE source = 'memory' AND source_id = ?2 AND session_id IS NULL",
-            libsql::params![session_id, source_id],
+            libsql::params![session_id, source_id, line],
         )
         .await
         .map_err(db_err("attach dream point"))?;
         Ok(())
+    }
+
+    /// A night came to read these conversations and their transcripts were
+    /// gone. They are not marked read: they are left out of the nights until
+    /// they go on again, and the thing's page says one could not be read.
+    pub async fn mark_dream_unread(
+        &self,
+        conversations: &[DueConversation],
+    ) -> Result<(), WenlanError> {
+        if conversations.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().await;
+        for conversation in conversations {
+            conn.execute(
+                "UPDATE conversation_labels SET unread_at = ?1 WHERE session_id = ?2",
+                libsql::params![conversation.last_at, conversation.session_id.as_str()],
+            )
+            .await
+            .map_err(db_err("dream unread"))?;
+        }
+        Ok(())
+    }
+
+    /// How many of a thing's conversations went on since a night last read
+    /// them, and could not be read because their transcript was gone.
+    pub async fn thing_unread_conversations(&self, thing_id: &str) -> Result<usize, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM conversation_labels cl
+                   JOIN thing_sessions ts ON ts.session_id = cl.session_id
+                  WHERE ts.thing_id = ?1 AND cl.work = 1
+                    AND cl.unread_at IS NOT NULL AND cl.unread_at >= cl.last_at
+                    AND (cl.dreamed_at IS NULL OR cl.dreamed_at < cl.last_at)",
+                libsql::params![thing_id],
+            )
+            .await
+            .map_err(db_err("thing unread"))?;
+        let count = match rows.next().await.map_err(db_err("thing unread row"))? {
+            Some(row) => row.get::<i64>(0).unwrap_or(0),
+            None => 0,
+        };
+        Ok(usize::try_from(count).unwrap_or(0))
+    }
+
+    /// The Space a night's point goes to when its conversation's label named
+    /// none (trust audit F4). The conversation's own Space, when it ran in a
+    /// repository (`in_repo`: outside one, the tool's default Space says
+    /// nothing about what was talked about); else the one Space the thing's
+    /// other conversations are all in. `None` leaves it to the default.
+    /// Only a registered Space other than Uncategorized is returned.
+    pub async fn dream_point_space(
+        &self,
+        thing_id: &str,
+        session_id: &str,
+        in_repo: bool,
+    ) -> Result<Option<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let registered = "SELECT sp.name FROM spaces sp
+                           WHERE sp.name = a.space AND sp.id <> '00000000-0000-4000-8000-000000000001'";
+        if in_repo {
+            let mut rows = conn
+                .query(
+                    &format!("SELECT ({registered}) FROM agent_sessions a WHERE a.id = ?1"),
+                    libsql::params![session_id],
+                )
+                .await
+                .map_err(db_err("point space session"))?;
+            if let Some(row) = rows
+                .next()
+                .await
+                .map_err(db_err("point space session row"))?
+            {
+                if let Some(space) = row.get::<Option<String>>(0).unwrap_or(None) {
+                    return Ok(Some(space));
+                }
+            }
+        }
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT DISTINCT ({registered}) FROM thing_sessions ts
+                       JOIN agent_sessions a ON a.id = ts.session_id
+                      WHERE ts.thing_id = ?1 AND ts.session_id <> ?2"
+                ),
+                libsql::params![thing_id, session_id],
+            )
+            .await
+            .map_err(db_err("point space thing"))?;
+        let mut spaces = Vec::new();
+        while let Some(row) = rows.next().await.map_err(db_err("point space thing row"))? {
+            spaces.push(row.get::<Option<String>>(0).unwrap_or(None));
+        }
+        Ok(match spaces.as_slice() {
+            [Some(space)] => Some(space.clone()),
+            _ => None,
+        })
     }
 
     /// The person takes back the newest night of a thing that was not taken

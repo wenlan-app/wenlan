@@ -1197,7 +1197,12 @@ fn sentence_citation(
 ) -> SentenceCitation {
     match record {
         Some(record) => {
-            let current = states.get(&record.locator).and_then(Option::as_ref);
+            let entry = states.get(&record.locator);
+            let current = entry.and_then(Option::as_ref);
+            // A cited source that can no longer be read here (superseded and
+            // hidden, deleted, or moved out of this Space) no longer backs the
+            // sentence, even though its old text never changed.
+            let gone = matches!(entry, Some(None));
             SentenceCitation {
                 occurrence,
                 marker: record.marker,
@@ -1206,7 +1211,7 @@ fn sentence_citation(
                 status: record.status.clone(),
                 cited_version: record.cited_version,
                 current_version: current.map(|(version, _, _)| *version),
-                stale: is_stale(record, current),
+                stale: gone || is_stale(record, current),
                 disproven: record.disproven,
             }
         }
@@ -1235,13 +1240,28 @@ fn evidence_of(citations: &[SentenceCitation]) -> EvidenceState {
     if citations.is_empty() {
         return EvidenceState::None;
     }
-    if citations
-        .iter()
-        .any(|c| c.status == "unverified" || c.disproven)
-    {
+    if citations.iter().any(|c| c.disproven) {
         return EvidenceState::Unverified;
     }
-    if citations.iter().all(|c| c.status == "verified" && !c.stale) {
+    // Each citation carries its own verdict, so one source that adds nothing
+    // to a sentence other sources support does not fail the sentence; it
+    // shows as unsupported on its own chip (`weak_reasons`).
+    if !citations.iter().any(|c| c.status == "verified") {
+        return if citations.iter().any(|c| c.status == "unverified") {
+            EvidenceState::Unverified
+        } else {
+            EvidenceState::Unevaluated
+        };
+    }
+    // Verified only when every verdict can still be trusted: no source has
+    // changed or gone, none is waiting for a check, and every verified one
+    // recorded the version it was checked against. Without that version a
+    // later edit to the source could never show as out of date.
+    if citations.iter().all(|c| {
+        !c.stale
+            && c.status != "unevaluated"
+            && (c.status != "verified" || c.cited_version.is_some())
+    }) {
         return EvidenceState::Verified;
     }
     EvidenceState::Unevaluated
@@ -1356,11 +1376,12 @@ pub async fn recheck_sentence(
             .collect::<Vec<_>>();
         let sentence = crate::citations::strip_markers(&unit.text);
         let paragraph = crate::citations::strip_markers(paragraph_at(&page.content, unit.start));
-        let (verified, scope, scores) =
+        let (_, scope, scores, supported) =
             crate::citations::claim_support(&sentence, &paragraph, &texts);
         for (k, &i) in targets.iter().enumerate() {
             let state = states.get(&citations[i].locator).and_then(Option::as_ref);
             let citation = &mut citations[i];
+            let verified = supported.get(k).copied().unwrap_or(false);
             let was_verified = citation.status == "verified" && !citation.disproven;
             citation.disproven = !verified && was_verified;
             citation.status = if verified { "verified" } else { "unverified" }.to_string();

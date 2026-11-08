@@ -335,7 +335,7 @@ pub(crate) fn claim_support(
     sentence: &str,
     paragraph: &str,
     sources: &[NumberedSource],
-) -> (bool, &'static str, Vec<f64>) {
+) -> (bool, &'static str, Vec<f64>, Vec<bool>) {
     let refs = sources.iter().collect::<Vec<_>>();
     let (verified, scope, claim) = if bounded_support(sentence, &refs) >= 0.5 {
         (true, "sentence", sentence)
@@ -346,11 +346,45 @@ pub(crate) fn claim_support(
             paragraph,
         )
     };
-    let scores = sources
+    let records = record_support(claim, &refs, verified);
+    (
+        verified,
+        scope,
+        records.iter().map(|(score, _)| *score).collect(),
+        records.iter().map(|(_, ok)| *ok).collect(),
+    )
+}
+
+/// Each cited source's own audit score at the deciding scope, and whether
+/// that source itself supports the claim. A claim the sources support
+/// together still marks a source unsupported when it adds nothing: it
+/// neither supports the claim alone nor is needed by the others to reach
+/// the floor. One strong source no longer lends its "verified" to a weak
+/// neighbour cited in the same sentence.
+fn record_support(
+    claim: &str,
+    sources: &[&NumberedSource],
+    union_verified: bool,
+) -> Vec<(f64, bool)> {
+    sources
         .iter()
-        .map(|source| bounded_support(claim, &[source]))
-        .collect();
-    (verified, scope, scores)
+        .map(|source| {
+            let score = bounded_support(claim, &[source]);
+            if !union_verified {
+                return (score, false);
+            }
+            if score >= 0.5 {
+                return (score, true);
+            }
+            let others = sources
+                .iter()
+                .filter(|other| other.locator != source.locator)
+                .copied()
+                .collect::<Vec<_>>();
+            let needed = others.is_empty() || bounded_support(claim, &others) < 0.5;
+            (score, needed)
+        })
+        .collect()
 }
 
 /// Select one contiguous, overlapping evidence window. The final window is
@@ -551,24 +585,28 @@ pub fn process_citation_output(
             let para_verified = bounded_support(paragraph, &claim_sources) >= 0.5;
             (para_verified, "paragraph", paragraph)
         };
-        if claim_verified {
-            verified += group.len();
-        } else {
-            unverified += group.len();
-        }
+        let records = record_support(claim_text, &claim_sources, claim_verified);
+        let mut record = records.iter();
 
         for &(n, _) in &group {
             occurrence += 1;
             if let Some(src) = sources.get((n - 1) as usize) {
-                // Audit score at the scope that decided the status.
-                let score = bounded_support(claim_text, &[src]);
+                // Audit score at the scope that decided the status, and this
+                // source's own verdict: the group's verdict is not copied
+                // onto a source that does not support the claim.
+                let (score, record_verified) = record.next().copied().unwrap_or((0.0, false));
+                if record_verified {
+                    verified += 1;
+                } else {
+                    unverified += 1;
+                }
                 citations.push(PageCitation {
                     occurrence,
                     marker: n,
                     source_kind: src.source_kind.clone(),
                     locator: src.locator.clone(),
                     score,
-                    status: if claim_verified {
+                    status: if record_verified {
                         "verified"
                     } else {
                         "unverified"
@@ -1727,6 +1765,49 @@ mod tests {
         assert_eq!(cites[1].status, "unverified");
         assert_eq!(stats.verified, 1);
         assert_eq!(stats.unverified, 1);
+    }
+
+    #[test]
+    fn ux_who_5_a_weak_source_cited_beside_a_strong_one_is_not_verified() {
+        // [1] says the claim; [2] is about something else. The sentence is
+        // supported, but [2] must not borrow [1]'s verdict.
+        let body = "The daemon binds to port 7878 by default.[1][2]";
+        let (_, cites, stats) = process_citation_output(body, &srcs());
+        assert_eq!(cites.len(), 2);
+        assert_eq!(cites[0].status, "verified");
+        assert_eq!(cites[1].status, "unverified");
+        assert!(cites[1].score < 0.5);
+        assert_eq!((stats.verified, stats.unverified), (1, 1));
+    }
+
+    #[test]
+    fn ux_who_5_sources_that_support_a_claim_only_together_both_stay_verified() {
+        // Each source carries about half the claim plus unrelated text, so
+        // neither reaches the floor alone; together they do. Both are needed.
+        let sources = vec![
+            NumberedSource {
+                index: 1,
+                source_kind: "memory".into(),
+                locator: "mem_daemon".into(),
+                text: "daemon listens loopback port; unrelated notes about gardening tomatoes watering schedules compost mulch seedlings".into(),
+            },
+            NumberedSource {
+                index: 2,
+                source_kind: "memory".into(),
+                locator: "mem_embed".into(),
+                text: "fastembed loads bge base; unrelated notes about cycling routes mountains weather tires helmets bottles".into(),
+            },
+        ];
+        let body = "The daemon listens on loopback port 7878 and fastembed loads bge base vectors quickly offline.[1][2]";
+        let (_, cites, _) = process_citation_output(body, &sources);
+        assert!(
+            cites.iter().all(|c| c.score < 0.5),
+            "fixture must need both sources: {cites:?}"
+        );
+        assert!(
+            cites.iter().all(|c| c.status == "verified"),
+            "each is needed for the claim: {cites:?}"
+        );
     }
 
     #[test]
