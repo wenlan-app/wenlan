@@ -21,6 +21,7 @@ fn found(id: &str, last_at: i64) -> FoundConversation {
         last_at,
         automated: false,
         on_behalf: false,
+        touched: Vec::new(),
     }
 }
 
@@ -205,6 +206,41 @@ async fn ux_thing_1_grouping_puts_read_conversations_into_things_with_where_they
         .unwrap()
         .iter()
         .all(|t| t.news.is_empty()));
+}
+
+#[tokio::test]
+async fn ux_thing_1_grouping_gets_what_each_conversation_and_thing_worked_on() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let mut a = found("a", now - 600);
+    a.touched = vec!["src/home.tsx".into(), "UX-HOME-4".into()];
+    db.record_conversation_label(&a, &work("Calmer cards", "Spacing"), None)
+        .await
+        .unwrap();
+    // A conversation labelled before this was kept gets it when read again.
+    let b = found("b", now - 300);
+    db.record_conversation_label(&b, &work("Card review", "Checked"), None)
+        .await
+        .unwrap();
+    let b_id = found_session_id(&b).unwrap();
+    db.record_conversation_touched(&[(b_id, vec!["src/home.tsx".into()])])
+        .await
+        .unwrap();
+
+    let pending = db.intake_pending(50).await.unwrap();
+    assert_eq!(pending[0].touched, vec!["src/home.tsx", "UX-HOME-4"]);
+    assert_eq!(pending[1].touched, vec!["src/home.tsx"]);
+
+    let grouping = Grouping {
+        new: vec![("Redesign".into(), vec![0, 1])],
+        ..Default::default()
+    };
+    db.apply_intake_grouping(&pending, &[], &grouping)
+        .await
+        .unwrap();
+    let open = db.intake_open_things().await.unwrap();
+    // A thing's files and rules, the ones its conversations shared first.
+    assert_eq!(open[0].touched, vec!["src/home.tsx", "UX-HOME-4"]);
 }
 
 #[tokio::test]

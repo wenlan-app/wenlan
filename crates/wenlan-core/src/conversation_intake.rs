@@ -75,6 +75,12 @@ pub struct FoundConversation {
     /// projects and Remote Control), so the words are not the person's own
     /// but the work is.
     pub on_behalf: bool,
+    /// What the conversation actually worked on, most often first: the
+    /// files it changed, relative to its folder, and rule ids such as
+    /// UX-HOME-4 it named. Names only, never what the files say; the
+    /// grouping model reads them so conversations that change the same
+    /// things land in the same thing even under different titles.
+    pub touched: Vec<String>,
 }
 
 /// Why conversations were left out, for the log.
@@ -236,6 +242,94 @@ fn strip_tags(text: &str) -> String {
     out.trim().to_string()
 }
 
+/// Files a conversation changed and rule ids it named, counted.
+#[derive(Default)]
+struct Touched {
+    files: HashMap<String, usize>,
+    ids: HashMap<String, usize>,
+}
+
+/// Files and rule ids kept for one conversation, each.
+const MAX_TOUCHED_FILES: usize = 8;
+const MAX_TOUCHED_IDS: usize = 8;
+
+/// A rule or ticket id with at least two letter parts, such as UX-HOME-4.
+/// One-part ids (UTF-8, SHA-256) say nothing about the work.
+static RULE_ID: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\b[A-Z]{2,}(?:-[A-Z]{2,})+-\d+\b").expect("rule id pattern")
+});
+
+impl Touched {
+    fn file(&mut self, path: &str) {
+        let path = path.trim();
+        if !path.is_empty() {
+            *self.files.entry(path.to_string()).or_default() += 1;
+        }
+    }
+
+    fn ids_in(&mut self, text: &str) {
+        for found in RULE_ID.find_iter(text) {
+            *self.ids.entry(found.as_str().to_string()).or_default() += 1;
+        }
+    }
+
+    /// The files inside `cwd`, relative to it, then the ids, most often
+    /// first. A file outside the conversation's folder (a scratch file, a
+    /// note elsewhere) says little about its work and is left out.
+    fn finish(self, cwd: Option<&str>) -> Vec<String> {
+        fn top(counts: HashMap<String, usize>, max: usize) -> Vec<String> {
+            let mut all: Vec<(String, usize)> = counts.into_iter().collect();
+            all.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            all.into_iter().take(max).map(|(name, _)| name).collect()
+        }
+        let mut files: HashMap<String, usize> = HashMap::new();
+        if let Some(cwd) = cwd
+            .map(|c| c.trim_end_matches('/'))
+            .filter(|c| !c.is_empty())
+        {
+            for (path, n) in self.files {
+                let inside = if Path::new(&path).is_absolute() {
+                    path.strip_prefix(cwd)
+                        .and_then(|rest| rest.strip_prefix('/'))
+                        .map(str::to_string)
+                } else {
+                    Some(path.trim_start_matches("./").to_string())
+                };
+                if let Some(inside) = inside.filter(|p| !p.is_empty() && !p.starts_with("..")) {
+                    *files.entry(inside).or_default() += n;
+                }
+            }
+        }
+        let mut out = top(files, MAX_TOUCHED_FILES);
+        out.extend(top(self.ids, MAX_TOUCHED_IDS));
+        out
+    }
+}
+
+/// Files an `apply_patch` call changed; false when it is no patch. The
+/// patch may sit inside a script's string (Codex's `exec` tool), with its
+/// line breaks written `\n` and a quote right after the path.
+fn patched_files(patch: &str, touch: &mut Touched) -> bool {
+    let mut any = false;
+    for line in patch.replace("\\n", "\n").lines() {
+        for head in ["*** Update File: ", "*** Add File: ", "*** Delete File: "] {
+            let Some(at) = line.find(head) else {
+                continue;
+            };
+            let path = line[at + head.len()..]
+                .split(['"', '\\', '`', '\''])
+                .next()
+                .unwrap_or_default()
+                .trim();
+            if !path.is_empty() {
+                touch.file(path);
+                any = true;
+            }
+        }
+    }
+    any
+}
+
 #[derive(Deserialize)]
 struct ClaudeEntry {
     #[serde(rename = "type")]
@@ -275,9 +369,44 @@ struct ClaudeBlock {
     #[serde(rename = "type")]
     kind: Option<String>,
     text: Option<String>,
+    /// A tool call's name and input.
+    name: Option<String>,
+    input: Option<serde_json::Value>,
 }
 
 impl ClaudeContent {
+    /// The files a turn's tool calls changed, and the rule ids its commands
+    /// (commit messages, PR titles) name.
+    fn tool_calls(&self, touch: &mut Touched) {
+        let Self::Blocks(blocks) = self else {
+            return;
+        };
+        for block in blocks
+            .iter()
+            .filter(|b| b.kind.as_deref() == Some("tool_use"))
+        {
+            let Some(input) = &block.input else {
+                continue;
+            };
+            if matches!(
+                block.name.as_deref(),
+                Some("Edit" | "Write" | "MultiEdit" | "NotebookEdit")
+            ) {
+                if let Some(file) = input["file_path"]
+                    .as_str()
+                    .or_else(|| input["notebook_path"].as_str())
+                {
+                    touch.file(file);
+                }
+            }
+            // A command (a commit message, a PR title) names what the work
+            // is; a file's new text would name every id in it.
+            if let Some(command) = input["command"].as_str() {
+                touch.ids_in(command);
+            }
+        }
+    }
+
     fn texts(self) -> Vec<String> {
         match self {
             Self::Text(text) => vec![text],
@@ -304,6 +433,7 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
     let (mut first_at, mut last_at) = (None::<i64>, None::<i64>);
     let (mut said, mut last_reply) = (Vec::new(), String::new());
     let (mut automated, mut branch, mut id) = (false, None, None);
+    let mut touch = Touched::default();
     for entry in entries {
         if let Some(at) = entry.timestamp.as_deref().and_then(unix_seconds) {
             first_at = Some(first_at.map_or(at, |f| f.min(at)));
@@ -328,6 +458,9 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
         let Some(content) = entry.message.and_then(|m| m.content) else {
             continue;
         };
+        if entry.kind.as_deref() == Some("assistant") {
+            content.tool_calls(&mut touch);
+        }
         match entry.kind.as_deref() {
             Some("user") => {
                 // A turn's first text block is what was typed; the rest are
@@ -341,16 +474,16 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
                     (!text.is_empty() && !injected(&text)).then_some(text)
                 });
                 if let Some(text) = typed {
+                    touch.ids_in(&text);
                     said.push(cut(&text, MAX_SAID_CHARS));
                 }
             }
             Some("assistant") => {
-                if let Some(text) = content
-                    .texts()
-                    .into_iter()
-                    .rev()
-                    .find(|t| !t.trim().is_empty())
-                {
+                let texts = content.texts();
+                for text in &texts {
+                    touch.ids_in(text);
+                }
+                if let Some(text) = texts.into_iter().rev().find(|t| !t.trim().is_empty()) {
                     last_reply = cut_end(text.trim(), MAX_REPLY_CHARS);
                 }
             }
@@ -363,6 +496,7 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
         .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
         .map(|(c, _)| c);
     let fallback = modified_secs(path)?;
+    let touched = touch.finish(cwd.as_deref());
     Some(FoundConversation {
         tool: "claude-code".into(),
         external_id,
@@ -376,6 +510,7 @@ pub fn read_claude_code(path: &Path) -> Option<FoundConversation> {
         last_at: last_at.unwrap_or(fallback),
         automated,
         on_behalf,
+        touched,
     })
 }
 
@@ -395,6 +530,7 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
     let (mut said, mut last_reply) = (Vec::<String>::new(), String::new());
     let (mut automated, mut cwd, mut branch, mut id) = (false, None, None, None);
     let mut seen_meta = false;
+    let mut touch = Touched::default();
     let text_of = |value: &serde_json::Value| value.as_str().map(str::trim).map(str::to_string);
     let typed = |text: Option<String>, said: &mut Vec<String>| {
         let Some(text) = text.filter(|t| !t.is_empty() && !injected(t)) else {
@@ -436,7 +572,37 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
                     automated = true;
                 }
             }
-            (Some("event_msg"), Some("user_message")) => typed(text_of(&p["message"]), &mut said),
+            (Some("event_msg"), Some("user_message")) => {
+                let text = text_of(&p["message"]);
+                if let Some(text) = &text {
+                    touch.ids_in(text);
+                }
+                typed(text, &mut said);
+            }
+            // A tool call: `apply_patch` names the files it changes; any
+            // call's input (a command, a PR title) can name rule ids.
+            (Some("response_item"), Some("function_call" | "custom_tool_call")) => {
+                let input = p["arguments"]
+                    .as_str()
+                    .or_else(|| p["input"].as_str())
+                    .unwrap_or_default();
+                // `arguments` is JSON text; its escaped newlines would hide
+                // the patch's file lines.
+                let input = serde_json::from_str::<serde_json::Value>(input)
+                    .ok()
+                    .and_then(|v| {
+                        v["input"]
+                            .as_str()
+                            .map(str::to_string)
+                            .or_else(|| v["patch"].as_str().map(str::to_string))
+                            .or_else(|| Some(v.to_string()))
+                    })
+                    .unwrap_or_else(|| input.to_string());
+                // A patch's text would name every id in the file it changes.
+                if !patched_files(&input, &mut touch) {
+                    touch.ids_in(&input);
+                }
+            }
             (Some("response_item"), Some("message")) if p["role"] == "user" => {
                 let first = p["content"]
                     .as_array()
@@ -454,6 +620,7 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
                     .filter_map(|c| text_of(&c["text"]))
                     .rfind(|t| !t.is_empty());
                 if let Some(reply) = reply {
+                    touch.ids_in(&reply);
                     last_reply = cut_end(&reply, MAX_REPLY_CHARS);
                 }
             }
@@ -462,6 +629,7 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
     }
     let external_id = id?;
     let fallback = modified_secs(path)?;
+    let touched = touch.finish(cwd.as_deref());
     Some(FoundConversation {
         tool: "codex".into(),
         external_id,
@@ -475,6 +643,7 @@ pub fn read_codex(path: &Path) -> Option<FoundConversation> {
         last_at: last_at.unwrap_or(fallback),
         automated,
         on_behalf: false,
+        touched,
     })
 }
 
@@ -714,6 +883,8 @@ pub struct Pending {
     pub space: String,
     /// Where this conversation left things, as its label says.
     pub status: String,
+    /// Files it changed and rule ids it named ([`FoundConversation::touched`]).
+    pub touched: Vec<String>,
 }
 
 /// A thing already on the list, as the grouping model sees it.
@@ -726,6 +897,8 @@ pub struct OpenThing {
     /// Where its conversations stand, newest first, from those read again
     /// since its line was last written: the line needs writing again.
     pub news: Vec<String>,
+    /// What its conversations worked on, most often first.
+    pub touched: Vec<String>,
 }
 
 /// A conversation the person moved to another thing: what it was about, and
@@ -738,9 +911,19 @@ pub struct Correction {
     pub to: String,
 }
 
+/// ` | worked on: a, b` for a non-empty [`FoundConversation::touched`].
+fn touched_note(touched: &[String]) -> String {
+    if touched.is_empty() {
+        String::new()
+    } else {
+        format!(" | worked on: {}", touched.join(", "))
+    }
+}
+
 /// The prompt that puts labelled conversations into things and writes where
 /// each thing stands: only the labels' one-line titles, abouts and statuses,
-/// never the conversations. The person's past moves come along as examples,
+/// and the names of the files and rules each conversation worked on, never
+/// the conversations. The person's past moves come along as examples,
 /// so a case they corrected once is sorted their way (UX-THING-2).
 pub fn group_prompt(
     pending: &[Pending],
@@ -759,7 +942,13 @@ pub fn group_prompt(
                 } else {
                     format!(" | news: {}", t.news.join(" / "))
                 };
-                format!("T{i}. {} [{}]: {}{news}", t.title, t.space, t.about)
+                format!(
+                    "T{i}. {} [{}]: {}{}{news}",
+                    t.title,
+                    t.space,
+                    t.about,
+                    touched_note(&t.touched)
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -772,8 +961,12 @@ pub fn group_prompt(
             .enumerate()
             .map(|(i, p)| {
                 format!(
-                    "C{i}. {} [{}]: {} | now: {}",
-                    p.title, p.space, p.about, p.status
+                    "C{i}. {} [{}]: {}{} | now: {}",
+                    p.title,
+                    p.space,
+                    p.about,
+                    touched_note(&p.touched),
+                    p.status
                 )
             })
             .collect::<Vec<_>>()
@@ -813,6 +1006,9 @@ with that title when none is listed.\n{moves}\n\n"
 Put every new conversation into a piece of work, or leave it out. A piece is a goal the \
 person is working toward (a product feature, a release, a launch, a paper, a trip), not a \
 step of it: a review, a test run, a cleanup or a check done for a goal belongs to that goal. \
+Judge by what the work actually is, not by how alike the titles are: \"worked on\" lists the \
+files a conversation changed and the rule ids it named. Conversations that changed the same \
+files or worked on the same rules usually serve one goal even under different titles. \
 A conversation joins an existing piece when it serves the same goal; a shared product, \
 folder or space alone is not enough. Conversations that serve the same new goal form one new \
 piece together. Leave out a conversation that is only a small chore with no goal of its own \

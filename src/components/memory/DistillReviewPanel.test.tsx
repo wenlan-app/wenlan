@@ -39,10 +39,12 @@ vi.mock("../../lib/tauri", async () => {
     redistillPage: vi.fn(),
     listRecentChanges: vi.fn(),
     clipboardWrite: vi.fn(),
+    listAgents: vi.fn(),
   };
 });
 
 import {
+  listAgents,
   distillReview,
   listPendingRevisions,
   acceptPendingRevision,
@@ -167,6 +169,7 @@ beforeEach(async () => {
   vi.mocked(getPageSources).mockImplementation(actual.getPageSources);
   localStorage.clear();
   vi.clearAllMocks();
+  vi.mocked(listAgents).mockResolvedValue([]);
   vi.mocked(distillReview).mockResolvedValue(reviewPayload);
   vi.mocked(listRecentChanges).mockResolvedValue([]);
   vi.mocked(listPendingRevisions).mockResolvedValue([]);
@@ -311,9 +314,26 @@ describe("DistillReviewPanel", () => {
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Copy command" })).toBeInTheDocument());
     expect(within(dialog).queryByRole("button", { name: "Refresh page" })).toBeNull();
     expect(within(dialog).getByText("Page refresh")).toBeInTheDocument();
-    expect(within(dialog).getByText(/run \/wenlan steep/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/To update now, type \/wenlan write my pages/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Copy command" }));
-    expect(clipboardWrite).toHaveBeenCalledWith("/wenlan steep");
+    expect(clipboardWrite).toHaveBeenCalledWith("/wenlan write my pages");
+  });
+
+  it("copies the Codex wording of the update command for a Codex user", async () => {
+    vi.mocked(listAgents).mockResolvedValue([
+      { name: "codex", agent_type: "codex", created_at: 1, last_seen_at: 2 } as Awaited<ReturnType<typeof listAgents>>[number],
+    ]);
+    vi.mocked(redistillPage).mockResolvedValue({ status: "skipped", updated: false, hint: "needs an LLM" });
+    vi.mocked(clipboardWrite).mockResolvedValue(undefined);
+    const { user } = renderPanel();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Review Retrieval Pipeline/ }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Refresh page" }));
+    await user.click(await within(dialog).findByRole("button", { name: "Copy command" }));
+    expect(clipboardWrite).toHaveBeenCalledWith("$wenlan write my pages");
   });
 
   it("keeps the last successful result visible after refresh failure", async () => {
