@@ -3886,33 +3886,16 @@ impl WenlanMcpServer {
         ))]))
     }
 
+    /// Accepting a proposal is the person's decision, made in the Wenlan app.
+    /// The tool stays so a caller learns that, but it never asks the daemon
+    /// (which refuses an AI caller too).
     pub async fn accept_refinement_impl(
         &self,
         params: AcceptRefinementParams,
     ) -> Result<CallToolResult, McpError> {
-        if self.transport == TransportMode::Http {
-            return Ok(CallToolResult::error(vec![ContentBlock::text(
-                "Review proposal operations are not available over remote connections. \
-                 Use local MCP on the machine running Wenlan to accept proposals."
-                    .to_string(),
-            )]));
-        }
-        let path = format!(
-            "/api/refinery/queue/{}/accept",
-            url_encode_simple(&params.id)
-        );
-        let request = match params.space {
-            Some(space) => {
-                wenlan_types::requests::AcceptRefinementRequest::PickSpace { space, notes: None }
-            }
-            None => wenlan_types::requests::AcceptRefinementRequest::Accept { notes: None },
-        };
-        let resp: AcceptRefinementResponse =
-            try_call!(self.client.post(&path, &request), "accept_refinement");
-        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
-            "Review proposal {} accepted (action={}).",
-            resp.id, resp.action_applied
-        ))]))
+        Ok(CallToolResult::error(vec![ContentBlock::text(
+            card_needs_the_person(&params.id, "reject_refinement"),
+        )]))
     }
 
     pub async fn create_relation_impl(
@@ -5389,25 +5372,16 @@ impl WenlanMcpServer {
         ))]))
     }
 
+    /// Accepting a revision card is the person's decision, made in the
+    /// Wenlan app. The tool stays so a caller learns that, but it never asks
+    /// the daemon (which refuses an AI caller too).
     pub async fn accept_revision_impl(
         &self,
         req: AcceptRevisionRequest,
     ) -> Result<CallToolResult, McpError> {
-        if self.transport == TransportMode::Http {
-            return Ok(CallToolResult::error(vec![ContentBlock::text(
-                "Revision operations are not available over remote connections. \
-                 Use local MCP on the machine running Wenlan to accept memory revisions."
-                    .to_string(),
-            )]));
-        }
-        let path = format!("/api/memory/revision/{}/accept", req.target_source_id);
-        let response = try_call!(
-            self.client.post_empty::<RevisionAcceptResponse>(&path),
-            "accept_revision"
-        );
-        let pretty = serde_json::to_string_pretty(&response)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(pretty)]))
+        Ok(CallToolResult::error(vec![ContentBlock::text(
+            card_needs_the_person(&req.target_source_id, "dismiss_revision"),
+        )]))
     }
 
     pub async fn dismiss_revision_impl(
@@ -5531,6 +5505,14 @@ fn format_update_page_response(
             Some(wenlan_types::responses::PageWriteOutcome::Unchanged) => {
                 format!("Page unchanged: {page_id}")
             }
+            None | Some(wenlan_types::responses::PageWriteOutcome::Wrote)
+                if !resp.edits_not_applied.is_empty() =>
+            {
+                format!(
+                    "Refreshed page {page_id}, but {} of your changes were not applied: they touch the person's sentences",
+                    resp.edits_not_applied.len()
+                )
+            }
             None | Some(wenlan_types::responses::PageWriteOutcome::Wrote) => {
                 format!("Refreshed page {page_id}")
             }
@@ -5550,11 +5532,62 @@ fn format_update_page_response(
             resp.sentence_proposals.len()
         ));
     }
+    append_edits_not_applied(&mut text, &resp.edits_not_applied);
     if !resp.next_step.is_empty() {
         text.push_str("\nnext_step: ");
         text.push_str(&resp.next_step);
     }
     text
+}
+
+/// What an AI caller is told when it tries to accept a card: only the
+/// person accepts, in the Wenlan app. `dismiss_tool` names what the caller
+/// may still do, when the person asks.
+fn card_needs_the_person(card_id: &str, dismiss_tool: &str) -> String {
+    format!(
+        "Not accepted: only the person can accept a card. {card_id} is waiting for them in the \
+         Wenlan app; tell them it is there and let them accept it. Do not try another way to \
+         apply it. If they decide against it, {dismiss_tool} turns it down."
+    )
+}
+
+/// The longest piece of a sentence the write_page text quotes.
+const NOT_APPLIED_QUOTE_CHARS: usize = 200;
+
+fn quote_sentence(text: &str) -> String {
+    let clipped: String = text.chars().take(NOT_APPLIED_QUOTE_CHARS).collect();
+    if clipped.len() < text.len() {
+        format!("\"{clipped}…\"")
+    } else {
+        format!("\"{clipped}\"")
+    }
+}
+
+/// Every change of the write that did not land, one line each: the sentence
+/// that stays, what the write wanted, and whether it waits for the person.
+fn append_edits_not_applied(text: &mut String, edits: &[wenlan_types::responses::EditNotApplied]) {
+    if edits.is_empty() {
+        return;
+    }
+    text.push_str(&format!(
+        "\nedits_not_applied: {} (these sentences are the person's and stay as written)",
+        edits.len()
+    ));
+    for edit in edits {
+        let wanted = if edit.after.is_empty() {
+            "delete it".to_string()
+        } else {
+            quote_sentence(&edit.after)
+        };
+        let status = match &edit.proposal_id {
+            Some(id) => format!("waits for the person as proposal {id}"),
+            None => "dropped: a rewording is never proposed".to_string(),
+        };
+        text.push_str(&format!(
+            "\n- kept {}; you wanted {wanted}; {status}",
+            quote_sentence(&edit.before)
+        ));
+    }
 }
 
 fn append_link_targets(text: &mut String, link_targets: &[String]) {
@@ -6019,7 +6052,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "List pending daemon refinement proposals only when the user explicitly asks to inspect or review the proposal/refinement queue; never poll this queue ambiently. Returns typed actions and payloads, including vocab_promote. Filter by action and bound the result with limit. Pair with accept_refinement or reject_refinement only after an unambiguous item-level user decision.",
+        description = "List pending daemon refinement proposals only when the user explicitly asks to inspect or review the proposal/refinement queue; never poll this queue ambiently. Returns typed actions and payloads, including vocab_promote. Filter by action and bound the result with limit. Only the person accepts a proposal, in the Wenlan app; use reject_refinement only after an unambiguous item-level user decision to turn one down.",
         annotations(
             title = "List refinement proposals",
             read_only_hint = true,
@@ -6036,7 +6069,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Accept one listed refinement proposal by id only after the user gives an unambiguous item-level accept decision. For cross_space_discovery, pass the selected destination space. Not available over remote HTTP MCP transport (local stdio only).",
+        description = "Accepting a refinement proposal is the person's decision, made in the Wenlan app: this tool never accepts and always returns an error that says so. Tell the person the proposal waits for them in the app. To turn one down when they ask, use reject_refinement.",
         annotations(
             title = "Accept refinement proposal",
             read_only_hint = false,
@@ -6553,10 +6586,10 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Accept a pending memory revision. Replaces the target memory's content \
-                       with the proposed revision content and removes the revision row from the \
-                       pending list. Returns the consumed revision id. Returns an error if no \
-                       pending revision exists for that target. Not available over remote HTTP MCP transport (local stdio only).",
+        description = "Accepting a pending revision (a card) is the person's decision, made in \
+                       the Wenlan app: this tool never accepts and always returns an error that \
+                       says so. Tell the person the card waits for them in the app. To turn one \
+                       down when they ask, use dismiss_revision.",
         annotations(
             title = "Accept revision",
             read_only_hint = false,
@@ -6629,11 +6662,10 @@ impl WenlanMcpServer {
         description = "List memories awaiting human accept/dismiss because a newer version \
                        was proposed (Protected tier supersede). Use when the user asks \
                        'what revisions are pending', 'show me memories awaiting approval'. \
-                       Each item carries target_source_id (the memory being revised; pass \
-                       this to accept_revision only after the user explicitly approves that \
-                       item) and revision_content for display. Review acceptance is local-only; \
-                       accept_revision is unavailable over remote HTTP MCP. Optional `limit` \
-                       caps results (default 50, max 500).",
+                       Each item carries target_source_id (the memory being revised) and \
+                       revision_content for display. Only the person accepts a revision, in the \
+                       Wenlan app; dismiss_revision turns one down when they ask. Optional \
+                       `limit` caps results (default 50, max 500).",
         annotations(
             title = "List pending revisions",
             read_only_hint = true,
@@ -10131,33 +10163,46 @@ mod tests {
 
     // ===== Transport security: revision wrappers block on HTTP =====
 
+    /// UX-WHO-2: an AI tool proposes; only the person accepts, in the app.
+    /// accept_revision refuses on every transport, says where the card
+    /// waits, and never asks the daemon.
     #[tokio::test]
-    async fn test_accept_revision_blocked_on_http_transport() {
-        let server = make_server(TransportMode::Http, "agent", None);
-        let req = AcceptRevisionRequest {
-            target_source_id: "mem_x".into(),
-        };
-        let result = server.accept_revision_impl(req).await.unwrap();
-        let content = &result.content[0];
-        match content {
-            rmcp::model::ContentBlock::Text(ref tc) => {
-                assert!(tc.text.contains("not available over remote connections"));
-            }
-            _ => panic!("expected text content"),
+    async fn ux_who_2_accept_revision_refuses_and_points_to_the_app() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        for transport in [TransportMode::Stdio, TransportMode::Http] {
+            let server = WenlanMcpServer::new(
+                WenlanClient::new(mock.uri()),
+                transport,
+                "agent".into(),
+                None,
+            );
+            let result = server
+                .accept_revision_impl(AcceptRevisionRequest {
+                    target_source_id: "mem_x".into(),
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(true));
+            let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
+                panic!("expected text content");
+            };
+            assert!(
+                text.text.contains("only the person can accept"),
+                "{}",
+                text.text
+            );
+            assert!(text
+                .text
+                .contains("mem_x is waiting for them in the Wenlan app"));
+            assert!(text.text.contains("dismiss_revision"));
         }
-    }
-
-    #[tokio::test]
-    async fn test_accept_revision_allowed_on_stdio_transport() {
-        let server = make_server(TransportMode::Stdio, "agent", None);
-        let req = AcceptRevisionRequest {
-            target_source_id: "mem_x".into(),
-        };
-        let result = server.accept_revision_impl(req).await.unwrap();
-        assert!(
-            result.is_error.unwrap_or(false),
-            "should fail with connection error, not transport block"
-        );
     }
 
     #[tokio::test]
@@ -12025,9 +12070,55 @@ mod tests {
                 link_targets: Vec::new(),
                 next_step: String::new(),
                 sentence_proposals: vec!["sp_1".into(), "sp_2".into()],
+                edits_not_applied: Vec::new(),
             },
         );
         assert!(text.contains("sentence_proposals: 2"), "{text}");
+    }
+
+    /// UX-CHAT-7 item 4: the AI wanted to change the person's sentences, so the
+    /// write_page text says plainly which changes did not land, with a count
+    /// and each sentence, instead of only "Refreshed page".
+    #[test]
+    fn ux_chat_7_write_page_text_lists_the_edits_that_did_not_land() {
+        use wenlan_types::responses::{EditNotApplied, PageWriteResponse};
+        let body = serde_json::json!({
+            "ok": true,
+            "write_outcome": "wrote",
+            "sentence_proposals": ["sp_1"],
+            "edits_not_applied": [
+                {"sentence_hash": "h1", "before": "I prefer the current-thread runtime.",
+                 "after": "The multi-thread runtime is better.", "proposal_id": "sp_1"},
+                {"sentence_hash": "h2", "before": "We ship on Fridays.", "after": ""}
+            ]
+        });
+        // The typed boundary carries the list.
+        let response: PageWriteResponse = serde_json::from_value(body).unwrap();
+        assert_eq!(
+            response.edits_not_applied[1],
+            EditNotApplied {
+                sentence_hash: "h2".into(),
+                before: "We ship on Fridays.".into(),
+                after: String::new(),
+                proposal_id: None,
+            }
+        );
+        let text = format_update_page_response("page_x", response);
+        assert!(
+            text.starts_with("Refreshed page page_x, but 2 of your changes were not applied"),
+            "{text}"
+        );
+        assert!(text.contains("edits_not_applied: 2"), "{text}");
+        assert!(
+            text.contains(
+                "kept \"I prefer the current-thread runtime.\"; you wanted \"The multi-thread runtime is better.\"; waits for the person as proposal sp_1"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("kept \"We ship on Fridays.\"; you wanted delete it; dropped"),
+            "{text}"
+        );
     }
 
     #[tokio::test]
@@ -12046,6 +12137,7 @@ mod tests {
                 link_targets: Vec::new(),
                 next_step: "Wait for review.".into(),
                 sentence_proposals: Vec::new(),
+                edits_not_applied: Vec::new(),
             },
         );
         assert!(
@@ -13347,7 +13439,9 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let _pin = pin_space(Some("work")).await;
         let mock = MockServer::start().await;
-        for action in ["accept", "reject"] {
+        // accept never reaches the daemon (only the person accepts, in the
+        // app); reject still carries the pinned Space.
+        for action in ["reject"] {
             Mock::given(method("POST")).and(path(format!("/api/refinery/queue/foreign/{action}"))).and(header("x-wenlan-space","work"))
                 .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({"error":"classification proposal unavailable in this Space"})))
                 .expect(1).mount(&mock).await;
@@ -13405,36 +13499,46 @@ mod tests {
         );
     }
 
+    /// UX-WHO-2: accept_refinement refuses on every transport, says where
+    /// the proposal waits, and never asks the daemon.
     #[tokio::test]
-    async fn test_accept_refinement_blocked_on_http_transport() {
-        let server = make_server(TransportMode::Http, "agent", None);
-        let result = server
-            .accept_refinement_impl(AcceptRefinementParams {
-                id: "merge_abc_def".into(),
-                space: None,
-            })
-            .await
-            .unwrap();
-        let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
-            panic!("expected text content");
-        };
-        assert!(text.text.contains("not available over remote connections"));
-    }
-
-    #[tokio::test]
-    async fn test_accept_refinement_allowed_on_stdio_transport() {
-        let server = make_server(TransportMode::Stdio, "agent", None);
-        let result = server
-            .accept_refinement_impl(AcceptRefinementParams {
-                id: "merge_abc_def".into(),
-                space: None,
-            })
-            .await
-            .unwrap();
-        assert!(
-            result.is_error.unwrap_or(false),
-            "should fail with connection error, not transport block"
-        );
+    async fn ux_who_2_accept_refinement_refuses_and_points_to_the_app() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock)
+            .await;
+        for transport in [TransportMode::Stdio, TransportMode::Http] {
+            let server = WenlanMcpServer::new(
+                WenlanClient::new(mock.uri()),
+                transport,
+                "agent".into(),
+                None,
+            );
+            let result = server
+                .accept_refinement_impl(AcceptRefinementParams {
+                    id: "merge_abc_def".into(),
+                    space: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(true));
+            let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
+                panic!("expected text content");
+            };
+            assert!(
+                text.text.contains("only the person can accept"),
+                "{}",
+                text.text
+            );
+            assert!(text
+                .text
+                .contains("merge_abc_def is waiting for them in the Wenlan app"));
+            assert!(text.text.contains("reject_refinement"));
+        }
     }
 
     #[test]
@@ -13789,9 +13893,9 @@ mod tests {
             .remove("list_pending_revisions")
             .expect("list_pending_revisions tool exists");
         assert!(description.contains("target_source_id"));
-        assert!(description.contains("accept_revision"));
-        assert!(description.contains("explicitly approves"));
-        assert!(description.contains("local-only"));
+        assert!(description.contains("Only the person accepts a revision, in the Wenlan app"));
+        assert!(description.contains("dismiss_revision"));
+        assert!(!description.contains("accept_revision"));
         assert!(!description.contains("accept_pending_revision"));
     }
 

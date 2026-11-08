@@ -970,6 +970,39 @@ impl WenlanClient {
             .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
+    // ── Person gestures ─────────────────────────────────────────────
+    // Same as `post_empty` / `post_json`, but they tell the daemon the
+    // person made this request with their own gesture (`x-wenlan-caller:
+    // person`). Only a person may accept a card, so the daemon refuses an
+    // accept without this marker. Call these only from a click the person
+    // made, never from a background task.
+
+    pub async fn post_json_as_person<Req: Serialize, Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &Req,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .post(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP POST {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP POST {} returned {}: {}", path, status, text));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
     // ── Health ──────────────────────────────────────────────────────
 
     pub async fn health(&self) -> Result<HealthResponse, String> {
@@ -2526,7 +2559,7 @@ impl WenlanClient {
         if let Some(space) = space {
             path.push_str(&format!("?space={}", percent_encode_path_segment(space)));
         }
-        self.post_empty(&path).await
+        self.post_empty_as_person(&path).await
     }
 
     pub async fn reject_refinement(
@@ -5129,6 +5162,31 @@ mod tests {
             request.lines().next().unwrap_or_default(),
             "GET /api/repairs/recovery/review%2Fid HTTP/1.1"
         );
+    }
+
+    /// UX-WHO-2: only the person accepts a card. The app's Accept tells the
+    /// daemon the person made the request, and names no agent.
+    #[tokio::test]
+    async fn ux_who_2_the_apps_accept_marks_the_request_as_the_persons() {
+        let (base_url, request) =
+            serve_json_once(r#"{"id":"rq_1","action_applied":"entity_merge"}"#).await;
+        let client = WenlanClient {
+            client: reqwest::Client::new(),
+            base_url,
+        };
+
+        client.accept_refinement("rq_1", None).await.unwrap();
+
+        let request = request.await.unwrap().to_ascii_lowercase();
+        assert!(
+            request.starts_with("post /api/refinery/queue/rq_1/accept http/1.1"),
+            "{request}"
+        );
+        assert!(
+            request.contains("\r\nx-wenlan-caller: person\r\n"),
+            "{request}"
+        );
+        assert!(!request.contains("x-agent-name"), "{request}");
     }
 
     #[test]

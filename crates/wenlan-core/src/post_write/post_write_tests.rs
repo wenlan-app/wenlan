@@ -7643,13 +7643,17 @@ async fn machine_write_requires_review_matrix() {
     assert!(machine_write_requires_review(
         pipeline, &authored, true, false
     ));
-    // user_forced releases user_edited but never authored.
-    assert!(!machine_write_requires_review(
+    // The person's sentences gate a pipeline writer, a forced rebuild
+    // included, even on a page no ownership flag marks as theirs; a
+    // version-checked agent still writes (its edits go through the sentence
+    // gate instead).
+    assert!(machine_write_requires_review(
         pipeline, &edited, false, true
     ));
     assert!(machine_write_requires_review(
-        pipeline, &authored, false, true
+        pipeline, &machine, false, true
     ));
+    assert!(!machine_write_requires_review(agent, &machine, true, true));
     // The lock gates every machine writer, whatever else holds.
     assert!(machine_write_requires_review(agent, &locked, true, false));
     assert!(machine_write_requires_review(agent, &locked, false, false));
@@ -7850,7 +7854,9 @@ async fn review_lock_stages_agent_and_pipeline_writes_but_not_human_edits() {
         pipeline.gated && !pipeline.wrote,
         "the lock gates pipeline writers"
     );
-    assert_eq!(db.list_pending_revisions(10).await.unwrap().len(), 2);
+    // A page has one open card: the pipeline proposal updates the agent's.
+    assert_eq!(pipeline.revision_card_id, agent.revision_card_id);
+    assert_eq!(db.list_pending_revisions(10).await.unwrap().len(), 1);
     assert_eq!(
         db.get_page("page_locked").await.unwrap().unwrap().content,
         locked.content
@@ -8310,7 +8316,8 @@ async fn staged_page_card_names_its_proposer() {
     let page = db.get_page(&page_id).await.unwrap().unwrap();
     let source_revision = db.get_page_source_revision(&page_id).await.unwrap();
 
-    let mut cases = Vec::new();
+    // Each proposal updates the page's one open card, so the card is read
+    // right after it is staged.
     for (edited_by, proposer, expected) in [
         ("agent_refresh", Some("claude-code"), Some("claude-code")),
         ("agent_refresh", Some("  "), None),
@@ -8331,11 +8338,9 @@ async fn staged_page_card_names_its_proposer() {
         )
         .await
         .unwrap();
-        cases.push((staged.revision_card_id.unwrap(), expected));
-    }
-
-    let listed = db.list_pending_revisions(10).await.unwrap();
-    for (card_id, expected) in cases {
+        let card_id = staged.revision_card_id.unwrap();
+        let listed = db.list_pending_revisions(10).await.unwrap();
+        assert_eq!(listed.len(), 1, "one open card per page");
         let card = listed
             .iter()
             .find(|row| row.revision_source_id == card_id)
@@ -8368,7 +8373,8 @@ async fn staged_page_card_records_review_reason() {
         ..locked.clone()
     };
 
-    let mut cases = Vec::new();
+    // Each proposal updates the page's one open card, so the card is read
+    // right after it is staged.
     for (page, edited_by, expected) in [
         (&authored, "agent_refresh", Some("authored")),
         (&authored, "re_distill", Some("authored")),
@@ -8390,21 +8396,19 @@ async fn staged_page_card_records_review_reason() {
         )
         .await
         .unwrap();
-        cases.push((staged.revision_card_id.unwrap(), expected));
-    }
-
-    let global = db.list_pending_revisions(10).await.unwrap();
-    let scoped = db
-        .list_pending_revisions_scoped(10, &crate::read_scope::ReadScope::Global)
-        .await
-        .unwrap();
-    for listed in [&global, &scoped] {
-        for (card_id, expected) in &cases {
+        let card_id = staged.revision_card_id.unwrap();
+        let global = db.list_pending_revisions(10).await.unwrap();
+        let scoped = db
+            .list_pending_revisions_scoped(10, &crate::read_scope::ReadScope::Global)
+            .await
+            .unwrap();
+        for listed in [&global, &scoped] {
+            assert_eq!(listed.len(), 1, "one open card per page");
             let card = listed
                 .iter()
-                .find(|row| &row.revision_source_id == card_id)
+                .find(|row| row.revision_source_id == card_id)
                 .expect("staged card is queued");
-            assert_eq!(card.review_reason.as_deref(), *expected, "card {card_id}");
+            assert_eq!(card.review_reason.as_deref(), expected, "card {card_id}");
         }
     }
 

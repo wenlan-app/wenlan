@@ -62,11 +62,10 @@ list_pending_revisions(limit=10)
 
 If empty, say nothing. If the call fails, emit one warning and keep the Brief.
 If non-empty, show at most the top three with `target_source_id`,
-`revision_content`, and source agent. Never auto-action them.
+`revision_content`, and source agent. Never auto-action them. Only the person
+accepts a revision, in the Wenlan app: say they wait there. You never accept one.
 
-- accept:
-  `accept_revision(target_source_id="<id>")`
-- dismiss:
+- dismiss, when the person turns one down:
   `dismiss_revision(target_source_id="<id>")`
 - skip: no call
 

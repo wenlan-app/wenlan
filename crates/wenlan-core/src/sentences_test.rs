@@ -544,17 +544,14 @@ async fn unknown_origin_is_protected_only_on_a_human_owned_page() {
     assert_eq!(db.get_page("q").await.unwrap().unwrap().content, AI_BODY);
 }
 
-#[tokio::test]
-async fn a_forced_rebuild_regenerates_the_ais_sentences_and_keeps_the_persons() {
-    let (db, _dir) = test_db().await;
-    page_with_my_line(&db, "p").await;
-    let fence = db.try_get_page_fence("p").await.unwrap().unwrap();
-    let result = page_write(
-        &db,
+async fn forced_rebuild(db: &MemoryDB, id: &str, content: &str) -> WriteResult {
+    let fence = db.try_get_page_fence(id).await.unwrap().unwrap();
+    page_write(
+        db,
         PageWrite::UserForcedUpdate {
-            page_id: "p",
+            page_id: id,
             req: UpdatePageRequest {
-                content: "Tokio is an async runtime. Workers steal queued tasks.".into(),
+                content: content.into(),
                 source_memory_ids: vec!["mem-tokio".to_string()],
                 expected_version: None,
                 caller_id: None,
@@ -567,22 +564,144 @@ async fn a_forced_rebuild_regenerates_the_ais_sentences_and_keeps_the_persons() 
         },
     )
     .await
-    .unwrap();
-    assert!(result.wrote);
-    assert!(
-        result.sentence_proposals.is_empty(),
-        "my line is kept, and with no facts-changed reason dropping it is not proposed"
+    .unwrap()
+}
+
+const REBUILT: &str = "Tokio is an async runtime. Workers steal queued tasks.";
+
+/// A forced rebuild of a page the person edited never rewrites it. The
+/// rebuild waits as a card; the page and its owner stay as they were. (No
+/// rule id yet: UX-WHO-2 says the AI cannot change the person's sentences,
+/// but also "never a whole-page card"; see the proposed rule text.)
+#[tokio::test]
+async fn a_forced_rebuild_of_a_page_the_person_edited_waits_as_a_card_and_leaves_the_page() {
+    let (db, _dir) = test_db().await;
+    let before = page_with_my_line(&db, "p").await;
+    let result = forced_rebuild(&db, "p", REBUILT).await;
+
+    assert_eq!(result.outcome, WriteOutcome::Gated);
+    assert!(!result.wrote);
+    let card = result.revision_card_id.clone().expect("a revision card");
+    assert_eq!(
+        db.open_page_write_card_id("p").await.unwrap().as_deref(),
+        Some(card.as_str())
     );
     let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content, "the page is left as it was");
+    assert_eq!(after.version, before.version);
+    assert!(after.user_edited, "the page is still the person's");
+}
+
+/// The person's sentences make the page theirs to decide on even when the
+/// page is not marked edited (a sentence they accepted, say). The forced
+/// rebuild waits as a card.
+#[tokio::test]
+async fn a_forced_rebuild_over_the_persons_sentences_waits_as_a_card_and_leaves_the_page() {
+    let (db, _dir) = test_db().await;
+    let before = page_with_my_line(&db, "p").await;
+    db.execute_batch_for_test("UPDATE pages SET user_edited = 0 WHERE id = 'p'")
+        .await;
+    assert!(!db.get_page("p").await.unwrap().unwrap().user_edited);
+
+    let result = forced_rebuild(&db, "p", REBUILT).await;
+
+    assert_eq!(result.outcome, WriteOutcome::Gated);
+    assert!(result.revision_card_id.is_some());
+    let after = db.get_page("p").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content, "the page is left as it was");
+}
+
+/// A page has at most one open card of a kind: a second proposal for the
+/// same page updates the open card, which then holds the newest content.
+#[tokio::test]
+async fn a_second_proposal_updates_the_open_card_instead_of_adding_one() {
+    let (db, _dir) = test_db().await;
+    page_with_my_line(&db, "p").await;
+    let first = forced_rebuild(&db, "p", REBUILT).await;
+    let newer = "Tokio is a runtime for async Rust. Workers steal queued tasks.";
+    let second = forced_rebuild(&db, "p", newer).await;
+
+    assert_eq!(second.outcome, WriteOutcome::Gated);
     assert_eq!(
-        after.content,
-        "Tokio is an async runtime. Workers steal queued tasks. \
-         I prefer the current-thread runtime."
+        second.revision_card_id, first.revision_card_id,
+        "the second proposal reuses the open card"
+    );
+    let open: Vec<_> = db
+        .list_pending_revisions(50)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|item| item.target_source_id == "p")
+        .collect();
+    assert_eq!(open.len(), 1, "one open card, not two: {open:?}");
+    // The card carries the proposal plus the person's kept lines; what
+    // matters here is that the newest proposal replaced the first.
+    let card = &open[0].revision_content;
+    assert!(
+        card.starts_with(newer),
+        "the card holds the newest content: {card}"
     );
     assert!(
-        after.user_edited,
-        "the rebuild kept the person's text, so it stays theirs"
+        !card.contains("Tokio is an async runtime."),
+        "the first proposal is gone: {card}"
     );
+    assert!(db
+        .list_duplicate_open_revision_cards()
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+/// A page only the AI wrote is still rebuilt in place by a forced rebuild.
+#[tokio::test]
+async fn a_forced_rebuild_of_a_page_only_the_ai_wrote_lands_in_place() {
+    let (db, _dir) = test_db().await;
+    ai_page(&db, "p", None).await;
+    let result = forced_rebuild(&db, "p", REBUILT).await;
+    assert!(result.wrote);
+    assert!(result.revision_card_id.is_none());
+    assert_eq!(db.get_page("p").await.unwrap().unwrap().content, REBUILT);
+}
+
+/// UX-CHAT-7: a write that touched the person's sentences says so, edit by
+/// edit: a rewording is dropped, a facts-changed edit waits as a proposal.
+#[tokio::test]
+async fn ux_chat_7_write_page_reports_the_edits_that_touch_the_persons_sentences() {
+    let rewrite = "Tokio runs async tasks on a pool. Workers steal queued tasks. \
+                   The multi-thread runtime is better for everyone.";
+
+    let (db, _dir) = test_db().await;
+    let before = page_with_my_line(&db, "p").await;
+    let dropped = write(&db, "p", rewrite, "agent_refresh", Some(before.version)).await;
+    assert!(dropped.wrote, "the AI's own sentence change lands");
+    assert_eq!(
+        dropped.edits_not_applied.len(),
+        1,
+        "{:?}",
+        dropped.edits_not_applied
+    );
+    let edit = &dropped.edits_not_applied[0];
+    assert_eq!(edit.before, "I prefer the current-thread runtime.");
+    assert_eq!(
+        edit.after,
+        "The multi-thread runtime is better for everyone."
+    );
+    assert_eq!(
+        edit.proposal_id, None,
+        "a rewording is dropped, not proposed"
+    );
+
+    let (db, _dir) = test_db().await;
+    let before = page_with_my_unsupported_line(&db, "p").await;
+    let proposed = write(&db, "p", rewrite, "agent_refresh", Some(before.version)).await;
+    assert_eq!(proposed.edits_not_applied.len(), 1);
+    let edit = &proposed.edits_not_applied[0];
+    assert_eq!(edit.before, "I prefer the current-thread runtime.[1]");
+    assert_eq!(
+        edit.proposal_id.as_ref(),
+        proposed.sentence_proposals.first()
+    );
+    assert!(edit.proposal_id.is_some());
 }
 
 fn citation(locator: &str, status: &str) -> String {

@@ -17,6 +17,7 @@ use wenlan_core::sources::RawDocument;
 use wenlan_server::maintenance_coordinator::MaintenanceCoordinator;
 use wenlan_server::router::{build_router, AppRouter};
 use wenlan_server::state::ServerState;
+use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
 
 fn owner_binding_digest(digest: &str, source_ids: &[String]) -> String {
     Sha256::digest(
@@ -531,7 +532,7 @@ async fn accept_entity_merge_flow() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_accept_em/accept")
-        .header("x-agent-name", "test-agent")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -571,7 +572,7 @@ async fn accept_stale_empty_json_body_applies_default_accept() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_accept_empty_json/accept")
-        .header("x-agent-name", "test-agent")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from("{}"))
         .unwrap();
@@ -602,7 +603,7 @@ async fn accept_tagged_accept_body_applies_default_accept() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_accept_tagged/accept")
-        .header("x-agent-name", "test-agent")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"action":"accept"}"#))
         .unwrap();
@@ -653,7 +654,7 @@ async fn accept_pick_space_body_applies_cross_space_discovery() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_accept_pick_space/accept")
-        .header("x-agent-name", "test-agent")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"action":"pick_space","space":"work"}"#))
         .unwrap();
@@ -675,7 +676,7 @@ async fn accept_garbage_body_returns_400() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_parse_first/accept")
-        .header("x-agent-name", "test-agent")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from("not json"))
         .unwrap();
@@ -689,7 +690,7 @@ async fn accept_returns_404_for_unknown_id() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_nonexistent/accept")
-        .header("x-agent-name", "test-agent")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -715,7 +716,7 @@ async fn accept_returns_422_for_suggest_entity() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_se_route/accept")
-        .header("x-agent-name", "test-agent")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -745,7 +746,7 @@ async fn accept_lint_repair_review_returns_choice_specific_422() {
     let req = Request::builder()
         .method(Method::POST)
         .uri(format!("/api/refinery/queue/{id}/accept"))
-        .header("x-agent-name", "test-agent")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -785,15 +786,19 @@ async fn accept_returns_422_for_already_resolved() {
     let req = Request::builder()
         .method(Method::POST)
         .uri("/api/refinery/queue/ref_done_accept/accept")
-        .header("x-agent-name", "test-agent")
+        .header(CALLER_HEADER, PERSON_CALLER_VALUE)
         .body(Body::empty())
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// UX-WHO-2: only the person accepts a proposal. A request that names an AI
+/// agent, or lacks the app's person marker, is refused with
+/// `card_needs_the_person` and applies nothing; the app's marked request
+/// applies it and logs the apply and the resolve.
 #[tokio::test]
-async fn accept_logs_apply_and_resolve_activity_with_agent() {
+async fn ux_who_2_an_ai_caller_cannot_accept_a_refinement_the_app_can() {
     let (app, _tmp, db) = test_app().await;
     let new_id = db
         .store_entity("Acme Corporation", "organization", None, None, None)
@@ -816,19 +821,56 @@ async fn accept_logs_apply_and_resolve_activity_with_agent() {
         .await
         .unwrap();
 
-    let req = Request::builder()
-        .method(Method::POST)
-        .uri("/api/refinery/queue/ref_acc_log/accept")
-        .header("x-agent-name", "claude-code")
-        .body(Body::empty())
-        .unwrap();
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let acts = db
+    let accept = |headers: &[(&str, &str)]| {
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/api/refinery/queue/ref_acc_log/accept");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+    for headers in [
+        vec![("x-agent-name", "claude-code")],
+        vec![],
+        vec![
+            (CALLER_HEADER, PERSON_CALLER_VALUE),
+            ("x-agent-name", "claude-code"),
+        ],
+    ] {
+        let resp = app.clone().oneshot(accept(&headers)).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{headers:?}"
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(
+            body.contains("card_needs_the_person"),
+            "{headers:?}: {body}"
+        );
+        let proposal = db
+            .get_refinement_proposal("ref_acc_log")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(proposal.status, "awaiting_review", "{headers:?}");
+    }
+    assert!(db
         .list_agent_activity(20, Some("claude-code"), None)
         .await
+        .unwrap()
+        .is_empty());
+
+    let resp = app
+        .oneshot(accept(&[(CALLER_HEADER, PERSON_CALLER_VALUE)]))
+        .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let acts = db.list_agent_activity(20, None, None).await.unwrap();
     assert!(
         acts.iter().any(|a| a.action == "refinement_apply"),
         "should log refinement_apply"

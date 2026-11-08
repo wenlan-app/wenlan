@@ -2961,8 +2961,8 @@ mod redistill_contract_tests {
     }
 
     /// Forcing Re-distill never overrides an authored page: its verified
-    /// rebuild is staged as a revision card, and the page keeps its body,
-    /// version, and `user_edited` flag.
+    /// rebuild goes on the page's one open revision card, and the page keeps
+    /// its body, version, and `user_edited` flag.
     async fn authored_page_stages_card_and_keeps_edit_protection(route: RebuildRoute) {
         let (app, state, db, page_id, card_id, before, _tmp) =
             seeded_protected_page_with_source(Some("authored")).await;
@@ -3001,17 +3001,23 @@ mod redistill_contract_tests {
             after.pending_card,
             "{route:?}: the earlier card stays pending"
         );
+        // A page has one open card: the forced rebuild updates the earlier
+        // card with its content instead of adding a second one.
         let staged: Vec<_> = db
             .list_pending_revisions(100)
             .await
             .expect("list pending revisions")
             .into_iter()
-            .filter(|item| item.target_source_id == page_id && item.revision_source_id != card_id)
+            .filter(|item| item.target_source_id == page_id)
             .collect();
         assert_eq!(
             staged.len(),
             1,
-            "{route:?}: the forced rebuild must stage exactly one new card: {staged:?}"
+            "{route:?}: the page keeps exactly one open card: {staged:?}"
+        );
+        assert_eq!(
+            staged[0].revision_source_id, card_id,
+            "{route:?}: the rebuild updates the earlier card"
         );
         assert_eq!(
             staged[0].revision_content, format!("{VERIFIED_REBUILD_BODY}\n\n{USER_PROSE}"),

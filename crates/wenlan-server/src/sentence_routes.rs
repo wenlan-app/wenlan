@@ -15,7 +15,8 @@
 //! The HTTP contract is pinned in `tests/sentence_route_contracts.rs`.
 //!
 //! All of it is additive to the whole-page revision cards
-//! (`/api/memory/revision/{id}/accept`), which keep working as before.
+//! (`/api/memory/revision/{id}/accept`), which only the app's marked
+//! person request may accept (`memory_routes::require_person_to_accept`).
 
 use std::sync::Arc;
 
