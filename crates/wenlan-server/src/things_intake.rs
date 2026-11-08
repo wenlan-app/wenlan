@@ -881,6 +881,163 @@ pub async fn connect_old_night_points(
     Ok(report)
 }
 
+/// Most paraphrase pairs one call about the old memories looks at.
+const OLD_PASS_PAIRS: usize = 10;
+/// Most memories about a passed date one call says again.
+const OLD_PASS_PASSED: usize = 12;
+
+/// The one-time pass over old memories (UX-GRAPH-7), once the owner OK'd its
+/// report: exact copies are hidden behind the earliest; a model is asked
+/// whether each paraphrase pair says the same, and a pair it merges is
+/// hidden the same way (nothing is rewritten); an AI's memory about a passed
+/// date is said again in the past tense, through the same path as a night's
+/// update. Then [`MemoryDB::apply_backlog`] records it all at once, with one
+/// Undo. A call that fails leaves its pairs or memories as they are.
+pub async fn run_old_memory_pass(
+    db: &MemoryDB,
+    model: &dyn LlmProvider,
+    writer: &dyn PointWriter,
+) -> Result<wenlan_core::db::night_backlog::BacklogPass, String> {
+    use wenlan_core::db::night_backlog::{BacklogMemory, BacklogPlan};
+    static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    struct Running;
+    impl Drop for Running {
+        fn drop(&mut self) {
+            RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    if RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("the old-memory pass is already running".into());
+    }
+    let _running = Running;
+    if db
+        .backlog_pass()
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err("the old-memory pass already ran; take it back first".into());
+    }
+    let now = chrono::Utc::now().timestamp();
+    let report = db.backlog_report(now).await.map_err(|e| e.to_string())?;
+    let item = |m: &BacklogMemory| night_tidy::TidyItem {
+        id: m.id.clone(),
+        text: m.text.clone(),
+        space: m.space.clone(),
+        created_at: m.created_at,
+        event_date: m.event_date,
+        decided: false,
+        session_id: None,
+        line: None,
+    };
+    let ask = |items: Vec<night_tidy::TidyItem>, groups: Vec<Vec<usize>>| async move {
+        let answer = model
+            .generate(LlmRequest {
+                system_prompt: Some(
+                    "You tidy the memories an AI keeps for a person, changing only what you are sure of. Answer with JSON only."
+                        .into(),
+                ),
+                user_prompt: night_tidy::tidy_prompt(&items, &groups, now),
+                max_tokens: 3_000,
+                temperature: 0.0,
+                label: Some("things_old_pass".into()),
+                timeout_secs: Some(300),
+            })
+            .await;
+        match answer {
+            Ok(text) => night_tidy::parse_tidy(&text, &items, now).map(|changes| (items, changes)),
+            Err(error) => {
+                tracing::warn!("[things] old-memory pass call failed: {error}");
+                None
+            }
+        }
+    };
+    let mut plan = BacklogPlan::default();
+    let mut paraphrases = Vec::new();
+    for pair in report.hideable() {
+        if pair.exact {
+            plan.hide.push((pair.keep.id.clone(), pair.hide.id.clone()));
+        } else {
+            paraphrases.push(pair);
+        }
+    }
+    for batch in paraphrases.chunks(OLD_PASS_PAIRS) {
+        let items: Vec<_> = batch
+            .iter()
+            .flat_map(|p| [item(&p.keep), item(&p.hide)])
+            .collect();
+        let groups = (0..batch.len()).map(|i| vec![2 * i, 2 * i + 1]).collect();
+        let Some((_, changes)) = ask(items, groups).await else {
+            continue;
+        };
+        for change in changes {
+            // Only "these two say the same" is taken, and only as hiding the
+            // later copy: an old memory is never rewritten here.
+            if let night_tidy::TidyChange::Merge { items: [a, b], .. } = change {
+                if a / 2 == b / 2 {
+                    let pair = batch[a / 2];
+                    plan.hide.push((pair.keep.id.clone(), pair.hide.id.clone()));
+                }
+            }
+        }
+    }
+    let passed: Vec<&BacklogMemory> = report
+        .passed
+        .iter()
+        .filter(|m| m.author == wenlan_types::authorship::SentenceAuthor::Ai)
+        .collect();
+    for batch in passed.chunks(OLD_PASS_PASSED) {
+        let items: Vec<_> = batch.iter().map(|m| item(m)).collect();
+        let groups = (0..batch.len()).map(|i| vec![i]).collect();
+        let Some((items, changes)) = ask(items, groups).await else {
+            continue;
+        };
+        for change in changes {
+            let night_tidy::TidyChange::Update { item: i, text } = change else {
+                continue;
+            };
+            let old = &items[i];
+            let detail = db.get_memory_detail(&old.id).await.ok().flatten();
+            let request = StoreMemoryRequest {
+                content: text.clone(),
+                memory_type: Some(
+                    detail
+                        .as_ref()
+                        .and_then(|d| d.memory_type.clone())
+                        .filter(|t| t == "decision")
+                        .unwrap_or_else(|| "fact".into()),
+                ),
+                space: match &old.space {
+                    Some(space) => WriteSpaceTarget::Named(space.clone()),
+                    None => WriteSpaceTarget::Inherit,
+                },
+                source_agent: None,
+                title: Some(text.clone()),
+                confidence: None,
+                supersedes: None,
+                entity: None,
+                entity_type: None,
+                entity_id: None,
+                structured_fields: None,
+                retrieval_cue: None,
+            };
+            let id = match writer.write(request).await {
+                Ok(id) => id,
+                Err(error) => {
+                    tracing::warn!("[things] an old memory was not said again: {error}");
+                    continue;
+                }
+            };
+            let session = detail.as_ref().and_then(|d| d.session_id.as_deref());
+            if let Err(error) = db.adopt_tidy_memory(&id, session, None).await {
+                tracing::warn!("[things] an old memory's update kept no source: {error}");
+            }
+            plan.updated.push((old.id.clone(), id));
+        }
+    }
+    db.apply_backlog(&plan).await.map_err(|e| e.to_string())
+}
+
 /// One look over conversations already found: label what is new or went on,
 /// then group what is labelled.
 pub async fn look_with(

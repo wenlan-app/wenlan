@@ -39,6 +39,14 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             post(handle_undo_connect_night_points),
         )
         .route(
+            "/api/things/old-pass",
+            get(handle_old_memory_pass).post(handle_run_old_memory_pass),
+        )
+        .route(
+            "/api/things/old-pass/undo",
+            post(handle_undo_old_memory_pass),
+        )
+        .route(
             "/api/things/{id}",
             get(handle_get_thing).patch(handle_rename_thing),
         )
@@ -151,6 +159,64 @@ pub async fn handle_undo_connect_night_points(
     let db = open_db(&state).await?;
     let removed = db.undo_night_links_backfill().await?;
     Ok(Json(wenlan_types::NightLinksBackfillUndo { removed }))
+}
+
+fn old_pass(pass: &wenlan_core::db::night_backlog::BacklogPass) -> wenlan_types::OldMemoryPass {
+    wenlan_types::OldMemoryPass {
+        at: pass.at,
+        merged: pass.merged(),
+        updated: pass.updated(),
+        expired: pass.expired.len(),
+        confirmed: pass.confirmed.len(),
+        filed: pass.filed.len(),
+    }
+}
+
+/// GET /api/things/old-pass
+///
+/// The one-time pass over old memories, while it stands (UX-GRAPH-7): what
+/// the map's line counts and offers to take back. Counts only.
+pub async fn handle_old_memory_pass(
+    State(state): State<SharedState>,
+) -> Result<Json<wenlan_types::OldMemoryPassResponse>, ServerError> {
+    let db = open_db(&state).await?;
+    Ok(Json(wenlan_types::OldMemoryPassResponse {
+        pass: db.backlog_pass().await?.as_ref().map(old_pass),
+    }))
+}
+
+/// POST /api/things/old-pass
+///
+/// The person runs the one-time pass over old memories, after OK'ing its
+/// report (UX-GRAPH-7). Once only, until taken back.
+pub async fn handle_run_old_memory_pass(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<wenlan_types::OldMemoryPass>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    let models = crate::things_intake::models(&state)
+        .await
+        .ok_or_else(|| ServerError::ValidationError("no model to read the memories with".into()))?;
+    let writer = crate::things_intake::DaemonWriter(state.clone());
+    let pass = crate::things_intake::run_old_memory_pass(&db, models.group.as_ref(), &writer)
+        .await
+        .map_err(ServerError::ValidationError)?;
+    Ok(Json(old_pass(&pass)))
+}
+
+/// POST /api/things/old-pass/undo
+///
+/// The person takes the whole pass back (UX-GRAPH-7); it can run again.
+pub async fn handle_undo_old_memory_pass(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+) -> Result<Json<wenlan_types::OldMemoryPassResponse>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    Ok(Json(wenlan_types::OldMemoryPassResponse {
+        pass: db.undo_backlog().await?.as_ref().map(old_pass),
+    }))
 }
 
 /// GET /api/things/{id}

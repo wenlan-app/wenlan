@@ -285,6 +285,31 @@ pub struct NightLinksBackfill {
     pub failed: usize,
 }
 
+/// The one-time pass over old memories (UX-GRAPH-7), while it stands:
+/// `GET`/`POST /api/things/old-pass`, and what `POST .../undo` took back.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OldMemoryPass {
+    /// When it ran, Unix seconds.
+    pub at: i64,
+    /// Later copies hidden behind an earlier one.
+    pub merged: usize,
+    /// Memories about a passed date said again in the past tense.
+    pub updated: usize,
+    /// Contradiction checks still waiting from code that no longer runs, set
+    /// to expired.
+    pub expired: usize,
+    /// Old night points taken off the review list.
+    pub confirmed: usize,
+    /// Old night points filed where their thing is.
+    pub filed: usize,
+}
+
+/// `GET /api/things/old-pass`: the pass, when one stands.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OldMemoryPassResponse {
+    pub pass: Option<OldMemoryPass>,
+}
+
 /// `POST /api/things/points/connect/undo`: the links taken back.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NightLinksBackfillUndo {

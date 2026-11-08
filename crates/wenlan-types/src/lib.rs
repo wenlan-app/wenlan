@@ -128,11 +128,11 @@ pub use steep_new::{
 };
 pub use things::{
     NightLinkMade, NightLinksBackfill, NightLinksBackfillUndo, NightTidied, NightTidyKind,
-    NightsUndo, NightsUndoRequest, SavedIn, SavedInRequest, SavedInResponse, SavedPageChange,
-    ThingActor, ThingConclusionSentence, ThingDetailResponse, ThingDream, ThingLastNight,
-    ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapOp, ThingMapOpsRequest,
-    ThingMapOpsResponse, ThingMapProposal, ThingMapResponse, ThingMapSource, ThingMapState,
-    ThingMergeRequest, ThingMoveRequest, ThingNightPoint, ThingNightPoints,
+    NightsUndo, NightsUndoRequest, OldMemoryPass, OldMemoryPassResponse, SavedIn, SavedInRequest,
+    SavedInResponse, SavedPageChange, ThingActor, ThingConclusionSentence, ThingDetailResponse,
+    ThingDream, ThingLastNight, ThingMapAuthor, ThingMapEdge, ThingMapNode, ThingMapOp,
+    ThingMapOpsRequest, ThingMapOpsResponse, ThingMapProposal, ThingMapResponse, ThingMapSource,
+    ThingMapState, ThingMergeRequest, ThingMoveRequest, ThingNightPoint, ThingNightPoints,
     ThingNightPointsResponse, ThingPageEntry, ThingPageVia, ThingRef, ThingRenameRequest,
     ThingReplaced, ThingSessionEntry, ThingSummary, ThingTidy, ThingsResponse,
     THING_QUIET_AFTER_SECS,

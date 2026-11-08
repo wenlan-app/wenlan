@@ -37,7 +37,10 @@ fn is_tidy_answer(answer: &str) -> bool {
 #[async_trait]
 impl LlmProvider for Scripted {
     async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
-        let tidy = request.label.as_deref() == Some("things_tidy");
+        let tidy = matches!(
+            request.label.as_deref(),
+            Some("things_tidy" | "things_old_pass")
+        );
         let mut answers = self.answers.lock().unwrap();
         let at = answers.iter().position(|a| is_tidy_answer(a) == tidy);
         if tidy {
@@ -1009,4 +1012,84 @@ Would merge {}, replace {}, update {}.\n",
     ));
     out.push_str(&samples);
     std::fs::write(&report, out).unwrap();
+}
+
+/// UX-GRAPH-7: the old-memory pass hides an exact copy behind the earlier
+/// without asking, says an AI's memory about a passed date again in the
+/// past tense through the same path as a point, runs once, and Undo takes
+/// all of it back.
+#[tokio::test]
+async fn ux_graph_7_the_old_memory_pass_hides_copies_and_says_passed_dates_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let day = now - now.rem_euclid(86_400) - 3 * 86_400;
+    for (id, text, space, at) in [
+        (
+            "mem_x",
+            "The site stays free for now.",
+            "wenlan",
+            now - 9_000,
+        ),
+        (
+            "mem_y",
+            "The site stays free, for now",
+            "wenlan",
+            now - 5_000,
+        ),
+        (
+            "mem_z",
+            "The demo is planned for that day.",
+            "personal",
+            now - 400_000,
+        ),
+    ] {
+        db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+            source: "memory".into(),
+            source_id: id.into(),
+            title: id.into(),
+            content: text.into(),
+            last_modified: at,
+            memory_type: Some("fact".into()),
+            space: Some(space.into()),
+            source_agent: Some("claude-code".into()),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+    }
+    db.set_event_dates_by_source_id(&[("mem_z".into(), day)])
+        .await
+        .unwrap();
+    let date = chrono::DateTime::from_timestamp(day, 0)
+        .unwrap()
+        .format("%b %-d, %Y")
+        .to_string();
+    let answer = format!(
+        r#"{{"changes": [{{"do": "update", "memory": "M0", "text": "The demo was planned for {date}."}}]}}"#
+    );
+    let model = Scripted::new(&[answer.as_str()]);
+    let keep = Keep(&db, Default::default());
+    let pass = run_old_memory_pass(&db, model.as_ref(), &keep)
+        .await
+        .unwrap();
+    assert_eq!((pass.merged(), pass.updated()), (1, 1), "{pass:?}");
+    let shown = |id: &'static str| {
+        let db = &db;
+        async move { db.get_memory_detail(id).await.unwrap().is_some() }
+    };
+    let written = db.get_memory_detail("mem_0").await.unwrap().unwrap();
+    assert_eq!(written.content, format!("The demo was planned for {date}."));
+    assert!(
+        run_old_memory_pass(&db, model.as_ref(), &keep)
+            .await
+            .is_err(),
+        "it runs once"
+    );
+    assert!(shown("mem_x").await);
+    db.undo_backlog().await.unwrap().unwrap();
+    assert!(db.get_memory_detail("mem_0").await.unwrap().is_none());
+    assert!(db.backlog_pass().await.unwrap().is_none());
 }
