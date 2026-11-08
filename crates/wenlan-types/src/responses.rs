@@ -89,9 +89,8 @@ pub struct ListMemoriesResponse {
 
 /// Shared wire format for any `deleted: bool` response.
 ///
-/// Reused by:
-/// - `DELETE /api/memory/delete/{id}` (server/memory.rs)
-/// - `DELETE /api/documents/{source}/{source_id}` (server/ingest.rs)
+/// Reused by `DELETE /api/documents/{source}/{source_id}` (server/ingest.rs).
+/// A memory delete answers [`ForgetMemoryResponse`].
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeleteResponse {
     pub deleted: bool,
@@ -581,6 +580,69 @@ pub struct RestorePageResponse {
     pub links_not_updated: u32,
 }
 
+/// What `DELETE /api/pages/{id}` and `POST /api/pages/{id}/archive` did to
+/// the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageRemovalStatus {
+    /// Moved to the archive with its history; `POST /api/pages/{id}/restore`
+    /// brings it back.
+    Archived,
+    /// Removed for good with its history. Only the person can ask for this,
+    /// from the app (`?permanent=true` on `DELETE`).
+    Deleted,
+}
+
+/// Result of archiving or deleting a page.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PageRemovalResponse {
+    pub status: PageRemovalStatus,
+    /// True when the page can be brought back with
+    /// `POST /api/pages/{id}/restore`.
+    pub restorable: bool,
+    /// The page's version after the archive, when this call archived it.
+    /// `None` when the page was already archived, missing, or deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_status: Option<PageProjectionStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_error: Option<String>,
+}
+
+/// Why a page archive or delete was refused, sent as `code` in the error
+/// body next to `error`. Clients switch on the code, never on the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageRemovalErrorCode {
+    /// An AI tool asked to archive or delete a page that holds the person's
+    /// own writing or is review-locked (403). Only the person does that.
+    PageIsThePersons,
+    /// Permanent delete was asked for by anything but the person in the app
+    /// (403).
+    PermanentDeleteNeedsPerson,
+}
+
+/// Result of `DELETE /api/memory/delete/{source_id}`. The memory is
+/// forgotten, not destroyed: it leaves search, lists and pages, and
+/// `POST /api/memory/restore/{source_id}` brings it back.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgetMemoryResponse {
+    /// The memory is forgotten now (also true when it already was).
+    pub deleted: bool,
+    /// True when `POST /api/memory/restore/{source_id}` can bring it back.
+    /// False from an older daemon, which destroyed the memory.
+    #[serde(default)]
+    pub restorable: bool,
+}
+
+/// Result of `POST /api/memory/restore/{source_id}`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RestoreMemoryResponse {
+    /// A forgotten memory was found and put back.
+    pub restored: bool,
+}
+
 /// Why `POST /api/pages/{id}/restore` refused, sent as `code` in the error
 /// body next to `error` (English text) and `current_version`. Clients switch
 /// on the code, never on the text.
@@ -994,6 +1056,30 @@ pub struct PageWriteResponse {
     /// Their ids are listed by `GET /api/pages/{id}/sentences`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sentence_proposals: Vec<String>,
+    /// Every change this write wanted to make that did not land because the
+    /// sentence is the person's (or the page is locked): the sentence stays as
+    /// it was. One entry per sentence; a change whose facts changed also
+    /// waits as a sentence proposal (`proposal_id`), a rewording is dropped.
+    /// Absent when every change landed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edits_not_applied: Vec<EditNotApplied>,
+}
+
+/// One change a machine write wanted to make to a sentence it may not change.
+/// The sentence stays on the page as `before`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditNotApplied {
+    /// The sentence's hash, as `GET /api/pages/{id}/sentences` lists it.
+    pub sentence_hash: String,
+    /// The sentence as it stays on the page.
+    pub before: String,
+    /// What the write wanted instead. Empty when it would have deleted the
+    /// sentence.
+    pub after: String,
+    /// The sentence proposal that now waits for the person. `None` when the
+    /// change was only a rewording, which is never proposed: it was dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.

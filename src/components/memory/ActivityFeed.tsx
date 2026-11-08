@@ -402,9 +402,12 @@ export default function ActivityFeed({
   // Diagnostic fallback names written by the daemon when no real agent could
   // be resolved. They're not user-facing agents — hide them from the filter.
   // See `extract_agent_name` in `crates/origin-server/src/memory_routes.rs`.
+  // `person` marks the person's own deletes and archives in the app; they
+  // are not an agent either.
   const FALLBACK_AGENT_NAMES = new Set([
     "api",
     "unknown",
+    "person",
     "system",
     "test-agent",
     "smoke-test",

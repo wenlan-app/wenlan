@@ -1391,6 +1391,7 @@ pub async fn commit(
             outcome: WriteOutcome::Unchanged,
             basis_confirm: None,
             sentence_proposals: Vec::new(),
+            edits_not_applied: Vec::new(),
         })
         .map_err(WenlanError::from)?;
         let acknowledged = db

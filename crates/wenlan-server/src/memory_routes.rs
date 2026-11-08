@@ -18,8 +18,8 @@ use wenlan_types::requests::{
     ConfirmRequest, ListMemoriesRequest, SearchMemoryRequest, StoreMemoryRequest,
 };
 use wenlan_types::responses::{
-    ConfirmResponse, DeleteResponse, ListMemoriesResponse, NearDuplicate, SearchMemoryResponse,
-    StoreMemoryResponse,
+    ConfirmResponse, ForgetMemoryResponse, ListMemoriesResponse, NearDuplicate,
+    RestoreMemoryResponse, SearchMemoryResponse, StoreMemoryResponse,
 };
 use wenlan_types::sources::{stability_tier, MemoryType, RawDocument, StabilityTier};
 use wenlan_types::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};
@@ -43,6 +43,10 @@ pub(crate) fn register_core(router: TrackedRouter<SharedState>) -> TrackedRouter
         .route(
             "/api/memory/delete/{source_id}",
             delete(handle_delete_memory),
+        )
+        .route(
+            "/api/memory/restore/{source_id}",
+            post(handle_restore_memory),
         )
         .route(
             "/api/memory/reclassify/{source_id}",
@@ -1527,13 +1531,39 @@ pub async fn handle_list_memories(
     Ok(Json(ListMemoriesResponse { memories }))
 }
 
+/// `?permanent=true` on `DELETE /api/memory/delete/{source_id}`.
+#[derive(Debug, Default, Deserialize)]
+pub struct DeleteMemoryQuery {
+    #[serde(default)]
+    pub permanent: bool,
+}
+
 /// DELETE /api/memory/delete/{source_id}
+///
+/// Forgets the memory: it leaves search, lists and pages, and
+/// `POST /api/memory/restore/{source_id}` brings it back. `?permanent=true`
+/// destroys it instead; only the person, in the app, may ask for that.
+///
+/// A request with no agent name is treated as an AI tool's, so a memory read
+/// from the person's vault note is refused to it as to any named tool.
 pub async fn handle_delete_memory(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: HeaderMap,
     Path(source_id): Path<String>,
-) -> Result<Json<DeleteResponse>, ServerError> {
-    crate::note_routes::refuse_ai_change_to_note(&headers, &source_id)?;
+    axum::extract::Query(query): axum::extract::Query<DeleteMemoryQuery>,
+) -> Result<Json<ForgetMemoryResponse>, ServerError> {
+    let is_person = caller_is_person(&headers);
+    crate::note_routes::refuse_change_to_note(is_person, &source_id)?;
+    if query.permanent && !is_person {
+        return Err(ServerError::Structured {
+            status: axum::http::StatusCode::FORBIDDEN,
+            body: serde_json::json!({
+                "code": "permanent_delete_needs_person",
+                "error": "permanent_delete_needs_person: only the person, in the app, can \
+                          destroy a memory; a plain delete forgets it, which can be undone",
+            }),
+        });
+    }
     // Snapshot Arc<MemoryDB> + resolve agent name from the RwLock guard,
     // then drop the guard BEFORE any `.await` calls. Follows the pattern
     // established in `handle_store_memory` (see AGENTS.md "Repository
@@ -1541,11 +1571,15 @@ pub async fn handle_delete_memory(
     let (db, agent) = {
         let s = state.read().await;
         let db = s.db.clone().ok_or(ServerError::DbNotInitialized)?;
-        let agent = extract_agent_name(&headers, None);
+        let agent = if is_person {
+            "person".to_string()
+        } else {
+            extract_agent_name(&headers, None)
+        };
         (db, agent)
     }; // guard dropped here — writers may proceed
 
-    // Capture title before deletion so we can include it in the activity log.
+    // Capture title before the delete so the activity log can name it.
     let title = db
         .get_memory_detail(&source_id)
         .await
@@ -1553,17 +1587,28 @@ pub async fn handle_delete_memory(
         .flatten()
         .map(|m| m.title)
         .filter(|t| !t.is_empty());
+    let detail = match (title.as_deref(), query.permanent) {
+        (Some(t), false) => format!("forgot \"{t}\""),
+        (None, false) => "forgot a memory".to_string(),
+        (Some(t), true) => format!("destroyed \"{t}\""),
+        (None, true) => "destroyed a memory".to_string(),
+    };
+
+    if !query.permanent {
+        let outcome = db
+            .forget_memory(&source_id, &agent, &detail)
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?;
+        let found = outcome != wenlan_core::db::ForgetOutcome::NotFound;
+        return Ok(Json(ForgetMemoryResponse {
+            deleted: found,
+            restorable: found,
+        }));
+    }
 
     db.delete_by_source_id("memory", &source_id)
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
-
-    // Log the forget activity. Memory is gone so title lookup would fail —
-    // carry the title in `detail` instead.
-    let detail = match title.as_deref() {
-        Some(t) => format!("forgot \"{}\"", t),
-        None => "forgot a memory".to_string(),
-    };
     let ids = vec![source_id.clone()];
     if let Err(e) = db
         .log_agent_activity(&agent, "forget", &ids, None, &detail)
@@ -1572,7 +1617,36 @@ pub async fn handle_delete_memory(
         tracing::warn!("Failed to log agent forget activity: {}", e);
     }
 
-    Ok(Json(DeleteResponse { deleted: true }))
+    Ok(Json(ForgetMemoryResponse {
+        deleted: true,
+        restorable: false,
+    }))
+}
+
+/// POST /api/memory/restore/{source_id}
+///
+/// Brings back a memory a delete forgot. A memory destroyed with
+/// `?permanent=true` is gone and answers `restored: false`.
+pub async fn handle_restore_memory(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
+    Path(source_id): Path<String>,
+) -> Result<Json<RestoreMemoryResponse>, ServerError> {
+    let (db, agent) = {
+        let s = state.read().await;
+        let db = s.db.clone().ok_or(ServerError::DbNotInitialized)?;
+        let agent = if caller_is_person(&headers) {
+            "person".to_string()
+        } else {
+            extract_agent_name(&headers, None)
+        };
+        (db, agent)
+    };
+    let restored = db
+        .restore_forgotten_memory(&source_id, &agent)
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?;
+    Ok(Json(RestoreMemoryResponse { restored }))
 }
 
 #[derive(Debug, Serialize)]
@@ -1670,12 +1744,70 @@ pub async fn handle_reclassify_memory(
 
 // ===== Pending Revision Endpoints =====
 
+/// The refusal an AI tool gets when it tries to accept a card.
+pub(crate) const CARD_NEEDS_THE_PERSON: &str =
+    "card_needs_the_person: only the person can accept a card. Ask them to accept it in the \
+     Wenlan app; you may still propose changes or dismiss a card";
+
+/// Accepting a card (a pending revision, or a review proposal) is the
+/// person's decision, made in the Wenlan app. An AI tool proposes; it never
+/// accepts. Every request that is not [`caller_is_person`] is refused.
+pub(crate) fn require_person_to_accept(headers: &HeaderMap) -> Result<(), ServerError> {
+    if !caller_is_person(headers) {
+        return Err(ServerError::ValidationError(CARD_NEEDS_THE_PERSON.into()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod caller_is_person_tests {
+    use super::{caller_is_person, require_person_to_accept, CARD_NEEDS_THE_PERSON};
+    use axum::http::{HeaderMap, HeaderValue};
+    use wenlan_types::requests::{CALLER_HEADER, PERSON_CALLER_VALUE};
+
+    fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, HeaderValue::from_static(value));
+        }
+        map
+    }
+
+    /// UX-WHO-2: only the person accepts a card. The marker alone (or with an
+    /// empty agent name) is the person; any agent name, a missing marker, or
+    /// another marker value is an AI tool and is refused.
+    #[test]
+    fn ux_who_2_only_the_marked_request_with_no_agent_name_is_the_person() {
+        for person in [
+            headers(&[(CALLER_HEADER, PERSON_CALLER_VALUE)]),
+            headers(&[(CALLER_HEADER, PERSON_CALLER_VALUE), ("x-agent-name", " ")]),
+        ] {
+            assert!(caller_is_person(&person), "{person:?}");
+            assert!(require_person_to_accept(&person).is_ok());
+        }
+        for ai in [
+            headers(&[]),
+            headers(&[("x-agent-name", "claude-code")]),
+            headers(&[
+                (CALLER_HEADER, PERSON_CALLER_VALUE),
+                ("x-agent-name", "claude-code"),
+            ]),
+            headers(&[(CALLER_HEADER, "agent")]),
+        ] {
+            assert!(!caller_is_person(&ai), "{ai:?}");
+            let refusal = require_person_to_accept(&ai).unwrap_err().to_string();
+            assert!(refusal.contains(CARD_NEEDS_THE_PERSON), "{refusal}");
+        }
+    }
+}
+
 pub async fn handle_accept_revision(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: axum::http::HeaderMap,
     Path(id): Path<String>,
     body: axum::body::Bytes,
 ) -> Result<Json<wenlan_types::RevisionAcceptResponse>, ServerError> {
+    require_person_to_accept(&headers)?;
     let db = {
         let s = state.read().await;
         s.db.as_ref().ok_or(ServerError::DbNotInitialized)?.clone()
@@ -1783,6 +1915,26 @@ fn truncate_for_title(content: &str) -> String {
     } else {
         first_line.to_string()
     }
+}
+
+/// Is this request the person's own, made with their gesture in the app?
+///
+/// Only when it carries the app's marker
+/// ([`wenlan_types::requests::CALLER_HEADER`] set to
+/// [`wenlan_types::requests::PERSON_CALLER_VALUE`]) and no agent name. Every
+/// other request, named or not, is treated as an AI tool's: most unnamed
+/// requests come from tools that did not say who they are, not from the
+/// person.
+pub(crate) fn caller_is_person(headers: &HeaderMap) -> bool {
+    let marked = headers
+        .get(wenlan_types::requests::CALLER_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.trim() == wenlan_types::requests::PERSON_CALLER_VALUE);
+    // Any agent name, even a literal "unknown", makes the caller an AI tool.
+    let named = headers
+        .get("x-agent-name")
+        .is_some_and(|v| v.to_str().map_or(true, |s| !s.trim().is_empty()));
+    marked && !named
 }
 
 /// Resolve the caller's agent name.
@@ -3934,6 +4086,10 @@ mod gated_store_tests {
                 Request::builder()
                     .method("POST")
                     .uri(format!("/api/memory/revision/{}/accept", parsed.source_id))
+                    .header(
+                        wenlan_types::requests::CALLER_HEADER,
+                        wenlan_types::requests::PERSON_CALLER_VALUE,
+                    )
                     .header("content-type", "application/json")
                     .body(Body::from("{}"))
                     .unwrap(),
@@ -4918,6 +5074,10 @@ mod dismiss_revision_tests {
                         Request::builder()
                             .method("POST")
                             .uri("/api/memory/revision/accept_http_card/accept")
+                            .header(
+                                wenlan_types::requests::CALLER_HEADER,
+                                wenlan_types::requests::PERSON_CALLER_VALUE,
+                            )
                             .header("content-type", "application/json")
                             .body(Body::from(invalid))
                             .unwrap(),
@@ -4940,6 +5100,10 @@ mod dismiss_revision_tests {
                     Request::builder()
                         .method("POST")
                         .uri("/api/memory/revision/accept_http_card/accept")
+                        .header(
+                            wenlan_types::requests::CALLER_HEADER,
+                            wenlan_types::requests::PERSON_CALLER_VALUE,
+                        )
                         .header("content-type", "application/json")
                         .body(Body::from(body))
                         .unwrap(),

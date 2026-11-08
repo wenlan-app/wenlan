@@ -283,9 +283,14 @@ fn manifest_counts_match_the_spec() {
     // lines one memory came from; not page-bearing).
     // Then 312 after POST `/api/things/nights/undo` (takes back every night
     // since a time; two counts only).
+    // Then 313 after POST `/api/memory/restore/{source_id}` (brings a
+    // forgotten memory back; two flags only).
+    // Then 315 after GET `/api/trust/scan` (the nightly trust scan report;
+    // page titles and excerpts) and POST `/api/pages/{id}/citations/requeue`
+    // (a receipt).
     assert_eq!(
         HTTP_READERS.len(),
-        312,
+        315,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 52, "#[tool( declarations");
@@ -296,7 +301,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        324,
+        327,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -304,7 +309,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        307,
+        310,
         "main builder entries"
     );
     assert_eq!(
@@ -321,8 +326,8 @@ fn manifest_counts_match_the_spec() {
         .filter(|r| r.page_bearing == PageBearing::Yes)
         .count();
     // +2: the in-chat check (two routes). +1: GET `/api/things/{id}` (the
-    // titles of its conversations' pages).
-    assert_eq!(bearing, 97, "page-bearing HTTP routes");
+    // titles of its conversations' pages). +1: GET `/api/trust/scan`.
+    assert_eq!(bearing, 98, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -487,7 +492,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        304 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes and a memory's conversation lines and the nights undo, all with no page markers.
+        307 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore and the two trust scan routes, all with no page markers.
     );
 }
 

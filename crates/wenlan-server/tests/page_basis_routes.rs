@@ -59,7 +59,8 @@ impl Drop for ScratchVault {
 
 #[derive(Clone, Copy)]
 enum Caller {
-    /// The app: no headers.
+    /// The app, for a gesture of the person: no agent name, and the
+    /// person marker.
     Person,
     /// An agent reading with the explicit-intent marker the read routes want.
     Reader,
@@ -79,7 +80,12 @@ async fn call(
         request = request.header("content-type", "application/json");
     }
     match caller {
-        Caller::Person => {}
+        Caller::Person => {
+            request = request.header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+        }
         Caller::Reader => {
             request = request
                 .header(INTENT_HEADER, "explicit")
@@ -359,7 +365,7 @@ async fn a_comparison_that_cannot_be_made_is_409_with_a_reason_and_bad_pairs_are
     let (status, _) = call(
         &router,
         Method::DELETE,
-        &format!("/api/pages/{basis}"),
+        &format!("/api/pages/{basis}?permanent=true"),
         None,
         Caller::Person,
     )

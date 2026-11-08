@@ -61,6 +61,10 @@ fn setup(guard: &DataDirGuard) -> (std::path::PathBuf, crate::router::AppRouter)
     (root, crate::router::build_router(state))
 }
 
+/// `agent` for a request from the person in the app: the person marker and
+/// no agent name, as the app's person gestures send it.
+const PERSON: &str = "<the person>";
+
 async fn send(
     app: &mut crate::router::AppRouter,
     method: &str,
@@ -69,8 +73,15 @@ async fn send(
     body: Option<Value>,
 ) -> (StatusCode, Value) {
     let mut request = Request::builder().method(method).uri(uri);
-    if let Some(agent) = agent {
-        request = request.header("x-agent-name", agent);
+    match agent {
+        Some(PERSON) => {
+            request = request.header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            );
+        }
+        Some(agent) => request = request.header("x-agent-name", agent),
+        None => {}
     }
     let request = match body {
         Some(body) => request
@@ -129,12 +140,26 @@ async fn a_persons_notes_start_at_never_and_only_the_person_changes_that() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert!(body.to_string().contains("note_needs_the_person"), "{body}");
-
     let (status, body) = send(
         &mut app,
         "PUT",
         "/api/sources/notes/ai-changes",
         None,
+        Some(ask.clone()),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "no agent name and no person marker is not the person: {body}"
+    );
+    assert!(body.to_string().contains("note_needs_the_person"), "{body}");
+
+    let (status, body) = send(
+        &mut app,
+        "PUT",
+        "/api/sources/notes/ai-changes",
+        Some(PERSON),
         Some(ask),
     )
     .await;
@@ -158,7 +183,7 @@ async fn a_persons_notes_start_at_never_and_only_the_person_changes_that() {
         &mut app,
         "PUT",
         "/api/sources/notes/ai-changes",
-        None,
+        Some(PERSON),
         Some(json!({"path": "../x", "value": "never"})),
     )
     .await;
@@ -167,7 +192,7 @@ async fn a_persons_notes_start_at_never_and_only_the_person_changes_that() {
         &mut app,
         "PUT",
         "/api/sources/notes/ai-changes",
-        None,
+        Some(PERSON),
         Some(json!({"path": "", "value": "allowed"})),
     )
     .await;
@@ -205,7 +230,7 @@ async fn an_ai_change_lands_only_after_the_person_accepts_it() {
         &mut app,
         "PUT",
         "/api/sources/notes/ai-changes",
-        None,
+        Some(PERSON),
         Some(json!({"path": "", "value": "ask_first"})),
     )
     .await;
@@ -256,6 +281,17 @@ async fn an_ai_change_lands_only_after_the_person_accepts_it() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // Nor can a caller with no name and no person marker.
+    let (status, body) = send(
+        &mut app,
+        "POST",
+        &format!("/api/notes/proposals/{id}/accept"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.to_string().contains("note_needs_the_person"), "{body}");
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
         "Launch in September.\n"
@@ -265,7 +301,7 @@ async fn an_ai_change_lands_only_after_the_person_accepts_it() {
         &mut app,
         "POST",
         &format!("/api/notes/proposals/{id}/accept"),
-        None,
+        Some(PERSON),
         None,
     )
     .await;
@@ -289,7 +325,7 @@ async fn declining_or_switching_to_never_leaves_the_note_alone() {
         &mut app,
         "PUT",
         "/api/sources/notes/ai-changes",
-        None,
+        Some(PERSON),
         Some(json!({"path": "Work/", "value": "ask_first"})),
     )
     .await;
@@ -335,7 +371,7 @@ async fn declining_or_switching_to_never_leaves_the_note_alone() {
         &mut app,
         "PUT",
         "/api/sources/notes/ai-changes",
-        None,
+        Some(PERSON),
         Some(json!({"path": "Work/plan.md", "value": "never"})),
     )
     .await;
@@ -400,14 +436,110 @@ async fn an_ai_tool_cannot_forget_replace_or_edit_what_came_from_a_note() {
         map
     };
     assert!(super::refuse_ai_change_to_note(&headers(Some("claude-code")), &chunk).is_err());
+    let mut person = headers(None);
+    person.insert(
+        wenlan_types::requests::CALLER_HEADER,
+        wenlan_types::requests::PERSON_CALLER_VALUE.parse().unwrap(),
+    );
     assert!(
-        super::refuse_ai_change_to_note(&headers(None), &chunk).is_ok(),
-        "the app may"
+        super::refuse_ai_change_to_note(&person, &chunk).is_ok(),
+        "the person, in the app, may"
+    );
+    assert!(
+        super::refuse_ai_change_to_note(&headers(None), &chunk).is_err(),
+        "no agent name and no person marker is refused like an AI tool"
+    );
+    let mut named_with_marker = headers(Some("claude-code"));
+    named_with_marker.insert(
+        wenlan_types::requests::CALLER_HEADER,
+        wenlan_types::requests::PERSON_CALLER_VALUE.parse().unwrap(),
+    );
+    assert!(
+        super::refuse_ai_change_to_note(&named_with_marker, &chunk).is_err(),
+        "an AI tool that sends the person marker is still an AI tool"
     );
     assert!(super::refuse_ai_change_to_note(&headers(Some("claude-code")), "mem_abc").is_ok());
     assert!(
         super::refuse_ai_change_to_note(&headers(Some("claude-code")), "notes-2::x::0").is_ok()
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_memory_delete_with_no_caller_name_is_refused_for_a_note_like_an_ai_one() {
+    let _lock = lock().await;
+    let guard = DataDirGuard::new();
+    let (root, mut app) = setup(&guard);
+    let chunk = format!("notes::{}::0", root.join("Work/plan.md").display());
+    let encoded = chunk.replace('/', "%2F").replace(' ', "%20");
+
+    let (status, body) = send(
+        &mut app,
+        "DELETE",
+        &format!("/api/memory/delete/{encoded}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body.to_string().contains("note_change_needs_proposal"),
+        "{body}"
+    );
+
+    // The app's person marker passes the note check (this router has no
+    // database, so the request stops there).
+    let request = Request::builder()
+        .method("DELETE")
+        .uri(format!("/api/memory/delete/{encoded}"))
+        .header(
+            wenlan_types::requests::CALLER_HEADER,
+            wenlan_types::requests::PERSON_CALLER_VALUE,
+        )
+        .body(Body::empty())
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(&mut app, request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    assert!(super::refuse_change_to_note(false, &chunk).is_err());
+    assert!(super::refuse_change_to_note(true, &chunk).is_ok());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_memory_edit_with_no_caller_name_is_refused_for_a_note_like_an_ai_one() {
+    let _lock = lock().await;
+    let guard = DataDirGuard::new();
+    let (root, mut app) = setup(&guard);
+    let chunk = format!("notes::{}::0", root.join("Work/plan.md").display());
+    let encoded = chunk.replace('/', "%2F").replace(' ', "%20");
+
+    let (status, body) = send(
+        &mut app,
+        "PUT",
+        &format!("/api/memory/{encoded}/update"),
+        None,
+        Some(json!({"content": "x"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body.to_string().contains("note_change_needs_proposal"),
+        "{body}"
+    );
+
+    // The app's person marker passes the note check (this router has no
+    // database, so the request stops there).
+    let request = Request::builder()
+        .method("PUT")
+        .uri(format!("/api/memory/{encoded}/update"))
+        .header(
+            wenlan_types::requests::CALLER_HEADER,
+            wenlan_types::requests::PERSON_CALLER_VALUE,
+        )
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"content": "x"}).to_string()))
+        .unwrap();
+    let response = tower::ServiceExt::oneshot(&mut app, request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -420,7 +552,7 @@ async fn an_ai_can_name_the_note_by_a_memory_it_read_from_it() {
         &mut app,
         "PUT",
         "/api/sources/notes/ai-changes",
-        None,
+        Some(PERSON),
         Some(json!({"path": "", "value": "ask_first"})),
     )
     .await;

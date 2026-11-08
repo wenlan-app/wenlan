@@ -1,11 +1,14 @@
 # /wenlan forget
 
-Permanently delete a memory by its `source_id`.
+Forget a memory by its `source_id`. Wenlan keeps it out of recall and pages,
+and it can be restored.
 
 ## Safety
 
-This cannot be undone by Wenlan. Prefer `/wenlan-capture` with `supersedes` pointing
-at the old memory when history should be preserved.
+An AI tool's forget does not destroy the memory; only the user can, in the app.
+A memory read from the user's own note is refused: propose the change to the
+note instead. Prefer `/wenlan-capture` with `supersedes` pointing at the old memory
+when history should be preserved.
 
 Always confirm with the user before calling forget, unless the same user message
 already includes an exact id and an unambiguous delete instruction (for example
