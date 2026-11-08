@@ -861,3 +861,159 @@ async fn ux_home_3_an_untitled_thing_no_conversation_can_name_is_not_listed() {
             .unwrap()
     ));
 }
+
+/// One memory of a thing's conversation, written by `agent` in `space`,
+/// `ago` seconds ago.
+async fn said_by(
+    db: &MemoryDB,
+    id: &str,
+    content: &str,
+    agent: Option<&str>,
+    space: &str,
+    session: &str,
+    ago: i64,
+) {
+    db.upsert_documents(vec![RawDocument {
+        source: "memory".to_string(),
+        source_id: id.to_string(),
+        title: id.to_string(),
+        content: content.to_string(),
+        last_modified: chrono::Utc::now().timestamp(),
+        metadata: HashMap::new(),
+        memory_type: Some("decision".to_string()),
+        space: Some(space.to_string()),
+        source_agent: agent.map(str::to_string),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let conn = db.conn.lock().await;
+    conn.execute(
+        "UPDATE memories SET session_id = ?2, created_at = ?3 WHERE source_id = ?1",
+        libsql::params![id, session, chrono::Utc::now().timestamp() - ago],
+    )
+    .await
+    .unwrap();
+}
+
+/// UX-GRAPH-7: a night offers only what an AI wrote, within one Space; the
+/// person's own memory and one nothing names are never offered. A replace
+/// hides the older, counts on the morning line, and Undo puts back the mode
+/// it had without forgetting anything the night did not write.
+#[tokio::test]
+async fn ux_graph_7_a_night_tidies_only_what_an_ai_wrote_and_undo_puts_it_back() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _notes) = two_things(&db, now).await;
+    db.create_space("personal", None, false).await.unwrap();
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let session = due
+        .iter()
+        .find(|d| d.thing_id == site)
+        .unwrap()
+        .conversations[0]
+        .session_id
+        .clone();
+    let s = session.as_str();
+    said_by(
+        &db,
+        "mem_old",
+        "The site has a pricing page.",
+        Some("claude-code"),
+        "wenlan",
+        s,
+        7_200,
+    )
+    .await;
+    said_by(
+        &db,
+        "mem_new",
+        "The site has no pricing page now.",
+        Some("codex"),
+        "wenlan",
+        s,
+        60,
+    )
+    .await;
+    said_by(
+        &db,
+        "mem_none",
+        "The site has a pricing page soon.",
+        None,
+        "wenlan",
+        s,
+        600,
+    )
+    .await;
+    said_by(
+        &db,
+        "mem_other",
+        "The site has a pricing page too.",
+        Some("codex"),
+        "personal",
+        s,
+        600,
+    )
+    .await;
+    said_by(
+        &db,
+        "mem_mine",
+        "The site has a pricing page, I think.",
+        Some("codex"),
+        "wenlan",
+        s,
+        600,
+    )
+    .await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET authored_content = content WHERE source_id = 'mem_mine'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+
+    let offer = db.tidy_offer(&site, now).await.unwrap();
+    let mut offered: Vec<&str> = offer.items.iter().map(|i| i.id.as_str()).collect();
+    offered.sort();
+    assert_eq!(offered, ["mem_new", "mem_old"], "{offer:?}");
+    assert!(offer.groups.iter().all(|g| g
+        .iter()
+        .all(|&i| offer.items[i].space.as_deref() == Some("wenlan"))));
+
+    let before = db.get_memory_detail("mem_old").await.unwrap().unwrap();
+    db.record_dream_tidied(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+        &[crate::db::night_tidy::TidyApplied {
+            how: wenlan_types::NightTidyKind::Replace,
+            old: vec!["mem_old".into()],
+            new: "mem_new".into(),
+            wrote: false,
+        }],
+    )
+    .await
+    .unwrap();
+    let hidden = db.get_memory_detail("mem_old").await.unwrap().unwrap();
+    assert_eq!(hidden.supersede_mode, "evicted");
+    let nights = db.thing_night_points(&ReadScope::Global).await.unwrap();
+    let night = nights.iter().find(|n| n.thing_id == site).unwrap();
+    let tidied = &night.last_night.as_ref().unwrap().tidied;
+    assert_eq!(tidied.len(), 1, "a night that only tidied still shows");
+    assert_eq!(tidied[0].replaced, ["mem_old"]);
+
+    let forget = db.undo_thing_dream(&site).await.unwrap();
+    assert!(
+        forget.is_empty(),
+        "the night wrote nothing, so nothing is forgotten"
+    );
+    let back = db.get_memory_detail("mem_old").await.unwrap().unwrap();
+    assert_eq!(back.supersede_mode, before.supersede_mode);
+    assert!(db.get_memory_detail("mem_new").await.unwrap().is_some());
+}

@@ -347,6 +347,7 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
             {"text": "", "settled": true, "from": "C0"},
             {"text": "A point from nowhere.", "settled": true, "from": "C9"}
         ]}"#,
+        r#"{"changes": []}"#,
         r#"{"conclusion": [
             {"text": "The tagline is settled; a pricing page is still open.", "points": ["P0", "P1"]},
             {"text": "Nothing backs this.", "points": []}
@@ -354,6 +355,7 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
         r#"{"points": [
             {"text": "The site gets no pricing page for now.", "settled": true, "from": "C0", "replaces": "P1"}
         ]}"#,
+        r#"{"changes": []}"#,
         "not json",
     ]);
     let models = IntakeModels {
@@ -412,7 +414,11 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
     assert_eq!((dream.decided, dream.open), (1, 1));
     // UX-VIEW-6: then the page's first paragraph, from every standing point;
     // the sentence nothing backs is dropped.
-    let concluded = group.prompts.lock().unwrap()[2].clone();
+    // UX-GRAPH-7: before it, the night asks whether alike memories an AI
+    // wrote need tidying; this one needs nothing.
+    let tidy = group.prompts.lock().unwrap()[2].clone();
+    assert!(tidy.contains("Group 1:"), "{tidy}");
+    let concluded = group.prompts.lock().unwrap()[3].clone();
     assert!(concluded.contains("P1 (open): Whether the site gets a pricing page is still open."));
     assert_eq!(dream.conclusion.len(), 1);
     assert_eq!(
@@ -463,7 +469,7 @@ async fn ux_chat_5_a_nights_reading_keeps_what_the_work_settled() {
         .await
         .unwrap();
     assert_eq!(done, (1, 1));
-    let asked = group.prompts.lock().unwrap()[3].clone();
+    let asked = group.prompts.lock().unwrap()[4].clone();
     assert!(asked.contains("P1 (open): Whether the site gets a pricing page is still open."));
     let kept: Vec<String> = db
         .dream_points(&thing.id)
@@ -559,11 +565,14 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
     db.store_entity("GitHub", "tool", Some("wenlan"), None, Some(1.0))
         .await
         .unwrap();
-    let group = Scripted::new(&[r#"{"points": [
+    let group = Scripted::new(&[
+        r#"{"points": [
         {"text": "The repository stays private.", "settled": true, "from": "C0", "topic": "T0"},
         {"text": "Which plan comes first is open.", "settled": false, "from": "C0", "topic": null},
         {"text": "Named a topic that is not there.", "settled": true, "from": "C0", "topic": "T9"}
-    ]}"#]);
+    ]}"#,
+        r#"{"changes": []}"#,
+    ]);
     let keep = Keep(&db, Default::default());
     let due = db
         .things_to_dream(chrono::Utc::now().timestamp(), 10)
@@ -573,8 +582,8 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
         .await
         .unwrap();
     assert_eq!(done, (1, 3));
-    // One call for points and topics; the second writes the conclusion.
-    assert_eq!(group.prompts.lock().unwrap().len(), 2, "one call");
+    // One call for points and topics; then the tidy, and the conclusion.
+    assert_eq!(group.prompts.lock().unwrap().len(), 3, "one call");
     let asked = group.prompts.lock().unwrap()[0].clone();
     assert!(asked.contains("T0: GitHub"), "{asked}");
 
@@ -589,6 +598,81 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
     for id in &forget {
         assert!(db.get_memory_detail(id).await.unwrap().is_none(), "{id}");
     }
+}
+
+/// UX-GRAPH-7: a night merges two memories an AI wrote that say the same.
+/// Both are hidden, not deleted; the merged one stands on the thing and the
+/// morning line counts it; taking the night back takes all of it back.
+#[tokio::test]
+async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (thing, found) = thing_for_links(
+        &db,
+        &["keep the GitHub repository private", "yes, private for now"],
+    )
+    .await;
+    let group = Scripted::new(&[
+        r#"{"points": [
+        {"text": "The repository stays private.", "settled": true, "from": "C0"},
+        {"text": "The repository is kept private.", "settled": true, "from": "C0"}
+    ]}"#,
+        r#"{"changes": [
+        {"do": "merge", "memories": ["M0", "M1"], "text": "The repository stays private."}
+    ]}"#,
+    ]);
+    let keep = Keep(&db, Default::default());
+    let due = db
+        .things_to_dream(chrono::Utc::now().timestamp(), 10)
+        .await
+        .unwrap();
+    dream_with(&db, &due, &found, group.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+    let tidy = group.prompts.lock().unwrap()[1].clone();
+    assert!(tidy.contains("The repository is kept private."), "{tidy}");
+
+    // The two are hidden and kept; the merged one is the thing's point.
+    let points: Vec<String> = db
+        .dream_points(&thing)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
+    assert_eq!(points, ["mem_2"]);
+    for id in ["mem_0", "mem_1"] {
+        let hidden = db.get_memory_detail(id).await.unwrap().unwrap();
+        assert_eq!(hidden.supersede_mode, "evicted", "{id}");
+    }
+    let merged = db.get_memory_detail("mem_2").await.unwrap().unwrap();
+    assert_eq!(merged.content, "The repository stays private.");
+    assert_eq!(merged.memory_type.as_deref(), Some("decision"));
+    assert!(
+        merged.session_id.is_some(),
+        "it keeps the conversation it came from"
+    );
+    let nights = db.thing_night_points(&ReadScope::Global).await.unwrap();
+    let last = nights[0].last_night.clone().unwrap();
+    assert!(
+        last.written.is_empty(),
+        "the merge is counted once, as a merge"
+    );
+    assert_eq!(
+        last.tidied,
+        [wenlan_types::NightTidied {
+            kind: NightTidyKind::Merge,
+            memory_id: "mem_2".into(),
+            replaced: vec!["mem_0".into(), "mem_1".into()],
+        }]
+    );
+
+    // Undo: this night wrote all three, so all three are forgotten.
+    let forget = db.undo_thing_dream(&thing).await.unwrap();
+    assert_eq!(forget, ["mem_0", "mem_1", "mem_2"]);
+    assert!(db.get_memory_detail("mem_2").await.unwrap().is_none());
 }
 
 /// UX-CHAT-5: old points are connected through the same path, once. A model

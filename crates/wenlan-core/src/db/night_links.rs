@@ -51,6 +51,19 @@ pub enum NightChange {
     Merge { from: String, into: String },
     /// A point left the map.
     Remove { memory: String },
+    /// Memories an AI wrote were tidied (UX-GRAPH-7): `old` are hidden,
+    /// their `supersede_mode` before kept in `before` to put back on undo;
+    /// `new` stands for them. `wrote` is set when the night wrote `new`, so
+    /// undo forgets it.
+    Tidy {
+        how: wenlan_types::NightTidyKind,
+        old: Vec<String>,
+        #[serde(default)]
+        before: Vec<Option<String>>,
+        new: String,
+        #[serde(default)]
+        wrote: bool,
+    },
 }
 
 /// A link a night made that was not there before, so undo takes back only

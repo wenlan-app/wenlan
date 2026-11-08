@@ -110,6 +110,7 @@ type PageSpaceWriteContext<'a> = (
     )>,
 );
 pub mod citation_provenance;
+pub mod night_tidy;
 pub mod research_disputes;
 pub mod research_runs;
 pub mod research_write;

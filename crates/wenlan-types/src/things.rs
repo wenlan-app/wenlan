@@ -196,6 +196,32 @@ pub struct ThingLastNight {
     pub written: Vec<String>,
     /// The links it made that still stand.
     pub linked: Vec<NightLinkMade>,
+    /// The memories it tidied (UX-GRAPH-7): merged, replaced or brought up
+    /// to date. Empty from older daemons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tidied: Vec<NightTidied>,
+}
+
+/// How a night tidied memories an AI wrote (UX-GRAPH-7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NightTidyKind {
+    /// Two that said the same became one.
+    Merge,
+    /// A newer one took the place of one it says no longer holds.
+    Replace,
+    /// One whose planned date passed was brought up to date.
+    Update,
+}
+
+/// One tidy a night made: what is hidden now, and what stands for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NightTidied {
+    pub kind: NightTidyKind,
+    /// The memory that stands now, as its `source_id`.
+    pub memory_id: String,
+    /// The memories it took the place of, hidden and kept.
+    pub replaced: Vec<String>,
 }
 
 /// `POST /api/things/nights/undo`: the person takes back the whole night on

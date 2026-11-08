@@ -18,6 +18,7 @@
 //! went on.
 
 use super::night_links::{remove_night_links, NightChange, NightLink};
+use super::night_tidy::{apply_tidies, undo_tidies, TidyApplied};
 use super::thing_map::DreamMapChanges;
 use super::things::history;
 use super::MemoryDB;
@@ -26,7 +27,7 @@ use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use std::collections::HashSet;
 use wenlan_types::{
-    NightLinkMade, ThingActor, ThingConclusionSentence, ThingDream, ThingLastNight,
+    NightLinkMade, NightTidied, ThingActor, ThingConclusionSentence, ThingDream, ThingLastNight,
     ThingNightPoint, ThingNightPoints,
 };
 
@@ -289,10 +290,11 @@ impl MemoryDB {
                     created_at: point.created_at,
                 })
                 .collect();
-            if points.is_empty() {
+            let last_night = self.thing_last_night(&thing.id, &points, scope).await?;
+            // A thing whose night only tidied still has a night to show.
+            if points.is_empty() && last_night.is_none() {
                 continue;
             }
-            let last_night = self.thing_last_night(&thing.id, &points).await?;
             out.push(ThingNightPoints {
                 thing_id: thing.id,
                 title: thing.title,
@@ -319,6 +321,22 @@ impl MemoryDB {
             decided.extend(entry.decided.iter().cloned());
             ids.extend(entry.decided);
             ids.extend(entry.open);
+            // What a tidy wrote stands in for what it hid, as a point of the
+            // thing: settled when one of those was.
+            for change in &entry.changes {
+                if let NightChange::Tidy {
+                    old,
+                    new,
+                    wrote: true,
+                    ..
+                } = change
+                {
+                    if old.iter().any(|id| decided.contains(id)) {
+                        decided.insert(new.clone());
+                    }
+                    ids.push(new.clone());
+                }
+            }
         }
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -332,6 +350,7 @@ impl MemoryDB {
                             COALESCE(MIN(m.created_at), MIN(m.last_modified)), MAX(m.space)
                        FROM memories m
                       WHERE m.source = 'memory' AND m.source_id = ?1 AND m.pending_revision = 0
+                        AND COALESCE(m.supersede_mode, '') <> 'evicted'
                         AND NOT EXISTS (SELECT 1 FROM memories s
                                          WHERE s.supersedes = m.source_id AND s.source = 'memory'
                                            AND s.pending_revision = 0)
@@ -505,6 +524,7 @@ impl MemoryDB {
         &self,
         thing_id: &str,
         standing: &[ThingNightPoint],
+        scope: &ReadScope,
     ) -> Result<Option<ThingLastNight>, WenlanError> {
         let nights = self.dream_nights(thing_id).await?;
         let Some((_, _, night)) = nights
@@ -514,7 +534,37 @@ impl MemoryDB {
         else {
             return Ok(None);
         };
-        Ok(last_night_of(&night, standing))
+        // A replace keeps a memory that may not be one of the thing's
+        // points: it counts while it still stands in the caller's scope.
+        let mut kept = HashSet::new();
+        let conn = self.conn.lock().await;
+        for change in &night.entry.changes {
+            let NightChange::Tidy {
+                new, wrote: false, ..
+            } = change
+            else {
+                continue;
+            };
+            let mut rows = conn
+                .query(
+                    "SELECT space FROM memories
+                      WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
+                        AND COALESCE(supersede_mode, '') <> 'evicted'",
+                    libsql::params![new.as_str()],
+                )
+                .await
+                .map_err(db_err("tidy kept"))?;
+            if let Some(row) = rows.next().await.map_err(db_err("tidy kept row"))? {
+                let space = crate::space_context::normalize_unfiled_space(
+                    row.get::<Option<String>>(0).unwrap_or(None),
+                );
+                if scope.matches(space.as_deref()) {
+                    kept.insert(new.clone());
+                }
+            }
+        }
+        drop(conn);
+        Ok(last_night_of(&night, standing, &kept))
     }
 
     /// The person takes back a whole night on the big map (UX-GRAPH-5):
@@ -561,7 +611,26 @@ impl MemoryDB {
         links: &[NightLink],
         conversations: &[DueConversation],
     ) -> Result<Option<i64>, WenlanError> {
-        let changes: Vec<NightChange> = decided
+        self.record_dream_tidied(thing_id, decided, open, map, links, conversations, &[])
+            .await
+    }
+
+    /// [`Self::record_dream`] with the memories the night tidied
+    /// (UX-GRAPH-7): what they take the place of is hidden in the same
+    /// transaction as the record, so Undo always finds it. A night that only
+    /// tidied is recorded too.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_dream_tidied(
+        &self,
+        thing_id: &str,
+        decided: &[String],
+        open: &[String],
+        map: &DreamMapChanges,
+        links: &[NightLink],
+        conversations: &[DueConversation],
+        tidied: &[TidyApplied],
+    ) -> Result<Option<i64>, WenlanError> {
+        let mut changes: Vec<NightChange> = decided
             .iter()
             .chain(open)
             .map(|memory| NightChange::New {
@@ -576,7 +645,11 @@ impl MemoryDB {
             .await
             .map_err(db_err("record dream begin"))?;
         let mut seq = None;
-        if !decided.is_empty() || !open.is_empty() {
+        changes.extend(apply_tidies(&tx, tidied).await?);
+        let tidies = changes
+            .iter()
+            .any(|change| matches!(change, NightChange::Tidy { .. }));
+        if !decided.is_empty() || !open.is_empty() || tidies {
             history(
                 &tx,
                 now,
@@ -760,6 +833,7 @@ impl MemoryDB {
         super::thing_map::undo_dream_map_in(&tx, thing_id, &night.entry.map, now).await?;
         let mut ids = night.entry.decided;
         ids.extend(night.entry.open);
+        ids.extend(undo_tidies(&tx, &night.entry.changes).await?);
         for id in &ids {
             self.delete_by_source_id_in_transaction(&tx, "memory", id, false)
                 .await?;
@@ -803,7 +877,11 @@ fn short_title(title: &str, text: &str) -> String {
 }
 
 /// A night's points and links, kept to the points in `standing`.
-fn last_night_of(night: &DreamEntryWithAt, standing: &[ThingNightPoint]) -> Option<ThingLastNight> {
+fn last_night_of(
+    night: &DreamEntryWithAt,
+    standing: &[ThingNightPoint],
+    kept: &HashSet<String>,
+) -> Option<ThingLastNight> {
     let here: HashSet<&str> = standing.iter().map(|p| p.memory_id.as_str()).collect();
     let entry = &night.entry;
     let written: Vec<String> = entry
@@ -826,13 +904,35 @@ fn last_night_of(night: &DreamEntryWithAt, standing: &[ThingNightPoint]) -> Opti
             _ => None,
         })
         .collect();
-    if written.is_empty() && linked.is_empty() {
+    let tidied: Vec<NightTidied> = entry
+        .changes
+        .iter()
+        .filter_map(|change| match change {
+            NightChange::Tidy { how, old, new, .. }
+                if here.contains(new.as_str()) || kept.contains(new) =>
+            {
+                Some(NightTidied {
+                    kind: *how,
+                    memory_id: new.clone(),
+                    replaced: old.clone(),
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    // A tidy's new point is counted once, as tidied, not also as written.
+    let written: Vec<String> = written
+        .into_iter()
+        .filter(|id| !tidied.iter().any(|t| &t.memory_id == id))
+        .collect();
+    if written.is_empty() && linked.is_empty() && tidied.is_empty() {
         return None;
     }
     Some(ThingLastNight {
         at: night.at,
         written,
         linked,
+        tidied,
     })
 }
 
