@@ -81,24 +81,25 @@ export function replayStops(things: readonly ThingNightPoints[], has: (nodeId: s
   return stops;
 }
 
-/** Replay's beats, ms (Fable's design, 2026-11-06). */
+/** Replay's beats, ms: Fable's design (2026-11-06), about a third slower after
+ *  Qi-Xuan tried it on real data (2026-11-08: a little fast). */
 export const REPLAY_TIMING = {
   /** The camera reaching a stop. */
-  camera: 450,
+  camera: 600,
   /** One point growing out of its thing's centre. */
-  grow: 400,
+  grow: 550,
   /** Between one point starting to grow and the next. */
-  stagger: 80,
+  stagger: 110,
   /** Most a thing's points take to all start growing, so a long night stays short. */
-  staggerMax: 600,
+  staggerMax: 800,
   /** Looking at what grew. */
-  holdGrown: 400,
+  holdGrown: 600,
   /** Points flying out to their topics. */
-  fly: 900,
+  fly: 1200,
   /** Looking at where they went. */
-  holdFlown: 500,
+  holdFlown: 700,
   /** Points flying home, with the camera going back. */
-  home: 450,
+  home: 600,
 } as const;
 
 /** The gap between points starting to grow, for `count` of them. */

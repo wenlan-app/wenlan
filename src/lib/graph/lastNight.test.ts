@@ -74,19 +74,19 @@ describe("Replay's stops (UX-GRAPH-6)", () => {
 
   it("keeps a long night's growing short", () => {
     expect(growStagger(1)).toBe(0);
-    expect(growStagger(8)).toBe(80);
-    expect(growMs(8)).toBe(400 + 7 * 80);
-    expect(growMs(31)).toBe(400 + 600);
+    expect(growStagger(8)).toBe(110);
+    expect(growMs(8)).toBe(550 + 7 * 110);
+    expect(growMs(31)).toBe(550 + 800);
   });
 
-  it("plays 8 points in 2 things with links in under ten seconds", () => {
+  it("plays 8 points in 2 things with links in under thirteen seconds", () => {
     const things = [
       thing("a", { at: at(3), written: ["a1", "a2", "a3", "a4", "a5"], linked: [["a1", "e1"], ["a2", "e2"], ["a3", "e2"]] }),
       thing("b", { at: at(3), written: ["b1", "b2", "b3"], linked: [["b1", "e3"], ["b2", "e3"]] }),
     ];
     const ms = replayMs(replayStops(things, () => true));
-    expect(ms).toBeGreaterThan(6_000);
-    expect(ms).toBeLessThan(10_000);
+    expect(ms).toBeGreaterThan(8_000);
+    expect(ms).toBeLessThan(13_000);
     expect(replayMs([])).toBe(0);
   });
 });
