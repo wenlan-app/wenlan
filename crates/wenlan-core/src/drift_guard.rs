@@ -9710,6 +9710,11 @@ const FLAG_ALLOWLIST: &[&str] = &[
     "WENLAN_UPDATE_CLI_REFERENCE",        // test-only CLI README regeneration opt-in
     "WENLAN_BATCH_LOG",                   // debug logging
     "WENLAN_CHATGPT_ZIP",                 // import path
+    "WENLAN_TIDY_DRY_DIR",                // test-only night-tidy dry run on a store copy
+    "WENLAN_TIDY_DRY_REPORT",             // test-only night-tidy dry run report path
+    "WENLAN_TIDY_DRY_DAYS",               // test-only night-tidy dry run look-back
+    "WENLAN_BACKLOG_DRY_DIR",             // test-only old-memory report on a store copy
+    "WENLAN_BACKLOG_DRY_REPORT",          // test-only old-memory report path
 ];
 
 /// BASELINE: behavioral flags undocumented when this contract was introduced
