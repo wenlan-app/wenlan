@@ -574,6 +574,75 @@ conversation (for example Wenlan, Heptabase); do not translate or transliterate 
 Write for the person, in plain words: no pull request or issue numbers, commit hashes, \
 version-control branch names, file paths, ids or dates.";
 
+/// What [`KEEP_NAMES`] asks a model to leave out, checked on its answer: an
+/// issue or pull request number, a commit hash, a date, a file path or file
+/// name, a version. A model sometimes ignores the instruction; a line the
+/// person reads must not depend on it (UX-HOME-6).
+static NOT_PLAIN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(concat!(
+        r"#\d+",
+        r"|(?-u:\b)20\d\d-\d\d(?:-\d\d)?(?-u:\b)",
+        r"|(?:^|[\s(\[\x22'`（「])(?:~|\.\.?)?/[\w.\-/]+",
+        r"|(?-u:\b)[\w\-]+\.(?:rs|ts|tsx|js|jsx|mjs|py|go|md|json|toml|ya?ml|sh|sql|css|html)(?-u:\b)",
+        r"|(?-u:\b)v\d+(?:\.\d+)*(?-u:\b)",
+        r"|(?-u:\b)\d+\.\d+\.\d+(?-u:\b)",
+    ))
+    .expect("plain-words pattern")
+});
+static HEX_WORD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?-u:\b)[0-9a-f]{7,40}(?-u:\b)").expect("hash pattern")
+});
+
+/// A commit hash: hex, with both a digit and a letter, so "1250000" and
+/// "defaced" are words, not hashes.
+fn is_hash(word: &str) -> bool {
+    word.bytes().any(|b| b.is_ascii_digit()) && word.bytes().any(|b| b.is_ascii_alphabetic())
+}
+
+/// Whether `text` is in plain words: none of what [`KEEP_NAMES`] leaves out.
+pub fn plain_words(text: &str) -> bool {
+    !NOT_PLAIN.is_match(text) && !HEX_WORD.find_iter(text).any(|m| is_hash(m.as_str()))
+}
+
+/// A title in plain words. One that is not is cut before a parenthesis or a
+/// dash aside, where numbers and paths usually sit, and whatever is still
+/// not plain is taken out. Empty when nothing plain is left.
+pub fn plain_title(title: &str) -> String {
+    let mut title = title.trim();
+    if !plain_words(title) {
+        for aside in ["(", "（", " — ", " – ", " - "] {
+            if let Some(at) = title.find(aside).filter(|&at| at > 0) {
+                title = &title[..at];
+            }
+        }
+    }
+    let mut out = title.to_string();
+    if !plain_words(&out) {
+        out = NOT_PLAIN.replace_all(&out, " ").into_owned();
+        out = HEX_WORD
+            .replace_all(&out, |c: &regex::Captures| {
+                if is_hash(&c[0]) {
+                    String::new()
+                } else {
+                    c[0].to_string()
+                }
+            })
+            .into_owned();
+        // A word left dangling by what was taken out.
+        for dangling in [" PR", " via", " in", " at", " on", " for", " of"] {
+            while out.trim_end().ends_with(dangling) {
+                let end = out.trim_end().len() - dangling.len();
+                out.truncate(end);
+            }
+        }
+    }
+    out.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(|c: char| ",;:-`".contains(c) || c.is_whitespace())
+        .to_string()
+}
+
 /// The language every title and line is written in.
 pub fn language_name(locale: Option<&str>) -> &'static str {
     let lower = locale.unwrap_or("").to_ascii_lowercase().replace('_', "-");
@@ -690,9 +759,17 @@ fn json_object(text: &str) -> Option<&str> {
 /// Spaces is dropped; a work label without a title is not work.
 pub fn parse_label(text: &str, spaces: &[String]) -> Option<Label> {
     let mut label: Label = serde_json::from_str(json_object(text)?).ok()?;
-    label.title = cut(label.title.trim(), MAX_TITLE_CHARS);
+    label.title = cut(&plain_title(&label.title), MAX_TITLE_CHARS);
     label.about = cut(label.about.trim(), MAX_ABOUT_CHARS);
     label.status = cut(label.status.trim(), MAX_STATUS_CHARS);
+    // A line that is not in plain words is left blank, so the one before it
+    // shows instead.
+    if !plain_words(&label.about) {
+        label.about.clear();
+    }
+    if !plain_words(&label.status) {
+        label.status.clear();
+    }
     let space = label.space.trim();
     label.space = spaces
         .iter()
@@ -935,20 +1012,23 @@ pub fn parse_grouping(text: &str, pending: &[Pending], open: usize) -> Option<Gr
             continue;
         }
         used.extend(members.iter().copied());
-        let title = cut(new.title.trim(), MAX_TITLE_CHARS);
+        let title = cut(&plain_title(&new.title), MAX_TITLE_CHARS);
         let title = if title.is_empty() {
             pending[members[0]].title.clone()
         } else {
             title
         };
         let line = cut(new.now.trim(), MAX_LINE_CHARS);
-        if !line.is_empty() {
+        if !line.is_empty() && plain_words(&line) {
             grouping.lines.push((Piece::New(grouping.new.len()), line));
         }
         grouping.new.push((title, members));
     }
     for now in &answer.now {
         let line = cut(now.line.trim(), MAX_LINE_CHARS);
+        if !plain_words(&line) {
+            continue;
+        }
         if let (Some(t), false) = (index(&now.piece, 'T', open), line.is_empty()) {
             grouping.lines.retain(|(piece, _)| *piece != Piece::Open(t));
             grouping.lines.push((Piece::Open(t), line));
@@ -1025,6 +1105,26 @@ pub struct DreamPoint {
     pub map: Option<usize>,
     /// Index of the topic on the big map it is about, when one fits.
     pub topic: Option<usize>,
+    /// Index into [`dream_lines`] of what the person typed that it came
+    /// from, as the model named it. The caller checks the line is in the
+    /// point's own conversation (UX-WHO-6).
+    pub line: Option<usize>,
+}
+
+/// The lines of what the person typed that the night's prompt shows, in
+/// order and numbered from 0 across all conversations: the conversation each
+/// is in, and the line as shown.
+pub fn dream_lines(conversations: &[FoundConversation]) -> Vec<(usize, String)> {
+    conversations
+        .iter()
+        .enumerate()
+        .flat_map(|(i, conv)| {
+            let start = conv.said.len().saturating_sub(DREAM_SAID);
+            conv.said[start..]
+                .iter()
+                .map(move |s| (i, cut(s, DREAM_SAID_CHARS)))
+        })
+        .collect()
 }
 
 /// A point on a thing's map that no night kept yet: the model can say a point
@@ -1046,11 +1146,13 @@ pub fn dream_prompt(
     language: &str,
 ) -> String {
     let mut chats = String::new();
+    let lines = dream_lines(conversations);
     for (i, conv) in conversations.iter().enumerate() {
-        let start = conv.said.len().saturating_sub(DREAM_SAID);
-        let said = conv.said[start..]
+        let said = lines
             .iter()
-            .map(|s| format!("- {}", cut(s, DREAM_SAID_CHARS)))
+            .enumerate()
+            .filter(|(_, (c, _))| *c == i)
+            .map(|(n, (_, text))| format!("L{n}: {text}"))
             .collect::<Vec<_>>()
             .join("\n");
         let reply = if conv.last_reply.is_empty() {
@@ -1118,10 +1220,11 @@ understands (name what it is about), in {language}. {KEEP_NAMES} Leave out anyth
 kept above. When a kept point no longer holds (it was decided differently, or what was open is now \
 settled), give the new point and name the old one in \"replaces\". When a point you write is \
 one of the map points above (the same point, perhaps now settled), name it in \"map\". At most \
-{MAX_DREAM_POINTS} points; none is a fine answer.\n\
+{MAX_DREAM_POINTS} points; none is a fine answer. For each point give in \"line\" the one line \
+the person typed, in its conversation, that it comes from (\"L3\").\n\
 {topics_text}\
 Answer with JSON only: {{\"points\": [{{\"text\": string, \"settled\": true|false, \
-\"from\": \"C0\", \"replaces\": \"P0\" or null, \"map\": \"N0\" or null{topic_field}}}]}}"
+\"from\": \"C0\", \"line\": \"L0\", \"replaces\": \"P0\" or null, \"map\": \"N0\" or null{topic_field}}}]}}"
     )
 }
 
@@ -1300,6 +1403,8 @@ pub fn parse_dream(
         map: Option<String>,
         #[serde(default)]
         topic: Option<String>,
+        #[serde(default)]
+        line: Option<String>,
     }
     #[derive(Deserialize)]
     struct Answer {
@@ -1317,7 +1422,9 @@ pub fn parse_dream(
         let Some(from) = index(&point.from, 'C', conversations) else {
             continue;
         };
-        if text.is_empty() || !seen.insert(text.clone()) {
+        // Not in plain words: a number, hash, path or date the person could
+        // not follow (UX-HOME-6). The point is dropped, not rewritten.
+        if text.is_empty() || !plain_words(&text) || !seen.insert(text.clone()) {
             continue;
         }
         let replaces = point
@@ -1337,6 +1444,10 @@ pub fn parse_dream(
             replaces,
             map: on_map,
             topic: point.topic.as_deref().and_then(|id| index(id, 'T', topics)),
+            line: point
+                .line
+                .as_deref()
+                .and_then(|id| index(id, 'L', usize::MAX)),
         });
         if points.len() == MAX_DREAM_POINTS {
             break;

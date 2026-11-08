@@ -205,6 +205,8 @@ export async function invoke(
           ],
         },
         open_points: ["mem_home_d"],
+        // `&unread=1`: a conversation a night could not read.
+        unread: new URLSearchParams(window.location.search).get("unread") === "1" ? 1 : undefined,
       };
     }
   }

@@ -72,6 +72,27 @@ pub fn said_lines(memory: &str, saved_at: i64, lines: &[ConversationLine]) -> Ve
     picked
 }
 
+/// Characters of a kept line that must be found in the conversation for
+/// it to be that line: what a night keeps is the line as its prompt showed
+/// it, cut and with pasted template lines left out.
+const QUOTED_KEY_CHARS: usize = 80;
+
+/// The index of the line the person typed that a night's point named as
+/// its source, kept with the point: the first of the person's lines that
+/// holds the start of it, spaces aside. `None` when the conversation no
+/// longer has it, so the caller falls back to [`said_lines`].
+pub fn quoted_line(quoted: &str, lines: &[ConversationLine]) -> Option<usize> {
+    let squash = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let key: String = squash(quoted).chars().take(QUOTED_KEY_CHARS).collect();
+    if key.is_empty() {
+        return None;
+    }
+    lines.iter().position(|line| {
+        line.speaker == wenlan_types::conversations::ConversationSpeaker::You
+            && squash(&line.text).contains(&key)
+    })
+}
+
 #[cfg(test)]
 #[path = "said_lines_test.rs"]
 mod tests;

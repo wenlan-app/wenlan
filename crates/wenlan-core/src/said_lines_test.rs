@@ -105,3 +105,20 @@ fn ux_who_6_a_long_reply_does_not_win_by_length() {
         vec![0]
     );
 }
+
+/// Trust audit F7: a night's point keeps the line it came from, so the line
+/// is found by what was typed, not by shared words with a paraphrase.
+#[test]
+fn ux_who_6_a_nights_point_finds_the_line_it_named() {
+    let lines = vec![
+        line(Ai, "keep the resume to one page?", 90),
+        line(You, "ok   keep it to one page,\nsame format as before", 100),
+        line(You, "and centre the header", 110),
+    ];
+    assert_eq!(
+        quoted_line("ok keep it to one page, same format as before", &lines),
+        Some(1)
+    );
+    assert_eq!(quoted_line("never said", &lines), None);
+    assert_eq!(quoted_line("  ", &lines), None);
+}

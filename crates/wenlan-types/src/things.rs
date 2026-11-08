@@ -107,6 +107,15 @@ pub struct ThingDetailResponse {
     /// Points steeped from this thing that are still open, not settled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open_points: Vec<String>,
+    /// Its conversations that went on but could not be read overnight,
+    /// because their transcript was gone (UX-CHAT-5). Older daemons leave it
+    /// out.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unread: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// One night's points of a thing, put into long-term memory: how many were

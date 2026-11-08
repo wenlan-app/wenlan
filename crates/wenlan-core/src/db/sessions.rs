@@ -26,6 +26,9 @@ pub struct SaidAnchor {
     /// Unix seconds.
     pub saved_at: i64,
     pub text: String,
+    /// The line the person typed that it came from, when a night kept it
+    /// with the point (UX-WHO-6).
+    pub line: Option<String>,
 }
 
 /// Most memories and notes `GET /api/sessions/{id}` returns for one session.
@@ -758,8 +761,10 @@ impl MemoryDB {
             .query(
                 &format!(
                     "SELECT MAX(session_id), MIN(COALESCE(created_at, last_modified)),
-                            GROUP_CONCAT(COALESCE(authored_content, content), char(10)), COUNT(*)
-                       FROM (SELECT session_id, created_at, last_modified, authored_content, content
+                            GROUP_CONCAT(COALESCE(authored_content, content), char(10)), COUNT(*),
+                            MAX(said_line)
+                       FROM (SELECT session_id, created_at, last_modified, authored_content, content,
+                                    said_line
                                FROM memories
                               WHERE {}
                               ORDER BY COALESCE(chunk_index, 0))",
@@ -789,6 +794,10 @@ impl MemoryDB {
                 .get::<Option<String>>(2)
                 .unwrap_or(None)
                 .unwrap_or_default(),
+            line: row
+                .get::<Option<String>>(4)
+                .unwrap_or(None)
+                .filter(|l| !l.trim().is_empty()),
         }))
     }
 

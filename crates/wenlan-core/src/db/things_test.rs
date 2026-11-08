@@ -108,7 +108,17 @@ async fn ux_thing_1_every_conversation_lands_in_a_thing_without_asking() {
         30,
     )
     .await;
-    let d = conversation(&db, "codex:d", None, None, None, 40).await;
+    // Recent: an untitled conversation is still read for a name only while
+    // it is newer than what the labeller looks at (trust audit F9).
+    let d = conversation(
+        &db,
+        "codex:d",
+        None,
+        None,
+        None,
+        chrono::Utc::now().timestamp(),
+    )
+    .await;
 
     let report = db.sort_sessions_into_things().await.unwrap();
     let rules: Vec<SortRule> = report.sorted.iter().map(|(_, r)| *r).collect();
