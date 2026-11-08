@@ -23,6 +23,7 @@ fn found(id: &str, last_at: i64, said: &[&str]) -> FoundConversation {
         last_at,
         automated: false,
         on_behalf: false,
+        touched: Vec::new(),
     }
 }
 

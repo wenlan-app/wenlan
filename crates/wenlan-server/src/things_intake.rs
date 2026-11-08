@@ -744,6 +744,12 @@ pub async fn look_with_until(
     let (kept, _dropped) = intake::keep_work(found);
     report.kept = kept.len();
     let ids: Vec<String> = kept.iter().filter_map(found_session_id).collect();
+    // What each worked on is read from the transcript, with no model: kept
+    // for every conversation already read, not only the ones read again.
+    let touched: Vec<(String, Vec<String>)> = kept
+        .iter()
+        .filter_map(|c| found_session_id(c).map(|id| (id, c.touched.clone())))
+        .collect();
     let reads = db
         .conversation_reads(&ids)
         .await
@@ -793,6 +799,9 @@ pub async fn look_with_until(
         report.work += usize::from(label.work);
     }
 
+    db.record_conversation_touched(&touched)
+        .await
+        .map_err(|e| e.to_string())?;
     let pending = db
         .intake_pending(GROUP_BATCH)
         .await

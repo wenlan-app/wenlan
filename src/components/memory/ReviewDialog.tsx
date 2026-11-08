@@ -28,7 +28,8 @@ import { MemoryRevisionChain, PageRevisionChain } from "./ReviewHistory";
 import SourceRepairReview from "./SourceRepairReview";
 import MarkdownDiff from "./MarkdownDiff";
 import { useActivity } from "../../lib/useActivity";
-import { STEEP_COMMAND, SteepNeedsAiToolError } from "../../lib/steepMode";
+import { SteepNeedsAiToolError } from "../../lib/steepMode";
+import { useAskAiCommand } from "./askAi/AskAiHint";
 
 // The writer id the desktop app sends on its own saves and rebuilds.
 const APP_AGENT_ID = "wenlan-app";
@@ -716,9 +717,12 @@ export default function ReviewDialog({
   const [staleNeedsAiToolIds, setStaleNeedsAiToolIds] = useState<ReadonlySet<string>>(() => new Set());
   const noDaemonModel = activity !== undefined && !activity.everyday.available && !activity.synthesis.available;
   const staleNeedsAiTool = item?.kind === "stale_page" && (noDaemonModel || staleNeedsAiToolIds.has(item.id));
+  // Worded for the AI tool the user last used; null until the tools are read.
+  const steepCommand = useAskAiCommand("steep");
   const copySteepCommand = async () => {
+    if (steepCommand === null) return;
     try {
-      await clipboardWrite(STEEP_COMMAND);
+      await clipboardWrite(steepCommand);
       setFlash(t("review.commandCopied"));
       window.setTimeout(() => setFlash(null), 1200);
     } catch {
@@ -1620,7 +1624,7 @@ export default function ReviewDialog({
                       margin: 0,
                     }}
                   >
-                    {t(staleNeedsAiTool ? "review.refreshNeedsAiTool" : "review.refreshHint")}
+                    {staleNeedsAiTool ? t("review.refreshNeedsAiTool", { command: steepCommand ?? "" }) : t("review.refreshHint")}
                   </p>
                   {item.summary && <div style={paneStyle}>{item.summary}</div>}
                 </div>
@@ -1973,7 +1977,7 @@ export default function ReviewDialog({
                 </button>
               )}
               {item.kind === "refinement" && item.action === "lint_repair_review" && <div className="source-repair-actions" ref={setRepairActionHost} />}
-              {staleNeedsAiTool && (
+              {staleNeedsAiTool && steepCommand !== null && (
                 <button type="button" data-testid="review-copy-steep-command" onClick={() => void copySteepCommand()} style={actionButtonStyle}>
                   {t("review.copyCommand")}
                 </button>

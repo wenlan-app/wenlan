@@ -34,6 +34,7 @@ fn conv(said: &[&str]) -> FoundConversation {
         last_at: 0,
         automated: false,
         on_behalf: false,
+        touched: Vec::new(),
     }
 }
 
@@ -178,6 +179,108 @@ fn ux_thing_1_a_codex_conversation_reads_its_meta_and_messages() {
 }
 
 #[test]
+fn ux_thing_1_a_claude_code_conversation_keeps_the_files_and_rules_it_worked_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("projects/-w-wenlan/s1.jsonl");
+    let tool = |name: &str, input: serde_json::Value| {
+        serde_json::json!({"type": "assistant", "sessionId": "s1", "timestamp": "2026-11-01T10:01:00Z",
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "name": name, "input": input}]}})
+    };
+    write(
+        &path,
+        &[
+            claude_user("Make home cards calmer", "2026-11-01T10:00:00Z"),
+            tool(
+                "Edit",
+                serde_json::json!({"file_path": "/w/wenlan/src/home.tsx"}),
+            ),
+            tool(
+                "Edit",
+                serde_json::json!({"file_path": "/w/wenlan/src/home.tsx"}),
+            ),
+            tool(
+                "Write",
+                serde_json::json!({"file_path": "/w/wenlan/docs/ux/spec.md",
+                "content": "UX-CHAT-9 is only mentioned in written text"}),
+            ),
+            // Outside the conversation's folder: not this work's file.
+            tool(
+                "Write",
+                serde_json::json!({"file_path": "/tmp/scratch.txt"}),
+            ),
+            tool(
+                "Read",
+                serde_json::json!({"file_path": "/w/wenlan/src/read-only.tsx"}),
+            ),
+            tool(
+                "Bash",
+                serde_json::json!({"command": "cargo test ux_home_4 # UX-HOME-4"}),
+            ),
+            claude_ai("Done for UX-HOME-4.", "2026-11-01T10:05:00Z"),
+        ],
+    );
+    let found = read_claude_code(&path).unwrap();
+    assert_eq!(
+        found.touched,
+        vec!["src/home.tsx", "docs/ux/spec.md", "UX-HOME-4"]
+    );
+}
+
+#[test]
+fn ux_thing_1_a_codex_conversation_keeps_the_files_its_patches_changed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sessions/2026/11/01/rollout-p.jsonl");
+    write(
+        &path,
+        &[
+            serde_json::json!({"type": "session_meta", "timestamp": "2026-11-01T09:00:00Z",
+                "payload": {"id": "p", "cwd": "/w/site", "originator": "codex_cli_rs"}}),
+            serde_json::json!({"type": "event_msg", "timestamp": "2026-11-01T09:00:01Z",
+                "payload": {"type": "user_message", "message": "Fix the sitemap"}}),
+            serde_json::json!({"type": "response_item", "timestamp": "2026-11-01T09:01:00Z",
+                "payload": {"type": "custom_tool_call", "name": "apply_patch",
+                    "input": "*** Begin Patch\n*** Update File: /w/site/app/sitemap.ts\n@@\n-a\n+b\n*** End Patch"}}),
+            // A patch written inside a script string, line breaks escaped.
+            serde_json::json!({"type": "response_item", "timestamp": "2026-11-01T09:02:00Z",
+                "payload": {"type": "custom_tool_call", "name": "exec",
+                    "input": "tools.apply_patch(\"*** Begin Patch\\n*** Add File: app/robots.ts\\n+x\\n*** End Patch\")"}}),
+            serde_json::json!({"type": "response_item", "timestamp": "2026-11-01T09:03:00Z",
+                "payload": {"type": "function_call", "name": "shell",
+                    "arguments": "{\"command\": [\"rg\", \"SEO-MAP-2\"]}"}}),
+        ],
+    );
+    let found = read_codex(&path).unwrap();
+    assert_eq!(
+        found.touched,
+        vec!["app/robots.ts", "app/sitemap.ts", "SEO-MAP-2"]
+    );
+}
+
+#[test]
+fn ux_thing_1_grouping_sees_what_each_conversation_worked_on() {
+    let pending = vec![Pending {
+        session_id: "s0".into(),
+        title: "Calmer cards".into(),
+        about: String::new(),
+        space: String::new(),
+        status: String::new(),
+        touched: vec!["src/home.tsx".into(), "UX-HOME-4".into()],
+    }];
+    let open = vec![OpenThing {
+        id: "t".into(),
+        title: "Redesign".into(),
+        about: String::new(),
+        space: String::new(),
+        news: Vec::new(),
+        touched: vec!["src/home.tsx".into()],
+    }];
+    let prompt = group_prompt(&pending, &open, &[], "English");
+    assert!(prompt.contains("C0. Calmer cards []:  | worked on: src/home.tsx, UX-HOME-4 | now:"));
+    assert!(prompt.contains("T0. Redesign []:  | worked on: src/home.tsx"));
+    assert!(prompt.contains("not by how alike the titles are"));
+}
+
+#[test]
 fn ux_home_5_scan_finds_only_conversations_whose_last_line_is_in_the_window() {
     let dir = tempfile::tempdir().unwrap();
     let recent = dir.path().join(".claude/projects/-w/new.jsonl");
@@ -285,6 +388,7 @@ fn ux_thing_1_grouping_joins_existing_things_and_gives_every_conversation_a_thin
             about: String::new(),
             space: String::new(),
             status: String::new(),
+            touched: Vec::new(),
         })
         .collect();
     let answer = r#"{"join": [{"conversation": "C0", "piece": "T1"}, {"conversation": "C0", "piece": "T0"},
@@ -325,6 +429,7 @@ fn ux_thing_1_one_new_group_swallowing_a_batch_is_broken_up() {
             about: String::new(),
             space: String::new(),
             status: String::new(),
+            touched: Vec::new(),
         })
         .collect();
     let all: Vec<String> = (0..20).map(|i| format!("\"C{i}\"")).collect();

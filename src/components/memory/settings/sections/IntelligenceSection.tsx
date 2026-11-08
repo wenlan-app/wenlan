@@ -18,6 +18,7 @@ import {
 } from "../../../intelligence/IntelligenceSetup";
 import { presetForEndpoint, type PresetGroup } from "../../../intelligence/providerPresets";
 import { chooseSteepMode } from "../../../../lib/steepMode";
+import { useAskAiCommand } from "../../askAi/AskAiHint";
 import { Button, Card, Select, SectionHeader, SegmentedControl } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
 import { SettingsHelp } from "../SettingsHelp";
@@ -163,9 +164,10 @@ function SteepModeRow({ automatic, loading, saving, readiness, error, onChoose }
   const titleId = useId();
   const name = useId();
   const disabled = automatic === undefined || saving;
+  const steepCommand = useAskAiCommand("steep") ?? "";
   const options = [
     { automatic: true, id: "automatic", label: t("intelligence.steepModeAutomatic"), hint: t("intelligence.steepModeAutomaticHint") },
-    { automatic: false, id: "on-demand", label: t("intelligence.steepModeOnDemand"), hint: t("intelligence.steepModeOnDemandHint") },
+    { automatic: false, id: "on-demand", label: t("intelligence.steepModeOnDemand"), hint: t("intelligence.steepModeOnDemandHint", { command: steepCommand }) },
   ];
   return (
     <div className="settings-row settings-steep-mode px-5 py-4" data-testid="steep-mode">
