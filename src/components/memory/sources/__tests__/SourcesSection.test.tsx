@@ -107,7 +107,11 @@ describe("SourcesSection", () => {
     render(<SourcesSection />, { wrapper });
     expect(await screen.findByText("Zotero Collection")).toBeInTheDocument();
     expect(screen.queryByText("ABCD")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect Zotero" })).toBeInTheDocument();
+    // Zotero is one choice of the single add-source menu, not a separate link.
+    expect(screen.queryByRole("button", { name: "Connect Zotero" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add source…" }));
+    expect(await screen.findByRole("button", { name: /Zotero/ })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.getByRole("button", { name: "Sync" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "More" }));
     expect(screen.queryByRole("menuitem", { name: "Reveal in Finder" })).not.toBeInTheDocument();

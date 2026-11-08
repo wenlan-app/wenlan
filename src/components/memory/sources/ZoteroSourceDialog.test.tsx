@@ -46,6 +46,42 @@ describe("ZoteroSourceDialog", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["indexedFiles"] });
   });
 
+  it("creates a Space named after the collection when there is no Space yet", async () => {
+    vi.mocked(tauri.listSpaces).mockResolvedValueOnce([]).mockResolvedValue([
+      { id: "space-new", name: "Books", description: null, suggested: false, starred: false, sort_order: 0, memory_count: 0, entity_count: 0, created_at: 0, updated_at: 0 },
+    ]);
+    vi.mocked(tauri.createSpace).mockResolvedValue({ id: "space-new", name: "Books", description: null, suggested: false, starred: false, sort_order: 0, memory_count: 0, entity_count: 0, created_at: 0, updated_at: 0 });
+    renderDialog();
+    await screen.findByText("Connected to local Zotero");
+    const name = await screen.findByLabelText("New Space name");
+    expect(name).toHaveValue("Articles");
+    fireEvent.change(screen.getByLabelText("Collection"), { target: { value: "B2" } });
+    expect(name).toHaveValue("Books");
+    fireEvent.click(screen.getByRole("button", { name: "Import collection" }));
+    expect(await screen.findByText("Imported 2; skipped 1; errors 0.")).toBeInTheDocument();
+    expect(tauri.createSpace).toHaveBeenCalledExactlyOnceWith("Books");
+    expect(tauri.addZoteroSource).toHaveBeenCalledExactlyOnceWith("B2", "local-1", "Books");
+  });
+
+  it("does not import into a new Space whose name was cleared", async () => {
+    vi.mocked(tauri.listSpaces).mockResolvedValue([]);
+    renderDialog();
+    const name = await screen.findByLabelText("New Space name");
+    fireEvent.change(name, { target: { value: "  " } });
+    expect(screen.getByRole("button", { name: "Import collection" })).toBeDisabled();
+  });
+
+  it("says how to let Wenlan reach Zotero when it cannot, and retries", async () => {
+    vi.mocked(tauri.listZoteroCollections).mockRejectedValueOnce(new Error("connection refused"));
+    renderDialog("Research");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Wenlan cannot reach Zotero.");
+    expect(alert).toHaveTextContent("Open Zotero 7 on this computer.");
+    expect(alert).toHaveTextContent("Allow other applications on this computer to communicate with Zotero");
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Connected to local Zotero")).toBeInTheDocument();
+  });
+
   it("keeps collection selection and an actionable error when sync fails, then permits an idempotent retry", async () => {
     vi.mocked(tauri.syncRegisteredSource).mockRejectedValueOnce(new Error("local connection lost"));
     renderDialog("Research");
@@ -143,7 +179,7 @@ describe("ZoteroSourceDialog", () => {
   it("shows local Zotero offline and retries collection discovery", async () => {
     vi.mocked(tauri.listZoteroCollections).mockRejectedValueOnce(new Error("Zotero is closed"));
     renderDialog("Research");
-    expect(await screen.findByText("Local Zotero is unavailable.")).toBeInTheDocument();
+    expect(await screen.findByText("Wenlan cannot reach Zotero.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("Connected to local Zotero")).toBeInTheDocument();

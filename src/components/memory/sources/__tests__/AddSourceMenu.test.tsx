@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   addSource: vi.fn(),
   syncRegisteredSource: vi.fn(),
   detectVault: vi.fn(),
+  listZoteroCollections: vi.fn(),
+  listSpaces: vi.fn(),
 }));
 
 vi.mock("../../../../lib/tauri", () => ({
@@ -20,6 +22,8 @@ vi.mock("../../../../lib/tauri", () => ({
   openFile: mocks.openFile,
   addSource: mocks.addSource,
   syncRegisteredSource: mocks.syncRegisteredSource,
+  listZoteroCollections: mocks.listZoteroCollections,
+  listSpaces: mocks.listSpaces,
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.openDialog }));
 vi.mock("sonner", () => ({ toast: vi.fn() }));
@@ -45,6 +49,15 @@ describe("AddSourceMenu", () => {
     expect(screen.getByText("Files")).toBeInTheDocument();
     expect(screen.getByText("Link and text")).toBeInTheDocument();
     expect(screen.queryByText("Your daemon needs an update to index files.")).toBeNull();
+  });
+
+  it("offers Zotero next to the other sources and opens its import in place", async () => {
+    mocks.listZoteroCollections.mockResolvedValue({ server_id: "local", collections: [{ key: "A1", name: "Articles", item_count: 2 }] });
+    mocks.listSpaces.mockResolvedValue([]);
+    render(wrap(<AddSourceMenu onClose={() => {}} />));
+    fireEvent.click(await screen.findByText("Zotero"));
+    expect(await screen.findByRole("dialog", { name: "Import from Zotero" })).toBeInTheDocument();
+    expect(await screen.findByText("Connected to local Zotero")).toBeInTheDocument();
   });
 
   it("offers past AI chats and opens the chat export import in place", async () => {
