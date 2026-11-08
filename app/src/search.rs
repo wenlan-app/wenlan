@@ -5643,6 +5643,17 @@ pub async fn undo_thing_dream(
     client.undo_thing_dream(&id).await
 }
 
+/// Take back the whole night on the big map (UX-GRAPH-5): every thing whose
+/// newest night ran at or after `since`, Unix seconds.
+#[tauri::command]
+pub async fn undo_nights(
+    state: tauri::State<'_, State>,
+    since: i64,
+) -> Result<wenlan_types::NightsUndo, String> {
+    let client = { state.read().await.client.clone() };
+    client.undo_nights(since).await
+}
+
 /// Move a conversation between things (UX-THING-1): into `to_thing_id`, or
 /// into a new thing named `new_title`.
 #[tauri::command]

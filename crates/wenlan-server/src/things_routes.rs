@@ -46,6 +46,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/things/{id}/merge", post(handle_merge_thing))
         .route("/api/things/{id}/keep-apart", post(handle_keep_thing_apart))
         .route("/api/things/{id}/dream/undo", post(handle_undo_thing_dream))
+        .route("/api/things/nights/undo", post(handle_undo_nights))
         .route("/api/things/{id}/map", get(handle_get_thing_map))
         .route("/api/things/{id}/map/ops", post(handle_thing_map_ops))
         .route(
@@ -448,6 +449,30 @@ pub async fn handle_undo_thing_dream(
         db.delete_by_source_id("memory", &memory).await?;
     }
     Ok(Json(summary(&db, &scope, &id).await?))
+}
+
+/// POST /api/things/nights/undo
+///
+/// The person takes back the whole night on the big map (UX-GRAPH-5): every
+/// thing in their scope whose newest night ran at or after `since`, and the
+/// points those nights wrote. One thing's page still takes back only its own.
+pub async fn handle_undo_nights(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
+    Json(request): Json<wenlan_types::NightsUndoRequest>,
+) -> Result<Json<wenlan_types::NightsUndo>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let (things, memories) = db.undo_nights_since(&scope, request.since).await?;
+    for memory in &memories {
+        db.delete_by_source_id("memory", memory).await?;
+    }
+    Ok(Json(wenlan_types::NightsUndo {
+        things,
+        points: memories.len(),
+    }))
 }
 
 /// POST /api/sessions/{id}/things/move

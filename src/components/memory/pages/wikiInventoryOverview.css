@@ -173,3 +173,8 @@
 .home-connect-line button { padding:0;border:0;background:none;color:var(--mem-accent-page);font:inherit;font-weight:600;cursor:pointer; }
 .home-connect-line button:hover { text-decoration:underline; }
 .home-connect-line button:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:var(--mem-r-4); }
+/* UX-GRAPH-6: the moon and "Steeped overnight" are the Replay button; they look as before until hovered. */
+.wiki-working-on-steeped-replay { flex:none;display:inline-flex;align-items:baseline;gap:6px;padding:0;border:0;background:none;color:inherit;font:inherit;white-space:nowrap;cursor:pointer; }
+.wiki-working-on-steeped-replay .steep-moon { align-self:center;color:var(--mem-accent-page); }
+.wiki-working-on-steeped-replay:hover .wiki-working-on-steeped-label { color:var(--mem-text-secondary);text-decoration:underline;text-underline-offset:3px; }
+.wiki-working-on-steeped-replay:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:var(--mem-r-4); }

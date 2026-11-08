@@ -137,6 +137,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "move_session_thing",
     "answer_thing_merge",
     "undo_thing_dream",
+    "undo_nights",
     "answer_thing_map_proposal",
     "list_registered_sources",
   ],

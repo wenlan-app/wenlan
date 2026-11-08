@@ -5,7 +5,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { hasToolMark, ToolMark } from "../assets/toolMarks";
 import { SteepMoon } from "../things/ThingSteeped";
-import { steepedToday } from "../things/ThingViews";
+import { ranOvernight, steepedToday } from "../../../lib/graph/lastNight";
 import { agentDisplayName, getThing, hideThing, listThings, listWorkingOn, setUiLanguage, type ThingDetail, type ThingSummary, type WorkingOnItem } from "../../../lib/tauri";
 
 export const WORKING_ON_QUERY_KEY = ["working-on"] as const;
@@ -17,8 +17,6 @@ const RETRY_SOON = { retry: 5, retryDelay: (attempt: number) => Math.min(2_000 *
 export const WORKING_ON_LISTED = 6;
 /** Most things the "steeped overnight" line names; the rest are "and more". */
 const STEEPED_NAMED = 2;
-/** Steeping before this local hour happened overnight. */
-const NIGHT_ENDS = 7;
 /** How long a card lights up when its name is pressed. */
 const GLOW_MS = 1_600;
 
@@ -69,9 +67,13 @@ export function openPointOf(detail?: ThingDetail): string | null {
 export function WorkingOn({
   onSelectSpace,
   onOpenThing,
+  onReplayNight,
 }: {
   readonly onSelectSpace: (spaceName: string) => void;
   readonly onOpenThing?: (thingId: string) => void;
+  /** "Replay": the big map plays last night (UX-GRAPH-6). Home adds only
+   *  this to its names line: no counts (UX-HOME-2) and no Undo. */
+  readonly onReplayNight?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   // A read that fails (the daemon restarting after an update) would look the
@@ -124,7 +126,7 @@ export function WorkingOn({
     : [];
   const steeped = steepedAll.slice(0, STEEPED_NAMED);
   const steepedMore = steepedAll.length > STEEPED_NAMED;
-  const overnight = steepedAll.every((thing) => new Date((thing.dreamed_at ?? 0) * 1000).getHours() < NIGHT_ENDS);
+  const overnight = ranOvernight(steepedAll.map((thing) => thing.dreamed_at ?? 0));
   const [glowing, setGlowing] = useState<string[]>([]);
   const glowTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(glowTimer.current), []);
@@ -172,8 +174,19 @@ export function WorkingOn({
         <h2 id="wiki-working-on-title">{t("pages.overview.workingOnTitle")}</h2>
         {steeped.length > 0 ? (
           <p className="wiki-working-on-steeped" data-testid="wiki-working-on-steeped">
-            <SteepMoon />
-            <span className="wiki-working-on-steeped-label">{t(overnight ? "pages.overview.steepedOvernight" : "pages.overview.steepedToday")}</span>
+            {/* UX-GRAPH-6: the moon and its words play last night on the big
+                map; the line gains no extra word for it. */}
+            {onReplayNight ? (
+              <button type="button" className="wiki-working-on-steeped-replay" title={t("pages.overview.steepedReplay")} aria-label={t("pages.overview.steepedReplay")} onClick={onReplayNight}>
+                <SteepMoon />
+                <span className="wiki-working-on-steeped-label">{t(overnight ? "pages.overview.steepedOvernight" : "pages.overview.steepedToday")}</span>
+              </button>
+            ) : (
+              <>
+                <SteepMoon />
+                <span className="wiki-working-on-steeped-label">{t(overnight ? "pages.overview.steepedOvernight" : "pages.overview.steepedToday")}</span>
+              </>
+            )}
             <span className="wiki-working-on-steeped-names">
               {steeped.map((thing, index) => (
                 <Fragment key={thing.id}>

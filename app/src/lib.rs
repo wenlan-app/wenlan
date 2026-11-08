@@ -1896,6 +1896,7 @@ pub fn run() {
             search::hide_thing,
             search::answer_thing_merge,
             search::undo_thing_dream,
+            search::undo_nights,
             search::answer_thing_map_proposal,
             search::move_session_thing,
             search::get_page_sessions,

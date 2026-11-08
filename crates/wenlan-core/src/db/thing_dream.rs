@@ -26,7 +26,8 @@ use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use std::collections::HashSet;
 use wenlan_types::{
-    ThingActor, ThingConclusionSentence, ThingDream, ThingNightPoint, ThingNightPoints,
+    NightLinkMade, ThingActor, ThingConclusionSentence, ThingDream, ThingLastNight,
+    ThingNightPoint, ThingNightPoints,
 };
 
 /// `thing_history` with the two operations added. Same columns, rows and
@@ -248,12 +249,14 @@ impl MemoryDB {
             if points.is_empty() {
                 continue;
             }
+            let last_night = self.thing_last_night(&thing.id, &points).await?;
             out.push(ThingNightPoints {
                 thing_id: thing.id,
                 title: thing.title,
                 spaces: thing.spaces,
                 quiet: thing.quiet,
                 points,
+                last_night,
             });
         }
         Ok(out)
@@ -450,6 +453,58 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// What a thing's newest night not taken back did on the big map
+    /// (UX-GRAPH-5): the points it wrote and the links it made, kept only
+    /// where the point is among `standing` (still there, and in the caller's
+    /// scope). `None` when that leaves nothing, so the morning line counts
+    /// only what can still be seen.
+    async fn thing_last_night(
+        &self,
+        thing_id: &str,
+        standing: &[ThingNightPoint],
+    ) -> Result<Option<ThingLastNight>, WenlanError> {
+        let nights = self.dream_nights(thing_id).await?;
+        let Some((_, _, night)) = nights
+            .into_iter()
+            .rev()
+            .find(|(_, undone, night)| !undone && !night.entry.backfill)
+        else {
+            return Ok(None);
+        };
+        Ok(last_night_of(&night, standing))
+    }
+
+    /// The person takes back a whole night on the big map (UX-GRAPH-5):
+    /// the newest night of every thing in `scope` that ran at or after
+    /// `since`, each as its own page's Undo does. Returns how many things'
+    /// nights were taken back and the memories they wrote, for the caller to
+    /// forget.
+    pub async fn undo_nights_since(
+        &self,
+        scope: &ReadScope,
+        since: i64,
+    ) -> Result<(usize, Vec<String>), WenlanError> {
+        let mut things = 0;
+        let mut memories = Vec::new();
+        for thing in self.list_things(scope, None).await? {
+            if thing.dreamed_at.is_none_or(|at| at < since) {
+                continue;
+            }
+            let nights = self.dream_nights(&thing.id).await?;
+            let newest = nights
+                .iter()
+                .rev()
+                .find(|(_, undone, night)| !undone && !night.entry.backfill);
+            if newest.is_none_or(|(_, _, night)| night.at < since) {
+                continue;
+            }
+            let wrote = self.undo_thing_dream(&thing.id).await?;
+            things += 1;
+            memories.extend(wrote);
+        }
+        Ok((things, memories))
+    }
+
     /// Record a night's reading of a thing: the memories it wrote, settled
     /// and open, what that changed on its map, the topics it connected them
     /// to, and that its conversations were read up to their last line. A
@@ -594,6 +649,40 @@ fn short_title(title: &str, text: &str) -> String {
     }
     let cut: String = source.chars().take(POINT_TITLE_MAX_CHARS - 1).collect();
     format!("{}…", cut.trim_end())
+}
+
+/// A night's points and links, kept to the points in `standing`.
+fn last_night_of(night: &DreamEntryWithAt, standing: &[ThingNightPoint]) -> Option<ThingLastNight> {
+    let here: HashSet<&str> = standing.iter().map(|p| p.memory_id.as_str()).collect();
+    let entry = &night.entry;
+    let written: Vec<String> = entry
+        .decided
+        .iter()
+        .chain(&entry.open)
+        .filter(|id| here.contains(id.as_str()))
+        .cloned()
+        .collect();
+    let linked: Vec<NightLinkMade> = entry
+        .changes
+        .iter()
+        .filter_map(|change| match change {
+            NightChange::Link { memory, entity } if here.contains(memory.as_str()) => {
+                Some(NightLinkMade {
+                    memory_id: memory.clone(),
+                    entity_id: entity.clone(),
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    if written.is_empty() && linked.is_empty() {
+        return None;
+    }
+    Some(ThingLastNight {
+        at: night.at,
+        written,
+        linked,
+    })
 }
 
 /// One night's entry and when it ran.

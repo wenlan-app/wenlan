@@ -162,6 +162,48 @@ pub struct ThingNightPoints {
     #[serde(default)]
     pub quiet: bool,
     pub points: Vec<ThingNightPoint>,
+    /// What its newest night not taken back did on the big map, for the
+    /// morning line and Replay (UX-GRAPH-5, UX-GRAPH-6). `None` for a thing
+    /// whose nights were all taken back, and from older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_night: Option<ThingLastNight>,
+}
+
+/// A point a night connected to a topic on the big map.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NightLinkMade {
+    /// The point's memory `source_id`.
+    pub memory_id: String,
+    /// The topic's entity id.
+    pub entity_id: String,
+}
+
+/// What one night did for a thing on the big map (UX-GRAPH-5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingLastNight {
+    /// When the night ran, Unix seconds.
+    pub at: i64,
+    /// The points it wrote that still stand, as memory `source_id`s.
+    pub written: Vec<String>,
+    /// The links it made that still stand.
+    pub linked: Vec<NightLinkMade>,
+}
+
+/// `POST /api/things/nights/undo`: the person takes back the whole night on
+/// the big map (UX-GRAPH-5): every thing whose newest night not taken back
+/// ran at or after `since` (Unix seconds; the app sends its local midnight).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NightsUndoRequest {
+    pub since: i64,
+}
+
+/// What taking back a whole night did: how many things' nights, and how many
+/// points those nights had written.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NightsUndo {
+    pub things: usize,
+    pub points: usize,
 }
 
 /// `GET /api/things/points`: every live thing the caller may see that has

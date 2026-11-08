@@ -130,6 +130,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_memory_said": throw new TauriMockArgumentError(command, "sourceId");
     // The fixture has no things, so no thing id resolves.
     case "get_thing": case "get_thing_map": case "rename_thing": case "hide_thing": case "answer_thing_merge": case "undo_thing_dream": case "answer_thing_map_proposal": throw new TauriMockArgumentError(command, "id");
+    case "undo_nights": return { things: 0, points: 0 };
     case "move_session_thing": throw new TauriMockArgumentError(command, "fromThingId");
     case "list_communities": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, communities: [], next_cursor: null };
     case "list_community_members": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, members: [], next_cursor: null };

@@ -1967,6 +1967,17 @@ impl WenlanClient {
         self.post_empty(&path).await
     }
 
+    /// `POST /api/things/nights/undo`: the person takes back the whole night
+    /// on the big map, every thing whose newest night ran at or after `since`
+    /// (UX-GRAPH-5).
+    pub async fn undo_nights(&self, since: i64) -> Result<wenlan_types::NightsUndo, String> {
+        self.post_json(
+            "/api/things/nights/undo",
+            &wenlan_types::NightsUndoRequest { since },
+        )
+        .await
+    }
+
     /// `POST /api/sessions/{id}/things/move`: the person moves a conversation
     /// into another thing, or into a new one they name.
     pub async fn move_session_thing(

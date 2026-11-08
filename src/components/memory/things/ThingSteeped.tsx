@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { undoThingDream, type ThingDetail } from "../../../lib/tauri";
 import { THINGS_QUERY_KEY } from "../pages/WorkingOn";
-import { steepedToday } from "./ThingViews";
+import { steepedToday } from "../../../lib/graph/lastNight";
 
 /** A small crescent: the mark for what Wenlan steeped overnight. */
 export function SteepMoon() {

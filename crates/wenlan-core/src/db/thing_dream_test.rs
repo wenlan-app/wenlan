@@ -392,6 +392,103 @@ async fn ux_chat_5_the_big_map_reads_each_things_night_points() {
         .is_empty());
 }
 
+/// UX-GRAPH-5: the big map's morning line and Replay read what each thing's
+/// newest night did, kept to the points the caller can still see; Undo on
+/// the map takes back the newest night of every thing that ran since the
+/// person's midnight, and nothing older.
+#[tokio::test]
+async fn ux_graph_5_last_night_is_read_and_taken_back_whole() {
+    use crate::db::night_links::NightLink;
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, notes) = two_things(&db, now).await;
+    remember_in(&db, "mem_tagline", "Tagline", "Tagline settled.", "wenlan").await;
+    remember_in(&db, "mem_other", "Elsewhere", "Filed elsewhere.", "other").await;
+    remember_in(
+        &db,
+        "mem_notes",
+        "Notes",
+        "Release notes drafted.",
+        "wenlan",
+    )
+    .await;
+    let link = |memory: &str| NightLink {
+        memory: memory.into(),
+        entity: "ent_site".into(),
+    };
+    db.record_dream(
+        &site,
+        &["mem_tagline".into(), "mem_other".into()],
+        &[],
+        &Default::default(),
+        &[link("mem_tagline"), link("mem_other")],
+        &[],
+    )
+    .await
+    .unwrap();
+    db.record_dream(
+        &notes,
+        &["mem_notes".into()],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+    )
+    .await
+    .unwrap();
+
+    let things = db.thing_night_points(&ReadScope::Global).await.unwrap();
+    let site_night = things
+        .iter()
+        .find(|t| t.thing_id == site)
+        .and_then(|t| t.last_night.clone())
+        .expect("the site's night");
+    assert_eq!(site_night.written, ["mem_tagline", "mem_other"]);
+    assert_eq!(
+        site_night
+            .linked
+            .iter()
+            .map(|l| (l.memory_id.as_str(), l.entity_id.as_str()))
+            .collect::<Vec<_>>(),
+        [("mem_tagline", "ent_site"), ("mem_other", "ent_site")]
+    );
+    assert!(site_night.at >= now);
+    // A Space-scoped read counts only that Space's points.
+    let scoped = db
+        .thing_night_points(&ReadScope::Space("wenlan".into()))
+        .await
+        .unwrap();
+    let scoped_night = scoped
+        .iter()
+        .find(|t| t.thing_id == site)
+        .and_then(|t| t.last_night.clone())
+        .unwrap();
+    assert_eq!(scoped_night.written, ["mem_tagline"]);
+    assert_eq!(scoped_night.linked.len(), 1);
+
+    // Nothing ran after a later midnight: nothing is taken back.
+    let (none, wrote) = db
+        .undo_nights_since(&ReadScope::Global, now + 3_600)
+        .await
+        .unwrap();
+    assert_eq!((none, wrote.len()), (0, 0));
+    let (undone, mut wrote) = db
+        .undo_nights_since(&ReadScope::Global, now - 3_600)
+        .await
+        .unwrap();
+    wrote.sort();
+    assert_eq!(undone, 2);
+    assert_eq!(wrote, ["mem_notes", "mem_other", "mem_tagline"]);
+    let after = db.thing_night_points(&ReadScope::Global).await.unwrap();
+    assert!(after.iter().all(|t| t.last_night.is_none()));
+    // Taken back once only.
+    let (again, _) = db
+        .undo_nights_since(&ReadScope::Global, now - 3_600)
+        .await
+        .unwrap();
+    assert_eq!(again, 0);
+}
+
 /// UX-VIEW-6: a thing's page opens with the conclusion its newest night wrote.
 /// It belongs to that night only: taking the night back brings back the one
 /// before, and a sentence whose point was replaced or is out of the caller's
