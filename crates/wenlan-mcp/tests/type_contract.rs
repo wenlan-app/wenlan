@@ -18,8 +18,8 @@ use wenlan_types::import::PendingImport;
 use wenlan_types::memory::{IndexedFileInfo, SearchResult};
 use wenlan_types::memory::{MemoryItem, RejectionRecord};
 use wenlan_types::responses::{
-    ConfirmResponse, CreateRelationResponse, DeleteResponse, ListMemoriesResponse,
-    MemoryDetailResponse, SearchMemoryResponse, StoreMemoryResponse,
+    ConfirmResponse, CreateRelationResponse, DeleteResponse, ForgetMemoryResponse,
+    ListMemoriesResponse, MemoryDetailResponse, SearchMemoryResponse, StoreMemoryResponse,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -609,7 +609,10 @@ async fn t5_memory_type_hint_preserved_without_forcing_domain() {
 #[tokio::test]
 async fn t8_forget_roundtrip() {
     let (deleted_mock, deleted_client) = setup().await;
-    let deleted_response = DeleteResponse { deleted: true };
+    let deleted_response = ForgetMemoryResponse {
+        deleted: true,
+        restorable: true,
+    };
     Mock::given(method("DELETE"))
         .and(path("/api/memory/delete/mem_xyz"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&deleted_response))
@@ -623,10 +626,16 @@ async fn t8_forget_roundtrip() {
         .expect("forget_impl failed for deleted=true");
 
     let deleted_text = text_of(&deleted_result);
-    assert_eq!(deleted_text, "Memory deleted");
+    assert_eq!(
+        deleted_text,
+        "Memory forgotten: it is out of search and pages, and can be restored"
+    );
 
     let (missing_mock, missing_client) = setup().await;
-    let missing_response = DeleteResponse { deleted: false };
+    let missing_response = ForgetMemoryResponse {
+        deleted: false,
+        restorable: false,
+    };
     Mock::given(method("DELETE"))
         .and(path("/api/memory/delete/mem_missing"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&missing_response))
@@ -1445,119 +1454,25 @@ async fn origin_client_post_empty_deserializes_typed_response() {
 
 use wenlan_mcp::tools::AcceptRevisionRequest;
 
+/// UX-WHO-2: only the person accepts a card, in the app. The tool refuses
+/// and sends no request at all, so no daemon reply shape is involved.
 #[tokio::test]
-async fn accept_revision_happy_path() {
-    let (mock, client) = setup().await;
-    Mock::given(method("POST"))
-        .and(path("/api/memory/revision/mem_target/accept"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "target_source_id": "mem_target",
-            "revision_source_id": "mem_rev",
-            "wrote": true,
-        })))
-        .mount(&mock)
-        .await;
-    let server = make_server(client);
-    let result = server
-        .accept_revision_impl(AcceptRevisionRequest {
-            target_source_id: "mem_target".into(),
-        })
-        .await
-        .unwrap();
-    let text = text_of(&result);
-    assert!(
-        text.contains("mem_target"),
-        "expected target_source_id in output; got: {text}"
-    );
-    assert!(
-        text.contains("mem_rev"),
-        "expected revision_source_id in output; got: {text}"
-    );
-    assert!(
-        text.contains("true"),
-        "expected wrote=true in output; got: {text}"
-    );
-}
-
-#[tokio::test]
-async fn accept_revision_envelope_guard_ignores_extra_fields() {
-    let (mock, client) = setup().await;
-    Mock::given(method("POST"))
-        .and(path("/api/memory/revision/mem_target/accept"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "target_source_id": "mem_target",
-            "revision_source_id": "mem_rev",
-            "wrote": true,
-            "unexpected_field": "should be ignored",
-        })))
-        .mount(&mock)
-        .await;
-    let server = make_server(client);
-    let result = server
-        .accept_revision_impl(AcceptRevisionRequest {
-            target_source_id: "mem_target".into(),
-        })
-        .await
-        .unwrap();
-    let text = text_of(&result);
-    assert!(
-        text.contains("mem_target"),
-        "expected target_source_id in output; got: {text}"
-    );
-}
-
-#[tokio::test]
-async fn accept_revision_404() {
-    let (mock, client) = setup().await;
-    Mock::given(method("POST"))
-        .and(path("/api/memory/revision/mem_missing/accept"))
-        .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
-        .mount(&mock)
-        .await;
-    let server = make_server(client);
-    let result = server
-        .accept_revision_impl(AcceptRevisionRequest {
-            target_source_id: "mem_missing".into(),
-        })
-        .await
-        .unwrap();
-    let text = text_of(&result);
-    assert!(
-        text.to_lowercase().contains("error") || text.contains("404"),
-        "expected error signal on 404; got: {text}"
-    );
-}
-
-#[tokio::test]
-async fn accept_revision_forwards_x_agent_name() {
+async fn ux_who_2_accept_revision_sends_nothing_to_the_daemon() {
     let mock = MockServer::start().await;
     let client = WenlanClient::new(mock.uri()).with_agent_name("test-agent".into());
-    Mock::given(method("POST"))
-        .and(path("/api/memory/revision/mem_hdr/accept"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "target_source_id": "mem_hdr",
-            "revision_source_id": "mem_rev",
-            "wrote": true,
-        })))
-        .mount(&mock)
-        .await;
     let server = make_server(client);
-    server
+    let result = server
         .accept_revision_impl(AcceptRevisionRequest {
-            target_source_id: "mem_hdr".into(),
+            target_source_id: "mem_target".into(),
         })
         .await
         .unwrap();
-    let received = requests(&mock).await;
-    assert_eq!(received.len(), 1, "expected exactly 1 request");
-    let value = received[0]
-        .headers
-        .get("x-agent-name")
-        .expect("x-agent-name header must be present");
-    assert_eq!(
-        value.to_str().expect("header value is valid utf-8"),
-        "test-agent",
-        "x-agent-name header must equal configured agent name"
+    assert_eq!(result.is_error, Some(true));
+    let text = text_of(&result);
+    assert!(text.contains("only the person can accept"), "{text}");
+    assert!(
+        requests(&mock).await.is_empty(),
+        "accept_revision must not reach the daemon"
     );
 }
 

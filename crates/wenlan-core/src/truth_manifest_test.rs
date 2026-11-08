@@ -283,13 +283,15 @@ fn manifest_counts_match_the_spec() {
     // lines one memory came from; not page-bearing).
     // Then 312 after POST `/api/things/nights/undo` (takes back every night
     // since a time; two counts only).
-    // Then 313 after POST `/api/things/{id}/tidy/{memory_id}/undo` (takes
+    // Then 313 after POST `/api/memory/restore/{source_id}` (brings a
+    // forgotten memory back; two flags only).
+    // Then 314 after POST `/api/things/{id}/tidy/{memory_id}/undo` (takes
     // back one tidy of a night; the thing's summary only).
-    // Then 316 after GET/POST `/api/things/old-pass` and POST `/undo` (the
+    // Then 317 after GET/POST `/api/things/old-pass` and POST `/undo` (the
     // one-time pass over old memories; a time and counts only).
     assert_eq!(
         HTTP_READERS.len(),
-        316,
+        317,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 52, "#[tool( declarations");
@@ -300,7 +302,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        328,
+        329,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -308,7 +310,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        311,
+        312,
         "main builder entries"
     );
     assert_eq!(
@@ -491,7 +493,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        308 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, one tidy's undo and the three old-pass routes, all with no page markers.
+        309 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, one tidy's undo and the three old-pass routes, all with no page markers.
     );
 }
 

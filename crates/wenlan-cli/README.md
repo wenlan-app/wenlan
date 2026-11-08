@@ -439,7 +439,7 @@ Options:
 
 #### `wenlan curate accept`
 
-Accept a revision: replace the original memory with the revised text.
+Not available here: only the person accepts a revision, in the Wenlan app. Prints where to accept it and exits with an error.
 
 ```text
 wenlan curate accept [OPTIONS] <REVISION_SOURCE_ID>

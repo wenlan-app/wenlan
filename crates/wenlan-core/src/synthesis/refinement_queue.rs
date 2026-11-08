@@ -85,6 +85,7 @@ pub async fn resolve_proposal(
         outcome: crate::post_write::WriteOutcome::Wrote,
         acknowledged: false,
         sentence_proposals: Vec::new(),
+        edits_not_applied: Vec::new(),
     })
 }
 

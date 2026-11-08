@@ -787,6 +787,34 @@ impl WenlanClient {
             .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
+    /// [`Self::put_json`] with the person marker; see
+    /// [`Self::delete_path_as_person`].
+    pub async fn put_json_as_person<Req: Serialize, Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &Req,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .put(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP PUT {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP PUT {} returned {}: {}", path, status, text));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
     pub async fn patch_json<Req: Serialize, Resp: DeserializeOwned>(
         &self,
         path: &str,
@@ -795,6 +823,34 @@ impl WenlanClient {
         let resp = self
             .client
             .patch(self.url(path))
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP PATCH {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP PATCH {} returned {}: {}", path, status, text));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
+    /// [`Self::patch_json`] with the person marker; see
+    /// [`Self::delete_path_as_person`].
+    pub async fn patch_json_as_person<Req: Serialize, Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &Req,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .patch(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
             .json(body)
             .send()
             .await
@@ -818,6 +874,64 @@ impl WenlanClient {
             .map_err(|e| format!("HTTP DELETE {}: {}", path, e))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP DELETE {} returned {}", path, resp.status()));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
+    /// [`Self::delete_path`] for a delete the person asked for with their
+    /// own gesture: it carries the person marker
+    /// (`wenlan_types::requests::CALLER_HEADER`), without which the daemon
+    /// treats the request as an AI tool's. Only call it from a command the
+    /// person triggers directly, never from background work.
+    pub async fn delete_path_as_person<Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .delete(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .send()
+            .await
+            .map_err(|e| format!("HTTP DELETE {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!(
+                "HTTP DELETE {} returned {}: {}",
+                path, status, text
+            ));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
+    /// [`Self::post_empty`] with the person marker; see
+    /// [`Self::delete_path_as_person`].
+    pub async fn post_empty_as_person<Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .post(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .send()
+            .await
+            .map_err(|e| format!("HTTP POST {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP POST {} returned {}: {}", path, status, text));
         }
         resp.json()
             .await
@@ -871,6 +985,39 @@ impl WenlanClient {
         let resp = self
             .client
             .post(self.url(path))
+            .send()
+            .await
+            .map_err(|e| format!("HTTP POST {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP POST {} returned {}: {}", path, status, text));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
+    // ── Person gestures ─────────────────────────────────────────────
+    // Same as `post_empty` / `post_json`, but they tell the daemon the
+    // person made this request with their own gesture (`x-wenlan-caller:
+    // person`). Only a person may accept a card, so the daemon refuses an
+    // accept without this marker. Call these only from a click the person
+    // made, never from a background task.
+
+    pub async fn post_json_as_person<Req: Serialize, Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &Req,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .post(self.url(path))
+            .header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+            .json(body)
             .send()
             .await
             .map_err(|e| format!("HTTP POST {}: {}", path, e))?;
@@ -1873,15 +2020,15 @@ impl WenlanClient {
     }
 
     /// `POST /api/things/{id}/map/ops`: the person answers a proposal on the
-    /// thing's map (UX-WHO-2). Sent without an agent name, so the daemon
-    /// takes it as the person's.
+    /// thing's map (UX-WHO-2). Carries the person marker, without which the
+    /// daemon takes the request as an AI tool's and refuses the answer.
     pub async fn answer_thing_map_proposal(
         &self,
         id: &str,
         request: wenlan_types::ThingMapOpsRequest,
     ) -> Result<wenlan_types::ThingMapOpsResponse, String> {
         let path = format!("/api/things/{}/map/ops", percent_encode_path_segment(id));
-        self.post_json(&path, &request).await
+        self.post_json_as_person(&path, &request).await
     }
 
     /// `GET /api/conversations/search`: sentences from conversations with
@@ -1923,21 +2070,21 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
-    /// `PATCH /api/things/{id}`: the person renames a thing.
+    /// `PATCH /api/things/{id}`: the person renames a thing (person marker).
     pub async fn rename_thing(
         &self,
         id: &str,
         title: String,
     ) -> Result<wenlan_types::ThingSummary, String> {
         let path = format!("/api/things/{}", percent_encode_path_segment(id));
-        self.patch_json(&path, &wenlan_types::ThingRenameRequest { title })
+        self.patch_json_as_person(&path, &wenlan_types::ThingRenameRequest { title })
             .await
     }
 
     /// `POST /api/things/{id}/hide`: the person takes a thing off home.
     pub async fn hide_thing(&self, id: &str) -> Result<wenlan_types::ThingSummary, String> {
         let path = format!("/api/things/{}/hide", percent_encode_path_segment(id));
-        self.post_empty(&path).await
+        self.post_empty_as_person(&path).await
     }
 
     /// `POST /api/things/{id}/merge` or `/keep-apart`: the person answers a
@@ -1956,7 +2103,7 @@ impl WenlanClient {
         let request = wenlan_types::ThingMergeRequest {
             other_thing_id: other.to_string(),
         };
-        self.post_json(&path, &request).await
+        self.post_json_as_person(&path, &request).await
     }
 
     /// `POST /api/things/{id}/dream/undo`: the person takes back the newest
@@ -1964,7 +2111,7 @@ impl WenlanClient {
     /// (UX-CHAT-5).
     pub async fn undo_thing_dream(&self, id: &str) -> Result<wenlan_types::ThingSummary, String> {
         let path = format!("/api/things/{}/dream/undo", percent_encode_path_segment(id));
-        self.post_empty(&path).await
+        self.post_empty_as_person(&path).await
     }
 
     /// `POST /api/things/{id}/tidy/{memory_id}/undo`: the person takes back
@@ -1999,7 +2146,7 @@ impl WenlanClient {
     /// on the big map, every thing whose newest night ran at or after `since`
     /// (UX-GRAPH-5).
     pub async fn undo_nights(&self, since: i64) -> Result<wenlan_types::NightsUndo, String> {
-        self.post_json(
+        self.post_json_as_person(
             "/api/things/nights/undo",
             &wenlan_types::NightsUndoRequest { since },
         )
@@ -2017,7 +2164,7 @@ impl WenlanClient {
             "/api/sessions/{}/things/move",
             percent_encode_path_segment(session_id)
         );
-        self.post_json(&path, &request).await
+        self.post_json_as_person(&path, &request).await
     }
 
     /// `GET /api/pages/{id}/sessions`.
@@ -2069,8 +2216,8 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
-    /// The person takes one sentence proposal. The app never sends an agent
-    /// name, so the daemon counts this as the person's decision.
+    /// The person takes one sentence proposal. Carries the person marker,
+    /// without which the daemon refuses it as an AI tool's (UX-WHO-2).
     pub async fn accept_sentence_proposal(
         &self,
         page_id: &str,
@@ -2081,15 +2228,15 @@ impl WenlanClient {
             percent_encode_path_segment(page_id),
             percent_encode_path_segment(proposal_id)
         );
-        self.post_json(
+        self.post_json_as_person(
             &path,
             &wenlan_types::authorship::SentenceDecisionRequest::default(),
         )
         .await
     }
 
-    /// The person undoes one AI write's sentence changes. The app never sends
-    /// an agent name, so the daemon counts this as the person's undo.
+    /// The person undoes one AI write's sentence changes. Carries the person
+    /// marker, without which the daemon refuses it as an AI tool's.
     pub async fn revert_page_sentences(
         &self,
         page_id: &str,
@@ -2099,7 +2246,7 @@ impl WenlanClient {
             "/api/pages/{}/sentences/revert",
             percent_encode_path_segment(page_id)
         );
-        self.post_json(
+        self.post_json_as_person(
             &path,
             &wenlan_types::authorship::SentenceRevertRequest { version },
         )
@@ -2107,7 +2254,8 @@ impl WenlanClient {
     }
 
     /// The person says 「不對」 about one sentence; with `ask_ai` the daemon
-    /// has the AI propose a fix, which lands only on accept.
+    /// has the AI propose a fix, which lands only on accept. Carries the
+    /// person marker.
     pub async fn flag_page_sentence(
         &self,
         page_id: &str,
@@ -2119,7 +2267,7 @@ impl WenlanClient {
             "/api/pages/{}/sentences/flag",
             percent_encode_path_segment(page_id)
         );
-        self.post_json(
+        self.post_json_as_person(
             &path,
             &wenlan_types::authorship::SentenceFlagRequest {
                 sentence_hash: sentence_hash.to_string(),
@@ -2150,6 +2298,7 @@ impl WenlanClient {
     }
 
     /// The person turns one sentence proposal down; the sentence stays.
+    /// Carries the person marker.
     pub async fn reject_sentence_proposal(
         &self,
         page_id: &str,
@@ -2160,7 +2309,7 @@ impl WenlanClient {
             percent_encode_path_segment(page_id),
             percent_encode_path_segment(proposal_id)
         );
-        self.post_json(
+        self.post_json_as_person(
             &path,
             &wenlan_types::authorship::SentenceDecisionRequest::default(),
         )
@@ -2468,7 +2617,7 @@ impl WenlanClient {
         if let Some(space) = space {
             path.push_str(&format!("?space={}", percent_encode_path_segment(space)));
         }
-        self.post_empty(&path).await
+        self.post_empty_as_person(&path).await
     }
 
     pub async fn reject_refinement(
@@ -5071,6 +5220,31 @@ mod tests {
             request.lines().next().unwrap_or_default(),
             "GET /api/repairs/recovery/review%2Fid HTTP/1.1"
         );
+    }
+
+    /// UX-WHO-2: only the person accepts a card. The app's Accept tells the
+    /// daemon the person made the request, and names no agent.
+    #[tokio::test]
+    async fn ux_who_2_the_apps_accept_marks_the_request_as_the_persons() {
+        let (base_url, request) =
+            serve_json_once(r#"{"id":"rq_1","action_applied":"entity_merge"}"#).await;
+        let client = WenlanClient {
+            client: reqwest::Client::new(),
+            base_url,
+        };
+
+        client.accept_refinement("rq_1", None).await.unwrap();
+
+        let request = request.await.unwrap().to_ascii_lowercase();
+        assert!(
+            request.starts_with("post /api/refinery/queue/rq_1/accept http/1.1"),
+            "{request}"
+        );
+        assert!(
+            request.contains("\r\nx-wenlan-caller: person\r\n"),
+            "{request}"
+        );
+        assert!(!request.contains("x-agent-name"), "{request}");
     }
 
     #[test]

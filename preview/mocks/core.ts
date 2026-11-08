@@ -13,6 +13,8 @@ import {
   REVIEW_ENTITIES,
   REVIEW_DISTILL,
   REVIEW_FAIL,
+  REPLACED_PAGE_CARD,
+  NEWER_PAGE_CARD,
   MERGE_SOURCES,
   RECENT_CHANGES,
   MEMORY_REVISIONS,
@@ -415,11 +417,28 @@ export async function invoke(
       return REVIEW_STATE.revisions;
     case "accept_pending_revision":
     case "dismiss_pending_revision": {
+      // The queue answers a card by its own id; a page id still works.
       const id = args?.sourceId as string;
-      REVIEW_STATE.revisions = REVIEW_STATE.revisions.filter(
-        (r) => r.target_source_id !== id,
+      // `?revision=replaced`: a newer proposal for the page already replaced
+      // this card. The daemon refuses it with the same conflict body it sends
+      // (HTTP 409) and the newer card takes its place in the queue.
+      if (id === REPLACED_PAGE_CARD.revision_source_id) {
+        REVIEW_STATE.revisions = REVIEW_STATE.revisions.map((r) =>
+          r.revision_source_id === id ? NEWER_PAGE_CARD : r,
+        );
+        throw `HTTP 409: ${JSON.stringify({
+          error: `page_revision_replaced: revision card ${id} for page ${REPLACED_PAGE_CARD.target_source_id} was replaced by a newer one (${NEWER_PAGE_CARD.revision_source_id}); nothing was applied. Review the newer card.`,
+        })}`;
+      }
+      const card = REVIEW_STATE.revisions.find(
+        (r) => r.revision_source_id === id || r.target_source_id === id,
       );
-      return { target_source_id: id, revision_source_id: `${id}-rev`, wrote: true };
+      REVIEW_STATE.revisions = REVIEW_STATE.revisions.filter((r) => r !== card);
+      return {
+        target_source_id: card?.target_source_id ?? id,
+        revision_source_id: card?.revision_source_id ?? `${id}-rev`,
+        wrote: true,
+      };
     }
     case "list_refinements":
       if (REVIEW_FAIL.queue) throw new Error("[preview] simulated queue failure");

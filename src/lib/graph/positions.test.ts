@@ -9,6 +9,7 @@ import {
   readNightOffsets,
   readSeenNightPoints,
   readStoredPositions,
+  readPreviousPositions,
   startRearrange,
   storeNightOffsets,
   storePositions,
@@ -27,7 +28,7 @@ describe("kept map layout (UX-GRAPH-1)", () => {
     expect(decodePositions(JSON.stringify({ p1: [1], p2: ["a", 2], p3: [3, 4] }))).toEqual(new Map([["p3", { x: 3, y: 4 }]]));
   });
 
-  it("keeps a layout per scope, and a rearrangement can be taken back once", () => {
+  it("keeps a layout per scope, and a rebalance can be put back once", () => {
     storePositions(null, new Map([["p1", { x: 1, y: 2 }]]));
     storePositions("work", new Map([["p9", { x: 9, y: 9 }]]));
     expect(readStoredPositions(null).get("p1")).toEqual({ x: 1, y: 2 });
@@ -35,6 +36,7 @@ describe("kept map layout (UX-GRAPH-1)", () => {
 
     startRearrange(null);
     expect(readStoredPositions(null).size).toBe(0);
+    expect(readPreviousPositions(null).get("p1")).toEqual({ x: 1, y: 2 });
     expect(canUndoRearrange(null)).toBe(true);
     undoRearrange(null);
     expect(readStoredPositions(null).get("p1")).toEqual({ x: 1, y: 2 });

@@ -54,7 +54,7 @@ REQUIRED_GUARDRAILS = {
         "Unclear**: ask one question",
     ],
     "forget": [
-        "cannot be undone",
+        "does not destroy the memory",
         "delete <id>",
         "Always confirm with the user before calling forget",
     ],

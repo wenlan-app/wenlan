@@ -194,11 +194,14 @@ and wait for evidence that people need them.
 - **UX-WHO-2** `shipped` The AI updates the sentences it wrote that nobody has
   touched; each update is recorded and can be undone. It cannot change your
   sentences: it proposes, one sentence at a time, with accept or no under that
-  sentence, never a whole-page card. Each page has one Lock switch, off by
+  sentence. When the AI rebuilds a whole page that holds a sentence you wrote,
+  edited or accepted, the page stays as it is and the rebuild waits as one
+  card for that page; only you accept it, in the Wenlan app, and an AI write
+  that could not land on your sentences says which ones. Each page has one Lock switch, off by
   default; there is no "may edit directly" mode. The AI proposes a change to
   your sentence only when the facts changed: a source no longer supports it or
   it has gone out of date. It never proposes a rewording.
-  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。
+  原文：AI 改不了你的句子，只能提議；提議能一句一句收。（2026-10-31 16:11 選擇卡：AI 自己寫、沒人動過的句子直接更新，可還原；你寫的、改過的、收下的才問你；每頁一個「鎖定」。）選擇卡「只在事实变了时」（2026-10-31 21:44）：AI 只在來源和你的句子對不上、或已經過時時才對你的句子提建議；只是換個說法不提。「尽量不 review 就尽量不 review」。「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 重建你改過的頁時不蓋掉你的修改，改成一張等你收的卡；只有你能收；沒寫進去的修改要說出來）。
 - **UX-WHO-3** `shipped` Every sentence has "not right": fix it yourself or ask
   the AI; the AI's fix is still a proposal.
   原文：每一句都能按「不對」：你自己改，或讓 AI 改，AI 改的仍然是提議。
@@ -216,6 +219,11 @@ and wait for evidence that people need them.
   thing, it says so instead of guessing. Finding the lines is not checking
   them, so they never look verified.
   原文：「可以。3.」（2026-11-06 15:47 PT，回覆：文澜寫出一句「我們決定一次發 0.21」，你點一下，就能看到原對話裡哪幾句這樣說過）
+- **UX-WHO-7** `shipped` An AI tool's delete never destroys: a page is
+  archived with its history and a memory is forgotten; both can be restored,
+  and only the person can delete for good. Every removal is listed in Activity
+  with who did it.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單第 12、13 條：「刪除改成封存，你寫的頁 AI 不能刪，留下紀錄」「沒名字的請求當成 AI；刪除先進可還原的垃圾桶」）
 
 ## While you chat (in your own AI tool)
 
@@ -289,9 +297,12 @@ and wait for evidence that people need them.
 
 ## The big map
 
-- **UX-GRAPH-1** `shipped` The same point is in the same place every time you
-  open it. Rearranging asks you first and can be undone.
-  原文：同一個點，兩次打開位置一樣；要重排先問你，能退回。
+- **UX-GRAPH-1** `shipped` The map first lays related topics out as named
+  regions, kept apart from each other, with small islands at the edge. After
+  that, opening it does not rearrange it, and something new goes next to the
+  region it belongs to. The first time the map switches to the new layout, a
+  note in the corner says so and lets you put the old one back.
+  原文：地圖先把相近的主題排成一塊塊有名字的區域、區域彼此分開、小島靠邊，之後打開不重排，新東西就近放進它所屬的區域。第一次換成新排法時，角落會說一聲、能放回去。
 - **UX-GRAPH-2** `planned` Three zoom levels (this thing, nearby, everything)
   with continuous motion; points do not jump.
   原文：拉遠三段：這件事 → 附近 → 全部，畫面連續，點不跳位置。

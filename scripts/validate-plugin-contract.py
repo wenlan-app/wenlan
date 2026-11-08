@@ -38,7 +38,7 @@ CODEX_RESOLVER_LOCATOR = (
 )
 CODEX_REQUIRED_GUARDRAILS = {
     "forget": [
-        "cannot be undone",
+        "does not destroy the memory",
         "delete <id>",
         "Always confirm with the user before calling forget",
     ],
@@ -221,7 +221,6 @@ def validate_session_brief_flow(
             "Bash",
             f"{expected_prefix}brief",
             f"{expected_prefix}list_pending_revisions",
-            f"{expected_prefix}accept_revision",
             f"{expected_prefix}dismiss_revision",
         }
         allowed: Any = None
@@ -620,6 +619,14 @@ def validate_skill_text(
     """Workflow guardrails that must survive on both surfaces. `frontmatter` is
     None for a Codex reference file, which carries no frontmatter."""
     entry = "/wenlan" if surface == "claude" else "$wenlan"
+    # Only the person accepts a card, in the Wenlan app (UX-WHO-2): no skill
+    # may hand an AI tool the accept tools or the CLI accept.
+    for needle in ("accept_revision", "accept_refinement", "curate accept"):
+        if needle in text:
+            fail(
+                f"{rel(root, skill_path)} must not tell an AI tool to accept a card "
+                f"({needle!r}); only the person accepts, in the Wenlan app"
+            )
     if name in {"brief", "handoff"}:
         validate_session_brief_flow(
             root, surface, skill_path, expected_prefix, frontmatter, text
@@ -650,7 +657,6 @@ def validate_skill_text(
             f"{expected_prefix}capture",
             f"{expected_prefix}recall",
             f"{expected_prefix}list_refinements",
-            f"{expected_prefix}accept_refinement",
             f"{expected_prefix}reject_refinement",
         }
         if surface == "claude":
@@ -680,9 +686,10 @@ def validate_skill_text(
                 f"List first with `{expected_prefix}list_refinements(limit=50)` "
                 "and show at most four items."
             ),
+            "Only the person accepts a proposal, in the Wenlan app.",
             (
                 "Perform no mutation until the user gives an unambiguous "
-                "item-level accept or reject decision."
+                "item-level reject decision."
             ),
             "Skip or cancel is a no-op.",
             "Re-list after every mutation batch.",

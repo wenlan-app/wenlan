@@ -12,9 +12,9 @@ pub use wenlan_types::requests::{
 };
 pub use wenlan_types::responses::{
     AcceptRefinementResponse, ConfirmResponse, CreateEntityResponse, CreatePageResponse,
-    CreateRelationResponse, DeleteResponse, ListMemoriesResponse, ListMemoryRevisionsResponse,
-    ListPageRevisionsResponse, ListRefinementsResponse, PageInventoryResponse,
-    RejectRefinementResponse, RevisionAcceptResponse, RevisionDismissResponse,
-    SearchMemoryResponse, StoreMemoryResponse,
+    CreateRelationResponse, DeleteResponse, ForgetMemoryResponse, ListMemoriesResponse,
+    ListMemoryRevisionsResponse, ListPageRevisionsResponse, ListRefinementsResponse,
+    PageInventoryResponse, PageRemovalResponse, PageRemovalStatus, RejectRefinementResponse,
+    RevisionAcceptResponse, RevisionDismissResponse, SearchMemoryResponse, StoreMemoryResponse,
 };
 pub use wenlan_types::PageSourceWithMemory;

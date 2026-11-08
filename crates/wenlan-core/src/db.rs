@@ -67,6 +67,8 @@ pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
 mod page_restore;
+mod removal;
+pub use removal::{ForgetOutcome, PageRemovalAudit};
 pub(crate) mod rebuild_writes;
 pub use page_restore::{restore_refusal_message, RestorePageError};
 mod page_summary_backfill;
@@ -94,6 +96,7 @@ mod citation_sources;
 pub mod conversations;
 pub mod intake;
 pub mod night_links;
+pub mod revision_cards;
 mod scoped_entities;
 mod scoped_pages;
 pub mod sentence_history;
@@ -56701,12 +56704,86 @@ impl MemoryDB {
         id: &str,
         expected_version: Option<i64>,
     ) -> Result<Option<i64>, WenlanError> {
+        self.archive_page_recorded(id, expected_version, None).await
+    }
+
+    /// [`Self::archive_page_versioned`] (or, with `expected_version`,
+    /// [`Self::archive_page_at_version`]) that also writes `audit` to
+    /// `agent_activity` as a `page_archive` row, in the same transaction as
+    /// the archive: a page is never archived without its record. Nothing is
+    /// recorded when nothing changed.
+    pub async fn archive_page_recorded(
+        &self,
+        id: &str,
+        expected_version: Option<i64>,
+        audit: Option<PageRemovalAudit<'_>>,
+    ) -> Result<Option<i64>, WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute("BEGIN", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("archive_page begin: {e}")))?;
+        let result = async {
+            let version = Self::archive_page_on_conn(&conn, id, expected_version).await?;
+            if let (Some(version), Some(audit)) = (version, audit) {
+                Self::record_page_removal_on_conn(&conn, id, "page_archive", version, audit)
+                    .await?;
+            }
+            Ok::<_, WenlanError>(version)
+        }
+        .await;
+        match result {
+            Ok(version) => {
+                commit_or_rollback(&conn)
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("archive_page commit: {e}")))?;
+                Ok(version)
+            }
+            Err(error) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Write one `agent_activity` row for a page archive or delete: who asked
+    /// (`audit.agent`), the page id, and its title and version in `detail`.
+    async fn record_page_removal_on_conn(
+        conn: &libsql::Connection,
+        id: &str,
+        action: &str,
+        version: i64,
+        audit: PageRemovalAudit<'_>,
+    ) -> Result<(), WenlanError> {
+        let verb = if action == "page_delete" {
+            "deleted"
+        } else {
+            "archived"
+        };
+        let detail = format!("{verb} \"{}\" at version {version}", audit.title);
+        Self::log_agent_activity_on_connection(
+            conn,
+            audit.agent,
+            action,
+            std::slice::from_ref(&id.to_string()),
+            None,
+            &detail,
+            chrono::Utc::now().timestamp(),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| WenlanError::VectorDb(format!("{action} activity: {e}")))
+    }
+
+    async fn archive_page_on_conn(
+        conn: &libsql::Connection,
+        id: &str,
+        expected_version: Option<i64>,
+    ) -> Result<Option<i64>, WenlanError> {
         let now = chrono::Utc::now();
         let now_rfc3339 = now.to_rfc3339();
         let now_ts = now.timestamp();
-        let conn = self.conn.lock().await;
-        Self::reject_entity_shadow_page_on_conn(&conn, id).await?;
-        Self::reject_page_draft_on_conn(&conn, id).await?;
+        Self::reject_entity_shadow_page_on_conn(conn, id).await?;
+        Self::reject_page_draft_on_conn(conn, id).await?;
         let affected = match expected_version {
             None => {
                 conn.execute(
@@ -56731,7 +56808,7 @@ impl MemoryDB {
         if affected != 1 {
             return Ok(None);
         }
-        Self::append_page_history(&conn, id, "archive", now_ts)
+        Self::append_page_history(conn, id, "archive", now_ts)
             .await
             .map_err(|e| WenlanError::VectorDb(format!("archive_page history: {e}")))?;
         // Same connection guard as the update, so no other write lands between.
@@ -57308,6 +57385,17 @@ impl MemoryDB {
     }
 
     pub async fn delete_page(&self, id: &str) -> Result<(), WenlanError> {
+        self.delete_page_recorded(id, None).await
+    }
+
+    /// [`Self::delete_page`] that also writes `audit` to `agent_activity` as
+    /// a `page_delete` row (with the version the page had), in the same
+    /// transaction as the delete. A missing page records nothing.
+    pub async fn delete_page_recorded(
+        &self,
+        id: &str,
+        audit: Option<PageRemovalAudit<'_>>,
+    ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         Self::reject_entity_shadow_page_on_conn(&conn, id).await?;
         Self::reject_page_draft_on_conn(&conn, id).await?;
@@ -57315,6 +57403,29 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("delete_page begin: {e}")))?;
         let result = async {
+            if let Some(audit) = audit {
+                let mut rows = conn
+                    .query(
+                        "SELECT version FROM pages WHERE id = ?1",
+                        libsql::params![id],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("delete_page version: {e}")))?;
+                let version = rows
+                    .next()
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("delete_page version row: {e}")))?
+                    .map(|row| row.get::<i64>(0))
+                    .transpose()
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!("delete_page version value: {e}"))
+                    })?;
+                drop(rows);
+                if let Some(version) = version {
+                    Self::record_page_removal_on_conn(&conn, id, "page_delete", version, audit)
+                        .await?;
+                }
+            }
             // Dual-write (G6 Stage 0): the FK CASCADE below drops this page's
             // page_sources/page_evidence/page_links rows, and inbound
             // page_links lose their target (NULL targets derive no edge), so

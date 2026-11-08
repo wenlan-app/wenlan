@@ -96,15 +96,19 @@ queue.
 | `distill` | Internal MCP operation for page synthesis: process new clusters or target a specific `page_id`. It remains available as a tool; Steep is the user-facing guided workflow. |
 | `list_pending` | List pending captures waiting for review. |
 | `confirm_memory` | Confirm a pending memory by `source_id`. |
-| `forget` | Delete a memory by ID. Destructive. |
+| `forget` | Forget a memory by ID; it leaves recall and pages and can be restored. |
 | `theme` | List, check, apply or reset a custom app theme (colors, fonts, corner roundness, background image, corner sticker) written as `theme.json` in the themes folder. Wenlan checks every value before the app uses it. Local stdio only. |
 | `list_refinements` | Explicitly inspect the daemon's unique proposal queue, including `vocab_promote`; never polled ambiently. |
-| `accept_refinement` | Accept one listed proposal after an unambiguous item-level decision. Local stdio only. |
+| `accept_refinement` | Never accepts: only the person accepts a proposal, in the Wenlan app. Returns an error that says where the proposal waits and that `reject_refinement` turns it down. Local stdio only. |
 | `reject_refinement` | Reject one listed proposal after an unambiguous item-level decision. Local stdio only. |
 
 The refinement trio remains because this review queue has no CLI or replacement
 path. Remote HTTP clients can list it, but `accept_refinement` and
-`reject_refinement` are hidden and hard-rejected remotely.
+`reject_refinement` are hidden and hard-rejected remotely. Accepting a card
+(a refinement proposal or a pending revision) is the person's decision in the
+Wenlan app: `accept_refinement` and `accept_revision` refuse on every
+transport, and the daemon refuses an accept that names an agent or lacks the
+app's `x-wenlan-caller: person` marker.
 
 `capture`, `write_page`, and `update_brief` accept an optional `session`
 (`<tool>:<session id>`, for example `claude-code:<id>`). Wenlan records it so a

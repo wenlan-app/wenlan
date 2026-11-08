@@ -340,19 +340,19 @@ async fn page_routes_preserve_typed_contracts() {
     let archive_id = common::create_page_fixture(
         &db,
         "Page Route Archive",
-        "Archive content",
+        source_content,
         None,
-        &[],
-        "authored",
+        &["page-route-source"],
+        "distilled",
     )
     .await;
     let delete_id = common::create_page_fixture(
         &db,
         "Page Route Delete",
-        "Delete content",
+        source_content,
         None,
-        &[],
-        "authored",
+        &["page-route-source"],
+        "distilled",
     )
     .await;
 
@@ -515,7 +515,8 @@ async fn page_routes_preserve_typed_contracts() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(deleted.status, "deleted");
+    // An AI tool's delete archives the page, so the person can restore it.
+    assert_eq!(deleted.status, "archived");
 
     let no_db = build_router(Arc::new(RwLock::new(ServerState::default())));
     for case in page_routes("missing-page") {

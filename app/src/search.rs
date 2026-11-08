@@ -2171,9 +2171,11 @@ pub async fn delete_memory(
     source_id: String,
 ) -> Result<(), String> {
     let client = daemon_client(&state).await;
-    let _resp: responses::DeleteResponse = client
-        .delete_path(&format!(
-            "/api/memory/delete/{}",
+    // The person's delete in the app destroys the memory for good, as the
+    // app's confirmation says; an AI tool's delete only forgets it.
+    let _resp: responses::ForgetMemoryResponse = client
+        .delete_path_as_person(&format!(
+            "/api/memory/delete/{}?permanent=true",
             percent_encode_path_segment(&source_id)
         ))
         .await?;
@@ -2363,8 +2365,11 @@ pub async fn update_memory_cmd(
         confirmed,
         memory_type,
     };
+    // Every caller is a gesture of the person (confirm, move to a Space, edit
+    // in the memory editor), so it carries the person marker: an unmarked
+    // change to a memory read from the person's own note is refused.
     let _resp: responses::SuccessResponse = client
-        .put_json(
+        .put_json_as_person(
             &format!(
                 "/api/memory/{}/update",
                 percent_encode_path_segment(&source_id)
@@ -3516,8 +3521,8 @@ pub async fn accept_pending_revision(
         percent_encode_path_segment(&source_id)
     );
     match edit {
-        Some(edit) => client.post_json(&path, &edit).await,
-        None => client.post_empty(&path).await,
+        Some(edit) => client.post_json_as_person(&path, &edit).await,
+        None => client.post_empty_as_person(&path).await,
     }
 }
 
@@ -5173,40 +5178,43 @@ pub async fn update_page(
 #[tauri::command]
 pub async fn archive_page(state: tauri::State<'_, State>, id: String) -> Result<(), String> {
     let client = daemon_client(&state).await;
-    let PageStatusResponse { status: _status } = archive_page_response(&client, &id).await?;
+    let _: responses::PageRemovalResponse = archive_page_response(&client, &id).await?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn delete_page(state: tauri::State<'_, State>, id: String) -> Result<(), String> {
     let client = daemon_client(&state).await;
-    let PageStatusResponse { status: _status } = delete_page_response(&client, &id).await?;
+    let _: responses::PageRemovalResponse = delete_page_response(&client, &id).await?;
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-struct PageStatusResponse {
-    status: String,
-}
-
+/// The person archives a page from the app. It carries the person marker, so
+/// the daemon lets the person archive a page they wrote.
 async fn archive_page_response(
     client: &crate::api::WenlanClient,
     id: &str,
-) -> Result<PageStatusResponse, String> {
+) -> Result<responses::PageRemovalResponse, String> {
     client
-        .post_empty(&format!(
+        .post_empty_as_person(&format!(
             "/api/pages/{}/archive",
             percent_encode_path_segment(id)
         ))
         .await
 }
 
+/// The person deletes a page for good from the app (the confirmation says it
+/// cannot be undone). Without `permanent=true` and the person marker the
+/// daemon would only archive it.
 async fn delete_page_response(
     client: &crate::api::WenlanClient,
     id: &str,
-) -> Result<PageStatusResponse, String> {
+) -> Result<responses::PageRemovalResponse, String> {
     client
-        .delete_path(&format!("/api/pages/{}", percent_encode_path_segment(id)))
+        .delete_path_as_person(&format!(
+            "/api/pages/{}?permanent=true",
+            percent_encode_path_segment(id)
+        ))
         .await
 }
 
@@ -5242,12 +5250,14 @@ mod page_status_command_type_tests {
 
     #[allow(dead_code)]
     async fn archive_page_response_uses_typed_status_envelope(client: crate::api::WenlanClient) {
-        let _: Result<PageStatusResponse, String> = archive_page_response(&client, "page").await;
+        let _: Result<responses::PageRemovalResponse, String> =
+            archive_page_response(&client, "page").await;
     }
 
     #[allow(dead_code)]
     async fn delete_page_response_uses_typed_status_envelope(client: crate::api::WenlanClient) {
-        let _: Result<PageStatusResponse, String> = delete_page_response(&client, "page").await;
+        let _: Result<responses::PageRemovalResponse, String> =
+            delete_page_response(&client, "page").await;
     }
 
     #[allow(dead_code)]
@@ -5258,30 +5268,63 @@ mod page_status_command_type_tests {
 
     #[test]
     fn page_status_response_deserializes_daemon_payloads() {
-        let archived: PageStatusResponse = serde_json::from_value(serde_json::json!({
-            "status": "archived"
+        let archived: responses::PageRemovalResponse = serde_json::from_value(serde_json::json!({
+            "status": "archived", "restorable": true, "version": 3
         }))
         .unwrap();
-        assert_eq!(archived.status, "archived");
+        assert_eq!(archived.status, responses::PageRemovalStatus::Archived);
+        assert!(archived.restorable);
 
-        let deleted: PageStatusResponse = serde_json::from_value(serde_json::json!({
-            "status": "deleted"
+        let deleted: responses::PageRemovalResponse = serde_json::from_value(serde_json::json!({
+            "status": "deleted", "restorable": false
         }))
         .unwrap();
-        assert_eq!(deleted.status, "deleted");
+        assert_eq!(deleted.status, responses::PageRemovalStatus::Deleted);
     }
 
     #[tokio::test]
     async fn delete_page_uses_the_permanent_delete_route() {
-        let (client, request) = serve_status_once("200 OK", r#"{"status":"deleted"}"#).await;
+        let (client, request) =
+            serve_status_once("200 OK", r#"{"status":"deleted","restorable":false}"#).await;
 
         let response = delete_page_response(&client, "page-delete-me")
             .await
             .unwrap();
         let request = request.await.unwrap();
 
-        assert_eq!(response.status, "deleted");
-        assert!(request.starts_with("DELETE /api/pages/page-delete-me HTTP/1.1\r\n"));
+        assert_eq!(response.status, responses::PageRemovalStatus::Deleted);
+        assert!(
+            request.starts_with("DELETE /api/pages/page-delete-me?permanent=true HTTP/1.1\r\n"),
+            "{request}"
+        );
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-wenlan-caller: person\r\n"),
+            "{request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_page_carries_the_person_marker() {
+        let (client, request) = serve_status_once(
+            "200 OK",
+            r#"{"status":"archived","restorable":true,"version":2}"#,
+        )
+        .await;
+
+        archive_page_response(&client, "page-archive-me")
+            .await
+            .unwrap();
+        let request = request.await.unwrap();
+
+        assert!(request.starts_with("POST /api/pages/page-archive-me/archive HTTP/1.1\r\n"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-wenlan-caller: person\r\n"),
+            "{request}"
+        );
     }
 
     #[tokio::test]
@@ -5294,8 +5337,8 @@ mod page_status_command_type_tests {
             .unwrap_err();
         let request = request.await.unwrap();
 
-        assert!(request.starts_with("DELETE /api/pages/page-delete-me HTTP/1.1\r\n"));
-        assert!(error.contains("HTTP DELETE /api/pages/page-delete-me returned 503"));
+        assert!(request.starts_with("DELETE /api/pages/page-delete-me?permanent=true HTTP/1.1\r\n"));
+        assert!(error.contains("HTTP DELETE /api/pages/page-delete-me?permanent=true returned 503"));
     }
 }
 
@@ -6240,7 +6283,7 @@ pub async fn set_note_ai_changes(
 ) -> Result<wenlan_types::sources::NoteAiChanges, String> {
     let client = state.read().await.client.clone();
     client
-        .put_json(
+        .put_json_as_person(
             &format!(
                 "/api/sources/{}/ai-changes",
                 percent_encode_path_segment(&source_id)
@@ -6288,7 +6331,7 @@ pub async fn accept_note_proposal(
 ) -> Result<responses::AcceptNoteProposalResponse, String> {
     let client = state.read().await.client.clone();
     client
-        .post_empty(&format!(
+        .post_empty_as_person(&format!(
             "/api/notes/proposals/{}/accept",
             percent_encode_path_segment(&id)
         ))
