@@ -157,6 +157,7 @@ pub async fn handle_undo_connect_night_points(
 pub async fn handle_get_thing(
     State(state): State<SharedState>,
     SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
 ) -> Result<Json<ThingDetailResponse>, ServerError> {
@@ -174,6 +175,14 @@ pub async fn handle_get_thing(
         |page| page.id.as_str(),
     )
     .await?;
+    // The person sees a conversation no tool titled by what they said first.
+    if crate::conversation_routes::may_read_conversation_words(&headers) {
+        for entry in detail.sessions.iter_mut().filter(|s| s.title.is_none()) {
+            if let Some(session) = db.get_session(&entry.id).await? {
+                entry.title = crate::session_routes::first_said_title(&session).await;
+            }
+        }
+    }
     // Only things this caller can see are offered to merge (UX-THING-3).
     for other in db.thing_merge_proposals(&id).await? {
         if db.get_thing(&other.id, &scope).await?.is_some() {
