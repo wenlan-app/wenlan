@@ -73,6 +73,7 @@ import { proposalsInFolds } from "./page/proposalsInFolds";
 import RelatedPages from "./page/RelatedPages";
 import PageInfo from "./page/PageInfo";
 import { PageSessionSources } from "./sessions/SessionSourceSection";
+import { OriginalPageView } from "./page/original/OriginalPageView";
 import PageInfoDrawer from "./page/PageInfoDrawer";
 import { DetailInfoContent, DetailReadingFrame } from "./DetailLayout";
 import { InfoAction } from "./page/InfoAction";
@@ -1505,6 +1506,8 @@ export default function PageDetail({
       return;
     }
     if (!page || page.id !== pageId || page.status !== "active" || canvasOpen) return;
+    // What an AI tool made opens as it was, not as its source text (UX-ART-1).
+    if (page.creation_kind === "original") return;
     const attempted = autoEditIntentRef.current;
     if (attempted?.pageId === pageId && attempted.mode === "edit") return;
     autoEditIntentRef.current = { pageId, mode: "edit" };
@@ -3183,6 +3186,18 @@ export default function PageDetail({
             <ReferenceNavigationProvider onOpenPage={onPageClick} onOpenMemory={openSourceMemory}>
             <div className="page-detail-prose" data-testid="page-document-reading" onClickCapture={handleContentClick}>
             <EmbedPageContext.Provider value={page.id}>
+              {page.creation_kind === "original" ? (
+                <OriginalPageView
+                  pageId={page.id}
+                  title={page.title}
+                  content={processed.content}
+                  onOpenMemory={openSourceMemory}
+                  onOpenPage={onPageClick}
+                  renderMarkdown={(markdown) => (
+                    <ContentRenderer content={markdown} variant="detail" renderCitation={renderCitation} />
+                  )}
+                />
+              ) : <>
               {ledeText && (
                 <div className="page-detail-lede">
                   {ledeMarkdown ? (
@@ -3210,6 +3225,7 @@ export default function PageDetail({
                   />
                 )}
               />
+              </>}
             </EmbedPageContext.Provider>
             </div>
             </ReferenceNavigationProvider>

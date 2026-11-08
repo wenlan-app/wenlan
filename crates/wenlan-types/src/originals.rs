@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Originals kept from imported chats: Claude artifacts and ChatGPT canvases.
+//! Originals: Claude artifacts and ChatGPT canvases kept from imported chats,
+//! and HTML, SVG or Markdown an AI tool keeps from a live session.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,29 @@ pub struct PageOriginalResponse {
     pub written_at: Option<i64>,
     /// When Wenlan kept it (unix seconds).
     pub imported_at: i64,
+}
+
+/// `POST /api/originals`: keep something an AI tool made in this session (an
+/// HTML page, an SVG, a Markdown document) as it is, as its own page. The
+/// session comes from the `x-wenlan-session` header.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeepOriginalRequest {
+    /// The page title: what it shows, in the person's words.
+    pub title: String,
+    /// The file's text, exactly as the AI tool made it.
+    pub content: String,
+    /// `html`, `svg` or `markdown` (a file name works too, e.g. `map.html`).
+    pub format: String,
+}
+
+/// The page that keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeepOriginalResponse {
+    pub page_id: String,
+    pub title: String,
+    /// False when this session had already kept the same content, so the
+    /// existing page is returned.
+    pub created: bool,
 }
 
 #[cfg(test)]

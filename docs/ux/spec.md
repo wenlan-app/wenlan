@@ -358,13 +358,13 @@ and wait for evidence that people need them.
 
 ## What AI tools made (HTML, images)
 
-- **UX-ART-1** `planned` Saved HTML opens in Wenlan looking exactly like the
+- **UX-ART-1** `shipped` Saved HTML opens in Wenlan looking exactly like the
   original.
   原文：存進來的 HTML 在文瀾打開，跟原本一樣。
-- **UX-ART-2** `planned` It is a page with its source: which conversation, and
+- **UX-ART-2** `shipped` It is a page with its source: which conversation, and
   when.
   原文：它是一頁，帶出處：哪段對話、什麼時候。
-- **UX-ART-3** `planned` The AI never rewrites it. If the facts change later, it
+- **UX-ART-3** `shipped` The AI never rewrites it. If the facts change later, it
   only adds a note.
   原文：AI 不改寫它；後來事實變了，只加註記。
 
