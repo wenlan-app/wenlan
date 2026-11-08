@@ -725,6 +725,11 @@ pub struct GatePlan {
     /// put back as it was.
     pub content: String,
     pub proposals: Vec<PlannedProposal>,
+    /// Changes to protected sentences that were kept and are not proposed
+    /// either: a rewording, nothing about the facts changed. The planner
+    /// leaves it empty; `sentences::sentence_gate` moves them here from
+    /// `proposals`, so the caller can still say they did not land.
+    pub dropped: Vec<PlannedProposal>,
     /// Where each `[N]` marker of `content` came from, in body order: the
     /// machine's body (its markers outside the spans the gate replaced) or a
     /// protected sentence put back with its markers from the current body.
@@ -886,6 +891,7 @@ pub fn plan_sentence_gate(
     Some(GatePlan {
         content,
         proposals,
+        dropped: Vec::new(),
         markers,
     })
 }

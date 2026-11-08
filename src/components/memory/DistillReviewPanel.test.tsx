@@ -545,7 +545,7 @@ describe("DistillReviewPanel review queue", () => {
     await user.click(within(dialog).getByRole("button", { name: "Approve" }));
 
     await waitFor(() => {
-      expect(acceptPendingRevision).toHaveBeenCalledWith("mem_target");
+      expect(acceptPendingRevision).toHaveBeenCalledWith("mem_target_rev");
     });
     expect(await within(dialog).findByRole("heading", { name: "Review complete" })).toBeInTheDocument();
     expect(within(dialog).getByText("You can close this review.")).toBeInTheDocument();
@@ -575,7 +575,7 @@ describe("DistillReviewPanel review queue", () => {
     await user.click(within(dialog).getByRole("button", { name: "Approve" }));
 
     await waitFor(() => {
-      expect(acceptPendingRevision).toHaveBeenCalledWith("mem_target");
+      expect(acceptPendingRevision).toHaveBeenCalledWith("mem_target_rev");
     });
     expect(await within(dialog).findByRole("heading", { name: "Review complete" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("heading", { name: "Vector clocks" })).toBeNull();
@@ -596,7 +596,7 @@ describe("DistillReviewPanel review queue", () => {
     await user.click(within(dialog).getByRole("button", { name: "Dismiss" }));
 
     await waitFor(() => {
-      expect(dismissPendingRevision).toHaveBeenCalledWith("mem_target");
+      expect(dismissPendingRevision).toHaveBeenCalledWith("mem_target_rev");
     });
   });
 
@@ -621,7 +621,7 @@ describe("DistillReviewPanel review queue", () => {
 
     expect(await within(dialog).findByRole("heading", { name: "Title mem_b" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(acceptPendingRevision).toHaveBeenCalledWith("mem_a");
+      expect(acceptPendingRevision).toHaveBeenCalledWith("mem_a_rev");
     });
   });
 
@@ -1179,7 +1179,7 @@ describe("note-context review entry", () => {
     const action = within(dialog).getByRole("button", {name: approve ? "Approve" : "Dismiss"});
     await waitFor(() => expect(action).toBeEnabled());
     await user.click(action);
-    await waitFor(() => expect(approve ? acceptPendingRevision : dismissPendingRevision).toHaveBeenCalledWith("mem_target"));
+    await waitFor(() => expect(approve ? acceptPendingRevision : dismissPendingRevision).toHaveBeenCalledWith("mem_target_rev"));
     await waitFor(() => expect(client.getQueryData(["pending-revisions", "note-context"])).toEqual([]));
     expect(client.getQueryData(["pending-revisions"])).toEqual([]);
     expect(client.getQueryState(["page", "related-page"])?.isInvalidated).toBe(true);

@@ -372,10 +372,44 @@ describe("liveInvoke authored Page preview", () => {
 
     await liveInvoke("delete_page", { id: "remote-page" });
 
+    // The app's Delete is the person's own gesture: a permanent delete that
+    // carries the person marker (UX-WHO-7).
     expect(fetch).toHaveBeenCalledWith(
-      "/daemon/api/pages/remote-page",
-      expect.objectContaining({ method: "DELETE" }),
+      "/daemon/api/pages/remote-page?permanent=true",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "x-wenlan-caller": "person" }),
+      }),
     );
+  });
+
+  it("sends the person marker on every answer only the person may give (UX-WHO-2)", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const calls: Array<[string, Record<string, unknown>, string]> = [
+      ["accept_pending_revision", { sourceId: "mem_1" }, "/daemon/api/memory/revision/mem_1/accept"],
+      ["accept_sentence_proposal", { pageId: "p", proposalId: "sp" }, "/daemon/api/pages/p/sentences/proposals/sp/accept"],
+      ["reject_sentence_proposal", { pageId: "p", proposalId: "sp" }, "/daemon/api/pages/p/sentences/proposals/sp/reject"],
+      ["revert_page_sentences", { pageId: "p", version: 2 }, "/daemon/api/pages/p/sentences/revert"],
+      ["flag_page_sentence", { pageId: "p", sentenceHash: "h" }, "/daemon/api/pages/p/sentences/flag"],
+      ["answer_thing_map_proposal", { id: "t", revision: 1, accept: true, proposalId: "mp" }, "/daemon/api/things/t/map/ops"],
+      ["rename_thing", { id: "t", title: "New" }, "/daemon/api/things/t"],
+      ["hide_thing", { id: "t" }, "/daemon/api/things/t/hide"],
+      ["answer_thing_merge", { id: "t", otherId: "u", merge: true }, "/daemon/api/things/t/merge"],
+      ["undo_thing_dream", { id: "t" }, "/daemon/api/things/t/dream/undo"],
+      ["undo_nights", { since: 1 }, "/daemon/api/things/nights/undo"],
+      ["move_session_thing", { sessionId: "s", fromThingId: "t", toThingId: "u" }, "/daemon/api/sessions/s/things/move"],
+    ];
+    for (const [command, args, url] of calls) {
+      await liveInvoke(command, args);
+      expect(fetch, command).toHaveBeenLastCalledWith(
+        url,
+        expect.objectContaining({
+          headers: expect.objectContaining({ "x-wenlan-caller": "person" }),
+        }),
+      );
+    }
   });
 
   it("models partial draft snapshots, CAS updates, publish, discard, and title conflicts in memory", async () => {

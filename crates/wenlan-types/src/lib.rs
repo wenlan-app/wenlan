@@ -90,7 +90,7 @@ pub use page_basis::{
     BasisPendingEntry, BasisRef, BasisRemoveResponse, BasisVersionRequest, ConfirmBasisInput,
     LinkedChanged, PAGE_REVISION_BASIS_REFUSED,
 };
-pub use pages::{Page, PageEvidence};
+pub use pages::{Page, PageEvidence, PAGE_REVISION_REPLACED};
 pub use repair::*;
 pub use repair_current::*;
 pub use repair_plan::*;

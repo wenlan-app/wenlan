@@ -11,6 +11,35 @@ use std::path::Path;
 /// the human's draft so the caller can recover from the conflict.
 pub const PAGE_REVISION_OUTDATED: &str = "page_revision_outdated";
 
+/// Refuse an Accept or Dismiss of `id` when a newer proposal for the same
+/// page replaced that card (`retire_replaced_page_card`): the person saw the
+/// old body, so nothing is applied and they are pointed at the newer card.
+async fn refuse_replaced_card(db: &MemoryDB, id: &str) -> Result<(), WenlanError> {
+    match db.replaced_page_card(id).await? {
+        Some(replaced) => Err(WenlanError::Conflict(format!(
+            "{}: revision card {id} for page {} was replaced by a newer one ({}); nothing was \
+             applied. Review the newer card.",
+            wenlan_types::PAGE_REVISION_REPLACED,
+            replaced.page_id,
+            replaced.replaced_by
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// An accept that lost a race with a newer proposal fails inside its write
+/// transaction as "already consumed"; say it was replaced instead when that
+/// is why.
+async fn explain_replaced(db: &MemoryDB, id: &str, error: WenlanError) -> WenlanError {
+    match error {
+        WenlanError::Conflict(_) => match refuse_replaced_card(db, id).await {
+            Err(replaced) => replaced,
+            Ok(()) => error,
+        },
+        other => other,
+    }
+}
+
 pub(super) struct PageRevisionCard {
     page_id: String,
     revision_id: String,
@@ -464,8 +493,13 @@ pub async fn accept_pending_revision_with_knowledge_path(
     agent: &str,
     knowledge_path: Option<&Path>,
 ) -> Result<wenlan_types::RevisionAcceptResponse, WenlanError> {
+    refuse_replaced_card(db, id).await?;
     if let Some(card) = resolve_page_revision_card(db, id).await? {
-        let result = accept_page_revision_card(db, card, knowledge_path, agent).await?;
+        let revision_id = card.revision_id.clone();
+        let result = match accept_page_revision_card(db, card, knowledge_path, agent).await {
+            Ok(result) => result,
+            Err(error) => return Err(explain_replaced(db, &revision_id, error).await),
+        };
         log_activity_best_effort(db, agent, "revision_accept", &result.target_source_id).await;
         return Ok(result);
     }
@@ -496,13 +530,18 @@ pub async fn accept_pending_revision_edited_with_knowledge_path(
             "edited revision content must not be empty".into(),
         ));
     }
+    refuse_replaced_card(db, id).await?;
     let result = if let Some(card) = resolve_page_revision_card(db, id).await? {
         if card.revision_id != id {
             return Err(WenlanError::NotFound(format!(
                 "No exact pending revision: {id}"
             )));
         }
-        accept_page_revision_card_with_edit(db, card, knowledge_path, agent, Some(edit)).await?
+        match accept_page_revision_card_with_edit(db, card, knowledge_path, agent, Some(edit)).await
+        {
+            Ok(result) => result,
+            Err(error) => return Err(explain_replaced(db, id, error).await),
+        }
     } else {
         let (target_source_id, revision_source_id) =
             db.accept_pending_revision_with_edit(id, Some(edit)).await?;
@@ -534,6 +573,7 @@ pub async fn dismiss_pending_revision(
     id: &str,
     agent: &str,
 ) -> Result<wenlan_types::RevisionDismissResponse, WenlanError> {
+    refuse_replaced_card(db, id).await?;
     if let Some(card) = resolve_page_revision_card(db, id).await? {
         db.delete_by_source_id("memory", &card.revision_id).await?;
         log_activity_best_effort(db, agent, "revision_dismiss", &card.page_id).await;

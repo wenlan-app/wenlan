@@ -23,8 +23,7 @@ use wenlan_types::{
         AgentResponse, DefaultSpaceResponse, EntityAliasesResponse, EntityBulkResponse,
         ExportStats, HealthResponse, KnowledgePathResponse, ListEntitiesResponse,
         ListMemoriesResponse, MemoryDetailResponse, MergeEntityResponse, PageReadResponse,
-        PendingRevisionItem, RevisionAcceptResponse, RevisionDismissResponse, SearchMemoryResponse,
-        StoreMemoryResponse,
+        PendingRevisionItem, RevisionDismissResponse, SearchMemoryResponse, StoreMemoryResponse,
     },
     sources::Source,
     BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefUpdateReceipt,
@@ -125,6 +124,20 @@ impl WenlanClient {
             session: None,
             session_announced: tokio::sync::OnceCell::new(),
         })
+    }
+
+    /// A client for `base_url` with no identity headers, for tests in other
+    /// modules that must never reach the real daemon.
+    #[cfg(test)]
+    pub(crate) fn for_test(base_url: &str) -> Self {
+        Self {
+            base_url: base_url.to_string(),
+            http: reqwest::Client::new(),
+            headers: HeaderMap::new(),
+            recovery_enabled: false,
+            session: None,
+            session_announced: tokio::sync::OnceCell::new(),
+        }
     }
 
     /// Attribute this client's writes to an AI session by sending
@@ -628,13 +641,6 @@ impl WenlanClient {
             true,
         )
         .await
-    }
-
-    /// POST /api/memory/revision/{id}/accept — replace the original with the revision.
-    /// `id` is the revision's own `source_id` (the daemon also accepts a target id, legacy).
-    pub async fn accept_revision(&self, id: &str) -> Result<RevisionAcceptResponse> {
-        self.post_empty_json(&format!("/api/memory/revision/{}/accept", id))
-            .await
     }
 
     /// POST /api/memory/revision/{id}/dismiss — unstage the false revision: keep BOTH it and the original.

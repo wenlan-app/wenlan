@@ -156,6 +156,7 @@ pub(super) async fn write_document_source_page_impl(
         acknowledged: false,
         outcome: WriteOutcome::Wrote,
         sentence_proposals: Vec::new(),
+        edits_not_applied: Vec::new(),
     })
 }
 
@@ -218,6 +219,7 @@ pub(super) async fn replace_source_page_impl(
             acknowledged: false,
             outcome: WriteOutcome::Unchanged,
             sentence_proposals: Vec::new(),
+            edits_not_applied: Vec::new(),
         });
     }
 
@@ -248,6 +250,7 @@ pub(super) async fn replace_source_page_impl(
         outcome: WriteOutcome::Wrote,
         acknowledged: false,
         sentence_proposals: Vec::new(),
+        edits_not_applied: Vec::new(),
     })
 }
 
@@ -294,6 +297,7 @@ async fn attach_page_sources_checked(
         outcome: WriteOutcome::Wrote,
         acknowledged: false,
         sentence_proposals: Vec::new(),
+        edits_not_applied: Vec::new(),
     })
 }
 
@@ -439,6 +443,7 @@ pub(super) async fn create_page_impl(
                     outcome: WriteOutcome::Unchanged,
                     acknowledged: false,
                     sentence_proposals: Vec::new(),
+                    edits_not_applied: Vec::new(),
                 });
             }
             if !req.source_memory_ids.is_empty() {
@@ -466,6 +471,7 @@ pub(super) async fn create_page_impl(
                 outcome: WriteOutcome::Unchanged,
                 acknowledged: false,
                 sentence_proposals: Vec::new(),
+                edits_not_applied: Vec::new(),
             });
         }
     }
@@ -661,5 +667,6 @@ pub(super) async fn create_page_impl(
         outcome: WriteOutcome::Wrote,
         acknowledged: false,
         sentence_proposals: Vec::new(),
+        edits_not_applied: Vec::new(),
     })
 }

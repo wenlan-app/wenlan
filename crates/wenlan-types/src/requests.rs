@@ -6,6 +6,18 @@ use crate::WriteSpaceTarget;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// ===== Caller =====
+
+/// Header the desktop app sends on a request the person made with their own
+/// gesture (delete a page, forget a memory). The daemon treats a request as
+/// the person's only when it carries this header with [`PERSON_CALLER_VALUE`]
+/// and no `x-agent-name`; a request without it is treated as an AI tool's,
+/// named or not. Like `x-agent-name`, it is a cooperative label from a local
+/// client, not proof: the remote relay does not forward it.
+pub const CALLER_HEADER: &str = "x-wenlan-caller";
+/// The value of [`CALLER_HEADER`] that marks the person, in the app.
+pub const PERSON_CALLER_VALUE: &str = "person";
+
 // ===== Memory CRUD =====
 
 /// Optional body for accepting an edited pending revision. Both fields are

@@ -169,18 +169,23 @@ fn selection_review_pending(page: &crate::pages::Page) -> bool {
 /// - The same holds for the link rewrite that follows a rename the person
 ///   made: it is computed from the exact version it fences on and changes
 ///   only link targets. The review lock still gates it, above.
-/// - A user-forced rebuild may release `user_edited`, but an authored page
-///   still gets a card.
-/// - Every other machine writer is gated on a human-owned page.
+/// - Every other machine writer is gated on a human-owned page, and on a page
+///   that holds the person's sentences (`holds_person_text`) even when no
+///   ownership flag says so. A forced rebuild is such a writer: pressing
+///   rebuild asks for a new draft, not for the person's edits to be replaced,
+///   so it waits as a card and the page stays as it is.
 ///
 /// `version_checked` must only be true once the caller's `expected_version`
 /// has been compared with the loaded page: a mismatch is refused before this
-/// gate runs, so it never reaches here.
+/// gate runs, so it never reaches here. `holds_person_text` is the caller's
+/// answer to "does this page hold sentences that are the person's or
+/// original text" (see `sentences::holds_person_sentences`); a caller that did
+/// not ask passes `false`.
 pub fn machine_write_requires_review(
     writer: Writer<'_>,
     page: &crate::pages::Page,
     version_checked: bool,
-    user_forced: bool,
+    holds_person_text: bool,
 ) -> bool {
     if !writer.is_machine() {
         return false;
@@ -190,8 +195,7 @@ pub fn machine_write_requires_review(
     }
     match writer {
         Writer::Agent(_) | Writer::Pipeline(PipelineStage::LinkRename) if version_checked => false,
-        _ if user_forced => page.creation_kind == "authored",
-        _ => page_is_human_owned(page),
+        _ => page_is_human_owned(page) || holds_person_text,
     }
 }
 
@@ -475,6 +479,26 @@ async fn stage_page_revision_card_inner(
             matches!(Writer::classify(edited_by), Writer::Pipeline(_)).then(|| "wenlan".to_string())
         });
 
+    // A page has at most one open card of a kind: a new proposal is staged
+    // under a new id and the open card it replaces is retired once the new
+    // one is written (below), so an id always names the one body it was
+    // staged with and an Accept of the old card can never land this newer
+    // body unseen. A card bound to a research write is never retired by
+    // another proposal (its adoption fence names it), nor is a card the
+    // person changed after staging (`open_page_write_card_id` checks its
+    // `proposal_digest`). A link card keeps its own lifecycle
+    // (`page_link_rename`).
+    let open_card = match research_write {
+        None if !matches!(
+            Writer::classify(edited_by),
+            Writer::Pipeline(PipelineStage::LinkRename)
+        ) =>
+        {
+            db.open_page_write_card_id(&page.id).await?
+        }
+        _ => None,
+    };
+    let replaces_open_card = open_card.is_some();
     let revision_card_id = format!(
         "mem_{}",
         uuid::Uuid::new_v4()
@@ -484,6 +508,9 @@ async fn stage_page_revision_card_inner(
             .take(12)
             .collect::<String>()
     );
+    // One timestamp for the row and its digest: the upsert grounds relative
+    // dates against `last_modified`.
+    let staged_at = chrono::Utc::now().timestamp();
     // Why this write needed review, so the card can say so: the review lock
     // first, then Wenlan's own background lanes, else the page has the
     // person's edits. A locked page the person wrote is `authored` (pages
@@ -520,6 +547,12 @@ async fn stage_page_revision_card_inner(
         "edited_by": edited_by,
         "source_memory_ids": source_memory_ids,
         "review_reason": review_reason,
+        // The body as stored (PII redacted, dates grounded, as the upsert
+        // writes it), so a later proposal can tell an untouched card (safe
+        // to replace) from one the person changed.
+        "proposal_digest": crate::provenance::revision_content_digest(
+            &crate::db::revision_cards::stored_card_body(content, staged_at)
+        ),
     });
     // Only an update-from-sources card carries the notes it was written from.
     if let Some(snapshot) = basis_snapshot {
@@ -552,7 +585,7 @@ async fn stage_page_revision_card_inner(
         source_id: revision_card_id.clone(),
         title,
         content: content.to_string(),
-        last_modified: chrono::Utc::now().timestamp(),
+        last_modified: staged_at,
         memory_type: Some("fact".to_string()),
         space: page.space.clone().or_else(|| page.workspace.clone()),
         source_agent: proposer.clone(),
@@ -569,15 +602,24 @@ async fn stage_page_revision_card_inner(
         basis_confirm: None,
         id: page.id.clone(),
         attached_to: None,
-        warnings: vec![
-            "human-owned page; staged revision card instead of overwriting content".to_string(),
-        ],
+        warnings: if replaces_open_card {
+            vec![
+                "human-owned page; staged a revision card that replaces the page's open card \
+                 instead of overwriting the page or adding a second card"
+                    .to_string(),
+            ]
+        } else {
+            vec![
+                "human-owned page; staged revision card instead of overwriting content".to_string(),
+            ]
+        },
         wrote: false,
         revision_card_id: Some(revision_card_id.clone()),
         gated: true,
         outcome: WriteOutcome::Gated,
         acknowledged: false,
         sentence_proposals: Vec::new(),
+        edits_not_applied: Vec::new(),
     };
     let response = match retry {
         Some(_) => Some(serde_json::to_string(&result)?),
@@ -630,6 +672,31 @@ async fn stage_page_revision_card_inner(
                 .map(Some);
         }
         (Err(error), _) => return Err(error),
+    }
+    // Retire the card this one replaces only now that the new card is
+    // written: a failure in between leaves two open cards, which the nightly
+    // scan reports, never a page with none.
+    if let Some(old_card_id) = open_card.as_deref() {
+        match db
+            .retire_replaced_page_card(
+                old_card_id,
+                &revision_card_id,
+                proposer.as_deref().unwrap_or(edited_by),
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => log::info!(
+                "[page_revision_card] open card {old_card_id} of page {} changed before it \
+                 could be replaced; left it open beside {revision_card_id}",
+                page.id
+            ),
+            Err(e) => log::warn!(
+                "[page_revision_card] retiring replaced card {old_card_id} of page {} \
+                 failed: {e}",
+                page.id
+            ),
+        }
     }
     if let Err(e) = db
         .log_agent_activity(
@@ -1132,6 +1199,7 @@ async fn update_page_db_impl(
         acknowledged: false,
         basis_confirm: None,
         sentence_proposals: Vec::new(),
+        edits_not_applied: Vec::new(),
     };
 
     let (
@@ -1243,11 +1311,11 @@ async fn update_page_db_impl(
 
             // Ownership gate, re-evaluated on every attempt. Inside the CAS loop
             // it is no longer advisory: whatever it decided is what the write
-            // guards on. A user-forced rebuild overrides `user_edited` (the
-            // write releases it together with the new body) but never an
-            // authored page or the review lock, which still get a revision
-            // card. An agent whose `expected_version` matched above may land
-            // on a human-owned page; see `machine_write_requires_review`.
+            // guards on. A user-forced rebuild of a page the person edited or
+            // wrote, or one holding their sentences, gets a revision card and
+            // leaves the page as it is, exactly like any other machine
+            // rewrite. An agent whose `expected_version` matched above may
+            // land on a human-owned page; see `machine_write_requires_review`.
             // Under the page lock, a write that only changes sentences the
             // page already has goes through the sentence gate instead of a
             // whole-page card: every sentence is protected, so each change is
@@ -1266,12 +1334,36 @@ async fn update_page_db_impl(
                     &req.content,
                 )
                 .await?;
+            // A forced rebuild of a page no flag marks as the person's still
+            // waits as a card when the page holds their sentences (ones they
+            // wrote, edited or accepted): replacing those is theirs to
+            // decide, whatever the flags say. Original (imported) text alone
+            // does not make a card; the sentence gate below keeps it in place.
+            let forced_over_person_text = user_forced
+                && writer.is_machine()
+                && !page_is_human_owned(&current)
+                && crate::sentences::holds_person_sentences(db, &current).await?;
+            // A forced rebuild that comes back byte-identical, from the same
+            // sources, proposes nothing: it is acknowledged below like any
+            // no-op compile, with no card.
+            let forced_identical = user_forced
+                && req.content == current.content
+                && current
+                    .source_memory_ids
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<std::collections::HashSet<_>>()
+                    == source_refs
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::HashSet<_>>();
             if !lock_proposes
+                && !forced_identical
                 && machine_write_requires_review(
                     writer,
                     &current,
                     req.expected_version.is_some(),
-                    user_forced,
+                    forced_over_person_text,
                 )
             {
                 // `expected_source_revision` is the caller's compile fence
@@ -1308,6 +1400,57 @@ async fn update_page_db_impl(
                     log::info!(
                         "[update_page] {page_id}: kept {restored} line(s) the user wrote in the revision card"
                     );
+                }
+                // A card that would leave the page exactly as it is (the
+                // rewrite came back identical once the person's lines were
+                // kept) proposes nothing: no card, and the compile is
+                // acknowledged like any no-op. A card that changes only the
+                // sources, or carries notes, citations or a research write to
+                // record on accept, is still a change, and is staged.
+                let proposes_nothing = card_content == current.content
+                    && staged_marks.is_empty()
+                    && basis.citation_snapshots.is_empty()
+                    && basis.research_write.is_none()
+                    && citations.is_none()
+                    && current
+                        .source_memory_ids
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<std::collections::HashSet<_>>()
+                        == source_refs
+                            .iter()
+                            .copied()
+                            .collect::<std::collections::HashSet<_>>();
+                if proposes_nothing {
+                    if require_stale || user_forced {
+                        let _ = match page_fence {
+                            Some(fence) => {
+                                db.clear_page_staleness_at_fence(page_id, current.version, fence)
+                                    .await?
+                            }
+                            None => {
+                                db.clear_page_staleness_at_source_revision(
+                                    page_id,
+                                    current.version,
+                                    expected_source_revision,
+                                )
+                                .await?
+                            }
+                        };
+                    }
+                    return terminal_result_with_receipt(
+                        db,
+                        retry.as_ref(),
+                        no_op(
+                            WriteOutcome::Unchanged,
+                            vec![
+                                "the rewrite proposes no change to this page; no revision card \
+                                 staged"
+                                    .to_string(),
+                            ],
+                        ),
+                    )
+                    .await;
                 }
                 let result = match page_fence {
                     Some(fence) => match stage_page_revision_card_at_fence(
@@ -1529,9 +1672,9 @@ async fn update_page_db_impl(
                 if lock_proposes {
                     db.prepare_staged_basis_marks(page_id, &basis.marks).await?;
                 }
-                let sentence_proposals = match &gate {
+                let (sentence_proposals, edits_not_applied) = match &gate {
                     Some(plan) => {
-                        crate::sentences::stage_gate_proposals(
+                        let staged = crate::sentences::stage_gate_proposals(
                             db,
                             page_id,
                             current_version,
@@ -1539,9 +1682,10 @@ async fn update_page_db_impl(
                             edited_by,
                             agent,
                         )
-                        .await?
+                        .await?;
+                        (staged.ids, staged.not_applied)
                     }
-                    None => Vec::new(),
+                    None => (Vec::new(), Vec::new()),
                 };
                 // No page write for the marks to ride on, so the notes and
                 // lines of code this write relied on (and reconfirms of ones it
@@ -1593,6 +1737,7 @@ async fn update_page_db_impl(
                         let acknowledged_result = WriteResult {
                             acknowledged: true,
                             sentence_proposals: sentence_proposals.clone(),
+                            edits_not_applied: edits_not_applied.clone(),
                             ..no_op(WriteOutcome::Unchanged, lock_warnings.clone())
                         };
                         let response = serde_json::to_string(&acknowledged_result)?;
@@ -1656,6 +1801,7 @@ async fn update_page_db_impl(
                     WriteResult {
                         acknowledged,
                         sentence_proposals,
+                        edits_not_applied,
                         ..no_op(WriteOutcome::Unchanged, lock_warnings)
                     },
                 )
@@ -1738,6 +1884,7 @@ async fn update_page_db_impl(
                     acknowledged: false,
                     basis_confirm: None,
                     sentence_proposals: Vec::new(),
+                    edits_not_applied: Vec::new(),
                 })?),
                 None => None,
             };
@@ -1962,7 +2109,7 @@ async fn update_page_db_impl(
         }
     }
     let mut warnings = write_warnings(&delta_summary, current_version, new_version);
-    let sentence_proposals = match &gate {
+    let (sentence_proposals, edits_not_applied) = match &gate {
         Some(plan) => match crate::sentences::stage_gate_proposals(
             db,
             page_id,
@@ -1973,24 +2120,24 @@ async fn update_page_db_impl(
         )
         .await
         {
-            Ok(ids) => {
-                if !ids.is_empty() {
+            Ok(staged) => {
+                if !staged.ids.is_empty() {
                     warnings.push(format!(
                         "{} change(s) to the person's sentences were staged as proposals",
-                        ids.len()
+                        staged.ids.len()
                     ));
                 }
-                ids
+                (staged.ids, staged.not_applied)
             }
             Err(error) => {
                 // The write has committed with the person's sentences kept;
                 // only the proposals for them were lost.
                 log::warn!("[update_page] {page_id}: staging sentence proposals failed: {error}");
                 warnings.push("the AI's changes to the person's sentences were not kept".into());
-                Vec::new()
+                (Vec::new(), crate::sentences::gate_not_applied(plan))
             }
         },
-        None => Vec::new(),
+        None => (Vec::new(), Vec::new()),
     };
 
     Ok(WriteResult {
@@ -2004,5 +2151,6 @@ async fn update_page_db_impl(
         acknowledged: false,
         basis_confirm: basis_outcome.confirm,
         sentence_proposals,
+        edits_not_applied,
     })
 }
