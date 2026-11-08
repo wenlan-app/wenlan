@@ -2687,7 +2687,7 @@ export default function PageDetail({
 
   return (
     <div className={`page-detail document-context-host${inspectorOpen ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && inspectorOpen ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
-      {documentToolsHost && createPortal(<>{actionsMenu}{titleRenameAction}{readModeEdit}{inspectorToggle}</>, documentToolsHost)}
+      {documentToolsHost && createPortal(<>{titleRenameAction}{readModeEdit}{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
       {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
         {page.status === "archived" && <div className="wiki-archive-notice" role="status">
