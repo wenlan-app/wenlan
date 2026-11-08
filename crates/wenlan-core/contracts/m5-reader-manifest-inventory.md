@@ -1358,8 +1358,8 @@ carrying the authority of agreement.
 |---|---|---|---|---|---|
 | `core/chat_check.rs::check_against_decisions` | `pub` | no | **yes** | `server/check_routes.rs::handle_check` | `core/chat_check.rs::decision_source` |
 | `core/chat_check.rs::decision_context` | `pub` | no | **yes** | `server/check_routes.rs::handle_check_context` | `core/chat_check.rs::decision_source` |
+| `core/chat_import/originals.rs::find_session_original` | `pub` | no | **yes** | `server/original_routes.rs::handle_keep_original` | `core/db.rs::get_page` |
 | `core/chat_import/originals.rs::first_unused_title` | `private` | no | no | — | `core/page_titles.rs::strict_same_title_note` |
-| `core/chat_import/originals.rs::keep_session_original` | `pub` | no | **yes** | `server/original_routes.rs::handle_keep_original` | `core/db.rs::get_page` |
 | `core/citations.rs::project_annotated_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/citations.rs::record_annotate_failure` | `private` | no | no | — | `core/db.rs::set_page_citations_with_changelog_at_version` |
 | `core/citations.rs::run_citation_backfill_with_page_limit` | `private` | no | no | — | `core/db.rs::get_page`, `core/db.rs::set_page_citations_with_changelog_at_version` |
@@ -1582,6 +1582,7 @@ carrying the authority of agreement.
 
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
+| `core/chat_import/originals.rs::keep_session_original` | `pub` | no | **yes** | `server/original_routes.rs::handle_keep_original` | `core/chat_import/originals.rs::find_session_original`, `core/chat_import/originals.rs::first_unused_title` |
 | `core/chat_import/originals.rs::unused_title` | `private` | no | no | — | `core/chat_import/originals.rs::first_unused_title` |
 | `core/citations.rs::run_citation_backfill_slice` | `pub` | no | no | — | `core/citations.rs::run_citation_backfill_with_page_limit` |
 | `core/citations.rs::run_citation_backfill_slice_projected` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/citations.rs::run_citation_backfill_with_page_limit` |
@@ -1709,7 +1710,7 @@ carrying the authority of agreement.
 | `server/lint_routes.rs::prepare_current_repair` | `pub(crate)` | no | no | `server/repair_routes.rs::handle_prepare_current` | `core/repair/current.rs::prepare_current_repair_with_pages` |
 | `server/main.rs::main` | `private` | yes | no | — | `server/main.rs::run_daemon` |
 | `server/memory_routes.rs::handle_search_memory` | `pub` | no | no | — | `server/memory_routes.rs::handle_search_memory_inner` |
-| `server/memory_routes.rs::handle_store_memory` | `pub` | no | **yes** | `server/things_intake.rs::write#2` | `server/memory_routes.rs::handle_store_memory_inner` |
+| `server/memory_routes.rs::handle_store_memory` | `pub` | no | **yes** | `server/original_routes.rs::handle_keep_original`, `server/things_intake.rs::write#2` | `server/memory_routes.rs::handle_store_memory_inner` |
 | `server/page_basis_routes.rs::handle_confirm_basis` | `pub` | no | no | — | `core/db/page_basis.rs::confirm_page_basis` |
 | `server/page_basis_routes.rs::handle_mark_basis` | `pub` | no | no | — | `core/db/page_basis.rs::mark_page_basis_in` |
 | `server/page_map_routes.rs::build_map_response` | `private` | no | no | `server/page_map_routes.rs::handle_get_page_map`, `server/page_map_routes.rs::handle_improve_page_map`, `server/page_map_routes.rs::handle_put_page_map_layout` | `server/page_map_routes.rs::wire_node` |

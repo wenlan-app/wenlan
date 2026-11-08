@@ -42,6 +42,11 @@ pub struct KeepOriginalRequest {
     pub content: String,
     /// `html`, `svg` or `markdown` (a file name works too, e.g. `map.html`).
     pub format: String,
+    /// What it shows, as text: an indented outline or an ASCII drawing of
+    /// its parts and how they connect. Kept as a memory of this session, so
+    /// the night's tidy and later sessions read the structure, not the HTML.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structure: Option<String>,
 }
 
 /// The page that keeps it.

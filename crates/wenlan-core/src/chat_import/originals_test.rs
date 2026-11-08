@@ -442,6 +442,7 @@ async fn ux_art_2_a_session_original_is_a_page_naming_its_session_and_time() {
         format: SessionOriginalFormat::Html,
         space: wenlan_types::WriteSpaceTarget::Uncategorized,
         workspace: None,
+        source_memory_ids: Vec::new(),
     };
     let (kept, created) = keep_session_original(&db, root.path(), None, input())
         .await

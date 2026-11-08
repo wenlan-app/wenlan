@@ -84,7 +84,7 @@ queue.
 | `capture` | Save one durable memory and return its explicit `source_memory_id`. |
 | `save_source` | Save a document read in another app or on the web (email, Notion or Drive page, Slack thread, article) with its link, so notes cite the original. Saving the same link again replaces the copy. |
 | `attach_file` | Copy an image or video on this computer into the pages folder's `_attachments/` and return the Markdown line (`![alt](_attachments/name.png)`) to place in a page. `read_page` lists the files a page shows under `attachments`. Local stdio only. |
-| `keep_original` | Keep an HTML page, SVG or Markdown document the AI made in this conversation exactly as it is, as its own page with the conversation as its source. Wenlan never rewrites it; a later fact is a note added after it. Local stdio only. |
+| `keep_original` | Keep an HTML page, SVG or Markdown document the AI made in this conversation exactly as it is, as its own page with the conversation as its source. Pass `structure` (an outline or ASCII drawing of what it shows): it is kept as a memory of the conversation, so later sessions and the nightly tidy read it instead of the HTML. Wenlan never rewrites it; a later fact is a note added after it. Local stdio only. |
 | `propose_note_change` | Propose a change to one of the person's own Obsidian notes. Nothing is written until the person accepts it in Wenlan; a note set to Never takes no proposal. Local stdio only. |
 | `check_reply` | Check a reply against the person's earlier decisions, for AI tools without hooks. Returns a dated reminder with a `wenlan://` link for each decision the reply goes against (at most five a day), or says nothing conflicts. |
 | `recall` | Search memories and pages by natural-language query. |

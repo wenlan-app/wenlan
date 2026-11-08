@@ -159,7 +159,7 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s,
 /// then by `keep_original`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 20_275;
+const DESCRIPTION_BUDGET_CHARS: usize = 20_366;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1507,6 +1507,11 @@ pub struct KeepOriginalParams {
     #[schemars(description = "html, svg or markdown. Taken from the path when omitted.")]
     #[serde(default)]
     pub format: Option<String>,
+    #[schemars(
+        description = "What it shows, as text: an indented outline or ASCII drawing of its parts and how they connect. Later sessions read this, not the HTML."
+    )]
+    #[serde(default)]
+    pub structure: Option<String>,
     #[schemars(
         description = "This conversation as <tool>:<id>, e.g. claude-code:<session id>. Defaults to WENLAN_SESSION."
     )]
@@ -3120,6 +3125,7 @@ impl WenlanMcpServer {
             title: params.title,
             content,
             format,
+            structure: params.structure,
         };
         let client = self.session_client(params.session.as_deref()).await;
         let resp: wenlan_types::originals::KeepOriginalResponse =
@@ -3148,7 +3154,7 @@ impl WenlanMcpServer {
             "Already kept from this conversation"
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(format!(
-            "{kept} as the page \"{title}\" (page_id {id}). Wenlan shows it exactly as it is, with this conversation as its source, and never rewrites it. To add a later fact, write_page with the page's content unchanged and your note after it. A changed version is kept as a new page.",
+            "{kept} as the page \"{title}\" (page_id {id}). Wenlan shows it exactly as it is, with this conversation as its source, and never rewrites it; its structure is kept as a memory of this conversation. To add a later fact, write_page with the page's content unchanged and your note after it. A changed version is kept as a new page.",
             title = resp.title,
             id = resp.page_id,
         ))]))
@@ -5984,7 +5990,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Keep an HTML page, SVG or Markdown document you made in this conversation (a diagram, map, chart or visual explanation) in Wenlan exactly as it is, as its own page with this conversation as its source. Use when the user wants to keep or reuse what you drew.",
+        description = "Keep an HTML page, SVG or Markdown document you made in this conversation (a diagram, map, chart or visual explanation) in Wenlan exactly as it is, as its own page with this conversation as its source. Use when the user wants to keep or reuse what you drew. Always pass structure. To change a kept diagram, keep the new version: the old page stays.",
         annotations(
             title = "Keep Original",
             read_only_hint = false,

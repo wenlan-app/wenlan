@@ -388,6 +388,49 @@ pub struct SessionOriginal<'a> {
     pub space: wenlan_types::WriteSpaceTarget,
     /// The resolved Space name, for the page's workspace axis.
     pub workspace: Option<String>,
+    /// Memories the page cites: the diagram's structure as text, kept in the
+    /// session so the night's tidy and later sessions read it, not the HTML.
+    pub source_memory_ids: Vec<String>,
+}
+
+/// The id a session original's content gets: a prefix of its SHA-256.
+fn content_id(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(content.as_bytes()))[..16].to_string()
+}
+
+/// The page this session already kept for exactly this content, if any.
+pub async fn find_session_original(
+    db: &MemoryDB,
+    session: Option<&wenlan_types::sessions::SessionRef>,
+    content: &str,
+) -> Result<Option<KeptOriginal>, WenlanError> {
+    let (vendor, conversation_id) = session_key(session);
+    let artifact_id = content_id(content);
+    let Some(record) = db
+        .originals_for_conversation(&vendor, &conversation_id)
+        .await?
+        .into_iter()
+        .find(|record| record.artifact_id == artifact_id)
+    else {
+        return Ok(None);
+    };
+    // Only a page that still exists counts as kept.
+    if db.get_page(&record.page_id).await?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(KeptOriginal {
+        artifact_id,
+        page_id: record.page_id,
+        file_path: record.file_path,
+    }))
+}
+
+fn session_key(session: Option<&wenlan_types::sessions::SessionRef>) -> (String, String) {
+    match session {
+        Some(session) => (session.tool.clone(), session.external_id.clone()),
+        None => ("agent".to_string(), "no-session".to_string()),
+    }
 }
 
 /// The largest original a session may keep (a self-contained HTML page with
@@ -418,7 +461,6 @@ pub async fn keep_session_original(
     knowledge_path: Option<&Path>,
     input: SessionOriginal<'_>,
 ) -> Result<(KeptOriginal, bool), WenlanError> {
-    use sha2::{Digest, Sha256};
     let title = input.title.trim();
     if title.is_empty() {
         return Err(WenlanError::Validation("original_title_missing".into()));
@@ -429,30 +471,18 @@ pub async fn keep_session_original(
     if input.content.len() > MAX_SESSION_ORIGINAL_BYTES {
         return Err(WenlanError::Validation("original_too_large".into()));
     }
-    let (vendor, conversation_id) = match input.session {
-        Some(session) => (session.tool.clone(), session.external_id.clone()),
-        None => ("agent".to_string(), "no-session".to_string()),
-    };
-    let digest = format!("{:x}", Sha256::digest(input.content.as_bytes()));
-    let mut artifact_id = digest[..16].to_string();
-    if let Some(record) = db
+    let (vendor, conversation_id) = session_key(input.session);
+    if let Some(kept) = find_session_original(db, input.session, input.content).await? {
+        return Ok((kept, false));
+    }
+    let mut artifact_id = content_id(input.content);
+    // A row whose page was destroyed keeps its id, so the new copy takes another.
+    if db
         .originals_for_conversation(&vendor, &conversation_id)
         .await?
-        .into_iter()
-        .find(|record| record.artifact_id == artifact_id)
+        .iter()
+        .any(|record| record.artifact_id == artifact_id)
     {
-        // Only a page that still exists counts as kept; one that was
-        // destroyed leaves its row, so the new copy takes a new id.
-        if db.get_page(&record.page_id).await?.is_some() {
-            return Ok((
-                KeptOriginal {
-                    artifact_id,
-                    page_id: record.page_id,
-                    file_path: record.file_path,
-                },
-                false,
-            ));
-        }
         artifact_id = format!("{artifact_id}-{}", uuid::Uuid::new_v4().simple());
     }
     let dir_rel = format!(
@@ -497,7 +527,7 @@ pub async fn keep_session_original(
             summary: None,
             entity_id: None,
             space: input.space,
-            source_memory_ids: Vec::new(),
+            source_memory_ids: input.source_memory_ids,
             creation_kind: Some(ORIGINAL_CREATION_KIND.to_string()),
             workspace: input.workspace,
         },
