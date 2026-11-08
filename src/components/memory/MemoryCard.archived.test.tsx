@@ -78,7 +78,7 @@ describe("archive-superseded memories stay visible but muted", () => {
         {...defaultProps}
       />,
     );
-    expect(screen.getByText("Chat transcript")).toBeInTheDocument();
+    expect(screen.getByText("Original text")).toBeInTheDocument();
     expect(screen.queryByText("decision")).not.toBeInTheDocument();
     expect(screen.queryByTestId("confirm-dot")).not.toBeInTheDocument();
 

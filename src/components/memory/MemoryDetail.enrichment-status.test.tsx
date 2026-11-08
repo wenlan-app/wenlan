@@ -164,7 +164,7 @@ describe("MemoryDetail Info and history", () => {
       { wrapper },
     );
     const info = await openMemoryInfo();
-    expect(within(info).getByTestId("memory-detail-conversation-text")).toHaveTextContent("Chat transcript");
+    expect(within(info).getByTestId("memory-detail-conversation-text")).toHaveTextContent("Original text");
     expect(within(info).queryByText("Preference")).toBeNull();
     expect(within(info).queryByRole("button", { name: /confirm content/i })).toBeNull();
   });
