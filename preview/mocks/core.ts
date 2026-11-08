@@ -265,7 +265,8 @@ export async function invoke(
           "tm-rel": { at: HOME_NIGHT, written: ["tm-n-rel-2", "tm-n-rel-3"], linked: [{ memory_id: "tm-n-rel-2", entity_id: "tm-e16" }] },
         };
         // `&tidy=1`: the same night also merged, replaced and updated some of
-        // what an AI wrote (UX-GRAPH-7).
+        // what an AI wrote, all in the first stop so Replay shows the three
+        // together (UX-GRAPH-7).
         if (new URLSearchParams(window.location.search).get("tidy") === "1") {
           nights["tm-site"] = {
             at: HOME_NIGHT,
@@ -273,10 +274,10 @@ export async function invoke(
             written: ["tm-n-site-3"],
             tidied: [
               { kind: "merge", memory_id: "tm-n-site-4", replaced: ["tm-n-site-4a", "tm-n-site-4b"] },
+              { kind: "replace", memory_id: "tm-n-site-2", replaced: ["tm-n-site-2a"] },
               { kind: "update", memory_id: "tm-n-site-5", replaced: ["tm-n-site-5a"] },
             ],
           };
-          nights["tm-rel"] = { at: HOME_NIGHT, written: nights["tm-rel"]?.written ?? [], linked: nights["tm-rel"]?.linked ?? [], tidied: [{ kind: "replace", memory_id: "tm-n-rel-2", replaced: ["tm-n-rel-2a"] }] };
         }
         return THING_MAP_POINTS.map((thing) => (nights[thing.thing_id] ? { ...thing, last_night: nights[thing.thing_id] } : thing));
       }
