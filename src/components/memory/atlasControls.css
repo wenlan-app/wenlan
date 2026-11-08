@@ -190,7 +190,8 @@
 .atlas-night-line-short { display: none; }
 .atlas-night-line button { padding: 0; border: 0; background: none; color: var(--mem-text-secondary); font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--mem-text) 18%, transparent); text-underline-offset: 3px; }
 .atlas-night-line button:hover { color: var(--mem-text); }
-.atlas-night-line .atlas-night-replay { color: var(--mem-accent-page); font-weight: 500; text-decoration: none; }
+.atlas-night-line .atlas-night-replay { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-decoration: none; }
+.atlas-night-line .atlas-night-replay:hover > span { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--mem-text) 30%, transparent); text-underline-offset: 3px; }
 .atlas-night-line button:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; }
 .atlas-night-line button:disabled { cursor: default; opacity: .6; }
 @media (max-width: 560px) {

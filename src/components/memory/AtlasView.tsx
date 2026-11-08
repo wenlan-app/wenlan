@@ -2393,11 +2393,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       ) : nightShown && !selectedThing ? (
         // What last night did, one line above the count line (UX-GRAPH-5).
         <p className="atlas-night-line" data-testid="atlas-night-line" title={nightSentence}>
-          <SteepMoon />
-          <span className="atlas-night-line-full">{nightSentence}</span>
-          <span className="atlas-night-line-short">{t(nightOvernight ? "atlas.night.lastNightShort" : "atlas.night.todayShort")}</span>
-          <span aria-hidden="true">·</span>
-          <button type="button" className="atlas-night-replay" onClick={startReplay}>{t("atlas.night.replay")}</button>
+          {/* The sentence itself plays Replay; the line gains no extra word for it. */}
+          <button type="button" className="atlas-night-replay" aria-label={t("atlas.night.replay")} onClick={startReplay}>
+            <SteepMoon />
+            <span className="atlas-night-line-full">{nightSentence}</span>
+            <span className="atlas-night-line-short">{t(nightOvernight ? "atlas.night.lastNightShort" : "atlas.night.todayShort")}</span>
+          </button>
           <span aria-hidden="true">·</span>
           <button type="button" disabled={undoNight.isPending} onClick={() => undoNight.mutate()}>{t("atlas.night.undo")}</button>
         </p>

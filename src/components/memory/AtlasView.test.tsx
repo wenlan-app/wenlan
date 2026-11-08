@@ -890,12 +890,12 @@ describe("AtlasView", () => {
       }]);
     };
 
-    it("says what last night did in one line, with Replay and Undo", async () => {
+    it("says what last night did in one line that plays Replay, then Undo", async () => {
       steeped();
       renderWithQuery(<AtlasView />);
       const line = await screen.findByTestId("atlas-night-line");
       expect(line.querySelector(".atlas-night-line-full")).toHaveTextContent("Last night: 2 points written, 1 connected");
-      expect(within(line).getByRole("button", { name: "Replay" })).toBeInTheDocument();
+      expect(within(line).getByRole("button", { name: "Replay last night" })).toBeInTheDocument();
       vi.mocked(undoNights).mockResolvedValue({ things: 1, points: 2 });
       fireEvent.click(within(line).getByRole("button", { name: "Undo" }));
       await waitFor(() => expect(undoNights).toHaveBeenCalledTimes(1));
@@ -925,15 +925,15 @@ describe("AtlasView", () => {
       renderWithQuery(<AtlasView />);
       const line = await screen.findByTestId("atlas-night-line");
       const instance = capturedSigmaInstances[0];
-      fireEvent.click(within(line).getByRole("button", { name: "Replay" }));
+      fireEvent.click(within(line).getByRole("button", { name: "Replay last night" }));
       const playing = await screen.findByRole("status");
       expect(playing).toHaveTextContent("Replaying last night");
       // The picked thing's zoom stops stay away while it plays.
       expect(screen.queryByRole("group", { name: "Zoom to" })).not.toBeInTheDocument();
       fireEvent.click(within(playing).getByRole("button", { name: "Skip" }));
-      await waitFor(() => expect(screen.getByTestId("atlas-night-line")).toHaveTextContent("Replay"));
+      await waitFor(() => expect(screen.getByTestId("atlas-night-line")).toHaveTextContent("Last night"));
       expect(screen.queryByText("Replaying last night")).not.toBeInTheDocument();
-      fireEvent.click(within(screen.getByTestId("atlas-night-line")).getByRole("button", { name: "Replay" }));
+      fireEvent.click(within(screen.getByTestId("atlas-night-line")).getByRole("button", { name: "Replay last night" }));
       await screen.findByText("Replaying last night");
       fireEvent.keyDown(window, { key: "Escape" });
       await waitFor(() => expect(screen.queryByText("Replaying last night")).not.toBeInTheDocument());
