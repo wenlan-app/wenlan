@@ -49,6 +49,13 @@ memories into notes is a different job: that is `/wenlan steep`.
 
 To save a note, follow "Save a note" below and skip the memory steps.
 
+## A diagram you drew
+
+A diagram, map, chart or HTML page you made in this conversation (an ASCII
+drawing in your reply too) is kept with `keep_original`, never captured as a
+memory or rewritten as a note. Pass `structure` and `session`. When to keep one
+without being asked is in that tool's description.
+
 ## Something from another app or the web
 
 When the user wants to keep something you read in another app or on the web

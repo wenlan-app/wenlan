@@ -5990,7 +5990,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Keep an HTML page, SVG or Markdown document you made in this conversation (a diagram, map, chart or visual explanation) in Wenlan exactly as it is, as its own page with this conversation as its source. Use when the user wants to keep or reuse what you drew. Always pass structure. To change a kept diagram, keep the new version: the old page stays.",
+        description = "Keep an HTML page, SVG or Markdown document you made in this conversation (a diagram, map, chart or a text drawing in your reply) in Wenlan exactly as it is, as its own page with this conversation as its source. Keep one when asked, and unasked when it shows how the work is structured (a plan, flow or architecture) or the user builds on it; skip throwaway sketches. Always pass structure. To change a kept diagram, keep the new version: the old page stays.",
         annotations(
             title = "Keep Original",
             read_only_hint = false,
