@@ -524,6 +524,35 @@ impl MemoryDB {
         session: &SessionRef,
         space: Option<&str>,
     ) -> Result<(), WenlanError> {
+        self.stamp_page_history_rows(page_id, "created_at >= ?3", since, session, space)
+            .await
+    }
+
+    /// Record that `session` wrote version `version` of `page_id`: stamp that
+    /// one `page_history` row if it has no session yet, and upsert the
+    /// session. For a write that knows the version it made (an archive), so a
+    /// sessionless row written in the same second is never stamped with it.
+    pub async fn stamp_page_history_version_session(
+        &self,
+        page_id: &str,
+        version: i64,
+        session: &SessionRef,
+        space: Option<&str>,
+    ) -> Result<(), WenlanError> {
+        self.stamp_page_history_rows(page_id, "version = ?3", version, session, space)
+            .await
+    }
+
+    /// Stamp the sessionless `page_history` rows of `page_id` that match
+    /// `filter` (an SQL condition on `?3`, bound to `value`) with `session`.
+    async fn stamp_page_history_rows(
+        &self,
+        page_id: &str,
+        filter: &str,
+        value: i64,
+        session: &SessionRef,
+        space: Option<&str>,
+    ) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         let tx = conn
             .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
@@ -533,9 +562,11 @@ impl MemoryDB {
         let id = session_row_id(session);
         let stamped = tx
             .execute(
-                "UPDATE page_history SET session_id = ?1
-                  WHERE page_id = ?2 AND created_at >= ?3 AND session_id IS NULL",
-                libsql::params![id.as_str(), page_id, since],
+                &format!(
+                    "UPDATE page_history SET session_id = ?1
+                      WHERE page_id = ?2 AND {filter} AND session_id IS NULL"
+                ),
+                libsql::params![id.as_str(), page_id, value],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("stamp page session: {e}")))?;

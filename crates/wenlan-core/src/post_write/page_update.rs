@@ -936,6 +936,7 @@ pub(super) async fn update_page_impl(
     if basis.confirm.is_some() && result.basis_confirm.is_none() {
         result.basis_confirm = Some(wenlan_types::BasisConfirmOutcome::NotSaved);
     }
+    log_write_outcome(page_id, edited_by, agent, &result);
     // Receipts describe the DB transaction. Repairing an independent
     // projection on replay must neither change that receipt nor replay old
     // content over a newer Page. Unchanged saves repair too.
@@ -948,6 +949,28 @@ pub(super) async fn update_page_impl(
         }
     }
     Ok(result)
+}
+
+/// One log line for a write that did not simply land: a refusal, or work
+/// staged for the person's review instead of applied. Guard rejections log
+/// where they happen, since they return an error rather than a result.
+fn log_write_outcome(page_id: &str, edited_by: &str, agent: Option<&str>, result: &WriteResult) {
+    let agent = agent.unwrap_or("-");
+    match result.outcome {
+        WriteOutcome::Refused => log::info!(
+            "[update_page] refused {edited_by} (agent {agent}) on {page_id}: {}",
+            result.warnings.join("; ")
+        ),
+        WriteOutcome::Gated => log::info!(
+            "[update_page] staged {edited_by} (agent {agent}) on {page_id} for review as revision card {}",
+            result.revision_card_id.as_deref().unwrap_or("-")
+        ),
+        WriteOutcome::Wrote if !result.sentence_proposals.is_empty() => log::info!(
+            "[update_page] {edited_by} (agent {agent}) on {page_id}: {} sentence change(s) staged for review",
+            result.sentence_proposals.len()
+        ),
+        _ => {}
+    }
 }
 
 async fn project_latest_page(db: &MemoryDB, page_id: &str, path: &Path) {

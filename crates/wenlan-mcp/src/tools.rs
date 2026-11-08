@@ -4818,8 +4818,11 @@ impl WenlanMcpServer {
 
         // DELETE /api/pages/{id} archives the page; it never deletes one for
         // an AI tool. The daemon refuses a page holding the person's work.
+        // Through the session client, so the archive's history row names the
+        // AI session that asked for it.
         let path = format!("/api/pages/{}", page_id);
-        let resp: PageRemovalResponse = try_call!(self.client.delete(&path), "delete_page");
+        let client = self.session_client(None).await;
+        let resp: PageRemovalResponse = try_call!(client.delete(&path), "delete_page");
         let text = match (resp.status, resp.restorable) {
             (PageRemovalStatus::Archived, true) => format!(
                 "Page {page_id} archived. Its history is kept, and the person can restore it \

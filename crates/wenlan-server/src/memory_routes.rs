@@ -1548,6 +1548,11 @@ pub async fn handle_delete_memory(
     let is_person = caller_is_person(&headers);
     crate::note_routes::refuse_change_to_note(is_person, &source_id)?;
     if query.permanent && !is_person {
+        tracing::warn!(
+            source_id = %source_id,
+            agent = %extract_agent_name(&headers, None),
+            "refused permanent delete of a memory: only the person may"
+        );
         return Err(ServerError::Structured {
             status: axum::http::StatusCode::FORBIDDEN,
             body: serde_json::json!({
@@ -1602,6 +1607,7 @@ pub async fn handle_delete_memory(
     db.delete_by_source_id("memory", &source_id)
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
+    tracing::info!(source_id = %source_id, agent = %agent, "deleted a memory permanently");
     let ids = vec![source_id.clone()];
     if let Err(e) = db
         .log_agent_activity(&agent, "forget", &ids, None, &detail)

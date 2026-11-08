@@ -565,7 +565,16 @@ pub async fn handle_archive_page(
     };
     let agent = extract_agent_name(&headers, None);
     let remover = page_remover(&headers, &agent);
-    archive_page_for(&db, page_root, &id, remover, header_space.as_deref()).await
+    let session = crate::session_routes::extract_session_ref(&headers);
+    archive_page_for(
+        &db,
+        page_root,
+        &id,
+        remover,
+        header_space.as_deref(),
+        session.as_ref(),
+    )
+    .await
 }
 
 /// Who asks to archive or delete a page: the person only when the request
@@ -603,6 +612,7 @@ async fn archive_page_for(
     id: &str,
     remover: wenlan_core::post_write::PageRemover<'_>,
     header_space: Option<&str>,
+    session: Option<&wenlan_types::SessionRef>,
 ) -> Result<Json<PageRemovalResponse>, ServerError> {
     // Checked here, not left to the core fence, so the refusal can carry the
     // entity id as a field. The core fence still stands behind it for every
@@ -613,6 +623,25 @@ async fn archive_page_for(
     let archived_version = wenlan_core::post_write::archive_page_as(db, id, remover, &scope)
         .await
         .map_err(|error| page_removal_error(error, id))?;
+    // The archive's history row names the session that asked for it, as a
+    // create or refresh does: that one version, so no other row written in
+    // the same second is stamped. Best effort: the archive already happened.
+    if let (Some(session), Some(version)) = (session, archived_version) {
+        let space = db
+            .get_page(id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|page| page.space);
+        if let Err(error) = db
+            .stamp_page_history_version_session(id, version, session, space.as_deref())
+            .await
+        {
+            tracing::warn!(
+                "[session] failed to stamp archive of page {id} with {session}: {error}"
+            );
+        }
+    }
     let mut body = PageRemovalResponse {
         status: PageRemovalStatus::Archived,
         restorable: archived_version.is_some(),
@@ -794,7 +823,16 @@ pub async fn handle_delete_page(
     let agent = extract_agent_name(&headers, None);
     let remover = page_remover(&headers, &agent);
     if !query.permanent {
-        return archive_page_for(&db, page_root, &id, remover, header_space.as_deref()).await;
+        let session = crate::session_routes::extract_session_ref(&headers);
+        return archive_page_for(
+            &db,
+            page_root,
+            &id,
+            remover,
+            header_space.as_deref(),
+            session.as_ref(),
+        )
+        .await;
     }
 
     let knowledge_path = wenlan_core::config::load_config().knowledge_path_or_default();

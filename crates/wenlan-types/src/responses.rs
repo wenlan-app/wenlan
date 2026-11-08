@@ -168,24 +168,60 @@ pub enum EmbeddingModelStatus {
 /// operators can see whether folder-ingest enrichment is progressing, idle, or
 /// paused on an LLM failure (waiting for a backoff retry). Mirrors the
 /// [`RerankerStatus`] tagged-enum shape.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+///
+/// A document that used up its retries is a failed item, reported in
+/// `failed` on whichever state the rest of the queue is in; it does not
+/// make the queue `paused`. `failed` is absent when nothing failed, so the
+/// wire is unchanged for a queue without failures.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum QueueStatus {
     /// No documents are queued for enrichment (nothing pending, in-progress, or paused).
-    #[default]
-    Idle,
-    /// Documents are queued or being enriched. `pending` counts rows not yet done.
-    Active { pending: u64 },
-    /// At least one document is paused after an LLM failure. `reason` is that
-    /// pause's failure reason, `next_retry_at` the earliest Unix-secs retry time
-    /// (the scheduler auto-resumes once it elapses — no daemon restart needed),
-    /// and `pending` counts rows not yet done.
+    Idle {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<QueueFailed>,
+    },
+    /// Documents are queued or being enriched. `pending` counts rows still to
+    /// be worked.
+    Active {
+        pending: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<QueueFailed>,
+    },
+    /// At least one document is paused after an LLM failure and will be
+    /// retried. `reason` is that pause's failure reason, `next_retry_at` the
+    /// earliest Unix-secs retry time (the scheduler auto-resumes once it
+    /// elapses — no daemon restart needed), and `pending` counts rows still to
+    /// be worked.
     Paused {
         reason: String,
         pending: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         next_retry_at: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<QueueFailed>,
     },
+}
+
+impl QueueStatus {
+    /// Nothing queued and nothing failed.
+    pub const IDLE: Self = Self::Idle { failed: None };
+}
+
+impl Default for QueueStatus {
+    fn default() -> Self {
+        Self::IDLE
+    }
+}
+
+/// Documents the queue gave up on after the retry cap. They will not be
+/// retried on their own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueFailed {
+    pub count: u64,
+    /// The error of the most recent one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Observable runtime selected for the local llama.cpp model.
@@ -2417,7 +2453,7 @@ mod queue_status_tests {
         let json =
             r#"{"is_running":true,"files_indexed":0,"files_total":0,"sources_connected":[]}"#;
         let parsed: StatusResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.queue, QueueStatus::Idle);
+        assert_eq!(parsed.queue, QueueStatus::IDLE);
         assert_eq!(
             parsed.on_device_inference,
             OnDeviceInferenceStatus::default()
@@ -2457,6 +2493,7 @@ mod queue_status_tests {
             reason: "analysis LLM failed".into(),
             pending: 2,
             next_retry_at: Some(1_712_678_400),
+            failed: None,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"state\":\"paused\""), "got: {json}");
@@ -2470,7 +2507,10 @@ mod queue_status_tests {
 
     #[test]
     fn queue_status_active_round_trips() {
-        let s = QueueStatus::Active { pending: 3 };
+        let s = QueueStatus::Active {
+            pending: 3,
+            failed: None,
+        };
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"state\":\"active\""), "got: {json}");
         assert!(json.contains("\"pending\":3"), "got: {json}");
@@ -2479,8 +2519,32 @@ mod queue_status_tests {
 
     #[test]
     fn queue_status_idle_serializes_state_only() {
-        let json = serde_json::to_string(&QueueStatus::Idle).unwrap();
+        let json = serde_json::to_string(&QueueStatus::IDLE).unwrap();
         assert_eq!(json, r#"{"state":"idle"}"#);
+    }
+
+    #[test]
+    fn queue_status_carries_failed_documents_beside_its_state() {
+        let s = QueueStatus::Idle {
+            failed: Some(QueueFailed {
+                count: 1,
+                reason: Some("source page write failed".into()),
+            }),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(
+            json,
+            r#"{"state":"idle","failed":{"count":1,"reason":"source page write failed"}}"#
+        );
+        assert_eq!(serde_json::from_str::<QueueStatus>(&json).unwrap(), s);
+        // A daemon from before `failed` existed still reads.
+        assert_eq!(
+            serde_json::from_str::<QueueStatus>(r#"{"state":"active","pending":2}"#).unwrap(),
+            QueueStatus::Active {
+                pending: 2,
+                failed: None
+            }
+        );
     }
 }
 
@@ -2508,8 +2572,8 @@ mod reranker_status_tests {
             files_indexed: 0,
             files_total: 0,
             sources_connected: vec![],
-            queue: QueueStatus::Idle,
-            compile_queue: QueueStatus::Idle,
+            queue: QueueStatus::IDLE,
+            compile_queue: QueueStatus::IDLE,
             reranker: RerankerStatus::Active {
                 model_id: "BGERerankerBase".into(),
             },

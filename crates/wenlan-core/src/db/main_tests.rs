@@ -506,6 +506,7 @@ pub async fn test_db() -> (MemoryDB, tempfile::TempDir) {
         // fresh-store chain exactly as `MemoryDB::new` would decide it.
         opened_fresh_file: std::sync::atomic::AtomicBool::new(true),
         skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+        migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
         steep_leases: crate::steep::SteepLeases::default(),
     };
     memory_db
@@ -577,6 +578,7 @@ pub async fn test_db_at(ceiling: i64) -> (MemoryDB, tempfile::TempDir) {
         // fresh-store chain exactly as `MemoryDB::new` would decide it.
         opened_fresh_file: std::sync::atomic::AtomicBool::new(true),
         skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+        migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
         steep_leases: crate::steep::SteepLeases::default(),
     };
     memory_db
@@ -45849,6 +45851,7 @@ async fn startup_reconciles_v79_observations_without_source_memory_id() {
         // fresh-store chain exactly as `MemoryDB::new` would decide it.
         opened_fresh_file: std::sync::atomic::AtomicBool::new(true),
         skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+        migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
         steep_leases: crate::steep::SteepLeases::default(),
     };
 

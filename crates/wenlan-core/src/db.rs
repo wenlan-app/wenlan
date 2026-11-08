@@ -36,6 +36,7 @@ mod count;
 mod derived_artifact_sweep;
 mod edges_rebuild;
 mod entity_page_adapter;
+mod entity_type_fold;
 mod eval_lifecycle_integrity;
 mod eval_paired_guard;
 mod eval_pipeline_reads;
@@ -56,6 +57,7 @@ mod maintenance_queue;
 mod maintenance_retro_scan;
 mod memory_point_reads;
 mod metadata_json;
+mod migration_backups;
 mod migrations_v004_v009;
 mod okf_concepts;
 mod onboarding_milestones;
@@ -1327,6 +1329,11 @@ impl MemoryDB {
         old_type: &str,
         canonical: &str,
     ) -> Result<usize, WenlanError> {
+        // The rows a fold covers: every topic page of type `?1`, with the
+        // entity id it is mapped to.
+        const FOLD_ENTITY_TYPE_ROWS: &str = "FROM entity_page_map epm \
+             JOIN pages p ON p.id = epm.page_id \
+             WHERE p.kind = 'entity' AND p.entity_type = ?1";
         // Snapshot the affected ids, rewrite them, and ledger the pre-image inside
         // ONE transaction so the UPDATE and the ledger write are atomic (mirrors
         // fold_relation_type's begin/commit/rollback). The ledger INSERT is inlined
@@ -1345,12 +1352,13 @@ impl MemoryDB {
             // old `entities`-only one -- nothing is missed -- and it is now
             // the ONLY source that sees a post-flip (shadow-only) entity,
             // which has no `entities` row at all.
+            //
+            // The selection, the ledgered pre-image, the returned count and the
+            // UPDATE all use FOLD_ENTITY_TYPE_ROWS, so they name the same rows:
+            // archived topics included, since the UPDATE always rewrote them.
             let mut rows = conn
                 .query(
-                    "SELECT epm.entity_id FROM entity_page_map epm \
-                     JOIN pages p ON p.id = epm.page_id \
-                     WHERE p.kind = 'entity' AND p.status = 'active' \
-                       AND p.entity_type = ?1",
+                    &format!("SELECT epm.entity_id {FOLD_ENTITY_TYPE_ROWS}"),
                     libsql::params![old_type],
                 )
                 .await
@@ -1387,9 +1395,11 @@ impl MemoryDB {
             // skipped.
             let now_iso = chrono::Utc::now().to_rfc3339();
             conn.execute(
-                "UPDATE pages SET entity_type = ?1, last_modified = ?2 \
-                 WHERE kind = 'entity' AND entity_type = ?3",
-                libsql::params![canonical.to_string(), now_iso, old_type.to_string()],
+                &format!(
+                    "UPDATE pages SET entity_type = ?2, last_modified = ?3 \
+                     WHERE id IN (SELECT p.id {FOLD_ENTITY_TYPE_ROWS})"
+                ),
+                libsql::params![old_type.to_string(), canonical.to_string(), now_iso],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("fold_entity_type shadow: {e}")))?;
@@ -4341,16 +4351,20 @@ pub struct DocEnrichmentQueueEntry {
 }
 
 /// Aggregate state of the document-enrichment queue, for `/api/status`
-/// observability. `pending` counts rows not yet `done` (pending + in_progress +
-/// paused); `paused_reason` / `next_retry_at` describe the soonest-to-retry
-/// paused row; `exhausted` counts paused rows that reached the retry cap and are
-/// no longer eligible for a claim.
+/// observability. `pending` counts rows still to be worked (pending +
+/// in_progress + paused rows that will be retried); `paused_reason` /
+/// `next_retry_at` describe the soonest-to-retry paused row; `exhausted`
+/// counts paused rows that reached the retry cap and are no longer eligible
+/// for a claim. An exhausted row is one failed document, not queue work and
+/// not a pause of the queue: it is counted only in `exhausted`, and
+/// `exhausted_reason` is the error of the most recent one.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DocEnrichmentQueueStatus {
     pub pending: u64,
     pub paused_reason: Option<String>,
     pub next_retry_at: Option<i64>,
     pub exhausted: u64,
+    pub exhausted_reason: Option<String>,
 }
 
 /// Durable store-time choices needed by restart-safe fixed-stage enrichment.
@@ -5139,6 +5153,10 @@ pub struct MemoryDB {
     /// Set by `run_migrations_up_to` for the chain it is running and read by
     /// `backup_before_migration`.
     skip_migration_backups: std::sync::atomic::AtomicBool,
+    /// How many pre-migration snapshots the running chain took or kept.
+    /// `run_migrations_up_to` resets it and prunes older snapshots when a
+    /// chain that took one finishes.
+    migration_backups_this_chain: std::sync::atomic::AtomicUsize,
     /// Which notes a steep run (automatic or on demand) holds right now. In
     /// memory on purpose: both kinds of run live in this daemon process, so a
     /// restart ends every hold together with the work behind it.
@@ -5300,6 +5318,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(false),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
             steep_leases: crate::steep::SteepLeases::default(),
         })
     }
@@ -5526,6 +5545,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(created_in_this_open),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
             steep_leases: crate::steep::SteepLeases::default(),
         };
 
@@ -5645,6 +5665,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(created_in_this_open),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
             steep_leases: crate::steep::SteepLeases::default(),
         };
 
@@ -5787,6 +5808,8 @@ impl MemoryDB {
             created_in_this_open && version == 0,
             std::sync::atomic::Ordering::Relaxed,
         );
+        self.migration_backups_this_chain
+            .store(0, std::sync::atomic::Ordering::Relaxed);
 
         // The downgrade barrier — see `refuse_if_newer_schema`. The constructors
         // now run it at open time, before any DDL; this call is defense in depth
@@ -11025,6 +11048,7 @@ impl MemoryDB {
             }
         }
 
+        self.prune_migration_backups_after_chain().await;
         Ok(())
     }
 
@@ -11663,6 +11687,7 @@ impl MemoryDB {
                  the original restore point (skipping re-snapshot)",
                 dest.display()
             );
+            self.note_chain_backup(migration).await?;
             return Ok(());
         }
         let receipt = self.online_backup(&dest).await?;
@@ -11684,7 +11709,80 @@ impl MemoryDB {
             receipt.dest,
             receipt.backup_pages
         );
+        self.note_chain_backup(migration).await?;
         Ok(())
+    }
+
+    /// Count a snapshot this migration chain took or kept, and remember the
+    /// version the upgrade started from (the one before its first snapshot)
+    /// unless an earlier attempt at the same upgrade already did. A retried
+    /// upgrade so keeps the snapshot from before the whole upgrade, even
+    /// though this run of the chain did not take it.
+    async fn note_chain_backup(&self, migration: i64) -> Result<(), WenlanError> {
+        self.migration_backups_this_chain
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let key = migration_backups::MIGRATION_CHAIN_FROM_VERSION_KEY;
+        if self.get_app_metadata(key).await?.is_none() {
+            self.set_app_metadata(key, &(migration - 1).to_string())
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// After a migration chain finishes, remove old pre-migration snapshots.
+    /// Every snapshot the upgrade took is kept, counting the ones an earlier,
+    /// failed attempt at the same upgrade took (they are numbered above the
+    /// version it started from, see [`Self::note_chain_backup`]), so the
+    /// state before the whole upgrade is never the one removed. Of older
+    /// snapshots, the newest are kept until
+    /// [`migration_backups::MIGRATION_BACKUPS_KEPT`] remain. The upgrade's
+    /// start version is then cleared. Best effort: a failure is logged and
+    /// never fails the open.
+    async fn prune_migration_backups_after_chain(&self) {
+        let taken = self
+            .migration_backups_this_chain
+            .swap(0, std::sync::atomic::Ordering::Relaxed);
+        let key = migration_backups::MIGRATION_CHAIN_FROM_VERSION_KEY;
+        let from_version = match self.get_app_metadata(key).await {
+            Ok(value) => value.and_then(|value| value.trim().parse::<i64>().ok()),
+            Err(error) => {
+                log::warn!("[migration] backup pruning skipped: {error}");
+                return;
+            }
+        };
+        if taken == 0 && from_version.is_none() {
+            return;
+        }
+        let source_path = {
+            let conn = self.conn.lock().await;
+            match Self::main_db_path(&conn).await {
+                Ok(path) => path,
+                Err(error) => {
+                    log::warn!("[migration] backup pruning skipped: {error}");
+                    return;
+                }
+            }
+        };
+        let Some(dir) = source_path.parent() else {
+            return;
+        };
+        if let Err(error) = migration_backups::prune_migration_backups(
+            dir,
+            migration_backups::MIGRATION_BACKUPS_KEPT,
+            from_version,
+        ) {
+            log::warn!("[migration] backup pruning failed: {error}");
+        }
+        let conn = self.conn.lock().await;
+        if let Err(error) = conn
+            .execute(
+                "DELETE FROM app_metadata WHERE key = ?1",
+                libsql::params![key],
+            )
+            .await
+        {
+            log::warn!("[migration] could not clear {key}: {error}");
+        }
     }
 
     // Migration 82 (M2 PR-2 "reader cutover", stages c+d). Adds the cutover
@@ -62286,23 +62384,22 @@ impl MemoryDB {
     }
 
     /// Summarize the document-enrichment queue for `/api/status`. `pending` is
-    /// the count of not-`done` rows; the paused fields describe the
-    /// soonest-to-retry paused row (a NULL `next_retry_at` — immediately
-    /// eligible — sorts first), excluding exhausted rows. `exhausted` counts
-    /// paused rows at or above the retry cap. `paused_reason` also surfaces
-    /// exhaustion: a caller mapping `paused_reason.is_some()` to a stalled
-    /// queue (e.g. the wire `QueueStatus::Paused`) must see an all-exhausted
-    /// queue as stalled too, not silently `Active` forever. `next_retry_at`
-    /// stays `None` when every paused row is exhausted, since there is no
-    /// next retry to report.
+    /// the count of not-`done` rows that will still be worked; the paused
+    /// fields describe the soonest-to-retry paused row (a NULL
+    /// `next_retry_at` — immediately eligible — sorts first). Rows at or
+    /// above the retry cap are failed documents: they are counted in
+    /// `exhausted` (with the latest one's error in `exhausted_reason`) and
+    /// nowhere else, so one document that gave up neither reads as pending
+    /// work forever nor makes the whole queue read as paused.
     pub async fn document_enrichment_queue_status(
         &self,
     ) -> Result<DocEnrichmentQueueStatus, WenlanError> {
         let conn = self.conn.lock().await;
         let mut pending_rows = conn
             .query(
-                "SELECT COUNT(*) FROM document_enrichment_queue WHERE status != 'done'",
-                (),
+                "SELECT COUNT(*) FROM document_enrichment_queue
+                 WHERE status != 'done' AND NOT (status = 'paused' AND attempt_count >= ?1)",
+                libsql::params![Self::DOC_ENRICHMENT_MAX_ATTEMPTS],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("queue_status pending: {e}")))?;
@@ -62342,7 +62439,7 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("queue_status paused: {e}")))?;
-        let (retryable_paused_reason, next_retry_at) = match paused_rows
+        let (paused_reason, next_retry_at) = match paused_rows
             .next()
             .await
             .map_err(|e| WenlanError::VectorDb(format!("queue_status paused row: {e}")))?
@@ -62353,19 +62450,29 @@ impl MemoryDB {
             ),
             None => (None, None),
         };
+        drop(paused_rows);
 
-        // Fold exhaustion into `paused_reason` so a caller that treats
-        // `paused_reason.is_some()` as "queue is stalled" (the wire mapping
-        // in wenlan-server) still sees a stall when the queue holds only
-        // permanently-exhausted documents, instead of reporting them as
-        // ordinary `pending` work forever.
-        let paused_reason = match (retryable_paused_reason, exhausted) {
-            (reason, 0) => reason,
-            (Some(reason), n) => Some(format!("{reason}; {n} documents exhausted retries")),
-            (None, n) => Some(format!(
-                "{n} documents exhausted enrichment retries (max {} attempts) and will not be retried",
-                Self::DOC_ENRICHMENT_MAX_ATTEMPTS
-            )),
+        let exhausted_reason = if exhausted == 0 {
+            None
+        } else {
+            let mut rows = conn
+                .query(
+                    "SELECT error_detail FROM document_enrichment_queue
+                     WHERE status = 'paused' AND attempt_count >= ?1
+                     ORDER BY updated_at DESC, rowid DESC
+                     LIMIT 1",
+                    libsql::params![Self::DOC_ENRICHMENT_MAX_ATTEMPTS],
+                )
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!("queue_status exhausted reason: {e}"))
+                })?;
+            rows.next()
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!("queue_status exhausted reason row: {e}"))
+                })?
+                .and_then(|row| row.get::<Option<String>>(0).ok().flatten())
         };
 
         Ok(DocEnrichmentQueueStatus {
@@ -62373,6 +62480,7 @@ impl MemoryDB {
             paused_reason,
             next_retry_at,
             exhausted,
+            exhausted_reason,
         })
     }
 
