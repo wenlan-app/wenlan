@@ -48,9 +48,11 @@ import {
   ranOvernight,
   replayStops,
   REPLAY_TIMING,
+  tidyMs,
   todayStartSeconds,
   type ReplayStop,
 } from "../../lib/graph/lastNight";
+import { GHOST_STROKE, ghostAt, ghostPhase, ghostRests, ghostsMoving, RING_RADII, swellOf, type ReplayGhost } from "../../lib/graph/tidyGhosts";
 import type { Entity, KnowledgeGraph, ThingNightPoints } from "../../lib/tauri";
 import {
   buildKnowledgeGraphModel,
@@ -273,13 +275,19 @@ function prefersReducedMotion(): boolean {
 const playedReplays = new Set<number>();
 
 /** What Replay is doing: the stops it plays, its timers, the things whose
- *  points it shows, and the view to go back to (UX-GRAPH-6). */
+ *  points it shows, and the view to go back to (UX-GRAPH-6); the tidies it
+ *  is showing and their paint loop (UX-GRAPH-7). */
 interface ReplayRun {
   readonly stops: readonly ReplayStop[];
   readonly timers: number[];
   readonly things: ReadonlySet<string>;
   readonly overview: AtlasViewpoint;
+  ghosts: readonly ReplayGhost[];
+  frame: number;
 }
+
+/** A ghost's size when what it slides into is not drawn, px. */
+const GHOST_FALLBACK_RADIUS = 5;
 
 export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack }: AtlasViewProps) {
   const { t } = useTranslation();
@@ -828,6 +836,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       timers: [],
       things: new Set(stops.map((stop) => stop.thing)),
       overview: captureAtlasViewpoint(renderer, drawn),
+      ghosts: [],
+      frame: 0,
     };
     replayRef.current = run;
     overviewRef.current = run.overview;
@@ -842,6 +852,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         duration: 0,
         padding: 40,
       });
+      // What the night tidied rests beside what stands now, still, until Done.
+      run.ghosts = stops.flatMap((stop) => stop.tidies.map((tidy) => ({ tidy, thing: stop.thing, startAt: 0, still: true })));
       setReplaying("marked");
       renderer.refresh();
       return;
@@ -865,6 +877,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       });
       at += beat.camera;
       if (stop.grow.length > 0) at += growMs(stop.grow.length) + beat.holdGrown;
+      // UX-GRAPH-7: what survivors grew is there; what the night hid comes
+      // in beside it and is taken in, one tidy after another.
+      if (stop.tidies.length > 0) {
+        after(at, () => {
+          const now = performance.now();
+          const gap = growStagger(stop.tidies.length);
+          playGhosts(run, stop.tidies.map((tidy, index) => ({ tidy, thing: stop.thing, startAt: now + index * gap, still: false })));
+        });
+        at += tidyMs(stop.tidies.length) + beat.holdTidied;
+      }
       if (stop.fly.length > 0) {
         after(at, () => {
           const view = sigmaRef.current;
@@ -880,6 +902,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     after(at, () => endReplayRef.current("return"));
   };
   startReplayRef.current = startReplay;
+  /** Shows these tidies, painting every frame while one moves; when they
+   *  are all in, nothing of them is left. */
+  const playGhosts = (run: ReplayRun, ghosts: readonly ReplayGhost[]) => {
+    cancelAnimationFrame(run.frame);
+    run.ghosts = ghosts;
+    const tick = () => {
+      if (replayRef.current !== run) return;
+      const moving = ghostsMoving(run.ghosts, performance.now());
+      if (!moving) run.ghosts = [];
+      sigmaRef.current?.refresh();
+      if (moving) run.frame = requestAnimationFrame(tick);
+    };
+    run.frame = requestAnimationFrame(tick);
+  };
   /** Replay ends: Skip, Esc and its own end take the camera back; touching
    *  the map leaves it where the person put it. Everything lands, and what
    *  the map shows goes back to its usual rules. */
@@ -887,6 +923,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const run = replayRef.current;
     if (!run) return;
     for (const timer of run.timers) window.clearTimeout(timer);
+    // Ghosts go and survivors land at full size, wherever a tidy had got to.
+    cancelAnimationFrame(run.frame);
+    run.ghosts = [];
     growRef.current([], 0, 0);
     const renderer = sigmaRef.current;
     const drawn = graphRef.current;
@@ -1103,6 +1142,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // A rebuild while Replay plays (a fresh read landing) ends it where it is.
     if (replayRef.current) {
       for (const timer of replayRef.current.timers) window.clearTimeout(timer);
+      cancelAnimationFrame(replayRef.current.frame);
       replayRef.current = null;
       selectedRef.current = null;
       setSelectedThing(null);
@@ -1577,7 +1617,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         if (attrs.night === true && lodRef.current.phase !== "overview" && !display.hidden) display.forceLabel = true;
         const floor = lodRef.current.phase === "overview" && attrs.landmark ? minimumGraphRadius * 2 : minimumGraphRadius;
         const cap = nodeSizeCapPx(attrs, node === hoverStateRef.current.hovered);
-        const size = Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel);
+        const ghosts = replayRef.current?.ghosts;
+        const size = Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel) * (ghosts && ghosts.length > 0 ? swellOf(ghosts, node, performance.now()) : 1);
         if (growth && growth.targets.has(node)) return { ...display, size: size * Math.max(0.15, growth.progress.get(node) ?? 0) };
         return { ...display, size };
       },
@@ -1607,6 +1648,50 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     }
 
     const dustAnchors = dustBadgeAnchors(graph);
+    // Replay's tidies (UX-GRAPH-7): each ghost a hollow ring in the colour
+    // of what it slides into, placed from where that is on screen now, so
+    // a camera move carries them along. Drawn over everything, then gone.
+    const drawGhosts = () => {
+      const run = replayRef.current;
+      if (!run || run.ghosts.length === 0) return;
+      const ctx = overlay.getContext("2d");
+      if (!ctx) return; // jsdom
+      const now = performance.now();
+      ctx.save();
+      ctx.lineWidth = GHOST_STROKE;
+      for (const ghost of run.ghosts) {
+        const phase = ghostPhase(ghost, now - ghost.startAt);
+        if (phase.alpha <= 0 && phase.ring === null) continue;
+        const thing = renderer.getNodeDisplayData(ghost.thing);
+        const centre = thing ? renderer.framedGraphToViewport(thing) : null;
+        const shown = ghost.tidy.survivor ? renderer.getNodeDisplayData(ghost.tidy.survivor) : undefined;
+        const standing = shown && !shown.hidden ? shown : null;
+        // Filtered off the map: no motion, as the line does not count it.
+        // A replace whose kept memory is not drawn goes into the thing.
+        if (!standing && (ghost.tidy.kind !== "replace" || !centre)) continue;
+        const at = standing ? renderer.framedGraphToViewport(standing) : centre!;
+        const radius = standing ? renderer.scaleSize(standing.size) / swellOf([ghost], ghost.tidy.survivor!, now) : GHOST_FALLBACK_RADIUS;
+        const color = standing?.color ?? paletteRef.current.memory;
+        if (phase.alpha > 0) {
+          ctx.strokeStyle = color;
+          ctx.globalAlpha = phase.alpha;
+          for (const rest of ghostRests(standing ? at : null, centre, radius, ghost.tidy.ghosts)) {
+            const spot = ghostAt(rest, at, phase.slide);
+            ctx.beginPath();
+            ctx.arc(spot.x, spot.y, radius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+        if (phase.ring !== null) {
+          ctx.strokeStyle = paletteRef.current.bridge;
+          ctx.globalAlpha = 0.6 * (1 - phase.ring);
+          ctx.beginPath();
+          ctx.arc(at.x, at.y, radius * (1 + (RING_RADII - 1) * phase.ring), 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    };
     const drawOverlay = (scene: CartographyScene) => {
       const ctx = overlay.getContext("2d");
       if (!ctx) return; // jsdom
@@ -1713,6 +1798,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         sceneDirtyRef.current = false;
       }
       drawOverlay(sceneRef.current);
+      drawGhosts();
     });
     // The opening frame follows the hierarchy's meaningful components. A
     // later rebuild restores its saved viewpoint below; only a fresh graph

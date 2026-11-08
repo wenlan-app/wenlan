@@ -11,6 +11,7 @@ import {
   REPLAY_MAX_THINGS,
   replayMs,
   replayStops,
+  tidyMs,
   todayStartSeconds,
 } from "./lastNight";
 
@@ -82,8 +83,45 @@ describe("Replay's stops (UX-GRAPH-6)", () => {
     ];
     const on = new Set([thingNodeId("a"), memoryNodeId("m1"), memoryNodeId("m2"), "e1", memoryNodeId("m9")]);
     expect(replayStops(things, (id) => on.has(id))).toEqual([
-      { thing: thingNodeId("a"), grow: [memoryNodeId("m1"), memoryNodeId("m2")], fly: [memoryNodeId("m1"), memoryNodeId("m2")], topics: ["e1"] },
+      { thing: thingNodeId("a"), grow: [memoryNodeId("m1"), memoryNodeId("m2")], tidies: [], fly: [memoryNodeId("m1"), memoryNodeId("m2")], topics: ["e1"] },
     ]);
+  });
+
+  it("shows each tidy (UX-GRAPH-7) by what stands now, and a replace into the thing when that is off the map", () => {
+    const tidied = thing("a", { at: at(3), written: [] });
+    tidied.last_night = {
+      at: at(3),
+      written: [],
+      linked: [],
+      tidied: [
+        { kind: "merge", memory_id: "m1", replaced: ["o1", "o2"] },
+        { kind: "merge", memory_id: "m3", replaced: ["o1", "o2", "o3", "o4", "o5"] },
+        { kind: "replace", memory_id: "elsewhere", replaced: ["o6"] },
+        { kind: "update", memory_id: "gone", replaced: ["o7"] },
+      ],
+    };
+    const on = new Set([thingNodeId("a"), memoryNodeId("m1"), memoryNodeId("m3")]);
+    const [stop] = replayStops([tidied], (id) => on.has(id));
+    expect(stop!.tidies).toEqual([
+      { kind: "merge", survivor: memoryNodeId("m1"), ghosts: 2 },
+      { kind: "merge", survivor: memoryNodeId("m3"), ghosts: 3 },
+      { kind: "replace", survivor: null, ghosts: 1 },
+    ]);
+    // A night that only replaced is still a stop.
+    const replacedOnly = thing("b", { at: at(3), written: [] });
+    replacedOnly.last_night = { at: at(3), written: [], linked: [], tidied: [{ kind: "replace", memory_id: "kept", replaced: ["o8"] }] };
+    expect(replayStops([replacedOnly], (id) => id === thingNodeId("b"))).toHaveLength(1);
+  });
+
+  it("takes about a second more for a stop that tidied", () => {
+    expect(tidyMs(0)).toBe(0);
+    expect(tidyMs(1)).toBe(200 + 450);
+    expect(tidyMs(3)).toBe(200 + 450 + 2 * 110);
+    const plain = thing("a", { at: at(3), written: ["a1"] });
+    const tidied = thing("a", { at: at(3), written: ["a1"] });
+    tidied.last_night!.tidied = [{ kind: "update", memory_id: "a1", replaced: ["o1"] }];
+    const extra = replayMs(replayStops([tidied], () => true)) - replayMs(replayStops([plain], () => true));
+    expect(extra).toBe(200 + 450 + 450);
   });
 
   it("stops at five things at most", () => {
