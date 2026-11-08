@@ -16,7 +16,6 @@ import {
   Minus,
   Funnel,
   Plus,
-  Shuffle,
   SlidersHorizontal,
 } from "@phosphor-icons/react";
 import {
@@ -398,8 +397,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // UX-GRAPH-1: points keep their places; moving all of them is the
   // person's choice, asked first, and can be taken back once.
   const [layoutVersion, setLayoutVersion] = useState(0);
-  const [rearrange, setRearrange] = useState<"idle" | "asking" | "done" | "rebalanced">("idle");
-  const rearrangeRef = useRef<"fresh" | "undo" | null>(null);
+  const [rebalanced, setRebalanced] = useState(false);
+  /** Put back was pressed: the next build brings the layout from before the rebalance back. */
+  const rearrangeRef = useRef<"undo" | null>(null);
   // A large fresh layout runs in a worker; its spots come back here and the
   // map is built again from them (round 3 polish).
   const workerLayoutRef = useRef<{ model: GraphModel; version: number; variant: AtlasLayoutVariant; positions: Map<string, { x: number; y: number }>; regions?: Map<string, string>; blockedMs: number; totalMs: number; report?: unknown } | null>(null);
@@ -1223,11 +1223,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     } catch {
       // Storage unavailable: the default layout.
     }
-    // R2 (round 4): each body keeps the region it was in; only Rearrange works
-    // the regions out again (its undo brings the old ones back).
+    // R2 (round 4): each body keeps the region it was in; only the one-time
+    // rebalance works the regions out again (Put back brings the old ones back).
     const undoing = rearrangeRef.current === "undo";
     const regionsAtStart: ReadonlyMap<string, string> | undefined = (() => {
-      if (layoutVariant !== "r2" || rearrangeRef.current === "fresh") return undefined;
+      if (layoutVariant !== "r2") return undefined;
       if (undoing) return readPreviousRegions(spaceFilter);
       if (readLayoutVersion(spaceFilter) < ATLAS_LAYOUT_VERSION) return undefined;
       const stored = readStoredRegions(spaceFilter);
@@ -1239,7 +1239,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // large map was a fresh layout that the kept one then replaced). An undo
     // or Put back always goes straight to the layout it brings back.
     const keptAtStart = (() => {
-      if (rearrangeRef.current === "fresh") return null;
       if (!undoing && layoutVariant !== "r0" && readLayoutVersion(spaceFilter) < ATLAS_LAYOUT_VERSION) return null;
       const prior = viewpointRef.current;
       const stored = undoing ? readPreviousPositions(spaceFilter) : prior?.scope === spaceFilter ? prior.body : readStoredPositions(spaceFilter);
@@ -1261,7 +1260,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       return undoing || missing <= keptMissingAllowance(bodies) ? stored : null;
     })();
     // Put back to a layout from before regions: it comes back as it was,
-    // without regions, until the next Rearrange.
+    // without regions, until the layout version changes again.
     const regionless = layoutVariant === "r2" && keptAtStart !== null && (regionsAtStart?.size ?? 0) === 0;
     const job = workerLayoutRef.current;
     const fromWorker = !keptAtStart && job && job.model === visibleModel && job.version === layoutVersion && job.variant === layoutVariant
@@ -1366,7 +1365,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const bodyIds = graph.nodes().filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE);
     // Within a visit the last layout is in memory; on a new visit it comes
     // from the kept layout, so the same point is where it was (UX-GRAPH-1).
-    let layoutChange = rearrangeRef.current;
+    let layoutChange: "fresh" | "undo" | null = rearrangeRef.current;
     rearrangeRef.current = null;
     // A layout kept from before the balanced map is laid out again, once, and
     // turned to sit as close to the old one as it can; the old one can be put
@@ -1416,7 +1415,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       sim.restorePositions(alignToKept(fresh, oldLayout));
       // The saved camera framed the old layout.
       viewpointRef.current = null;
-      setRearrange("rebalanced");
+      setRebalanced(true);
     }
     const bodyPositions = () => {
       const positions = new Map(graph.nodes()
@@ -2934,41 +2933,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
             <CornersOut size={16} weight="regular" aria-hidden="true" />
           </button>
         </AtlasTooltip>
-        <AtlasTooltip content={t("atlas.rearrange")}>
-          <button type="button" className="atlas-icon-button" aria-label={t("atlas.rearrange")} aria-expanded={rearrange === "asking"}
-            onClick={() => setRearrange((state) => (state === "asking" ? "idle" : "asking"))}>
-            <Shuffle size={16} weight="regular" aria-hidden="true" />
-          </button>
-        </AtlasTooltip>
       </div>
       {layingOut && (
         <div className="atlas-laying-out" role="status">{t("atlas.layingOut")}</div>
       )}
-      {rearrange !== "idle" && (
-        <div className="atlas-rearrange-note" role={rearrange === "asking" ? "dialog" : "status"} aria-label={t("atlas.rearrange")}>
-          {rearrange === "rebalanced" ? (
-            <>
-              <span className="atlas-note-long">{t("atlas.rebalanced")}</span>
-              <span className="atlas-note-short">{t("atlas.rebalancedShort")}</span>
-              <span aria-hidden="true">·</span>
-            </>
-          ) : <span>{t(rearrange === "asking" ? "atlas.rearrangeAsk" : "atlas.rearranged")}</span>}
-          {rearrange === "asking" ? (
-            <>
-              <button type="button" className="atlas-rearrange-go" onClick={() => {
-                rearrangeRef.current = "fresh";
-                setRearrange("done");
-                setLayoutVersion((version) => version + 1);
-              }}>{t("atlas.rearrangeConfirm")}</button>
-              <button type="button" onClick={() => setRearrange("idle")}>{t("atlas.rearrangeCancel")}</button>
-            </>
-          ) : (
-            <button type="button" onClick={() => {
-              rearrangeRef.current = "undo";
-              setRearrange("idle");
-              setLayoutVersion((version) => version + 1);
-            }}>{t(rearrange === "rebalanced" ? "atlas.putBack" : "atlas.rearrangeUndo")}</button>
-          )}
+      {rebalanced && (
+        <div className="atlas-rearrange-note" role="status" aria-label={t("atlas.rebalancedShort")}>
+          <span className="atlas-note-long">{t("atlas.rebalanced")}</span>
+          <span className="atlas-note-short">{t("atlas.rebalancedShort")}</span>
+          <span aria-hidden="true">·</span>
+          <button type="button" onClick={() => {
+            rearrangeRef.current = "undo";
+            setRebalanced(false);
+            setLayoutVersion((version) => version + 1);
+          }}>{t("atlas.putBack")}</button>
         </div>
       )}
 

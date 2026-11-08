@@ -2909,7 +2909,7 @@ describe("AtlasView", () => {
     expect(screen.queryByRole("dialog", { name: "Bob" })).not.toBeInTheDocument();
   });
 
-  it("UX-GRAPH-1: opening the map again does not rearrange it, something new goes next to what it links to, and Rearrange asks first and can be undone", async () => {
+  it("UX-GRAPH-1: opening the map again does not rearrange it, something new goes next to what it links to, and the map has no Rearrange button", async () => {
     const relation = (id: string, target: string, name: string) => ({
       id,
       relation_type: "knows",
@@ -2957,25 +2957,8 @@ describe("AtlasView", () => {
     const [newX, newY] = at("e6");
     expect(Math.hypot(newX - hubX, newY - hubY)).toBeLessThan(40);
 
-    // Rearranging asks first; cancelling changes nothing.
-    fireEvent.click(screen.getByRole("button", { name: "Rearrange" }));
-    const ask = screen.getByRole("dialog", { name: "Rearrange" });
-    expect(ask).toHaveTextContent("Every point will move to a new place.");
-    fireEvent.click(within(ask).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("dialog", { name: "Rearrange" })).toBeNull();
-    expect(capturedSigmaInstances).toHaveLength(2);
-
-    fireEvent.click(screen.getByRole("button", { name: "Rearrange" }));
-    fireEvent.click(within(screen.getByRole("dialog", { name: "Rearrange" })).getByRole("button", { name: "Rearrange" }));
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
-    expect(at("e2")).not.toEqual([123, 45]);
-    const done = screen.getByRole("status", { name: "Rearrange" });
-    expect(done).toHaveTextContent("Rearranged.");
-
-    // Undo puts the earlier layout back.
-    fireEvent.click(within(done).getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(4));
-    expect(at("e2")).toEqual([123, 45]);
+    // Nothing on the map rearranges it by hand.
+    expect(screen.queryByRole("button", { name: /rearrange/i })).toBeNull();
   });
 
   /** A star of `count` entities around e0, linked so every one is drawn. */
@@ -3012,7 +2995,7 @@ describe("AtlasView", () => {
 
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
-    const note = await screen.findByRole("status", { name: "Rearrange" });
+    const note = await screen.findByRole("status", { name: "Rebalanced" });
     expect(note).toHaveTextContent("The map was rebalanced");
     expect([latestGraph().getNodeAttribute("e3", "x"), latestGraph().getNodeAttribute("e3", "y")]).not.toEqual([321, -54]);
 
@@ -3054,22 +3037,17 @@ describe("AtlasView", () => {
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
     first.unmount();
     cleanup();
-    // The layout an undo brings back had no regions.
-    const spots = window.localStorage.getItem("atlas.positions.*")!;
-    window.localStorage.setItem("atlas.positions.previous.*", spots);
-    window.localStorage.removeItem("atlas.regions.previous.*");
+    // A layout kept from before regions and before the current layout version.
+    window.localStorage.removeItem("atlas.regions.*");
+    window.localStorage.setItem("atlas.layout.version.*", "1");
 
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
-    fireEvent.click(screen.getByRole("button", { name: "Rearrange" }));
-    fireEvent.click(within(screen.getByRole("dialog", { name: "Rearrange" })).getByRole("button", { name: "Rearrange" }));
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
     expect(window.localStorage.getItem("atlas.regions.*")).not.toBeNull();
-    // Rearranging kept the region-less layout as the one to put back.
-    window.localStorage.removeItem("atlas.regions.previous.*");
-    const done = screen.getByRole("status", { name: "Rearrange" });
-    fireEvent.click(within(done).getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(4));
+    // The rebalance kept the region-less layout as the one to put back.
+    const done = await screen.findByRole("status", { name: "Rebalanced" });
+    fireEvent.click(within(done).getByRole("button", { name: "Put back" }));
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
     expect(atlasLayout()).toMatchObject({ kept: true, regionless: true });
     expect(latestGraph().getNodeAttribute("e1", "region")).toBeUndefined();
     expect(window.localStorage.getItem("atlas.regions.*")).toBeNull();

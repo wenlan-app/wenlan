@@ -40,7 +40,6 @@
   .atlas-rearrange-note .atlas-note-long { display: none; }
   .atlas-rearrange-note .atlas-note-short { display: inline; }
 }
-.atlas-rearrange-note .atlas-rearrange-go { color: var(--mem-accent-indigo); }
 .atlas-rearrange-note button:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
 .atlas-cartography-alert { display: inline-flex; align-items: center; padding: 0 2px; color: var(--mem-danger); font: 400 10px/1.4 var(--mem-font-mono); }
 .atlas-icon-button { flex: none; border: none; min-height: 24px; padding: 3px; }

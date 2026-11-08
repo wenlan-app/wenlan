@@ -293,9 +293,8 @@ and wait for evidence that people need them.
   regions, kept apart from each other, with small islands at the edge. After
   that, opening it does not rearrange it, and something new goes next to the
   region it belongs to. The first time the map switches to the new layout, a
-  note in the corner says so and lets you put the old one back; to rearrange
-  the whole map, press "Rearrange", which can also be undone.
-  原文：地圖先把相近的主題排成一塊塊有名字的區域、區域彼此分開、小島靠邊，之後打開不重排，新東西就近放進它所屬的區域。第一次換成新排法時，角落會說一聲、能放回去；想整張重排就按「重新排列」，也能復原。
+  note in the corner says so and lets you put the old one back.
+  原文：地圖先把相近的主題排成一塊塊有名字的區域、區域彼此分開、小島靠邊，之後打開不重排，新東西就近放進它所屬的區域。第一次換成新排法時，角落會說一聲、能放回去。
 - **UX-GRAPH-2** `planned` Three zoom levels (this thing, nearby, everything)
   with continuous motion; points do not jump.
   原文：拉遠三段：這件事 → 附近 → 全部，畫面連續，點不跳位置。

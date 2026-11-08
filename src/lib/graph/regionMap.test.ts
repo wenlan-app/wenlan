@@ -110,7 +110,7 @@ describe("UX-GRAPH-1 kept regions", () => {
     expect(Math.hypot(n2.x - c4.x, n2.y - c4.y)).toBeLessThan(40);
   });
 
-  it("stores regions per scope and moves them with Rearrange and its undo", () => {
+  it("stores regions per scope and moves them with a rebalance and its Put back", () => {
     window.localStorage.clear();
     storeRegions("s", new Map([["x", "c1"]]));
     expect(readStoredRegions("s").get("x")).toBe("c1");
