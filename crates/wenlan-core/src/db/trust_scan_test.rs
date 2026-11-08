@@ -87,7 +87,7 @@ async fn migration_159_adds_one_report_row_that_the_next_scan_replaces() {
         count(&db, "PRAGMA user_version").await,
         i64::from(super::SCHEMA_VERSION)
     );
-    assert_eq!(super::SCHEMA_VERSION, 159);
+    const { assert!(super::SCHEMA_VERSION >= 159) };
     assert!(latest(&db).await.unwrap().is_none());
 
     run_and_store(&db, None, NOW).await.unwrap();
