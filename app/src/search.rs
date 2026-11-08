@@ -3562,8 +3562,8 @@ pub async fn accept_pending_revision(
         percent_encode_path_segment(&source_id)
     );
     match edit {
-        Some(edit) => client.post_json(&path, &edit).await,
-        None => client.post_empty(&path).await,
+        Some(edit) => client.post_json_as_person(&path, &edit).await,
+        None => client.post_empty_as_person(&path).await,
     }
 }
 

@@ -60,6 +60,11 @@ async fn request_bytes(
             Request::builder()
                 .method(&method)
                 .uri(uri)
+                // These requests stand in for the app, the person's gestures.
+                .header(
+                    wenlan_types::requests::CALLER_HEADER,
+                    wenlan_types::requests::PERSON_CALLER_VALUE,
+                )
                 .body(body)
                 .unwrap(),
         )

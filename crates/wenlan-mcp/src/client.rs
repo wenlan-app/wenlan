@@ -534,6 +534,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "repair_source_reports_stale"
             | "page_revision_outdated"
             | "page_revision_basis_refused"
+            | "page_revision_replaced"
             | "noise_pattern"
             | "too_short"
             | "not_novel"
@@ -651,6 +652,7 @@ mod tests {
             "repair_source_reports_stale",
             "page_revision_outdated",
             "page_revision_basis_refused",
+            "page_revision_replaced",
         ] {
             let body = format!(r#"{{"error":"{code}","detail":"PRIVATE_SENTINEL"}}"#);
             let reason = parse_api_error_reason(body.as_bytes()).expect("typed reason survives");

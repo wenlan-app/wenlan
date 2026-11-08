@@ -99,6 +99,7 @@ pub async fn handle_upsert_session(
 pub async fn handle_get_session(
     State(state): State<SharedState>,
     SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
 ) -> Result<Json<SessionDetailResponse>, ServerError> {
@@ -152,6 +153,11 @@ pub async fn handle_get_session(
     detail.things = db.session_things(&detail.session.id).await?;
     detail.transcript_available = transcript_exists(detail.session.transcript_path.as_deref());
     fill_title_from_transcript(&mut detail.session).await;
+    if detail.session.title.is_none()
+        && crate::conversation_routes::may_read_conversation_words(&headers)
+    {
+        detail.session.title = first_said_title(&detail.session).await;
+    }
     Ok(Json(detail))
 }
 
@@ -179,6 +185,21 @@ pub(crate) async fn fill_title_from_transcript(session: &mut AgentSession) {
     .await
     .ok()
     .flatten();
+}
+
+/// For the app only: a conversation no tool titled is named by the first
+/// thing the person said in it, so it never reads "untitled" when its
+/// transcript is still here. Agents never get the person's words this way
+/// (UX-FIND-1). Best effort; `None` when the transcript can't be read.
+pub(crate) async fn first_said_title(session: &AgentSession) -> Option<String> {
+    let tool = session.tool.clone();
+    let path = session.transcript_path.clone()?;
+    tokio::task::spawn_blocking(move || {
+        wenlan_core::transcript_lines::first_said(&tool, std::path::Path::new(&path))
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Whether a stored transcript location still names a file on this machine.

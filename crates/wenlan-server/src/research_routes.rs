@@ -402,6 +402,11 @@ mod maintenance_tests {
                     .method("POST")
                     .uri(uri)
                     .header("content-type", "application/json")
+                    // The app: the person's gesture.
+                    .header(
+                        wenlan_types::requests::CALLER_HEADER,
+                        wenlan_types::requests::PERSON_CALLER_VALUE,
+                    )
                     .body(Body::from(serde_json::to_vec(&body).unwrap()))
                     .unwrap(),
             )

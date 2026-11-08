@@ -349,6 +349,22 @@ fn find_chars(haystack: &[char], needle: &[char]) -> Option<usize> {
     (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
 }
 
+/// Longest name made from what the person said first.
+const FIRST_SAID_CHARS: usize = 60;
+
+/// A name for a conversation no tool titled: the first thing the person said
+/// in it, on one line and cut short. These are the person's own words, so a
+/// caller shows them only to the person (UX-FIND-1). `None` when the
+/// transcript can't be read or the person said nothing in it.
+pub fn first_said(tool: &str, path: &Path) -> Option<String> {
+    let lines = conversation_lines(tool, path)?;
+    let first = lines
+        .iter()
+        .find(|line| line.speaker == ConversationSpeaker::You)?;
+    let one_line = first.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!one_line.is_empty()).then(|| head(&one_line, FIRST_SAID_CHARS))
+}
+
 /// The start of `text`, at most `max` characters.
 pub fn head(text: &str, max: usize) -> String {
     if text.chars().count() <= max {

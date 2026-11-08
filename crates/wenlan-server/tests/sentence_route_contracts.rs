@@ -61,13 +61,16 @@ impl Drop for ScratchVault {
 
 #[derive(Clone, Copy)]
 enum Caller {
-    /// The app: no headers.
+    /// The app: its person marker, no agent name.
     Person,
+    /// A request with neither the person marker nor an agent name: an AI
+    /// tool that did not say who it is, never the person (UX-WHO-2).
+    Unmarked,
     /// An automatic agent read: these routes serve automatic callers only.
     Reader,
     /// An agent writing, named by `x-agent-name`.
     Agent(&'static str),
-    /// The app, scoped to one Space.
+    /// The app, scoped to one Space, with its person marker.
     InSpace(&'static str),
 }
 
@@ -83,10 +86,21 @@ async fn call(
         request = request.header("content-type", "application/json");
     }
     match caller {
-        Caller::Person => {}
+        Caller::Person => {
+            request = request.header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+        }
+        Caller::Unmarked => {}
         Caller::Reader => request = request.header("x-agent-name", "sentence-route-contract"),
         Caller::Agent(name) => request = request.header("x-agent-name", name),
-        Caller::InSpace(space) => request = request.header("x-wenlan-space", space),
+        Caller::InSpace(space) => {
+            request = request.header("x-wenlan-space", space).header(
+                wenlan_types::requests::CALLER_HEADER,
+                wenlan_types::requests::PERSON_CALLER_VALUE,
+            )
+        }
     }
     let response = router
         .clone()
@@ -304,7 +318,9 @@ async fn an_agent_refresh_lands_on_the_ais_sentences_and_drops_a_rewording_of_th
 }
 
 #[tokio::test]
-async fn proposals_are_made_by_the_ai_and_accepted_by_the_person() {
+/// UX-WHO-2: an AI proposes; only the app's marked person request accepts.
+/// An agent and a request with no marker at all are both refused.
+async fn ux_who_2_proposals_are_made_by_the_ai_and_accepted_only_by_the_marked_person() {
     let _guard = data_dir_lock().lock().await;
     let _vault = ScratchVault::new();
     let (router, _tmp, db) = common::test_app_no_gate().await;
@@ -382,6 +398,19 @@ async fn proposals_are_made_by_the_ai_and_accepted_by_the_person() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // No agent name is not the person: without the app's marker the accept
+    // is refused and the page keeps its text.
+    let (status, body) = call(&router, Method::POST, &accept, None, Caller::Unmarked).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body.to_string().contains("sentence_needs_the_person"),
+        "{body}"
+    );
+    assert!(sentences(&router, &id)
+        .await
+        .sentences
+        .iter()
+        .all(|s| !s.text.contains("for tests")));
     let (status, body) = call(
         &router,
         Method::POST,

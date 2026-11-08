@@ -450,6 +450,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // arrives later as a proposal, and the sentence reads and proposals are
     // in the sensitive catalog instead.
     "/api/pages/{id}/sentences/flag",
+    // Re-queueing one page's citation backfill returns its id and whether it
+    // had given up; the trust scan report is in the sensitive catalog.
+    "/api/pages/{id}/citations/requeue",
     // Undoing one AI write's sentence changes returns counts and the new
     // version only; re-reading the page is a sensitive read.
     "/api/pages/{id}/sentences/revert",

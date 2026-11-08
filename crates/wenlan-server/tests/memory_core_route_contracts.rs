@@ -151,6 +151,13 @@ async fn request_bytes(
     if let Some(space) = space {
         request = request.header("x-wenlan-space", space);
     }
+    if case.uri.ends_with("/accept") {
+        // Only the person accepts a card: these probes come from the app.
+        request = request.header(
+            wenlan_types::requests::CALLER_HEADER,
+            wenlan_types::requests::PERSON_CALLER_VALUE,
+        );
+    }
     if marked {
         request = request
             .header(INTENT_HEADER, "explicit")

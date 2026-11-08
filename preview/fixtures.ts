@@ -715,6 +715,36 @@ const reviewRevisions = (): PendingRevisionItem[] => [
   },
 ];
 
+// `?mode=review&revision=replaced` (UX-WHO-2): a page card that a newer
+// proposal for the same page has already replaced. Approving or dismissing it
+// gets the daemon's `page_revision_replaced` conflict (mocks/core.ts), and the
+// queue's refetch then holds the newer card in its place.
+export const REPLACED_REVIEW =
+  typeof window !== "undefined"
+  && new URLSearchParams(window.location.search).get("revision") === "replaced";
+
+export const REPLACED_PAGE_CARD: PendingRevisionItem = {
+  target_source_id: "page-plain",
+  revision_source_id: "mem-plain-rev-old",
+  revision_content:
+    "# Memory Distillation\n\nDistillation turns related memories into one page that cites each memory it rests on.",
+  source_agent: "claude-code",
+  last_modified: 1_752_000_500,
+  target_kind: "page" as const,
+  review_reason: "owned",
+};
+
+export const NEWER_PAGE_CARD: PendingRevisionItem = {
+  target_source_id: "page-plain",
+  revision_source_id: "mem-plain-rev-new",
+  revision_content:
+    "# Memory Distillation\n\nDistillation turns related memories into one page that cites each memory it rests on, and it reruns when one of those memories changes.",
+  source_agent: "codex",
+  last_modified: 1_752_000_600,
+  target_kind: "page" as const,
+  review_reason: "owned",
+};
+
 const reviewProposals = (): RefinementProposalSummary[] => [
   {
     id: "prop-merge-vscode",
@@ -837,13 +867,13 @@ export const REVIEW_STATE: {
   proposals: RefinementProposalSummary[];
   captures: RecentActivityItem[];
 } = {
-  revisions: reviewRevisions(),
+  revisions: [...(REPLACED_REVIEW ? [REPLACED_PAGE_CARD] : []), ...reviewRevisions()],
   proposals: reviewProposals(),
   captures: reviewCaptures(),
 };
 
 export function resetReviewFixtures(): void {
-  REVIEW_STATE.revisions = reviewRevisions();
+  REVIEW_STATE.revisions = [...(REPLACED_REVIEW ? [REPLACED_PAGE_CARD] : []), ...reviewRevisions()];
   REVIEW_STATE.proposals = reviewProposals();
   REVIEW_STATE.captures = reviewCaptures();
 }
