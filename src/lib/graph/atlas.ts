@@ -1184,10 +1184,10 @@ export function annotateDust(graph: Graph, plan: Satellite[]): void {
 }
 
 /** A memory dot that would sit on another body: folded until its body is
- *  hovered, like the dots past the zoom's count (round 3, B4). */
+ *  hovered, like the dots the zoom does not show yet (round 3, B4). */
 export const ATLAS_DUST_CROWDED_ATTR = "dustCrowded";
 /** On an anchor whose ring is crowded: how many of its dots fit (the first
- *  ones; a ring only grows outward), so its count badge stays true. */
+ *  ones; a ring only grows outward). */
 export const ATLAS_DUST_ROOM_ATTR = "dustRoom";
 /** Clear room kept between a ring's dot and a neighbouring disc, graph units. */
 const DUST_CROWD_GAP = 2;

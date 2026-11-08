@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import Graph from "graphology";
 import { townsGraph } from "./__fixtures__/towns";
 import { MEMORY_NODE_TYPE } from "./model";
-import { planDustBadges } from "./dust";
 import {
   ATLAS_DUST_CROWDED_ATTR,
   ATLAS_DUST_ROOM_ATTR,
@@ -210,7 +209,7 @@ describe("UX-GRAPH-1 a hub's ring of dots never runs through a neighbour", () =>
     surface: "#000000", graticule: "rgba(4,5,6,0.13)", bridge: "#bbbbbb", memory: "#cccccc", page: "#dddddd",
   };
 
-  it("folds the dots that would land on a close neighbour, and counts them in the badge", () => {
+  it("folds the dots that would land on a close neighbour, and shows them again when the hub is hovered", () => {
     const graph = ringGraph(30);
     const room = graph.getNodeAttribute("hub", ATLAS_DUST_ROOM_ATTR) as number;
     expect(room).toBeGreaterThan(0);
@@ -222,8 +221,6 @@ describe("UX-GRAPH-1 a hub's ring of dots never runs through a neighbour", () =>
       if (shown) expect(Math.hypot((attrs.x as number) - near.x, (attrs.y as number) - near.y)).toBeGreaterThan(near.r + (attrs.size as number));
       expect(attrs[ATLAS_DUST_CROWDED_ATTR] === true).toBe((attrs.dustRank as number) >= room && (attrs.dustRank as number) < 18);
     });
-    const badges = planDustBadges(graph, ["hub"], (p) => ({ x: p.x + 400, y: p.y + 300 }), lodFor(5), null, { width: 800, height: 600 });
-    expect(badges[0]?.text).toBe(`+${30 - room}`);
     // Hovering the hub still shows its whole ring.
     const crowded = graph.filterNodes((_id, attrs) => attrs[ATLAS_DUST_CROWDED_ATTR] === true)[0] as string;
     expect(nodeDisplay({ hovered: "hub", neighbors: new Set(["hub"]) }, crowded, graph.getNodeAttributes(crowded), palette, lodFor(5)).hidden).not.toBe(true);

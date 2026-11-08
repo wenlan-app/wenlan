@@ -98,7 +98,6 @@ import {
   labelSideFor,
 } from "../../lib/graph/atlas";
 import type { HoverState, AtlasSimulation, FlyTo, LodState, LabelPlacement, LabelSide } from "../../lib/graph/atlas";
-import { dustBadgeAnchors, drawDustCounts, planDustBadges } from "../../lib/graph/dust";
 import {
   applyNightOffsets,
   drawNightMarks,
@@ -188,7 +187,6 @@ type Box = { left: number; right: number; top: number; bottom: number };
 type GuardDisc = { key: string; x: number; y: number; r: number; owner?: string };
 type LabelGuard = {
   cells: Map<number, GuardDisc[]>;
-  badges: Box[];
   /** The map's own controls and count line, in canvas pixels, plus the canvas size. */
   chrome: Box[];
   width: number;
@@ -1690,7 +1688,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       return { left: left - 4, right: left + width + 4, top: top - 3, bottom: top + 15 };
     };
     // What a name may not cover besides another name: every drawn disc but
-    // its own, and every count badge (drawDustCounts paints the same plan).
+    // its own, and the map's controls.
     // Rebuilt once per paint, on the first label sigma asks for, when the
     // display data for that paint are final.
     // The place-name scene, rebuilt only when a paint marked it dirty. The
@@ -1707,7 +1705,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       return sceneRef.current;
     };
     let guard: LabelGuard | null = null;
-    let dustAnchorsForGuard: string[] = [];
     const ensureGuard = (ctx: CanvasRenderingContext2D): LabelGuard | null => {
       if (guard) return guard;
       const sigma = labelSigma;
@@ -1736,15 +1733,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           }
         }
       });
-      const badges = planDustBadges(
-        graph,
-        dustAnchorsForGuard.filter((id) => !entityTypeHidden(graph.getNodeAttribute(id, "entityType"), excludedTypesRef.current)),
-        (pos) => sigma.graphToViewport(pos),
-        lodRef.current,
-        hoverStateRef.current.hovered,
-        { width, height },
-        sigma.scaleSize(1),
-      ).map((b) => ({ left: b.x - 2, right: b.x + b.width + 2, top: b.y - 8, bottom: b.y + 8 }));
       const chrome: Box[] = [];
       const shell = container.parentElement;
       if (shell) {
@@ -1764,16 +1752,15 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         const at = sigma.framedGraphToViewport(display);
         rings.set(disc.owner, Math.max(rings.get(disc.owner) ?? 0, Math.hypot(disc.x - at.x, disc.y - at.y) + disc.r));
       }
-      guard = { cells, badges, chrome, width, height, plan: null, rings };
+      guard = { cells, chrome, width, height, plan: null, rings };
       // An R2 map at overview zoom is a map of named regions: the region
       // names go down first and the point names give way to them (round 5).
-      // A name keeps off every drawn point, the smallest too, the count
-      // badges and the controls.
+      // A name keeps off every drawn point, the smallest too, and the
+      // controls.
       if (regionLayoutRef.current && lodRef.current.phase === "overview" && hoverStateRef.current.hovered === null) {
         const scene = currentScene();
         const all = allDiscCells(sigma, width, height);
         const blocked = (box: Box) => {
-          if (badges.some((o) => o.left < box.right && box.left < o.right && o.top < box.bottom && box.top < o.bottom)) return true;
           if (chrome.some((o) => o.left < box.right && box.left < o.right && o.top < box.bottom && box.top < o.bottom)) return true;
           return discsHit(all, box, 1);
         };
@@ -1835,7 +1822,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       if (labelBoxes.some(taken) || (guarded && frameGuards.some(taken))) return false;
       if (key === undefined || guard === null) return true;
       if (box.left < LABEL_EDGE_INSET || box.top < LABEL_EDGE_INSET || box.right > guard.width - LABEL_EDGE_INSET || box.bottom > guard.height - LABEL_EDGE_INSET) return false;
-      if (guard.badges.some(taken) || guard.chrome.some(taken)) return false;
+      if (guard.chrome.some(taken)) return false;
       for (let cx = Math.floor(box.left / LABEL_GUARD_CELL); cx <= Math.floor(box.right / LABEL_GUARD_CELL); cx += 1) {
         for (let cy = Math.floor(box.top / LABEL_GUARD_CELL); cy <= Math.floor(box.bottom / LABEL_GUARD_CELL); cy += 1) {
           for (const disc of guard.cells.get(cx * 65536 + cy) ?? []) {
@@ -2079,8 +2066,6 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       (window as unknown as Record<string, unknown>).__ATLAS_SIGMA = renderer;
     }
 
-    const dustAnchors = dustBadgeAnchors(graph);
-    dustAnchorsForGuard = dustAnchors;
     const drawOverlay = (scene: CartographyScene) => {
       const ctx = overlay.getContext("2d");
       if (!ctx) return; // jsdom
@@ -2113,35 +2098,23 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       // drops the field the names simply stay on, as before.
       const labelledNodes = (renderer as unknown as { displayedNodeLabels?: ReadonlySet<string> })
         .displayedNodeLabels;
-      // Region names and counts keep off the frames too; the frames' own
+      // Region names keep off the frames too; the frames' own
       // marks are placed against the fresh labels only.
       const guardStart = labelBoxes.length;
       labelBoxes.push(...frameGuards);
       // An R2 map is a map of named regions: its names show without the toggle.
       // An R2 name keeps off every drawn point, small ones too, and off the
-      // count badges and the map's controls (round 4).
+      // map's controls (round 4).
       let regionNameBlocked: ((box: Box) => boolean) | undefined;
       const overlayGuard = regionLayoutRef.current && lodRef.current.phase === "overview" ? (guard ?? ensureGuard(ctx)) : guard;
       if (regionLayoutRef.current && !overlayGuard?.regionNames) {
         const cells = allDiscCells(renderer, width, height);
-        const extra = overlayGuard ? [...overlayGuard.badges, ...overlayGuard.chrome] : [];
+        const extra = overlayGuard ? overlayGuard.chrome : [];
         regionNameBlocked = (box) =>
           extra.some((o) => o.left < box.right && box.left < o.right && o.top < box.bottom && box.top < o.bottom) || discsHit(cells, box, 1);
       }
       if (overlayGuard?.regionNames) drawPlannedRegionNames(ctx, overlayGuard.regionNames, paletteRef.current);
       else if (showRegionsRef.current || regionLayoutRef.current) drawRegionNames(ctx, named, project, paletteRef.current, { width, height }, labelledNodes, labelBoxes, regionNameBlocked);
-      drawDustCounts(
-        ctx,
-        graph,
-        dustAnchors.filter((id) => !entityTypeHidden(graph.getNodeAttribute(id, "entityType"), excludedTypesRef.current)),
-        project,
-        paletteRef.current,
-        lod,
-        hoverStateRef.current.hovered,
-        { width, height },
-        renderer.scaleSize(1),
-        labelBoxes,
-      );
       labelBoxes.splice(guardStart, frameGuards.length);
       const drawnAt = (id: string) => {
         const display = renderer.getNodeDisplayData(id);

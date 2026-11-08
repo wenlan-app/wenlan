@@ -477,8 +477,8 @@ export function layoutRegionMap(graph: Graph, options: RegionMapOptions = {}): R
   }
   for (const list of members.values()) list.sort(byId);
   const dustRing = options.dustRing ?? new Map();
-  // A super-hub's dust is far too much to show as a ring; it shows as its
-  // count badge, so its region does not keep empty ground for it (round 4:
+  // A super-hub's dust is far too much to show as a ring; it stays folded
+  // until zoomed in, so its region does not keep empty ground for it (round 4:
   // the wenlan block was a wide empty ring round its hub).
   const ringAround = (id: string) => (superSet.has(id) ? Math.min(SUPER_HUB_DUST_RING, dustRing.get(id)?.ring ?? 0) : dustRing.get(id)?.ring ?? 0);
   const dustCount = (id: string) => (superSet.has(id) ? 0 : dustRing.get(id)?.count ?? 0);

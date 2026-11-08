@@ -823,7 +823,7 @@ export function regionNameKeepsEnough(full: string, shown: string): boolean {
  * R2 at overview zoom: the region names are the map's landmarks, so they are
  * placed BEFORE any point name and the point names give way to them. Every
  * region is tried, largest first; a name keeps off `blocked` (every drawn
- * point, the count badges, the controls) and off the names already placed.
+ * point, the controls) and off the names already placed.
  * A name sits on its own region or right at its edge: within
  * REGION_NAME_EDGE_PX of one of its own points and no nearer to another
  * region's points than to its own, so it never drifts off to free ground
