@@ -2181,11 +2181,18 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           const x = update ? spot.x + radius + 4 : left ? spot.x - ring - 6 - width : spot.x + ring + 6;
           const y = update ? spot.y - radius - 12 : spot.y;
           ctx.save();
-          ctx.globalAlpha = phase.words * 0.85;
-          ctx.fillStyle = paletteRef.current.label;
+          ctx.globalAlpha = phase.words;
           ctx.textBaseline = "middle";
           ctx.textAlign = "left";
+          // A halo in the map's ground keeps them readable over anything
+          // drawn underneath; the strike stays light so the words lead.
+          ctx.strokeStyle = paletteRef.current.surface;
+          ctx.lineWidth = 4;
+          ctx.lineJoin = "round";
+          ctx.strokeText(text, x, y);
+          ctx.fillStyle = paletteRef.current.label;
           ctx.fillText(text, x, y);
+          ctx.globalAlpha = phase.words * 0.5;
           ctx.strokeStyle = paletteRef.current.label;
           ctx.lineWidth = 1;
           ctx.beginPath();

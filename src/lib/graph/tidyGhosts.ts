@@ -154,8 +154,10 @@ export function ghostsMoving(ghosts: readonly ReplayGhost[], now: number): boole
   return ghosts.some((ghost) => !ghost.still && !ghostPhase(ghost, now - ghost.startAt).done);
 }
 
-/** How wide a ghost's words may run, px, before they are cut. */
-export const SAID_MAX_PX = 220;
+/** How wide a ghost's words may run, px, before they are cut: about a dozen
+ *  CJK characters at the map's label size, so they read at a glance
+ *  (Qi-Xuan 11-08: how many words matters, keep them easy to see). */
+export const SAID_MAX_PX = 150;
 
 /** A ghost's words on one line: the first line of what it said, cut with an
  *  ellipsis to fit `maxPx` as `measure` reads it. */
