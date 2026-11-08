@@ -1066,10 +1066,13 @@ fn last_night_of(
             NightChange::Tidy { how, old, new, .. }
                 if here.contains(new.as_str()) || kept.contains(new) =>
             {
+                // In id order, whatever order the model named them in.
+                let mut replaced = old.clone();
+                replaced.sort();
                 Some(NightTidied {
                     kind: *how,
                     memory_id: new.clone(),
-                    replaced: old.clone(),
+                    replaced,
                 })
             }
             _ => None,
