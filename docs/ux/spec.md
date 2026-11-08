@@ -224,6 +224,11 @@ and wait for evidence that people need them.
   and only the person can delete for good. Every removal is listed in Activity
   with who did it.
   原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單第 12、13 條：「刪除改成封存，你寫的頁 AI 不能刪，留下紀錄」「沒名字的請求當成 AI；刪除先進可還原的垃圾桶」）
+- **UX-WHO-8** `shipped` An AI write never leaves a page broken: cut off,
+  half a link, broken characters, or a background pass losing the Chinese
+  text. Such a write is refused and the page stays as it was; damage already
+  there is reported each night, and nothing is repaired until you approve it.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：AI 寫入不能把頁弄壞；已經壞的每晚列出來，等你同意才修）
 
 ## While you chat (in your own AI tool)
 

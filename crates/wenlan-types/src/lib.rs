@@ -51,6 +51,7 @@ pub mod steep_new;
 pub mod system_info;
 pub mod theme;
 pub mod things;
+pub mod trust_scan;
 pub mod zotero;
 
 // Re-export commonly used types at crate root for convenience.

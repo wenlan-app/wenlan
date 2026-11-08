@@ -269,6 +269,7 @@ async fn sync_pass(
     // Recovery precedes discovery, so a pending move cannot resurrect its old path.
     let targets = crate::export::knowledge::knowledge_edit_targets(knowledge_path)?;
     let person = crate::export::knowledge::person_page_files(knowledge_path)?;
+    let written = crate::export::knowledge::wenlan_page_digests(knowledge_path)?;
     let mut paths = crate::export::knowledge::knowledge_markdown_paths(knowledge_path)?;
     if let Some(only) = only {
         paths.retain(|path| only.contains(path));
@@ -277,7 +278,7 @@ async fn sync_pass(
     for relative in paths {
         let path = knowledge_path.join(&relative);
         stats.scanned += 1;
-        match sync_one_file(db, &relative, knowledge_path, &targets, &person).await {
+        match sync_one_file(db, &relative, knowledge_path, &targets, &person, &written).await {
             Ok(Outcome::Applied { page_id }) => {
                 stats.applied += 1;
                 log::info!(
@@ -568,6 +569,7 @@ async fn sync_one_file(
     knowledge_path: &Path,
     targets: &HashMap<String, String>,
     person: &HashMap<String, crate::export::knowledge::PersonPageFile>,
+    written: &HashMap<String, (String, String)>,
 ) -> Result<Outcome, WenlanError> {
     let (raw, _) = crate::export::knowledge::read_knowledge_markdown(knowledge_path, relative)?;
     let (fm, _) = obsidian::extract_frontmatter(&raw);
@@ -628,6 +630,15 @@ async fn sync_one_file(
         let md_version = crate::export::knowledge::projected_origin_version(&fm);
         if md_version < existing.version {
             return Ok(Outcome::SkippedDaemonAhead { page_id });
+        }
+        // The file holds exactly the bytes Wenlan last wrote for this page:
+        // its own write, not the person's, even when today's render differs
+        // (a newer build renders differently, or the page changed without a
+        // new version). Decided by the stored checksum, never by history.
+        if written.get(&page_id).is_some_and(|(file, digest)| {
+            file == relative && *digest == crate::sources::directory::sha256_hex(raw.as_bytes())
+        }) {
+            return Ok(Outcome::Unchanged);
         }
     }
 
@@ -2625,6 +2636,71 @@ mod tests {
         );
         let p = db.get_page("page_fresh").await.unwrap().unwrap();
         assert!(!p.user_edited);
+    }
+
+    /// Audit item 20: a file holding exactly the bytes Wenlan last wrote is
+    /// not "edited outside" just because today's render of the page differs.
+    #[tokio::test]
+    async fn bytes_matching_the_stored_checksum_are_not_an_outside_edit() {
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let page = sample_page(
+            "page_hashed",
+            "Hashed Topic",
+            "## Overview\nbody prose here",
+        );
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            &page.id,
+            &page.title,
+            None,
+            &page.content,
+            None,
+            None,
+            &["mem_seed"],
+            &now,
+        )
+        .await
+        .unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        let file = project_page(&db, &writer, &page);
+        let path = knowledge_dir.path().join(&file);
+
+        // What an earlier build wrote at this same version: a different body,
+        // with its checksum recorded in state.json the way the writer does.
+        let earlier = std::fs::read_to_string(&path).unwrap().replace(
+            "body prose here",
+            "body prose here, as an earlier build rendered it",
+        );
+        std::fs::write(&path, &earlier).unwrap();
+        let state_path = knowledge_dir.path().join(".wenlan/state.json");
+        let mut state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+        state["pages"]["page_hashed"]["content_sha256"] =
+            serde_json::Value::String(crate::sources::directory::sha256_hex(earlier.as_bytes()));
+        std::fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+
+        let stats = sync_filesystem_edits(&db, knowledge_dir.path())
+            .await
+            .unwrap();
+        assert_eq!((stats.applied, stats.errors), (0, 0), "{stats:?}");
+        let kept = db.get_page("page_hashed").await.unwrap().unwrap();
+        assert_eq!(kept.content, "## Overview\nbody prose here");
+        assert!(!kept.user_edited);
+
+        // A real edit changes the bytes, so it is still read back.
+        std::fs::write(&path, earlier.replace("earlier build", "person")).unwrap();
+        let stats = sync_filesystem_edits(&db, knowledge_dir.path())
+            .await
+            .unwrap();
+        assert_eq!((stats.applied, stats.errors), (1, 0), "{stats:?}");
+        assert!(
+            db.get_page("page_hashed")
+                .await
+                .unwrap()
+                .unwrap()
+                .user_edited
+        );
     }
 
     #[tokio::test]
