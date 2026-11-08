@@ -9,10 +9,11 @@
  */
 import { REPLAY_TIMING, type ReplayTidy } from "./lastNight";
 
-/** How strongly a ghost shows: hollow and faint reads "kept out of sight". */
-export const GHOST_ALPHA = 0.55;
+/** How strongly a ghost shows: hollow, so it reads "kept out of sight"; near
+ *  full strength so it is seen on a dark map (brightened 11-08 at Qi-Xuan's ask). */
+export const GHOST_ALPHA = 0.9;
 /** A ghost's ring, px. */
-export const GHOST_STROKE = 1.5;
+export const GHOST_STROKE = 2;
 /** How far a merge's ghosts splay from the line out of the thing's centre. */
 export const GHOST_SPLAY_DEG = 35;
 /** How far out the ghosts rest: two dot-widths. */
