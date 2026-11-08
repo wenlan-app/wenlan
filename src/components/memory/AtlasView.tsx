@@ -38,7 +38,7 @@ import AtlasInspector from "./AtlasInspector";
 import AtlasSelect from "./AtlasSelect";
 import AtlasTooltip from "./AtlasTooltip";
 import { entityTypeHidden, filterGraphEntityTypes } from "../../lib/graph/typeFilter";
-import { getKnowledgeGraph, listThingNightPoints, undoNights } from "../../lib/tauri";
+import { getKnowledgeGraph, getOldMemoryPass, listThingNightPoints, undoNights, undoOldMemoryPass } from "../../lib/tauri";
 import { SteepMoon } from "./things/ThingSteeped";
 import {
   growMs,
@@ -285,6 +285,9 @@ interface ReplayRun {
   ghosts: readonly ReplayGhost[];
   frame: number;
 }
+
+/** How long the map's line tells of the pass over old memories. */
+const OLD_PASS_SHOWN_SECS = 2 * 86_400;
 
 /** A ghost's size when what it slides into is not drawn, px. */
 const GHOST_FALLBACK_RADIUS = 5;
@@ -547,6 +550,32 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     },
   });
   const nightShown = Object.values(nightCount).some((count) => count > 0) && !undoNight.isPending && !undoNight.isSuccess;
+  // The one-time pass over old memories (UX-GRAPH-7): for two days after it
+  // ran, the line says what it merged and updated and offers to take it all
+  // back, when no night has a line of its own. An older daemon has none.
+  const { data: oldPass = null } = useQuery({
+    queryKey: ["old-memory-pass"],
+    queryFn: async () => {
+      try {
+        return (await getOldMemoryPass()) ?? null;
+      } catch {
+        return null;
+      }
+    },
+    refetchInterval: 120_000,
+  });
+  const undoOldPass = useMutation({
+    mutationFn: undoOldMemoryPass,
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["old-memory-pass"] });
+      void queryClient.invalidateQueries({ queryKey: ["thing-night-points"] });
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-graph"] });
+    },
+  });
+  const oldPassShown = oldPass !== null
+    && oldPass.merged + oldPass.updated > 0
+    && Date.now() / 1000 - oldPass.at < OLD_PASS_SHOWN_SECS
+    && !undoOldPass.isPending && !undoOldPass.isSuccess;
   // A fresh read after Undo says what is left; the line follows it again.
   const resetUndo = undoNight.reset;
   const undoDone = undoNight.isSuccess;
@@ -2287,6 +2316,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       ...(nightCount.updated > 0 ? [t("atlas.night.updated", { count: nightCount.updated })] : []),
     ].join(t("atlas.night.joiner")),
   });
+  const oldPassSentence = oldPass ? t("atlas.night.sentence", {
+    when: t("atlas.night.oldPass"),
+    what: [
+      ...(oldPass.merged > 0 ? [t("atlas.night.merged", { count: oldPass.merged })] : []),
+      ...(oldPass.updated > 0 ? [t("atlas.night.updated", { count: oldPass.updated })] : []),
+    ].join(t("atlas.night.joiner")),
+  }) : "";
 
   return (
     <div className="atlas-canvas-shell">
@@ -2493,6 +2529,18 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         </p>
       ) : undoNight.isError ? (
         <p className="atlas-night-line" role="alert">{t("atlas.night.undoFailed")}</p>
+      ) : oldPassShown && !selectedThing ? (
+        // What the one-time pass over old memories did, like a night's line
+        // and in its place (UX-GRAPH-7); it has no Replay.
+        <p className="atlas-night-line" data-testid="atlas-old-pass-line" title={oldPassSentence}>
+          <SteepMoon />
+          <span className="atlas-night-line-full">{oldPassSentence}</span>
+          <span className="atlas-night-line-short">{t("atlas.night.oldPassShort")}</span>
+          <span aria-hidden="true">·</span>
+          <button type="button" disabled={undoOldPass.isPending} onClick={() => undoOldPass.mutate()}>{t("atlas.night.undo")}</button>
+        </p>
+      ) : undoOldPass.isError ? (
+        <p className="atlas-night-line" role="alert">{t("atlas.night.oldPassUndoFailed")}</p>
       ) : null}
 
       {selectedThing && replaying === "idle" ? (

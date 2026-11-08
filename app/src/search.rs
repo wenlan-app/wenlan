@@ -5665,6 +5665,25 @@ pub async fn undo_nights(
     client.undo_nights(since).await
 }
 
+/// The one-time pass over old memories while it stands, for the big map's
+/// line (UX-GRAPH-7); `None` when it never ran or was taken back.
+#[tauri::command]
+pub async fn get_old_memory_pass(
+    state: tauri::State<'_, State>,
+) -> Result<Option<wenlan_types::OldMemoryPass>, String> {
+    let client = { state.read().await.client.clone() };
+    Ok(client.get_old_memory_pass().await?.pass)
+}
+
+/// Take the whole pass over old memories back (UX-GRAPH-7).
+#[tauri::command]
+pub async fn undo_old_memory_pass(
+    state: tauri::State<'_, State>,
+) -> Result<Option<wenlan_types::OldMemoryPass>, String> {
+    let client = { state.read().await.client.clone() };
+    Ok(client.undo_old_memory_pass().await?.pass)
+}
+
 /// Move a conversation between things (UX-THING-1): into `to_thing_id`, or
 /// into a new thing named `new_title`.
 #[tauri::command]

@@ -139,6 +139,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "undo_thing_dream",
     "undo_thing_tidy",
     "undo_nights",
+    "get_old_memory_pass",
+    "undo_old_memory_pass",
     "answer_thing_map_proposal",
     "list_registered_sources",
   ],

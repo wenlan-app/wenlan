@@ -131,6 +131,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     // The fixture has no things, so no thing id resolves.
     case "get_thing": case "get_thing_map": case "rename_thing": case "hide_thing": case "answer_thing_merge": case "undo_thing_dream": case "undo_thing_tidy": case "answer_thing_map_proposal": throw new TauriMockArgumentError(command, "id");
     case "undo_nights": return { things: 0, points: 0 };
+    // The fixture never ran the pass over old memories.
+    case "get_old_memory_pass": case "undo_old_memory_pass": return null;
     case "move_session_thing": throw new TauriMockArgumentError(command, "fromThingId");
     case "list_communities": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, communities: [], next_cursor: null };
     case "list_community_members": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, members: [], next_cursor: null };

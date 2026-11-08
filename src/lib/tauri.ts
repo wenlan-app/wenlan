@@ -1279,6 +1279,29 @@ export async function undoThingDream(id: string): Promise<ThingSummary> {
   return invoke("undo_thing_dream", { id });
 }
 
+/** The one-time pass over old memories (UX-GRAPH-7), while it stands. */
+export interface OldMemoryPass {
+  /** When it ran, unix seconds. */
+  at: number;
+  /** Later copies hidden behind an earlier one. */
+  merged: number;
+  /** Memories about a passed date said again in the past tense. */
+  updated: number;
+  expired: number;
+  confirmed: number;
+  filed: number;
+}
+
+/** The pass over old memories, or null when it never ran or was taken back. */
+export async function getOldMemoryPass(): Promise<OldMemoryPass | null> {
+  return invoke("get_old_memory_pass");
+}
+
+/** Take the whole pass over old memories back. */
+export async function undoOldMemoryPass(): Promise<OldMemoryPass | null> {
+  return invoke("undo_old_memory_pass");
+}
+
 /** Take back the whole night on the big map (UX-GRAPH-5): every thing whose
  *  newest night ran at or after `since` (Unix seconds, local midnight). */
 export async function undoNights(since: number): Promise<{ things: number; points: number }> {

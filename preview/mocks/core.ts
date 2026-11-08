@@ -59,6 +59,9 @@ const projectSourceText = new Map([
   ["/preview/sources/讀書會資料/每週摘錄.md", "# 每週摘錄\n\n## 本週問題\n哪一段內容改變了我們原先的想法？\n\n## 討論後記\n保留不同觀點，並連回各自引用的段落。"],
 ]);
 import { liveInvoke } from "./live-invoke";
+
+/** The preview's pass over old memories was taken back. */
+let oldPassUndone = false;
 import { COMMUNITY_READ_SCHEMA_VERSION, type ThingNightPoints } from "../../src/lib/tauri";
 import { invokeRemoteFixture } from "./remote-access";
 
@@ -282,6 +285,17 @@ export async function invoke(
         quiet: true,
         points: i === 0 ? thing.points.filter((point) => linked.has(point.memory_id)) : thing.points,
       }));
+    }
+    // `&oldpass=1`: the one-time pass over old memories ran this morning
+    // (UX-GRAPH-7); Undo takes it away for the rest of the page's life.
+    if (cmd === "get_old_memory_pass") {
+      return new URLSearchParams(window.location.search).get("oldpass") === "1" && !oldPassUndone
+        ? { at: Math.floor(Date.now() / 1000) - 3_600, merged: 12, updated: 3, expired: 582, confirmed: 137, filed: 73 }
+        : null;
+    }
+    if (cmd === "undo_old_memory_pass") {
+      oldPassUndone = true;
+      return null;
     }
     // No regions yet: an honest empty read, not an error.
     if (cmd === "list_communities") return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, scope: { kind: "space", name: args?.space ?? null }, communities: [], next_cursor: null };

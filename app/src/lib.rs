@@ -1898,6 +1898,8 @@ pub fn run() {
             search::undo_thing_dream,
             search::undo_thing_tidy,
             search::undo_nights,
+            search::get_old_memory_pass,
+            search::undo_old_memory_pass,
             search::answer_thing_map_proposal,
             search::move_session_thing,
             search::get_page_sessions,
