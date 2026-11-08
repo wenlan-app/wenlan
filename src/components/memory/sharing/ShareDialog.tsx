@@ -18,7 +18,7 @@ import {
 } from "../../../lib/tauri";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import { relativeMs } from "../page/format";
-import { SHARES_KEY, cloudName, others, pageShare, shortFolder, spaceShare, useShares } from "./sharing";
+import { SHARES_KEY, cloudName, others, pageShare, revealFolderLabel, shortFolder, spaceShare, useShares } from "./sharing";
 import "./sharing.css";
 
 export type ShareTarget = {
@@ -181,7 +181,7 @@ function MembersBox({ share, onClose, onOpenSettings }: {
       <h2 id="share-dialog-title">{t("sharing.membersTitle")}</h2>
       <p className="share-hint">{t("sharing.inviteHow", { cloud: cloud ?? t("sharing.yourCloud") })}</p>
       <div>
-        <button type="button" className="share-secondary" onClick={() => void revealSharedFolder(share.folder).catch(() => undefined)}>{t("sharing.showInFinder")}</button>
+        <button type="button" className="share-secondary" onClick={() => void revealSharedFolder(share.folder).catch(() => undefined)}>{revealFolderLabel(t)}</button>
       </div>
       <ul className="share-member-list">
         <li>

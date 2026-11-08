@@ -137,8 +137,9 @@ test("proves Review identity and exercises Wiki Page mutations", async ({ page }
   await closeWritingView(page);
   await expect(page.getByText("Edited through the Review-flavor lane.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Page actions", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Update from sources", exact: true }).click();
+  const info = page.getByRole("button", { name: "Info", exact: true });
+  if (await info.getAttribute("aria-expanded") !== "true") await info.click();
+  await page.getByRole("button", { name: "Update from sources", exact: true }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Update from sources", exact: true }).click();
   await expect(page.getByText("Page updated from its sources.", { exact: true })).toBeVisible();
   await expect.poll(async () => (await storedReviewPage(page, "page-architecture"))?.last_compiled).toBe("2026-07-10T12:33:00Z");

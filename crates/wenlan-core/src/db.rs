@@ -61443,6 +61443,41 @@ impl MemoryDB {
         Ok(affected > 0)
     }
 
+    /// Marks the changelog entry of `version` as having replaced
+    /// `lost_version`: an edit made here at the same time as a shared
+    /// version, which lost to it and stays in the page's history. The app
+    /// tells the person once (`concurrent_with` on the revisions route).
+    /// False when the page moved on or has no entry for `version`.
+    pub async fn mark_concurrent_edit(
+        &self,
+        page_id: &str,
+        version: i64,
+        lost_version: i64,
+    ) -> Result<bool, WenlanError> {
+        let existing = self.get_page_changelog(page_id).await?;
+        let mut entries: Vec<serde_json::Value> =
+            serde_json::from_str(&existing).unwrap_or_default();
+        let Some(entry) = entries
+            .iter_mut()
+            .rev()
+            .find(|entry| entry.get("version").and_then(|v| v.as_i64()) == Some(version))
+        else {
+            return Ok(false);
+        };
+        entry["concurrent_with"] = serde_json::json!(lost_version);
+        let changelog = serde_json::to_string(&entries)
+            .map_err(|e| WenlanError::VectorDb(format!("mark_concurrent_edit: {e}")))?;
+        let conn = self.conn.lock().await;
+        let affected = conn
+            .execute(
+                "UPDATE pages SET changelog = ?1 WHERE id = ?2 AND version = ?3",
+                libsql::params![changelog, page_id, version],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("mark_concurrent_edit: {e}")))?;
+        Ok(affected > 0)
+    }
+
     /// Update a memory's content in-place for topic-key upsert.
     ///
     /// Workflow:

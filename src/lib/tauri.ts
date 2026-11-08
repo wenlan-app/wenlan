@@ -1773,6 +1773,8 @@ export interface PageChangelogEntry {
   char_delta?: number | null;
   sources_added?: number | null;
   sources_removed?: number | null;
+  /** For a version taken from a shared folder: the version edited here at the same time that lost to it. */
+  concurrent_with?: number | null;
 }
 
 export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update";

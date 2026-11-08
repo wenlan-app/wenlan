@@ -1063,6 +1063,12 @@ impl Pass<'_> {
             counts.applied += 1;
             if lost {
                 counts.conflicts += 1;
+                // The person is told once, on this page, that their edit
+                // lost and where it is.
+                let now = self.reload(&page.id).await?;
+                self.db
+                    .mark_concurrent_edit(&page.id, now.version, page.version)
+                    .await?;
             }
         } else if !applied.complete {
             counts.skipped += 1;

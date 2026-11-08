@@ -319,6 +319,7 @@ async fn edits_made_at_the_same_time_keep_both_versions_in_history() {
     a.edit(&id, "Fish, pasta or risotto.").await;
     b.edit(&id, "Fish or pasta, and a cake.").await;
     assert_eq!(b.sync(&folder).await.exported, 1);
+    let b_edit = b.page(&id).await.unwrap().version;
     tick().await;
     // A's edit is later, so it wins everywhere; B's stays a version.
     assert_eq!(a.sync(&folder).await.exported, 1);
@@ -326,6 +327,21 @@ async fn edits_made_at_the_same_time_keep_both_versions_in_history() {
     assert_eq!(got.applied, 1, "{got:?}");
     assert_eq!(got.conflicts, 1, "{got:?}");
     assert_eq!(b.content(&id).await, "Fish, pasta or risotto.");
+    // B's page says which of its versions lost, so the app can tell B once.
+    let b_now = b.page(&id).await.unwrap();
+    let changelog: Vec<serde_json::Value> =
+        serde_json::from_str(&b.db.get_page_changelog(&id).await.unwrap()).unwrap();
+    let last = changelog.last().unwrap();
+    assert_eq!(last["version"], serde_json::json!(b_now.version));
+    assert_eq!(last["concurrent_with"], serde_json::json!(b_edit));
+    let writer = b_now.last_edited_by.unwrap_or_default();
+    assert!(
+        writer.starts_with("shared_") && writer.ends_with(&a.member_id()),
+        "{writer}"
+    );
+    // A's own edit won, so A has nothing to be told.
+    let a_log = a.db.get_page_changelog(&id).await.unwrap();
+    assert!(!a_log.contains("concurrent_with"), "{a_log}");
     let texts: Vec<String> = b
         .history(&id)
         .await

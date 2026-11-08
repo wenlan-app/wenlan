@@ -3,7 +3,7 @@ import { useEffect, useId, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { getPageRevisions, type PageHistoryItem } from "../../../lib/tauri";
+import { getPageRevisions, type PageHistoryItem, type SharedStatus } from "../../../lib/tauri";
 import { diffWords } from "../../../lib/wordDiff";
 import { DiffText } from "../ReviewDialog";
 import { Button } from "../settings/primitives";
@@ -15,6 +15,8 @@ interface HistoryChangeDialogProps {
   /** The history entry the person opened. Matched by kind, version and source. */
   item: PageHistoryItem;
   onClose: () => void;
+  /** Names the member behind a change taken from a shared folder. */
+  shares?: readonly SharedStatus[];
 }
 
 function sameItem(a: PageHistoryItem, b: PageHistoryItem): boolean {
@@ -49,7 +51,7 @@ export function historyTexts(
 }
 
 /** What one entry of the page's history changed (docs/ux/spec.md, UX-HIST-2). */
-export function HistoryChangeDialog({ pageId, item, onClose }: HistoryChangeDialogProps) {
+export function HistoryChangeDialog({ pageId, item, onClose, shares }: HistoryChangeDialogProps) {
   const { t, i18n } = useTranslation();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -123,7 +125,7 @@ export function HistoryChangeDialog({ pageId, item, onClose }: HistoryChangeDial
           }
         }}
       >
-        <h2 id={titleId} className="basis-diff__title">{historyItemLabel(t, item)}</h2>
+        <h2 id={titleId} className="basis-diff__title">{historyItemLabel(t, item, shares)}</h2>
         <p className="basis-diff__versions">{when}</p>
         {body}
         <div className="basis-diff__actions">

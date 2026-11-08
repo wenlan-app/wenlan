@@ -92,3 +92,15 @@ export function sharedWriter(editedBy: string | null | undefined, shares: readon
   }
   return null;
 }
+
+/** The button that opens the shared folder, named after the platform's own
+ * file manager: Finder on macOS, File Explorer on Windows, and a plain
+ * "Open folder" where the platform is Linux or cannot be told. */
+export function revealFolderLabel(
+  t: TFunction,
+  ua: string | undefined = globalThis.navigator?.userAgent,
+): string {
+  if (ua && /\b(Macintosh|Mac OS X)\b/.test(ua)) return t("sharing.showInFinder");
+  if (ua && /\bWindows\b/.test(ua)) return t("sharing.showInExplorer");
+  return t("sharing.showInFolder");
+}

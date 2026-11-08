@@ -276,8 +276,10 @@ for (const locale of LOCALES) {
       });
       await openNote(page);
 
-      await page.getByRole("button", { name: t("pageDetail.actions"), exact: true }).click();
-      await page.getByRole("menuitem", { name: t("pageDetail.redistillPage"), exact: true }).click();
+      // "Update from sources" sits with the sources in Info.
+      const info = page.getByRole("button", { name: t("pageInspector.info"), exact: true });
+      if (await info.getAttribute("aria-expanded") !== "true") await info.click();
+      await page.getByRole("button", { name: t("pageDetail.redistillPage"), exact: true }).click();
 
       expect(callsOf(controller, "redistill_page")).toEqual([{ pageId: "page-architecture" }]);
       // The review queue opens on the preview card; nothing was applied to the note.

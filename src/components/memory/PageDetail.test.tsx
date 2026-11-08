@@ -793,9 +793,9 @@ describe("PageDetail", () => {
 
     expect(within(menu).queryByRole("menuitem", { name: "Mind map" })).toBeNull();
     expect(within(menu).queryByRole("menuitem", { name: i18n.t("pageInspector.info") })).toBeNull();
-    expect(within(menu).getByRole("menuitem", { name: "Edit page" })).toBeVisible();
+    expect(within(menu).queryByRole("menuitem", { name: "Edit page" })).toBeNull();
     // The first enabled page action receives focus.
-    expect(within(menu).getByRole("menuitem", { name: "Edit page" })).toHaveFocus();
+    expect(within(menu).getByRole("menuitem", { name: "Export…" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu", { name: "Page actions" })).toBeNull();
     expect(trigger).toHaveFocus();
@@ -914,8 +914,7 @@ describe("PageDetail", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "Revised Page body"));
@@ -967,8 +966,7 @@ describe("PageDetail", () => {
       level: 1,
       name: "libSQL Architecture",
     });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
 
     rerender(
       <QueryClientProvider client={queryClient}>
@@ -998,7 +996,7 @@ describe("PageDetail", () => {
       screen.queryByRole("textbox", { name: "Page editor" }),
     ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Page actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit page" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Edit page" })).toBeVisible();
     expect(
       screen.getByRole("heading", {
         level: 1,
@@ -1021,15 +1019,14 @@ describe("PageDetail", () => {
       level: 1,
       name: "libSQL Architecture",
     });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     expect(await screen.findByText("Checking editor compatibility…")).toBeVisible();
 
     fireEvent.keyDown(document.body, { key: "Escape" });
 
     expect(defaultProps.onBack).not.toHaveBeenCalled();
     await user.click(await screen.findByRole("button", { name: "Page actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit page" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Edit page" })).toBeVisible();
     expect(
       screen.queryByText("Checking editor compatibility…"),
     ).toBeNull();
@@ -1053,8 +1050,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "One serialized Page body"));
@@ -1158,8 +1154,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "Revised Page body"));
@@ -1245,7 +1240,7 @@ describe("PageDetail", () => {
       await screen.findByText("libSQL Architecture");
 
       await user.click(screen.getByRole("button", { name: "Page actions" }));
-      expect(screen.getByRole("menuitem", { name: "Edit page" })).toHaveFocus();
+      expect(screen.getByRole("menuitem", { name: "Export…" })).toHaveFocus();
     } finally {
       rectsSpy.mockRestore();
     }

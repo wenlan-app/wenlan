@@ -16,6 +16,7 @@ import { listAllActivePages } from "../pages/listAllPages";
 import { Funnel } from "@phosphor-icons/react";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
 import { JoinSharedDialog } from "../sharing/JoinSharedDialog";
+import { PeopleIcon } from "../sharing/SharedWithLine";
 import { ConfirmedSpaces } from "./ConfirmedSpaces";
 import { SpaceEditor } from "./SpaceEditor";
 import { SuggestedSpaces } from "./SuggestedSpaces";
@@ -186,6 +187,7 @@ export function SpacesOverview(props: SpacesOverviewProps) {
             onDiscard={(space) => submit({ kind: "delete", space })}
           />
           <button type="button" className="spaces-join-action collection-control" onClick={() => setJoining(true)}>
+            <PeopleIcon className="spaces-join-icon" />
             {t("sharing.joinEntry")}
           </button>
           <button type="button" className="page-create-action spaces-new-action collection-control collection-control--primary" onClick={() => setCreating(true)}>
@@ -238,6 +240,11 @@ export function SpacesOverview(props: SpacesOverviewProps) {
             onReorder={(space, target) => submit({ kind: "reorder", space, target })}
             onDelete={(space) => submit({ kind: "delete", space })}
           />
+          {/* A narrow window has no room for it in the header row. */}
+          <button type="button" className="spaces-join-row spaces-quiet-action" onClick={() => setJoining(true)}>
+            <PeopleIcon className="spaces-join-icon" />
+            {t("sharing.joinEntry")}
+          </button>
         </>
       )}
     </div>

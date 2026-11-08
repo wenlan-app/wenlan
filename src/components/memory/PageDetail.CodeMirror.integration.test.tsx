@@ -137,8 +137,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       );
 
       expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+      await user.click(screen.getByRole("button", { name: "Edit page" }));
 
       const description = document.getElementById(
         "page-markdown-editor-description",
@@ -171,8 +170,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
 
     expect(
       document.getElementById("page-markdown-editor-description"),
@@ -202,8 +200,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const view = editorViewFromTextbox(textbox);
     expect(
@@ -250,8 +247,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const view = editorViewFromTextbox(textbox);
     act(() => selectRange(view, 0, view.state.doc.length));
@@ -292,8 +288,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const textbox = await screen.findByRole("textbox", {
       name: "Page editor",
     });
@@ -353,8 +348,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const textbox = await screen.findByRole("textbox", {
       name: "Page editor",
     });
@@ -407,8 +401,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       screen.getByRole("button", { name: "Page actions" }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const textbox = await screen.findByRole("textbox", {
       name: "Page editor",
     });
@@ -473,8 +466,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: PAGE.title });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const localDraft = `# ${PAGE.title}\n\nUnsaved local draft.\n`;
     act(() => replaceDocument(editorViewFromTextbox(textbox), localDraft));
@@ -522,8 +514,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
 
     await screen.findByRole("button", { name: "Page actions" });
     expect(container.querySelector(".page-detail-title")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Line-ending normalization required",

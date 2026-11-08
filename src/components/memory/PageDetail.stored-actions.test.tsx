@@ -281,7 +281,7 @@ describe("PageDetail stored actions in seamless editing", () => {
   expect(invalidation).toHaveBeenCalledWith({queryKey:['pages']});
   await waitFor(()=>expect(screen.queryByRole('textbox',{name:'Page editor'})).toBeNull());
   await user.click(screen.getByRole('button',{name:'Page actions'}));
-  expect(screen.queryByRole('menuitem',{name:'Edit page'})).toBeNull();
+  expect(screen.queryByRole('button',{name:'Edit page'})).toBeNull();
   expect(screen.queryByRole('menuitem',{name:'Archive page'})).toBeNull();
   expect(screen.getByRole('menuitem',{name:'Delete page'})).toBeInTheDocument();
  });
