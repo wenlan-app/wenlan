@@ -30,7 +30,7 @@ const kept = new Map([
   ["pair2", { x: -1540, y: 230 }],
 ]);
 
-describe("staleKeptGroups", () => {
+describe("UX-GRAPH-1 staleKeptGroups: small far groups move to the edge", () => {
   it("moves only the small far groups, as whole groups", () => {
     expect([...staleKeptGroups(hubWithLeaves(), kept).keys()].sort()).toEqual(["far", "pair1", "pair2"]);
   });
@@ -97,7 +97,7 @@ describe("staleKeptGroups", () => {
   });
 });
 
-describe("islandSolid", () => {
+describe("UX-GRAPH-1 islandSolid: islands at the edge come up by zoom", () => {
   it("brings a small island up at the detail zoom, a larger one at 2x", () => {
     const small = { island: true, islandBodies: 2 };
     const large = { island: true, islandBodies: 6 };

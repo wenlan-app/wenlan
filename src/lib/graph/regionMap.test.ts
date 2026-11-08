@@ -77,7 +77,7 @@ describe("UX-GRAPH-1 new clusters stay apart from kept regions", () => {
   });
 });
 
-describe("R2 kept regions (round 4)", () => {
+describe("UX-GRAPH-1 kept regions", () => {
   it("keeps every kept body's region when the map grows, and new bodies join by their links", () => {
     const before = fourGroups();
     layoutRegionMap(before, { scope: "t", regionCount: { min: 3, max: 5 } });
@@ -125,7 +125,7 @@ describe("R2 kept regions (round 4)", () => {
   });
 });
 
-describe("R2 region names keep off the points (round 4)", () => {
+describe("UX-GRAPH-1 region names keep off the points", () => {
   const scene = () => {
     const g = new Graph({ type: "undirected" });
     // A tight cluster round the middle, where the name would first go.
@@ -154,7 +154,7 @@ describe("R2 region names keep off the points (round 4)", () => {
   });
 });
 
-describe("R2 region names go first at overview (round 5)", () => {
+describe("UX-GRAPH-1 region names go first at overview", () => {
   const measure = (text: string, size: number) => text.length * size * 0.6;
   const project = (p: { x: number; y: number }) => ({ x: p.x, y: p.y });
 
@@ -194,7 +194,7 @@ describe("R2 region names go first at overview (round 5)", () => {
   });
 });
 
-describe("R2 names and new points (round 6)", () => {
+describe("UX-GRAPH-1 region names and new points", () => {
   const measure = (text: string, size: number) => text.length * size * 0.6;
   const project = (p: { x: number; y: number }) => ({ x: p.x, y: p.y });
 
@@ -319,7 +319,7 @@ describe("R2 names and new points (round 6)", () => {
   });
 });
 
-describe("R2 nudge after grow (round 6)", () => {
+describe("UX-GRAPH-1 new points are nudged clear when the map grows", () => {
   it("moves only the placed point, until its disc is clear", () => {
     const g = new Graph({ type: "undirected" });
     for (let i = 0; i < 9; i += 1) g.addNode(`k${i}`, { size: 5, x: 12 * (i % 3), y: 12 * Math.floor(i / 3) });

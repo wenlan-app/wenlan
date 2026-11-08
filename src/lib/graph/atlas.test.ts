@@ -1704,7 +1704,7 @@ describe("shelveComponents", () => {
     return closest;
   }
 
-  it("packs every other component as an island ISLAND_GAP clear of the core and ISLAND_PACK_GAP clear of each other", () => {
+  it("UX-GRAPH-1: packs every other component as an island ISLAND_GAP clear of the core and ISLAND_PACK_GAP clear of each other", () => {
     const { graph, placement } = shelved([9, 6, 5, 5, 5, 5, 5, 3, 1]);
     const boxes = placement.map((ids) => box(graph, ids));
     for (let i = 1; i < boxes.length; i += 1) {

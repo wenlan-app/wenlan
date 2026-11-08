@@ -2909,7 +2909,7 @@ describe("AtlasView", () => {
     expect(screen.queryByRole("dialog", { name: "Bob" })).not.toBeInTheDocument();
   });
 
-  it("UX-GRAPH-1: the same point is in the same place when the map opens again; rearranging asks first and can be undone", async () => {
+  it("UX-GRAPH-1: opening the map again does not rearrange it, something new goes next to what it links to, and Rearrange asks first and can be undone", async () => {
     const relation = (id: string, target: string, name: string) => ({
       id,
       relation_type: "knows",
@@ -2996,6 +2996,31 @@ describe("AtlasView", () => {
     return ids;
   }
   const atlasLayout = () => (window as unknown as { __ATLAS_LAYOUT?: { kept: boolean; regionless: boolean } }).__ATLAS_LAYOUT;
+
+  it("UX-GRAPH-1: the first time the map switches to the new layout, a corner note says so and Put back brings the old one back", async () => {
+    mockStar(12);
+    const first = renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+    first.unmount();
+    cleanup();
+    // A layout kept from before the current layout version, with one point moved by hand.
+    const key = "atlas.positions.*";
+    const kept = JSON.parse(window.localStorage.getItem(key)!) as Record<string, [number, number]>;
+    kept.e3 = [321, -54];
+    window.localStorage.setItem(key, JSON.stringify(kept));
+    window.localStorage.setItem("atlas.layout.version.*", "1");
+
+    renderWithQuery(<AtlasView />);
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(2));
+    const note = await screen.findByRole("status", { name: "Rearrange" });
+    expect(note).toHaveTextContent("The map was rebalanced");
+    expect([latestGraph().getNodeAttribute("e3", "x"), latestGraph().getNodeAttribute("e3", "y")]).not.toEqual([321, -54]);
+
+    fireEvent.click(within(note).getByRole("button", { name: "Put back" }));
+    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(3));
+    expect([latestGraph().getNodeAttribute("e3", "x"), latestGraph().getNodeAttribute("e3", "y")]).toEqual([321, -54]);
+    expect(atlasLayout()?.kept).toBe(true);
+  });
 
   it("UX-GRAPH-1: a map with a few new points goes straight back to its kept spots, without a fresh layout", async () => {
     const ids = mockStar(40);

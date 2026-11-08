@@ -37,9 +37,12 @@ import {
   undoRearrange,
 } from "./positions";
 
-const laidOut = (scale: number) => {
+/** The towns map laid out and settled. Scale 0.05 (about 210 points, a few
+ *  towns and islands) is enough for the rules below and stays well under a
+ *  second when CI runs every test file at once. */
+const laidOut = (scale: number, variant: "r1" | "r2" = "r1") => {
   const graph = townsGraph({ scale });
-  runAtlasLayout(graph, "r1");
+  runAtlasLayout(graph, variant);
   createAtlasSimulation(graph).stop();
   return graph;
 };
@@ -47,13 +50,18 @@ const laidOut = (scale: number) => {
 const positionsOf = (graph: Graph) =>
   new Map(graph.nodes().map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }]));
 
-describe("round 3 balanced layout", () => {
+describe("UX-GRAPH-1 balanced layout", () => {
   it("lays the same map out the same way every time", () => {
-    const a = positionsOf(laidOut(0.2));
-    const b = positionsOf(laidOut(0.2));
-    expect(b).toEqual(a);
+    for (const variant of ["r1", "r2"] as const) {
+      const a = positionsOf(laidOut(0.05, variant));
+      const b = positionsOf(laidOut(0.05, variant));
+      expect(a.size).toBeGreaterThan(150);
+      expect(b).toEqual(a);
+    }
   });
 
+  // The core's shape is only meaningful on a full-size map, so this one
+  // keeps the large fixture and its own timeout.
   it("gives the towns map a landscape core between 1.3 and 1.8 wide", () => {
     const graph = laidOut(0.3);
     const hubs = graph.filterNodes((_id, attrs) => attrs[ATLAS_SKELETON_HUB_ATTR] === true);
@@ -69,7 +77,7 @@ describe("round 3 balanced layout", () => {
   }, 60_000);
 });
 
-describe("round 3 re-balance and put back", () => {
+describe("UX-GRAPH-1 re-balance and put back", () => {
   beforeEach(() => window.localStorage.clear());
 
   it("re-balances a kept layout once per scope", () => {
@@ -112,7 +120,7 @@ describe("round 3 re-balance and put back", () => {
   });
 });
 
-describe("round 3 label spots (section 8)", () => {
+describe("UX-GRAPH-1 label spots", () => {
   it("tries the four sides, then the same sides further out, then four corners", () => {
     const spots = labelCandidates(100, 100, 6, "right");
     expect(spots).toHaveLength(12);
@@ -124,9 +132,9 @@ describe("round 3 label spots (section 8)", () => {
   });
 });
 
-describe("round 1 polish: line tiers and reopening", () => {
+describe("UX-GRAPH-1 line tiers and reopening", () => {
   it("keeps every hub tie and one line up per member, and hides the rest at overview", () => {
-    const graph = laidOut(0.2);
+    const graph = laidOut(0.05);
     const tiers = graph.mapEdges((_e, attrs) => attrs[ATLAS_EDGE_TIER_ATTR] as number | undefined);
     // Count node pairs, not edges: a pair can carry several parallel links.
     const tierOne = new Set(graph.filterEdges((_e, attrs) => attrs[ATLAS_EDGE_TIER_ATTR] === 1)
@@ -137,10 +145,10 @@ describe("round 1 polish: line tiers and reopening", () => {
     // Tier 1 is a tree over the main component: never more lines than nodes.
     const main = graph.filterNodes((_id, attrs) => attrs.island === false).length;
     expect(tierOne).toBeLessThan(main);
-  }, 60_000);
+  });
 
   it("reopens a kept map without moving it", () => {
-    const graph = laidOut(0.2);
+    const graph = laidOut(0.05);
     const before = positionsOf(graph);
     const copy = graph.copy();
     markKeptLayout(copy, "r1");
@@ -151,10 +159,10 @@ describe("round 1 polish: line tiers and reopening", () => {
       expect(after.get(id)!.y).toBeCloseTo(p.y, 6);
     }
     expect(copy.someEdge((_e, attrs) => attrs[ATLAS_EDGE_TIER_ATTR] === 1)).toBe(true);
-  }, 60_000);
+  });
 });
 
-describe("round 1 polish: a huge hub's lines up close", () => {
+describe("UX-GRAPH-1 a huge hub's lines up close", () => {
   const palette = {
     project: "#111111", tool: "#222222", org: "#333333", person: "#444444", concept: "#555555",
     neutral: "#666666", edge: "#777777", edgeStrong: "#888888", label: "#999999", labelMuted: "#aaaaaa",
@@ -178,7 +186,7 @@ describe("round 1 polish: a huge hub's lines up close", () => {
   });
 });
 
-describe("round 3 B4: a hub's ring of dots never runs through a neighbour", () => {
+describe("UX-GRAPH-1 a hub's ring of dots never runs through a neighbour", () => {
   const ringGraph = (neighbourAt: number) => {
     const graph = new Graph({ multi: true });
     graph.addNode("hub", { x: 0, y: 0, size: 6, entityType: "concept", label: "hub" });
