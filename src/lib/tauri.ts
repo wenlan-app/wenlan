@@ -1214,6 +1214,29 @@ export async function getConversationLines(sessionId: string): Promise<Conversat
   return invoke("get_conversation_lines", { sessionId });
 }
 
+/** One line a memory came from, with the line before and after it (UX-WHO-6). */
+export interface SaidLine {
+  index: number;
+  line: ConversationLine;
+  before?: ConversationLine | null;
+  after?: ConversationLine | null;
+}
+
+/** The lines of its conversation a memory came from; empty when none says the same thing. */
+export interface MemorySaid {
+  session_id: string;
+  tool: string;
+  title?: string | null;
+  thing_id?: string | null;
+  thing_title?: string | null;
+  lines: SaidLine[];
+}
+
+/** Rejects when the memory was not saved in a conversation Wenlan can read (UX-WHO-6). */
+export async function getMemorySaid(sourceId: string): Promise<MemorySaid> {
+  return invoke("get_memory_said", { sourceId });
+}
+
 export async function renameThing(id: string, title: string): Promise<ThingSummary> {
   return invoke("rename_thing", { id, title });
 }

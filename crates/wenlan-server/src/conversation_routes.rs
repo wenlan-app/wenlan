@@ -17,11 +17,13 @@ use axum::Json;
 use serde::Deserialize;
 
 use wenlan_core::db::conversations::SearchableConversation;
+use wenlan_core::said_lines::said_lines;
 use wenlan_core::transcript_lines::{
     conversation_lines, excerpt, head, line_matches, search_terms, tail,
 };
 use wenlan_types::conversations::{
-    ConversationHit, ConversationLinesResponse, ConversationSearchResponse,
+    ConversationHit, ConversationLine, ConversationLinesResponse, ConversationSearchResponse,
+    MemorySaidResponse, SaidLine,
 };
 
 use crate::error::ServerError;
@@ -40,6 +42,8 @@ const MAX_HITS: usize = 50;
 /// Search stops looking once it has spent this long reading transcripts.
 const SEARCH_BUDGET: Duration = Duration::from_secs(2);
 const HIT_CHARS: usize = 240;
+/// Text kept from each line a memory came from.
+const SAID_CHARS: usize = 400;
 const CONTEXT_CHARS: usize = 160;
 /// Lines "show all" returns, the newest kept.
 const MAX_LINES: usize = 5_000;
@@ -51,6 +55,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             get(handle_search_conversations),
         )
         .route("/api/sessions/{id}/lines", get(handle_conversation_lines))
+        .route("/api/memories/{source_id}/said", get(handle_memory_said))
 }
 
 fn require_person(headers: &HeaderMap) -> Result<(), ServerError> {
@@ -134,16 +139,7 @@ fn search(
             }
             let mut line = lines[index].clone();
             line.text = excerpt(&line.text, terms, HIT_CHARS);
-            let before = index.checked_sub(1).map(|i| {
-                let mut l = lines[i].clone();
-                l.text = tail(&l.text, CONTEXT_CHARS);
-                l
-            });
-            let after = lines.get(index + 1).map(|l| {
-                let mut l = l.clone();
-                l.text = head(&l.text, CONTEXT_CHARS);
-                l
-            });
+            let (before, after) = around(&lines, index);
             hits.push(ConversationHit {
                 session_id: session.id.clone(),
                 tool: session.tool.clone(),
@@ -158,6 +154,24 @@ fn search(
         }
     }
     hits
+}
+
+/// A little of the lines before and after `index`.
+fn around(
+    lines: &[ConversationLine],
+    index: usize,
+) -> (Option<ConversationLine>, Option<ConversationLine>) {
+    let before = index.checked_sub(1).map(|i| {
+        let mut l = lines[i].clone();
+        l.text = tail(&l.text, CONTEXT_CHARS);
+        l
+    });
+    let after = lines.get(index + 1).map(|l| {
+        let mut l = l.clone();
+        l.text = head(&l.text, CONTEXT_CHARS);
+        l
+    });
+    (before, after)
 }
 
 /// The stored title, else the one Claude Code wrote into its transcript.
@@ -220,5 +234,67 @@ pub async fn handle_conversation_lines(
         thing_title: thing.and_then(|t| t.title),
         first_index,
         lines,
+    }))
+}
+
+/// GET /api/memories/{source_id}/said
+///
+/// The lines of the conversation a memory was saved in that say the same
+/// thing, each with the line before and after it (UX-WHO-6). Indexes match
+/// `/api/sessions/{id}/lines`, so "show all" opens at the same line. 404 when
+/// the memory is unknown or out of the caller's Space, was not saved in a
+/// conversation, or that conversation can't be read.
+pub async fn handle_memory_said(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
+    Path(source_id): Path<String>,
+) -> Result<Json<MemorySaidResponse>, ServerError> {
+    require_person(&headers)?;
+    let db = {
+        let state = state.read().await;
+        state.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let not_found = || ServerError::NotFound("conversation not found".to_string());
+    let anchor = db
+        .memory_said_anchor(&source_id, &scope)
+        .await?
+        .ok_or_else(not_found)?;
+    let SearchableConversation { session, thing } = db
+        .searchable_conversation(&anchor.session_id, &scope)
+        .await?
+        .ok_or_else(not_found)?;
+    let session_id = session.id.clone();
+    let tool = session.tool.clone();
+    let (title, lines) = tokio::task::spawn_blocking(move || {
+        let path = std::path::PathBuf::from(session.transcript_path.clone().unwrap_or_default());
+        let lines = conversation_lines(&session.tool, &path).map(|lines| {
+            said_lines(&anchor.text, anchor.saved_at, &lines)
+                .into_iter()
+                .map(|index| {
+                    let mut line = lines[index].clone();
+                    line.text = head(&line.text, SAID_CHARS);
+                    let (before, after) = around(&lines, index);
+                    SaidLine {
+                        index,
+                        line,
+                        before,
+                        after,
+                    }
+                })
+                .collect::<Vec<_>>()
+        });
+        (conversation_title(&session), lines)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(format!("memory said: {e}")))?;
+    Ok(Json(MemorySaidResponse {
+        session_id,
+        tool,
+        title,
+        thing_id: thing.as_ref().map(|t| t.id.clone()),
+        thing_title: thing.and_then(|t| t.title),
+        lines: lines.ok_or_else(not_found)?,
     }))
 }

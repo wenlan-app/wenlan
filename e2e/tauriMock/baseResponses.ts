@@ -126,6 +126,8 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_page_sessions": return { sessions: [] };
     case "get_session_detail": return null;
     case "get_conversation_lines": throw new TauriMockArgumentError(command, "sessionId");
+    // No memory in the fixture was saved in a conversation.
+    case "get_memory_said": throw new TauriMockArgumentError(command, "sourceId");
     // The fixture has no things, so no thing id resolves.
     case "get_thing": case "get_thing_map": case "rename_thing": case "hide_thing": case "answer_thing_merge": case "undo_thing_dream": case "answer_thing_map_proposal": throw new TauriMockArgumentError(command, "id");
     case "undo_nights": return { things: 0, points: 0 };

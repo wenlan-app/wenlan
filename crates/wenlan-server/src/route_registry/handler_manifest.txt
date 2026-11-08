@@ -78,6 +78,7 @@ main|get|/api/things/{id}|wenlan_server::things_routes::handle_get_thing
 main|get|/api/things/{id}/map|wenlan_server::things_routes::handle_get_thing_map
 main|get|/api/conversations/search|wenlan_server::conversation_routes::handle_search_conversations
 main|get|/api/sessions/{id}/lines|wenlan_server::conversation_routes::handle_conversation_lines
+main|get|/api/memories/{source_id}/said|wenlan_server::conversation_routes::handle_memory_said
 main|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 repair|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 main|get|/api/snapshots|wenlan_server::snapshot_routes::handle_list_snapshots

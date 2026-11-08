@@ -207,6 +207,13 @@ and wait for evidence that people need them.
   verified.
   原文：現有規則不變：沒驗證的出處不能藏，也不能看起來像驗證過。
 
+- **UX-WHO-6** `shipped` Opening a sentence shows the lines of the
+  conversation it came from: who said each one and when, at most three, each
+  opening the whole conversation at that line. When no line says the same
+  thing, it says so instead of guessing. Finding the lines is not checking
+  them, so they never look verified.
+  原文：「可以。3.」（2026-11-06 15:47 PT，回覆：文澜寫出一句「我們決定一次發 0.21」，你點一下，就能看到原對話裡哪幾句這樣說過）
+
 ## While you chat (in your own AI tool)
 
 - **UX-CHAT-1** `planned` When you or the AI say something that contradicts an

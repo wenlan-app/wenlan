@@ -68,6 +68,21 @@ const base = {
 };
 
 export const PAGES: Record<string, Page> = {
+  // A page whose sentences came from an AI conversation (UX-WHO-6):
+  // `?page=page-said&said=1`.
+  "page-said": {
+    ...base,
+    id: "page-said",
+    title: "0.21 發布",
+    content: `# 0.21 發布
+
+我們決定 0.21 一次發，等 Zotero 那幾個 PR 進來。[1] 首頁只放你自己對話裡在做的事。[2]
+`,
+    citations: [
+      cite(1, 1, { locator: "mem_said_release" }),
+      cite(2, 2, { locator: "mem_said_home" }),
+    ],
+  } as Page,
   "page-cited": {
     ...base,
     id: "page-cited",
@@ -1534,3 +1549,49 @@ export const THING_MAP_POINTS: ThingNightPoints[] = [
     ],
   },
 ];
+
+/** Preview only: what the daemon would pick for each memory (UX-WHO-6). */
+const SAID_AT = Math.floor(Date.now() / 1000) - 3 * 3600;
+export const SAID_CONVERSATION = {
+  session_id: "ses_said_release",
+  tool: "claude-code",
+  title: "0.21 怎麼發",
+  first_index: 0,
+  lines: [
+    { speaker: "you" as const, text: "0.21 要分幾次發？Zotero PDF 那幾個 PR 還沒好。", at: SAID_AT },
+    { speaker: "ai" as const, text: "分開發比較穩；一次發比較簡單，但要等 Codex 那幾個 PR 進來。", at: SAID_AT + 20 },
+    { speaker: "you" as const, text: "那就一次發 0.21，等 Zotero 那幾個 PR 進來。", at: SAID_AT + 95 },
+    { speaker: "ai" as const, text: "好，0.21 一次發。我先把首頁修好，Zotero 的 PR 合了再開版本 PR。", at: SAID_AT + 110 },
+    { speaker: "you" as const, text: "首頁那個修好就裝到我 Mac 上。", at: SAID_AT + 600 },
+  ],
+};
+export const MEMORY_SAID: Record<string, unknown> = {
+  mem_said_release: {
+    session_id: SAID_CONVERSATION.session_id,
+    tool: SAID_CONVERSATION.tool,
+    title: SAID_CONVERSATION.title,
+    lines: [2, 3].map((index) => ({
+      index,
+      line: SAID_CONVERSATION.lines[index],
+      before: SAID_CONVERSATION.lines[index - 1],
+      after: SAID_CONVERSATION.lines[index + 1],
+    })),
+  },
+  // A point on a thing's page (`?mode=home`, the first thing).
+  mem_home_c: {
+    session_id: SAID_CONVERSATION.session_id,
+    tool: SAID_CONVERSATION.tool,
+    title: "Home layout",
+    lines: [
+      { index: 6, line: { speaker: "you", text: "卡片要完整，不要左右滑，放不下就換行。", at: SAID_AT - 7200 } },
+      { index: 7, line: { speaker: "ai", text: "好：卡片一張張完整顯示，不再橫向捲動。", at: SAID_AT - 7180 } },
+    ],
+  },
+  // The conversation is there, but no line says this.
+  mem_said_home: {
+    session_id: SAID_CONVERSATION.session_id,
+    tool: SAID_CONVERSATION.tool,
+    title: SAID_CONVERSATION.title,
+    lines: [],
+  },
+};

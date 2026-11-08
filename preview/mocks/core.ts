@@ -27,6 +27,8 @@ import {
   REPEAT_CITED_SOURCES,
   THING_MAP_GRAPH,
   THING_MAP_POINTS,
+  MEMORY_SAID,
+  SAID_CONVERSATION,
 } from "../fixtures";
 import { TauriMockRuntime } from "../../e2e/tauriMock/runtime";
 import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
@@ -205,6 +207,28 @@ export async function invoke(
         open_points: ["mem_home_d"],
       };
     }
+  }
+  // The lines a sentence or point came from (UX-WHO-6), for every fixture
+  // mode that shows them.
+  if (cmd === "get_memory_said") {
+    const said = MEMORY_SAID[String(args?.sourceId ?? "")] ?? (String(args?.sourceId ?? "").startsWith("mem_home_") ? MEMORY_SAID.mem_said_home : undefined);
+    if (!said) throw new Error("not saved in a conversation");
+    return said;
+  }
+  if (cmd === "get_conversation_lines" && args?.sessionId === SAID_CONVERSATION.session_id) return SAID_CONVERSATION;
+  if (new URLSearchParams(window.location.search).get("said") === "1" && cmd === "get_page_sentences") {
+    const sentence = (idx: number, text: string, locator: string) => ({
+      idx, text, hash: `said_${idx}`, author: "ai", origin: "ai", since_version: 1, confidence: "exact", protected: false,
+      evidence: "verified",
+      citations: [{ occurrence: idx + 1, marker: idx + 1, source_kind: "memory", locator, status: "verified" }],
+    });
+    return {
+      page_id: args?.pageId, version: 1, ai_edits: "propose", proposals: [],
+      sentences: [
+        sentence(0, "我們決定 0.21 一次發，等 Zotero 那幾個 PR 進來。", "mem_said_release"),
+        sentence(1, "首頁只放你自己對話裡在做的事。", "mem_said_home"),
+      ],
+    };
   }
   // `?mode=atlas&things=1`: the big map with things being worked on, from
   // fixtures, no daemon (UX-CHAT-5). See THING_MAP_GRAPH.

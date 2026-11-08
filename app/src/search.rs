@@ -5561,6 +5561,16 @@ pub async fn get_conversation_lines(
     client.conversation_lines(&session_id).await
 }
 
+/// The lines of its conversation a memory came from (UX-WHO-6).
+#[tauri::command]
+pub async fn get_memory_said(
+    state: tauri::State<'_, State>,
+    source_id: String,
+) -> Result<wenlan_types::conversations::MemorySaidResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.memory_said(&source_id).await
+}
+
 #[tauri::command]
 pub async fn rename_thing(
     state: tauri::State<'_, State>,

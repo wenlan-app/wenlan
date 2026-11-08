@@ -131,6 +131,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "get_thing_map",
     "search_conversations",
     "get_conversation_lines",
+    "get_memory_said",
     "rename_thing",
     "hide_thing",
     "move_session_thing",

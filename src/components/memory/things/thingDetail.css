@@ -53,6 +53,10 @@
 .thing-recap-group h3 { margin:6px 0 0;color:var(--mem-text-secondary);font:600 13px/1.4 var(--mem-font-body);letter-spacing:.02em; }
 .thing-recap-group ul { margin:0;padding-left:1.1em;display:grid;gap:2px;color:var(--mem-text);font:400 15px/1.7 var(--mem-font-body);overflow-wrap:anywhere; }
 .thing-recap-group li::marker { color:var(--mem-text-tertiary); }
+.thing-recap-point { padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer; }
+.thing-recap-point:hover { text-decoration:underline;text-decoration-color:var(--mem-text-tertiary);text-underline-offset:3px; }
+.thing-recap-point:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:var(--mem-r-4); }
+.thing-recap-group li .said-lines { margin:4px 0 8px; }
 .thing-recap-more { justify-self:start;padding:0;border:0;background:none;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body);cursor:pointer; }
 .thing-recap-more:hover { color:var(--mem-text-secondary);text-decoration:underline; }
 .thing-recap-more:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:var(--mem-r-4); }

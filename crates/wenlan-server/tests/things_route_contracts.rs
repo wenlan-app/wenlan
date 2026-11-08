@@ -824,3 +824,153 @@ async fn ux_find_1_search_finds_what_was_said_with_the_lines_around_it() {
         .collect();
     assert_eq!(titles, vec!["京都住宿"]);
 }
+
+#[tokio::test]
+async fn ux_who_6_a_memory_opens_to_the_lines_it_was_said_in() {
+    let _guard = data_dir_lock().lock().await;
+    let vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("other", None, false).await.unwrap();
+
+    let projects = vault._tmp.path().join(".claude/projects/-release");
+    std::fs::create_dir_all(&projects).unwrap();
+    let transcript = projects.join("release.jsonl");
+    std::fs::write(
+        &transcript,
+        [
+            r#"{"type":"user","message":{"role":"user","content":"Should 0.21 go out in pieces?"},"timestamp":"2026-11-01T10:00:00Z"}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Pieces are safer, one release is simpler."}]},"timestamp":"2026-11-01T10:00:05Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":"那就一次發 0.21，等 Zotero 那幾個 PR 進來。"},"timestamp":"2026-11-01T10:01:00Z"}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Noted."}]},"timestamp":"2026-11-01T10:01:04Z"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({
+            "session": "claude-code:release",
+            "title": "Release 0.21",
+            "transcript_path": transcript.to_str().unwrap(),
+        })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let session_id = body["id"].as_str().unwrap().to_string();
+
+    let store = |content: &'static str, session: Option<&'static str>| {
+        let router = router.clone();
+        async move {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri("/api/memory/store")
+                .header("content-type", "application/json")
+                .header("x-agent-name", "claude-code");
+            if let Some(session) = session {
+                request = request.header("x-wenlan-session", session);
+            }
+            let response = router
+                .oneshot(
+                    request
+                        .body(Body::from(
+                            json!({ "content": content, "memory_type": "decision" }).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            serde_json::from_slice::<Value>(&bytes).unwrap()["source_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    let decided = store(
+        "決定一次發 0.21，等 Zotero 的 PR 進來。",
+        Some("claude-code:release"),
+    )
+    .await;
+    let unrelated = store(
+        "The office plant needs water on Fridays.",
+        Some("claude-code:release"),
+    )
+    .await;
+    let no_conversation = store("Saved outside any conversation.", None).await;
+
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/memories/{decided}/said"),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let said = typed::<wenlan_types::conversations::MemorySaidResponse>(body);
+    assert_eq!(said.session_id, session_id);
+    assert_eq!(said.title.as_deref(), Some("Release 0.21"));
+    let indexes: Vec<usize> = said.lines.iter().map(|l| l.index).collect();
+    assert_eq!(indexes, vec![2], "{said:?}");
+    assert_eq!(
+        said.lines[0].line.text,
+        "那就一次發 0.21，等 Zotero 那幾個 PR 進來。"
+    );
+    assert_eq!(
+        said.lines[0].before.as_ref().map(|l| l.text.as_str()),
+        Some("Pieces are safer, one release is simpler.")
+    );
+
+    // A memory no line says the same thing as: the conversation, no lines.
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/memories/{unrelated}/said"),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        typed::<wenlan_types::conversations::MemorySaidResponse>(body)
+            .lines
+            .is_empty()
+    );
+
+    // Not saved in a conversation, unknown, for an AI tool, or out of Space.
+    for (uri, caller, expected) in [
+        (
+            format!("/api/memories/{no_conversation}/said"),
+            Caller::Person,
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/api/memories/mem_missing/said".to_string(),
+            Caller::Person,
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            format!("/api/memories/{decided}/said"),
+            Caller::InSpace("other"),
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (status, body) = call(&router, Method::GET, &uri, None, caller).await;
+        assert_eq!(status, expected, "{uri}: {body}");
+    }
+    let (status, _) = call(
+        &router,
+        Method::GET,
+        &format!("/api/memories/{decided}/said"),
+        None,
+        Caller::Agent("codex"),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "the lines are for the person");
+}

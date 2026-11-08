@@ -1961,6 +1961,13 @@ const en = {
     noModel: "No AI model is set up to fix it. You can fix it yourself.",
     flagged: "You marked this sentence as not right.",
     flagFailed: "Could not send it. Try again.",
+    said: {
+      title: "In the conversation",
+      notFound: "Not found in the conversation.",
+      showAll: "Whole conversation",
+      close: "Close",
+      loading: "Opening the conversation…",
+    },
   },
   weakReason: {
     no_citation: "no source",
@@ -5203,6 +5210,13 @@ const zhHans = {
     noModel: "还没有能改它的 AI 模型，你可以自己改。",
     flagged: "你标了这句不对。",
     flagFailed: "没送出去，再试一次。",
+    said: {
+      title: "原对话",
+      notFound: "原对话里没找到这句的原话。",
+      showAll: "看整段对话",
+      close: "关闭",
+      loading: "正在打开对话…",
+    },
   },
   weakReason: {
     no_citation: "没有出处",
@@ -8420,6 +8434,13 @@ const zhHant = {
     noModel: "還沒有能改它的 AI 模型，你可以自己改。",
     flagged: "你標了這句不對。",
     flagFailed: "沒送出去，再試一次。",
+    said: {
+      title: "原對話",
+      notFound: "原對話裡沒找到這句的原話。",
+      showAll: "看整段對話",
+      close: "關閉",
+      loading: "正在打開對話…",
+    },
   },
   weakReason: {
     no_citation: "沒有出處",
