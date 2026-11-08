@@ -87,6 +87,9 @@ pub enum LintMetricCode {
     TaggedDocuments,
     PinnedMemories,
     StableMemories,
+    /// Imported chat turns kept as conversation text, never as the
+    /// person's memories (UX-ADD-4).
+    ImportedChatTurns,
     SessionActivities,
     SessionCaptures,
     SessionSnapshots,

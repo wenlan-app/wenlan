@@ -195,6 +195,19 @@ pub(super) async fn prepare_startup_state(
             ),
             Err(error) => tracing::warn!("[pages] summary backfill failed: {error}"),
         }
+        // Chat turns imported before new imports flagged their own still
+        // carry a machine-assigned type that made them the person's fact,
+        // preference, identity or decision (UX-ADD-4). Flag them once;
+        // marker-guarded, and nothing is deleted.
+        match db_arc.flag_imported_chat_turns(false).await {
+            Ok(outcome) if outcome.flagged > 0 => tracing::info!(
+                "[import] flagged {} imported chat turns across {} conversations as conversation text",
+                outcome.flagged,
+                outcome.conversations
+            ),
+            Ok(_) => {}
+            Err(error) => tracing::warn!("[import] chat turn flag pass failed: {error}"),
+        }
     }
 
     // Requeue any document-enrichment rows left `in_progress` by a previous run

@@ -121,6 +121,21 @@ describe("PageInfo", () => {
     expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
   });
 
+  it("UX-ADD-4 labels an imported chat turn as a chat transcript, never as the person's fact", async () => {
+    const { user } = renderInfo({
+      sourceCount: 2,
+      sources: [
+        source("import_claude_c1", { memory_type: "fact", conversation_text: true }),
+        source("mem-own", { memory_type: "decision" }),
+      ],
+    });
+    await user.click(screen.getByText(/Page info/i));
+    const [turn, own] = screen.getAllByTestId("page-info-source-row");
+    expect(within(turn).getByText("Chat transcript")).toBeInTheDocument();
+    expect(within(turn).queryByText("fact")).toBeNull();
+    expect(within(own).getByText("decision")).toBeInTheDocument();
+  });
+
   it("caps revisions at 3 newest-first regardless of daemon order", async () => {
     // Daemon returns ascending; the cap must keep the newest.
     const { user } = renderInfo({

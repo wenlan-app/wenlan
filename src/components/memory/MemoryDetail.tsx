@@ -429,6 +429,10 @@ export default function MemoryDetail({
   const facetType = isMemoryType(memory.memory_type) ? memory.memory_type : "fact";
   const facetLabel = t(`importView.typeLabels.${facetType}`);
   const isConfirmed = memory.confirmed;
+  // An imported chat turn is the conversation's original text. It is not the
+  // person's fact or decision, so it has no type to pick and nothing to
+  // confirm as theirs (UX-ADD-4).
+  const isConversationText = memory.conversation_text === true;
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const formatTimeAgo = (ts: number) => formatRelativeEntityTime(ts, locale) ?? "";
   const formatAbsoluteTime = (ts: number) => new Date(ts * 1000).toLocaleString(locale);
@@ -589,7 +593,7 @@ export default function MemoryDetail({
 
       <PageInfoDrawer docked inspector focusOnOpen={false} returnFocusRef={infoToggleRef} open={infoOpen && fetchedMemory !== null} onClose={() => setInfoOpen(false)} title={t("knowledgeContext.memoryPanel")} closeLabel={t("common.close")}>
         <DetailInfoContent className="memory-detail-context-content">
-          <InfoAction
+          {!isConversationText && <InfoAction
             label={t(isConfirmed ? "infoActions.contentConfirmed" : "infoActions.confirmContent")}
             description={t(contentBusy ? "infoActions.saveMemoryFirst" : isConfirmed ? "infoActions.contentConfirmedHint" : "infoActions.confirmContentHint")}
             showDescription={!isConfirmed}
@@ -598,7 +602,7 @@ export default function MemoryDetail({
             disabled={isConfirmed || contentBusy || revisionPending || deleteMutation.isPending}
             error={confirmMutation.isError && confirmMutation.variables?.id === sourceId ? t("infoActions.saveError") : undefined}
             onClick={() => { void (contentFlushRef.current?.() ?? Promise.resolve(true)).then(saved => { if (saved) confirmMutation.mutate({ id: sourceId, confirmed: true }); }); }}
-          />
+          />}
 
           <section className="memory-detail-information">
             <h3 className="memory-detail-subsection">{t("detailInfo.details")}</h3>
@@ -606,6 +610,9 @@ export default function MemoryDetail({
               <div className="memory-detail-info-row">
                 <dt className="memory-detail-info-label">{t("memoryList.type")}</dt>
                 <dd className="memory-detail-info-value">
+                  {isConversationText ? (
+                    <span data-testid="memory-detail-conversation-text">{t("memoryList.conversationText")}</span>
+                  ) : (
                   <div className="relative" ref={dropdownRef}>
                     <button
                       onClick={() => setReclassifyOpen(!reclassifyOpen)}
@@ -636,6 +643,7 @@ export default function MemoryDetail({
                       </div>
                     )}
                   </div>
+                  )}
                 </dd>
               </div>
               <div className="memory-detail-info-row">

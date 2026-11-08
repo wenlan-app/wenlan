@@ -197,6 +197,7 @@ fn sample_memory(source_id: &str) -> MemoryItem {
         pending_revision: false,
         merged_from: None,
         session_id: None,
+        conversation_text: false,
     }
 }
 
@@ -1718,6 +1719,7 @@ async fn t_list_pending_uses_post_with_confirmed_false() {
             created_at: 1_000_000,
             content: String::new(),
             is_archived: false,
+            conversation_text: false,
         }],
     };
 

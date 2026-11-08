@@ -1491,7 +1491,8 @@ pub async fn handle_confirm_memory(
     let updated = db
         .set_stability(&source_id, stability)
         .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?;
+        // A refused chat turn is a 409 Conflict, not a daemon fault.
+        .map_err(ServerError::from)?;
     if !updated {
         return Err(ServerError::NotFound(format!("memory {}", source_id)));
     }
@@ -2356,7 +2357,7 @@ pub async fn handle_set_stability(
     let updated = db
         .set_stability(&id, &req.stability)
         .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?;
+        .map_err(ServerError::from)?;
     if !updated {
         return Err(ServerError::NotFound(format!("memory {}", id)));
     }

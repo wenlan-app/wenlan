@@ -1944,6 +1944,11 @@ export interface MemoryItem {
   merged_from?: string[] | null;
   /** The AI conversation that wrote this memory (`ses_...`), when one did. */
   session_id?: string | null;
+  /**
+   * True for an imported chat turn: the conversation's original text, not a
+   * fact, preference, identity or decision the person holds (UX-ADD-4).
+   */
+  conversation_text?: boolean;
   structured_fields?: string | null;  // JSON string from Rust
   retrieval_cue?: string | null;
   access_count?: number;

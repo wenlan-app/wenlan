@@ -1303,6 +1303,8 @@ const en = {
   },
   memoryList: {
     label: "Memory list",
+    // An imported chat turn is stored as the conversation's original text (UX-ADD-4).
+    conversationText: "Chat transcript",
     filterLabel: "Filter memories",
     clearFilter: "Clear filter",
     actions: "Memory actions",
@@ -4560,6 +4562,7 @@ const zhHans = {
   },
   memoryList: {
     label: "记忆列表",
+    conversationText: "对话原文",
     filterLabel: "筛选记忆",
     clearFilter: "清除筛选",
     actions: "记忆操作",
@@ -7784,6 +7787,7 @@ const zhHant = {
   },
   memoryList: {
     label: "記憶列表",
+    conversationText: "對話原文",
     filterLabel: "篩選記憶",
     clearFilter: "清除篩選",
     actions: "記憶操作",

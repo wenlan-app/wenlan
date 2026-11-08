@@ -376,6 +376,21 @@ and wait for evidence that people need them.
 - **UX-ADD-3** `planned` An Obsidian folder that has never used Wenlan works
   when connected, without installing a plugin.
   原文：接上一個沒用過文瀾的 Obsidian 資料夾，不裝外掛就能用。
+- **UX-ADD-4** `shipped` An imported chat is kept as the conversation's
+  original. Its turns are conversation text, not your memories: they are never
+  typed or counted as your fact, preference, identity or decision, never wait
+  in review for you to confirm, and are labelled 「對話原文」 ("Chat
+  transcript"), with nothing to confirm, on memory cards and rows, in a
+  memory's details and in a page's sources. Confirming one, or giving it a
+  type, is refused with a message saying it is conversation text.
+  Turns imported before this rule are flagged the same way, and nothing is
+  deleted or rewritten: the flag is the only change, so clearing it puts each
+  turn back exactly as it was, and pages and topics that cite them keep their
+  sources.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查第 5 條：「對話原文存成「原文」，記憶只放提煉出的結論；現有這 1,047 筆先標出來，不直接刪」）
+- **UX-ADD-5** `planned` The memories an imported chat adds are only the
+  conclusions distilled from it, each pointing back to the lines it came from.
+  原文：同 UX-ADD-4：「記憶只放提煉出的結論」（2026-11-08）
 
 ## History
 
