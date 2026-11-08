@@ -28,7 +28,7 @@ use crate::WenlanError;
 use std::collections::HashSet;
 use wenlan_types::{
     NightLinkMade, NightTidied, ThingActor, ThingConclusionSentence, ThingDream, ThingLastNight,
-    ThingNightPoint, ThingNightPoints,
+    ThingNightPoint, ThingNightPoints, ThingReplaced, ThingTidy,
 };
 
 /// `thing_history` with the two operations added. Same columns, rows and
@@ -567,6 +567,110 @@ impl MemoryDB {
         Ok(last_night_of(&night, standing, &kept))
     }
 
+    /// What a thing's nights tidied that can still be taken back one at a
+    /// time (UX-GRAPH-7): nights not taken back, whose hidden rows are still
+    /// hidden, newest first, with the text that was there.
+    pub async fn thing_tidies(&self, thing_id: &str) -> Result<Vec<ThingTidy>, WenlanError> {
+        let nights = self.dream_nights(thing_id).await?;
+        let conn = self.conn.lock().await;
+        let mut out = Vec::new();
+        for (_, _, night) in nights.into_iter().rev().filter(|(_, undone, _)| !undone) {
+            for change in night.entry.changes {
+                let NightChange::Tidy { how, old, new, .. } = change else {
+                    continue;
+                };
+                let mut replaced = Vec::new();
+                for id in old {
+                    let mut rows = conn
+                        .query(
+                            "SELECT content FROM memories
+                              WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
+                                AND supersede_mode = 'evicted'",
+                            libsql::params![id.as_str()],
+                        )
+                        .await
+                        .map_err(db_err("tidy hidden"))?;
+                    if let Some(row) = rows.next().await.map_err(db_err("tidy hidden row"))? {
+                        replaced.push(ThingReplaced {
+                            source_id: id,
+                            text: row.get::<String>(0).unwrap_or_default(),
+                        });
+                    }
+                }
+                if !replaced.is_empty() {
+                    out.push(ThingTidy {
+                        kind: how,
+                        memory_id: new,
+                        replaced,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The person takes back one tidy from the memory that stands now
+    /// (UX-GRAPH-7): what it hid comes back, what it wrote is forgotten, and
+    /// the night no longer lists it, all in one transaction. Returns the
+    /// memories forgotten; `None` when no night not taken back made it.
+    pub async fn undo_tidy(
+        &self,
+        thing_id: &str,
+        memory_id: &str,
+    ) -> Result<Option<Vec<String>>, WenlanError> {
+        let nights = self.dream_nights(thing_id).await?;
+        let Some((seq, change)) = nights
+            .into_iter()
+            .filter(|(_, undone, _)| !undone)
+            .find_map(|(seq, _, night)| {
+                night
+                    .entry
+                    .changes
+                    .into_iter()
+                    .find(|c| matches!(c, NightChange::Tidy { new, .. } if new == memory_id))
+                    .map(|c| (seq, c))
+            })
+        else {
+            return Ok(None);
+        };
+        let conn = self.conn.lock().await;
+        let tx = conn
+            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+            .await
+            .map_err(db_err("undo tidy begin"))?;
+        let forgotten = undo_tidies(&tx, thing_id, std::slice::from_ref(&change)).await?;
+        for id in &forgotten {
+            self.delete_by_source_id_in_transaction(&tx, "memory", id, false)
+                .await?;
+        }
+        let mut rows = tx
+            .query(
+                "SELECT data FROM thing_history WHERE seq = ?1",
+                libsql::params![seq],
+            )
+            .await
+            .map_err(db_err("undo tidy read"))?;
+        let data = match rows.next().await.map_err(db_err("undo tidy row"))? {
+            Some(row) => row.get::<String>(0).unwrap_or_default(),
+            None => String::new(),
+        };
+        drop(rows);
+        let mut entry: serde_json::Value =
+            serde_json::from_str(&data).unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(changes) = entry.get_mut("changes").and_then(|c| c.as_array_mut()) {
+            let gone = serde_json::to_value(&change).unwrap_or_default();
+            changes.retain(|c| *c != gone);
+        }
+        tx.execute(
+            "UPDATE thing_history SET data = ?1 WHERE seq = ?2",
+            libsql::params![entry.to_string(), seq],
+        )
+        .await
+        .map_err(db_err("undo tidy write"))?;
+        tx.commit().await.map_err(db_err("undo tidy commit"))?;
+        Ok(Some(forgotten))
+    }
+
     /// The person takes back a whole night on the big map (UX-GRAPH-5):
     /// the newest night of every thing in `scope` that ran at or after
     /// `since`, each as its own page's Undo does. Returns how many things'
@@ -830,10 +934,12 @@ impl MemoryDB {
         )
         .await?;
         remove_night_links(&tx, &night.entry.changes).await?;
+        // The tidies came last, so they go first.
+        let tidied = undo_tidies(&tx, thing_id, &night.entry.changes).await?;
         super::thing_map::undo_dream_map_in(&tx, thing_id, &night.entry.map, now).await?;
         let mut ids = night.entry.decided;
         ids.extend(night.entry.open);
-        ids.extend(undo_tidies(&tx, &night.entry.changes).await?);
+        ids.extend(tidied);
         for id in &ids {
             self.delete_by_source_id_in_transaction(&tx, "memory", id, false)
                 .await?;

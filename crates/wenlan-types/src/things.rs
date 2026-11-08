@@ -112,6 +112,27 @@ pub struct ThingDetailResponse {
     /// out.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub unread: usize,
+    /// What its nights tidied that can still be taken back, one change at a
+    /// time, from the memory that stands now (UX-GRAPH-7). Older daemons
+    /// leave it out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tidied: Vec<ThingTidy>,
+}
+
+/// One tidy on a thing's page: the memory that stands now, and what it took
+/// the place of, hidden and kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingTidy {
+    pub kind: NightTidyKind,
+    pub memory_id: String,
+    pub replaced: Vec<ThingReplaced>,
+}
+
+/// A memory a tidy hid, with its text, so the page can say what was there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingReplaced {
+    pub source_id: String,
+    pub text: String,
 }
 
 fn is_zero(n: &usize) -> bool {

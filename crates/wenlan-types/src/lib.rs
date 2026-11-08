@@ -134,7 +134,8 @@ pub use things::{
     ThingMapOpsResponse, ThingMapProposal, ThingMapResponse, ThingMapSource, ThingMapState,
     ThingMergeRequest, ThingMoveRequest, ThingNightPoint, ThingNightPoints,
     ThingNightPointsResponse, ThingPageEntry, ThingPageVia, ThingRef, ThingRenameRequest,
-    ThingSessionEntry, ThingSummary, ThingsResponse, THING_QUIET_AFTER_SECS,
+    ThingReplaced, ThingSessionEntry, ThingSummary, ThingTidy, ThingsResponse,
+    THING_QUIET_AFTER_SECS,
 };
 
 use serde::{Deserialize, Serialize};

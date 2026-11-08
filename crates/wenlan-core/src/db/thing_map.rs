@@ -743,12 +743,37 @@ pub struct DreamMapChanges {
     /// Proposals it left on the person's points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proposals: Vec<String>,
+    /// Points it took off because a tidy hid the memory they were
+    /// (UX-GRAPH-7), as they were, so undo puts them back.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<ThingMapNode>,
 }
 
 impl DreamMapChanges {
     pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.changed.is_empty() && self.proposals.is_empty()
+        self.added.is_empty()
+            && self.changed.is_empty()
+            && self.proposals.is_empty()
+            && self.removed.is_empty()
     }
+
+    /// Both nights' changes, `self`'s first.
+    pub fn extend(&mut self, other: DreamMapChanges) {
+        self.added.extend(other.added);
+        self.changed.extend(other.changed);
+        self.proposals.extend(other.proposals);
+        self.removed.extend(other.removed);
+    }
+}
+
+/// What a night's tidy did, as the thing's map takes it (UX-GRAPH-7): the
+/// memories it hid and the one that stands for them, with that one's text
+/// when the night wrote it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TidyMapWrite {
+    pub old: Vec<String>,
+    pub new: String,
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -953,6 +978,82 @@ impl MemoryDB {
         Ok(changes)
     }
 
+    /// Show a night's tidies on the thing's map (UX-GRAPH-7). The first
+    /// point that was a hidden memory now is the one that stands for it,
+    /// with the new text when the night wrote one; any other such point is
+    /// taken off when the AI made it and nothing is under it. A point the
+    /// person wrote keeps its words and only names the new memory.
+    pub async fn tidy_into_map(
+        &self,
+        thing_id: &str,
+        tidies: &[TidyMapWrite],
+    ) -> Result<DreamMapChanges, WenlanError> {
+        let mut changes = DreamMapChanges::default();
+        if tidies.is_empty() {
+            return Ok(changes);
+        }
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().await;
+        let mut map = read_map(&conn, thing_id).await?;
+        for tidy in tidies {
+            let holds = |node: &ThingMapNode| {
+                node.sources.iter().any(|s| {
+                    s.memory_id
+                        .as_deref()
+                        .is_some_and(|m| tidy.old.iter().any(|o| o == m))
+                })
+            };
+            let found: Vec<String> = map
+                .nodes
+                .iter()
+                .filter(|(n, _, _)| holds(n))
+                .map(|(n, _, _)| n.id.clone())
+                .collect();
+            for (k, id) in found.iter().enumerate() {
+                let Some(i) = map.index(id) else { continue };
+                let before = map.nodes[i].0.clone();
+                let leaf = !map
+                    .nodes
+                    .iter()
+                    .any(|(n, _, _)| n.parent_id.as_deref() == Some(id.as_str()));
+                // A replace keeps a memory that may have its own point: the
+                // hidden one's point goes. So does every point but the first.
+                let keep = k == 0 && tidy.text.is_some();
+                if !keep && before.by == ThingMapAuthor::Local && leaf {
+                    map.nodes.remove(i);
+                    map.edges.retain(|e| e.from != *id && e.to != *id);
+                    changes.removed.push(before);
+                    continue;
+                }
+                let mut after = before.clone();
+                for source in &mut after.sources {
+                    if source
+                        .memory_id
+                        .as_deref()
+                        .is_some_and(|m| tidy.old.iter().any(|o| o == m))
+                    {
+                        source.memory_id = Some(tidy.new.clone());
+                    }
+                }
+                if keep && before.by == ThingMapAuthor::Local {
+                    if let Some(text) = &tidy.text {
+                        after.label = cut_label(text);
+                    }
+                }
+                if after != before {
+                    map.nodes[i].0 = after.clone();
+                    map.nodes[i].2 = now;
+                    changes.changed.push(DreamNodeChange { before, after });
+                }
+            }
+        }
+        if !changes.is_empty() {
+            map.revision += 1;
+            write_map(&conn, thing_id, &map, now).await?;
+        }
+        Ok(changes)
+    }
+
     /// Take a night's changes off the thing's map: its proposals still
     /// waiting go, each point it changed and nobody changed since goes back
     /// to what it was, and each point it added that nobody touched since and
@@ -994,6 +1095,18 @@ pub(super) async fn undo_dream_map_in(
         let mut map = read_map(conn, thing_id).await?;
         let before = (map.nodes.len(), map.proposals.len());
         let mut touched = false;
+        // Points a tidy took off come back, under their parent while it is
+        // still there.
+        for node in changes.removed.iter().rev() {
+            let parent_there = node
+                .parent_id
+                .as_deref()
+                .is_none_or(|p| map.index(p).is_some());
+            if map.index(&node.id).is_none() && parent_there {
+                map.nodes.push((node.clone(), now, now));
+                touched = true;
+            }
+        }
         map.proposals.retain(|p| !changes.proposals.contains(&p.id));
         for change in changes.changed.iter().rev() {
             if let Some(i) = map.index(&change.after.id) {

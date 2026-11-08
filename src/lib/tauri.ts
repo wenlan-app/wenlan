@@ -1060,6 +1060,9 @@ export interface ThingDetail extends ThingSummary {
   pages: ThingPage[];
   /** Newest first. Older daemons leave it out. */
   memories?: ThingMemory[];
+  /** What its nights tidied that can be taken back one at a time
+   *  (UX-GRAPH-7), by the memory that stands now. */
+  tidied?: ThingTidy[];
   /** Things the AI thinks are the same goal, waiting for the person
    *  (UX-THING-3). Older daemons leave it out. */
   merge_proposals?: { id: string; title: string | null }[];
@@ -1150,6 +1153,24 @@ export interface ThingLastNight {
   at: number;
   written: string[];
   linked: { memory_id: string; entity_id: string }[];
+  /** Memories an AI wrote that the night tidied (UX-GRAPH-7): the one that
+   *  stands now, and the ones it took the place of, hidden and kept. */
+  tidied?: NightTidied[];
+}
+
+/** One tidy on a thing's page: the memory that stands now and the text it
+ *  took the place of (UX-GRAPH-7). */
+export interface ThingTidy {
+  kind: NightTidied["kind"];
+  memory_id: string;
+  replaced: { source_id: string; text: string }[];
+}
+
+/** One tidy a night made (UX-GRAPH-7). */
+export interface NightTidied {
+  kind: "merge" | "replace" | "update";
+  memory_id: string;
+  replaced: string[];
 }
 
 /** Every thing with night points, for the big map. */
@@ -1250,6 +1271,10 @@ export async function hideThing(id: string): Promise<ThingSummary> {
 
 /** Answer "these two look like one thing" on a thing's page (UX-THING-3):
  *  merge `otherId` into `id`, or keep them apart so it is not asked again. */
+export async function undoThingTidy(id: string, memoryId: string): Promise<ThingSummary> {
+  return invoke("undo_thing_tidy", { id, memoryId });
+}
+
 export async function undoThingDream(id: string): Promise<ThingSummary> {
   return invoke("undo_thing_dream", { id });
 }

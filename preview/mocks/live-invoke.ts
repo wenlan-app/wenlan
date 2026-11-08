@@ -1253,6 +1253,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       other_thing_id: a?.otherId,
     }),
   undo_thing_dream: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/dream/undo`, {}),
+  undo_thing_tidy: (a) =>
+    post(`/api/things/${enc(String(a?.id ?? ""))}/tidy/${enc(String(a?.memoryId ?? ""))}/undo`, {}),
   undo_nights: (a) => post("/api/things/nights/undo", { since: Number(a?.since ?? 0) }),
   answer_thing_map_proposal: (a) => post(`/api/things/${enc(String(a?.id ?? ""))}/map/ops`, {
     expected_revision: Number(a?.revision ?? 0),

@@ -11,6 +11,7 @@
 //! entry records the mode it had, so Undo puts it back.
 
 use super::night_links::NightChange;
+use super::thing_map::DreamMapChanges;
 use super::{not_hidden_by_superseder, not_self_archived, MemoryDB};
 use crate::authorship::{memory_author, MemoryWriter};
 use crate::night_tidy::{TidyItem, MAX_NEIGHBOURS, MAX_TOUCHED, MIN_SIMILARITY};
@@ -29,12 +30,16 @@ const FIRST_NIGHT_SECS: i64 = 24 * 60 * 60;
 
 /// A tidy the night applied, before it is recorded: what is hidden and what
 /// stands for it. See [`NightChange::Tidy`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TidyApplied {
     pub how: NightTidyKind,
     pub old: Vec<String>,
     pub new: String,
     pub wrote: bool,
+    /// What the night wrote for `new`, for the thing's map.
+    pub text: Option<String>,
+    /// What it changed on the thing's map, for undo.
+    pub map: DreamMapChanges,
 }
 
 /// What a night may tidy for one thing: the memories offered, and the
@@ -300,6 +305,7 @@ pub(super) async fn apply_tidies(
             before,
             new: tidy.new.clone(),
             wrote: tidy.wrote,
+            map: tidy.map.clone(),
         });
     }
     Ok(changes)
@@ -310,20 +316,25 @@ pub(super) async fn apply_tidies(
 /// later step changed again is left alone.
 pub(super) async fn undo_tidies(
     tx: &libsql::Transaction,
+    thing_id: &str,
     changes: &[NightChange],
 ) -> Result<Vec<String>, WenlanError> {
     let mut wrote = Vec::new();
-    for change in changes {
+    let now = chrono::Utc::now().timestamp();
+    // Newest first: a later tidy's map change sits on an earlier one's.
+    for change in changes.iter().rev() {
         let NightChange::Tidy {
             old,
             before,
             new,
             wrote: written,
+            map,
             ..
         } = change
         else {
             continue;
         };
+        super::thing_map::undo_dream_map_in(tx, thing_id, map, now).await?;
         for (i, id) in old.iter().enumerate() {
             let mode = before.get(i).cloned().flatten();
             tx.execute(

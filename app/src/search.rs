@@ -5643,6 +5643,17 @@ pub async fn undo_thing_dream(
     client.undo_thing_dream(&id).await
 }
 
+/// Take back one tidy a night made on a thing (UX-GRAPH-7).
+#[tauri::command]
+pub async fn undo_thing_tidy(
+    state: tauri::State<'_, State>,
+    id: String,
+    memory_id: String,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.undo_thing_tidy(&id, &memory_id).await
+}
+
 /// Take back the whole night on the big map (UX-GRAPH-5): every thing whose
 /// newest night ran at or after `since`, Unix seconds.
 #[tauri::command]

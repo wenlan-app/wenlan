@@ -1967,6 +1967,21 @@ impl WenlanClient {
         self.post_empty(&path).await
     }
 
+    /// `POST /api/things/{id}/tidy/{memory_id}/undo`: the person takes back
+    /// one tidy a night made (UX-GRAPH-7).
+    pub async fn undo_thing_tidy(
+        &self,
+        id: &str,
+        memory_id: &str,
+    ) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!(
+            "/api/things/{}/tidy/{}/undo",
+            percent_encode_path_segment(id),
+            percent_encode_path_segment(memory_id)
+        );
+        self.post_empty(&path).await
+    }
+
     /// `POST /api/things/nights/undo`: the person takes back the whole night
     /// on the big map, every thing whose newest night ran at or after `since`
     /// (UX-GRAPH-5).

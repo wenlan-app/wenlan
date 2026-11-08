@@ -996,6 +996,8 @@ async fn ux_graph_7_a_night_tidies_only_what_an_ai_wrote_and_undo_puts_it_back()
             old: vec!["mem_old".into()],
             new: "mem_new".into(),
             wrote: false,
+            text: None,
+            map: Default::default(),
         }],
     )
     .await

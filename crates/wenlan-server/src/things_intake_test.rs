@@ -602,7 +602,8 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
 
 /// UX-GRAPH-7: a night merges two memories an AI wrote that say the same.
 /// Both are hidden, not deleted; the merged one stands on the thing and the
-/// morning line counts it; taking the night back takes all of it back.
+/// morning line counts it; the page can take back just the merge, and the
+/// night's Undo still takes back the rest.
 #[tokio::test]
 async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
     let dir = tempfile::tempdir().unwrap();
@@ -669,10 +670,73 @@ async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
         }]
     );
 
-    // Undo: this night wrote all three, so all three are forgotten.
-    let forget = db.undo_thing_dream(&thing).await.unwrap();
-    assert_eq!(forget, ["mem_0", "mem_1", "mem_2"]);
+    // The thing's own map holds one point for the two.
+    let points_on_map = |map: &wenlan_types::ThingMapResponse| -> Vec<String> {
+        map.nodes
+            .iter()
+            .filter(|n| n.parent_id.is_some())
+            .map(|n| n.label.clone())
+            .collect()
+    };
+    let map = db.get_thing_map(&thing).await.unwrap();
+    assert_eq!(points_on_map(&map), ["The repository stays private."]);
+    // The page can say what it took the place of, and take back just that.
+    let detail = db
+        .get_thing_detail(&thing, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.tidied.len(), 1);
+    assert_eq!(detail.tidied[0].memory_id, "mem_2");
+    let texts: Vec<&str> = detail.tidied[0]
+        .replaced
+        .iter()
+        .map(|r| r.text.as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "The repository stays private.",
+            "The repository is kept private."
+        ]
+    );
+    let listed: Vec<&str> = detail
+        .memories
+        .iter()
+        .map(|m| m.source_id.as_str())
+        .collect();
+    assert_eq!(listed, ["mem_2"], "the hidden two are not listed");
+
+    assert_eq!(
+        db.undo_tidy(&thing, "mem_2").await.unwrap().unwrap(),
+        ["mem_2"]
+    );
     assert!(db.get_memory_detail("mem_2").await.unwrap().is_none());
+    for id in ["mem_0", "mem_1"] {
+        let back = db.get_memory_detail(id).await.unwrap().unwrap();
+        assert_ne!(back.supersede_mode, "evicted", "{id}");
+    }
+    let mut back = points_on_map(&db.get_thing_map(&thing).await.unwrap());
+    back.sort();
+    assert_eq!(
+        back,
+        [
+            "The repository is kept private.",
+            "The repository stays private."
+        ]
+    );
+    assert!(db
+        .get_thing_detail(&thing, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap()
+        .tidied
+        .is_empty());
+    assert!(db.undo_tidy(&thing, "mem_2").await.unwrap().is_none());
+
+    // Undo of the night then forgets the two points it wrote.
+    let forget = db.undo_thing_dream(&thing).await.unwrap();
+    assert_eq!(forget, ["mem_0", "mem_1"]);
 }
 
 /// UX-CHAT-5: old points are connected through the same path, once. A model

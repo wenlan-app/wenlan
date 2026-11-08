@@ -46,6 +46,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/things/{id}/merge", post(handle_merge_thing))
         .route("/api/things/{id}/keep-apart", post(handle_keep_thing_apart))
         .route("/api/things/{id}/dream/undo", post(handle_undo_thing_dream))
+        .route(
+            "/api/things/{id}/tidy/{memory_id}/undo",
+            post(handle_undo_thing_tidy),
+        )
         .route("/api/things/nights/undo", post(handle_undo_nights))
         .route("/api/things/{id}/map", get(handle_get_thing_map))
         .route("/api/things/{id}/map/ops", post(handle_thing_map_ops))
@@ -446,6 +450,28 @@ pub async fn handle_undo_thing_dream(
     let db = open_db(&state).await?;
     let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
     db.undo_thing_dream(&id).await?;
+    Ok(Json(summary(&db, &scope, &id).await?))
+}
+
+/// POST /api/things/{id}/tidy/{memory_id}/undo
+///
+/// The person takes back one tidy a night made, from the memory that stands
+/// now (UX-GRAPH-7): what it hid comes back, what it wrote is forgotten.
+/// Returns the thing.
+pub async fn handle_undo_thing_tidy(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    headers: HeaderMap,
+    Path((id, memory_id)): Path<(String, String)>,
+) -> Result<Json<ThingSummary>, ServerError> {
+    require_person(&headers)?;
+    let db = open_db(&state).await?;
+    let scope = visible_thing(&db, header_space.as_deref(), &id).await?;
+    if db.undo_tidy(&id, &memory_id).await?.is_none() {
+        return Err(ServerError::NotFound(format!(
+            "no tidy of {memory_id} on this thing to take back"
+        )));
+    }
     Ok(Json(summary(&db, &scope, &id).await?))
 }
 

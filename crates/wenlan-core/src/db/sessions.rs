@@ -820,6 +820,9 @@ impl MemoryDB {
             "pending_revision = 0".to_string(),
             "session_id = ?".to_string(),
             not_hidden_by_superseder(scope, "memories"),
+            // Hidden and kept (a night's tidy, the refinery's eviction): not
+            // listed, so a thing's page shows what stands now.
+            "COALESCE(supersede_mode, '') <> 'evicted'".to_string(),
         ];
         let mut values = vec![libsql::Value::Text(id.to_string())];
         push_read_scope_filter_folded(scope, "space", &mut conditions, &mut values);

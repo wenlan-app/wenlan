@@ -538,7 +538,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       void queryClient.invalidateQueries({ queryKey: ["knowledge-graph"] });
     },
   });
-  const nightShown = (nightCount.written > 0 || nightCount.connected > 0) && !undoNight.isPending && !undoNight.isSuccess;
+  const nightShown = Object.values(nightCount).some((count) => count > 0) && !undoNight.isPending && !undoNight.isSuccess;
   // A fresh read after Undo says what is left; the line follows it again.
   const resetUndo = undoNight.reset;
   const undoDone = undoNight.isSuccess;
@@ -2189,13 +2189,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     ...(regionCount > 0 ? [t("atlas.countRegions", { count: regionCount })] : []),
   ].join(" · ");
   const dropdownOpen = searchFocused && query.trim().length > 0;
-  // "Last night: 8 points written, 5 connected"; a part that is zero is left out.
+  // "Last night: 8 points written, 5 connected, 2 merged"; a part that is zero is left out.
   const nightOvernight = ranOvernight(tonight.map((thing) => thing.last_night?.at ?? 0));
   const nightSentence = t("atlas.night.sentence", {
     when: t(nightOvernight ? "atlas.night.lastNight" : "atlas.night.today"),
     what: [
       ...(nightCount.written > 0 ? [t("atlas.night.written", { count: nightCount.written })] : []),
       ...(nightCount.connected > 0 ? [t("atlas.night.connected", { count: nightCount.connected })] : []),
+      ...(nightCount.merged > 0 ? [t("atlas.night.merged", { count: nightCount.merged })] : []),
+      ...(nightCount.replaced > 0 ? [t("atlas.night.replaced", { count: nightCount.replaced })] : []),
+      ...(nightCount.updated > 0 ? [t("atlas.night.updated", { count: nightCount.updated })] : []),
     ].join(t("atlas.night.joiner")),
   });
 

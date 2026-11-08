@@ -30,9 +30,9 @@ const NEAREST_TOPICS: usize = 40;
 /// value says how many links that made.
 const BACKFILL_MARKER: &str = "night_links_backfill_v1";
 
-/// One change a night made to the big map. Only `New` and `Link` are written
-/// so far; the record can hold the others when nights start making them.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// One change a night made to the big map. `New`, `Link` and `Tidy` are
+/// written; the record can hold the others when nights start making them.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NightChange {
     /// A point was written.
@@ -63,6 +63,12 @@ pub enum NightChange {
         new: String,
         #[serde(default)]
         wrote: bool,
+        /// What it changed on the thing's map.
+        #[serde(
+            default,
+            skip_serializing_if = "super::thing_map::DreamMapChanges::is_empty"
+        )]
+        map: super::thing_map::DreamMapChanges,
     },
 }
 

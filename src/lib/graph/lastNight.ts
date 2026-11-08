@@ -33,19 +33,36 @@ export function ranOvernight(ats: readonly number[]): boolean {
   return ats.every((at) => new Date(at * 1000).getHours() < NIGHT_ENDS_HOUR);
 }
 
-/** What the morning line counts: points written and points connected that
- *  are on the map now (`has` takes a graph node id), so another Space's never
- *  count. */
-export function nightCounts(things: readonly ThingNightPoints[], has: (nodeId: string) => boolean): { written: number; connected: number } {
-  let written = 0;
-  let connected = 0;
+/** What the morning line counts, in the owner's order: points written and
+ *  connected, then memories merged, replaced and updated (UX-GRAPH-7), each
+ *  only while what stands now is on the map (`has` takes a graph node id),
+ *  so another Space's never count. */
+export interface NightCounts {
+  written: number;
+  connected: number;
+  merged: number;
+  replaced: number;
+  updated: number;
+}
+
+export function nightCounts(things: readonly ThingNightPoints[], has: (nodeId: string) => boolean): NightCounts {
+  const counts: NightCounts = { written: 0, connected: 0, merged: 0, replaced: 0, updated: 0 };
   for (const thing of things) {
     const night = thing.last_night;
     if (!night) continue;
-    written += night.written.filter((id) => has(memoryNodeId(id))).length;
-    connected += new Set(night.linked.filter((link) => has(memoryNodeId(link.memory_id)) && has(link.entity_id)).map((link) => link.memory_id)).size;
+    counts.written += night.written.filter((id) => has(memoryNodeId(id))).length;
+    counts.connected += new Set(night.linked.filter((link) => has(memoryNodeId(link.memory_id)) && has(link.entity_id)).map((link) => link.memory_id)).size;
+    for (const tidy of night.tidied ?? []) {
+      // A replace may keep a memory that is not one of the thing's points:
+      // it counts while the thing is on the map.
+      const seen = has(memoryNodeId(tidy.memory_id)) || (tidy.kind === "replace" && has(thingNodeId(thing.thing_id)));
+      if (!seen) continue;
+      if (tidy.kind === "merge") counts.merged += 1;
+      else if (tidy.kind === "replace") counts.replaced += 1;
+      else counts.updated += 1;
+    }
   }
-  return { written, connected };
+  return counts;
 }
 
 /** Most things Replay stops at; past that, the rest are left out of the
@@ -70,7 +87,9 @@ export function replayStops(things: readonly ThingNightPoints[], has: (nodeId: s
     const night = thing.last_night;
     const node = thingNodeId(thing.thing_id);
     if (!night || !has(node)) continue;
-    const grow = night.written.map(memoryNodeId).filter(has);
+    // What a merge or update wrote is new on the map and grows like a point.
+    const tidiedNew = (night.tidied ?? []).filter((tidy) => tidy.kind !== "replace").map((tidy) => tidy.memory_id);
+    const grow = [...night.written, ...tidiedNew].map(memoryNodeId).filter(has);
     const links = night.linked.filter((link) => has(memoryNodeId(link.memory_id)) && has(link.entity_id));
     const fly = [...new Set(links.map((link) => memoryNodeId(link.memory_id)))];
     const topics = [...new Set(links.map((link) => link.entity_id))];

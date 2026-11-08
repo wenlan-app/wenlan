@@ -47,7 +47,26 @@ describe("last night on the big map (UX-GRAPH-5)", () => {
   it("counts what is on the map now, and a point connected twice once", () => {
     const things = [thing("a", { at: at(3), written: ["m1", "m2", "gone"], linked: [["m1", "e1"], ["m1", "e2"], ["m2", "elsewhere"]] })];
     const on = new Set([memoryNodeId("m1"), memoryNodeId("m2"), "e1", "e2"]);
-    expect(nightCounts(things, (id) => on.has(id))).toEqual({ written: 2, connected: 1 });
+    expect(nightCounts(things, (id) => on.has(id))).toEqual({ written: 2, connected: 1, merged: 0, replaced: 0, updated: 0 });
+  });
+
+  it("counts what a night tidied (UX-GRAPH-7) while what stands now is on the map", () => {
+    const tidied = thing("a", { at: at(3), written: [] });
+    tidied.last_night = {
+      at: at(3),
+      written: [],
+      linked: [],
+      tidied: [
+        { kind: "merge", memory_id: "m1", replaced: ["o1", "o2"] },
+        { kind: "replace", memory_id: "kept", replaced: ["o3"] },
+        { kind: "update", memory_id: "m2", replaced: ["o4"] },
+        { kind: "update", memory_id: "gone", replaced: ["o5"] },
+      ],
+    };
+    const on = new Set([thingNodeId("a"), memoryNodeId("m1"), memoryNodeId("m2")]);
+    expect(nightCounts([tidied], (id) => on.has(id))).toEqual({ written: 0, connected: 0, merged: 1, replaced: 1, updated: 1 });
+    // What a merge or update wrote grows in Replay like a new point.
+    expect(replayStops([tidied], (id) => on.has(id))[0]!.grow).toEqual([memoryNodeId("m1"), memoryNodeId("m2")]);
   });
 
   it("takes back from local midnight", () => {

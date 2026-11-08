@@ -409,6 +409,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // The person takes back a night's points of a thing (UX-CHAT-5); returns
     // the thing's summary.
     "/api/things/{id}/dream/undo",
+    // The person takes back one tidy a night made (UX-GRAPH-7); returns the
+    // thing's summary.
+    "/api/things/{id}/tidy/{memory_id}/undo",
     // The person takes back a whole night on the big map (UX-GRAPH-5), only
     // inside their scope; returns two counts.
     "/api/things/nights/undo",

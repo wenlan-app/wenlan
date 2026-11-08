@@ -27,7 +27,7 @@ use wenlan_core::conversation_intake::{self as intake, FoundConversation};
 use wenlan_core::db::intake::{found_session_id, needs_label};
 use wenlan_core::db::night_tidy::TidyApplied;
 use wenlan_core::db::thing_dream::DreamDue;
-use wenlan_core::db::thing_map::DreamMapWrite;
+use wenlan_core::db::thing_map::{DreamMapWrite, TidyMapWrite};
 use wenlan_core::db::MemoryDB;
 use wenlan_core::llm_provider::{LlmProvider, LlmRequest};
 use wenlan_core::night_tidy;
@@ -547,8 +547,20 @@ pub async fn dream_with(
             .await
             .map_err(|e| e.to_string())?;
         // Then tidy what the AI wrote around it (UX-GRAPH-7). A failure
-        // here tidies nothing and does not stop the night.
-        let tidied = tidy_thing(db, &thing.thing_id, model, writer).await;
+        // here tidies nothing and does not stop the night. Each tidy keeps
+        // its own map changes, so it can be taken back alone.
+        let mut tidied = tidy_thing(db, &thing.thing_id, model, writer).await;
+        for tidy in &mut tidied {
+            let write = TidyMapWrite {
+                old: tidy.old.clone(),
+                new: tidy.new.clone(),
+                text: tidy.text.clone(),
+            };
+            tidy.map = db
+                .tidy_into_map(&thing.thing_id, std::slice::from_ref(&write))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
         let night = db
             .record_dream_tidied(
                 &thing.thing_id,
@@ -632,6 +644,8 @@ pub async fn tidy_thing(
                     old: vec![offer.items[drop].id.clone()],
                     new: offer.items[keep].id.clone(),
                     wrote: false,
+                    text: None,
+                    map: Default::default(),
                 });
                 continue;
             }
@@ -659,7 +673,7 @@ pub async fn tidy_thing(
                 None => WriteSpaceTarget::Inherit,
             },
             source_agent: None,
-            title: Some(text),
+            title: Some(text.clone()),
             confidence: None,
             supersedes: None,
             entity: None,
@@ -690,6 +704,8 @@ pub async fn tidy_thing(
             old: old.iter().map(|item| item.id.clone()).collect(),
             new: id,
             wrote: true,
+            text: Some(text),
+            map: Default::default(),
         });
     }
     tidied
