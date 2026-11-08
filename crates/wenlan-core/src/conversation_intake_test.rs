@@ -201,7 +201,7 @@ fn ux_thing_1_a_claude_code_conversation_keeps_the_files_and_rules_it_worked_on(
             tool(
                 "Write",
                 serde_json::json!({"file_path": "/w/wenlan/docs/ux/spec.md",
-                "content": "UX-CHAT-9 is only mentioned in written text"}),
+                "content": "UX-CHAT-7 is only mentioned in written text"}),
             ),
             // Outside the conversation's folder: not this work's file.
             tool(
