@@ -396,6 +396,15 @@ interface ReplayRun {
 const OLD_PASS_SHOWN_SECS = 2 * 86_400;
 
 /** A ghost's size when what it slides into is not drawn, px. */
+/** How wide a map label runs, in the map's label font; 0 without a canvas (jsdom). */
+let labelMeasurer: CanvasRenderingContext2D | null | undefined;
+const measureLabel = (text: string): number => {
+  if (labelMeasurer === undefined) {
+    labelMeasurer = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+    if (labelMeasurer) labelMeasurer.font = NODE_LABEL_FONT;
+  }
+  return labelMeasurer ? labelMeasurer.measureText(text).width : text.length * 7;
+};
 const GHOST_FALLBACK_RADIUS = 5;
 
 export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack }: AtlasViewProps) {
@@ -2106,6 +2115,14 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         const floor = lodRef.current.phase === "overview" && attrs.landmark ? minimumGraphRadius * 2 : minimumGraphRadius;
         const cap = nodeSizeCapPx(attrs, node === hoverStateRef.current.hovered);
         const ghosts = replayRef.current?.ghosts;
+        // While Replay shows what a tidy took away, what stands for it reads
+        // as short as the old words beside it, one line each (Qi-Xuan
+        // 11-08: easy to compare at a glance); its full words come back
+        // when Replay ends.
+        if (ghosts && attrs.label && ghosts.some((ghost) => ghost.tidy.survivor === node && ghost.tidy.said.length > 0)) {
+          display.label = saidLine(String(attrs.label), measureLabel);
+          display.forceLabel = true;
+        }
         const size = Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel) * (ghosts && ghosts.length > 0 ? swellOf(ghosts, node, performance.now()) : 1);
         if (growth && growth.targets.has(node)) return { ...display, size: size * Math.max(0.15, growth.progress.get(node) ?? 0) };
         return { ...display, size };
@@ -2190,9 +2207,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           ctx.lineWidth = 4;
           ctx.lineJoin = "round";
           ctx.strokeText(text, x, y);
+          // A touch quieter than the words that stand now beside them.
+          ctx.globalAlpha = phase.words * 0.7;
           ctx.fillStyle = paletteRef.current.label;
           ctx.fillText(text, x, y);
-          ctx.globalAlpha = phase.words * 0.5;
+          ctx.globalAlpha = phase.words * 0.45;
           ctx.strokeStyle = paletteRef.current.label;
           ctx.lineWidth = 1;
           ctx.beginPath();
@@ -2266,7 +2285,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         const display = renderer.getNodeDisplayData(thing);
         return display ? renderer.framedGraphToViewport(display) : null;
       };
-      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current, centreAt);
+      const nightMarksNow = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current, centreAt);
+      // While Replay shows what a tidy took away, what stands for it reads
+      // as short as the old words beside it, one line each (Qi-Xuan 11-08:
+      // easy to compare at a glance); its whole sentence comes back after.
+      const tidyGhosts = replayRef.current?.ghosts ?? [];
+      const shortened = new Set(tidyGhosts.filter((ghost) => ghost.tidy.said.length > 0 && ghost.tidy.survivor).map((ghost) => ghost.tidy.survivor!));
+      const marks = shortened.size === 0 ? nightMarksNow : {
+        ...nightMarksNow,
+        sentences: nightMarksNow.sentences.map((sentence) => (shortened.has(sentence.id) ? { ...sentence, text: saidLine(sentence.text, measureLabel), dim: false } : sentence)),
+      };
       // Sentences keep off the other bodies on screen, not only the labels;
       // with a thing picked, only off what is lit: the dimmed rest is
       // background a sentence may cross.
