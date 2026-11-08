@@ -273,9 +273,9 @@ export async function invoke(
             linked: nights["tm-site"]?.linked ?? [],
             written: ["tm-n-site-3"],
             tidied: [
-              { kind: "merge", memory_id: "tm-n-site-4", replaced: ["tm-n-site-4a", "tm-n-site-4b"] },
-              { kind: "replace", memory_id: "tm-n-site-2", replaced: ["tm-n-site-2a"] },
-              { kind: "update", memory_id: "tm-n-site-5", replaced: ["tm-n-site-5a"] },
+              { kind: "merge", memory_id: "tm-n-site-4", replaced: ["tm-n-site-4a", "tm-n-site-4b"], said: ["Positions are saved per viewer", "A dragged point stays where it was put"] },
+              { kind: "replace", memory_id: "tm-n-site-2", replaced: ["tm-n-site-2a"], said: ["夜裡寫下的點隨機排在事情周圍"] },
+              { kind: "update", memory_id: "tm-n-site-5", replaced: ["tm-n-site-5a"], said: ["下週會讓框隨新點往外長"] },
             ],
           };
         }

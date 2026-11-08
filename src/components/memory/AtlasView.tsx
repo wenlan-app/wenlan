@@ -52,7 +52,7 @@ import {
   todayStartSeconds,
   type ReplayStop,
 } from "../../lib/graph/lastNight";
-import { GHOST_STROKE, ghostAt, ghostPhase, ghostRests, ghostsMoving, swellOf, type ReplayGhost } from "../../lib/graph/tidyGhosts";
+import { GHOST_STROKE, ghostAt, ghostPhase, ghostRests, ghostsMoving, saidLine, swellOf, type ReplayGhost } from "../../lib/graph/tidyGhosts";
 import type { Entity, KnowledgeGraph, ThingNightPoints } from "../../lib/tauri";
 import {
   buildKnowledgeGraphModel,
@@ -2162,12 +2162,38 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         // never reads as a replace's ghost.
         ctx.strokeStyle = ghost.tidy.kind === "update" ? paletteRef.current.bridge : standing?.color ?? paletteRef.current.memory;
         ctx.globalAlpha = phase.alpha;
-        for (const rest of ghostRests(standing ? at : null, centre, radius, ghost.tidy.ghosts)) {
+        ghostRests(standing ? at : null, centre, radius, ghost.tidy.ghosts).forEach((rest, index) => {
           const spot = ghostAt(rest, at, phase.slide);
+          const ring = radius * phase.scale;
           ctx.beginPath();
-          ctx.arc(spot.x, spot.y, radius * phase.scale, 0, Math.PI * 2);
+          ctx.arc(spot.x, spot.y, ring, 0, Math.PI * 2);
           ctx.stroke();
-        }
+          // The words that went, faint and struck through, moving with
+          // their ghost: on its outer side, or above the dot for an update
+          // so they never sit on the words that stand now.
+          const said = ghost.tidy.said[index];
+          if (!said || phase.words <= 0) return;
+          ctx.font = NODE_LABEL_FONT;
+          const text = saidLine(said, (t) => ctx.measureText(t).width);
+          const width = ctx.measureText(text).width;
+          const update = ghost.tidy.kind === "update";
+          const left = !update && spot.x < at.x;
+          const x = update ? spot.x + radius + 4 : left ? spot.x - ring - 6 - width : spot.x + ring + 6;
+          const y = update ? spot.y - radius - 12 : spot.y;
+          ctx.save();
+          ctx.globalAlpha = phase.words * 0.85;
+          ctx.fillStyle = paletteRef.current.label;
+          ctx.textBaseline = "middle";
+          ctx.textAlign = "left";
+          ctx.fillText(text, x, y);
+          ctx.strokeStyle = paletteRef.current.label;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, y + 0.5);
+          ctx.lineTo(x + width, y + 0.5);
+          ctx.stroke();
+          ctx.restore();
+        });
       }
       ctx.restore();
     };

@@ -680,6 +680,11 @@ async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
             kind: NightTidyKind::Merge,
             memory_id: "mem_2".into(),
             replaced: vec!["mem_0".into(), "mem_1".into()],
+            // Replay shows the words that went (UX-GRAPH-7).
+            said: vec![
+                "The repository stays private.".into(),
+                "The repository stays private for now.".into(),
+            ],
         }]
     );
 

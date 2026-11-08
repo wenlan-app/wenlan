@@ -94,8 +94,8 @@ describe("Replay's stops (UX-GRAPH-6)", () => {
       written: [],
       linked: [],
       tidied: [
-        { kind: "merge", memory_id: "m1", replaced: ["o1", "o2"] },
-        { kind: "merge", memory_id: "m3", replaced: ["o1", "o2", "o3", "o4", "o5"] },
+        { kind: "merge", memory_id: "m1", replaced: ["o1", "o2"], said: ["one", "two"] },
+        { kind: "merge", memory_id: "m3", replaced: ["o1", "o2", "o3", "o4", "o5"], said: ["a", "b", "c", "d", "e"] },
         { kind: "replace", memory_id: "elsewhere", replaced: ["o6"] },
         { kind: "update", memory_id: "gone", replaced: ["o7"] },
       ],
@@ -103,9 +103,10 @@ describe("Replay's stops (UX-GRAPH-6)", () => {
     const on = new Set([thingNodeId("a"), memoryNodeId("m1"), memoryNodeId("m3")]);
     const [stop] = replayStops([tidied], (id) => on.has(id));
     expect(stop!.tidies).toEqual([
-      { kind: "merge", survivor: memoryNodeId("m1"), ghosts: 2 },
-      { kind: "merge", survivor: memoryNodeId("m3"), ghosts: 3 },
-      { kind: "replace", survivor: null, ghosts: 1 },
+      // Each ghost carries the words its memory said, where known.
+      { kind: "merge", survivor: memoryNodeId("m1"), ghosts: 2, said: ["one", "two"] },
+      { kind: "merge", survivor: memoryNodeId("m3"), ghosts: 3, said: ["a", "b", "c"] },
+      { kind: "replace", survivor: null, ghosts: 1, said: [] },
     ]);
     // A night that only replaced is still a stop.
     const replacedOnly = thing("b", { at: at(3), written: [] });
@@ -113,15 +114,15 @@ describe("Replay's stops (UX-GRAPH-6)", () => {
     expect(replayStops([replacedOnly], (id) => id === thingNodeId("b"))).toHaveLength(1);
   });
 
-  it("takes about a second more for a stop that tidied", () => {
+  it("takes about two seconds more for a stop that tidied", () => {
     expect(tidyMs(0)).toBe(0);
-    expect(tidyMs(1)).toBe(200 + 600);
-    expect(tidyMs(3)).toBe(200 + 600 + 2 * 110);
+    expect(tidyMs(1)).toBe(200 + 900 + 600);
+    expect(tidyMs(3)).toBe(200 + 900 + 600 + 2 * 110);
     const plain = thing("a", { at: at(3), written: ["a1"] });
     const tidied = thing("a", { at: at(3), written: ["a1"] });
     tidied.last_night!.tidied = [{ kind: "update", memory_id: "a1", replaced: ["o1"] }];
     const extra = replayMs(replayStops([tidied], () => true)) - replayMs(replayStops([plain], () => true));
-    expect(extra).toBe(200 + 600 + 450);
+    expect(extra).toBe(200 + 900 + 600 + 450);
   });
 
   it("stops at five things at most", () => {

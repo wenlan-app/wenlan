@@ -563,8 +563,28 @@ impl MemoryDB {
                 }
             }
         }
-        drop(conn);
-        Ok(last_night_of(&night, standing, &kept))
+        let Some(mut last) = last_night_of(&night, standing, &kept) else {
+            return Ok(None);
+        };
+        // The words each tidy took away, for Replay (UX-GRAPH-7). A row no
+        // longer hidden says nothing; the order stays `replaced`'s.
+        for tidy in &mut last.tidied {
+            for id in &tidy.replaced {
+                let mut rows = conn
+                    .query(
+                        "SELECT content FROM memories
+                          WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0
+                            AND supersede_mode = 'evicted'",
+                        libsql::params![id.as_str()],
+                    )
+                    .await
+                    .map_err(db_err("tidy said"))?;
+                if let Some(row) = rows.next().await.map_err(db_err("tidy said row"))? {
+                    tidy.said.push(row.get::<String>(0).unwrap_or_default());
+                }
+            }
+        }
+        Ok(Some(last))
     }
 
     /// What a thing's nights tidied that can still be taken back one at a
@@ -1073,6 +1093,7 @@ fn last_night_of(
                     kind: *how,
                     memory_id: new.clone(),
                     replaced,
+                    said: Vec::new(),
                 })
             }
             _ => None,

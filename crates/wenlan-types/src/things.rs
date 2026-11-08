@@ -243,6 +243,10 @@ pub struct NightTidied {
     pub memory_id: String,
     /// The memories it took the place of, hidden and kept.
     pub replaced: Vec<String>,
+    /// What those said, in the same order, so Replay can show the words that
+    /// went (one entry per `replaced` still hidden). Empty from older daemons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub said: Vec<String>,
 }
 
 /// `POST /api/things/nights/undo`: the person takes back the whole night on

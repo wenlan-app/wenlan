@@ -1171,6 +1171,8 @@ export interface NightTidied {
   kind: "merge" | "replace" | "update";
   memory_id: string;
   replaced: string[];
+  /** What those said, in the same order, for Replay; absent from older daemons. */
+  said?: string[];
 }
 
 /** Every thing with night points, for the big map. */

@@ -40,6 +40,8 @@ const COMING = 0.4;
 const UPDATE_START = 1.35;
 /** How small a replace's ghost gets as it is pushed away. */
 export const PUSHED_SCALE = 0.4;
+/** The share of the move over which the words fade out. */
+const WORDS_GO = 0.35;
 /** An update's old version, still with reduced motion: part way out. */
 const STILL_SPREAD = 1.7;
 
@@ -84,12 +86,14 @@ export function ghostRests(survivor: Point | null, centre: Point | null, radius:
 }
 
 /** One moment of a tidy, `elapsed` ms after it starts. `alpha` is the
- *  ghosts' (0 when not shown); `slide` how far along from rest they are
+ *  ghosts' (0 when not shown); `words` how strongly their words show (full
+ *  while they rest to be read, gone early in the move); `slide` how far along from rest they are
  *  towards what stands now (1 on it, below 0 pushed away from it); `scale`
  *  their size against the dot's; `swell` the scale of the dot that stands
  *  now; and `done` once nothing moves any more. */
 export interface GhostPhase {
   readonly alpha: number;
+  readonly words: number;
   readonly slide: number;
   readonly scale: number;
   readonly swell: number;
@@ -103,32 +107,35 @@ export function ghostPhase(ghost: Pick<ReplayGhost, "tidy" | "still">, elapsed: 
   const kind = ghost.tidy.kind;
   // An update's old version is on the dot from the start; the others rest beside it.
   const home = kind === "update" ? 1 : 0;
-  if (ghost.still) return { alpha: GHOST_ALPHA, slide: home, scale: kind === "update" ? STILL_SPREAD : 1, swell: 1, done: false };
+  if (ghost.still) return { alpha: GHOST_ALPHA, words: 1, slide: home, scale: kind === "update" ? STILL_SPREAD : 1, swell: 1, done: false };
   const t = REPLAY_TIMING;
   const rest = { slide: home, scale: kind === "update" ? UPDATE_START : 1, swell: 1, done: false };
-  if (elapsed < 0) return { ...rest, alpha: 0 };
-  if (elapsed < t.ghostFade) return { ...rest, alpha: (GHOST_ALPHA * elapsed) / t.ghostFade };
-  const moving = elapsed - t.ghostFade;
+  if (elapsed < 0) return { ...rest, alpha: 0, words: 0 };
+  if (elapsed < t.ghostFade) return { ...rest, alpha: (GHOST_ALPHA * elapsed) / t.ghostFade, words: elapsed / t.ghostFade };
+  // Resting, so the words that went can be read.
+  if (elapsed < t.ghostFade + t.ghostRead) return { ...rest, alpha: GHOST_ALPHA, words: 1 };
+  const moving = elapsed - t.ghostFade - t.ghostRead;
   if (moving < t.ghostSlide) {
     const p = moving / t.ghostSlide;
+    const words = Math.max(0, 1 - p / WORDS_GO);
     if (kind === "replace") {
-      if (p < COMING) return { alpha: GHOST_ALPHA, slide: REACH * easeInOut(p / COMING), scale: 1, swell: 1, done: false };
+      if (p < COMING) return { alpha: GHOST_ALPHA, words, slide: REACH * easeInOut(p / COMING), scale: 1, swell: 1, done: false };
       const q = (p - COMING) / (1 - COMING);
       const out = easeOut(q);
-      return { alpha: GHOST_ALPHA * (1 - q), slide: REACH - (REACH + PUSH) * out, scale: 1 - (1 - PUSHED_SCALE) * out, swell: 1, done: false };
+      return { alpha: GHOST_ALPHA * (1 - q), words, slide: REACH - (REACH + PUSH) * out, scale: 1 - (1 - PUSHED_SCALE) * out, swell: 1, done: false };
     }
     if (kind === "update") {
       const out = easeOut(p);
-      return { alpha: GHOST_ALPHA * (1 - out), slide: 1, scale: UPDATE_START + (RING_RADII - UPDATE_START) * out, swell: 1, done: false };
+      return { alpha: GHOST_ALPHA * (1 - out), words, slide: 1, scale: UPDATE_START + (RING_RADII - UPDATE_START) * out, swell: 1, done: false };
     }
-    return { alpha: GHOST_ALPHA, slide: easeInOut(p), scale: 1, swell: 1, done: false };
+    return { alpha: GHOST_ALPHA, words, slide: easeInOut(p), scale: 1, swell: 1, done: false };
   }
   // A merge's ghosts are in, an update's old version has spread out: what
   // stands now swells once. A replace pushes its ghost away and stays as it
   // is, and into the thing's centre (nothing standing on the map) nothing swells.
   const after = moving - t.ghostSlide;
   const swellMs = kind !== "replace" && ghost.tidy.survivor !== null ? t.swell : 0;
-  const end = { alpha: 0, slide: kind === "replace" ? -PUSH : 1, scale: kind === "update" ? RING_RADII : kind === "replace" ? PUSHED_SCALE : 1 };
+  const end = { alpha: 0, words: 0, slide: kind === "replace" ? -PUSH : 1, scale: kind === "update" ? RING_RADII : kind === "replace" ? PUSHED_SCALE : 1 };
   if (after < swellMs) return { ...end, swell: 1 + SWELL * Math.sin((Math.PI * after) / swellMs), done: false };
   return { ...end, swell: 1, done: true };
 }
@@ -145,6 +152,25 @@ export function swellOf(ghosts: readonly ReplayGhost[], node: string, now: numbe
 /** Whether any of these tidies still moves at `now`, so the map keeps painting. */
 export function ghostsMoving(ghosts: readonly ReplayGhost[], now: number): boolean {
   return ghosts.some((ghost) => !ghost.still && !ghostPhase(ghost, now - ghost.startAt).done);
+}
+
+/** How wide a ghost's words may run, px, before they are cut. */
+export const SAID_MAX_PX = 220;
+
+/** A ghost's words on one line: the first line of what it said, cut with an
+ *  ellipsis to fit `maxPx` as `measure` reads it. */
+export function saidLine(said: string, measure: (text: string) => number, maxPx = SAID_MAX_PX): string {
+  const line = said.split("\n").map((part) => part.trim()).find(Boolean) ?? "";
+  if (measure(line) <= maxPx) return line;
+  const chars = [...line];
+  let lo = 0;
+  let hi = chars.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (measure(chars.slice(0, mid).join("").trimEnd() + "…") <= maxPx) lo = mid;
+    else hi = mid - 1;
+  }
+  return chars.slice(0, lo).join("").trimEnd() + "…";
 }
 
 /** A ghost's place on screen, part way from its rest to what it slides into

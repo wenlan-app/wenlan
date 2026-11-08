@@ -70,14 +70,16 @@ export function nightCounts(things: readonly ThingNightPoints[], has: (nodeId: s
 export const REPLAY_MAX_THINGS = 5;
 
 /** One tidy Replay shows (UX-GRAPH-7, Fable's design 2026-11-08): the
- *  memories it hid come in as hollow ghosts and slide into the one that
- *  stands now. `survivor` is that memory's graph node, or null when it is
- *  not on the map (a replace that kept another thing's memory): then the
- *  ghost slides into the thing's centre. */
+ *  memories it hid come in as hollow ghosts beside the one that stands now.
+ *  `survivor` is that memory's graph node, or null when it is not on the map
+ *  (a replace that kept another thing's memory): then the ghost moves by
+ *  the thing's centre. `said` is what each ghost's memory said, one per
+ *  ghost where known, so the words that went are seen going. */
 export interface ReplayTidy {
   readonly kind: NightTidied["kind"];
   readonly survivor: string | null;
   readonly ghosts: number;
+  readonly said: readonly string[];
 }
 
 /** Most ghosts one tidy shows, however many memories it took in. */
@@ -117,7 +119,7 @@ export function replayStops(things: readonly ThingNightPoints[], has: (nodeId: s
       const drawn = has(survivor);
       if (!drawn && tidy.kind !== "replace") continue;
       const ghosts = Math.max(1, Math.min(tidy.kind === "merge" ? tidy.replaced.length : 1, REPLAY_MAX_GHOSTS));
-      tidies.push({ kind: tidy.kind, survivor: drawn ? survivor : null, ghosts });
+      tidies.push({ kind: tidy.kind, survivor: drawn ? survivor : null, ghosts, said: (tidy.said ?? []).slice(0, ghosts) });
     }
     if (grow.length === 0 && fly.length === 0 && tidies.length === 0) continue;
     stops.push({ thing: node, grow, tidies, fly, topics });
@@ -141,6 +143,8 @@ export const REPLAY_TIMING = {
   holdGrown: 600,
   /** A tidy's ghosts fading in beside what stands now (UX-GRAPH-7). */
   ghostFade: 200,
+  /** The ghosts resting with the words that went, long enough to read. */
+  ghostRead: 900,
   /** The ghosts moving: a merge's sliding in, a replace's pushed away, an
    *  update's spreading out from the dot. */
   ghostSlide: 600,
@@ -172,7 +176,7 @@ export function growMs(count: number): number {
  *  they start one after another like growing points. */
 export function tidyMs(count: number): number {
   if (count === 0) return 0;
-  return REPLAY_TIMING.ghostFade + REPLAY_TIMING.ghostSlide + growStagger(count) * (count - 1);
+  return REPLAY_TIMING.ghostFade + REPLAY_TIMING.ghostRead + REPLAY_TIMING.ghostSlide + growStagger(count) * (count - 1);
 }
 
 /** The whole replay's length, ms: per stop the camera, the growing and a
