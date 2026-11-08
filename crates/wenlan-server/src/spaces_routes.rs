@@ -235,8 +235,12 @@ async fn shared_member_name(
     Ok(name)
 }
 
-/// The full name of this computer's account (macOS `id -F`, the passwd
-/// entry's name elsewhere on Unix), else the account name.
+/// The full name of this computer's account, else the account name.
+///
+/// Each lookup simply fails where it does not apply, so one code path serves
+/// every platform: `id -F` prints the full name on macOS (and errors on GNU
+/// `id`), the passwd entry carries it on other Unix systems, and Windows has
+/// neither, so it falls through to `USERNAME`.
 fn computer_user_name() -> Option<String> {
     let clean = |name: String| {
         let name = name.trim().to_string();
@@ -245,7 +249,6 @@ fn computer_user_name() -> Option<String> {
     if std::env::var_os("WENLAN_TEST_NO_COMPUTER_NAME").is_some() {
         return None;
     }
-    #[cfg(target_os = "macos")]
     if let Some(name) = std::process::Command::new("id")
         .arg("-F")
         .output()
@@ -255,31 +258,23 @@ fn computer_user_name() -> Option<String> {
     {
         return Some(name);
     }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    if let Ok(user) = std::env::var("USER") {
-        if let Some(name) = std::fs::read_to_string("/etc/passwd")
-            .ok()
-            .and_then(|passwd| {
-                passwd.lines().find_map(|line| {
-                    let fields: Vec<&str> = line.split(':').collect();
-                    (fields.first() == Some(&user.as_str()))
-                        .then(|| {
-                            fields
-                                .get(4)
-                                .map(|gecos| gecos.split(',').next().unwrap_or("").to_string())
-                        })
-                        .flatten()
-                })
-            })
-            .and_then(clean)
-        {
-            return Some(name);
-        }
-    }
-    std::env::var("USER")
+    let account = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .ok()
+        .and_then(clean)?;
+    std::fs::read_to_string("/etc/passwd")
+        .ok()
+        .and_then(|passwd| {
+            passwd.lines().find_map(|line| {
+                let fields: Vec<&str> = line.split(':').collect();
+                (fields.first() == Some(&account.as_str()))
+                    .then(|| fields.get(4).and_then(|gecos| gecos.split(',').next()))
+                    .flatten()
+                    .map(str::to_string)
+            })
+        })
         .and_then(clean)
+        .or(Some(account))
 }
 
 fn shared_folder_path(folder: &str) -> Result<std::path::PathBuf, ServerError> {
