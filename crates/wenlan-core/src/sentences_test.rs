@@ -677,6 +677,100 @@ async fn citations_record_the_cited_version_and_go_stale_only_when_the_text_chan
     assert_eq!(restored.sentence.weak, []);
 }
 
+async fn verified_port_page(db: &MemoryDB) {
+    seed_memory(db, "mem-port", "The daemon binds port 7878 by default").await;
+    db.insert_page_with_kind(
+        "c",
+        "Ports",
+        None,
+        "The daemon binds port 7878 by default.[1]",
+        None,
+        None,
+        &["mem-port"],
+        &chrono::Utc::now().to_rfc3339(),
+        "distilled",
+        "confirmed",
+        None,
+        Some(&citation("mem-port", "verified")),
+    )
+    .await
+    .unwrap();
+    let view = page_sentences(db, "c").await.unwrap();
+    assert_eq!(view.sentences[0].evidence, EvidenceState::Verified);
+}
+
+#[tokio::test]
+async fn ux_who_5_a_citation_to_a_superseded_hidden_memory_goes_stale() {
+    let (db, _dir) = test_db().await;
+    verified_port_page(&db).await;
+    // A correction replaces and hides the cited memory. Its old text never
+    // changed, so a digest-only check would keep calling it verified.
+    seed_memory(&db, "mem-port-v2", "The daemon binds port 7979 by default").await;
+    db.execute_batch_for_test(
+        "UPDATE memories SET supersedes = 'mem-port', supersede_mode = 'hide', \
+         pending_revision = 0 WHERE source_id = 'mem-port-v2'",
+    )
+    .await;
+    let view = page_sentences(&db, "c").await.unwrap();
+    assert!(view.sentences[0].citations[0].stale);
+    assert_eq!(view.sentences[0].weak, [WeakReason::Stale]);
+    assert_eq!(view.sentences[0].evidence, EvidenceState::Unevaluated);
+}
+
+#[tokio::test]
+async fn ux_who_5_a_verified_citation_without_its_cited_version_is_not_shown_verified() {
+    let (db, _dir) = test_db().await;
+    verified_port_page(&db).await;
+    // Records written before versions were stamped: a later edit to the
+    // source could never show as out of date, so the verdict is unconfirmed.
+    db.execute_batch_for_test(&format!(
+        "UPDATE pages SET citations = '{}' WHERE id = 'c'",
+        citation("mem-port", "verified")
+    ))
+    .await;
+    let view = page_sentences(&db, "c").await.unwrap();
+    assert_eq!(view.sentences[0].citations[0].cited_version, None);
+    assert_eq!(view.sentences[0].evidence, EvidenceState::Unevaluated);
+}
+
+#[tokio::test]
+async fn ux_who_5_one_unsupported_source_beside_a_supporting_one_is_weak_not_failing() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-port", "The daemon binds port 7878 by default").await;
+    seed_memory(
+        &db,
+        "mem-garden",
+        "Completely unrelated text about gardening",
+    )
+    .await;
+    let citations = serde_json::json!([
+        {"occurrence": 1, "marker": 1, "source_kind": "memory", "locator": "mem-port",
+         "score": 0.9, "status": "verified"},
+        {"occurrence": 2, "marker": 2, "source_kind": "memory", "locator": "mem-garden",
+         "score": 0.0, "status": "unverified"}
+    ])
+    .to_string();
+    db.insert_page_with_kind(
+        "m",
+        "Mixed",
+        None,
+        "The daemon binds port 7878 by default.[1][2]",
+        None,
+        None,
+        &["mem-port", "mem-garden"],
+        &chrono::Utc::now().to_rfc3339(),
+        "distilled",
+        "confirmed",
+        None,
+        Some(&citations),
+    )
+    .await
+    .unwrap();
+    let view = page_sentences(&db, "m").await.unwrap();
+    assert_eq!(view.sentences[0].evidence, EvidenceState::Verified);
+    assert_eq!(view.sentences[0].weak, [WeakReason::Unsupported]);
+}
+
 #[tokio::test]
 async fn an_unverified_citation_is_weak_and_a_marker_without_a_check_is_unevaluated() {
     let (db, _dir) = test_db().await;
