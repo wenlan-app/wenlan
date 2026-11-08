@@ -9,7 +9,7 @@ export interface AtlasViewpoint {
   anchors: { id: string; x: number; y: number }[];
 }
 
-export type AtlasFrameMode = "main" | "all";
+export type AtlasFrameMode = "main" | "all" | "core";
 
 export interface AtlasFrameOptions {
   mode?: AtlasFrameMode;
@@ -62,6 +62,15 @@ export function atlasFrameNodeIds(
 ): string[] {
   const visible = graph.nodes().filter((id) => isVisible(id, options.visibleNodeIds));
   if (options.mode === "all") return visible;
+  if (options.mode === "core") {
+    // The core component alone (round 3): the islands packed round it are
+    // left to the edges, so the core fills the opening view.
+    const core = visible.filter((id) => {
+      const attrs = graph.getNodeAttributes(id);
+      return attrs.entityType !== MEMORY_NODE_TYPE && attrs.island === false;
+    });
+    if (core.length > 0) return core;
+  }
 
   const structural = visible.filter(
     (id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE,

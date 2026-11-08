@@ -71,15 +71,19 @@ import {
   THING_NODE_TYPE,
 } from "../../lib/graph/model";
 import type { GraphLayers, GraphModel, GraphNode } from "../../lib/graph/model";
+import type { AtlasLayoutReply, AtlasLayoutRequest } from "../../lib/graph/atlasLayout.worker";
 import {
   buildAtlasGraph,
   applyAtlasHierarchy,
+  markKeptLayout,
   runAtlasLayout,
+  DEFAULT_ATLAS_LAYOUT,
+  type AtlasLayoutVariant,
   createAtlasSimulation,
   hoverStateFor,
   nodeDisplay,
   edgeDisplay,
-  labelAnchor,
+  labelCandidates,
   lodFor,
   OPENING_LOD,
   drawNodeLabelAt,
@@ -92,8 +96,8 @@ import {
   thingLinkedBodies,
   labelSideFor,
 } from "../../lib/graph/atlas";
-import type { HoverState, AtlasSimulation, FlyTo, LodState, LabelPlacement } from "../../lib/graph/atlas";
-import { dustBadgeAnchors, drawDustCounts } from "../../lib/graph/dust";
+import type { HoverState, AtlasSimulation, FlyTo, LodState, LabelPlacement, LabelSide } from "../../lib/graph/atlas";
+import { dustBadgeAnchors, drawDustCounts, planDustBadges } from "../../lib/graph/dust";
 import {
   applyNightOffsets,
   drawNightMarks,
@@ -119,19 +123,31 @@ import {
   readNightOffsets,
   readSeenNightPoints,
   readStoredPositions,
+  readStoredRegions,
+  readPreviousRegions,
+  storeRegions,
   readThingsApart,
   startRearrange,
+  alignToKept,
+  ATLAS_LAYOUT_VERSION,
+  readLayoutVersion,
+  storeLayoutVersion,
   storeNightOffsets,
   storePositions,
   storeSeenNightPoints,
   storeThingsApart,
   undoRearrange,
 } from "../../lib/graph/positions";
+import { placeNewRegionMembers } from "../../lib/graph/regionMap";
 import type { CartographyScene } from "../../lib/graph/cartography";
 import {
   communitiesFor,
   cartographyScene,
   drawRegionNames,
+  drawPlannedRegionNames,
+  planRegionNamesFirst,
+  regionNameMeasure,
+  type PlannedRegionName,
   drawRegionAreas,
   isUnscopedSpace,
   MIN_REGION_SIZE,
@@ -156,6 +172,82 @@ class ScreenSpaceEdgeProgram extends EdgeRectangleProgram {
 // community climb and the place-name overlay — a new identity re-runs the climb
 // and repaints every edge each render until the fetch lands.
 const EMPTY_CARTOGRAPHY: Map<string, SpaceCartography> = new Map();
+/** How far past the opening view the map may zoom out (camera ratio). */
+const MAX_ZOOM_OUT = 2;
+/** Label thresholds per zoom phase: the smallest rendered disc (px) that
+ *  may carry a name, and the label grid's cell (px). The overview keeps the
+ *  landmarks' names only. */
+type Box = { left: number; right: number; top: number; bottom: number };
+type GuardDisc = { key: string; x: number; y: number; r: number; owner?: string };
+type LabelGuard = {
+  cells: Map<number, GuardDisc[]>;
+  badges: Box[];
+  /** The map's own controls and count line, in canvas pixels, plus the canvas size. */
+  chrome: Box[];
+  width: number;
+  height: number;
+  plan: Map<string, { label: string; at: LabelPlacement } | null> | null;
+  rings: Map<string, number>;
+  /** R2 at overview zoom: region names placed before any point name. */
+  regionNames?: PlannedRegionName[];
+  /** Hubs whose region name is on screen: their own name is left off. */
+  namedHubs?: Set<string>;
+};
+/** Screen px. A drawn disc at least this big is something a name may not cover. */
+const LABEL_GUARD_MIN_RADIUS = 1.5;
+/** Screen px per cell of the disc lookup grid. */
+const LABEL_GUARD_CELL = 32;
+// Names keep this far inside the canvas edge (round 3).
+const LABEL_EDGE_INSET = 4;
+/** Every drawn disc on screen, the smallest too, on the guard's cell grid:
+ *  what an R2 region name may not cover. */
+function allDiscCells(sigma: Sigma, width: number, height: number): Map<number, GuardDisc[]> {
+  const cells = new Map<number, GuardDisc[]>();
+  sigma.getGraph().forEachNode((id) => {
+    const display = sigma.getNodeDisplayData(id);
+    if (!display || display.hidden) return;
+    const r = sigma.scaleSize(display.size);
+    const { x, y } = sigma.framedGraphToViewport(display);
+    if (x < -r || y < -r || x > width + r || y > height + r) return;
+    const disc: GuardDisc = { key: id, x, y, r };
+    for (let cx = Math.floor((x - r) / LABEL_GUARD_CELL); cx <= Math.floor((x + r) / LABEL_GUARD_CELL); cx += 1) {
+      for (let cy = Math.floor((y - r) / LABEL_GUARD_CELL); cy <= Math.floor((y + r) / LABEL_GUARD_CELL); cy += 1) {
+        const list = cells.get(cx * 65536 + cy);
+        if (list) list.push(disc);
+        else cells.set(cx * 65536 + cy, [disc]);
+      }
+    }
+  });
+  return cells;
+}
+
+/** Whether `box` comes within `margin` px of any disc in `cells`. */
+function discsHit(cells: Map<number, GuardDisc[]>, box: Box, margin: number): boolean {
+  for (let cx = Math.floor((box.left - margin) / LABEL_GUARD_CELL); cx <= Math.floor((box.right + margin) / LABEL_GUARD_CELL); cx += 1) {
+    for (let cy = Math.floor((box.top - margin) / LABEL_GUARD_CELL); cy <= Math.floor((box.bottom + margin) / LABEL_GUARD_CELL); cy += 1) {
+      for (const disc of cells.get(cx * 65536 + cy) ?? []) {
+        const nx = Math.max(box.left, Math.min(disc.x, box.right));
+        const ny = Math.max(box.top, Math.min(disc.y, box.bottom));
+        if (Math.hypot(disc.x - nx, disc.y - ny) < disc.r + margin) return true;
+      }
+    }
+  }
+  return false;
+}
+
+const LABEL_PASSES_SMALL = (() => { try { return window.localStorage.getItem("atlas.exp.labelPass") === "1"; } catch { return false; } })();
+/** The controls drawn over the map; a name keeps out from under them. */
+const ATLAS_CHROME_SELECTOR = ".atlas-top-controls > *, .atlas-display-trigger, .atlas-display-panel, .atlas-camera-controls, .atlas-count-line";
+/** The most landmark names the zoomed-out map carries at once. */
+const OVERVIEW_LABEL_MAX = 30;
+// Sigma lays its label grid out once per graph refresh, so zoomed in most of
+// the screen falls in a few of its cells; the detail zoom offers more names
+// per cell, and the label guard keeps only those with room.
+const LABEL_LOD: Record<"overview" | "neighborhood" | "detail", { threshold: number; cell: number; density: number }> = {
+  overview: { threshold: 8, cell: 200, density: 0.04 },
+  neighborhood: { threshold: 1.8, cell: 140, density: 0.04 },
+  detail: { threshold: 1.8, cell: 110, density: 0.2 },
+};
 
 /** The closest a thing's own stop (這件事) zooms, CSS px per graph unit:
  *  its points a sentence's line apart or more, not a screen apart. */
@@ -189,6 +281,16 @@ const EMPTY_THING_POINTS: ThingNightPoints[] = [];
 const LAYERS_STORAGE_KEY = "atlas.layers";
 
 /** Where the "Working on" choice is remembered across reloads. */
+/** How far out a name may sit for its dust (screen px past the disc): about
+ *  one ring. Close in, a busy hub's dust spreads 150-300 px, and a name past
+ *  all of it no longer reads as the dot's (round 3). Its own dust never
+ *  blocks its name; the halo keeps the name legible over it. */
+const LABEL_RING_MAX = 22;
+/** From this many nodes a fresh layout runs in a worker (it takes seconds). */
+const WORKER_LAYOUT_MIN_NODES = 1500;
+const labelRing = (radius: number, ring: number | undefined): number =>
+  Math.max(radius, Math.min(ring ?? 0, radius + LABEL_RING_MAX));
+
 export const WORKING_STORAGE_KEY = "atlas.showWorking";
 
 /** Read the persisted layer choice. Anything malformed — bad JSON, a
@@ -291,8 +393,14 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // UX-GRAPH-1: points keep their places; moving all of them is the
   // person's choice, asked first, and can be taken back once.
   const [layoutVersion, setLayoutVersion] = useState(0);
-  const [rearrange, setRearrange] = useState<"idle" | "asking" | "done">("idle");
+  const [rearrange, setRearrange] = useState<"idle" | "asking" | "done" | "rebalanced">("idle");
   const rearrangeRef = useRef<"fresh" | "undo" | null>(null);
+  // A large fresh layout runs in a worker; its spots come back here and the
+  // map is built again from them (round 3 polish).
+  const workerLayoutRef = useRef<{ model: GraphModel; version: number; variant: AtlasLayoutVariant; positions: Map<string, { x: number; y: number }>; blockedMs: number; totalMs: number; report?: unknown } | null>(null);
+  const [layingOut, setLayingOut] = useState(false);
+  const [workerLayouts, setWorkerLayouts] = useState(0);
+  const workerFailedRef = useRef(false);
   const viewpointRef = useRef<{ scope: string | null; view: AtlasViewpoint; body: Map<string, { x: number; y: number }> } | null>(null);
   const graphRef = useRef<Graph | null>(null);
   const simRef = useRef<AtlasSimulation | null>(null);
@@ -585,6 +693,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
   // ref at PAINT time instead of closing over the `communities` value that
   // was current when the sigma renderer was built.
   const communitiesRef = useRef<Map<string, string>>(communities);
+  const regionLayoutRef = useRef<Map<string, string> | null>(null);
+  const [laidRegionCount, setLaidRegionCount] = useState<number | null>(null);
 
   const filteredModel = useMemo(() => filterGraphEntityTypes(visibleModel, excludedTypes), [visibleModel, excludedTypes]);
 
@@ -1098,7 +1208,90 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // Each night point goes back to the spot it was given the first time it
     // was on the map; only new ones are placed (UX-CHAT-5).
     applyNightOffsets(graph, readNightOffsets());
-    runAtlasLayout(graph);
+    // Prototype switch (round 3): which core layout to use, for side-by-side
+    // renders; the default is DEFAULT_ATLAS_LAYOUT.
+    const layoutStartedAt = performance.now();
+    let layoutVariant: AtlasLayoutVariant = DEFAULT_ATLAS_LAYOUT;
+    try {
+      const pick = window.localStorage.getItem("atlas.exp.layout");
+      if (pick === "r0" || pick === "r1" || pick === "r1b" || pick === "r2") layoutVariant = pick;
+    } catch {
+      // Storage unavailable: the default layout.
+    }
+    // R2 (round 4): each body keeps the region it was in; only Rearrange works
+    // the regions out again (its undo brings the old ones back).
+    const regionsAtStart: ReadonlyMap<string, string> | undefined = layoutVariant !== "r2"
+      || rearrangeRef.current === "fresh"
+      || readLayoutVersion(spaceFilter) < ATLAS_LAYOUT_VERSION
+      ? undefined
+      : rearrangeRef.current === "undo" ? readPreviousRegions(spaceFilter) : readStoredRegions(spaceFilter);
+    // A map opened again with every body on its kept spot is not laid out
+    // again: the kept spots go straight back (most of the cost of opening a
+    // large map was a fresh layout that the kept one then replaced).
+    const keptAtStart = (() => {
+      if (rearrangeRef.current) return null;
+      if (layoutVariant !== "r0" && readLayoutVersion(spaceFilter) < ATLAS_LAYOUT_VERSION) return null;
+      const prior = viewpointRef.current;
+      const stored = prior?.scope === spaceFilter ? prior.body : readStoredPositions(spaceFilter);
+      const apartNow = readThingsApart();
+      let bodies = 0;
+      for (const id of graph.nodes()) {
+        if (graph.getNodeAttribute(id, "entityType") === MEMORY_NODE_TYPE) continue;
+        bodies += 1;
+        if (!stored.has(id)) return null;
+        const isApart = apartNow ? apartNow.has(id) : thingIdOf(id) !== null;
+        if (isApart && thingLinkedBodies(graph, id).length > 0) return null;
+      }
+      return bodies > 0 ? stored : null;
+    })();
+    const job = workerLayoutRef.current;
+    const fromWorker = !keptAtStart && job && job.model === visibleModel && job.version === layoutVersion && job.variant === layoutVariant
+      ? job.positions
+      : null;
+    const placed = keptAtStart ?? fromWorker;
+    if (placed) {
+      for (const [id, spot] of placed) {
+        if (graph.hasNode(id)) graph.mergeNodeAttributes(id, { x: spot.x, y: spot.y });
+      }
+      markKeptLayout(graph, layoutVariant, spaceFilter ?? "", regionsAtStart);
+    } else if (graph.order >= WORKER_LAYOUT_MIN_NODES && typeof Worker !== "undefined" && !workerFailedRef.current) {
+      // A large fresh layout takes seconds: run it off the main thread and
+      // say so quietly, then build the map again from its spots.
+      let blockedMs = 0;
+      const worker = new Worker(new URL("../../lib/graph/atlasLayout.worker.ts", import.meta.url), { type: "module" });
+      let live = true;
+      worker.onmessage = (event: MessageEvent<AtlasLayoutReply>) => {
+        worker.terminate();
+        if (!live) return;
+        workerLayoutRef.current = {
+          model: visibleModel,
+          version: layoutVersion,
+          variant: layoutVariant,
+          positions: new Map(event.data.positions.map(([id, x, y]) => [id, { x, y }])),
+          report: event.data.report,
+          blockedMs,
+          totalMs: performance.now() - layoutStartedAt,
+        };
+        setLayingOut(false);
+        setWorkerLayouts((count) => count + 1);
+      };
+      worker.onerror = () => {
+        worker.terminate();
+        if (!live) return;
+        // No worker after all: lay it out here, as before.
+        workerLayoutRef.current = null;
+        setLayingOut(false);
+        workerFailedRef.current = true;
+        setWorkerLayouts((count) => count + 1);
+      };
+      worker.postMessage({ graph: graph.export(), variant: layoutVariant, scope: spaceFilter ?? "", ...(regionsAtStart?.size ? { regions: [...regionsAtStart] } : {}) } satisfies AtlasLayoutRequest);
+      blockedMs = performance.now() - layoutStartedAt;
+      setLayingOut(true);
+      return () => {
+        live = false;
+        worker.terminate();
+      };
+    } else runAtlasLayout(graph, layoutVariant, spaceFilter ?? "", regionsAtStart);
     graphRef.current = graph;
     // A rebuild while Replay plays (a fresh read landing) ends it where it is.
     if (replayRef.current) {
@@ -1107,6 +1300,24 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       selectedRef.current = null;
       setSelectedThing(null);
       setReplaying("idle");
+    }
+    // An R2 map names its own regions (round 4): the paint reads them from
+    // the layout instead of the cartography communities.
+    if (layoutVariant === "r2") {
+      const regionMembers = new Map<string, string>();
+      graph.forEachNode((id, attrs) => {
+        if (typeof attrs.region === "string") regionMembers.set(id, attrs.region);
+      });
+      regionLayoutRef.current = regionMembers;
+      setLaidRegionCount(new Set(regionMembers.values()).size);
+      communitiesRef.current = regionMembers;
+      (window as unknown as Record<string, unknown>).__ATLAS_REGIONS = {
+        report: fromWorker ? job?.report : graph.getAttribute("atlasRegionReport"),
+        regions: graph.getAttribute("atlasRegions"),
+      };
+    } else {
+      regionLayoutRef.current = null;
+      setLaidRegionCount(null);
     }
     hoverStateRef.current = hoverStateFor(graph, null);
     sceneRef.current = null;
@@ -1118,13 +1329,29 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const sim = createAtlasSimulation(graph, () => {
       sceneDirtyRef.current = true;
       sigmaRef.current?.refresh();
-    });
+    }, { settled: placed !== null });
+    (window as unknown as Record<string, unknown>).__ATLAS_LAYOUT = {
+      variant: layoutVariant,
+      kept: keptAtStart !== null,
+      worker: fromWorker !== null,
+      layoutMs: Math.round(performance.now() - layoutStartedAt + (fromWorker ? job!.blockedMs : 0)),
+      ...(fromWorker ? { workerTotalMs: Math.round(job!.totalMs) } : {}),
+    };
     const previous = viewpointRef.current;
     const bodyIds = graph.nodes().filter((id) => graph.getNodeAttribute(id, "entityType") !== MEMORY_NODE_TYPE);
     // Within a visit the last layout is in memory; on a new visit it comes
     // from the kept layout, so the same point is where it was (UX-GRAPH-1).
-    const layoutChange = rearrangeRef.current;
+    let layoutChange = rearrangeRef.current;
     rearrangeRef.current = null;
+    // A layout kept from before the balanced map is laid out again, once, and
+    // turned to sit as close to the old one as it can; the old one can be put
+    // back (round 3, section 6).
+    const balanced = layoutVariant !== "r0";
+    const stale = balanced && !layoutChange && readLayoutVersion(spaceFilter) < ATLAS_LAYOUT_VERSION;
+    const oldLayout = stale ? readStoredPositions(spaceFilter) : null;
+    const rebalancing = oldLayout !== null && oldLayout.size > 0;
+    if (rebalancing) layoutChange = "fresh";
+    if (balanced) storeLayoutVersion(spaceFilter);
     if (layoutChange === "fresh") startRearrange(spaceFilter);
     else if (layoutChange === "undo") undoRearrange(spaceFilter);
     const kept = previous?.scope === spaceFilter && !layoutChange ? previous.body : readStoredPositions(spaceFilter);
@@ -1141,7 +1368,30 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           .map((id) => [id, kept.get(id)] as const)
           .filter((entry): entry is readonly [string, { x: number; y: number }] => entry[1] !== undefined),
       );
-      if (survivorPositions.size > 0) sim.restorePositions(survivorPositions);
+      // A body new to an R2 region sits by its kept neighbours there, not
+      // where the fresh layout happened to put it.
+      // How many graph units one screen px spans once the kept map is fit
+      // to the view: under R2 what is new keeps its drawn size apart.
+      let unitsPerPx = 0;
+      if (layoutVariant === "r2" && survivorPositions.size > 0) {
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const p of survivorPositions.values()) {
+          minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+          minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+        }
+        unitsPerPx = container.clientWidth > 0 && container.clientHeight > 0
+          ? 1.3 * Math.max((maxX - minX) / container.clientWidth, (maxY - minY) / container.clientHeight)
+          : 0;
+        for (const [id, spot] of placeNewRegionMembers(graph, survivorPositions, { unitsPerPx })) survivorPositions.set(id, spot);
+      }
+      if (survivorPositions.size > 0) sim.restorePositions(survivorPositions, { unitsPerPx });
+    }
+    if (rebalancing && oldLayout) {
+      const fresh = new Map(bodyIds.map((id) => [id, { x: graph.getNodeAttribute(id, "x") as number, y: graph.getNodeAttribute(id, "y") as number }]));
+      sim.restorePositions(alignToKept(fresh, oldLayout));
+      // The saved camera framed the old layout.
+      viewpointRef.current = null;
+      setRearrange("rebalanced");
     }
     const bodyPositions = () => {
       const positions = new Map(graph.nodes()
@@ -1157,6 +1407,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // Keep this layout now, so it holds even if the app quits without
     // unmounting the map, and again when the window goes away.
     storePositions(spaceFilter, bodyPositions());
+    if (layoutVariant === "r2" && regionLayoutRef.current) storeRegions(spaceFilter, regionLayoutRef.current);
     storeNightOffsets(nightOffsetsOf(graph));
     // Which things on the map now sit apart from it: kept for the next open.
     const thingsHere = bodyIds.filter((id) => thingIdOf(id) !== null);
@@ -1404,17 +1655,202 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     let frameGuards: readonly { left: number; right: number; top: number; bottom: number }[] = [];
     let guardRender = false;
     let guardPasses = 0;
-    const reserveLabel = (ctx: CanvasRenderingContext2D, label: string, at: LabelPlacement, guarded = false) => {
+    const labelBox = (ctx: CanvasRenderingContext2D, label: string, at: LabelPlacement): Box => {
       ctx.font = NODE_LABEL_FONT;
       const width = ctx.measureText(label).width;
       const left = at.align === "center" ? at.x - width / 2 : at.align === "right" ? at.x - width : at.x;
       const top = at.baseline === "middle" ? at.y - 6 : at.baseline === "top" ? at.y : at.y - 12;
-      const box = { left: left - 4, right: left + width + 4, top: top - 3, bottom: top + 15 };
-      const taken = (other: { left: number; right: number; top: number; bottom: number }) =>
+      return { left: left - 4, right: left + width + 4, top: top - 3, bottom: top + 15 };
+    };
+    // What a name may not cover besides another name: every drawn disc but
+    // its own, and every count badge (drawDustCounts paints the same plan).
+    // Rebuilt once per paint, on the first label sigma asks for, when the
+    // display data for that paint are final.
+    // The place-name scene, rebuilt only when a paint marked it dirty. The
+    // label pass may need it before the overlay does (R2 names go first).
+    const currentScene = () => {
+      if (sceneDirtyRef.current || sceneRef.current === null) {
+        const sceneGraph = excludedTypesRef.current.size ? graph.copy() : graph;
+        if (sceneGraph !== graph) for (const id of sceneGraph.nodes()) {
+          if (entityTypeHidden(sceneGraph.getNodeAttribute(id, "entityType"), excludedTypesRef.current)) sceneGraph.dropNode(id);
+        }
+        sceneRef.current = cartographyScene(sceneGraph, communitiesRef.current);
+        sceneDirtyRef.current = false;
+      }
+      return sceneRef.current;
+    };
+    let guard: LabelGuard | null = null;
+    let dustAnchorsForGuard: string[] = [];
+    const ensureGuard = (ctx: CanvasRenderingContext2D): LabelGuard | null => {
+      if (guard) return guard;
+      const sigma = labelSigma;
+      if (sigma === null) return null;
+      const { width, height } = sigma.getDimensions();
+      const cells = new Map<number, GuardDisc[]>();
+      const discs: GuardDisc[] = [];
+      graph.forEachNode((id) => {
+        const display = sigma.getNodeDisplayData(id);
+        if (!display || display.hidden) return;
+        const r = sigma.scaleSize(display.size);
+        if (!(r >= LABEL_GUARD_MIN_RADIUS)) return;
+        const { x, y } = sigma.framedGraphToViewport(display);
+        // A name near the edge may still show part of itself over a disc just off screen.
+        const margin = r + 24;
+        if (x < -margin || y < -margin || x > width + margin || y > height + margin) return;
+        const dustOf = graph.getNodeAttribute(id, "dustOf");
+        const disc: GuardDisc = { key: id, x, y, r, owner: typeof dustOf === "string" ? dustOf : undefined };
+        discs.push(disc);
+        for (let cx = Math.floor((x - r) / LABEL_GUARD_CELL); cx <= Math.floor((x + r) / LABEL_GUARD_CELL); cx += 1) {
+          for (let cy = Math.floor((y - r) / LABEL_GUARD_CELL); cy <= Math.floor((y + r) / LABEL_GUARD_CELL); cy += 1) {
+            const cell = cx * 65536 + cy;
+            const list = cells.get(cell);
+            if (list) list.push(disc);
+            else cells.set(cell, [disc]);
+          }
+        }
+      });
+      const badges = planDustBadges(
+        graph,
+        dustAnchorsForGuard.filter((id) => !entityTypeHidden(graph.getNodeAttribute(id, "entityType"), excludedTypesRef.current)),
+        (pos) => sigma.graphToViewport(pos),
+        lodRef.current,
+        hoverStateRef.current.hovered,
+        { width, height },
+        sigma.scaleSize(1),
+      ).map((b) => ({ left: b.x - 2, right: b.x + b.width + 2, top: b.y - 8, bottom: b.y + 8 }));
+      const chrome: Box[] = [];
+      const shell = container.parentElement;
+      if (shell) {
+        const origin = container.getBoundingClientRect();
+        shell.querySelectorAll(ATLAS_CHROME_SELECTOR).forEach((element) => {
+          const rect = element.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return;
+          chrome.push({ left: rect.left - origin.left - 4, right: rect.right - origin.left + 4, top: rect.top - origin.top - 4, bottom: rect.bottom - origin.top + 4 });
+        });
+      }
+      // How far each hub's own dust reaches on screen: its name sits outside it.
+      const rings = new Map<string, number>();
+      for (const disc of discs) {
+        if (disc.owner === undefined) continue;
+        const display = sigma.getNodeDisplayData(disc.owner);
+        if (!display || display.hidden) continue;
+        const at = sigma.framedGraphToViewport(display);
+        rings.set(disc.owner, Math.max(rings.get(disc.owner) ?? 0, Math.hypot(disc.x - at.x, disc.y - at.y) + disc.r));
+      }
+      guard = { cells, badges, chrome, width, height, plan: null, rings };
+      // An R2 map at overview zoom is a map of named regions: the region
+      // names go down first and the point names give way to them (round 5).
+      // A name keeps off every drawn point, the smallest too, the count
+      // badges and the controls.
+      if (regionLayoutRef.current && lodRef.current.phase === "overview" && hoverStateRef.current.hovered === null) {
+        const scene = currentScene();
+        const all = allDiscCells(sigma, width, height);
+        const blocked = (box: Box) => {
+          if (badges.some((o) => o.left < box.right && box.left < o.right && o.top < box.bottom && box.top < o.bottom)) return true;
+          if (chrome.some((o) => o.left < box.right && box.left < o.right && o.top < box.bottom && box.top < o.bottom)) return true;
+          return discsHit(all, box, 1);
+        };
+        const names = planRegionNamesFirst(
+          lodRef.current.islandsSolid ? scene : { regions: scene.regions.filter((r) => !r.island) },
+          (pos) => sigma.graphToViewport(pos),
+          regionNameMeasure(ctx),
+          { width, height },
+          blocked,
+        );
+        guard.regionNames = names;
+        guard.namedHubs = new Set(names.map((n) => n.hubId));
+        for (const name of names) labelBoxes.push(name.box);
+      }
+      // Zoomed out and at the middle zoom, the names are the map's landmarks:
+      // the best-linked first,
+      // each on the first side that is free, up to OVERVIEW_LABEL_MAX, so they
+      // spread over the map instead of piling into its densest cluster.
+      const planPhase = lodRef.current.phase;
+      if (planPhase !== "detail" && hoverStateRef.current.hovered === null) {
+        const plan = new Map<string, { label: string; at: LabelPlacement } | null>();
+        const maxWidth = overviewLabelMaxWidth(width);
+        let placedCount = 0;
+        const candidates = discs
+          .filter((d) => graph.getNodeAttribute(d.key, "landmark") === true && graph.getNodeAttribute(d.key, "night") !== true)
+          .sort((a, b) =>
+            ((graph.getNodeAttribute(b.key, "structuralDegree") as number | undefined) ?? 0)
+            - ((graph.getNodeAttribute(a.key, "structuralDegree") as number | undefined) ?? 0)
+            || (a.key < b.key ? -1 : 1));
+        for (const disc of candidates) {
+          if (placedCount >= OVERVIEW_LABEL_MAX || guard.namedHubs?.has(disc.key)) {
+            plan.set(disc.key, null);
+            continue;
+          }
+          plan.set(disc.key, null);
+          const display = sigma.getNodeDisplayData(disc.key);
+          const raw = String(display?.label ?? "");
+          if (!raw) continue;
+          ctx.font = NODE_LABEL_FONT;
+          const label = planPhase === "overview" ? truncateOverviewLabel(ctx, raw, maxWidth) : raw;
+          if (!label) continue;
+          const preferred = labelSideFor(graph.getNodeAttribute(disc.key, "x") as number, graph.getNodeAttribute(disc.key, "y") as number);
+          for (const at of labelCandidates(disc.x, disc.y, labelRing(disc.r, guard.rings.get(disc.key)), preferred)) {
+            const box = labelBox(ctx, label, at);
+            if (!boxFree(box, disc.key, true, disc)) continue;
+            labelBoxes.push(box);
+            plan.set(disc.key, { label, at });
+            placedCount += 1;
+            break;
+          }
+        }
+        guard.plan = plan;
+      }
+      return guard;
+    };
+    const boxFree = (box: Box, key: string | undefined, guarded: boolean, own?: { x: number; y: number; r: number }) => {
+      const taken = (other: Box) =>
         other.left < box.right && box.left < other.right && other.top < box.bottom && box.top < other.bottom;
       if (labelBoxes.some(taken) || (guarded && frameGuards.some(taken))) return false;
+      if (key === undefined || guard === null) return true;
+      if (box.left < LABEL_EDGE_INSET || box.top < LABEL_EDGE_INSET || box.right > guard.width - LABEL_EDGE_INSET || box.bottom > guard.height - LABEL_EDGE_INSET) return false;
+      if (guard.badges.some(taken) || guard.chrome.some(taken)) return false;
+      for (let cx = Math.floor(box.left / LABEL_GUARD_CELL); cx <= Math.floor(box.right / LABEL_GUARD_CELL); cx += 1) {
+        for (let cy = Math.floor(box.top / LABEL_GUARD_CELL); cy <= Math.floor(box.bottom / LABEL_GUARD_CELL); cy += 1) {
+          for (const disc of guard.cells.get(cx * 65536 + cy) ?? []) {
+            if (disc.key === key) continue;
+            if (LABEL_PASSES_SMALL && disc.r < 2.5 && lodRef.current.phase === "overview" && graph.getNodeAttribute(disc.key, "landmark") !== true) continue;
+            const nx = Math.max(box.left, Math.min(disc.x, box.right));
+            const ny = Math.max(box.top, Math.min(disc.y, box.bottom));
+            if (Math.hypot(disc.x - nx, disc.y - ny) < disc.r) return false;
+          }
+        }
+      }
+      // Whose name is it: the dot nearest the box's inner edge must be the
+      // label's own, or a reader would take it for a neighbour's.
+      if (own) {
+        const px = Math.max(box.left, Math.min(own.x, box.right));
+        const py = Math.max(box.top, Math.min(own.y, box.bottom));
+        const ownGap = Math.hypot(own.x - px, own.y - py) - own.r;
+        for (let cx = Math.floor((px - ownGap) / LABEL_GUARD_CELL); cx <= Math.floor((px + ownGap) / LABEL_GUARD_CELL); cx += 1) {
+          for (let cy = Math.floor((py - ownGap) / LABEL_GUARD_CELL); cy <= Math.floor((py + ownGap) / LABEL_GUARD_CELL); cy += 1) {
+            for (const disc of guard.cells.get(cx * 65536 + cy) ?? []) {
+              if (disc.key === key || disc.owner === key) continue;
+              if (Math.hypot(disc.x - px, disc.y - py) - disc.r < ownGap) return false;
+            }
+          }
+        }
+      }
+      return true;
+    };
+    const reserveLabel = (ctx: CanvasRenderingContext2D, label: string, at: LabelPlacement, guarded = false, key?: string, own?: { x: number; y: number; r: number }) => {
+      const box = labelBox(ctx, label, at);
+      if (!boxFree(box, key, guarded, own)) return false;
       labelBoxes.push(box);
       return true;
+    };
+    // The first free side for a name, starting from its usual one.
+    const placeLabel = (ctx: CanvasRenderingContext2D, label: string, data: Record<string, any>, preferred: LabelSide, guarded: boolean): LabelPlacement | null => {
+      const own = { x: data.x as number, y: data.y as number, r: data.size as number };
+      const ring = labelRing(own.r, guard?.rings.get(data.key));
+      for (const at of labelCandidates(own.x, own.y, ring, preferred)) {
+        if (reserveLabel(ctx, label, at, guarded, data.key, own)) return at;
+      }
+      return null;
     };
     // The node under the pointer, whatever the hover state shows.
     let pointerNode: string | null = null;
@@ -1429,6 +1865,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       || (selectedRef.current === thing && thingStopRef.current === "this" && performance.now() >= pickedAtRef.current + THING_CAMERA_MS);
     const drawLabel = (ctx: CanvasRenderingContext2D, data: Record<string, any>, s: Record<string, any>) => {
       const nodeAttrs = graph.hasNode(data.key) ? graph.getNodeAttributes(data.key) : null;
+      const labelGuard = ensureGuard(ctx);
       const nightPoint = nodeAttrs?.night === true && typeof nodeAttrs.dustOf === "string";
       // A picked quiet thing's point beside its topic: a short title too, not
       // its whole sentence.
@@ -1446,9 +1883,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         if (!title) return;
         const angle = Math.atan2(-(graph.getNodeAttribute(data.key, "y") as number), graph.getNodeAttribute(data.key, "x") as number);
         const sector = Math.round((angle + Math.PI) / (Math.PI / 2)) % 4;
-        const at = labelAnchor(data.x, data.y, data.size, sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above");
-        // Where titles would overlap, the later one is left off.
-        if (reserveLabel(ctx, title, at, false)) drawNodeLabelAt(ctx, { ...data, label: title }, s, at, paletteRef.current.surface);
+        // Where a title has no free side, it is left off.
+        const at = placeLabel(ctx, title, data, sector === 0 ? "right" : sector === 2 ? "left" : sector === 1 ? "below" : "above", false);
+        if (at) drawNodeLabelAt(ctx, { ...data, label: title }, s, at, paletteRef.current.surface);
         return;
       }
       // Truncation, collision reservation, and drawNodeLabelAt must all use
@@ -1480,12 +1917,21 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       );
       if (!rawLabel) return;
       const overview = lodRef.current.phase === "overview" && hoverStateRef.current.hovered === null;
+      // A planned landmark is already reserved; one the plan left off stays
+      // blank. A landmark the plan never saw (no drawn disc) goes the usual way.
+      if (labelGuard?.namedHubs?.has(data.key)) return;
+      if (labelGuard?.plan?.has(data.key)) {
+        const planned = labelGuard.plan.get(data.key);
+        if (planned) drawNodeLabelAt(ctx, { ...data, label: planned.label }, s, planned.at, paletteRef.current.surface);
+        return;
+      }
       if (overview) ctx.font = NODE_LABEL_FONT;
       const maxWidth = overviewLabelMaxWidth(labelSigma?.getDimensions().width ?? 160);
       const label = overview ? truncateOverviewLabel(ctx, rawLabel, maxWidth) : rawLabel;
       if (!label) return;
-      const at = labelAnchor(data.x, data.y, data.size, labelSideFor(graph.getNodeAttribute(data.key, "x") as number, graph.getNodeAttribute(data.key, "y") as number));
-      if (reserveLabel(ctx, label, at, labelYieldsToFrames(nodeAttrs?.night === true, hoverStateRef.current.linked?.has(data.key) === true))) drawNodeLabelAt(ctx, { ...data, label }, s, at, paletteRef.current.surface);
+      const preferred = labelSideFor(graph.getNodeAttribute(data.key, "x") as number, graph.getNodeAttribute(data.key, "y") as number);
+      const at = placeLabel(ctx, label, data, preferred, labelYieldsToFrames(nodeAttrs?.night === true, hoverStateRef.current.linked?.has(data.key) === true));
+      if (at) drawNodeLabelAt(ctx, { ...data, label }, s, at, paletteRef.current.surface);
     };
     let minimumGraphRadius = 0;
     let graphUnitsPerPixel = Infinity;
@@ -1607,6 +2053,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     }
 
     const dustAnchors = dustBadgeAnchors(graph);
+    dustAnchorsForGuard = dustAnchors;
     const drawOverlay = (scene: CartographyScene) => {
       const ctx = overlay.getContext("2d");
       if (!ctx) return; // jsdom
@@ -1643,7 +2090,19 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       // marks are placed against the fresh labels only.
       const guardStart = labelBoxes.length;
       labelBoxes.push(...frameGuards);
-      if (showRegionsRef.current) drawRegionNames(ctx, named, project, paletteRef.current, { width, height }, labelledNodes, labelBoxes);
+      // An R2 map is a map of named regions: its names show without the toggle.
+      // An R2 name keeps off every drawn point, small ones too, and off the
+      // count badges and the map's controls (round 4).
+      let regionNameBlocked: ((box: Box) => boolean) | undefined;
+      const overlayGuard = regionLayoutRef.current && lodRef.current.phase === "overview" ? (guard ?? ensureGuard(ctx)) : guard;
+      if (regionLayoutRef.current && !overlayGuard?.regionNames) {
+        const cells = allDiscCells(renderer, width, height);
+        const extra = overlayGuard ? [...overlayGuard.badges, ...overlayGuard.chrome] : [];
+        regionNameBlocked = (box) =>
+          extra.some((o) => o.left < box.right && box.left < o.right && o.top < box.bottom && box.top < o.bottom) || discsHit(cells, box, 1);
+      }
+      if (overlayGuard?.regionNames) drawPlannedRegionNames(ctx, overlayGuard.regionNames, paletteRef.current);
+      else if (showRegionsRef.current || regionLayoutRef.current) drawRegionNames(ctx, named, project, paletteRef.current, { width, height }, labelledNodes, labelBoxes, regionNameBlocked);
       drawDustCounts(
         ctx,
         graph,
@@ -1702,17 +2161,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     };
     // One handler paints the overlay from one scene — rebuilt only when a
     // paint marked it dirty — and sigma sees a single afterRender listener.
-    renderer.on("beforeRender", () => { labelBoxes.length = 0; });
+    renderer.on("beforeRender", () => {
+      labelBoxes.length = 0;
+      guard = null;
+    });
     renderer.on("afterRender", () => {
-      if (sceneDirtyRef.current || sceneRef.current === null) {
-        const sceneGraph = excludedTypesRef.current.size ? graph.copy() : graph;
-        if (sceneGraph !== graph) for (const id of sceneGraph.nodes()) {
-          if (entityTypeHidden(sceneGraph.getNodeAttribute(id, "entityType"), excludedTypesRef.current)) sceneGraph.dropNode(id);
-        }
-        sceneRef.current = cartographyScene(sceneGraph, communitiesRef.current);
-        sceneDirtyRef.current = false;
-      }
-      drawOverlay(sceneRef.current);
+      drawOverlay(currentScene());
     });
     // The opening frame follows the hierarchy's meaningful components. A
     // later rebuild restores its saved viewpoint below; only a fresh graph
@@ -1724,7 +2178,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const restored = saved?.scope === spaceFilter && restoreAtlasViewpoint(renderer, graph, saved.view);
     // The opening view keeps the toolbar's band clear: no frame starts
     // under the search field (UX-CHAT-5).
-    if (!restored) frameAtlasView(renderer, graph, { mode: "main", visibleNodeIds, padding: 56, insets: ATLAS_CONTROL_INSETS });
+    if (!restored) frameAtlasView(renderer, graph, { mode: "core", visibleNodeIds, padding: 56, insets: ATLAS_CONTROL_INSETS });
     // Zoom level of detail, relative to THIS opening view: how much memory
     // dust each anchor shows, and whether the islands are solid yet (see
     // atlas.ts's lodFor). The reducers only re-run on refresh(), not on a
@@ -1760,6 +2214,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     containerSizeObserver?.observe(container);
     let previousRatio = mountRatio;
     lodRef.current = OPENING_LOD;
+    // Zooming out past twice the opening view only shrinks the map to a
+    // blob with its counts stacked on it; stop there.
+    renderer.setSetting("maxCameraRatio", mountRatio * MAX_ZOOM_OUT);
+    const applyLabelLod = (phase: LodState["phase"]) => {
+      const lod = LABEL_LOD[phase];
+      renderer.setSetting("labelRenderedSizeThreshold", lod.threshold);
+      renderer.setSetting("labelGridCellSize", lod.cell);
+      renderer.setSetting("labelDensity", lod.density);
+    };
+    applyLabelLod(OPENING_LOD.phase);
     const camera = renderer.getCamera();
     const onCameraUpdated = ({ ratio }: { ratio: number }) => {
       const next = lodFor(openingRatioRef.current / ratio);
@@ -1767,8 +2231,11 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       const zoomChanged = ratio !== previousRatio;
       previousRatio = ratio;
       updateRadiusScale();
-      if (!zoomChanged && next.dustVisible === prev.dustVisible && next.islandsSolid === prev.islandsSolid && next.phase === prev.phase) return;
+      if (!zoomChanged && next.dustVisible === prev.dustVisible && next.islandsSolid === prev.islandsSolid && next.smallIslandsSolid === prev.smallIslandsSolid && next.phase === prev.phase) return;
       lodRef.current = next;
+      // Closer in, more names: a smaller disc may carry one and the label
+      // grid is finer, so zooming names more things, not fewer.
+      if (next.phase !== prev.phase) applyLabelLod(next.phase);
       renderer.refresh();
     };
     camera.on("updated", onCameraUpdated);
@@ -2055,7 +2522,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     rendererDisposeRef.current = dispose;
     return dispose;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleModel, layoutVersion, mapReady]);
+  }, [visibleModel, layoutVersion, mapReady, workerLayouts]);
 
   // Theme flip: recolor the live graph and repaint — no remount. Also keeps
   // paletteRef current so nodeReducer/edgeReducer (read at paint time) see
@@ -2092,6 +2559,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // there is nothing to repaint and the scene would be rebuilt twice.
     // Only an actual change to the map is work.
     if (communitiesRef.current === communities) return;
+    // An R2 map keeps the regions its layout drew.
+    if (regionLayoutRef.current) return;
     communitiesRef.current = communities;
     // Region membership is derived from the communities map, so a status flip
     // invalidates the cached scene even though nothing moved.
@@ -2186,7 +2655,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     ...(layers.memory && memoryCount > 0
       ? [t("atlas.countMemories", { count: memoryCount })]
       : []),
-    ...(regionCount > 0 ? [t("atlas.countRegions", { count: regionCount })] : []),
+    ...((laidRegionCount ?? regionCount) > 0 ? [t("atlas.countRegions", { count: laidRegionCount ?? regionCount })] : []),
   ].join(" · ");
   const dropdownOpen = searchFocused && query.trim().length > 0;
   // "Last night: 8 points written, 5 connected"; a part that is zero is left out.
@@ -2468,9 +2937,18 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
           </button>
         </AtlasTooltip>
       </div>
+      {layingOut && (
+        <div className="atlas-laying-out" role="status">{t("atlas.layingOut")}</div>
+      )}
       {rearrange !== "idle" && (
         <div className="atlas-rearrange-note" role={rearrange === "asking" ? "dialog" : "status"} aria-label={t("atlas.rearrange")}>
-          <span>{t(rearrange === "asking" ? "atlas.rearrangeAsk" : "atlas.rearranged")}</span>
+          {rearrange === "rebalanced" ? (
+            <>
+              <span className="atlas-note-long">{t("atlas.rebalanced")}</span>
+              <span className="atlas-note-short">{t("atlas.rebalancedShort")}</span>
+              <span aria-hidden="true">·</span>
+            </>
+          ) : <span>{t(rearrange === "asking" ? "atlas.rearrangeAsk" : "atlas.rearranged")}</span>}
           {rearrange === "asking" ? (
             <>
               <button type="button" className="atlas-rearrange-go" onClick={() => {
@@ -2485,7 +2963,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
               rearrangeRef.current = "undo";
               setRearrange("idle");
               setLayoutVersion((version) => version + 1);
-            }}>{t("atlas.rearrangeUndo")}</button>
+            }}>{t(rearrange === "rebalanced" ? "atlas.putBack" : "atlas.rearrangeUndo")}</button>
           )}
         </div>
       )}

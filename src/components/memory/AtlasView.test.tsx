@@ -30,6 +30,12 @@ vi.mock("sigma/rendering", () => ({
 /** The mock viewport. Tests that watch the names of a far component widen
  *  it (see graphToViewport below). */
 let mockDimensions = { width: 400, height: 600 };
+/** Pins a test to the R1 layout, whose regions are the cartography
+ *  communities (R2, the default, names its own). */
+function useR1Layout() {
+  window.localStorage.setItem("atlas.exp.layout", "r1");
+}
+
 vi.mock("sigma", () => {
   class MouseCaptorMock {
     handlers = new Map<string, (payload: any) => void>();
@@ -57,6 +63,9 @@ vi.mock("sigma", () => {
     }
     getMouseCaptor() {
       return this.mouseCaptor;
+    }
+    getGraph() {
+      return this.graph;
     }
     // 100-unit graph span in a 400px-min-dim container: the fill-aware
     // default density is 0.6 * 400 / 100 = 2.4 px/unit (inside the [1.5, 3]
@@ -114,6 +123,9 @@ vi.mock("sigma", () => {
       off: vi.fn(),
     };
     scaleSize(size: number) { return size; }
+    // The label guard projects display data; the mock's display spots carry
+    // no size, so they add no discs to it.
+    framedGraphToViewport(coords: { x: number; y: number }) { return coords; }
     getCamera() {
       return this.camera;
     }
@@ -425,6 +437,7 @@ describe("AtlasView", () => {
 
   beforeEach(async () => {
     await i18n.changeLanguage("en");
+    window.localStorage.removeItem("atlas.exp.layout");
     vi.clearAllMocks();
     vi.mocked(listThingNightPoints).mockReset();
     capturedSigmaInstances.length = 0;
@@ -1603,6 +1616,8 @@ describe("AtlasView", () => {
   }
 
   it("names an island small group only once the view is zoomed in enough for the islands to come up solid", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockStarWithSmallStar();
     mockDimensions = { width: 2000, height: 1200 }; // the island sits out on the rim; keep it in view
 
@@ -1811,6 +1826,8 @@ describe("AtlasView", () => {
   }
 
   it("shows the artifact count line — entities · regions — in the toolbar", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockTwoTriangles();
 
     renderWithQuery(<AtlasView />);
@@ -2305,6 +2322,8 @@ describe("AtlasView", () => {
   }
 
   it("paints names when Regions is enabled through the refresh path, without a second draw", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockTwoTrianglesInSpace();
     mockDimensions = { width: 2000, height: 1200 }; // both triangles in view, like a real fit
     // The helper canvases only exist once the mount effect has run, so stub
@@ -2331,6 +2350,8 @@ describe("AtlasView", () => {
   });
 
   it("re-renders the place names when a space's cartography status changes, without a full remount", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockTwoTrianglesInSpace();
     mockDimensions = { width: 2000, height: 1200 }; // both triangles in view, like a real fit
     // Starts on the default (empty) fallback climb: two 3-cliques joined by
@@ -2756,6 +2777,8 @@ describe("AtlasView", () => {
   });
 
   it("gives each layer a chip whose pressed state matches what is drawn", async () => {
+    // Cartography-named regions: the R1 path, still behind the layout switch.
+    useR1Layout();
     mockPairWithPages();
 
     renderWithQuery(<AtlasView />);

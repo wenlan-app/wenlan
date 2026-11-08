@@ -76,6 +76,8 @@ export const storePositions = (scope: string | null, positions: BodyPositions) =
 export function startRearrange(scope: string | null): void {
   write(PREVIOUS_POSITIONS_STORAGE_PREFIX, scope, read(POSITIONS_STORAGE_PREFIX, scope));
   write(POSITIONS_STORAGE_PREFIX, scope, null);
+  writeRegions(PREVIOUS_REGIONS_STORAGE_PREFIX, scope, readRegions(REGIONS_STORAGE_PREFIX, scope));
+  writeRegions(REGIONS_STORAGE_PREFIX, scope, null);
 }
 
 export const canUndoRearrange = (scope: string | null) => read(PREVIOUS_POSITIONS_STORAGE_PREFIX, scope).size > 0;
@@ -84,10 +86,48 @@ export const canUndoRearrange = (scope: string | null) => read(PREVIOUS_POSITION
 export function undoRearrange(scope: string | null): void {
   write(POSITIONS_STORAGE_PREFIX, scope, read(PREVIOUS_POSITIONS_STORAGE_PREFIX, scope));
   write(PREVIOUS_POSITIONS_STORAGE_PREFIX, scope, null);
+  writeRegions(REGIONS_STORAGE_PREFIX, scope, readRegions(PREVIOUS_REGIONS_STORAGE_PREFIX, scope));
+  writeRegions(PREVIOUS_REGIONS_STORAGE_PREFIX, scope, null);
 }
 
 /** The undo is offered once; any later choice drops it. */
-export const dropRearrangeUndo = (scope: string | null) => write(PREVIOUS_POSITIONS_STORAGE_PREFIX, scope, null);
+export function dropRearrangeUndo(scope: string | null): void {
+  write(PREVIOUS_POSITIONS_STORAGE_PREFIX, scope, null);
+  writeRegions(PREVIOUS_REGIONS_STORAGE_PREFIX, scope, null);
+}
+
+// Round 4 (R2): which region each body belongs to is kept per scope beside
+// its spot, so opening the map again, or the map growing, never moves a
+// point to another region. Only Rearrange works the regions out again.
+export const REGIONS_STORAGE_PREFIX = "atlas.regions.";
+export const PREVIOUS_REGIONS_STORAGE_PREFIX = "atlas.regions.previous.";
+export type BodyRegions = Map<string, string>;
+
+function readRegions(prefix: string, scope: string | null): BodyRegions {
+  try {
+    const raw = window.localStorage.getItem(keyFor(prefix, scope));
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return new Map();
+    return new Map(Object.entries(parsed as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"));
+  } catch {
+    return new Map();
+  }
+}
+
+function writeRegions(prefix: string, scope: string | null, regions: BodyRegions | null): void {
+  try {
+    const key = keyFor(prefix, scope);
+    if (!regions || regions.size === 0) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, JSON.stringify(Object.fromEntries([...regions].slice(0, MAX_STORED_POINTS))));
+  } catch {
+    // Storage full or unavailable: regions are worked out again next time.
+  }
+}
+
+export const readStoredRegions = (scope: string | null) => readRegions(REGIONS_STORAGE_PREFIX, scope);
+export const readPreviousRegions = (scope: string | null) => readRegions(PREVIOUS_REGIONS_STORAGE_PREFIX, scope);
+export const storeRegions = (scope: string | null, regions: BodyRegions) => writeRegions(REGIONS_STORAGE_PREFIX, scope, regions);
 
 // UX-CHAT-5: each night point's spot round its thing's centre is worked out
 // once and kept, for every scope (it is relative to the centre, which the
@@ -178,4 +218,56 @@ export function storeSeenNightPoints(current: Iterable<string>): void {
   } catch {
     // Unavailable storage: nothing grows next time either (no record).
   }
+}
+
+// Round 3: a layout kept from before the balanced map is laid out again, once,
+// per scope. The person can put the old one back (the previous slot above).
+export const ATLAS_LAYOUT_VERSION = 3;
+export const LAYOUT_VERSION_STORAGE_PREFIX = "atlas.layout.version.";
+
+export function readLayoutVersion(scope: string | null): number {
+  try {
+    const raw = window.localStorage.getItem(keyFor(LAYOUT_VERSION_STORAGE_PREFIX, scope));
+    const value = raw === null ? 0 : Number(raw);
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    return ATLAS_LAYOUT_VERSION;
+  }
+}
+
+export function storeLayoutVersion(scope: string | null): void {
+  try {
+    window.localStorage.setItem(keyFor(LAYOUT_VERSION_STORAGE_PREFIX, scope), String(ATLAS_LAYOUT_VERSION));
+  } catch {
+    // Unavailable storage: the map just does not remember it re-balanced.
+  }
+}
+
+/** Turn and move `fresh` (no scaling) so the points it shares with `old` sit
+ *  as close to their old places as a rigid move allows (orthogonal
+ *  Procrustes). With fewer than two shared points it only moves. */
+export function alignToKept(fresh: BodyPositions, old: BodyPositions): BodyPositions {
+  const shared = [...fresh.keys()].filter((id) => old.has(id));
+  if (shared.length === 0) return new Map(fresh);
+  let fx = 0, fy = 0, ox = 0, oy = 0;
+  for (const id of shared) {
+    const f = fresh.get(id)!, o = old.get(id)!;
+    fx += f.x; fy += f.y; ox += o.x; oy += o.y;
+  }
+  fx /= shared.length; fy /= shared.length; ox /= shared.length; oy /= shared.length;
+  let sxx = 0, sxy = 0;
+  for (const id of shared) {
+    const f = fresh.get(id)!, o = old.get(id)!;
+    const ax = f.x - fx, ay = f.y - fy, bx = o.x - ox, by = o.y - oy;
+    sxx += ax * bx + ay * by;
+    sxy += ax * by - ay * bx;
+  }
+  const angle = shared.length >= 2 ? Math.atan2(sxy, sxx) : 0;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const out: BodyPositions = new Map();
+  for (const [id, { x, y }] of fresh) {
+    const ax = x - fx, ay = y - fy;
+    out.set(id, { x: ox + ax * cos - ay * sin, y: oy + ax * sin + ay * cos });
+  }
+  return out;
 }

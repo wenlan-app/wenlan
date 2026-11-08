@@ -21,6 +21,7 @@ import {
   isIslandCenterProtected,
   islandProtectionMetrics,
   ISLAND_GAP,
+  ISLAND_PACK_GAP,
   satelliteAnchor,
   annotateDust,
   dustVisibleCount,
@@ -1415,8 +1416,10 @@ describe("nonSimulatedIds and satellites", () => {
     }
     const withoutMemories = buildAtlasGraph(makeModel(bare.nodes, bare.edges), PALETTE);
     const withMemories = buildAtlasGraph(makeModel(dressed.nodes, dressed.edges), PALETTE);
-    runAtlasLayout(withoutMemories);
-    runAtlasLayout(withMemories);
+    // R1: a fresh R2 layout keeps room for the memory dots it shows (a
+    // kept map is restored as it was, whichever layers are on).
+    runAtlasLayout(withoutMemories, "r1");
+    runAtlasLayout(withMemories, "r1");
     createAtlasSimulation(withoutMemories);
     createAtlasSimulation(withMemories);
     for (const { id } of bare.nodes) {
@@ -1655,7 +1658,8 @@ describe("shelveComponents", () => {
 
   function shelved(sizes: number[]) {
     const graph = buildAtlasGraph(componentsModel(sizes), PALETTE);
-    runAtlasLayout(graph);
+    // The island shelf is the R1 path's; R2 places its own islands.
+    runAtlasLayout(graph, "r1");
     const placement = shelveComponents(graph);
     return { graph, placement };
   }
@@ -1700,7 +1704,7 @@ describe("shelveComponents", () => {
     return closest;
   }
 
-  it("packs every other component as an island at least ISLAND_GAP clear of the drawn discs", () => {
+  it("packs every other component as an island ISLAND_GAP clear of the core and ISLAND_PACK_GAP clear of each other", () => {
     const { graph, placement } = shelved([9, 6, 5, 5, 5, 5, 5, 3, 1]);
     const boxes = placement.map((ids) => box(graph, ids));
     for (let i = 1; i < boxes.length; i += 1) {
@@ -1709,7 +1713,7 @@ describe("shelveComponents", () => {
       );
       for (let j = i + 1; j < boxes.length; j += 1) {
         expect(discGap(graph, placement[i] as string[], placement[j] as string[])).toBeGreaterThanOrEqual(
-          ISLAND_GAP - 1e-6,
+          ISLAND_PACK_GAP - 1e-6,
         );
       }
     }
@@ -1737,15 +1741,12 @@ describe("shelveComponents", () => {
   });
 
   it("never overlaps two components", () => {
+    // Islands are packed as circles that hold their discs, so the boxes of
+    // two islands may cross at a corner; their discs never touch.
     const { graph, placement } = shelved([9, 6, 5, 5, 5, 5, 5]);
-    const boxes = placement.map((ids) => box(graph, ids));
-    for (let i = 0; i < boxes.length; i += 1) {
-      for (let j = i + 1; j < boxes.length; j += 1) {
-        const a = boxes[i] as { minX: number; maxX: number; minY: number; maxY: number };
-        const b = boxes[j] as { minX: number; maxX: number; minY: number; maxY: number };
-        const overlaps =
-          a.minX < b.maxX && b.minX < a.maxX && a.minY < b.maxY && b.minY < a.maxY;
-        expect(overlaps).toBe(false);
+    for (let i = 0; i < placement.length; i += 1) {
+      for (let j = i + 1; j < placement.length; j += 1) {
+        expect(discGap(graph, placement[i] as string[], placement[j] as string[])).toBeGreaterThan(0);
       }
     }
   });
@@ -1754,7 +1755,7 @@ describe("shelveComponents", () => {
     const { graph, placement } = shelved([9, 5]);
     const ids = placement[1] as string[];
     const graph2 = buildAtlasGraph(componentsModel([9, 5]), PALETTE);
-    runAtlasLayout(graph2);
+    runAtlasLayout(graph2, "r1");
     const at = (g: Graph, id: string) => ({
       x: g.getNodeAttribute(id, "x") as number,
       y: g.getNodeAttribute(id, "y") as number,
@@ -1839,7 +1840,7 @@ describe("shelveComponents", () => {
       );
       for (let j = i + 1; j < placement.length; j += 1) {
         expect(discGap(graph, placement[i] as string[], placement[j] as string[])).toBeGreaterThanOrEqual(
-          ISLAND_GAP - 1e-6,
+          ISLAND_PACK_GAP - 1e-6,
         );
       }
     }

@@ -35,6 +35,11 @@
 }
 .atlas-rearrange-note button { padding: 0; border: 0; background: none; color: var(--mem-text-secondary); font: 500 12.5px/1.4 var(--mem-font-body); cursor: pointer; white-space: nowrap; }
 .atlas-rearrange-note button:hover { color: var(--mem-text); }
+.atlas-rearrange-note .atlas-note-short { display: none; }
+@media (max-width: 560px) {
+  .atlas-rearrange-note .atlas-note-long { display: none; }
+  .atlas-rearrange-note .atlas-note-short { display: inline; }
+}
 .atlas-rearrange-note .atlas-rearrange-go { color: var(--mem-accent-indigo); }
 .atlas-rearrange-note button:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
 .atlas-cartography-alert { display: inline-flex; align-items: center; padding: 0 2px; color: var(--mem-danger); font: 400 10px/1.4 var(--mem-font-mono); }
@@ -197,4 +202,11 @@
 @media (max-width: 560px) {
   .atlas-night-line-full { display: none; }
   .atlas-night-line-short { display: inline; }
+}
+
+/* A large first layout runs in the background; the map says so quietly. */
+.atlas-laying-out {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 12;
+  color: var(--mem-text-secondary); font: 400 13px/1.4 var(--mem-font-body);
+  pointer-events: none;
 }
