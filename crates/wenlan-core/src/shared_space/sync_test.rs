@@ -715,6 +715,17 @@ async fn another_members_sentences_are_kept_from_this_ai_but_not_from_this_perso
     );
     let view = crate::sentences::page_sentences(&b.db, &id).await.unwrap();
     assert!(view.sentences.iter().all(|sentence| sentence.protected));
+    // The app names who wrote each one.
+    assert_eq!(
+        view.sentences
+            .iter()
+            .map(|sentence| sentence.shared_by.clone())
+            .collect::<Vec<_>>(),
+        [
+            Some(format!("shared_ai:{}", a.member_id())),
+            Some(format!("shared_person:{}", a.member_id())),
+        ]
+    );
 
     // B's AI tool rewrites the page: A's sentences, its AI's included, stay;
     // the sentence it adds lands.

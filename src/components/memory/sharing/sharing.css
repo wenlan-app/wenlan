@@ -1,0 +1,44 @@
+/* Sharing with people: the share, members and join boxes, and the one line
+   under a shared title. No divider lines, restrained radii. */
+.share-dialog { margin:auto;inset:0;background:var(--mem-bg);color:var(--mem-text);border:1px solid var(--mem-border);border-radius:var(--mem-r-10);padding:24px;width:min(460px,calc(100vw - 32px));font:14px/1.55 var(--mem-font-body); }
+.share-dialog::backdrop { background:rgba(0,0,0,.35); }
+.share-dialog h2 { margin:0 0 16px;font-size:18px;font-weight:500;overflow-wrap:anywhere; }
+.share-dialog form, .share-members { display:flex;flex-direction:column;gap:14px; }
+.share-field { display:flex;flex-direction:column;gap:6px; }
+.share-label { color:var(--mem-text-secondary);font-size:13px; }
+.share-folder-row { display:flex;gap:8px;align-items:center; }
+.share-folder { flex:1;min-width:0;display:flex;gap:8px;align-items:center;background:var(--mem-surface);border-radius:var(--mem-r-5);padding:8px 10px;color:var(--mem-text); }
+.share-folder > span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.share-folder[data-empty="true"] { color:var(--mem-text-tertiary); }
+.share-folder-icon { width:16px;height:16px;flex:none;color:var(--mem-text-secondary); }
+.share-hint { margin:0;color:var(--mem-text-secondary);font-size:13px; }
+.share-warning { margin:0;color:var(--mem-status-warning-text);font-size:13px; }
+.share-warning-text { color:var(--mem-status-warning-text); }
+.share-muted { color:var(--mem-text-tertiary); }
+.share-input { border:1px solid var(--mem-border);border-radius:var(--mem-r-5);padding:8px;background:var(--mem-surface);color:var(--mem-text);font:inherit; }
+.share-found { display:flex;flex-direction:column;gap:2px;background:var(--mem-surface);border-radius:var(--mem-r-5);padding:12px 14px; }
+.share-found strong { font-weight:500;font-size:15px; }
+.share-found span { color:var(--mem-text-secondary); }
+.share-actions { display:flex;justify-content:flex-end;gap:8px;margin-top:10px; }
+.share-actions-split { justify-content:space-between; }
+.share-dialog button { white-space:nowrap;font:inherit;cursor:pointer; }
+.share-dialog button:disabled { opacity:.45;cursor:default; }
+.share-primary { border:0;background:var(--mem-accent-indigo);color:var(--mem-text-on-accent);padding:8px 14px;border-radius:var(--mem-r-5); }
+.share-secondary { border:1px solid var(--mem-border);background:transparent;color:var(--mem-text);padding:7px 12px;border-radius:var(--mem-r-5); }
+.share-danger { border:0;background:transparent;color:var(--mem-danger);padding:8px 0; }
+.share-link { border:0;background:transparent;color:var(--mem-text-secondary);padding:0;text-decoration:underline;text-underline-offset:3px; }
+.share-member-list { list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px; }
+.share-member-list li { display:flex;gap:12px;align-items:baseline;justify-content:space-between; }
+.share-facts { margin:0;display:flex;flex-direction:column;gap:6px; }
+.share-facts div { display:flex;gap:12px;align-items:baseline; }
+.share-facts dt { color:var(--mem-text-secondary);min-width:4em;font-size:13px; }
+.share-facts dd { margin:0;display:flex;gap:10px;align-items:baseline;min-width:0; }
+.share-folder-text { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.shared-with-line { margin:6px 0 0;display:flex;gap:10px;align-items:center;color:var(--mem-text-secondary);font-size:13px; }
+.shared-with-paused { color:var(--mem-status-warning-text); }
+.shared-with-paused .share-link { color:inherit; }
+.shared-with-button { display:inline-flex;gap:6px;align-items:center;border:0;background:transparent;color:inherit;padding:0;font:inherit;cursor:pointer; }
+.shared-with-button:hover { color:var(--mem-text); }
+.shared-people-icon { width:15px;height:15px;flex:none; }
+.shared-row-meta { color:var(--mem-text-tertiary);font-size:12px;white-space:nowrap;margin-left:auto;padding-left:12px; }
+.page-detail-shared-line { margin: 0 0 8px; }

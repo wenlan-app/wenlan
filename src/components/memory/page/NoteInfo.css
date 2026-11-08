@@ -433,3 +433,6 @@
 .note-revision-open .note-revision-summary,
 .note-revision-open .note-revision-provenance { display: block; }
 .note-revision-open .note-revision-provenance { display: flex; }
+.note-info-sources-action { background: none; border: 0; color: var(--mem-accent-indigo); cursor: pointer; font: inherit; font-size: 12px; margin: 6px 0 0; padding: 4px 2px; }
+.note-info-sources-action:hover:not(:disabled) { text-decoration: underline; }
+.note-info-sources-action:disabled { color: var(--mem-text-tertiary); cursor: default; }

@@ -25,6 +25,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "search_pages",
     "search_entities_cmd",
     "list_spaces",
+    // What this Wenlan shares with people; the fixture shares nothing.
+    "list_shares",
     // Home's "what you're working on": active Brief items across Spaces.
     "list_working_on",
     "list_memories_cmd",

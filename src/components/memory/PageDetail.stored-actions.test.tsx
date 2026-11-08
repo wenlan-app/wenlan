@@ -109,6 +109,11 @@ describe("PageDetail stored actions in seamless editing", () => {
   await user.click(screen.getByRole('button',{name:i18n.t('pageDetail.actions')}));
   return screen.getByRole('menuitem',{name:label});
  }
+ async function updateFromSources(user:ReturnType<typeof userEvent.setup>) {
+  const info=screen.getByRole('button',{name:i18n.t('pageInspector.info')});
+  if(info.getAttribute('aria-expanded')!=='true') await user.click(info);
+  return screen.findByRole('button',{name:'Update from sources'});
+ }
  async function reviewAction(user:ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button',{name:i18n.t('pageInspector.info')}));
   return screen.getByRole('button',{name:i18n.t('pageDetail.markPageReviewed')});
@@ -224,8 +229,8 @@ describe("PageDetail stored actions in seamless editing", () => {
  });
  it('exposes existing commands without leaving seamless editing',async()=>{
   const {user}=await start();
-  await expect(action(user,'Update from sources')).resolves.toBeEnabled();
-  expect(await reviewAction(user)).toBeEnabled();
+  await expect(updateFromSources(user)).resolves.toBeEnabled();
+  expect(screen.getByRole('button',{name:i18n.t('pageDetail.markPageReviewed')})).toBeEnabled();
   expect(await action(user,'Delete page')).toBeEnabled();
  });
  it('flushes edits then reviews exactly the saved body without closing the editor',async()=>{
@@ -415,7 +420,7 @@ describe("PageDetail stored actions in seamless editing", () => {
   const {user}=await start();
   await user.click(await reviewAction(user));
   await screen.findByText(i18n.t('pageDetail.reviewApplied'));
-  await user.click(await action(user,'Update from sources'));
+  await user.click(await updateFromSources(user));
   expect(screen.queryByText(i18n.t('pageDetail.reviewApplied'))).not.toBeInTheDocument();
   await waitFor(()=>expect(tauriMocks.redistillPage).toHaveBeenCalledOnce());
   await waitFor(()=>expect(editorViewFromTextbox(screen.getByRole('textbox',{name:'Page editor'})).state.doc.toString()).toBe('Fresh rebuilt content'));

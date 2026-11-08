@@ -177,6 +177,11 @@ pub struct PageSentence {
     /// Pending proposals for this sentence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proposals: Vec<String>,
+    /// Another member of a shared Space wrote it: the `edited_by` of the
+    /// version that did (`shared_person:<member>` or `shared_ai:<member>`),
+    /// so the app can name them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_by: Option<String>,
 }
 
 /// Where a sentence proposal stands.

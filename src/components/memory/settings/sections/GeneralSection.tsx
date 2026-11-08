@@ -131,6 +131,7 @@ function ProfileSettingsBlock() {
               <div style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 500, color: "var(--mem-text)" }}>
                 {t("settings.profile.displayName")}
               </div>
+              <p className="settings-profile-hint">{t("sharing.displayNameHint")}</p>
             </div>
             <div>
               <Input

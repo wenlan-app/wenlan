@@ -20,6 +20,7 @@ import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { useQuery } from "@tanstack/react-query";
 import { ARCHIVED_PAGES_QUERY_KEY, EXPLICIT_BROWSE_QUERY_POLICY, isKnowledgePage, listAllArchivedPagesExplicitBrowse } from "./listAllPages";
 import "./archivedNotes.css";
+import { useShares } from "../sharing/sharing";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -85,6 +86,7 @@ export function PagesOverview({
     setAdding(false);
   };
   const writePages = useWritePages(pages);
+  const shares = useShares();
   // "Use Search to find a page" is advice the workspace cannot honour until
   // the daemon answers; the sidebar says it is starting, so this stays quiet.
   // When it never answers, the page area says so in place of the start panel
@@ -130,6 +132,7 @@ export function PagesOverview({
         onSelectPage={onSelectPage}
         onBrowseAll={onBrowseAll}
         justWritten={new Set(writePages.run ? pagesWrittenSince(pages, writePages.run.startedAt).map((page) => page.id) : [])}
+        shares={shares.data}
       />
     );
   // With pages to list, "open a page" has nothing to add.

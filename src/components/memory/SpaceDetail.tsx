@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   confirmSpace,
@@ -18,6 +18,9 @@ import {
   PAGE_FETCH_LIMIT,
 } from "./space-detail/model";
 import { useUnobstructedContentWidth } from "./useUnobstructedContentWidth";
+import { ShareDialog } from "./sharing/ShareDialog";
+import { SharedWithLine } from "./sharing/SharedWithLine";
+import { spaceShare, useShares } from "./sharing/sharing";
 import "./space-detail/space-detail-header.css";
 import "./space-detail/space-detail.css";
 import "./pages/pageActions.css";
@@ -33,6 +36,8 @@ export type SpaceDetailProps = {
   readonly onSelectPage: (pageId: string) => void;
   readonly onOpenSource?: (file: IndexedFileInfo) => void;
   readonly onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
+  /** Opens Settings, where the name people see is changed. */
+  readonly onOpenSettings?: () => void;
   readonly spaceName: string;
 };
 
@@ -52,9 +57,12 @@ export default function SpaceDetail({
   onSelectPage,
   onOpenSource,
   onRegisterFlush,
+  onOpenSettings,
   spaceName,
 }: SpaceDetailProps) {
   const queryClient = useQueryClient();
+  const shares = useShares();
+  const [sharing, setSharing] = useState(false);
   const spaceQuery = useQuery({
     queryKey: ["space", spaceName],
     queryFn: () => getSpace(spaceName),
@@ -142,12 +150,15 @@ export default function SpaceDetail({
   const space = spaceQuery.data;
   const pages = pagesQuery.data ?? [];
   const mutationError = renameMutation.isError || deleteMutation.isError || confirmMutation.isError;
+  const share = spaceShare(shares.data, space.name);
 
   return (
     <SpaceDossierFrame>
       <SpaceDossierHeader
         key={space.id}
         leadingAction={<RepoWikiButton space={space.name} />}
+        shared={share !== undefined}
+        sharedLine={share && <SharedWithLine share={share} onOpen={() => setSharing(true)} />}
         onRegisterFlush={registerIdentityFlush}
         actions={{
           onBack,
@@ -162,6 +173,7 @@ export default function SpaceDetail({
           },
           onKeep: () => confirmMutation.mutate(),
           onReviewAll,
+          onShare: () => setSharing(true),
           onCreatePage: () => onCreatePage?.(space.name),
           onSaveIdentity: async ({ name, description }) => {
             if (name !== space.name && previewFlushRef.current && !await previewFlushRef.current()) {
@@ -187,7 +199,17 @@ export default function SpaceDetail({
         onSelectPage={onSelectPage}
         onOpenSource={onOpenSource}
         onRegisterPreviewFlush={registerPreviewFlush}
+        shares={shares.data}
       />
+      {sharing && (
+        <ShareDialog
+          kind="space"
+          target={space.name}
+          title={space.name}
+          onClose={() => setSharing(false)}
+          onOpenSettings={onOpenSettings}
+        />
+      )}
     </SpaceDossierFrame>
   );
 }

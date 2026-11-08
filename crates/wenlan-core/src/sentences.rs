@@ -938,6 +938,16 @@ pub async fn page_sentences(
         page.citations.iter().map(|c| (c.occurrence, c)).collect();
     let markers = occurrence_units(&page.content, &units);
     let guard = guarded(&page);
+    // Who wrote each version, to name another member of a shared Space.
+    let writers: HashMap<i64, String> = if rows.iter().any(|row| row.shared) {
+        db.list_page_history(&page.id, HISTORY_LIMIT)
+            .await?
+            .into_iter()
+            .map(|entry| (entry.version, entry.edited_by))
+            .collect()
+    } else {
+        HashMap::new()
+    };
     let sentences = units
         .iter()
         .zip(&rows)
@@ -977,6 +987,10 @@ pub async fn page_sentences(
                     .filter(|p| p.sentence_hash == unit.hash)
                     .map(|p| p.id.clone())
                     .collect(),
+                shared_by: row
+                    .shared
+                    .then(|| writers.get(&row.since_version).cloned())
+                    .flatten(),
             }
         })
         .collect();

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   confirmSpace,
   createSpace,
@@ -14,6 +15,7 @@ import { readAssetLens, writeAssetLens, type AssetLens } from "../../../lib/asse
 import { listAllActivePages } from "../pages/listAllPages";
 import { Funnel } from "@phosphor-icons/react";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
+import { JoinSharedDialog } from "../sharing/JoinSharedDialog";
 import { ConfirmedSpaces } from "./ConfirmedSpaces";
 import { SpaceEditor } from "./SpaceEditor";
 import { SuggestedSpaces } from "./SuggestedSpaces";
@@ -70,7 +72,9 @@ function actionKey(action: SpaceRowAction): string {
 }
 
 export function SpacesOverview(props: SpacesOverviewProps) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const [joining, setJoining] = useState(false);
   const [filter, setFilter] = useState("");
   const [lens, setLens] = useState<AssetLens>(() => readAssetLens("spaces"));
   const [creating, setCreating] = useState(false);
@@ -181,11 +185,23 @@ export function SpacesOverview(props: SpacesOverviewProps) {
             onKeep={(space) => submit({ kind: "confirm", space })}
             onDiscard={(space) => submit({ kind: "delete", space })}
           />
+          <button type="button" className="spaces-join-action collection-control" onClick={() => setJoining(true)}>
+            {t("sharing.joinEntry")}
+          </button>
           <button type="button" className="page-create-action spaces-new-action collection-control collection-control--primary" onClick={() => setCreating(true)}>
             {props.labels.newSpace}
           </button>
         </div>
       </header>
+      {joining ? (
+        <JoinSharedDialog
+          onClose={() => setJoining(false)}
+          onJoined={(kind, target) => {
+            setJoining(false);
+            props.onSharedJoined?.(kind, target);
+          }}
+        />
+      ) : null}
       {creating ? (
         <SpaceEditor
           labels={props.labels}

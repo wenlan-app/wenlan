@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { PageIcon } from "../assets/PageIcon";
 import { useTranslation } from "react-i18next";
 import type {
@@ -47,6 +47,8 @@ interface PageInfoProps {
   /** The lines of code this note relies on, and a way to stop relying on one. */
   codeBasis?: readonly CodeBasisRef[];
   onUnmarkCodeBasis?: (row: CodeBasisRef) => void;
+  /** "Update from sources", shown with the sources it rebuilds the page from. */
+  sourcesAction?: ReactNode;
 }
 
 // Content chips already carry per-claim provenance; inside this panel the
@@ -121,6 +123,7 @@ export default function PageInfo({
   onUnmarkBasis,
   codeBasis,
   onUnmarkCodeBasis,
+  sourcesAction,
 }: PageInfoProps) {
   const { t, i18n } = useTranslation();
   // English keeps the legacy abbreviated relatives ("1d ago"); Chinese gets
@@ -472,6 +475,15 @@ export default function PageInfo({
                 {t("pageInfo.showAllSources", { count: rows.length })}
               </button>
             )}
+            {sourcesAction}
+          </div>
+        )}
+        {rows.length === 0 && sourcesAction && (
+          <div>
+            <h4 className={embedded ? "note-info-section-heading" : "mb-1"} style={embedded ? undefined : groupHeading}>
+              {t("pageInfo.sources")}
+            </h4>
+            {sourcesAction}
           </div>
         )}
         {onMarkBasis && onUnmarkBasis && currentPageId && (

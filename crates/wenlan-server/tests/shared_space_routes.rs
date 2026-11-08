@@ -177,9 +177,25 @@ async fn shared_sync_writes_the_space_pages_and_returns_counts() {
     let venue_folder = venue_folder.path().join("Venue");
     let page_req = serde_json::json!({ "folder": venue_folder.to_string_lossy() });
     let uri = format!("/api/pages/{venue}/shared/sync");
+    std::env::set_var("WENLAN_TEST_NO_COMPUTER_NAME", "1");
     let (status, _) = call(&router, Method::POST, &uri, Some(page_req.clone())).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "no name to show");
+    std::env::remove_var("WENLAN_TEST_NO_COMPUTER_NAME");
+    // With no display name, the computer account's name becomes it.
+    std::env::set_var("USER", "qixuan-test-account");
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/spaces/Wedding/shared/sync",
+        Some(serde_json::json!({ "folder": req.folder })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let profile = db.get_profile().await.unwrap().expect("a profile");
+    assert!(
+        profile.display_name.is_some(),
+        "the computer's name is kept"
+    );
     db.update_profile(&profile.id, None, Some("Qi-Xuan L"), None, None, None)
         .await
         .unwrap();

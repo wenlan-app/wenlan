@@ -23,6 +23,7 @@ import { enSourceContainer, hansSourceContainer, hantSourceContainer } from "../
 import { enPageExport, hansPageExport, hantPageExport } from "../components/memory/page/pageExportCopy";
 
 const en = {
+  sharing: {"menuShare": "Share with people…", "menuMembers": "Members…", "shareTitle": "Share {{name}}", "folder": "Folder", "choose": "Choose…", "noFolder": "No folder chosen", "folderHintSpace": "An empty folder in Google Drive or iCloud Drive. Everyone with the folder sees these pages.", "folderHintPage": "An empty folder in Google Drive or iCloud Drive. Only this page goes in it.", "notCloud": "This folder isn't in Google Drive or iCloud Drive. Others won't see it.", "alreadyShared": "This folder already shares something. To join it, use Add shared in Spaces.", "share": "Share", "sharing": "Sharing…", "failed": "Couldn't share: {{message}}", "cancel": "Cancel", "membersTitle": "Members", "inviteHow": "Invite by sharing the folder in {{cloud}}. People appear here once they add it in Wenlan.", "showInFinder": "Show in Finder", "you": "{{name}} (you)", "changeInSettings": "Change in Settings", "noOthers": "No one else yet.", "change": "Change…", "sync": "Sync", "upToDate": "Up to date · {{when}}", "syncing": "Syncing…", "paused": "Paused · folder not found", "waiting_one": "{{count}} file still downloading", "waiting_other": "{{count}} files still downloading", "stop": "Stop sharing", "done": "Done", "withOne": "With {{name}}", "withMany_one": "With {{name}} and {{count}} other", "withMany_other": "With {{name}} and {{count}} others", "withAlone": "Shared · no one else yet", "pausedLine": "Shared folder not found. Sync paused.", "chooseFolder": "Choose folder…", "joinEntry": "Add shared…", "joinTitle": "Add a shared Space or page", "joinFolderHint": "Choose the folder someone shared with you.", "joinFindHint": "Can't find it? In Google Drive, add it to My Drive first.", "joinNotShared": "This folder doesn't share anything yet.", "joinKindSpace": "Space · shared by {{names}}", "joinKindPage": "One page · shared by {{names}}", "joinPageLands": "It goes in your Pages, in no Space.", "joinNameTaken": "You already have a Space with this name. Name this one:", "joinAlready": "You share this already.", "join": "Add", "joining": "Adding…", "joinFailed": "Couldn't add it: {{message}}", "stopConfirmSpace": "Stop sharing {{name}}? Your pages stay here, and copies already on other computers stay there. To take the folder back, stop sharing it in {{cloud}}.", "stopConfirmPage": "Stop sharing this page? It stays here, and copies already on other computers stay there. To take the folder back, stop sharing it in {{cloud}}.", "rowBy": "{{who}} · {{when}}", "memberAi": "{{name}}'s AI tool", "sharedMarker": "Shared with {{names}}", "displayNameHint": "People you share with see this name.", "icloud": "iCloud Drive", "yourCloud": "your cloud folder"},
   zoteroDisconnect: enZoteroDisconnect,
   selectedSources: enSelectedSources,
   reviewAdjust: enReviewAdjust,
@@ -1944,7 +1945,7 @@ const en = {
   },
   thisSentence: {
     title: "This sentence",
-    who: { you: "Yours", accepted: "Yours, you accepted it", ai: "Written by AI", original: "Original text", unknown: "Not sure who wrote it" },
+    who: { you: "Yours", accepted: "Yours, you accepted it", ai: "Written by AI", original: "Original text", unknown: "Not sure who wrote it", shared: "Written by {{name}}" },
     evidence: { verified: "source checked", unverified: "not confirmed by text matching", unevaluated: "source not checked yet", none: "no source" },
     weak: "Source check: {{reason}}",
     recheck: "Ask AI to recheck",
@@ -3309,6 +3310,7 @@ const en = {
 };
 
 const zhHans = {
+  sharing: {"menuShare": "和别人一起用…", "menuMembers": "成员…", "shareTitle": "共用「{{name}}」", "folder": "文件夹", "choose": "选择…", "noFolder": "还没选文件夹", "folderHintSpace": "Google Drive 或 iCloud 云盘里的一个空文件夹。拿到这个文件夹的人都看得到这些笔记。", "folderHintPage": "Google Drive 或 iCloud 云盘里的一个空文件夹。只放这一篇。", "notCloud": "这个文件夹不在 Google Drive 或 iCloud 云盘里，别人看不到。", "alreadyShared": "这个文件夹已经在共用东西。要加入它，请到“空间”按“加入共用的…”。", "share": "开始共用", "sharing": "正在共用…", "failed": "没能共用：{{message}}", "cancel": "取消", "membersTitle": "成员", "inviteHow": "在 {{cloud}} 共用这个文件夹就是邀请。对方在 Wenlan 加入后会出现在这里。", "showInFinder": "在 Finder 显示", "you": "{{name}}（你）", "changeInSettings": "在设置里改", "noOthers": "还没有其他人。", "change": "更改…", "sync": "同步", "upToDate": "已同步 · {{when}}", "syncing": "同步中…", "paused": "已暂停 · 找不到文件夹", "waiting_one": "还有 {{count}} 个文件在下载", "waiting_other": "还有 {{count}} 个文件在下载", "stop": "停止共用", "done": "完成", "withOne": "和{{name}}一起", "withMany_one": "和{{name}}等 {{count}} 人一起", "withMany_other": "和{{name}}等 {{count}} 人一起", "withAlone": "已共用 · 还没有人加入", "pausedLine": "找不到共用文件夹，已暂停同步。", "chooseFolder": "选文件夹…", "joinEntry": "加入共用的…", "joinTitle": "加入共用的 Space 或笔记", "joinFolderHint": "选对方共用给你的文件夹。", "joinFindHint": "找不到？在 Google Drive 先把它加到“我的云端硬盘”。", "joinNotShared": "这个文件夹还没有共用东西。", "joinKindSpace": "Space · {{names}} 共用的", "joinKindPage": "一篇笔记 · {{names}} 共用的", "joinPageLands": "会在你的“笔记”里，不属于任何 Space。", "joinNameTaken": "你已经有同名的 Space，给这个取个名字：", "joinAlready": "这个你已经在共用了。", "join": "加入", "joining": "正在加入…", "joinFailed": "没能加入：{{message}}", "stopConfirmSpace": "停止共用「{{name}}」？你的笔记留在这里，别人电脑上已有的副本也会留着。要收回文件夹，请在 {{cloud}} 停止共用。", "stopConfirmPage": "停止共用这一篇？它留在这里，别人电脑上已有的副本也会留着。要收回文件夹，请在 {{cloud}} 停止共用。", "rowBy": "{{who}} · {{when}}", "memberAi": "{{name}}的 AI 工具", "sharedMarker": "和{{names}}共用", "displayNameHint": "共用给别人时，对方看到的是这个名字。", "icloud": "iCloud 云盘", "yourCloud": "你的云盘"},
   zoteroDisconnect: hansZoteroDisconnect,
   selectedSources: hansSelectedSources,
   reviewAdjust: hansReviewAdjust,
@@ -5194,7 +5196,7 @@ const zhHans = {
   },
   thisSentence: {
     title: "这一句",
-    who: { you: "你写的", accepted: "你收下的", ai: "AI 写的", original: "原文", unknown: "不确定是谁写的" },
+    who: { you: "你写的", accepted: "你收下的", ai: "AI 写的", original: "原文", unknown: "不确定是谁写的", shared: "{{name}}写的" },
     evidence: { verified: "出处核对过", unverified: "文字比对尚未确认支持", unevaluated: "出处还没核对", none: "没有出处" },
     weak: "来源核对：{{reason}}",
     recheck: "让 AI 重查这句",
@@ -6534,6 +6536,7 @@ const zhHans = {
 };
 
 const zhHant = {
+  sharing: {"menuShare": "和別人一起用…", "menuMembers": "成員…", "shareTitle": "共用「{{name}}」", "folder": "資料夾", "choose": "選擇…", "noFolder": "還沒選資料夾", "folderHintSpace": "Google Drive 或 iCloud 雲碟裡的一個空資料夾。拿到這個資料夾的人都看得到這些筆記。", "folderHintPage": "Google Drive 或 iCloud 雲碟裡的一個空資料夾。只放這一篇。", "notCloud": "這個資料夾不在 Google Drive 或 iCloud 雲碟裡，別人看不到。", "alreadyShared": "這個資料夾已經在共用東西。要加入它，請到「空間」按「加入共用的…」。", "share": "開始共用", "sharing": "正在共用…", "failed": "沒能共用：{{message}}", "cancel": "取消", "membersTitle": "成員", "inviteHow": "在 {{cloud}} 共用這個資料夾就是邀請。對方在 Wenlan 加入後會出現在這裡。", "showInFinder": "在 Finder 顯示", "you": "{{name}}（你）", "changeInSettings": "在設定裡改", "noOthers": "還沒有其他人。", "change": "更改…", "sync": "同步", "upToDate": "已同步 · {{when}}", "syncing": "同步中…", "paused": "已暫停 · 找不到資料夾", "waiting_one": "還有 {{count}} 個檔案在下載", "waiting_other": "還有 {{count}} 個檔案在下載", "stop": "停止共用", "done": "完成", "withOne": "和{{name}}一起", "withMany_one": "和{{name}}等 {{count}} 人一起", "withMany_other": "和{{name}}等 {{count}} 人一起", "withAlone": "已共用 · 還沒有人加入", "pausedLine": "找不到共用資料夾，已暫停同步。", "chooseFolder": "選資料夾…", "joinEntry": "加入共用的…", "joinTitle": "加入共用的 Space 或筆記", "joinFolderHint": "選對方共用給你的資料夾。", "joinFindHint": "找不到？在 Google Drive 先把它加到「我的雲端硬碟」。", "joinNotShared": "這個資料夾還沒有共用東西。", "joinKindSpace": "Space · {{names}} 共用的", "joinKindPage": "一篇筆記 · {{names}} 共用的", "joinPageLands": "會在你的「筆記」裡，不屬於任何 Space。", "joinNameTaken": "你已經有同名的 Space，給這個取個名字：", "joinAlready": "這個你已經在共用了。", "join": "加入", "joining": "正在加入…", "joinFailed": "沒能加入：{{message}}", "stopConfirmSpace": "停止共用「{{name}}」？你的筆記留在這裡，別人電腦上已有的副本也會留著。要收回資料夾，請在 {{cloud}} 停止共用。", "stopConfirmPage": "停止共用這一篇？它留在這裡，別人電腦上已有的副本也會留著。要收回資料夾，請在 {{cloud}} 停止共用。", "rowBy": "{{who}} · {{when}}", "memberAi": "{{name}}的 AI 工具", "sharedMarker": "和{{names}}共用", "displayNameHint": "共用給別人時，對方看到的是這個名字。", "icloud": "iCloud 雲碟", "yourCloud": "你的雲碟"},
   zoteroDisconnect: hantZoteroDisconnect,
   selectedSources: hantSelectedSources,
   reviewAdjust: hantReviewAdjust,
@@ -8419,7 +8422,7 @@ const zhHant = {
   },
   thisSentence: {
     title: "這一句",
-    who: { you: "你寫的", accepted: "你收下的", ai: "AI 寫的", original: "原文", unknown: "不確定是誰寫的" },
+    who: { you: "你寫的", accepted: "你收下的", ai: "AI 寫的", original: "原文", unknown: "不確定是誰寫的", shared: "{{name}}寫的" },
     evidence: { verified: "出處核對過", unverified: "文字比對尚未確認支持", unevaluated: "出處還沒核對", none: "沒有出處" },
     weak: "來源核對：{{reason}}",
     recheck: "讓 AI 重查這句",

@@ -213,13 +213,73 @@ async fn shared_member_name(
     if let Some(name) = asked.map(str::trim).filter(|name| !name.is_empty()) {
         return Ok(name.to_string());
     }
-    wenlan_core::shared_space::person_name(db)
-        .await?
-        .ok_or_else(|| {
-            ServerError::ValidationError(
-                "no name to show the others: set a display name in Settings".into(),
-            )
-        })
+    if let Some(name) = wenlan_core::shared_space::person_name(db).await? {
+        return Ok(name);
+    }
+    // No display name yet: the computer account's name becomes it, so the
+    // person sees and changes it in Settings, where every share reads it.
+    let Some(name) = computer_user_name() else {
+        return Err(ServerError::ValidationError(
+            "no name to show the others: set a display name in Settings".into(),
+        ));
+    };
+    if let Some(profile) = db
+        .get_profile()
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+    {
+        db.update_profile(&profile.id, None, Some(&name), None, None, None)
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?;
+    }
+    Ok(name)
+}
+
+/// The full name of this computer's account (macOS `id -F`, the passwd
+/// entry's name elsewhere on Unix), else the account name.
+fn computer_user_name() -> Option<String> {
+    let clean = |name: String| {
+        let name = name.trim().to_string();
+        (!name.is_empty()).then_some(name)
+    };
+    if std::env::var_os("WENLAN_TEST_NO_COMPUTER_NAME").is_some() {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(name) = std::process::Command::new("id")
+        .arg("-F")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| clean(String::from_utf8_lossy(&out.stdout).into_owned()))
+    {
+        return Some(name);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Ok(user) = std::env::var("USER") {
+        if let Some(name) = std::fs::read_to_string("/etc/passwd")
+            .ok()
+            .and_then(|passwd| {
+                passwd.lines().find_map(|line| {
+                    let fields: Vec<&str> = line.split(':').collect();
+                    (fields.first() == Some(&user.as_str()))
+                        .then(|| {
+                            fields
+                                .get(4)
+                                .map(|gecos| gecos.split(',').next().unwrap_or("").to_string())
+                        })
+                        .flatten()
+                })
+            })
+            .and_then(clean)
+        {
+            return Some(name);
+        }
+    }
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .ok()
+        .and_then(clean)
 }
 
 fn shared_folder_path(folder: &str) -> Result<std::path::PathBuf, ServerError> {
