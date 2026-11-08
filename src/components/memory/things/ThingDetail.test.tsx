@@ -303,6 +303,17 @@ describe("ThingDetail", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: /overnight/ })).toBeNull());
   });
 
+  it("UX-CHAT-5: a conversation a night could not read is said once, quietly", async () => {
+    vi.mocked(getThing).mockResolvedValue({ ...tagline, unread: 1 });
+    renderThing();
+    expect(await screen.findByText("One conversation couldn't be read overnight.")).toBeTruthy();
+    cleanup();
+    vi.mocked(getThing).mockResolvedValue(tagline);
+    renderThing();
+    await screen.findByRole("heading", { level: 1, name: "New tagline" });
+    expect(screen.queryByText(/couldn't be read/)).toBeNull();
+  });
+
   it("UX-CHAT-5: a steeped thing opens on the big map from its night's line", async () => {
     vi.mocked(getThing).mockResolvedValue({ ...tagline, dream: { at: now - 60, decided: 1, open: 0, fresh: ["mem_1"] } });
     const onOpenGraph = vi.fn();

@@ -528,6 +528,7 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
                 replaces: Some(1),
                 map: None,
                 topic: None,
+                line: None,
             },
             DreamPoint {
                 text: "Pricing page is open.".into(),
@@ -536,6 +537,7 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
                 replaces: None,
                 map: None,
                 topic: None,
+                line: None,
             },
             DreamPoint {
                 text: "Bad replace.".into(),
@@ -544,6 +546,7 @@ fn ux_chat_5_a_nights_points_come_from_real_conversations() {
                 replaces: None,
                 map: None,
                 topic: None,
+                line: None,
             },
         ]
     );
@@ -741,4 +744,98 @@ fn ux_view_6_the_conclusion_prompt_lists_the_newest_points() {
     assert!(prompt.contains("P0 (open): point 5"));
     assert!(prompt.contains("in Traditional Chinese"));
     assert!(!prompt.contains("point 4\n"));
+}
+
+/// UX-HOME-6: numbers, hashes, paths, dates and versions are caught on the
+/// model's answer, not only asked for in its prompt. Real lines from the
+/// 2026-11-08 trust audit.
+#[test]
+fn ux_home_6_plain_words_catches_what_the_prompt_asks_to_leave_out() {
+    for bad in [
+        "PR #43 with local Project worker fixes is open.",
+        "Shipped via PR #1120.",
+        "PR wenlan-app/wenlan#1067 was approved.",
+        "Fix the restore issue at knowledge.rs:1689.",
+        "Session log kept at ~/.wenlan/logs.",
+        "The brief is at v146.",
+        "Daemon on main 2ce7a6ca now.",
+        "Release planned for 2026-11-03.",
+        "Ships in 0.21.1.",
+        "设置写在 /Users/lucian/Repos 里。",
+        "合併了 #1183。",
+    ] {
+        assert!(!plain_words(bad), "{bad}");
+    }
+    for good in [
+        "Tagline is You do the thinking.",
+        "Resume stays one page, with a centered header.",
+        "The defaced page was replaced.",
+        "Budget is 1250000 yen.",
+        "Whether to apply to Anthropic or OpenAI is still undecided.",
+        "首頁改成三欄。",
+        "Use and/or in the copy.",
+        "Wait 2.5 seconds.",
+    ] {
+        assert!(plain_words(good), "{good}");
+    }
+}
+
+/// UX-HOME-6: a title that is not in plain words loses the aside or the
+/// token; one that is keeps its dash.
+#[test]
+fn ux_home_6_a_title_is_cut_to_plain_words() {
+    assert_eq!(
+        plain_title("Daemon lifecycle UX (PR #718, main 2ce7a6ca)"),
+        "Daemon lifecycle UX"
+    );
+    assert_eq!(plain_title("Ship the fix via PR #1120"), "Ship the fix");
+    assert_eq!(
+        plain_title("`~/Repos/wenlan/.cargo/config.toml` sccache landmine — fix"),
+        "sccache landmine"
+    );
+    assert_eq!(
+        plain_title("Wenlan - landing page"),
+        "Wenlan - landing page"
+    );
+    assert_eq!(plain_title("  Home   layout  "), "Home layout");
+    let label = parse_label(
+        r#"{"work": true, "title": "Ship v2 (PR #12)", "about": "Fixes #12.", "status": "Merged on 2026-11-03."}"#,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(label.title, "Ship");
+    assert!(label.work && label.about.is_empty() && label.status.is_empty());
+}
+
+/// UX-WHO-6: the night's prompt numbers what the person typed, and each
+/// point names the line it came from; a point not in plain words is
+/// dropped (UX-HOME-6).
+#[test]
+fn ux_who_6_a_nights_point_names_the_line_it_came_from() {
+    let conversations = [
+        conv(&["first ask", "keep one page"]),
+        conv(&["second chat"]),
+    ];
+    let lines = dream_lines(&conversations);
+    assert_eq!(
+        lines,
+        vec![
+            (0, "first ask".to_string()),
+            (0, "keep one page".to_string()),
+            (1, "second chat".to_string()),
+        ]
+    );
+    let prompt = dream_prompt("Resume", &conversations, &[], &[], &[], "English");
+    assert!(prompt.contains("L1: keep one page"), "{prompt}");
+    assert!(prompt.contains("L2: second chat"), "{prompt}");
+    assert!(prompt.contains("\"line\": \"L0\""), "{prompt}");
+    let answer = r#"{"points": [
+      {"text": "Resume stays one page.", "settled": true, "from": "C0", "line": "L1"},
+      {"text": "Second point here.", "settled": false, "from": "C1", "line": "bad"},
+      {"text": "Merged in PR #43.", "settled": true, "from": "C0", "line": "L0"}
+    ]}"#;
+    let points = parse_dream(answer, 2, 0, 0, 0).unwrap();
+    assert_eq!(points.len(), 2);
+    assert_eq!(points[0].line, Some(1));
+    assert_eq!(points[1].line, None);
 }

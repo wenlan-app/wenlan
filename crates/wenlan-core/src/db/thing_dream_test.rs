@@ -138,7 +138,7 @@ async fn ux_chat_5_each_night_what_a_thing_settled_goes_into_long_term_memory() 
     )
     .await;
     for id in ["mem_tagline", "mem_pricing"] {
-        db.attach_dream_point(id, &due[0].conversations[0].session_id)
+        db.attach_dream_point(id, &due[0].conversations[0].session_id, None)
             .await
             .unwrap();
     }
@@ -658,4 +658,206 @@ async fn ux_view_6_the_page_opens_with_the_newest_nights_conclusion() {
         back,
         ["The tagline is settled.", "A pricing page is still open."]
     );
+}
+
+/// Trust audit F6: a conversation whose transcript is gone is not marked
+/// read. It waits until it goes on again, and the thing says how many could
+/// not be read; the others are read as usual.
+#[tokio::test]
+async fn ux_chat_5_a_conversation_that_could_not_be_read_is_not_marked_read() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _) = two_things(&db, now).await;
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let site_due = due.iter().find(|d| d.thing_id == site).unwrap();
+    let c0 = site_due
+        .conversations
+        .iter()
+        .find(|c| c.external_id == "c0")
+        .unwrap()
+        .clone();
+    let c1 = site_due
+        .conversations
+        .iter()
+        .find(|c| c.external_id == "c1")
+        .unwrap()
+        .clone();
+
+    // c0's transcript is gone; c1 is read.
+    db.mark_dream_unread(std::slice::from_ref(&c0))
+        .await
+        .unwrap();
+    db.record_dream(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        std::slice::from_ref(&c1),
+    )
+    .await
+    .unwrap();
+    assert!(
+        db.things_to_dream(now, 10)
+            .await
+            .unwrap()
+            .iter()
+            .all(|d| d.thing_id != site),
+        "nothing of the thing is due: c1 was read, c0 waits"
+    );
+    assert_eq!(db.thing_unread_conversations(&site).await.unwrap(), 1);
+    let detail = db
+        .get_thing_detail(&site, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.unread, 1, "the page can say one could not be read");
+
+    // c0 goes on: it is due again, and no longer counted as unread.
+    db.record_conversation_label(&found("c0", now - 30), &work("Site redesign"), None)
+        .await
+        .unwrap();
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let site_due = due.iter().find(|d| d.thing_id == site).expect("c0 went on");
+    assert_eq!(site_due.conversations.len(), 1);
+    assert_eq!(db.thing_unread_conversations(&site).await.unwrap(), 0);
+}
+
+/// Trust audit F4, F5, F7: a night's point whose label named no Space goes
+/// to its conversation's own Space, or the one Space of the thing's other
+/// conversations; it is Wenlan's own writing, not put in the review list,
+/// and it keeps the line it came from.
+#[tokio::test]
+async fn ux_chat_5_a_nights_point_lands_in_its_space_and_keeps_its_line() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    db.create_space("wenlan", None, false).await.unwrap();
+    db.create_space("engineering", None, false).await.unwrap();
+    let (site, _) = two_things(&db, now).await;
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let site_due = due.iter().find(|d| d.thing_id == site).unwrap();
+    let session = |id: &str| {
+        site_due
+            .conversations
+            .iter()
+            .find(|c| c.external_id == id)
+            .unwrap()
+            .session_id
+            .clone()
+    };
+    let (c0, c1) = (session("c0"), session("c1"));
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE agent_sessions SET space = 'engineering' WHERE id = ?1",
+            libsql::params![c0.as_str()],
+        )
+        .await
+        .unwrap();
+    }
+    // In a repository, the conversation's own Space.
+    assert_eq!(
+        db.dream_point_space(&site, &c0, true).await.unwrap(),
+        Some("engineering".into())
+    );
+    // Outside one, the tool's default Space says nothing: the thing's other
+    // conversation is in "wenlan".
+    assert_eq!(
+        db.dream_point_space(&site, &c0, false).await.unwrap(),
+        Some("wenlan".into())
+    );
+    // The other conversation's Space is gone: no guess.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE agent_sessions SET space = 'gone' WHERE id = ?1",
+            libsql::params![c1.as_str()],
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(db.dream_point_space(&site, &c0, false).await.unwrap(), None);
+
+    remember(&db, "mem_page", "Resume stays one page.", "decision", None).await;
+    db.attach_dream_point("mem_page", &c0, Some("ok keep it to one page"))
+        .await
+        .unwrap();
+    let unconfirmed = db
+        .list_unconfirmed_memories_scoped(50, &ReadScope::Global)
+        .await
+        .unwrap();
+    assert!(
+        unconfirmed.iter().all(|m| m.id != "mem_page"),
+        "the person sees it on the thing, not in the review list"
+    );
+    {
+        let conn = db.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT source_agent FROM memories WHERE source_id = 'mem_page' LIMIT 1",
+                (),
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        assert_eq!(row.get::<String>(0).unwrap(), "wenlan");
+    }
+    let anchor = db
+        .memory_said_anchor("mem_page", &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(anchor.session_id, c0);
+    assert_eq!(anchor.line.as_deref(), Some("ok keep it to one page"));
+}
+
+/// Trust audit F9: a thing the rules made that no conversation can name any
+/// more is not listed; one still being organized is.
+#[tokio::test]
+async fn ux_home_3_an_untitled_thing_no_conversation_can_name_is_not_listed() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let conversation = found("c9", now - 60);
+    db.record_conversation_label(&conversation, &work("Chore"), None)
+        .await
+        .unwrap();
+    let session = db.intake_pending(10).await.unwrap()[0].session_id.clone();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "INSERT INTO things (id, title, title_by, created_at, updated_at)
+             VALUES ('thg_unnamed', NULL, 'ai', ?1, ?1)",
+            libsql::params![now],
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "INSERT INTO thing_sessions (thing_id, session_id, assigned_by, at)
+             VALUES ('thg_unnamed', ?1, 'ai', ?2)",
+            libsql::params![session.as_str(), now],
+        )
+        .await
+        .unwrap();
+    }
+    let listed =
+        |things: Vec<wenlan_types::ThingSummary>| things.iter().any(|t| t.id == "thg_unnamed");
+    // Labelled as work and waiting to be grouped: still being organized.
+    assert!(listed(
+        db.list_things(&ReadScope::Global, None).await.unwrap()
+    ));
+    // Read as not work: it will never be named.
+    let mut chore = work("Chore");
+    chore.work = false;
+    db.record_conversation_label(&conversation, &chore, None)
+        .await
+        .unwrap();
+    assert!(!listed(
+        db.list_things(&ReadScope::Global, None).await.unwrap()
+    ));
+    // Still found by its id.
+    assert!(listed(
+        db.list_things(&ReadScope::Global, Some("thg_unnamed"))
+            .await
+            .unwrap()
+    ));
 }

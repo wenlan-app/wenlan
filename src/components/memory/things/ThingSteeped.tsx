@@ -65,3 +65,12 @@ export function ThingSteeped({
     </div>
   );
 }
+
+/** A night came to read some of the thing's conversations and could not:
+ *  said once, quietly, so a point that is missing is not a surprise. */
+export function ThingUnread({ thing }: { readonly thing: ThingDetail }) {
+  const { t } = useTranslation();
+  const count = thing.unread ?? 0;
+  if (count === 0) return null;
+  return <p className="thing-unread">{t("thing.unreadConversations", { count })}</p>;
+}

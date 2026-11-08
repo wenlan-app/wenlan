@@ -675,6 +675,9 @@ impl MemoryDB {
         only: Option<&str>,
     ) -> Result<Vec<ThingSummary>, WenlanError> {
         let now = chrono::Utc::now().timestamp();
+        // A conversation with no label is still read for a name until it is
+        // older than what the labeller looks at.
+        let name_window = now - crate::conversation_intake::INTAKE_WINDOW_SECS;
         let conn = self.conn.lock().await;
         let mut params = Vec::new();
         let only_sql = match only {
@@ -700,7 +703,15 @@ impl MemoryDB {
                                                  WHERE u.thing_id = t.id
                                                    AND u.op = 'thing.dream_undo'
                                                    AND json_extract(u.data, '$.seq') = h.seq)),
-                            t.brief_item_id IS NOT NULL
+                            t.brief_item_id IS NOT NULL,
+                            (t.title IS NULL AND t.title_by = 'ai' AND t.brief_item_id IS NULL
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM thing_sessions ts
+                                   JOIN agent_sessions a ON a.id = ts.session_id
+                                   LEFT JOIN conversation_labels l ON l.session_id = ts.session_id
+                                  WHERE ts.thing_id = t.id
+                                    AND (l.work = 1
+                                         OR (l.session_id IS NULL AND a.last_write_at >= {name_window}))))
                        FROM things t
                        LEFT JOIN brief_items bi ON bi.id = t.brief_item_id
                        LEFT JOIN spaces sp ON sp.id = bi.space_id
@@ -720,6 +731,13 @@ impl MemoryDB {
             let state = row.get::<Option<String>>(5).unwrap_or(None);
             let sessions = row.get::<i64>(8).unwrap_or(0);
             if sessions == 0 && state.as_deref() != Some("active") {
+                continue;
+            }
+            // Untitled means still being organized (UX-HOME-3). A thing the
+            // rules made that no conversation can name any more, because
+            // every one was read as not work or is too old to be read, is
+            // not listed; it is still found by its id (trust audit F9).
+            if only.is_none() && row.get::<i64>(13).unwrap_or(0) != 0 {
                 continue;
             }
             let created_at = row.get::<i64>(3).unwrap_or(0);
@@ -1017,6 +1035,7 @@ impl MemoryDB {
             .filter(|point| !point.decided)
             .map(|point| point.id)
             .collect();
+        let unread = self.thing_unread_conversations(&thing.id).await?;
         Ok(Some(ThingDetailResponse {
             thing,
             sessions,
@@ -1025,6 +1044,7 @@ impl MemoryDB {
             merge_proposals: Vec::new(),
             dream,
             open_points,
+            unread,
         }))
     }
 
