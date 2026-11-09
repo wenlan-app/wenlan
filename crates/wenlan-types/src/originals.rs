@@ -95,10 +95,14 @@ mod tests {
             file_path: "originals/claude/c1/landing.html".into(),
             written_at: None,
             imported_at: 1,
+            newer: None,
+            older: Vec::new(),
         };
         let json = serde_json::to_value(&original).unwrap();
         assert!(json.get("title").is_none());
         assert!(json.get("written_at").is_none());
+        assert!(json.get("newer").is_none());
+        assert!(json.get("older").is_none());
         let back: PageOriginalResponse = serde_json::from_value(json).unwrap();
         assert_eq!(back, original);
     }
