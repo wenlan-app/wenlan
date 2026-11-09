@@ -302,6 +302,7 @@ pub async fn keep_conversation_originals(
             conversation_url: url.clone(),
             written_at: artifact.created_at.map(|t| t.timestamp()),
             imported_at: chrono::Utc::now().timestamp(),
+            replaces: None,
         })
         .await?;
         kept.push(KeptOriginal {
@@ -391,6 +392,58 @@ pub struct SessionOriginal<'a> {
     /// Memories the page cites: the diagram's structure as text, kept in the
     /// session so the night's tidy and later sessions read it, not the HTML.
     pub source_memory_ids: Vec<String>,
+    /// The older version this one replaces: its page id, or its title as it
+    /// was kept. A version that was itself replaced since resolves to the
+    /// newest one, so versions stay one line.
+    pub replaces: Option<&'a str>,
+}
+
+/// The newest version of the original `named` (a page id or a kept title),
+/// following later versions forward. `original_replaces_unknown` when no
+/// kept original matches.
+async fn newest_version_of(db: &MemoryDB, named: &str) -> Result<OriginalRecord, WenlanError> {
+    let found = match db.get_original(named).await? {
+        Some(record) if db.get_page(&record.page_id).await?.is_some() => Some(record),
+        _ => db.latest_original_titled(named).await?,
+    };
+    let Some(mut record) = found else {
+        return Err(WenlanError::Validation("original_replaces_unknown".into()));
+    };
+    // A chain is short; the bound only stops a corrupted cycle.
+    for _ in 0..64 {
+        match db
+            .originals_replacing(&record.page_id)
+            .await?
+            .into_iter()
+            .next()
+        {
+            Some(newer) => record = newer,
+            None => break,
+        }
+    }
+    Ok(record)
+}
+
+/// The page a new version replaces: the newest version of the original
+/// `named` (a page id or a kept title). `original_replaces_unknown` when no
+/// kept original matches.
+pub async fn original_to_replace(db: &MemoryDB, named: &str) -> Result<String, WenlanError> {
+    Ok(newest_version_of(db, named.trim()).await?.page_id)
+}
+
+/// One version of a kept original: its page, title and when it was kept.
+async fn version_ref(
+    db: &MemoryDB,
+    record: &OriginalRecord,
+) -> Result<Option<wenlan_types::originals::OriginalVersion>, WenlanError> {
+    Ok(db
+        .get_page(&record.page_id)
+        .await?
+        .map(|page| wenlan_types::originals::OriginalVersion {
+            page_id: record.page_id.clone(),
+            title: page.title,
+            kept_at: record.imported_at,
+        }))
 }
 
 /// The id a session original's content gets: a prefix of its SHA-256.
@@ -475,6 +528,22 @@ pub async fn keep_session_original(
     if let Some(kept) = find_session_original(db, input.session, input.content).await? {
         return Ok((kept, false));
     }
+    let replaced = match input
+        .replaces
+        .map(str::trim)
+        .filter(|named| !named.is_empty())
+    {
+        Some(named) => {
+            let record = newest_version_of(db, named).await?;
+            let title = db
+                .get_page(&record.page_id)
+                .await?
+                .map(|page| page.title)
+                .unwrap_or_default();
+            Some((record.page_id, title))
+        }
+        None => None,
+    };
     let mut artifact_id = content_id(input.content);
     // A row whose page was destroyed keeps its id, so the new copy takes another.
     if db
@@ -501,8 +570,12 @@ pub async fn keep_session_original(
     } else {
         "Saved by an AI tool".to_string()
     };
+    let newer_than = replaced
+        .as_ref()
+        .map(|(_, title)| format!(" New version of \u{201c}{title}\u{201d}."))
+        .unwrap_or_default();
     let mut body = format!(
-        "{from}, {}. Original file: `{file_rel}`.\n\n",
+        "{from}, {}.{newer_than} Original file: `{file_rel}`.\n\n",
         now.format("%Y-%m-%d %H:%M UTC")
     );
     let language = match input.format {
@@ -552,6 +625,7 @@ pub async fn keep_session_original(
         conversation_url: String::new(),
         written_at: Some(now.timestamp()),
         imported_at: now.timestamp(),
+        replaces: replaced.map(|(page_id, _)| page_id),
     })
     .await?;
     Ok((
@@ -570,19 +644,53 @@ pub async fn page_original(
     db: &MemoryDB,
     page_id: &str,
 ) -> Result<Option<wenlan_types::originals::PageOriginalResponse>, WenlanError> {
-    Ok(db.get_original(page_id).await?.map(|record| {
-        wenlan_types::originals::PageOriginalResponse {
-            page_id: record.page_id,
-            vendor: record.vendor,
-            conversation_id: record.conversation_id,
-            conversation_url: record.conversation_url,
-            artifact_id: record.artifact_id,
-            kind: record.kind,
-            title: record.title,
-            file_path: record.file_path,
-            written_at: record.written_at,
-            imported_at: record.imported_at,
+    let Some(record) = db.get_original(page_id).await? else {
+        return Ok(None);
+    };
+    // The newest version, when a later one replaced this.
+    let mut newer = None;
+    let mut at = record.page_id.clone();
+    for _ in 0..64 {
+        match db.originals_replacing(&at).await?.into_iter().next() {
+            Some(next) => {
+                at = next.page_id.clone();
+                newer = Some(next);
+            }
+            None => break,
         }
+    }
+    let newer = match newer {
+        Some(next) => version_ref(db, &next).await?,
+        None => None,
+    };
+    // Every older version, newest first.
+    let mut older = Vec::new();
+    let mut back = record.replaces.clone();
+    while let Some(id) = back.take() {
+        if older.len() >= 64 || id == record.page_id {
+            break;
+        }
+        let Some(prior) = db.get_original(&id).await? else {
+            break;
+        };
+        if let Some(version) = version_ref(db, &prior).await? {
+            older.push(version);
+        }
+        back = prior.replaces.clone();
+    }
+    Ok(Some(wenlan_types::originals::PageOriginalResponse {
+        page_id: record.page_id,
+        vendor: record.vendor,
+        conversation_id: record.conversation_id,
+        conversation_url: record.conversation_url,
+        artifact_id: record.artifact_id,
+        kind: record.kind,
+        title: record.title,
+        file_path: record.file_path,
+        written_at: record.written_at,
+        imported_at: record.imported_at,
+        newer,
+        older,
     }))
 }
 

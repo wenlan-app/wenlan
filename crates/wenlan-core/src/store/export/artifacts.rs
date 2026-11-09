@@ -37,6 +37,7 @@ pub async fn export_artifacts(
             "url": record.conversation_url,
             "written": record.written_at,
             "imported": record.imported_at,
+            "replaces": record.replaces,
         }));
         // Only a plain relative path under the data root is read.
         let fine = !record.file_path.is_empty()

@@ -23,11 +23,11 @@ import { OriginalPageView } from "./OriginalPageView";
 const HTML = "<!doctype html>\n<html><body><h1>Release map</h1></body></html>\n";
 const SAVED = `Saved from a Claude Code session, 2026-11-08 18:30 UTC. Original file: \`originals/claude-code/s-1/a.html\`.\n\n\`\`\`html\n${HTML}\`\`\`\n`;
 
-function renderView(content: string) {
+function renderView(content: string, onOpenPage?: (pageId: string) => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <OriginalPageView pageId="page_1" title="Release map" content={content}
+      <OriginalPageView pageId="page_1" title="Release map" content={content} onOpenPage={onOpenPage}
         renderMarkdown={(markdown) => <div data-testid="markdown">{markdown}</div>} />
     </QueryClientProvider>,
   );
@@ -69,6 +69,39 @@ describe("originals", () => {
     renderView(SAVED.replace("Saved from a Claude Code session", "Kept from the Claude chat \"Plan\""));
     await waitFor(() => expect(screen.getByTestId("original-source")).toHaveTextContent("From Claude · Oct 20"));
     expect(screen.getByRole("button", { name: "Open in Claude" })).toBeInTheDocument();
+  });
+
+  it("points an older version to the newest, and lists the versions a newer one replaced", async () => {
+    const base = {
+      page_id: "page_1", vendor: "claude-code", conversation_id: "s-1", conversation_url: "",
+      artifact_id: "a", kind: "text/html", file_path: "originals/claude-code/s-1/a.html", imported_at: 1_762_600_000,
+    };
+    const open = vi.fn();
+    mocks.getPageOriginal.mockResolvedValue({
+      ...base, newer: { page_id: "page_3", title: "Release map (Claude Code 2026-11-09)", kept_at: 1_762_650_000 },
+    });
+    const { unmount } = renderView(SAVED, open);
+    (await screen.findByRole("button", { name: "Newer version: Release map (Claude Code 2026-11-09)" })).click();
+    expect(open).toHaveBeenCalledWith("page_3");
+    expect(screen.queryByTestId("original-older")).toBeNull();
+    unmount();
+
+    mocks.getPageOriginal.mockResolvedValue({
+      ...base, older: [
+        { page_id: "page_2", title: "Release map (Claude Code 2026-11-08)", kept_at: 1_762_620_000 },
+        { page_id: "page_0", title: "Release map", kept_at: 1_762_600_000 },
+      ],
+    });
+    renderView(SAVED, open);
+    expect(await screen.findByText("Earlier versions")).toBeInTheDocument();
+    const older = screen.getByTestId("original-older").querySelectorAll("button");
+    expect([...older].map((button) => button.textContent)).toEqual([
+      expect.stringMatching(/^Release map \(Claude Code 2026-11-08\) · Nov 8/),
+      expect.stringMatching(/^Release map · Nov 8/),
+    ]);
+    older[1].click();
+    expect(open).toHaveBeenCalledWith("page_0");
+    expect(screen.queryByTestId("original-newer")).toBeNull();
   });
 
   it("UX-ART-3 shows notes added after the original below it", () => {

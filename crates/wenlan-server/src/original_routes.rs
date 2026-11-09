@@ -82,6 +82,19 @@ pub async fn handle_keep_original(
             "original_title_missing".into(),
         ));
     }
+    // Checked before the structure memory, so an unknown older version
+    // leaves nothing behind.
+    let replaces = match req
+        .replaces
+        .as_deref()
+        .map(str::trim)
+        .filter(|named| !named.is_empty())
+    {
+        Some(named) => {
+            Some(wenlan_core::chat_import::originals::original_to_replace(&db, named).await?)
+        }
+        None => None,
+    };
     // The structure is a memory of this session, written the way a capture
     // is (same Space, session and agent), so the night's tidy folds it into
     // the session's thing and later recall finds it; the page cites it.
@@ -136,6 +149,7 @@ pub async fn handle_keep_original(
                 space,
                 workspace: resolved.space_name.clone(),
                 source_memory_ids,
+                replaces: replaces.as_deref(),
             },
         )
         .await?;

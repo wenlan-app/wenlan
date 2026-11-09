@@ -509,7 +509,7 @@ impl MemoryDB {
         let mut rows = conn
             .query(
                 "SELECT page_id, vendor, conversation_id, artifact_id, kind, title, file_path, \
-                        conversation_url, written_at, imported_at \
+                        conversation_url, written_at, imported_at, replaces \
                  FROM originals ORDER BY page_id",
                 (),
             )
@@ -528,6 +528,7 @@ impl MemoryDB {
                 conversation_url: row.get(7).map_err(decode)?,
                 written_at: row.get(8).map_err(decode)?,
                 imported_at: row.get(9).map_err(decode)?,
+                replaces: row.get(10).map_err(decode)?,
             });
         }
         Ok(out)

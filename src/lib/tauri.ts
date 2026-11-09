@@ -3416,6 +3416,18 @@ export interface PageOriginal {
   /** Unix seconds. */
   written_at?: number;
   imported_at: number;
+  /** The newest version, when a later one replaced this one. */
+  newer?: OriginalVersion;
+  /** The versions this one replaced, newest first. */
+  older?: OriginalVersion[];
+}
+
+/** One version of a kept original. */
+export interface OriginalVersion {
+  page_id: string;
+  title: string;
+  /** Unix seconds. */
+  kept_at: number;
 }
 
 /** Null for a page that does not keep an original. */

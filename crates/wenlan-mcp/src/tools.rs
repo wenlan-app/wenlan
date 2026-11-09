@@ -1513,6 +1513,11 @@ pub struct KeepOriginalParams {
     #[serde(default)]
     pub structure: Option<String>,
     #[schemars(
+        description = "When this is a new version of a diagram kept before: its title as kept, or its page_id. The old page stays and points to this one."
+    )]
+    #[serde(default)]
+    pub replaces: Option<String>,
+    #[schemars(
         description = "This conversation as <tool>:<id>, e.g. claude-code:<session id>. Defaults to WENLAN_SESSION."
     )]
     #[serde(default)]
@@ -3126,35 +3131,41 @@ impl WenlanMcpServer {
             content,
             format,
             structure: params.structure,
+            replaces: params.replaces,
         };
         let client = self.session_client(params.session.as_deref()).await;
-        let resp: wenlan_types::originals::KeepOriginalResponse =
-            match client.post("/api/originals", &request).await {
-                Ok(resp) => resp,
-                Err(WenlanError::Api {
-                    reason: Some(ref reason),
-                    ..
-                }) if reason.starts_with("original_") => {
-                    let why = match reason.as_str() {
+        let resp: wenlan_types::originals::KeepOriginalResponse = match client
+            .post("/api/originals", &request)
+            .await
+        {
+            Ok(resp) => resp,
+            Err(WenlanError::Api {
+                reason: Some(ref reason),
+                ..
+            }) if reason.starts_with("original_") => {
+                let why = match reason.as_str() {
                         "original_format_unsupported" => {
                             "only HTML, SVG and Markdown can be kept as they are"
                         }
                         "original_empty" => "the file is empty",
                         "original_too_large" => "the file is larger than 10 MB",
                         "original_title_missing" => "give it a title",
+                        "original_replaces_unknown" => {
+                            "no kept diagram has that title or page_id; leave replaces out to keep it as a new one"
+                        }
                         _ => "the daemon refused it",
                     };
-                    return refuse(why);
-                }
-                Err(error) => return Ok(tool_error(error, "keep original")),
-            };
+                return refuse(why);
+            }
+            Err(error) => return Ok(tool_error(error, "keep original")),
+        };
         let kept = if resp.created {
             "Kept"
         } else {
             "Already kept from this conversation"
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(format!(
-            "{kept} as the page \"{title}\" (page_id {id}). Wenlan shows it exactly as it is, with this conversation as its source, and never rewrites it; its structure is kept as a memory of this conversation. To add a later fact, write_page with the page's content unchanged and your note after it. A changed version is kept as a new page.",
+            "{kept} as the page \"{title}\" (page_id {id}). Wenlan shows it exactly as it is, with this conversation as its source, and never rewrites it; its structure is kept as a memory of this conversation. To add a later fact, write_page with the page's content unchanged and your note after it. To keep a changed version, pass replaces with this title: it gets its own page, and this one stays and points to it.",
             title = resp.title,
             id = resp.page_id,
         ))]))
@@ -5990,7 +6001,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Keep an HTML page, SVG or Markdown document you made in this conversation (a diagram, map, chart or a text drawing in your reply) in Wenlan exactly as it is, as its own page with this conversation as its source. Keep one when asked, and unasked when it shows how the work is structured (a plan, flow or architecture) or the user builds on it; skip throwaway sketches. Always pass structure. To change a kept diagram, keep the new version: the old page stays.",
+        description = "Keep an HTML page, SVG or Markdown document you made in this conversation (a diagram, map, chart or a text drawing in your reply) in Wenlan exactly as it is, as its own page with this conversation as its source. Keep one when asked, and unasked when it shows how the work is structured (a plan, flow or architecture) or the user builds on it; skip throwaway sketches. Always pass structure. To change a kept diagram, keep a new one with replaces; the old stays.",
         annotations(
             title = "Keep Original",
             read_only_hint = false,
