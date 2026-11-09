@@ -62,6 +62,11 @@ impl<'a> Writer<'a> {
             "page_growth" => Writer::Pipeline(PipelineStage::PageGrowth),
             "refinery_merge" => Writer::Pipeline(PipelineStage::RefineryMerge),
             "link_rename" => Writer::Pipeline(PipelineStage::LinkRename),
+            // Another member's version of a shared page, already written
+            // there by that member (or their AI tool, which that member's
+            // Wenlan let land). Taking it here is copying a page someone
+            // saved, so it lands as written like a person's save.
+            other if crate::shared_space::shared_writer(other).is_some() => Writer::Human(other),
             other => Writer::Pipeline(PipelineStage::Unknown(other)),
         }
     }
@@ -1533,8 +1538,9 @@ async fn update_page_db_impl(
 
             // Sentence gate. A machine write that reaches this point would
             // land, so it lands only on the AI's sentences: every sentence
-            // that is the person's (and, on a human-owned or review-locked
-            // page, every sentence of unknown origin) that the write changed
+            // that is the person's or another shared-Space member's (and, on
+            // a human-owned or review-locked page, every sentence of unknown
+            // origin) that the write changed
             // or dropped is kept as it is and staged as a `sentence.propose`
             // entry instead. This is what replaced the version-checked agent
             // write landing outright on a human-owned page, and a forced

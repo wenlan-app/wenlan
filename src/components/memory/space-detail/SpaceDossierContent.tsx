@@ -2,7 +2,10 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PageIcon } from "../assets/PageIcon";
-import type { Page } from "../../../lib/tauri";
+import type { Page, SharedStatus } from "../../../lib/tauri";
+import { relativeMs } from "../page/format";
+import { sharedWriter } from "../sharing/sharing";
+import "../sharing/sharing.css";
 import type { AssetLens } from "../../../lib/assetLens";
 import type { SpaceDetailCopy } from "./copy";
 import {
@@ -21,9 +24,12 @@ type SpaceDossierContentProps = {
   readonly navigation: SpaceDossierNavigation;
   readonly pages: readonly Page[];
   readonly lens: AssetLens;
+  /** Everything shared: a row says who changed the page when it was not
+   *  this person. */
+  readonly shares?: readonly SharedStatus[];
 };
 
-export function SpaceDossierContent({ copy, navigation, pages, lens }: SpaceDossierContentProps) {
+export function SpaceDossierContent({ copy, navigation, pages, lens, shares }: SpaceDossierContentProps) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const [visiblePageCount, setVisiblePageCount] = useState(PAGE_DISPLAY_STEP);
@@ -44,6 +50,7 @@ export function SpaceDossierContent({ copy, navigation, pages, lens }: SpaceDoss
                   <span className="space-dossier-page-title">{page.title}</span>{" "}
                   {page.summary?.trim() && <span className="space-dossier-page-summary">{page.summary}</span>}
                 </span>
+                <SharedRowMeta page={page} shares={shares} locale={locale} />
               </button>
             ))}
           </div>
@@ -62,4 +69,14 @@ export function SpaceDossierContent({ copy, navigation, pages, lens }: SpaceDoss
 
     </div>
   );
+}
+
+/** "Yiling · 2h ago" when another member changed the page last; nothing for
+ *  this person's own changes. */
+function SharedRowMeta({ page, shares, locale }: { readonly page: Page; readonly shares?: readonly SharedStatus[]; readonly locale: string }) {
+  const { t } = useTranslation();
+  const who = sharedWriter(page.last_edited_by, shares, t);
+  if (!who) return null;
+  const at = Date.parse(page.last_modified);
+  return <span className="shared-row-meta">{t("sharing.rowBy", { who, when: Number.isFinite(at) ? relativeMs(at, locale) : "" })}</span>;
 }

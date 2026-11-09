@@ -43,6 +43,7 @@ pub mod requests;
 pub mod responses;
 pub mod session_context;
 pub mod sessions;
+pub mod shared_space;
 pub mod source_annotations;
 pub mod sources;
 pub mod space_context;

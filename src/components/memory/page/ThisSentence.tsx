@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { flagPageSentence, recheckPageSentence, type PageSentence } from "../../../lib/tauri";
 import { leadingWeakReason } from "../editor/sentenceAuthorship";
 import { SaidLines } from "./SaidLines";
+import { sharedWriter, useShares } from "../sharing/sharing";
 import "./thisSentence.css";
 
 interface ThisSentenceProps {
@@ -43,6 +44,7 @@ export function ThisSentence({ pageId, sentence, onFixMyself, disabled }: ThisSe
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [choosing, setChoosing] = useState(false);
+  const shares = useShares();
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["page-sentences", pageId] });
   const flag = useMutation({
     mutationFn: (hash: string) => flagPageSentence(pageId, hash, true),
@@ -70,6 +72,8 @@ export function ThisSentence({ pageId, sentence, onFixMyself, disabled }: ThisSe
   }, [aiQueued, proposalCount, pageId]);
   if (!sentence || sentence.author === "original") return null;
   const weak = leadingWeakReason(sentence.weak ?? []);
+  // Another member's sentence names them, not "Yours".
+  const sharedName = sharedWriter(sentence.shared_by, shares.data, t);
   // The memories it cites; the daemon finds which lines of their
   // conversation said the same thing (UX-WHO-6).
   const memories = (sentence.citations ?? [])
@@ -80,8 +84,8 @@ export function ThisSentence({ pageId, sentence, onFixMyself, disabled }: ThisSe
       <h3 id="this-sentence-title" className="this-sentence-title">{t("thisSentence.title")}</h3>
       <p className="this-sentence-text">{sentence.text}</p>
       <p className="this-sentence-line">
-        <span className={`this-sentence-who this-sentence-who--${sentence.protected ? "you" : sentence.author}`}>
-          {t(sentenceWhoKey(sentence))}
+        <span className={`this-sentence-who this-sentence-who--${sharedName ? "shared" : sentence.protected ? "you" : sentence.author}`}>
+          {sharedName ? t("thisSentence.who.shared", { name: sharedName }) : t(sentenceWhoKey(sentence))}
         </span>
         <span aria-hidden="true">·</span>
         <span>{t(evidenceKey(sentence))}</span>

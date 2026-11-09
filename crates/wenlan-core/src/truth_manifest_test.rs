@@ -285,14 +285,22 @@ fn manifest_counts_match_the_spec() {
     // since a time; two counts only).
     // Then 313 after POST `/api/memory/restore/{source_id}` (brings a
     // forgotten memory back; two flags only).
-    // Then 315 after GET `/api/trust/scan` (the nightly trust scan report;
+    // Then 314 after POST `/api/spaces/{name}/shared/sync` (one sync pass of
+    // a shared Space's folder; counts only).
+    // Then 315 after GET `/api/spaces/{name}/shared` (how a Space is shared
+    // and its last sync pass; no page text).
+    // Then 321 after the rest of sharing: DELETE `/api/spaces/{name}/shared`,
+    // POST `/api/pages/{id}/shared/sync`, GET and DELETE
+    // `/api/pages/{id}/shared`, GET `/api/shared` and POST
+    // `/api/shared/folder` (receipts, names and counts; no page text).
+    // Then 323 after GET `/api/trust/scan` (the nightly trust scan report;
     // page titles and excerpts) and POST `/api/pages/{id}/citations/requeue`
-    // (a receipt), and 316 after POST `/api/originals` (keeps a session's HTML
+    // (a receipt), and 324 after POST `/api/originals` (keeps a session's HTML
     // as its own page; returns its id and title only) and 53 tools with
     // `keep_original`.
     assert_eq!(
         HTTP_READERS.len(),
-        316,
+        324,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 53, "#[tool( declarations");
@@ -303,7 +311,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        328,
+        336,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -311,7 +319,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        311,
+        319,
         "main builder entries"
     );
     assert_eq!(
@@ -494,7 +502,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        308 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes and keeping a session original, all with no page markers.
+        316 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original and the 8 sharing routes, all with no page markers.
     );
 }
 

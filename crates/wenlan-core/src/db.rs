@@ -19210,12 +19210,15 @@ pub struct BackupReceipt {
 /// The `page_history.edited_by` of a page's first version. An authored page
 /// records who made it, so a later edit by the person never makes the AI
 /// tool's sentences theirs: `person_create` for the person in the app (no
-/// agent name), `agent_create` for an AI tool. Other pages, and internal
-/// callers that name no actor, keep `create`.
-fn create_label(creation_kind: &str, actor: &str) -> &'static str {
+/// agent name), `agent_create` for an AI tool. A page another member of a
+/// shared Space wrote keeps that member (`shared_person:<member>`,
+/// `shared_ai:<member>`). Other pages, and internal callers that name no
+/// actor, keep `create`.
+fn create_label<'a>(creation_kind: &str, actor: &'a str) -> &'a str {
     match (creation_kind, actor) {
         ("authored", "unknown") => "person_create",
         ("authored", "") => "create",
+        ("authored", shared) if crate::shared_space::shared_writer(shared).is_some() => shared,
         ("authored", _) => "agent_create",
         _ => "create",
     }
@@ -61668,6 +61671,69 @@ impl MemoryDB {
             Some(row) => Ok(row.get::<String>(0).unwrap_or_else(|_| "[]".to_string())),
             None => Ok("[]".to_string()),
         }
+    }
+
+    /// Records who wrote a page's `version` in its changelog when the write
+    /// itself kept none (a page created here from another member's shared
+    /// version), so the page's "last edited by" names them. Only while the
+    /// page is still at that version; returns whether it was recorded.
+    pub async fn record_page_writer(
+        &self,
+        page_id: &str,
+        version: i64,
+        edited_by: &str,
+    ) -> Result<bool, WenlanError> {
+        let existing = self.get_page_changelog(page_id).await?;
+        let entry = serde_json::json!({
+            "version": version,
+            "at": chrono::Utc::now().timestamp(),
+            "edited_by": edited_by,
+        });
+        let changelog = append_changelog_entry(&existing, entry, 20)?;
+        let conn = self.conn.lock().await;
+        let affected = conn
+            .execute(
+                "UPDATE pages SET changelog = ?1 WHERE id = ?2 AND version = ?3",
+                libsql::params![changelog, page_id, version],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("record_page_writer: {e}")))?;
+        Ok(affected > 0)
+    }
+
+    /// Marks the changelog entry of `version` as having replaced
+    /// `lost_version`: an edit made here at the same time as a shared
+    /// version, which lost to it and stays in the page's history. The app
+    /// tells the person once (`concurrent_with` on the revisions route).
+    /// False when the page moved on or has no entry for `version`.
+    pub async fn mark_concurrent_edit(
+        &self,
+        page_id: &str,
+        version: i64,
+        lost_version: i64,
+    ) -> Result<bool, WenlanError> {
+        let existing = self.get_page_changelog(page_id).await?;
+        let mut entries: Vec<serde_json::Value> =
+            serde_json::from_str(&existing).unwrap_or_default();
+        let Some(entry) = entries
+            .iter_mut()
+            .rev()
+            .find(|entry| entry.get("version").and_then(|v| v.as_i64()) == Some(version))
+        else {
+            return Ok(false);
+        };
+        entry["concurrent_with"] = serde_json::json!(lost_version);
+        let changelog = serde_json::to_string(&entries)
+            .map_err(|e| WenlanError::VectorDb(format!("mark_concurrent_edit: {e}")))?;
+        let conn = self.conn.lock().await;
+        let affected = conn
+            .execute(
+                "UPDATE pages SET changelog = ?1 WHERE id = ?2 AND version = ?3",
+                libsql::params![changelog, page_id, version],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("mark_concurrent_edit: {e}")))?;
+        Ok(affected > 0)
     }
 
     /// Update a memory's content in-place for topic-key upsert.
