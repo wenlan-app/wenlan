@@ -438,6 +438,8 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/attachments",
     // Finds the media file one `![[embed]]` names; returns its path only.
     "/api/attachments/resolve",
+    // Keeps one session original as its own page; returns its id and title only.
+    "/api/originals",
     "/api/onboarding/milestones/{id}/acknowledge", "/api/onboarding/reset", "/ws/updates",
     "/api/palace/layout/revert", "/api/pages/{id}/map/layout", "/api/pages/{id}/map/nodes", "/api/pages/{id}/map/edges",
     "/api/pages/{id}/map/nodes/{node_id}", "/api/pages/{id}/map/edges/{edge_id}",

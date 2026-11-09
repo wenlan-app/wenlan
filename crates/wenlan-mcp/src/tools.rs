@@ -156,9 +156,10 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// length of `attach_file`'s, then by the length of `propose_note_change`'s,
 /// then by the length of `check_reply`'s, then by the length of
 /// `thing_map`'s, then by the four folder and link tool descriptions, then by
-/// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s.
+/// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s,
+/// then by `keep_original`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 20_018;
+const DESCRIPTION_BUDGET_CHARS: usize = 20_366;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1489,6 +1490,33 @@ pub struct AttachFileParams {
     )]
     #[serde(default)]
     pub alt: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct KeepOriginalParams {
+    #[schemars(description = "Page title: what it shows, in the user's words.")]
+    pub title: String,
+    #[schemars(
+        description = "Absolute path of the .html, .svg or .md file you made on this computer. Give this or content."
+    )]
+    #[serde(default)]
+    pub path: Option<String>,
+    #[schemars(description = "The file's full text, when there is no file. Give this or path.")]
+    #[serde(default)]
+    pub content: Option<String>,
+    #[schemars(description = "html, svg or markdown. Taken from the path when omitted.")]
+    #[serde(default)]
+    pub format: Option<String>,
+    #[schemars(
+        description = "What it shows, as text: an indented outline or ASCII drawing of its parts and how they connect. Later sessions read this, not the HTML."
+    )]
+    #[serde(default)]
+    pub structure: Option<String>,
+    #[schemars(
+        description = "This conversation as <tool>:<id>, e.g. claude-code:<session id>. Defaults to WENLAN_SESSION."
+    )]
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3054,6 +3082,82 @@ impl WenlanMcpServer {
         Ok(CallToolResult::success(vec![ContentBlock::text(
             format_attach_file_success(&resp),
         )]))
+    }
+
+    pub async fn keep_original_impl(
+        &self,
+        params: KeepOriginalParams,
+    ) -> Result<CallToolResult, McpError> {
+        let refuse = |why: &str| {
+            Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "Not kept: {why}. Nothing was changed."
+            ))]))
+        };
+        let path = params
+            .path
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty());
+        let content = match (path, params.content) {
+            (Some(path), _) => {
+                if !std::path::Path::new(path).is_absolute() {
+                    return refuse("path must be an absolute path on this computer");
+                }
+                match tokio::fs::read_to_string(path).await {
+                    Ok(text) => text,
+                    Err(error) => return refuse(&format!("could not read {path}: {error}")),
+                }
+            }
+            (None, Some(content)) => content,
+            (None, None) => return refuse("give the file's path or its content"),
+        };
+        let Some(format) = params
+            .format
+            .as_deref()
+            .map(str::trim)
+            .filter(|f| !f.is_empty())
+            .or(path)
+            .map(str::to_string)
+        else {
+            return refuse("say its format: html, svg or markdown");
+        };
+        let request = wenlan_types::originals::KeepOriginalRequest {
+            title: params.title,
+            content,
+            format,
+            structure: params.structure,
+        };
+        let client = self.session_client(params.session.as_deref()).await;
+        let resp: wenlan_types::originals::KeepOriginalResponse =
+            match client.post("/api/originals", &request).await {
+                Ok(resp) => resp,
+                Err(WenlanError::Api {
+                    reason: Some(ref reason),
+                    ..
+                }) if reason.starts_with("original_") => {
+                    let why = match reason.as_str() {
+                        "original_format_unsupported" => {
+                            "only HTML, SVG and Markdown can be kept as they are"
+                        }
+                        "original_empty" => "the file is empty",
+                        "original_too_large" => "the file is larger than 10 MB",
+                        "original_title_missing" => "give it a title",
+                        _ => "the daemon refused it",
+                    };
+                    return refuse(why);
+                }
+                Err(error) => return Ok(tool_error(error, "keep original")),
+            };
+        let kept = if resp.created {
+            "Kept"
+        } else {
+            "Already kept from this conversation"
+        };
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+            "{kept} as the page \"{title}\" (page_id {id}). Wenlan shows it exactly as it is, with this conversation as its source, and never rewrites it; its structure is kept as a memory of this conversation. To add a later fact, write_page with the page's content unchanged and your note after it. A changed version is kept as a new page.",
+            title = resp.title,
+            id = resp.page_id,
+        ))]))
     }
 
     pub async fn recall_impl(&self, params: RecallParams) -> Result<CallToolResult, McpError> {
@@ -5889,6 +5993,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Keep an HTML page, SVG or Markdown document you made in this conversation (a diagram, map, chart or a text drawing in your reply) in Wenlan exactly as it is, as its own page with this conversation as its source. Keep one when asked, and unasked when it shows how the work is structured (a plan, flow or architecture) or the user builds on it; skip throwaway sketches. Always pass structure. To change a kept diagram, keep the new version: the old page stays.",
+        annotations(
+            title = "Keep Original",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn keep_original(
+        &self,
+        Parameters(params): Parameters<KeepOriginalParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.keep_original_impl(params).await
+    }
+
+    #[tool(
         description = "Search memories by query. Use when the user asks 'do you remember', 'what do you know about', 'look up', or when you need a specific fact before acting.\n\nWrite queries as natural language — the search engine handles semantic matching. For precision, use filters (memory_type, space) to narrow results. If you get too many results, add filters rather than making the query longer.\n\nFor higher retrieval quality at the cost of latency, pass `rerank: true` to opt into the cross-encoder reranker (requires WENLAN_RERANKER_ENABLED=1 on the daemon).\n\nThis is for targeted lookups. To resume work from a Space-owned project snapshot, use brief instead. Search records the query and accessed memory IDs in local activity history for auditability; it does not rewrite stored knowledge.",
         annotations(
             title = "Recall",
@@ -6763,6 +6884,7 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "propose_source_classifications",
     "read_source",
     "attach_file",
+    "keep_original",
     "lint_repair_prepare",
     "lint_repair_apply",
     "lint_repair_verify",
@@ -12888,6 +13010,28 @@ mod tests {
     }
 
     #[test]
+    fn ux_art_4_the_ai_keeps_a_diagram_of_the_work_without_being_asked() {
+        let server = make_server(TransportMode::Stdio, "test", None);
+        let tools = server.visible_tools();
+        let keep = tools
+            .iter()
+            .find(|tool| tool.name == "keep_original")
+            .and_then(|tool| tool.description.as_deref())
+            .expect("keep_original is visible over stdio");
+        for words in [
+            "unasked when it shows how the work is structured",
+            "the user builds on it",
+            "skip throwaway sketches",
+            "a text drawing in your reply",
+        ] {
+            assert!(
+                keep.contains(words),
+                "keep_original description lost {words:?}"
+            );
+        }
+    }
+
+    #[test]
     fn visible_tool_descriptions_stay_within_budget() {
         let total: usize = make_server(TransportMode::Stdio, "test", None)
             .visible_tools()
@@ -13984,6 +14128,7 @@ mod tests {
             ("accept_refinement", (false, true, false)),
             ("accept_revision", (false, true, false)),
             ("attach_file", (false, false, false)),
+            ("keep_original", (false, false, false)),
             ("brief", (true, false, false)),
             ("capture", (false, true, false)),
             ("create_folder", (false, false, false)),
@@ -14399,6 +14544,7 @@ mod tests {
             "accept_refinement",
             "accept_revision",
             "attach_file",
+            "keep_original",
             "capture",
             "check_reply",
             "confirm_memory",

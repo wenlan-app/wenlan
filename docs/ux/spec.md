@@ -335,6 +335,24 @@ and wait for evidence that people need them.
   night, and each one is shown on the big map and can be undone. How it looks
   is designed as a whole and agreed before it is built.
   原文：合併、取代、更新由 AI 自己做，可以還原，在大圖上看得到（2026-11-05「可以的，以上」）。
+- **UX-GRAPH-8** `shipped` A memory is filed under the topics it is about. It
+  is never filed under a topic you archived, and never under a topic so common
+  that it is linked to a large share of everything; a memory that names only
+  such a topic stays unfiled until a real one fits. Archiving a topic moves its
+  memories to another shown, specific topic they are linked to, or leaves them
+  unfiled, and restoring the topic puts them back unless you filed them under
+  another shown topic since. Every move of a memory's main topic
+  records who moved it, why and when, and can be undone.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：記憶的主題看內容決定，歸錯可以查、可以退回）
+- **UX-GRAPH-9** `shipped` The AI does not make a topic out of something that
+  only looks like code, a pull request number or a sentence (five words or
+  more, unless every word is capitalised the way a name is, as in "The Lord of
+  the Rings"). When the AI adds another name to a topic only because the two
+  read or are spelled alike, that name stays a guess: the next mention of it
+  is checked again instead of being filed under the topic straight away. A
+  name taken off a topic is never put back on it by the AI, not even when two
+  topics are merged. You cannot take a name off a topic yet.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：記憶的主題看內容決定，歸錯可以查、可以退回）
 
 ## Finding things
 
@@ -363,15 +381,19 @@ and wait for evidence that people need them.
 
 ## What AI tools made (HTML, images)
 
-- **UX-ART-1** `planned` Saved HTML opens in Wenlan looking exactly like the
+- **UX-ART-1** `shipped` Saved HTML opens in Wenlan looking exactly like the
   original.
   原文：存進來的 HTML 在文瀾打開，跟原本一樣。
-- **UX-ART-2** `planned` It is a page with its source: which conversation, and
+- **UX-ART-2** `shipped` It is a page with its source: which conversation, and
   when.
   原文：它是一頁，帶出處：哪段對話、什麼時候。
-- **UX-ART-3** `planned` The AI never rewrites it. If the facts change later, it
+- **UX-ART-3** `shipped` The AI never rewrites it. If the facts change later, it
   only adds a note.
   原文：AI 不改寫它；後來事實變了，只加註記。
+- **UX-ART-4** `shipped` When the AI draws a plan, a flow or an architecture,
+  or a diagram you keep building on, it keeps it in Wenlan without being asked.
+  Throwaway sketches are not kept. A text drawing (ASCII) counts.
+  原文：有用的图自己存：画出计划、流程、架构，或你接着用的图，AI 自己存；随手小草图不存。eli5 的 ASCII 图也算。（2026-11-08 22:26）
 
 ## Adding to Wenlan
 

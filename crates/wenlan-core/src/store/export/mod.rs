@@ -94,6 +94,7 @@ pub const FILE_TABLE_HOMES: &[(&str, &str)] = &[
     ("entailment_cache", "records"),
     ("eval_signals", "records"),
     ("enrichment_steps", "records"),
+    ("entity_alias_sources", "records"),
 ];
 
 /// Columns of the tables written field by field (pages, entities, memories,

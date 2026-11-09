@@ -6,7 +6,7 @@ description: >
   a preference, makes a decision, corrects you, or shares a durable fact.
   Invoked as `/capture <content>`.
 argument-hint: "<content>"
-allowed-tools: ["mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__save_source", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__create_entity", "mcp__plugin_wenlan_wenlan__create_relation", "mcp__plugin_wenlan_wenlan__list_rejections", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "Bash"]
+allowed-tools: ["mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__save_source", "mcp__plugin_wenlan_wenlan__keep_original", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__create_entity", "mcp__plugin_wenlan_wenlan__create_relation", "mcp__plugin_wenlan_wenlan__list_rejections", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "Bash"]
 ---
 
 # /capture
@@ -57,6 +57,13 @@ never save the same thing as both a memory and a note in one turn. Turning many
 memories into notes is a different job: that is `/wenlan steep`.
 
 To save a note, follow "Save a note" below and skip the memory steps.
+
+## A diagram you drew
+
+A diagram, map, chart or HTML page you made in this conversation (an ASCII
+drawing in your reply too) is kept with `keep_original`, never captured as a
+memory or rewritten as a note. Pass `structure` and `session`. When to keep one
+without being asked is in that tool's description.
 
 ## Something from another app or the web
 

@@ -58,6 +58,16 @@ pub enum LintMetricCode {
     KgDuplicateEntityNames,
     KgHubEntities,
     KgSemanticSuspicions,
+    /// Memories whose main topic is an archived topic (UX-GRAPH-8). The
+    /// repair re-files them; nothing is deleted.
+    KgArchivedPrimaryMemories,
+    /// Memories with topic links but none to a shown topic.
+    KgSourcesWithoutActiveTopic,
+    /// Aliases a vector merge added (UX-GRAPH-9) whose mention was of a
+    /// different type than the topic it was merged into: an env var that
+    /// absorbed a project, an app that absorbed a website. Advisory; a
+    /// person detaches the wrong ones.
+    KgAutoAliasTypeMismatches,
     KgServingStatus,
     KgSweepStatus,
     KgProviderReadiness,

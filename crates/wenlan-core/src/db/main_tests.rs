@@ -32929,7 +32929,16 @@ async fn test_migration_54_memory_entities_table() {
         cols.push(row.get::<String>(0).unwrap());
     }
     cols.sort();
-    assert_eq!(cols, vec!["entity_id".to_string(), "memory_id".to_string()]);
+    // UX-GRAPH-8 (m160) adds who wrote each link and when.
+    assert_eq!(
+        cols,
+        vec![
+            "created_at".to_string(),
+            "entity_id".to_string(),
+            "memory_id".to_string(),
+            "writer".to_string(),
+        ]
+    );
 
     let mut rows = conn
         .query("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memory_entities' AND name='idx_memory_entities_entity_memory'", ())
@@ -38564,21 +38573,22 @@ async fn ambient_entity_commit_preserves_minhash_resolution() {
             "ambient resolution must link the canonical MinHash entity"
         );
 
-        // G6 Stage 2 PR 2c sub-step 3 item 4: `entity_aliases` stops being
-        // written, and `pages.aliases` carries no per-alias provenance
-        // field (see `add_entity_alias`'s doc comment) -- so the
-        // MinHash-vs-auto `source` distinction this test used to check is
-        // no longer expressible. Assert the behavior that matters instead:
-        // the near-duplicate name resolves to the canonical entity via the
-        // page-payload alias array.
-        let resolved = db
-            .resolve_entity_by_alias("vorpalblade jabberwock ino")
-            .await
-            .unwrap();
+        // UX-GRAPH-9: the alias the minhash step added is recorded as auto,
+        // like a vector merge's, so the next mention is checked again
+        // instead of resolving as an exact alias.
         assert_eq!(
-            resolved.as_deref(),
-            Some(canonical.id.as_str()),
-            "the MinHash-resolved near-duplicate must resolve via the page payload"
+            db.entity_alias_source(&canonical.id, "vorpalblade jabberwock ino")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("auto"),
+            "the MinHash-resolved near-duplicate is recorded as an auto alias"
+        );
+        assert_eq!(
+            db.resolve_entity_by_alias("vorpalblade jabberwock ino")
+                .await
+                .unwrap(),
+            None
         );
     })
     .await;
@@ -60043,6 +60053,10 @@ async fn growth_takes_the_closest_page_of_the_topic_and_needs_similarity() {
 #[tokio::test]
 async fn old_hub_links_are_unfiled_once() {
     let (db, _dir) = test_db().await;
+    // Only a shown topic counts as the specific one (UX-GRAPH-8).
+    db.test_seed_entity_shadow_page(TestEntity::new("specific", "specific", "project"))
+        .await
+        .unwrap();
     {
         let conn = db.conn.lock().await;
         conn.execute("PRAGMA foreign_keys = OFF", ()).await.unwrap();

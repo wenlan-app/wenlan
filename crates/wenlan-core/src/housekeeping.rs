@@ -34,6 +34,8 @@ pub struct HousekeepingReport {
     pub rejections_pruned: usize,
     pub orphaned_page_sources: usize,
     pub hub_links_removed: u64,
+    /// Memories moved off an archived main topic (UX-GRAPH-8), each logged.
+    pub archived_primaries_refiled: u64,
     pub memories_evicted: usize,
     pub errors: Vec<String>,
 }
@@ -84,6 +86,15 @@ pub async fn run_housekeeping(db: &MemoryDB, now_epoch: i64) -> HousekeepingRepo
         Ok(count) => report.hub_links_removed = count,
         Err(error) => report.errors.push(format!("hub links: {error}")),
     }
+    // Archiving a topic re-files its memories itself; this catches a main
+    // topic archived by any other path, so lint's count stays at zero.
+    match db
+        .refile_archived_primaries("refile_archived_primaries_daily")
+        .await
+    {
+        Ok(refiled) => report.archived_primaries_refiled = refiled.moved + refiled.unfiled,
+        Err(error) => report.errors.push(format!("archived main topics: {error}")),
+    }
     if crate::db::eviction_enabled() {
         match db
             .evict_stale(&crate::tuning::EvictionConfig::default())
@@ -110,6 +121,9 @@ pub async fn run_housekeeping(db: &MemoryDB, now_epoch: i64) -> HousekeepingRepo
 pub struct OneTimeCleanupReport {
     pub hub_links_removed: u64,
     pub primaries_moved_off_archived: u64,
+    /// The one-time re-filing of every memory whose main topic is archived
+    /// (UX-GRAPH-8): moved to another shown topic, or left with none.
+    pub archived_primaries: crate::db::topic_filing::RefileReport,
     pub duplicate_recaps_removed: usize,
     /// Topics whose type was a case or plural variant of a canonical type,
     /// folded onto it (`concepts` to `concept`).
@@ -136,6 +150,12 @@ pub async fn run_one_time_cleanups(db: &MemoryDB) -> OneTimeCleanupReport {
     match db.move_unfiled_primaries_off_archived_topics_once().await {
         Ok(count) => report.primaries_moved_off_archived = count,
         Err(error) => report.errors.push(format!("archived main topics: {error}")),
+    }
+    match db.refile_archived_primaries_once().await {
+        Ok(refiled) => report.archived_primaries = refiled,
+        Err(error) => report
+            .errors
+            .push(format!("archived main topics v1: {error}")),
     }
     match crate::synthesis::recaps::dedupe_old_recaps_once(db).await {
         Ok(count) => report.duplicate_recaps_removed = count,
