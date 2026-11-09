@@ -359,7 +359,14 @@ async fn link_capture_entity(
             }
         }
     };
-    match db.update_memory_entity_id(source_id, &entity_id).await {
+    match db
+        .update_memory_entity_id_as(
+            source_id,
+            &entity_id,
+            wenlan_core::db::topic_filing::writer::CAPTURE,
+        )
+        .await
+    {
         Ok(_) => Some(entity_id),
         Err(e) => {
             tracing::warn!("[memory] linking {source_id} to {entity_id} failed: {e}");

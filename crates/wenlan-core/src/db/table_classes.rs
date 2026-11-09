@@ -99,6 +99,8 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("chat_reminders", History),
         ("thing_sessions", History),
         ("thing_history", History),
+        // Every move of a memory's main topic off a topic (UX-GRAPH-8).
+        ("memory_topic_changes", History),
         // Usage counts are rebuilt from the reads stream, never reset.
         ("access_log", History),
         // Search indexes and their shadow tables.
@@ -126,6 +128,8 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         ("memory_enrichment_summary", Cache),
         ("conversation_labels", Cache),
         ("thing_lines", Cache),
+        // The latest nightly trust scan; the next scan writes it again.
+        ("trust_scan_reports", Cache),
         // Links, entities, relations, claims and checks.
         ("page_links", Cache),
         ("memory_entities", Cache),

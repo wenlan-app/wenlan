@@ -129,6 +129,9 @@ pub mod thing_dream;
 pub mod thing_map;
 pub mod thing_merge;
 pub mod things;
+pub mod topic_filing;
+use topic_filing::ACTIVE_LINK_SQL;
+pub mod trust_scan;
 mod truth_exposure;
 mod zotero_membership;
 mod zotero_scope_impacts;
@@ -274,6 +277,10 @@ mod thing_map_test;
 mod thing_merge_test;
 #[cfg(test)]
 mod things_test;
+#[cfg(test)]
+mod topic_filing_test;
+#[cfg(test)]
+mod trust_scan_test;
 #[cfg(test)]
 mod tx_rollback_test;
 
@@ -1585,6 +1592,8 @@ pub const EMBEDDING_DIM: usize = 768;
 /// quick captures into the `memory` namespace.
 /// Migration 145 adds `chat_reminders` (one `chat.reminder` history entry per
 /// in-chat reminder).
+/// Migration 160 adds `memory_entities.writer` / `created_at` and
+/// `memory_topic_changes` (db/topic_filing.rs).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1592,7 +1601,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 158;
+pub const SCHEMA_VERSION: u32 = 160;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10873,6 +10882,24 @@ impl MemoryDB {
             }
             if version < 158 {
                 self.migrate_158_dream_reading(version).await?;
+            }
+
+            // Migration 159 keeps the latest nightly trust scan report.
+            // See db/trust_scan.rs.
+            if ceiling < 159 {
+                return Ok(());
+            }
+            if version < 159 {
+                self.migrate_159_trust_scan_reports(version).await?;
+            }
+
+            // Migration 160: who wrote each topic link, and the log of
+            // main-topic changes. See db/topic_filing.rs.
+            if ceiling < 160 {
+                return Ok(());
+            }
+            if version < 160 {
+                self.migrate_160_topic_filing(version).await?;
             }
         }
 
@@ -38904,9 +38931,14 @@ impl MemoryDB {
                 // rows, undercounting the legacy `memories.entity_id` column
                 // the UPDATE above also moves.
                 conn.execute(
-                    "INSERT OR IGNORE INTO memory_entities (memory_id, entity_id)
-                     SELECT memory_id, ?1 FROM memory_entities WHERE entity_id = ?2",
-                    libsql::params![canonical_id, alias_id],
+                    "INSERT OR IGNORE INTO memory_entities (memory_id, entity_id, writer, created_at)
+                     SELECT memory_id, ?1, ?3, ?4 FROM memory_entities WHERE entity_id = ?2",
+                    libsql::params![
+                        canonical_id,
+                        alias_id,
+                        topic_filing::writer::MERGE,
+                        chrono::Utc::now().timestamp()
+                    ],
                 )
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("merge_entities memory links: {e}")))?;
@@ -39866,7 +39898,7 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("archive_entity begin: {e}")))?;
         let result = self
-            .archive_entity_in_transaction(&conn, entity_id, &now)
+            .archive_entity_in_transaction(&conn, entity_id, &now, "archive_entity")
             .await;
         match result {
             Ok(archived) => {
@@ -39889,11 +39921,17 @@ impl MemoryDB {
     /// graph half-archived if it failed partway, and each commit costs a
     /// separate fsync. The caller owns the transaction and the connection
     /// guard, so this must never `BEGIN`, `COMMIT`, or `ROLLBACK`.
+    ///
+    /// The memories whose main topic was this entity are re-filed onto
+    /// their first other shown topic, or left with none (UX-GRAPH-8); each
+    /// move is logged under `writer` and [`Self::restore_entity`] puts them
+    /// back.
     async fn archive_entity_in_transaction(
         &self,
         conn: &libsql::Connection,
         entity_id: &str,
         now: &chrono::DateTime<chrono::Utc>,
+        writer: &str,
     ) -> Result<bool, WenlanError> {
         let Some(page_id) = entity_page_adapter::page_id_for_entity(conn, entity_id).await? else {
             return Ok(false);
@@ -39917,6 +39955,7 @@ impl MemoryDB {
         self.retract_entity_incident_edges_in_transaction(conn, entity_id, Some(entity_id))
             .await
             .map_err(|e| WenlanError::VectorDb(format!("archive_entity edges: {e}")))?;
+        Self::refile_memories_off_entity_on(conn, entity_id, writer).await?;
         Ok(true)
     }
 
@@ -39985,6 +40024,10 @@ impl MemoryDB {
             Self::append_page_history(conn, &page_id, "restore", now.timestamp())
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("restore_entity history: {e}")))?;
+            // The memories re-filed because it was archived -- by its own
+            // archive or by a repair pass -- come back (UX-GRAPH-8). The
+            // #708 auto-restore runs through here too.
+            Self::undo_archive_refiles_on(conn, entity_id).await?;
 
             let mut rows = conn
                 .query(
@@ -40148,8 +40191,13 @@ impl MemoryDB {
                 for entity_id in &chunk {
                     let changed = match action {
                         EntityBulkAction::Archive => {
-                            self.archive_entity_in_transaction(&conn, entity_id, &now)
-                                .await?
+                            self.archive_entity_in_transaction(
+                                &conn,
+                                entity_id,
+                                &now,
+                                "bulk_entity_lifecycle",
+                            )
+                            .await?
                         }
                         EntityBulkAction::Restore => {
                             self.restore_entity_in_transaction(&conn, entity_id, &now)
@@ -40267,7 +40315,12 @@ impl MemoryDB {
                     .await?;
                     for entity_id in &eligible {
                         if self
-                            .archive_entity_in_transaction(&conn, entity_id, &now)
+                            .archive_entity_in_transaction(
+                                &conn,
+                                entity_id,
+                                &now,
+                                "archive_idle_entities",
+                            )
                             .await?
                         {
                             done += 1;
@@ -40845,45 +40898,11 @@ impl MemoryDB {
         &self,
         candidates: &[&str],
     ) -> Result<std::collections::HashSet<String>, WenlanError> {
-        let mut hubs = std::collections::HashSet::new();
         if candidates.is_empty() {
-            return Ok(hubs);
+            return Ok(std::collections::HashSet::new());
         }
         let conn = self.conn.lock().await;
-        let count = |sql: &'static str, params: Vec<libsql::Value>| {
-            let conn = &conn;
-            async move {
-                let mut rows = conn
-                    .query(sql, params)
-                    .await
-                    .map_err(|e| WenlanError::VectorDb(format!("hub_entity_ids: {e}")))?;
-                let n = match rows
-                    .next()
-                    .await
-                    .map_err(|e| WenlanError::VectorDb(format!("hub_entity_ids: {e}")))?
-                {
-                    Some(row) => row.get::<i64>(0).unwrap_or(0),
-                    None => 0,
-                };
-                Ok::<i64, WenlanError>(n)
-            }
-        };
-        let total = count(
-            "SELECT COUNT(DISTINCT memory_id) FROM memory_entities",
-            Vec::new(),
-        )
-        .await?;
-        for id in candidates {
-            let links = count(
-                "SELECT COUNT(*) FROM memory_entities WHERE entity_id = ?1",
-                vec![libsql::Value::Text((*id).to_string())],
-            )
-            .await?;
-            if is_hub_entity(links, total) {
-                hubs.insert((*id).to_string());
-            }
-        }
-        Ok(hubs)
+        Self::hub_subset_on(&conn, candidates).await
     }
 
     /// Repair for the first run of [`Self::unfile_old_hub_links_once`],
@@ -41081,12 +41100,16 @@ impl MemoryDB {
                     .map(|i| format!("?{i}"))
                     .collect::<Vec<_>>()
                     .join(",");
-                // A topic still shown wins over an archived one.
+                // Only a topic still shown counts as the specific one: an
+                // archived topic is never a main topic (UX-GRAPH-8), and a
+                // memory left with only archived specific links keeps its
+                // hub link.
                 let specific = |memory: &str| {
                     format!(
                         "SELECT o.entity_id FROM memory_entities o
                           WHERE o.memory_id = {memory} AND o.entity_id NOT IN ({marks})
-                          ORDER BY {ARCHIVED_TOPIC_SQL}, o.rowid LIMIT 1"
+                            AND {ACTIVE_LINK_SQL}
+                          ORDER BY o.rowid LIMIT 1"
                     )
                 };
                 let with_hubs = |first: libsql::Value| {
@@ -41134,12 +41157,18 @@ impl MemoryDB {
                 }
                 drop(rows);
                 for (source_id, _, to) in &moved {
-                    conn.execute(
-                        "UPDATE memories SET entity_id = ?1 WHERE source_id = ?2",
-                        libsql::params![to.clone(), source_id.clone()],
+                    Self::set_primary_topic_on(
+                        &conn,
+                        source_id,
+                        Some(to.as_str()),
+                        if once {
+                            "unfile_old_hub_links"
+                        } else {
+                            "unfile_hub_links_daily"
+                        },
+                        topic_filing::reason::HUB_PRIMARY,
                     )
-                    .await
-                    .map_err(query_err)?;
+                    .await?;
                 }
                 for (memory_id, hub) in &removed {
                     conn.execute(
@@ -41197,6 +41226,21 @@ impl MemoryDB {
         source_id: &str,
         entity_id: &str,
     ) -> Result<u64, WenlanError> {
+        self.update_memory_entity_id_as(source_id, entity_id, "unnamed")
+            .await
+    }
+
+    /// [`Self::update_memory_entity_id`] naming the writer recorded on the
+    /// link (UX-GRAPH-8). The link is always written; the entity becomes
+    /// the memory's main topic only when it is shown (active) once the link
+    /// is in -- an archived topic is never a main topic. A move off an
+    /// earlier main topic is logged in `memory_topic_changes`.
+    pub async fn update_memory_entity_id_as(
+        &self,
+        source_id: &str,
+        entity_id: &str,
+        writer: &str,
+    ) -> Result<u64, WenlanError> {
         let min_memories = entity_establish_min_memories();
         let conn = self.conn.lock().await;
         conn.execute("BEGIN", ())
@@ -41204,22 +41248,29 @@ impl MemoryDB {
             .map_err(|e| WenlanError::VectorDb(format!("update_memory_entity_id BEGIN: {e}")))?;
 
         let result: Result<u64, WenlanError> = async {
-            let updated = conn
-                .execute(
-                    "UPDATE memories SET entity_id = ?1 WHERE source_id = ?2",
-                    libsql::params![entity_id, source_id],
+            let mut rows = conn
+                .query(
+                    "SELECT COUNT(*) FROM memories WHERE source_id = ?1",
+                    libsql::params![source_id],
                 )
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("update_memory_entity_id: {}", e)))?;
+            let updated =
+                match rows.next().await.map_err(|e| {
+                    WenlanError::VectorDb(format!("update_memory_entity_id row: {e}"))
+                })? {
+                    Some(row) => u64::try_from(row.get::<i64>(0).unwrap_or(0)).unwrap_or(0),
+                    None => 0,
+                };
+            drop(rows);
             if updated > 0 {
                 conn.execute(
-                    "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, ?2) ON CONFLICT DO NOTHING",
-                    libsql::params![source_id, entity_id],
+                    "INSERT INTO memory_entities (memory_id, entity_id, writer, created_at)
+                     VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING",
+                    libsql::params![source_id, entity_id, writer, chrono::Utc::now().timestamp()],
                 )
                 .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("update_memory_entity_id link: {e}"))
-                })?;
+                .map_err(|e| WenlanError::VectorDb(format!("update_memory_entity_id link: {e}")))?;
                 self.maybe_establish_entity_in_transaction(
                     &conn,
                     entity_id,
@@ -41227,6 +41278,16 @@ impl MemoryDB {
                     min_memories,
                 )
                 .await?;
+                if Self::entity_is_active_on(&conn, entity_id).await? {
+                    Self::set_primary_topic_on(
+                        &conn,
+                        source_id,
+                        Some(entity_id),
+                        writer,
+                        topic_filing::reason::LINKED,
+                    )
+                    .await?;
+                }
             }
             Ok(updated)
         }
@@ -41394,6 +41455,18 @@ impl MemoryDB {
         memory_source_id: &str,
         entity_ids: &[&str],
     ) -> Result<(), WenlanError> {
+        self.link_memory_entities_as(memory_source_id, entity_ids, "unnamed")
+            .await
+    }
+
+    /// [`Self::link_memory_entities`] naming the writer recorded on each
+    /// link (UX-GRAPH-8).
+    pub async fn link_memory_entities_as(
+        &self,
+        memory_source_id: &str,
+        entity_ids: &[&str],
+        writer: &str,
+    ) -> Result<(), WenlanError> {
         if entity_ids.is_empty() {
             return Ok(());
         }
@@ -41409,8 +41482,14 @@ impl MemoryDB {
         let result: Result<(), WenlanError> = async {
             for eid in entity_ids {
                 conn.execute(
-                    "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, ?2) ON CONFLICT DO NOTHING",
-                    libsql::params![memory_source_id, *eid],
+                    "INSERT INTO memory_entities (memory_id, entity_id, writer, created_at)
+                     VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING",
+                    libsql::params![
+                        memory_source_id,
+                        *eid,
+                        writer,
+                        chrono::Utc::now().timestamp()
+                    ],
                 )
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("link_memory_entities INSERT: {e}")))?;
@@ -41827,7 +41906,9 @@ impl MemoryDB {
             };
 
             let mut entity_ids: HashMap<String, String> = HashMap::new();
-            let mut first_entity_id: Option<String> = None;
+            // In the order the model listed them: the first shown, specific
+            // one becomes the memory's main topic (UX-GRAPH-8).
+            let mut listed_ids: Vec<String> = Vec::new();
             for (lower, name, entity_type, embedding, minhash_candidate, raw_type) in
                 &prepared_entities
             {
@@ -42053,8 +42134,8 @@ impl MemoryDB {
                     WenlanError::VectorDb(format!("entity enrichment alias shadow: {e}"))
                 })?;
 
-                if first_entity_id.is_none() {
-                    first_entity_id = Some(entity_id.clone());
+                if !listed_ids.contains(&entity_id) {
+                    listed_ids.push(entity_id.clone());
                 }
                 entity_ids.insert(lower.clone(), entity_id);
             }
@@ -42435,11 +42516,27 @@ impl MemoryDB {
             }
 
             let establish_min = entity_establish_min_memories();
-            for entity_id in entity_ids.values() {
+            // UX-GRAPH-8: a hub topic is never linked here. A memory that
+            // names only the hub stays unfiled and eligible for a vector link,
+            // instead of growing the hub.
+            // An archived topic may be linked but is never the main topic.
+            let listed_refs: Vec<&str> = listed_ids.iter().map(String::as_str).collect();
+            let hubs = Self::hub_subset_on(&conn, &listed_refs).await?;
+            let to_link: Vec<String> = listed_ids
+                .iter()
+                .filter(|id| !hubs.contains(id.as_str()))
+                .cloned()
+                .collect();
+            for entity_id in &to_link {
                 conn.execute(
-                    "INSERT INTO memory_entities (memory_id, entity_id)
-                     VALUES (?1, ?2) ON CONFLICT DO NOTHING",
-                    libsql::params![source_id, entity_id.as_str()],
+                    "INSERT INTO memory_entities (memory_id, entity_id, writer, created_at)
+                     VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING",
+                    libsql::params![
+                        source_id,
+                        entity_id.as_str(),
+                        topic_filing::writer::ENTITY_ENRICHMENT,
+                        chrono::Utc::now().timestamp()
+                    ],
                 )
                 .await
                 .map_err(|e| {
@@ -42456,16 +42553,36 @@ impl MemoryDB {
                 )
                 .await?;
             }
-            if let Some(first_entity_id) = first_entity_id {
-                conn.execute(
-                    "UPDATE memories SET entity_id = ?1 WHERE source_id = ?2",
-                    libsql::params![first_entity_id.as_str(), source_id],
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("entity enrichment legacy link: {e}"))
-                })?;
+            // The main topic: the first shown topic just linked; else the
+            // current one when it is still shown; else the memory's first
+            // shown link; else none.
+            let mut primary: Option<String> = None;
+            for entity_id in &to_link {
+                if Self::entity_is_active_on(&conn, entity_id).await? {
+                    primary = Some(entity_id.clone());
+                    break;
+                }
             }
+            if primary.is_none() {
+                let current = Self::primary_topic_on(&conn, source_id).await?.flatten();
+                primary = match current {
+                    Some(current) if Self::entity_is_active_on(&conn, &current).await? => {
+                        Some(current)
+                    }
+                    _ => {
+                        let all_hubs = Self::hub_ids_on(&conn).await?;
+                        Self::first_active_topic_on(&conn, source_id, None, &all_hubs).await?
+                    }
+                };
+            }
+            Self::set_primary_topic_on(
+                &conn,
+                source_id,
+                primary.as_deref(),
+                topic_filing::writer::ENTITY_ENRICHMENT,
+                topic_filing::reason::RE_EXTRACTED,
+            )
+            .await?;
 
             let steps: &[&str] = if complete_entity_link {
                 &["entity_link", "entity_extract"]
@@ -42569,6 +42686,7 @@ impl MemoryDB {
         source_id: &str,
         expected_version: i64,
         entity_id: &str,
+        file_under: bool,
     ) -> Result<bool, WenlanError> {
         let now = chrono::Utc::now().timestamp();
         let conn = self.conn.lock().await;
@@ -42613,9 +42731,14 @@ impl MemoryDB {
             }
 
             conn.execute(
-                "INSERT INTO memory_entities (memory_id, entity_id)
-                 VALUES (?1, ?2) ON CONFLICT DO NOTHING",
-                libsql::params![source_id, entity_id],
+                "INSERT INTO memory_entities (memory_id, entity_id, writer, created_at)
+                 VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING",
+                libsql::params![
+                    source_id,
+                    entity_id,
+                    topic_filing::writer::ENTITY_LINK,
+                    chrono::Utc::now().timestamp()
+                ],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("entity link junction: {e}")))?;
@@ -42627,12 +42750,18 @@ impl MemoryDB {
                 entity_establish_min_memories(),
             )
             .await?;
-            conn.execute(
-                "UPDATE memories SET entity_id=?1 WHERE source_id=?2",
-                libsql::params![entity_id, source_id],
-            )
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("entity link mirror: {e}")))?;
+            // The guard above checked the entity is shown. A hub is linked
+            // but never made the main topic (UX-GRAPH-8).
+            if file_under {
+                Self::set_primary_topic_on(
+                    &conn,
+                    source_id,
+                    Some(entity_id),
+                    topic_filing::writer::ENTITY_LINK,
+                    topic_filing::reason::LINKED,
+                )
+                .await?;
+            }
 
             for (step, status) in [("entity_link", "ok"), ("entity_extract", "ok")] {
                 conn.execute(
@@ -42931,9 +43060,23 @@ impl MemoryDB {
             existing_entity_id,
         } = candidate;
 
-        if let Some(entity_id) = existing_entity_id {
+        if let Some(mut entity_id) = existing_entity_id {
+            // The candidate query may pick a shown hub link before a
+            // specific one; the specific one is the main topic, and a
+            // memory linked only to hubs gets none (UX-GRAPH-8).
+            let mut file_under = true;
+            if self
+                .hub_entity_ids(&[&entity_id])
+                .await?
+                .contains(&entity_id)
+            {
+                match self.first_active_topic(&source_id).await? {
+                    Some(specific) => entity_id = specific,
+                    None => file_under = false,
+                }
+            }
             if !self
-                .commit_entity_link_at_version(&source_id, expected_version, &entity_id)
+                .commit_entity_link_at_version(&source_id, expected_version, &entity_id, file_under)
                 .await?
             {
                 log::info!(
@@ -42980,13 +43123,20 @@ impl MemoryDB {
             };
             match search {
                 Ok(entities) => {
-                    if let Some(entity) = entities.iter().find(|entity| entity.distance < distance)
-                    {
+                    // Same rule as reweave and `auto_link_entity`: closeness
+                    // to a hub topic is not a reason to file under it.
+                    let candidates: Vec<&str> =
+                        entities.iter().map(|e| e.entity.id.as_str()).collect();
+                    let hubs = self.hub_entity_ids(&candidates).await?;
+                    if let Some(entity) = entities.iter().find(|entity| {
+                        entity.distance < distance && !hubs.contains(&entity.entity.id)
+                    }) {
                         if !self
                             .commit_entity_link_at_version(
                                 &source_id,
                                 expected_version,
                                 &entity.entity.id,
+                                true,
                             )
                             .await?
                         {
@@ -60077,82 +60227,11 @@ impl MemoryDB {
         })?;
 
         let cleanup_result: Result<usize, WenlanError> = async {
-            let mut affected_pages: HashMap<String, HashSet<String>> = HashMap::new();
-            // G6 Stage 2 PR 2b: the orphan inventory used to scan
-            // `page_sources` -- it's frozen now (no PR writes new rows past
-            // this point), so a memory deleted after the flip would mint no
-            // fresh legacy row and this sweep would never see the orphan.
-            // Scans `edges` directly instead.
-            let mut orphan_rows = conn
-                .query(
-                    "SELECT src_id, dst_id
-                     FROM edges
-                     WHERE edge_type = 'cites' AND src_kind = 'page' AND dst_kind = 'memory'
-                       AND valid_until IS NULL
-                       AND NOT EXISTS (
-                           SELECT 1 FROM memories m
-                           WHERE m.source != 'episode'
-                             AND (m.source_id = edges.dst_id OR m.id = edges.dst_id)
-                       )",
-                    (),
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("cleanup_orphaned_page_sources inventory: {e}"))
-                })?;
-            while let Some(row) = orphan_rows.next().await.map_err(|e| {
-                WenlanError::VectorDb(format!("cleanup_orphaned_page_sources inventory row: {e}"))
-            })? {
-                let page_id = row.get::<String>(0).map_err(|e| {
-                    WenlanError::VectorDb(format!("cleanup_orphaned_page_sources page id: {e}"))
-                })?;
-                let locator = row.get::<String>(1).map_err(|e| {
-                    WenlanError::VectorDb(format!("cleanup_orphaned_page_sources locator: {e}"))
-                })?;
-                affected_pages.entry(page_id).or_default().insert(locator);
-            }
-            drop(orphan_rows);
-
-            // Legacy JSON may contain provenance that never received a join row.
-            // Inventory it independently so JSON-only ghosts cannot survive the
-            // canonical orphan sweep.
-            let mut json_orphan_rows = conn
-                .query(
-                    "SELECT p.id, CAST(legacy_source.value AS TEXT)
-                     FROM pages p,
-                          json_each(COALESCE(p.source_memory_ids, '[]')) legacy_source
-                     WHERE NOT EXISTS (
-                         SELECT 1 FROM memories m
-                         WHERE m.source != 'episode'
-                           AND (m.source_id = CAST(legacy_source.value AS TEXT)
-                                OR m.id = CAST(legacy_source.value AS TEXT))
-                     )",
-                    (),
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources JSON inventory: {e}"
-                    ))
-                })?;
-            while let Some(row) = json_orphan_rows.next().await.map_err(|e| {
-                WenlanError::VectorDb(format!(
-                    "cleanup_orphaned_page_sources JSON inventory row: {e}"
-                ))
-            })? {
-                let page_id = row.get::<String>(0).map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources JSON page id: {e}"
-                    ))
-                })?;
-                let locator = row.get::<String>(1).map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources JSON locator: {e}"
-                    ))
-                })?;
-                affected_pages.entry(page_id).or_default().insert(locator);
-            }
-            drop(json_orphan_rows);
+            // The inventory is shared with the nightly trust scan, so its
+            // report names exactly what this sweep removes. It scans `edges`
+            // (G6 Stage 2 PR 2b: `page_sources` is frozen) and the legacy JSON
+            // list independently, so JSON-only ghosts cannot survive.
+            let affected_pages = trust_scan::orphan_source_inventory(&conn).await?.pages;
 
             // G6 Stage 2 PR 2b: the `page_sources`/`page_evidence` DELETE
             // sweeps that used to run here stop -- both tables are frozen.

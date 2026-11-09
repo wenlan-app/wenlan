@@ -132,15 +132,28 @@ const USER_LINE_HISTORY: i64 = 200;
 /// The refusal code for a machine write to an original's page.
 const ORIGINAL_PAGE_READ_ONLY: &str = "original_page_is_read_only";
 
-/// A page made from an original (`creation_kind = "original"`: an artifact
-/// or canvas kept from an imported chat) is never rewritten by a machine.
-/// Later facts can only annotate it. A person may still edit it, and the
-/// mechanical `[[link]]` rewrite after a rename still lands, as it changes
-/// link targets only; the kept file under `originals/` is never touched.
-fn refuses_machine_rewrite(writer: Writer<'_>, page: &crate::pages::Page) -> bool {
-    page.creation_kind == "original"
-        && writer.is_machine()
-        && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
+/// A page made from an original (`creation_kind = "original"`: an artifact,
+/// canvas or HTML page kept from a chat) is never rewritten by a machine
+/// (UX-ART-3). Later facts can only add a note: an agent may send the page
+/// as it is with a note added after it, and nothing else. A pipeline never
+/// writes it. A person may still edit it, and the mechanical `[[link]]`
+/// rewrite after a rename still lands, as it changes link targets only; the
+/// kept file under `originals/` is never touched.
+fn refuses_machine_rewrite(writer: Writer<'_>, page: &crate::pages::Page, content: &str) -> bool {
+    if page.creation_kind != "original" || !writer.is_machine() {
+        return false;
+    }
+    match writer {
+        Writer::Pipeline(PipelineStage::LinkRename) => false,
+        Writer::Agent(_) => !only_adds_a_note(&page.content, content),
+        _ => true,
+    }
+}
+
+/// Whether `new` is `current` unchanged with something added after it.
+pub(crate) fn only_adds_a_note(current: &str, new: &str) -> bool {
+    let kept = current.trim_end();
+    new.starts_with(kept) && !new[kept.len()..].trim().is_empty()
 }
 
 pub fn page_is_human_owned(page: &crate::pages::Page) -> bool {
@@ -1213,10 +1226,11 @@ async fn update_page_db_impl(
             if !in_space_guard(basis, &current) {
                 return Err(page_not_in_space(page_id));
             }
-            if refuses_machine_rewrite(writer, &current) {
+            if refuses_machine_rewrite(writer, &current, &req.content) {
                 return Err(WenlanError::Validation(format!(
                     "{ORIGINAL_PAGE_READ_ONLY}: page '{page_id}' keeps an original the AI made \
-                     in a chat; it is not rewritten. Add an annotation instead."
+                     in a chat; it is not rewritten. To add a note, send the page exactly as it \
+                     is with the note added after it."
                 )));
             }
             if machine_empty_sources && !current.source_memory_ids.is_empty() {
@@ -1618,10 +1632,12 @@ async fn update_page_db_impl(
                     )));
                 }
             }
-            // Damage guard: a machine rewrite that brings in broken
-            // characters, a chat preamble or a repeated paragraph does not
-            // land, and neither does an LLM rewrite that stops mid-sentence.
-            // Only what this write introduced counts.
+            // Damage guard (UX-WHO-8): a machine rewrite that brings in
+            // broken characters, a chat preamble or a repeated paragraph does
+            // not land. A background pass is also refused when it stops
+            // mid-sentence, leaves half a link or loses most of the page's
+            // CJK text; an agent's write (a translation the person asked for)
+            // is not. Only what this write introduced counts.
             if writer.is_llm_rewrite() || matches!(writer, Writer::Agent(_)) {
                 if let Some(reason) = crate::retrieval::integrity::rewrite_damage(
                     &current.content,

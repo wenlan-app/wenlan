@@ -2207,11 +2207,16 @@ pub fn spawn_scheduler(
                 if one_time_cleanup_tries_left > 0 {
                     one_time_cleanup_tries_left -= 1;
                     let report = wenlan_core::housekeeping::run_one_time_cleanups(&db).await;
-                    if report.hub_links_removed > 0 || report.duplicate_recaps_removed > 0 {
+                    if report.hub_links_removed > 0
+                        || report.duplicate_recaps_removed > 0
+                        || report.archived_primaries.moved + report.archived_primaries.unfiled > 0
+                    {
                         tracing::info!(
-                            "[scheduler] one-time cleanup: hub_links_removed={} duplicate_recaps_removed={}",
+                            "[scheduler] one-time cleanup: hub_links_removed={} duplicate_recaps_removed={} archived_primaries_moved={} archived_primaries_unfiled={}",
                             report.hub_links_removed,
                             report.duplicate_recaps_removed,
+                            report.archived_primaries.moved,
+                            report.archived_primaries.unfiled,
                         );
                     }
                     if report.errors.is_empty() {
@@ -2225,14 +2230,39 @@ pub fn spawn_scheduler(
                     wenlan_core::housekeeping::last_housekeeping_run(&db).await,
                     now_epoch,
                 ) {
+                    // The trust scan reads first, so its report names what
+                    // this run's orphaned-source cleanup is about to remove.
+                    match wenlan_core::trust_scan::run_and_store(
+                        &db,
+                        Some(knowledge_path.as_path()),
+                        now_epoch,
+                    )
+                    .await
+                    {
+                        Ok(scan) => tracing::info!(
+                            "[scheduler] trust scan: pages={} damaged={} cjk_losses={} source_mismatches={} sourceless={} dangling_links={} dangling_listed={} outside_edit_false_positives={:?} backfill_give_ups={} errors={:?}",
+                            scan.counts.pages_scanned,
+                            scan.damaged_pages.len(),
+                            scan.counts.cjk_losses,
+                            scan.counts.source_mismatches,
+                            scan.counts.sourceless_pages,
+                            scan.counts.dangling_links,
+                            scan.counts.dangling_listed,
+                            scan.counts.outside_edit_false_positives,
+                            scan.counts.backfill_give_ups,
+                            scan.errors,
+                        ),
+                        Err(error) => tracing::warn!("[scheduler] trust scan not stored: {error}"),
+                    }
                     let report = wenlan_core::housekeeping::run_housekeeping(&db, now_epoch).await;
                     tracing::info!(
-                        "[scheduler] housekeeping: decayed={} promoted={} rejections_pruned={} orphaned_page_sources={} hub_links_removed={} evicted={} errors={:?}",
+                        "[scheduler] housekeeping: decayed={} promoted={} rejections_pruned={} orphaned_page_sources={} hub_links_removed={} archived_primaries_refiled={} evicted={} errors={:?}",
                         report.memories_decayed,
                         report.memories_promoted,
                         report.rejections_pruned,
                         report.orphaned_page_sources,
                         report.hub_links_removed,
+                        report.archived_primaries_refiled,
                         report.memories_evicted,
                         report.errors,
                     );

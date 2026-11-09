@@ -17,6 +17,7 @@ import {
 } from "../components/memory/activityCopy";
 
 import { enSessionSource, hansSessionSource, hantSessionSource } from "../components/memory/sessions/sessionCopy";
+import { enOriginalPage, hansOriginalPage, hantOriginalPage } from "../components/memory/page/original/originalCopy";
 import { enRepoWiki, hansRepoWiki, hantRepoWiki } from "../components/memory/space-detail/repoWikiCopy";
 import { enSourceAccess, hansSourceAccess, hantSourceAccess } from "../components/memory/sources/sourceAccessCopy";
 import { enSourceContainer, hansSourceContainer, hantSourceContainer } from "../components/memory/sources/sourceContainerCopy";
@@ -2022,7 +2023,7 @@ const en = {
     proposalOpen: "this is still open",
     proposalUse: "Use this",
     proposalNo: "No",
-    untitledConversation: "Untitled conversation",
+    conversationIn: "{{tool}} conversation",
     move: "Move",
     moveTo: "Move “{{title}}” to",
     newThing: "Start new",
@@ -3316,6 +3317,7 @@ const en = {
 },
   activityStatus: enActivityStatus,
   sessionSource: enSessionSource,
+  originalPage: enOriginalPage,
   repoWiki: enRepoWiki,
 };
 
@@ -5283,7 +5285,7 @@ const zhHans = {
     proposalOpen: "这还没定",
     proposalUse: "换成这个",
     proposalNo: "不用",
-    untitledConversation: "没有标题的对话",
+    conversationIn: "{{tool}} 的对话",
     move: "移到…",
     moveTo: "把「{{title}}」移到",
     newThing: "新的一件事",
@@ -6552,6 +6554,7 @@ const zhHans = {
 },
   activityStatus: hansActivityStatus,
   sessionSource: hansSessionSource,
+  originalPage: hansOriginalPage,
   repoWiki: hansRepoWiki,
 };
 
@@ -8519,7 +8522,7 @@ const zhHant = {
     proposalOpen: "這還沒定",
     proposalUse: "換成這個",
     proposalNo: "不用",
-    untitledConversation: "沒有標題的對話",
+    conversationIn: "{{tool}} 的對話",
     move: "移到…",
     moveTo: "把「{{title}}」移到",
     newThing: "新的一件事",
@@ -9788,6 +9791,7 @@ const zhHant = {
 },
   activityStatus: hantActivityStatus,
   sessionSource: hantSessionSource,
+  originalPage: hantOriginalPage,
   repoWiki: hantRepoWiki,
 };
 

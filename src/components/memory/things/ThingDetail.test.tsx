@@ -73,6 +73,16 @@ describe("ThingDetail", () => {
     expect(onOpenPage).toHaveBeenCalledWith("page-1");
   });
 
+  it("a conversation nothing could name is named by its AI tool, never untitled", async () => {
+    vi.mocked(getThing).mockResolvedValue({
+      ...tagline,
+      sessions: [{ id: "ses_c", tool: "claude-desktop", title: null, last_write_at: now - 1500 }],
+    });
+    renderThing();
+    expect(await screen.findByText("Claude Desktop conversation")).toBeTruthy();
+    expect(screen.queryByText(/untitled/i)).toBeNull();
+  });
+
   it("UX-VIEW-6: the short text is a recap in a fixed order: where it stands, decided, background", async () => {
     vi.mocked(getThing).mockResolvedValue({
       ...tagline,

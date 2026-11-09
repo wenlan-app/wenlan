@@ -143,11 +143,16 @@ pub fn looks_cut_off(body: &str) -> bool {
 /// Each class was found in real pages written by on-device models
 /// (2026-11-04): lost characters shown as U+FFFD, a chat preamble as the
 /// first line, a page body appended to itself, and rewrites that stopped
-/// mid-sentence. `check_end` is false for writers that may legitimately end
-/// a page without punctuation.
-pub fn rewrite_damage(old: &str, new: &str, check_end: bool) -> Option<&'static str> {
-    let fffd = |s: &str| s.chars().filter(|&c| c == '\u{FFFD}').count();
-    if fffd(new) > fffd(old) {
+/// mid-sentence.
+///
+/// Broken characters, a preamble and a repeated paragraph are refused from
+/// every AI writer. `background` is true for a background machine pass
+/// (distill, re-distill, page growth, refinery merge): it is also refused
+/// when it stops mid-sentence, leaves half a `[[link]]`, or loses most of the
+/// page's Chinese, Japanese or Korean text. An agent writing for the person
+/// may end a page without punctuation or translate it on request (UX-WHO-8).
+pub fn rewrite_damage(old: &str, new: &str, background: bool) -> Option<&'static str> {
+    if broken_char_count(new) > broken_char_count(old) {
         return Some("it contains broken characters");
     }
     if starts_with_preamble(new) && !starts_with_preamble(old) {
@@ -156,10 +161,112 @@ pub fn rewrite_damage(old: &str, new: &str, check_end: bool) -> Option<&'static 
     if repeats_a_block(old, new) {
         return Some("it repeats a whole paragraph");
     }
-    if check_end && looks_cut_off(new) && !looks_cut_off(old) {
+    if !background {
+        return None;
+    }
+    if looks_cut_off(new) && !looks_cut_off(old) {
         return Some("it stops mid-sentence");
     }
+    if half_wiki_link(new).is_some() && half_wiki_link(old).is_none() {
+        return Some("it leaves half a link");
+    }
+    if drops_most_cjk(old, new) {
+        return Some("it drops most of the page's Chinese, Japanese or Korean text");
+    }
     None
+}
+
+/// Pages with fewer CJK characters than this are too short to judge a loss.
+pub const CJK_LOSS_MIN: usize = 20;
+
+/// True for a Han, kana or Hangul character. Punctuation (`。`, `「`) is not
+/// counted: a lossy rewrite drops the words, and punctuation alone says nothing.
+pub fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF       // Hiragana, Katakana
+        | 0x3400..=0x4DBF     // CJK Extension A
+        | 0x4E00..=0x9FFF     // CJK Unified Ideographs
+        | 0xF900..=0xFAFF     // CJK Compatibility Ideographs
+        | 0x1100..=0x11FF     // Hangul Jamo
+        | 0x3130..=0x318F     // Hangul Compatibility Jamo
+        | 0xAC00..=0xD7AF     // Hangul Syllables
+        | 0x20000..=0x3134F   // CJK Extensions B-H
+    )
+}
+
+pub fn cjk_count(body: &str) -> usize {
+    body.chars().filter(|&c| is_cjk(c)).count()
+}
+
+pub fn broken_char_count(body: &str) -> usize {
+    body.chars().filter(|&c| c == '\u{FFFD}').count()
+}
+
+/// True when `new` keeps fewer than half of `old`'s CJK characters *and* CJK
+/// makes up less than half the share of the page it did. The share test keeps
+/// an honest shortening (a section cut, every script shrinking together) out:
+/// only a write whose CJK vanished while the rest stayed trips it — the shape
+/// of text lost to a bad encoding or a model that answered in another language.
+pub fn drops_most_cjk(old: &str, new: &str) -> bool {
+    let before = cjk_count(old);
+    if before < CJK_LOSS_MIN {
+        return false;
+    }
+    let after = cjk_count(new);
+    if after * 2 >= before {
+        return false;
+    }
+    let (old_len, new_len) = (old.chars().count(), new.chars().count());
+    // after/new_len < (before/old_len) / 2, kept in integers.
+    after * old_len * 2 < before * new_len
+}
+
+/// The first `[[` link opened and never closed on its line, as written: an
+/// interrupted write leaves `[[mem_e5c607eb6` at the end. Links do not span
+/// lines, so a `[[` with no `]]` before the next `[[` or the line end is cut.
+/// A `[[` inside inline code (`` `[[` to link a note ``) is text, not a link.
+pub fn half_wiki_link(body: &str) -> Option<&str> {
+    body.lines()
+        .flat_map(outside_inline_code)
+        .find_map(half_link_in)
+}
+
+fn half_link_in(text: &str) -> Option<&str> {
+    let mut rest = text;
+    while let Some(open) = rest.find("[[") {
+        let after = &rest[open + 2..];
+        let close = after.find("]]");
+        let next_open = after.find("[[");
+        match (close, next_open) {
+            (Some(c), Some(n)) if n < c => {
+                return Some(link_fragment(&rest[open..open + 2 + n]));
+            }
+            (Some(c), _) => rest = &after[c + 2..],
+            (None, _) => return Some(link_fragment(&rest[open..])),
+        }
+    }
+    None
+}
+
+/// The parts of `line` outside inline code spans, each a slice of `line`. A
+/// trailing unpaired backtick opens no span: the text after it is kept.
+fn outside_inline_code(line: &str) -> Vec<&str> {
+    let ticks: Vec<usize> = line.match_indices('`').map(|(at, _)| at).collect();
+    let mut parts = Vec::new();
+    let mut from = 0;
+    for pair in ticks.chunks_exact(2) {
+        parts.push(&line[from..pair[0]]);
+        from = pair[1] + 1;
+    }
+    parts.push(&line[from..]);
+    parts
+}
+
+fn link_fragment(s: &str) -> &str {
+    match s.char_indices().nth(48) {
+        Some((i, _)) => &s[..i],
+        None => s,
+    }
 }
 
 /// Openers a model uses when it answers instead of writing the page.
@@ -261,6 +368,112 @@ mod tests {
             None
         );
         assert_eq!(rewrite_damage("a\u{FFFD}b.", "a\u{FFFD}b c.", true), None);
+    }
+
+    // UX-WHO-8: an AI write never leaves a page broken. These pin the
+    // half-link and CJK-loss checks, and who they apply to.
+    const ZH: &str = "混合搜尋把關鍵字和向量的結果合在一起，再依照和問題的距離重新排序，這樣找到的內容比較準確。";
+
+    #[test]
+    fn ux_who_8_a_background_pass_that_drops_most_cjk_is_refused() {
+        let page = format!("## 搜尋\n\n{ZH}");
+        // Same length, the Chinese replaced by question marks: lossy encoding.
+        let lost: String = page
+            .chars()
+            .map(|c| if is_cjk(c) { '?' } else { c })
+            .collect();
+        assert_eq!(
+            rewrite_damage(&page, &lost, true),
+            Some("it drops most of the page's Chinese, Japanese or Korean text")
+        );
+        // An English answer in place of the Chinese page trips it too.
+        assert_eq!(
+            rewrite_damage(
+                &page,
+                "## Search\n\nHybrid search fuses keyword and vector results, then reranks them.",
+                true
+            ),
+            Some("it drops most of the page's Chinese, Japanese or Korean text")
+        );
+    }
+
+    #[test]
+    fn ux_who_8_an_agent_translation_lands_but_broken_characters_do_not() {
+        let page = format!("## 搜尋\n\n{ZH}");
+        // The person asked their AI tool for an English version: it lands.
+        assert_eq!(
+            rewrite_damage(
+                &page,
+                "## Search\n\nHybrid search fuses keyword and vector results, then reranks them.",
+                false
+            ),
+            None
+        );
+        // Broken characters are refused from an agent too.
+        let broken = page.replacen("搜尋", "搜\u{FFFD}", 1);
+        assert_eq!(
+            rewrite_damage(&page, &broken, false),
+            Some("it contains broken characters")
+        );
+    }
+
+    #[test]
+    fn ux_who_8_a_background_pass_that_leaves_half_a_link_is_refused() {
+        let page = "## Notes\n\nSee [[mem_abc]] for the decision.";
+        let half = "## Notes\n\nSee [[mem_ab for the decision.";
+        assert_eq!(
+            rewrite_damage(page, half, true),
+            Some("it leaves half a link")
+        );
+        // An agent may write about the `[[` syntax itself.
+        assert_eq!(rewrite_damage(page, half, false), None);
+        // A half link the page already had does not lock it.
+        assert_eq!(
+            rewrite_damage(half, &format!("{half}\n\nMore."), true),
+            None
+        );
+    }
+
+    #[test]
+    fn rewrite_damage_lets_an_honest_cjk_shortening_through() {
+        let page = format!("## 搜尋\n\n{ZH}\n\n## 排序\n\n{ZH}\n\n## 其他\n\n{ZH}");
+        // Two of three sections cut: CJK falls by two thirds, but so does the page.
+        let shorter = format!("## 搜尋\n\n{ZH}");
+        assert_eq!(rewrite_damage(&page, &shorter, true), None);
+        // Mixed page that adds English keeps its Chinese.
+        let added = format!("{page}\n\nA short English note.");
+        assert_eq!(rewrite_damage(&page, &added, true), None);
+        // Too little CJK to judge.
+        assert_eq!(
+            rewrite_damage("Uses 搜尋 here.", "Uses search here.", true),
+            None
+        );
+    }
+
+    #[test]
+    fn cjk_count_skips_punctuation_and_counts_kana_and_hangul() {
+        assert_eq!(cjk_count("中文，「引號」。"), 4);
+        assert_eq!(cjk_count("ひらがなカタカナ한국어"), 11);
+        assert_eq!(cjk_count("plain ascii"), 0);
+    }
+
+    #[test]
+    fn half_wiki_link_finds_an_unclosed_link() {
+        assert_eq!(
+            half_wiki_link("See [[mem_e5c607eb6"),
+            Some("[[mem_e5c607eb6")
+        );
+        assert_eq!(
+            half_wiki_link("A [[mem_aaa and [[mem_bbb]] later."),
+            Some("[[mem_aaa and ")
+        );
+        assert_eq!(half_wiki_link("A [[mem_aaa]] and [[Page|label]]."), None);
+        // A link never spans lines.
+        assert_eq!(half_wiki_link("A [[mem_aaa\n]] next"), Some("[[mem_aaa"));
+        assert_eq!(half_wiki_link("no links"), None);
+        // `[[` quoted in inline code is text, but a half link beside it counts.
+        assert_eq!(half_wiki_link("Type `[[` to link a note."), None);
+        assert_eq!(half_wiki_link("Type `[[` then [[mem_ab"), Some("[[mem_ab"));
     }
 
     // ── body_shrink_ok ────────────────────────────────────────────────────────

@@ -80,6 +80,7 @@ pub mod telemetry_routes;
 pub mod theme_routes;
 pub mod things_intake;
 pub mod things_routes;
+pub mod trust_scan_routes;
 pub mod truth_guard;
 mod web_fetch;
 pub mod web_fetch_routes;

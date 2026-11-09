@@ -124,6 +124,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // Fixtures have no AI conversations; both answer with the quiet shape.
     "get_page_sessions",
     "get_session_detail",
+    // Fixtures keep no originals: no page names one.
+    "get_page_original",
     // Fixtures have no things: the list is empty and no id resolves.
     "list_things",
     "list_thing_night_points",
