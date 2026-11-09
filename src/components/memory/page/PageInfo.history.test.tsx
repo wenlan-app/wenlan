@@ -10,8 +10,9 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
 }));
 
 import PageInfo from "./PageInfo";
+import { entryForItem } from "./historyItems";
 
-const entry = (version: number): PageChangelogEntry => ({ version, at: 100 + version, edited_by: "manual_edit" });
+const entry = (version: number): PageChangelogEntry => ({ version, at: 100 + version, edited_by: "manual_edit", char_delta: 10 });
 
 // Versions 2–4 are one burst of saves; the daemon lists them once.
 const history: PageHistoryItem[] = [
@@ -44,10 +45,17 @@ describe("PageInfo history", () => {
   it("UX-HIST-3: a burst of saves counts as one revision", () => {
     setup();
     expect(screen.getByText(/2 revisions/)).toBeInTheDocument();
+    expect(screen.getByText("v2–v4")).toBeInTheDocument();
   });
 
   it("UX-HIST-3: a version inside a folded run still opens its change", () => {
     const { onOpenedVersion } = setup(3);
     expect(onOpenedVersion).toHaveBeenCalled();
+  });
+
+  it("UX-HIST-3: a folded run's summary adds up every save in it", () => {
+    const byVersion = new Map([1, 2, 3, 4].map((v) => [v, entry(v)] as const));
+    expect(entryForItem(history[0], byVersion)?.char_delta).toBe(30);
+    expect(entryForItem(history[1], byVersion)?.char_delta).toBe(10);
   });
 });
