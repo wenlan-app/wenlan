@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.21.3](https://github.com/wenlan-app/wenlan/compare/v0.21.2...v0.21.3) (2026-11-09)
+
+
+### Features
+
+* **originals:** keep the HTML an AI draws in a session and show it as it was ([#1216](https://github.com/wenlan-app/wenlan/issues/1216)) ([f937464](https://github.com/wenlan-app/wenlan/commit/f937464b4049232b254cbad979aa293edbf95844))
+* **spaces:** share a Space or one page with people through a folder ([#1210](https://github.com/wenlan-app/wenlan/issues/1210)) ([9ef664f](https://github.com/wenlan-app/wenlan/commit/9ef664fc5d19a4a613b7b5d36d31a0af0ddca053))
+
+
+### Bug Fixes
+
+* **topics:** code-shaped names go to review, and a name added by similarity stays a guess (UX-GRAPH-9) ([#1222](https://github.com/wenlan-app/wenlan/issues/1222)) ([3b156f8](https://github.com/wenlan-app/wenlan/commit/3b156f8c54d7e2b764e57688934610a856ad128e))
+* **topics:** file memories only under shown topics, and make every move undoable ([#1218](https://github.com/wenlan-app/wenlan/issues/1218)) ([26d92e6](https://github.com/wenlan-app/wenlan/commit/26d92e67ac6a25fa507e7c40307c1758c1cd12e4))
+
 ## [0.21.2](https://github.com/wenlan-app/wenlan/compare/v0.21.1...v0.21.2) (2026-11-08)
 
 

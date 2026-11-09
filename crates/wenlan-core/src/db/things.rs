@@ -1036,6 +1036,7 @@ impl MemoryDB {
             .map(|point| point.id)
             .collect();
         let unread = self.thing_unread_conversations(&thing.id).await?;
+        let tidied = self.thing_tidies(&thing.id).await?;
         Ok(Some(ThingDetailResponse {
             thing,
             sessions,
@@ -1045,6 +1046,7 @@ impl MemoryDB {
             dream,
             open_points,
             unread,
+            tidied,
         }))
     }
 

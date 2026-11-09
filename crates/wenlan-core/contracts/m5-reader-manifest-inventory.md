@@ -721,9 +721,13 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/things/{id}/merge` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/{id}/keep-apart` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/{id}/dream/undo` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `POST` | `/api/things/{id}/tidy/{memory_id}/undo` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/nights/undo` | main | no | not_applicable | `none` | — | NightsUndo: two counts only, no page prose |
 | `POST` | `/api/things/points/connect` | main | no | not_applicable | `none` | — | NightLinksBackfill: counts only, no page prose |
 | `POST` | `/api/things/points/connect/undo` | main | no | not_applicable | `none` | — | NightLinksBackfillUndo: a count only, no page prose |
+| `GET` | `/api/things/old-pass` | main | no | not_applicable | `none` | — | OldMemoryPassResponse: a time and counts only, no page prose |
+| `POST` | `/api/things/old-pass` | main | no | not_applicable | `none` | — | OldMemoryPass: a time and counts only, no page prose |
+| `POST` | `/api/things/old-pass/undo` | main | no | not_applicable | `none` | — | OldMemoryPassResponse: a time and counts only, no page prose |
 | `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
 | `POST` | `/api/pages/{id}/rename` | main | yes | automatic | `none` | `handle_rename_page` | title metadata — core page_write_permit before mutation |
@@ -1159,6 +1163,8 @@ carrying the authority of agreement.
 | `core/db/maintenance_duplicate_reads.rs::scan_near_duplicate_slice` | `pub(crate)` | no | no | — | — |
 | `core/db/maintenance_retro_scan.rs::scan_automatic_retro_stub_slice` | `pub(crate)` | no | no | — | — |
 | `core/db/night_links.rs::offerable_topics` | `private` | no | no | — | — |
+| `core/db/originals.rs::latest_original_titled` | `pub` | no | no | — | — |
+| `core/db/originals.rs::originals_replacing` | `pub` | no | no | — | — |
 | `core/db/page_basis.rs::linked_changed` | `pub` | no | **yes** | `server/page_routes.rs::handle_get_page` | — |
 | `core/db/page_basis.rs::list_basis_context` | `pub` | no | no | — | — |
 | `core/db/page_basis.rs::list_basis_pending` | `pub` | no | no | — | — |
@@ -1226,6 +1232,8 @@ carrying the authority of agreement.
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
 | `core/chat_check.rs::decision_source` | `private` | no | no | — | `core/db.rs::get_pages_for_memory` |
+| `core/chat_import/originals.rs::newest_version_of` | `private` | no | no | — | `core/db/originals.rs::latest_original_titled`, `core/db/originals.rs::originals_replacing` |
+| `core/chat_import/originals.rs::page_original` | `pub` | no | **yes** | `server/original_routes.rs::handle_get_page_original` | `core/db/originals.rs::originals_replacing` |
 | `core/db.rs::accept_page_merge` | `pub` | no | no | — | `core/db.rs::page_merge_row` |
 | `core/db.rs::add_entity_alias_in_scope` | `pub` | no | **yes** | `server/entity_graph_routes.rs::handle_add_entity_alias` | `core/db.rs::read_entity_page` |
 | `core/db.rs::append_page_history` | `private` | no | no | — | `core/db.rs::append_page_history_with_minor` |
@@ -1278,6 +1286,7 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::reconcile_supported_pages` | `pub` | no | **yes** | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::run_leased_page_linked_truth_promotion` | `pub(super)` | no | no | — | `core/db/claim_derivation.rs::derive_leased_page_claims`, `core/db/claim_derivation.rs::load_linked_memory_chunks`, `core/db/claim_derivation.rs::page_text_is_cut_off` |
 | `core/db/entity_alias_sources.rs::add_auto_alias` | `pub(super)` | no | no | — | `core/db/entity_alias_sources.rs::record_auto_alias_on` |
+| `core/db/linked_pages.rs::linked_pages_for_hits` | `pub` | no | **yes** | `server/memory_routes.rs::handle_search_memory_inner` | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
 | `core/db/night_links.rs::night_topics` | `pub` | no | **yes** | `server/things_intake.rs::connect_old_night_points`, `server/things_intake.rs::dream_with` | `core/db/night_links.rs::offerable_topics` |
 | `core/db/page_basis.rs::apply_card_mark` | `private` | no | no | — | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::basis_diff_in_scope` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_basis_diff` | `core/db/page_basis.rs::load_facts` |
@@ -1379,6 +1388,9 @@ carrying the authority of agreement.
 | `core/chat_check.rs::decision_context` | `pub` | no | **yes** | `server/check_routes.rs::handle_check_context` | `core/chat_check.rs::decision_source` |
 | `core/chat_import/originals.rs::find_session_original` | `pub` | no | **yes** | `server/original_routes.rs::handle_keep_original` | `core/db.rs::get_page` |
 | `core/chat_import/originals.rs::first_unused_title` | `private` | no | no | — | `core/page_titles.rs::strict_same_title_note` |
+| `core/chat_import/originals.rs::keep_session_original` | `pub` | no | **yes** | `server/original_routes.rs::handle_keep_original` | `core/chat_import/originals.rs::newest_version_of`, `core/db.rs::get_page` |
+| `core/chat_import/originals.rs::original_to_replace` | `pub` | no | **yes** | `server/original_routes.rs::handle_keep_original` | `core/chat_import/originals.rs::newest_version_of` |
+| `core/chat_import/originals.rs::version_ref` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/citations.rs::project_annotated_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/citations.rs::record_annotate_failure` | `private` | no | no | — | `core/db.rs::set_page_citations_with_changelog_at_version` |
 | `core/citations.rs::run_citation_backfill_with_page_limit` | `private` | no | no | — | `core/db.rs::get_page`, `core/db.rs::set_page_citations_with_changelog_at_version` |
@@ -1571,8 +1583,9 @@ carrying the authority of agreement.
 | `server/knowledge_routes.rs::handle_resolve_embed` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/main.rs::run_daemon` | `private` | no | no | `server/main.rs::main` | `server/main/startup.rs::prepare_startup_state` |
 | `server/main/runtime.rs::register_optional_runtime_workers` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/claim_derivation.rs::reconcile_supported_pages`, `server/main/runtime.rs::load_embedding_model_in_background` |
-| `server/memory_routes.rs::handle_search_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_search_memory` | `core/db.rs::search_memory` |
+| `server/memory_routes.rs::handle_search_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_search_memory` | `core/db.rs::search_memory`, `core/db/linked_pages.rs::linked_pages_for_hits` |
 | `server/memory_routes.rs::handle_store_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_store_memory` | `server/memory_routes.rs::plan_capture_entity` |
+| `server/original_routes.rs::handle_get_page_original` | `pub` | no | no | — | `core/chat_import/originals.rs::page_original` |
 | `server/original_routes.rs::handle_keep_original` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/page_basis_routes.rs::handle_basis_diff` | `pub` | no | no | — | `core/db/page_basis.rs::basis_diff_in_scope` |
 | `server/page_basis_routes.rs::handle_basis_pending` | `pub` | no | no | — | `core/db/page_basis.rs::list_basis_pending_in_scope` |
@@ -1611,7 +1624,6 @@ carrying the authority of agreement.
 
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
-| `core/chat_import/originals.rs::keep_session_original` | `pub` | no | **yes** | `server/original_routes.rs::handle_keep_original` | `core/chat_import/originals.rs::find_session_original`, `core/chat_import/originals.rs::first_unused_title` |
 | `core/chat_import/originals.rs::unused_title` | `private` | no | no | — | `core/chat_import/originals.rs::first_unused_title` |
 | `core/citations.rs::run_citation_backfill_slice` | `pub` | no | no | — | `core/citations.rs::run_citation_backfill_with_page_limit` |
 | `core/citations.rs::run_citation_backfill_slice_projected` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/citations.rs::run_citation_backfill_with_page_limit` |

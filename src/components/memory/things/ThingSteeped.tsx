@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { undoThingDream, type ThingDetail } from "../../../lib/tauri";
+import { undoThingDream, undoThingTidy, type ThingDetail, type ThingTidy } from "../../../lib/tauri";
 import { THINGS_QUERY_KEY } from "../pages/WorkingOn";
 import { steepedToday } from "../../../lib/graph/lastNight";
 
@@ -73,4 +73,38 @@ export function ThingUnread({ thing }: { readonly thing: ThingDetail }) {
   const count = thing.unread ?? 0;
   if (count === 0) return null;
   return <p className="thing-unread">{t("thing.unreadConversations", { count })}</p>;
+}
+
+/**
+ * What a night's tidy took the place of, under the point that stands now
+ * (docs/ux/spec.md, UX-GRAPH-7): one quiet line for each hidden memory, and
+ * "Undo" puts them back and takes the new one away. Shown only once the
+ * point is opened, never inline.
+ */
+export function PointTidied({ thingId, tidy }: { readonly thingId: string; readonly tidy: ThingTidy }) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const undo = useMutation({
+    mutationFn: () => undoThingTidy(thingId, tidy.memory_id),
+    onSuccess: () => {
+      // The thing's page, its own map and the things on Home.
+      void queryClient.invalidateQueries({ queryKey: ["thing", thingId] });
+      void queryClient.invalidateQueries({ queryKey: ["thing-map", thingId] });
+      void queryClient.invalidateQueries({ queryKey: THINGS_QUERY_KEY });
+    },
+  });
+  if (tidy.replaced.length === 0) return null;
+  return (
+    <div className="thing-tidied" role="group" aria-label={t("thing.tidiedLabel")}>
+      {tidy.replaced.map((old) => (
+        <p key={old.source_id} className="thing-tidied-text">
+          {t("thing.tidiedReplaced", { text: old.text })}
+        </p>
+      ))}
+      <button type="button" className="thing-steeped-undo" disabled={undo.isPending} onClick={() => undo.mutate()}>
+        {t("thing.steepUndo")}
+      </button>
+      {undo.isError ? <p className="thing-merge-error" role="alert">{t("thing.mergeFailed")}</p> : null}
+    </div>
+  );
 }

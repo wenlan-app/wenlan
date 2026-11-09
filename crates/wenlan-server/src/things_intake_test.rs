@@ -9,29 +9,48 @@ use wenlan_core::llm_provider::{LlmBackend, LlmError};
 use wenlan_core::read_scope::ReadScope;
 
 /// Answers in turn from a list, and keeps the prompts it was given.
+/// Answers in order. A night's tidy call (UX-GRAPH-7) depends on how alike
+/// the embedder finds memories, which differs between a machine with the
+/// model and one without, so tidy calls are kept apart: they take the first
+/// scripted `{"changes": ...}` answer, or nothing to tidy, and their prompts
+/// go to `tidy_prompts`.
 struct Scripted {
     answers: Mutex<Vec<String>>,
     prompts: Mutex<Vec<String>>,
+    tidy_prompts: Mutex<Vec<String>>,
 }
 
 impl Scripted {
     fn new(answers: &[&str]) -> Arc<Self> {
         Arc::new(Self {
-            answers: Mutex::new(answers.iter().rev().map(|a| a.to_string()).collect()),
+            answers: Mutex::new(answers.iter().map(|a| a.to_string()).collect()),
             prompts: Mutex::new(Vec::new()),
+            tidy_prompts: Mutex::new(Vec::new()),
         })
     }
+}
+
+fn is_tidy_answer(answer: &str) -> bool {
+    answer.trim_start().starts_with(r#"{"changes""#)
 }
 
 #[async_trait]
 impl LlmProvider for Scripted {
     async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+        let tidy = matches!(
+            request.label.as_deref(),
+            Some("things_tidy" | "things_old_pass")
+        );
+        let mut answers = self.answers.lock().unwrap();
+        let at = answers.iter().position(|a| is_tidy_answer(a) == tidy);
+        if tidy {
+            self.tidy_prompts.lock().unwrap().push(request.user_prompt);
+            return Ok(at
+                .map(|i| answers.remove(i))
+                .unwrap_or_else(|| r#"{"changes": []}"#.to_string()));
+        }
         self.prompts.lock().unwrap().push(request.user_prompt);
-        self.answers
-            .lock()
-            .unwrap()
-            .pop()
-            .ok_or(LlmError::NotAvailable)
+        at.map(|i| answers.remove(i)).ok_or(LlmError::NotAvailable)
     }
     fn is_available(&self) -> bool {
         true
@@ -581,20 +600,161 @@ async fn ux_chat_5_a_night_connects_its_points_in_the_one_call() {
     assert_eq!(db.dream_points(&thing).await.unwrap().len(), 3);
     assert_eq!(unlinked(&db, &thing).await, ["mem_2", "mem_1"]);
 
-    // Taking the night back removes the link, before anything is forgotten.
+    // Taking the night back removes its links and forgets its points in
+    // the same step (F14): nothing of the night is left on the thing.
     let forget = db.undo_thing_dream(&thing).await.unwrap();
     assert_eq!(forget.len(), 3);
-    db.record_dream(
-        &thing,
-        &["mem_0".into()],
-        &[],
-        &Default::default(),
-        &[],
-        &[],
+    assert!(db.dream_points(&thing).await.unwrap().is_empty());
+    for id in &forget {
+        assert!(db.get_memory_detail(id).await.unwrap().is_none(), "{id}");
+    }
+}
+
+/// UX-GRAPH-7: a night merges two memories an AI wrote that say the same.
+/// Both are hidden, not deleted; the merged one stands on the thing and the
+/// morning line counts it; the page can take back just the merge, and the
+/// night's Undo still takes back the rest.
+#[tokio::test]
+async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let (thing, found) = thing_for_links(
+        &db,
+        &["keep the GitHub repository private", "yes, private for now"],
     )
-    .await
-    .unwrap();
-    assert_eq!(unlinked(&db, &thing).await, ["mem_0"]);
+    .await;
+    let group = Scripted::new(&[
+        r#"{"points": [
+        {"text": "The repository stays private.", "settled": true, "from": "C0"},
+        {"text": "The repository stays private for now.", "settled": true, "from": "C0"}
+    ]}"#,
+        r#"{"changes": [
+        {"do": "merge", "memories": ["M0", "M1"], "text": "The repository stays private."}
+    ]}"#,
+    ]);
+    let keep = Keep(&db, Default::default());
+    let due = db
+        .things_to_dream(chrono::Utc::now().timestamp(), 10)
+        .await
+        .unwrap();
+    dream_with(&db, &due, &found, group.as_ref(), "English", &keep)
+        .await
+        .unwrap();
+    let tidy = group.tidy_prompts.lock().unwrap()[0].clone();
+    assert!(
+        tidy.contains("The repository stays private for now."),
+        "{tidy}"
+    );
+
+    // The two are hidden and kept; the merged one is the thing's point.
+    let points: Vec<String> = db
+        .dream_points(&thing)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
+    assert_eq!(points, ["mem_2"]);
+    for id in ["mem_0", "mem_1"] {
+        let hidden = db.get_memory_detail(id).await.unwrap().unwrap();
+        assert_eq!(hidden.supersede_mode, "evicted", "{id}");
+    }
+    let merged = db.get_memory_detail("mem_2").await.unwrap().unwrap();
+    assert_eq!(merged.content, "The repository stays private.");
+    assert_eq!(merged.memory_type.as_deref(), Some("decision"));
+    assert!(
+        merged.session_id.is_some(),
+        "it keeps the conversation it came from"
+    );
+    let nights = db.thing_night_points(&ReadScope::Global).await.unwrap();
+    let last = nights[0].last_night.clone().unwrap();
+    assert!(
+        last.written.is_empty(),
+        "the merge is counted once, as a merge"
+    );
+    assert_eq!(
+        last.tidied,
+        [wenlan_types::NightTidied {
+            kind: NightTidyKind::Merge,
+            memory_id: "mem_2".into(),
+            replaced: vec!["mem_0".into(), "mem_1".into()],
+            // Replay shows the words that went (UX-GRAPH-7).
+            said: vec![
+                "The repository stays private.".into(),
+                "The repository stays private for now.".into(),
+            ],
+        }]
+    );
+
+    // The thing's own map holds one point for the two.
+    let points_on_map = |map: &wenlan_types::ThingMapResponse| -> Vec<String> {
+        map.nodes
+            .iter()
+            .filter(|n| n.parent_id.is_some())
+            .map(|n| n.label.clone())
+            .collect()
+    };
+    let map = db.get_thing_map(&thing).await.unwrap();
+    assert_eq!(points_on_map(&map), ["The repository stays private."]);
+    // The page can say what it took the place of, and take back just that.
+    let detail = db
+        .get_thing_detail(&thing, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.tidied.len(), 1);
+    assert_eq!(detail.tidied[0].memory_id, "mem_2");
+    let texts: Vec<&str> = detail.tidied[0]
+        .replaced
+        .iter()
+        .map(|r| r.text.as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "The repository stays private.",
+            "The repository stays private for now."
+        ]
+    );
+    let listed: Vec<&str> = detail
+        .memories
+        .iter()
+        .map(|m| m.source_id.as_str())
+        .collect();
+    assert_eq!(listed, ["mem_2"], "the hidden two are not listed");
+
+    assert_eq!(
+        db.undo_tidy(&thing, "mem_2").await.unwrap().unwrap(),
+        ["mem_2"]
+    );
+    assert!(db.get_memory_detail("mem_2").await.unwrap().is_none());
+    for id in ["mem_0", "mem_1"] {
+        let back = db.get_memory_detail(id).await.unwrap().unwrap();
+        assert_ne!(back.supersede_mode, "evicted", "{id}");
+    }
+    let mut back = points_on_map(&db.get_thing_map(&thing).await.unwrap());
+    back.sort();
+    assert_eq!(
+        back,
+        [
+            "The repository stays private for now.",
+            "The repository stays private."
+        ]
+    );
+    assert!(db
+        .get_thing_detail(&thing, &ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap()
+        .tidied
+        .is_empty());
+    assert!(db.undo_tidy(&thing, "mem_2").await.unwrap().is_none());
+
+    // Undo of the night then forgets the two points it wrote.
+    let forget = db.undo_thing_dream(&thing).await.unwrap();
+    assert_eq!(forget, ["mem_0", "mem_1"]);
 }
 
 /// UX-CHAT-5: old points are connected through the same path, once. A model
@@ -744,4 +904,197 @@ async fn ux_chat_5_a_night_keeps_its_lines_and_says_what_it_could_not_read() {
         .unwrap()
         .unwrap();
     assert_eq!(detail.unread, 1);
+}
+
+/// The dry run of UX-GRAPH-7 on a copy of a real database: what a week of
+/// nights would have tidied, asked of the same model a night uses, written to
+/// a report. Nothing is applied. Run on a copy only:
+/// `WENLAN_TIDY_DRY_DIR=<copy's data dir> WENLAN_TIDY_DRY_REPORT=<file>
+/// cargo test -p wenlan-server --lib -- --ignored tidy_dry_run`
+#[tokio::test]
+#[ignore = "needs a database copy and the person's AI tool"]
+async fn tidy_dry_run() {
+    let dir = std::env::var("WENLAN_TIDY_DRY_DIR").expect("WENLAN_TIDY_DRY_DIR");
+    let report = std::env::var("WENLAN_TIDY_DRY_REPORT").expect("WENLAN_TIDY_DRY_REPORT");
+    let days: i64 = std::env::var("WENLAN_TIDY_DRY_DAYS")
+        .ok()
+        .and_then(|d| d.parse().ok())
+        .unwrap_or(7);
+    let db = MemoryDB::new(std::path::Path::new(&dir), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let model = wenlan_core::agent_cli_llm::AgentCliProvider::find().expect("an AI tool CLI");
+    let now = chrono::Utc::now().timestamp();
+    let since = now - days * 86_400;
+    let things = db.list_things(&ReadScope::Global, None).await.unwrap();
+    let mut out = format!(
+        "# Night tidy dry run\n\nLooked back {days} days over {} things. Nothing was applied.\n\n",
+        things.len()
+    );
+    let (mut offered, mut asked, mut counts) = (0usize, 0usize, [0usize; 3]);
+    let mut samples = String::new();
+    for thing in &things {
+        let title = thing.title.clone().unwrap_or_else(|| "(untitled)".into());
+        let offer = db
+            .tidy_offer_since(&thing.id, Some(since), now)
+            .await
+            .unwrap();
+        offered += offer.items.len();
+        if offer.groups.is_empty() {
+            continue;
+        }
+        asked += 1;
+        let started = std::time::Instant::now();
+        let answer = model
+            .generate(LlmRequest {
+                system_prompt: Some(
+                    "You tidy the memories an AI keeps for a person, changing only what you are sure of. Answer with JSON only."
+                        .into(),
+                ),
+                user_prompt: night_tidy::tidy_prompt(&offer.items, &offer.groups, now),
+                max_tokens: 1_500,
+                temperature: 0.0,
+                label: Some("things_tidy_dry_run".into()),
+                timeout_secs: Some(300),
+            })
+            .await;
+        let secs = started.elapsed().as_secs();
+        let changes = match answer {
+            Ok(answer) => night_tidy::parse_tidy(&answer, &offer.items, now).unwrap_or_default(),
+            Err(error) => {
+                samples.push_str(&format!("- {}: the call failed ({error})\n", title));
+                continue;
+            }
+        };
+        samples.push_str(&format!(
+            "\n## {} ({} groups, {} memories, {secs}s)\n",
+            title,
+            offer.groups.len(),
+            offer.items.len()
+        ));
+        if changes.is_empty() {
+            samples.push_str("Nothing to tidy.\n");
+        }
+        for change in changes {
+            let text = |i: usize| offer.items[i].text.replace('\n', " ");
+            match change {
+                night_tidy::TidyChange::Merge {
+                    items: [a, b],
+                    text: merged,
+                } => {
+                    counts[0] += 1;
+                    samples.push_str(&format!(
+                        "- Merge\n  - was: {}\n  - was: {}\n  - now: {merged}\n",
+                        text(a),
+                        text(b)
+                    ));
+                }
+                night_tidy::TidyChange::Replace { keep, drop } => {
+                    counts[1] += 1;
+                    samples.push_str(&format!(
+                        "- Replace\n  - hidden: {}\n  - kept: {}\n",
+                        text(drop),
+                        text(keep)
+                    ));
+                }
+                night_tidy::TidyChange::Update {
+                    item,
+                    text: updated,
+                } => {
+                    counts[2] += 1;
+                    samples.push_str(&format!(
+                        "- Update\n  - was: {}\n  - now: {updated}\n",
+                        text(item)
+                    ));
+                }
+            }
+        }
+    }
+    out.push_str(&format!(
+        "AI-written memories looked at: {offered}. Things asked: {asked}.\n\n\
+Would merge {}, replace {}, update {}.\n",
+        counts[0], counts[1], counts[2]
+    ));
+    out.push_str(&samples);
+    std::fs::write(&report, out).unwrap();
+}
+
+/// UX-GRAPH-7: the old-memory pass hides an exact copy behind the earlier
+/// without asking, says an AI's memory about a passed date again in the
+/// past tense through the same path as a point, runs once, and Undo takes
+/// all of it back.
+#[tokio::test]
+async fn ux_graph_7_the_old_memory_pass_hides_copies_and_says_passed_dates_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = MemoryDB::new(dir.path(), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let day = now - now.rem_euclid(86_400) - 3 * 86_400;
+    for (id, text, space, at) in [
+        (
+            "mem_x",
+            "The site stays free for now.",
+            "wenlan",
+            now - 9_000,
+        ),
+        (
+            "mem_y",
+            "The site stays free, for now",
+            "wenlan",
+            now - 5_000,
+        ),
+        (
+            "mem_z",
+            "The demo is planned for that day.",
+            "personal",
+            now - 400_000,
+        ),
+    ] {
+        db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+            source: "memory".into(),
+            source_id: id.into(),
+            title: id.into(),
+            content: text.into(),
+            last_modified: at,
+            memory_type: Some("fact".into()),
+            space: Some(space.into()),
+            source_agent: Some("claude-code".into()),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+    }
+    db.set_event_dates_by_source_id(&[("mem_z".into(), day)])
+        .await
+        .unwrap();
+    let date = chrono::DateTime::from_timestamp(day, 0)
+        .unwrap()
+        .format("%b %-d, %Y")
+        .to_string();
+    let answer = format!(
+        r#"{{"changes": [{{"do": "update", "memory": "M0", "text": "The demo was planned for {date}."}}]}}"#
+    );
+    let model = Scripted::new(&[answer.as_str()]);
+    let keep = Keep(&db, Default::default());
+    let pass = run_old_memory_pass(&db, model.as_ref(), &keep)
+        .await
+        .unwrap();
+    assert_eq!((pass.merged(), pass.updated()), (1, 1), "{pass:?}");
+    let shown = |id: &'static str| {
+        let db = &db;
+        async move { db.get_memory_detail(id).await.unwrap().is_some() }
+    };
+    let written = db.get_memory_detail("mem_0").await.unwrap().unwrap();
+    assert_eq!(written.content, format!("The demo was planned for {date}."));
+    assert!(
+        run_old_memory_pass(&db, model.as_ref(), &keep)
+            .await
+            .is_err(),
+        "it runs once"
+    );
+    assert!(shown("mem_x").await);
+    db.undo_backlog().await.unwrap().unwrap();
+    assert!(db.get_memory_detail("mem_0").await.unwrap().is_none());
+    assert!(db.backlog_pass().await.unwrap().is_none());
 }

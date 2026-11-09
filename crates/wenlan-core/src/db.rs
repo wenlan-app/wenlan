@@ -97,6 +97,7 @@ pub use activity_counts::{
 mod citation_sources;
 pub mod conversations;
 pub mod intake;
+mod linked_pages;
 pub mod night_links;
 pub mod revision_cards;
 mod scoped_entities;
@@ -115,6 +116,8 @@ type PageSpaceWriteContext<'a> = (
     )>,
 );
 pub mod citation_provenance;
+pub mod night_backlog;
+pub mod night_tidy;
 pub mod research_disputes;
 pub mod research_runs;
 pub mod research_write;
@@ -1604,7 +1607,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 161;
+pub const SCHEMA_VERSION: u32 = 162;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10912,6 +10915,15 @@ impl MemoryDB {
             }
             if version < 161 {
                 self.migrate_161_entity_alias_sources(version).await?;
+            }
+
+            // Migration 162: a kept original can name the older version it
+            // replaces. See db/originals.rs.
+            if ceiling < 162 {
+                return Ok(());
+            }
+            if version < 162 {
+                self.migrate_162_original_versions(version).await?;
             }
         }
 
@@ -46505,8 +46517,20 @@ impl MemoryDB {
             .filter(|p| p.kind != "entity")
             .collect();
         let scoped = crate::pages::scope_filter_pages(raw_pages, caller_space, memory_source_ids);
-        let mut tier_ok = Vec::with_capacity(scoped.len());
-        for page in scoped {
+        let tier_ok = self.pages_within_source_tier(scoped, caller_trust).await;
+        crate::pages::select_pages_for_context(&tier_ok, memory_source_ids, cap)
+    }
+
+    /// The pages whose most sensitive source `caller_trust` may read, in the
+    /// order given. The per-page half of [`Self::select_visible_pages`],
+    /// shared with pages that arrive by link rather than by rank.
+    pub(crate) async fn pages_within_source_tier(
+        &self,
+        pages: Vec<Page>,
+        caller_trust: &str,
+    ) -> Vec<Page> {
+        let mut tier_ok = Vec::with_capacity(pages.len());
+        for page in pages {
             // fail-closed: a lookup error → treat as most sensitive (tier 1) → drop
             // unless the caller has full trust.
             let eff_tier = self
@@ -46517,7 +46541,7 @@ impl MemoryDB {
                 tier_ok.push(page);
             }
         }
-        crate::pages::select_pages_for_context(&tier_ok, memory_source_ids, cap)
+        tier_ok
     }
 
     pub async fn get_memory_space(&self, source_id: &str) -> Result<Option<String>, WenlanError> {

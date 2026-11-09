@@ -97,6 +97,43 @@ function OriginalSource({ pageId, original, onOpenMemory, onOpenPage }: {
 }
 
 /**
+ * Its versions: on an older one, the newest that replaced it; on a newer
+ * one, the ones it replaced, newest first. Each opens its own page.
+ */
+function OriginalVersions({ original, where, onOpenPage }: {
+  original: PageOriginal | null;
+  where: "newer" | "older";
+  onOpenPage?: (pageId: string) => void;
+}) {
+  const { t, i18n } = useTranslation();
+  if (!original) return null;
+  if (where === "newer") {
+    const newer = original.newer;
+    if (!newer) return null;
+    return (
+      <div className="original-newer" data-testid="original-newer">
+        <button type="button" className="session-source-line" onClick={() => onOpenPage?.(newer.page_id)}>
+          {t("originalPage.newer", { title: newer.title })}
+        </button>
+      </div>
+    );
+  }
+  const older = original.older ?? [];
+  if (older.length === 0) return null;
+  return (
+    <div className="original-older" data-testid="original-older">
+      <span className="original-older-label">{t("originalPage.older")}</span>
+      {older.map((version) => (
+        <button key={version.page_id} type="button" className="session-source-line"
+          onClick={() => onOpenPage?.(version.page_id)}>
+          {[version.title, formatSessionDay(version.kept_at, i18n.language)].filter(Boolean).join(" · ")}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
  * A page that keeps what an AI tool made: where it came from, then the
  * original exactly as it was (UX-ART-1), then any notes added after it
  * (UX-ART-3: the AI never rewrites the original, it only adds notes).
@@ -120,8 +157,10 @@ export function OriginalPageView({ pageId, title, content, renderMarkdown, onOpe
     <div className="original-page" data-testid="original-page">
       <OriginalSource pageId={pageId} original={original.data ?? null}
         onOpenMemory={onOpenMemory} onOpenPage={onOpenPage} />
+      <OriginalVersions original={original.data ?? null} where="newer" onOpenPage={onOpenPage} />
       {parts.frame ? <OriginalFrame frame={parts.frame} title={title} /> : parts.body && renderMarkdown(parts.body)}
       {parts.notes && <div className="original-notes" data-testid="original-notes">{renderMarkdown(parts.notes)}</div>}
+      <OriginalVersions original={original.data ?? null} where="older" onOpenPage={onOpenPage} />
     </div>
   );
 }

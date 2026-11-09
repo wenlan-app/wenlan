@@ -1513,6 +1513,11 @@ pub struct KeepOriginalParams {
     #[serde(default)]
     pub structure: Option<String>,
     #[schemars(
+        description = "When this is a new version of a diagram kept before: its title as kept, or its page_id. The old page stays and points to this one."
+    )]
+    #[serde(default)]
+    pub replaces: Option<String>,
+    #[schemars(
         description = "This conversation as <tool>:<id>, e.g. claude-code:<session id>. Defaults to WENLAN_SESSION."
     )]
     #[serde(default)]
@@ -2457,10 +2462,74 @@ fn page_write_code_basis_refused_result(error: &WenlanError) -> CallToolResult {
     ))])
 }
 
+/// Whether a daemon reason is a source-read refusal, with or without the
+/// positions detail the client keeps.
+fn is_source_read_refusal(reason: &str) -> bool {
+    reason == "source_read_refused" || reason.starts_with("source_read_refused:")
+}
+
+/// The agent's message for a write the daemon refused because some of the
+/// sources it named cannot be read where the page lives. The ids named are
+/// the caller's own, picked by the positions the daemon returned; a source in
+/// another Space and one that is gone read the same, so nothing about another
+/// Space is told. An unfiled page gets the one fix that applies to it.
+fn source_read_refused_result(reason: &str, source_ids: &[String]) -> CallToolResult {
+    let detail = reason
+        .strip_prefix("source_read_refused:")
+        .map(str::trim)
+        .unwrap_or("");
+    let (positions, target) = detail
+        .strip_prefix("positions=")
+        .and_then(|rest| rest.split_once(" target="))
+        .unwrap_or(("", ""));
+    let named: Vec<String> = positions
+        .split(',')
+        .filter_map(|n| n.parse::<usize>().ok())
+        .filter_map(|n| {
+            source_ids
+                .get(n.wrapping_sub(1))
+                .map(|id| format!("[{n}] {id}"))
+        })
+        .collect();
+    let mut text = String::from("write_page refused, nothing was written: source_read_refused. ");
+    if named.is_empty() {
+        text.push_str("A source this write names cannot be read where the page lives. ");
+    } else {
+        text.push_str(&format!(
+            "These sources cannot be read where the page lives: {}. ",
+            named.join(", ")
+        ));
+    }
+    text.push_str(
+        "Each is in another Space, gone, ambiguous, or over its complete-read limit; no \
+         source was silently truncated. ",
+    );
+    if target == "unfiled" {
+        text.push_str(
+            "This page is in no Space, so it can cite only notes that are in no Space. If \
+             its sources are in one Space, move the page there with move_page and retry; if \
+             they span several Spaces, leave out the ones from other Spaces. ",
+        );
+    } else {
+        text.push_str(
+            "Reread those sources with read_source in the page's Space, or leave them out, \
+             and retry. ",
+        );
+    }
+    text.push_str(
+        "Do not edit the page's file directly instead: that shows up as the person's own \
+         edit. This is a source-read failure, not a request to rewrite the claim.",
+    );
+    CallToolResult::error(vec![ContentBlock::text(text)])
+}
+
 /// A write the daemon refused because too few of its `[n]` citations match
 /// the source they point to. Nothing was written. The daemon's counts lead the
 /// message, then how to fix the citations.
-fn page_write_citations_refused_result(error: &WenlanError) -> Option<CallToolResult> {
+fn page_write_citations_refused_result(
+    error: &WenlanError,
+    source_ids: &[String],
+) -> Option<CallToolResult> {
     let WenlanError::Api {
         status,
         reason: Some(reason),
@@ -2468,10 +2537,8 @@ fn page_write_citations_refused_result(error: &WenlanError) -> Option<CallToolRe
     else {
         return None;
     };
-    if reason == "source_read_refused" {
-        return Some(CallToolResult::error(vec![ContentBlock::text(
-            "write_page refused, nothing was written: source_read_refused. Reread the exact sources with read_source, check their Space and completeness, and retry. A source exceeded its complete-read limit, changed, is missing, or is ambiguous; no source was silently truncated. This is a source-read failure, not a request to rewrite the claim."
-        )]));
+    if is_source_read_refusal(reason) {
+        return Some(source_read_refused_result(reason, source_ids));
     }
     if *status != 422 {
         return None;
@@ -3126,35 +3193,41 @@ impl WenlanMcpServer {
             content,
             format,
             structure: params.structure,
+            replaces: params.replaces,
         };
         let client = self.session_client(params.session.as_deref()).await;
-        let resp: wenlan_types::originals::KeepOriginalResponse =
-            match client.post("/api/originals", &request).await {
-                Ok(resp) => resp,
-                Err(WenlanError::Api {
-                    reason: Some(ref reason),
-                    ..
-                }) if reason.starts_with("original_") => {
-                    let why = match reason.as_str() {
+        let resp: wenlan_types::originals::KeepOriginalResponse = match client
+            .post("/api/originals", &request)
+            .await
+        {
+            Ok(resp) => resp,
+            Err(WenlanError::Api {
+                reason: Some(ref reason),
+                ..
+            }) if reason.starts_with("original_") => {
+                let why = match reason.as_str() {
                         "original_format_unsupported" => {
                             "only HTML, SVG and Markdown can be kept as they are"
                         }
                         "original_empty" => "the file is empty",
                         "original_too_large" => "the file is larger than 10 MB",
                         "original_title_missing" => "give it a title",
+                        "original_replaces_unknown" => {
+                            "no kept diagram has that title or page_id; leave replaces out to keep it as a new one"
+                        }
                         _ => "the daemon refused it",
                     };
-                    return refuse(why);
-                }
-                Err(error) => return Ok(tool_error(error, "keep original")),
-            };
+                return refuse(why);
+            }
+            Err(error) => return Ok(tool_error(error, "keep original")),
+        };
         let kept = if resp.created {
             "Kept"
         } else {
             "Already kept from this conversation"
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(format!(
-            "{kept} as the page \"{title}\" (page_id {id}). Wenlan shows it exactly as it is, with this conversation as its source, and never rewrites it; its structure is kept as a memory of this conversation. To add a later fact, write_page with the page's content unchanged and your note after it. A changed version is kept as a new page.",
+            "{kept} as the page \"{title}\" (page_id {id}). Wenlan shows it exactly as it is, with this conversation as its source, and never rewrites it; its structure is kept as a memory of this conversation. To add a later fact, write_page with the page's content unchanged and your note after it. To keep a changed version, pass replaces with this title: it gets its own page, and this one stays and points to it.",
             title = resp.title,
             id = resp.page_id,
         ))]))
@@ -3188,6 +3261,15 @@ impl WenlanMcpServer {
                 "\n\nCompiled pages:\n`confirmed: false` marks an AI-written page the user has \
                  not confirmed or edited; `raw_score` is its relevance.\n{}",
                 pages_json
+            ));
+        }
+        if let Some(linked) = resp.linked_pages.as_ref().filter(|p| !p.is_empty()) {
+            let linked_json = serde_json::to_string_pretty(linked)
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            output.push_str(&format!(
+                "\n\nLinked pages (the compiled pages above link to these; `point` is each \
+                 page's first paragraph, read_page reads the rest):\n{}",
+                linked_json
             ));
         }
         let output = self
@@ -4134,10 +4216,12 @@ impl WenlanMcpServer {
                     // free text from agents, so read the page's current
                     // version here and give the same recovery steps the
                     // daemon's 409 body carries.
-                    Err(e) if matches!(&e, WenlanError::Api { reason: Some(reason), .. } if reason == "source_read_refused") =>
+                    Err(e) if matches!(&e, WenlanError::Api { reason: Some(reason), .. } if is_source_read_refusal(reason)) =>
                     {
-                        return Ok(page_write_citations_refused_result(&e)
-                            .unwrap_or_else(|| tool_error(e, "write_page")));
+                        return Ok(
+                            page_write_citations_refused_result(&e, &req.source_memory_ids)
+                                .unwrap_or_else(|| tool_error(e, "write_page")),
+                        );
                     }
                     Err(WenlanError::Api { status: 409, .. }) => {
                         let current = client
@@ -4158,8 +4242,10 @@ impl WenlanMcpServer {
                         return Ok(page_write_code_basis_refused_result(&e));
                     }
                     Err(e) => {
-                        return Ok(page_write_citations_refused_result(&e)
-                            .unwrap_or_else(|| tool_error(e, "write_page")));
+                        return Ok(
+                            page_write_citations_refused_result(&e, &req.source_memory_ids)
+                                .unwrap_or_else(|| tool_error(e, "write_page")),
+                        );
                     }
                 };
                 // Ownership gate (spec §5.2): a human-owned page is never overwritten
@@ -4209,8 +4295,11 @@ impl WenlanMcpServer {
                         return Ok(page_write_code_basis_refused_result(&e));
                     }
                     Err(e) => {
-                        return Ok(page_write_citations_refused_result(&e)
-                            .unwrap_or_else(|| tool_error(e, "write_page")));
+                        return Ok(page_write_citations_refused_result(
+                            &e,
+                            &req.create.source_memory_ids,
+                        )
+                        .unwrap_or_else(|| tool_error(e, "write_page")));
                     }
                 };
                 let page_id = resp.id.clone();
@@ -5990,7 +6079,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Keep an HTML page, SVG or Markdown document you made in this conversation (a diagram, map, chart or a text drawing in your reply) in Wenlan exactly as it is, as its own page with this conversation as its source. Keep one when asked, and unasked when it shows how the work is structured (a plan, flow or architecture) or the user builds on it; skip throwaway sketches. Always pass structure. To change a kept diagram, keep the new version: the old page stays.",
+        description = "Keep an HTML page, SVG or Markdown document you made in this conversation (a diagram, map, chart or a text drawing in your reply) in Wenlan exactly as it is, as its own page with this conversation as its source. Keep one when asked, and unasked when it shows how the work is structured (a plan, flow or architecture) or the user builds on it; skip throwaway sketches. Always pass structure. To change a kept diagram, keep a new one with replaces; the old stays.",
         annotations(
             title = "Keep Original",
             read_only_hint = false,
@@ -11261,6 +11350,41 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("PRIVATE_SENTINEL"));
+    }
+
+    /// An unfiled page whose sources sit in a Space: the refusal names the
+    /// caller's own ids that could not be read and says how to fix it,
+    /// without editing the page's file behind Wenlan's back.
+    #[tokio::test]
+    async fn source_read_refused_names_the_unreadable_ids_and_the_unfiled_fix() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let _pin = pin_space(None).await;
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/pages/page_x"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+                "error": "source_read_refused: positions=2,3 target=unfiled; PRIVATE_SENTINEL"
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let mut params = write_params(Some("page_x"));
+        params.source_memory_ids = vec!["mem_a".into(), "mem_b".into(), "mem_c".into()];
+        let result = stdio_server(mock.uri())
+            .write_page_impl(params)
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let text = text_of(&result);
+        assert!(text.contains("[2] mem_b, [3] mem_c"), "{text}");
+        assert!(!text.contains("mem_a"), "{text}");
+        assert!(
+            text.contains("move_page") && text.contains("in no Space"),
+            "{text}"
+        );
+        assert!(text.contains("nothing was written"), "{text}");
+        assert!(!text.contains("PRIVATE_SENTINEL"), "{text}");
     }
 
     /// A 409 while the page is still at the version the agent read came from a

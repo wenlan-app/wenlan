@@ -727,8 +727,16 @@ async fn handle_store_memory_inner(
     // local first-party write and grants FULL trust, so blanking the claim
     // before that resolution would turn a spoof attempt into a trust upgrade.
     // Identity keeps judging the raw claim; the row keeps no false origin.
+    //
+    // The row keeps the tool that saved it: the body's value when one was
+    // sent, else the `x-agent-name` header. A night may only tidy what a
+    // tool wrote (`authorship::memory_author`), and on the owner's data 738
+    // memories saved through the header alone had no writer at all.
+    let claimed_source_agent = req
+        .source_agent
+        .or_else(|| (resolved_agent != "unknown").then(|| resolved_agent.clone()));
     let (persisted_source_agent, rejected_origin_claim) =
-        wenlan_core::origin::normalize_wire_source_agent(req.source_agent);
+        wenlan_core::origin::normalize_wire_source_agent(claimed_source_agent);
     if let Some(claimed) = rejected_origin_claim {
         tracing::warn!(
             "[origin-guard] /api/memory/store request claimed reserved source_agent \
@@ -1474,11 +1482,56 @@ async fn handle_search_memory_inner(
         None => None,
     };
 
+    // UX-FIND-5: the pages those hits link to come along, each cut to its
+    // point, so no AI tool has to think of following the links itself. They
+    // pass the same tier gate and grant filter as the hits.
+    let linked_pages = match supplemental_pages.as_deref() {
+        Some(hits) if req.query != "recent context" => {
+            let hits: Vec<(String, String)> = hits
+                .iter()
+                .map(|row| (row.source_id.clone(), row.title.clone()))
+                .collect();
+            let trust_level = caller_trust_level(&db, &headers).await;
+            let linked = db
+                .linked_pages_for_hits(
+                    &hits,
+                    &scope,
+                    &trust_level,
+                    wenlan_core::pages::LINKED_PAGE_CAP,
+                )
+                .await;
+            let kept =
+                wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, linked, |page| {
+                    page.id.as_str()
+                })
+                .await
+                .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
+            (!kept.is_empty()).then_some(kept)
+        }
+        _ => None,
+    };
+
     Ok(Json(SearchMemoryResponse {
+        linked_pages,
         results,
         took_ms,
         supplemental_pages,
     }))
+}
+
+/// The caller's trust level from its `x-agent-name` header, "unknown" when it
+/// names no registered agent (fail closed, as the page gate expects).
+async fn caller_trust_level(db: &wenlan_core::db::MemoryDB, headers: &HeaderMap) -> String {
+    let agent_name = extract_agent_name(headers, None);
+    if agent_name == "unknown" {
+        return "unknown".to_string();
+    }
+    db.get_agent(&agent_name)
+        .await
+        .ok()
+        .flatten()
+        .map(|a| a.trust_level)
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// POST /api/memory/confirm/{source_id}
@@ -2907,7 +2960,7 @@ mod store_scheduler_handoff_tests {
         wenlan_core::config::save_config(&wenlan_core::config::Config::default()).unwrap();
 
         let response = handle_store_memory(
-            State(state),
+            State(state.clone()),
             HeaderMap::new(),
             crate::space_header::SpaceHeader(None),
             Json(StoreMemoryRequest {
@@ -2934,6 +2987,38 @@ mod store_scheduler_handoff_tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.source_agent.as_deref(), Some("claude-code"));
+
+        // A tool that names itself only in the header (MCP does) is kept
+        // too, so a night can tell an AI's memory from one nothing names.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-agent-name", "codex".parse().unwrap());
+        let response = handle_store_memory(
+            State(state),
+            headers,
+            crate::space_header::SpaceHeader(None),
+            Json(StoreMemoryRequest {
+                content: "Bob owns the release checklist for the desktop app.".to_string(),
+                memory_type: None,
+                space: (None).into(),
+                source_agent: None,
+                title: None,
+                confidence: None,
+                supersedes: None,
+                entity: None,
+                entity_type: None,
+                entity_id: None,
+                structured_fields: None,
+                retrieval_cue: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let stored = db
+            .get_memory_detail(&response.0.source_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.source_agent.as_deref(), Some("codex"));
     }
 
     #[tokio::test]
@@ -4838,6 +4923,70 @@ mod search_quick_path_page_tests {
                 .map(|p| p.source_id.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn ux_find_5_recall_carries_the_pages_a_hit_links_to() {
+        let (state, _tmp, page_work_id, _page_cross_id) = build_state_with_pages().await;
+        let db = state.read().await.db.clone().unwrap();
+        let linked_id = seed_confirmed_distilled_page(
+            &db,
+            "Quillon ticket plan",
+            "Buy the quillon tickets in March.\n\nMore detail below.",
+            "m_quillon",
+            "fact",
+            "work",
+        )
+        .await;
+        // Enough pages that say "zorblax" to fill every hit slot, all linking
+        // to the ticket plan, so the plan arrives by link and not by rank
+        // whatever the embedder.
+        let mut zorblax_pages = vec![page_work_id.clone()];
+        for n in 0..3 {
+            zorblax_pages.push(
+                seed_confirmed_distilled_page(
+                    &db,
+                    &format!("Zorblax note {n}"),
+                    "zorblax zorblax workmarker body",
+                    &format!("m_zorblax_{n}"),
+                    "decision",
+                    "work",
+                )
+                .await,
+            );
+        }
+        for page in &zorblax_pages {
+            db.replace_page_links(
+                page,
+                &[wenlan_core::synthesis::wikilinks::Wikilink {
+                    target_page_id: Some(linked_id.clone()),
+                    label: "Quillon ticket plan".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+        }
+        let app = crate::router::build_router(state.clone());
+
+        let resp = search(app, Some("trusted-agent")).await;
+        let hits = resp.supplemental_pages.expect("the hit pages surface");
+        assert!(
+            !hits.iter().any(|p| p.source_id == linked_id),
+            "the linked page must not be a hit here: {:?}",
+            hits.iter().map(|p| &p.title).collect::<Vec<_>>()
+        );
+        let linked = resp
+            .linked_pages
+            .expect("the page the hits link to comes along");
+        assert_eq!(linked.len(), 1, "{linked:?}");
+        assert_eq!(linked[0].id, linked_id);
+        assert_eq!(linked[0].point, "Buy the quillon tickets in March.");
+        let hit_titles: Vec<String> = hits.iter().map(|p| p.title.clone()).collect();
+        assert_eq!(linked[0].linked_from, hit_titles);
+
+        let app = crate::router::build_router(state);
+        let unknown = search(app, None).await;
+        assert!(unknown.linked_pages.is_none(), "{:?}", unknown.linked_pages);
     }
 
     #[tokio::test]

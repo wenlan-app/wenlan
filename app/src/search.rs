@@ -5863,6 +5863,17 @@ pub async fn undo_thing_dream(
     client.undo_thing_dream(&id).await
 }
 
+/// Take back one tidy a night made on a thing (UX-GRAPH-7).
+#[tauri::command]
+pub async fn undo_thing_tidy(
+    state: tauri::State<'_, State>,
+    id: String,
+    memory_id: String,
+) -> Result<wenlan_types::ThingSummary, String> {
+    let client = { state.read().await.client.clone() };
+    client.undo_thing_tidy(&id, &memory_id).await
+}
+
 /// Take back the whole night on the big map (UX-GRAPH-5): every thing whose
 /// newest night ran at or after `since`, Unix seconds.
 #[tauri::command]
@@ -5872,6 +5883,25 @@ pub async fn undo_nights(
 ) -> Result<wenlan_types::NightsUndo, String> {
     let client = { state.read().await.client.clone() };
     client.undo_nights(since).await
+}
+
+/// The one-time pass over old memories while it stands, for the big map's
+/// line (UX-GRAPH-7); `None` when it never ran or was taken back.
+#[tauri::command]
+pub async fn get_old_memory_pass(
+    state: tauri::State<'_, State>,
+) -> Result<Option<wenlan_types::OldMemoryPass>, String> {
+    let client = { state.read().await.client.clone() };
+    Ok(client.get_old_memory_pass().await?.pass)
+}
+
+/// Take the whole pass over old memories back (UX-GRAPH-7).
+#[tauri::command]
+pub async fn undo_old_memory_pass(
+    state: tauri::State<'_, State>,
+) -> Result<Option<wenlan_types::OldMemoryPass>, String> {
+    let client = { state.read().await.client.clone() };
+    Ok(client.undo_old_memory_pass().await?.pass)
 }
 
 /// Move a conversation between things (UX-THING-1): into `to_thing_id`, or

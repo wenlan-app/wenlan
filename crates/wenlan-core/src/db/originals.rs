@@ -53,6 +53,8 @@ pub struct OriginalRecord {
     /// When the AI last wrote it in the chat (unix seconds), when known.
     pub written_at: Option<i64>,
     pub imported_at: i64,
+    /// The page of the older version this one replaces (migration 162).
+    pub replaces: Option<String>,
 }
 
 fn db_error(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
@@ -127,8 +129,8 @@ impl MemoryDB {
         conn.execute(
             "INSERT INTO originals
                  (page_id, vendor, conversation_id, artifact_id, kind, title, file_path,
-                  conversation_url, written_at, imported_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                  conversation_url, written_at, imported_at, replaces)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             libsql::params![
                 record.page_id.as_str(),
                 record.vendor.as_str(),
@@ -140,6 +142,7 @@ impl MemoryDB {
                 record.conversation_url.as_str(),
                 record.written_at,
                 record.imported_at,
+                record.replaces.as_deref(),
             ],
         )
         .await
@@ -153,7 +156,7 @@ impl MemoryDB {
         let mut rows = conn
             .query(
                 "SELECT page_id, vendor, conversation_id, artifact_id, kind, title, file_path,
-                        conversation_url, written_at, imported_at
+                        conversation_url, written_at, imported_at, replaces
                  FROM originals WHERE page_id = ?1",
                 libsql::params![page_id],
             )
@@ -176,7 +179,7 @@ impl MemoryDB {
         let mut rows = conn
             .query(
                 "SELECT page_id, vendor, conversation_id, artifact_id, kind, title, file_path,
-                        conversation_url, written_at, imported_at
+                        conversation_url, written_at, imported_at, replaces
                  FROM originals WHERE vendor = ?1 AND conversation_id = ?2
                  ORDER BY artifact_id",
                 libsql::params![vendor, conversation_id],
@@ -188,6 +191,95 @@ impl MemoryDB {
             out.push(record_from_row(&row));
         }
         Ok(out)
+    }
+
+    /// Migration 162: `originals.replaces`, the page of the older version a
+    /// kept original replaces. Idempotent.
+    pub(super) async fn migrate_162_original_versions(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(162, prior_version).await?;
+        let conn = self.conn.lock().await;
+        let has_column = {
+            let mut rows = conn
+                .query(
+                    "SELECT 1 FROM pragma_table_info('originals') WHERE name = 'replaces'",
+                    (),
+                )
+                .await
+                .map_err(db_error("m162 columns"))?;
+            rows.next()
+                .await
+                .map_err(db_error("m162 column row"))?
+                .is_some()
+        };
+        if !has_column {
+            conn.execute("ALTER TABLE originals ADD COLUMN replaces TEXT", ())
+                .await
+                .map_err(db_error("m162 add column"))?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS originals_replaces ON originals(replaces)",
+            (),
+        )
+        .await
+        .map_err(db_error("m162 index"))?;
+        conn.execute("PRAGMA user_version = 162", ())
+            .await
+            .map_err(db_error("m162 bump"))?;
+        Ok(())
+    }
+
+    /// The originals that name `page_id` as the version they replace, whose
+    /// pages still exist, newest first.
+    pub async fn originals_replacing(
+        &self,
+        page_id: &str,
+    ) -> Result<Vec<OriginalRecord>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT o.page_id, o.vendor, o.conversation_id, o.artifact_id, o.kind, o.title,
+                        o.file_path, o.conversation_url, o.written_at, o.imported_at, o.replaces
+                 FROM originals o JOIN pages p ON p.id = o.page_id
+                 WHERE o.replaces = ?1
+                 ORDER BY o.imported_at DESC, o.page_id",
+                libsql::params![page_id],
+            )
+            .await
+            .map_err(db_error("originals replacing"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(db_error("replacing row"))? {
+            out.push(record_from_row(&row));
+        }
+        Ok(out)
+    }
+
+    /// The most recently kept original whose own title is exactly `title`
+    /// and whose page still exists.
+    pub async fn latest_original_titled(
+        &self,
+        title: &str,
+    ) -> Result<Option<OriginalRecord>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT o.page_id, o.vendor, o.conversation_id, o.artifact_id, o.kind, o.title,
+                        o.file_path, o.conversation_url, o.written_at, o.imported_at, o.replaces
+                 FROM originals o JOIN pages p ON p.id = o.page_id
+                 WHERE o.title = ?1
+                 ORDER BY o.imported_at DESC, o.page_id DESC
+                 LIMIT 1",
+                libsql::params![title],
+            )
+            .await
+            .map_err(db_error("latest original titled"))?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(db_error("latest original row"))?
+            .map(|row| record_from_row(&row)))
     }
 }
 
@@ -203,6 +295,7 @@ fn record_from_row(row: &libsql::Row) -> OriginalRecord {
         conversation_url: row.get::<String>(7).unwrap_or_default(),
         written_at: row.get::<Option<i64>>(8).unwrap_or(None),
         imported_at: row.get::<i64>(9).unwrap_or(0),
+        replaces: row.get::<Option<String>>(10).unwrap_or(None),
     }
 }
 

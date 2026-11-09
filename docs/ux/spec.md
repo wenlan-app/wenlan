@@ -378,6 +378,13 @@ and wait for evidence that people need them.
   When a source can't be reached (moved, or its drive unplugged), Activity says
   so in its own place at the bottom left, not on Home, and opens that source.
   原文：「以及要把左邊的導覽，只留下重要的，剩下的可以不用特別的 tab」（2026-11-01 22:20）「我确定是、不会特别需要有一个记忆的页面」（2026-11-01 23:35）「活动还是要在的……它就在左下角」（2026-11-01 23:46）「那你说你有什么情况下会特别需要到一个来源的页面，导览页面里面去管理那些东西？感觉机会并不是很大。」（2026-11-02 16:02）「1. 同意」（2026-11-02 16:47）選擇卡「左下角「活动」」（2026-11-02 18:11）「因為現在選項沒有很多，全放出來也還好」（2026-11-02 19:38）
+- **UX-FIND-5** `shipped` When an AI tool's lookup finds pages, the pages
+  they link to come along in the same answer, at most two, each as its title
+  and first paragraph, so no AI tool has to think of following the links
+  itself. A linked page outside the caller's Space, or one the caller may not
+  read, does not come along. The AI tool reads the rest of a page when it
+  needs it.
+  原文：「自己 get page links 區別在哪」「可以做些量測，能確認方向對就行」（2026-11-09 03:48）「以上三點都同意」「為什麼不現在做？」（2026-11-09 03:55）
 
 ## What AI tools made (HTML, images)
 

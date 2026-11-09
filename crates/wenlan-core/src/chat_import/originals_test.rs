@@ -443,6 +443,7 @@ async fn ux_art_2_a_session_original_is_a_page_naming_its_session_and_time() {
         space: wenlan_types::WriteSpaceTarget::Uncategorized,
         workspace: None,
         source_memory_ids: Vec::new(),
+        replaces: None,
     };
     let (kept, created) = keep_session_original(&db, root.path(), None, input())
         .await
@@ -519,4 +520,104 @@ async fn ux_art_2_a_session_original_is_a_page_naming_its_session_and_time() {
         };
         assert!(refused, "{format}");
     }
+}
+
+#[tokio::test]
+async fn a_new_version_names_the_one_it_replaces_and_the_old_one_points_to_it() {
+    let (db, _tmp) = crate::db::tests::test_db().await;
+    let root = tempfile::tempdir().unwrap();
+    let first_session = wenlan_types::sessions::SessionRef::new("claude-code", "s-1").unwrap();
+    let later_session = wenlan_types::sessions::SessionRef::new("claude-code", "s-2").unwrap();
+    let v2_html = format!("{HTML}<p>v2</p>\n");
+    let v3_html = format!("{HTML}<p>v3</p>\n");
+    let keep = |session, content, replaces| SessionOriginal {
+        session: Some(session),
+        title: "Release map",
+        content,
+        format: SessionOriginalFormat::Html,
+        space: wenlan_types::WriteSpaceTarget::Uncategorized,
+        workspace: None,
+        source_memory_ids: Vec::new(),
+        replaces,
+    };
+    let (v1, _) = keep_session_original(&db, root.path(), None, keep(&first_session, HTML, None))
+        .await
+        .unwrap();
+    let v1_body = db.get_page(&v1.page_id).await.unwrap().unwrap().content;
+
+    // Named by its kept title, in a later session.
+    let (v2, created) = keep_session_original(
+        &db,
+        root.path(),
+        None,
+        keep(&later_session, &v2_html, Some("Release map")),
+    )
+    .await
+    .unwrap();
+    assert!(created);
+    // Named by the first page's id: a version replaced since resolves to the
+    // newest, so the versions stay one line.
+    let (v3, _) = keep_session_original(
+        &db,
+        root.path(),
+        None,
+        keep(&later_session, &v3_html, Some(&v1.page_id)),
+    )
+    .await
+    .unwrap();
+
+    let v2_title = db.get_page(&v2.page_id).await.unwrap().unwrap().title;
+    let v3_page = db.get_page(&v3.page_id).await.unwrap().unwrap();
+    assert!(
+        v3_page
+            .content
+            .contains(&format!("New version of \u{201c}{v2_title}\u{201d}.")),
+        "{}",
+        v3_page.content
+    );
+    // The older pages are untouched.
+    assert_eq!(
+        db.get_page(&v1.page_id).await.unwrap().unwrap().content,
+        v1_body
+    );
+
+    let ids = |versions: &[wenlan_types::originals::OriginalVersion]| {
+        versions
+            .iter()
+            .map(|v| v.page_id.clone())
+            .collect::<Vec<_>>()
+    };
+    let first = page_original(&db, &v1.page_id).await.unwrap().unwrap();
+    assert_eq!(
+        first.newer.as_ref().map(|v| v.page_id.as_str()),
+        Some(v3.page_id.as_str())
+    );
+    assert!(first.older.is_empty());
+    let middle = page_original(&db, &v2.page_id).await.unwrap().unwrap();
+    assert_eq!(
+        middle.newer.as_ref().map(|v| v.page_id.as_str()),
+        Some(v3.page_id.as_str())
+    );
+    assert_eq!(ids(&middle.older), vec![v1.page_id.clone()]);
+    let newest = page_original(&db, &v3.page_id).await.unwrap().unwrap();
+    assert_eq!(newest.newer, None);
+    assert_eq!(
+        ids(&newest.older),
+        vec![v2.page_id.clone(), v1.page_id.clone()]
+    );
+    assert_eq!(newest.older[0].title, v2_title);
+
+    // An older version nobody kept is refused before anything is written.
+    let unknown = keep_session_original(
+        &db,
+        root.path(),
+        None,
+        keep(&later_session, "<p>other</p>", Some("No such map")),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        unknown.to_string().contains("original_replaces_unknown"),
+        "{unknown}"
+    );
 }

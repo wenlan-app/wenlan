@@ -40,6 +40,19 @@ impl From<&SearchResult> for QueryHit {
 pub struct QueryRecallOutput {
     pub results: Vec<QueryHit>,
     pub supplemental_pages: Vec<QueryHit>,
+    /// Pages the supplemental pages link to, each cut to its first paragraph.
+    /// Left out when there are none, so older readers see the same shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linked_pages: Vec<QueryLinkedPage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QueryLinkedPage {
+    pub id: String,
+    pub title: String,
+    pub point: String,
+    pub linked_from: Vec<String>,
 }
 
 pub fn project_recall(response: &SearchMemoryResponse) -> QueryRecallOutput {
@@ -51,6 +64,18 @@ pub fn project_recall(response: &SearchMemoryResponse) -> QueryRecallOutput {
             .unwrap_or_default()
             .iter()
             .map(QueryHit::from)
+            .collect(),
+        linked_pages: response
+            .linked_pages
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|page| QueryLinkedPage {
+                id: page.id.clone(),
+                title: page.title.clone(),
+                point: page.point.clone(),
+                linked_from: page.linked_from.clone(),
+            })
             .collect(),
     }
 }

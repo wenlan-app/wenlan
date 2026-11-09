@@ -165,6 +165,11 @@ pub fn filter_pages_by_source_overlap(
 /// weight has nothing to choose between.
 pub const PAGE_CANDIDATE_POOL: usize = 9;
 
+/// How many linked pages a recall adds beside its page hits (UX-FIND-5):
+/// three hits plus two linked pages beat five hits in the 2026-11-09
+/// measurement on real pages.
+pub const LINKED_PAGE_CAP: usize = 2;
+
 /// Pages scoring below this normalized relevance are left out of search
 /// results. Without a floor every search in a Space with a few pages would
 /// carry full unrelated pages. A starting value, to be calibrated on data.

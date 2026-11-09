@@ -25,12 +25,14 @@ use crate::state::SharedState;
 use chrono::Timelike;
 use wenlan_core::conversation_intake::{self as intake, FoundConversation};
 use wenlan_core::db::intake::{found_session_id, needs_label};
+use wenlan_core::db::night_tidy::TidyApplied;
 use wenlan_core::db::thing_dream::DreamDue;
-use wenlan_core::db::thing_map::DreamMapWrite;
+use wenlan_core::db::thing_map::{DreamMapWrite, TidyMapWrite};
 use wenlan_core::db::MemoryDB;
 use wenlan_core::llm_provider::{LlmProvider, LlmRequest};
+use wenlan_core::night_tidy;
 use wenlan_types::requests::StoreMemoryRequest;
-use wenlan_types::WriteSpaceTarget;
+use wenlan_types::{NightTidyKind, WriteSpaceTarget};
 
 /// How often conversations are looked at.
 const TICK: Duration = Duration::from_secs(10 * 60);
@@ -544,14 +546,30 @@ pub async fn dream_with(
             .dream_into_map(&thing.thing_id, &thing.title, &on_map)
             .await
             .map_err(|e| e.to_string())?;
+        // Then tidy what the AI wrote around it (UX-GRAPH-7). A failure
+        // here tidies nothing and does not stop the night. Each tidy keeps
+        // its own map changes, so it can be taken back alone.
+        let mut tidied = tidy_thing(db, &thing.thing_id, model, writer).await;
+        for tidy in &mut tidied {
+            let write = TidyMapWrite {
+                old: tidy.old.clone(),
+                new: tidy.new.clone(),
+                text: tidy.text.clone(),
+            };
+            tidy.map = db
+                .tidy_into_map(&thing.thing_id, std::slice::from_ref(&write))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
         let night = db
-            .record_dream(
+            .record_dream_tidied(
                 &thing.thing_id,
                 &decided,
                 &open,
                 &changed,
                 &links,
                 &read_conversations,
+                &tidied,
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -567,6 +585,130 @@ pub async fn dream_with(
         }
     }
     Ok((due.len(), points_written))
+}
+
+/// Tidy the memories an AI wrote around one thing's night (UX-GRAPH-7):
+/// one call with what [`MemoryDB::tidy_offer`] found, then the merges and
+/// updates are written through the same path as a point. What they take the
+/// place of is hidden only when the night is recorded. Empty when there is
+/// nothing to tidy or the call fails.
+pub async fn tidy_thing(
+    db: &MemoryDB,
+    thing_id: &str,
+    model: &dyn LlmProvider,
+    writer: &dyn PointWriter,
+) -> Vec<TidyApplied> {
+    let now = chrono::Utc::now().timestamp();
+    let offer = match db.tidy_offer(thing_id, now).await {
+        Ok(offer) => offer,
+        Err(error) => {
+            tracing::warn!("[things] nothing to tidy for {thing_id}: {error}");
+            return Vec::new();
+        }
+    };
+    if offer.groups.is_empty() {
+        return Vec::new();
+    }
+    let answer = model
+        .generate(LlmRequest {
+            system_prompt: Some(
+                "You tidy the memories an AI keeps for a person, changing only what you are sure of. Answer with JSON only."
+                    .into(),
+            ),
+            user_prompt: night_tidy::tidy_prompt(&offer.items, &offer.groups, now),
+            max_tokens: 1_500,
+            temperature: 0.0,
+            label: Some("things_tidy".into()),
+            timeout_secs: Some(300),
+        })
+        .await;
+    let changes = match answer {
+        Ok(answer) => night_tidy::parse_tidy(&answer, &offer.items, now).unwrap_or_default(),
+        Err(error) => {
+            tracing::warn!("[things] tidying {thing_id}: {error}");
+            return Vec::new();
+        }
+    };
+    let mut tidied = Vec::new();
+    for change in changes {
+        let (how, olds, text) = match change {
+            night_tidy::TidyChange::Merge { items, text } => {
+                (NightTidyKind::Merge, items.to_vec(), Some(text))
+            }
+            night_tidy::TidyChange::Update { item, text } => {
+                (NightTidyKind::Update, vec![item], Some(text))
+            }
+            night_tidy::TidyChange::Replace { keep, drop } => {
+                tidied.push(TidyApplied {
+                    how: NightTidyKind::Replace,
+                    old: vec![offer.items[drop].id.clone()],
+                    new: offer.items[keep].id.clone(),
+                    wrote: false,
+                    text: None,
+                    map: Default::default(),
+                });
+                continue;
+            }
+        };
+        let Some(text) = text else { continue };
+        let old: Vec<&night_tidy::TidyItem> = olds.iter().map(|&i| &offer.items[i]).collect();
+        // The newest of them gives the source the new memory keeps.
+        let source = old
+            .iter()
+            .filter(|item| item.session_id.is_some())
+            .max_by_key(|item| item.created_at)
+            .copied();
+        let request = StoreMemoryRequest {
+            content: text.clone(),
+            memory_type: Some(
+                if old.iter().any(|item| item.decided) {
+                    "decision"
+                } else {
+                    "fact"
+                }
+                .into(),
+            ),
+            space: match &old[0].space {
+                Some(space) => WriteSpaceTarget::Named(space.clone()),
+                None => WriteSpaceTarget::Inherit,
+            },
+            source_agent: None,
+            title: Some(text.clone()),
+            confidence: None,
+            supersedes: None,
+            entity: None,
+            entity_type: None,
+            entity_id: None,
+            structured_fields: None,
+            retrieval_cue: None,
+        };
+        let id = match writer.write(request).await {
+            Ok(id) => id,
+            Err(error) => {
+                tracing::warn!("[things] a tidy of {thing_id} was not written: {error}");
+                continue;
+            }
+        };
+        if let Err(error) = db
+            .adopt_tidy_memory(
+                &id,
+                source.and_then(|item| item.session_id.as_deref()),
+                source.and_then(|item| item.line.as_deref()),
+            )
+            .await
+        {
+            tracing::warn!("[things] a tidy of {thing_id} kept no source: {error}");
+        }
+        tidied.push(TidyApplied {
+            how,
+            old: old.iter().map(|item| item.id.clone()).collect(),
+            new: id,
+            wrote: true,
+            text: Some(text),
+            map: Default::default(),
+        });
+    }
+    tidied
 }
 
 /// Write a thing's conclusion onto the night `seq`: at most two sentences
@@ -737,6 +879,174 @@ pub async fn connect_old_night_points(
             .map_err(|e| e.to_string())?;
     }
     Ok(report)
+}
+
+/// Most paraphrase pairs one call about the old memories looks at.
+const OLD_PASS_PAIRS: usize = 10;
+/// Most memories about a passed date one call says again.
+const OLD_PASS_PASSED: usize = 12;
+
+/// The one-time pass over old memories (UX-GRAPH-7), once the owner OK'd its
+/// report: exact copies are hidden behind the earliest; a model is asked
+/// whether each paraphrase pair says the same, and a pair it merges is
+/// hidden the same way (nothing is rewritten); an AI's memory about a passed
+/// date is said again in the past tense, through the same path as a night's
+/// update. Then [`MemoryDB::apply_backlog`] records it all at once, with one
+/// Undo. A call that fails leaves its pairs or memories as they are.
+pub async fn run_old_memory_pass(
+    db: &MemoryDB,
+    model: &dyn LlmProvider,
+    writer: &dyn PointWriter,
+) -> Result<wenlan_core::db::night_backlog::BacklogPass, String> {
+    use wenlan_core::db::night_backlog::{BacklogMemory, BacklogPlan};
+    static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    struct Running;
+    impl Drop for Running {
+        fn drop(&mut self) {
+            RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    if RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("the old-memory pass is already running".into());
+    }
+    let _running = Running;
+    if db
+        .backlog_pass()
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err("the old-memory pass already ran; take it back first".into());
+    }
+    let now = chrono::Utc::now().timestamp();
+    let report = db.backlog_report(now).await.map_err(|e| e.to_string())?;
+    let item = |m: &BacklogMemory| night_tidy::TidyItem {
+        id: m.id.clone(),
+        text: m.text.clone(),
+        space: m.space.clone(),
+        created_at: m.created_at,
+        event_date: m.event_date,
+        decided: false,
+        session_id: None,
+        line: None,
+    };
+    let ask = |items: Vec<night_tidy::TidyItem>, groups: Vec<Vec<usize>>| async move {
+        let answer = model
+            .generate(LlmRequest {
+                system_prompt: Some(
+                    "You tidy the memories an AI keeps for a person, changing only what you are sure of. Answer with JSON only."
+                        .into(),
+                ),
+                user_prompt: night_tidy::tidy_prompt(&items, &groups, now),
+                max_tokens: 3_000,
+                temperature: 0.0,
+                label: Some("things_old_pass".into()),
+                timeout_secs: Some(300),
+            })
+            .await;
+        match answer {
+            Ok(text) => night_tidy::parse_tidy(&text, &items, now).map(|changes| (items, changes)),
+            Err(error) => {
+                tracing::warn!("[things] old-memory pass call failed: {error}");
+                None
+            }
+        }
+    };
+    let mut plan = BacklogPlan::default();
+    let mut paraphrases = Vec::new();
+    for pair in report.hideable() {
+        if pair.exact {
+            plan.hide.push((pair.keep.id.clone(), pair.hide.id.clone()));
+        } else {
+            paraphrases.push(pair);
+        }
+    }
+    for batch in paraphrases.chunks(OLD_PASS_PAIRS) {
+        let items: Vec<_> = batch
+            .iter()
+            .flat_map(|p| [item(&p.keep), item(&p.hide)])
+            .collect();
+        let groups = (0..batch.len()).map(|i| vec![2 * i, 2 * i + 1]).collect();
+        let Some((_, changes)) = ask(items, groups).await else {
+            continue;
+        };
+        for change in changes {
+            // "These two say the same" or "the newer says the older no
+            // longer holds" is taken, and only as hiding the older behind
+            // the newer (`keep` comes first in each group): an old memory is
+            // never rewritten here.
+            let same_pair = match change {
+                night_tidy::TidyChange::Merge { items: [a, b], .. } if a / 2 == b / 2 => {
+                    Some(a / 2)
+                }
+                night_tidy::TidyChange::Replace { keep, drop }
+                    if keep % 2 == 0 && drop == keep + 1 =>
+                {
+                    Some(keep / 2)
+                }
+                _ => None,
+            };
+            if let Some(i) = same_pair {
+                let pair = batch[i];
+                plan.hide.push((pair.keep.id.clone(), pair.hide.id.clone()));
+            }
+        }
+    }
+    let passed: Vec<&BacklogMemory> = report
+        .passed
+        .iter()
+        .filter(|m| m.author == wenlan_types::authorship::SentenceAuthor::Ai)
+        .collect();
+    for batch in passed.chunks(OLD_PASS_PASSED) {
+        let items: Vec<_> = batch.iter().map(|m| item(m)).collect();
+        let groups = (0..batch.len()).map(|i| vec![i]).collect();
+        let Some((items, changes)) = ask(items, groups).await else {
+            continue;
+        };
+        for change in changes {
+            let night_tidy::TidyChange::Update { item: i, text } = change else {
+                continue;
+            };
+            let old = &items[i];
+            let detail = db.get_memory_detail(&old.id).await.ok().flatten();
+            let request = StoreMemoryRequest {
+                content: text.clone(),
+                memory_type: Some(
+                    detail
+                        .as_ref()
+                        .and_then(|d| d.memory_type.clone())
+                        .filter(|t| t == "decision")
+                        .unwrap_or_else(|| "fact".into()),
+                ),
+                space: match &old.space {
+                    Some(space) => WriteSpaceTarget::Named(space.clone()),
+                    None => WriteSpaceTarget::Inherit,
+                },
+                source_agent: None,
+                title: Some(text.clone()),
+                confidence: None,
+                supersedes: None,
+                entity: None,
+                entity_type: None,
+                entity_id: None,
+                structured_fields: None,
+                retrieval_cue: None,
+            };
+            let id = match writer.write(request).await {
+                Ok(id) => id,
+                Err(error) => {
+                    tracing::warn!("[things] an old memory was not said again: {error}");
+                    continue;
+                }
+            };
+            let session = detail.as_ref().and_then(|d| d.session_id.as_deref());
+            if let Err(error) = db.adopt_tidy_memory(&id, session, None).await {
+                tracing::warn!("[things] an old memory's update kept no source: {error}");
+            }
+            plan.updated.push((old.id.clone(), id));
+        }
+    }
+    db.apply_backlog(&plan).await.map_err(|e| e.to_string())
 }
 
 /// One look over conversations already found: label what is new or went on,

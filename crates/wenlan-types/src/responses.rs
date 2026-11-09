@@ -80,6 +80,28 @@ pub struct SearchMemoryResponse {
     /// set this field; old consumers that don't read it are unaffected).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supplemental_pages: Option<Vec<SearchResult>>,
+    /// Pages the `supplemental_pages` hits link to with `[[links]]`, each
+    /// cut to its first paragraph (UX-FIND-5). Absent when there are none;
+    /// older daemons never set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_pages: Option<Vec<LinkedPage>>,
+}
+
+/// A page a search hit links to: its point, not its whole text. The AI
+/// tool reads the rest with `read_page` when it needs it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LinkedPage {
+    pub id: String,
+    pub title: String,
+    /// The page's first paragraph.
+    pub point: String,
+    /// Titles of the hits that link to this page, in hit order.
+    pub linked_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    /// Same meaning as a hit's `confirmed`: a person wrote, edited or
+    /// confirmed it.
+    pub confirmed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2596,6 +2618,7 @@ mod search_memory_response_tests {
     #[test]
     fn none_supplemental_pages_not_serialized() {
         let resp = SearchMemoryResponse {
+            linked_pages: None,
             results: vec![],
             took_ms: 2.0,
             supplemental_pages: None,

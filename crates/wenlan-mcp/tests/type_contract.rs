@@ -505,6 +505,7 @@ async fn t3_structured_fields_schema_is_object() {
 async fn t4_recall_roundtrip() {
     let (mock, client) = setup().await;
     let response = SearchMemoryResponse {
+        linked_pages: None,
         results: vec![sample_search_result()],
         took_ms: 10.0,
         supplemental_pages: None,
@@ -696,6 +697,7 @@ async fn t8b_confirm_memory_reports_missing_row() {
 async fn t9_recall_request_does_not_contain_entity() {
     let (mock, client) = setup().await;
     let response = SearchMemoryResponse {
+        linked_pages: None,
         results: vec![],
         took_ms: 1.0,
         supplemental_pages: None,

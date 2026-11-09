@@ -861,3 +861,274 @@ async fn ux_home_3_an_untitled_thing_no_conversation_can_name_is_not_listed() {
             .unwrap()
     ));
 }
+
+/// One memory of a thing's conversation, written by `agent` in `space`,
+/// `ago` seconds ago.
+async fn said_by(
+    db: &MemoryDB,
+    id: &str,
+    content: &str,
+    agent: Option<&str>,
+    space: &str,
+    session: &str,
+    ago: i64,
+) {
+    db.upsert_documents(vec![RawDocument {
+        source: "memory".to_string(),
+        source_id: id.to_string(),
+        title: id.to_string(),
+        content: content.to_string(),
+        last_modified: chrono::Utc::now().timestamp(),
+        metadata: HashMap::new(),
+        memory_type: Some("decision".to_string()),
+        space: Some(space.to_string()),
+        source_agent: agent.map(str::to_string),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let conn = db.conn.lock().await;
+    conn.execute(
+        "UPDATE memories SET session_id = ?2, created_at = ?3 WHERE source_id = ?1",
+        libsql::params![id, session, chrono::Utc::now().timestamp() - ago],
+    )
+    .await
+    .unwrap();
+}
+
+/// UX-GRAPH-7: a night offers only what an AI wrote, within one Space; the
+/// person's own memory and one nothing names are never offered. A replace
+/// hides the older, counts on the morning line, and Undo puts back the mode
+/// it had without forgetting anything the night did not write.
+#[tokio::test]
+async fn ux_graph_7_a_night_tidies_only_what_an_ai_wrote_and_undo_puts_it_back() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _notes) = two_things(&db, now).await;
+    db.create_space("personal", None, false).await.unwrap();
+    let due = db.things_to_dream(now, 10).await.unwrap();
+    let session = due
+        .iter()
+        .find(|d| d.thing_id == site)
+        .unwrap()
+        .conversations[0]
+        .session_id
+        .clone();
+    let s = session.as_str();
+    said_by(
+        &db,
+        "mem_old",
+        "The site has a pricing page.",
+        Some("claude-code"),
+        "wenlan",
+        s,
+        7_200,
+    )
+    .await;
+    said_by(
+        &db,
+        "mem_new",
+        "The site has a pricing page now.",
+        Some("codex"),
+        "wenlan",
+        s,
+        60,
+    )
+    .await;
+    said_by(
+        &db,
+        "mem_none",
+        "The site has a pricing page soon.",
+        None,
+        "wenlan",
+        s,
+        600,
+    )
+    .await;
+    said_by(
+        &db,
+        "mem_other",
+        "The site has a pricing page too.",
+        Some("codex"),
+        "personal",
+        s,
+        600,
+    )
+    .await;
+    said_by(
+        &db,
+        "mem_mine",
+        "The site has a pricing page, I think.",
+        Some("codex"),
+        "wenlan",
+        s,
+        600,
+    )
+    .await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET authored_content = content WHERE source_id = 'mem_mine'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+
+    let offer = db.tidy_offer(&site, now).await.unwrap();
+    let mut offered: Vec<&str> = offer.items.iter().map(|i| i.id.as_str()).collect();
+    offered.sort();
+    assert_eq!(offered, ["mem_new", "mem_old"], "{offer:?}");
+    assert!(offer.groups.iter().all(|g| g
+        .iter()
+        .all(|&i| offer.items[i].space.as_deref() == Some("wenlan"))));
+
+    let before = db.get_memory_detail("mem_old").await.unwrap().unwrap();
+    db.record_dream_tidied(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+        &[crate::db::night_tidy::TidyApplied {
+            how: wenlan_types::NightTidyKind::Replace,
+            old: vec!["mem_old".into()],
+            new: "mem_new".into(),
+            wrote: false,
+            text: None,
+            map: Default::default(),
+        }],
+    )
+    .await
+    .unwrap();
+    let hidden = db.get_memory_detail("mem_old").await.unwrap().unwrap();
+    assert_eq!(hidden.supersede_mode, "evicted");
+    let nights = db.thing_night_points(&ReadScope::Global).await.unwrap();
+    let night = nights.iter().find(|n| n.thing_id == site).unwrap();
+    let tidied = &night.last_night.as_ref().unwrap().tidied;
+    assert_eq!(tidied.len(), 1, "a night that only tidied still shows");
+    assert_eq!(tidied[0].replaced, ["mem_old"]);
+
+    let forget = db.undo_thing_dream(&site).await.unwrap();
+    assert!(
+        forget.is_empty(),
+        "the night wrote nothing, so nothing is forgotten"
+    );
+    let back = db.get_memory_detail("mem_old").await.unwrap().unwrap();
+    assert_eq!(back.supersede_mode, before.supersede_mode);
+    assert!(db.get_memory_detail("mem_new").await.unwrap().is_some());
+}
+
+fn replace(old: &str, new: &str) -> crate::db::night_tidy::TidyApplied {
+    crate::db::night_tidy::TidyApplied {
+        how: wenlan_types::NightTidyKind::Replace,
+        old: vec![old.into()],
+        new: new.into(),
+        wrote: false,
+        text: None,
+        map: Default::default(),
+    }
+}
+
+async fn mode(db: &MemoryDB, id: &str) -> String {
+    db.get_memory_detail(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .supersede_mode
+}
+
+/// UX-GRAPH-7: hiding a memory that had hidden an older one keeps the older
+/// one hidden; a memory pinned since the offer, or a replace whose kept
+/// memory is gone, is left alone; a tidy a later night took the place of is
+/// not offered for Undo, and Undo puts everything back.
+#[tokio::test]
+async fn ux_graph_7_a_tidy_keeps_what_it_hid_hidden_and_checks_again_when_it_records() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let (site, _notes) = two_things(&db, now).await;
+    let s = "ses_tidy";
+    for (id, text, ago) in [
+        ("mem_p", "Pricing is 5 dollars.", 9_000),
+        ("mem_n", "Pricing is 6 dollars.", 7_000),
+        ("mem_k", "There is no paid plan.", 5_000),
+        ("mem_k2", "There is no paid plan for now.", 3_000),
+        ("mem_pin", "Pricing is set.", 2_000),
+        ("mem_gone", "Pricing was dropped.", 1_000),
+    ] {
+        said_by(&db, id, text, Some("claude-code"), "wenlan", s, ago).await;
+    }
+    {
+        let conn = db.conn.lock().await;
+        for sql in [
+            "UPDATE memories SET supersedes = 'mem_p', supersede_mode = 'hide' WHERE source_id = 'mem_n'",
+            "UPDATE memories SET pinned = 1 WHERE source_id = 'mem_pin'",
+            "UPDATE memories SET supersede_mode = 'evicted' WHERE source_id = 'mem_gone'",
+        ] {
+            conn.execute(sql, ()).await.unwrap();
+        }
+    }
+    let p_before = mode(&db, "mem_p").await;
+
+    db.record_dream_tidied(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+        &[
+            replace("mem_n", "mem_k"),
+            replace("mem_pin", "mem_k"),
+            replace("mem_k", "mem_gone"),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(mode(&db, "mem_n").await, "evicted");
+    assert_eq!(
+        mode(&db, "mem_p").await,
+        "evicted",
+        "what mem_n hid stays hidden"
+    );
+    assert_ne!(
+        mode(&db, "mem_pin").await,
+        "evicted",
+        "pinned since the offer"
+    );
+    assert_ne!(mode(&db, "mem_k").await, "evicted", "its keep was gone");
+    let tidies = db.thing_tidies(&site).await.unwrap();
+    assert_eq!(tidies.len(), 1, "{tidies:?}");
+    assert_eq!(tidies[0].memory_id, "mem_k");
+    assert_eq!(tidies[0].replaced[0].source_id, "mem_n");
+
+    // A later night takes mem_k's place: only that tidy is offered for Undo.
+    db.record_dream_tidied(
+        &site,
+        &[],
+        &[],
+        &Default::default(),
+        &[],
+        &[],
+        &[replace("mem_k", "mem_k2")],
+    )
+    .await
+    .unwrap();
+    let tidies = db.thing_tidies(&site).await.unwrap();
+    assert_eq!(
+        tidies
+            .iter()
+            .map(|t| t.memory_id.as_str())
+            .collect::<Vec<_>>(),
+        ["mem_k2"]
+    );
+    assert!(db.undo_tidy(&site, "mem_k").await.unwrap().is_none());
+
+    // Undo, newest first, puts every mode back.
+    db.undo_thing_dream(&site).await.unwrap();
+    assert_ne!(mode(&db, "mem_k").await, "evicted");
+    assert_eq!(db.undo_tidy(&site, "mem_k").await.unwrap(), Some(vec![]));
+    assert_eq!(mode(&db, "mem_n").await, "hide");
+    assert_eq!(mode(&db, "mem_p").await, p_before);
+}

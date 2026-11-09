@@ -57,6 +57,7 @@ pub mod maintenance;
 pub mod migrate_rename;
 pub mod migrations;
 pub mod narrative;
+pub mod night_tidy;
 pub mod on_device_models;
 pub mod onboarding;
 pub mod origin;
