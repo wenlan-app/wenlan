@@ -1048,7 +1048,11 @@ async fn ux_graph_7_the_old_memory_pass_hides_copies_and_says_passed_dates_again
             "mem_z",
             "The demo is planned for that day.",
             "personal",
-            now - 400_000,
+            // Written two days before the day it is about, whatever the time
+            // of day the test runs: `now - 400_000` was less than a day
+            // before it after 15:06 UTC, so the date no longer counted as a
+            // plan that passed.
+            day - 2 * 86_400,
         ),
     ] {
         db.upsert_documents(vec![wenlan_core::sources::RawDocument {
