@@ -2506,9 +2506,9 @@ fn source_read_refused_result(reason: &str, source_ids: &[String]) -> CallToolRe
     );
     if target == "unfiled" {
         text.push_str(
-            "This page is in no Space, so it can cite only notes that are in no Space. If \
-             its sources are in one Space, move the page there with move_page and retry; if \
-             they span several Spaces, leave out the ones from other Spaces. ",
+            "This page is in no Space, so it can cite only notes that are in no Space. A \
+             page cannot be moved into a Space yet (move_page only changes its folder), so \
+             leave out those sources and retry, or tell the person which ones were left out. ",
         );
     } else {
         text.push_str(
@@ -5131,6 +5131,14 @@ impl WenlanMcpServer {
             } else {
                 None
             };
+            // A kept diagram that a later one replaced says so, so an AI
+            // reading the old one builds on the newest (UX-ART-3). The
+            // daemon walks the versions; best effort, like attachments.
+            if page.page.page.creation_kind == "original" {
+                if let Some(newer) = self.newer_original(page_id).await {
+                    object.insert("newer_version".into(), newer);
+                }
+            }
             if let Some(tree) = tree {
                 object.insert(
                     "map".into(),
@@ -5143,6 +5151,22 @@ impl WenlanMcpServer {
             }
         }
         Ok(CallToolResult::structured(value))
+    }
+
+    /// The newest version of a kept diagram, when a later one replaced it.
+    /// Read on the plain client so it is not listed as a read of the session.
+    async fn newer_original(&self, page_id: &str) -> Option<serde_json::Value> {
+        let original: wenlan_types::originals::PageOriginalResponse = self
+            .client
+            .get(&format!("/api/pages/{page_id}/original"))
+            .await
+            .ok()?;
+        let newer = original.newer?;
+        Some(serde_json::json!({
+            "page_id": newer.page_id,
+            "title": newer.title,
+            "note": "A newer version of this diagram was kept. Read that one before building on this.",
+        }))
     }
 
     /// The page's mind map drawn by [`crate::map_tree::render`]. Names come from
@@ -11380,7 +11404,7 @@ mod tests {
         assert!(text.contains("[2] mem_b, [3] mem_c"), "{text}");
         assert!(!text.contains("mem_a"), "{text}");
         assert!(
-            text.contains("move_page") && text.contains("in no Space"),
+            text.contains("in no Space") && text.contains("only changes its folder"),
             "{text}"
         );
         assert!(text.contains("nothing was written"), "{text}");
@@ -12087,6 +12111,69 @@ mod tests {
         assert_eq!(value["page"]["basis_count"], 0);
         assert!(value.get("basis").is_none());
         assert!(value.get("linked_changed").is_none());
+    }
+
+    /// An AI reading a kept diagram that a later one replaced is told which
+    /// page is newer; the newest one, and ordinary pages, carry nothing.
+    #[tokio::test]
+    async fn read_page_of_a_replaced_diagram_names_the_newer_version() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        for (id, newer) in [
+            (
+                "page_old",
+                Some(
+                    serde_json::json!({"page_id": "page_new", "title": "Release flow (v2)", "kept_at": 1}),
+                ),
+            ),
+            ("page_new", None),
+        ] {
+            let mut wire = page_wire_json(id, 1, false);
+            wire["creation_kind"] = "original".into();
+            Mock::given(method("GET"))
+                .and(path(format!("/api/pages/{id}")))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({"page": wire})),
+                )
+                .mount(&mock)
+                .await;
+            Mock::given(method("GET"))
+                .and(path(format!("/api/pages/{id}/sources")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+                .mount(&mock)
+                .await;
+            let mut original = serde_json::json!({
+                "page_id": id, "vendor": "claude-code", "conversation_id": "s1",
+                "conversation_url": "", "artifact_id": "a", "kind": "image/svg+xml",
+                "file_path": "originals/claude-code/s1/a.svg", "imported_at": 1
+            });
+            if let Some(newer) = newer {
+                original["newer"] = newer;
+            }
+            Mock::given(method("GET"))
+                .and(path(format!("/api/pages/{id}/original")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(original))
+                .mount(&mock)
+                .await;
+        }
+        let server = stdio_server(mock.uri());
+        let old = server
+            .read_page_impl("page_old")
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(old["newer_version"]["page_id"], "page_new");
+        assert_eq!(old["newer_version"]["title"], "Release flow (v2)");
+        let newest = server
+            .read_page_impl("page_new")
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert!(newest.get("newer_version").is_none());
     }
 
     /// `list_pages` shows a page's non-ok bases and how many there are, and
