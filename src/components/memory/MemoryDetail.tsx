@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
-import { useState, useRef, useEffect, useId, useCallback } from "react";
+import { useState, useRef, useEffect, useId, useCallback, useContext } from "react";
+import { createPortal } from "react-dom";
+import { WorkspaceDocumentToolsHostContext } from "./navigation/WorkspacePaneHost";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -137,6 +139,7 @@ export default function MemoryDetail({
 }: MemoryDetailProps) {
   const { t, i18n } = useTranslation();
   const exampleWiki = useExampleWikiActive();
+  const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
   const queryClient = useQueryClient();
   const [contentBusy, setContentBusy] = useState(false);
   const [revisionPending, setRevisionPending] = useState(false);
@@ -453,23 +456,10 @@ export default function MemoryDetail({
   const navigateEntity = (id: string) => onNavigateEntity(id);
   const navigatePage = onNavigatePage ? (id: string) => onNavigatePage(id) : undefined;
 
-  return (
-    <main className={`memory-detail-dossier memory-detail-content-first document-context-host${infoOpen ? " document-context-open" : ""}`} aria-label={t("memoryDetail.dossierLabel")}>
-      <DetailReadingFrame variant="compact" className="memory-document-frame">
-      <header className="memory-detail-header">
-        <WorkspaceBackButton
-          type="button"
-          onClick={onBack}
-          className="memory-detail-back"
-          aria-label={t("memoryDetail.backToMemories")}
-          title={t("memoryDetail.backToMemories")}
-        >
-          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
-        </WorkspaceBackButton>
-        {fetchedMemory !== null && <div className="memory-detail-actions">
-          <InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} />
-
-          {!exampleWiki && <div
+  // Inside the workspace the reader's tools live in the shared document
+  // toolbar, in the same order as a page's: its menu, then Info.
+  const actionsMenu = exampleWiki ? null : (
+    <div
             className="page-detail-actions-anchor"
             ref={actionsRef}
           >
@@ -533,7 +523,26 @@ export default function MemoryDetail({
                 </button>
               </div>
             )}
-          </div>}
+          </div>
+  );
+
+  return (
+    <main className={`memory-detail-dossier memory-detail-content-first document-context-host${infoOpen ? " document-context-open" : ""}`} aria-label={t("memoryDetail.dossierLabel")}>
+      {fetchedMemory !== null && documentToolsHost && createPortal(<>{actionsMenu}<InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} /></>, documentToolsHost)}
+      <DetailReadingFrame variant="compact" className={`memory-document-frame${documentToolsHost ? " memory-document-frame--tools-hosted" : ""}`}>
+      <header className="memory-detail-header">
+        <WorkspaceBackButton
+          type="button"
+          onClick={onBack}
+          className="memory-detail-back"
+          aria-label={t("memoryDetail.backToMemories")}
+          title={t("memoryDetail.backToMemories")}
+        >
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
+        </WorkspaceBackButton>
+        {fetchedMemory !== null && !documentToolsHost && <div className="memory-detail-actions">
+          <InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} />
+          {actionsMenu}
         </div>}
       </header>
 

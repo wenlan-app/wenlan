@@ -142,12 +142,18 @@ for (const cfg of [
       const reader = page.locator(kind === "memory" ? ".memory-document-frame" : ".entity-detail-dossier .page-detail-document");
       await expect(pane).toBeVisible();
       if (kind === "topic") {
-        expect(await titleAndTools(".entity-detail-dossier .page-detail-document", ".entity-detail-dossier .page-detail-title", ".entity-detail-dossier .page-detail-actions-menu-trigger")).toEqual(headingType);
+        expect(await titleAndTools(".entity-detail-dossier .page-detail-document", ".entity-detail-dossier .page-detail-title")).toEqual(headingType);
         expect(await page.locator(".entity-obs-content").first().evaluate(el => ({ size: getComputedStyle(el).fontSize, leading: getComputedStyle(el).lineHeight }))).toEqual(sourceType);
       } else {
-        await titleAndTools(".memory-document-frame", ".memory-document-editor .cm-line:first-child", ".memory-detail-actions .page-detail-actions-menu-trigger");
+        await titleAndTools(".memory-document-frame", ".memory-document-editor .cm-line:first-child");
         expect(await page.locator(".memory-document-editor .cm-line:first-child").evaluate(el => ({ size: getComputedStyle(el).fontSize, leading: getComputedStyle(el).lineHeight }))).toEqual(sourceType);
       }
+      // Like a page, the reader's menu and Info sit in the workspace toolbar,
+      // menu first, not over the first line of text.
+      const toolbar = page.locator(".workspace-document-tools-host");
+      await expect(toolbar.locator(".page-detail-actions-menu-trigger")).toHaveCount(1);
+      await expect(reader.locator(".page-detail-actions-menu-trigger")).toHaveCount(0);
+      expect((await toolbar.locator(".page-detail-actions-menu-trigger").boundingBox())!.x).toBeLessThan((await toolbar.locator(".workspace-panel-toggle").boundingBox())!.x);
       await balancedStart(kind === "memory" ? ".memory-document-frame" : ".entity-detail-dossier .page-detail-document");
       const start = (await reader.boundingBox())!.x;
       await capture(`${kind}-info-open`);
