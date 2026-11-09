@@ -579,6 +579,21 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
     // and the agent acts on it: claim again, fix a citation, pick another
     // page. A write's citations refusal carries only counts. A refused change
     // to a person's note is a fixed sentence pointing at propose_note_change.
+    // A source-read refusal keeps only the positions of the caller's own
+    // source ids that could not be read and the kind of target, parsed
+    // strictly, so the agent can name the ids it sent. Anything else in the
+    // message stays withheld.
+    if code == "source_read_refused" {
+        return Some(
+            match reason
+                .split_once(':')
+                .and_then(|(_, d)| source_read_detail(d))
+            {
+                Some(detail) => format!("{code}: {detail}"),
+                None => code.to_string(),
+            },
+        );
+    }
     if code == "code_basis_invalid"
         || code.starts_with("steep_")
         || code == "citations_unsupported"
@@ -600,6 +615,27 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
     Some(code.to_string())
 }
 
+/// `positions=<n,...> target=<unfiled|space|global>` from the start of a
+/// `source_read_refused` detail, rebuilt from the parsed values, or `None`
+/// when it is not exactly that shape.
+fn source_read_detail(detail: &str) -> Option<String> {
+    let head = detail.trim_start().split(';').next()?.trim();
+    let (positions, target) = head.strip_prefix("positions=")?.split_once(" target=")?;
+    let positions: Vec<usize> = positions
+        .split(',')
+        .map(|n| n.parse::<usize>().ok().filter(|n| *n > 0))
+        .collect::<Option<_>>()?;
+    if positions.is_empty() || positions.len() > 1000 {
+        return None;
+    }
+    let target = match target {
+        "unfiled" | "space" | "global" => target,
+        _ => return None,
+    };
+    let positions: Vec<String> = positions.iter().map(usize::to_string).collect();
+    Some(format!("positions={} target={target}", positions.join(",")))
+}
+
 /// Longest `code_basis_invalid`, steep or `citations_unsupported`
 /// explanation kept for the agent.
 const DETAIL_MAX_CHARS: usize = 500;
@@ -618,6 +654,27 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_source_read_refusal_keeps_only_positions_and_target() {
+        let body =
+            br#"{"error":"source_read_refused: positions=2,5 target=unfiled; source unavailable"}"#;
+        assert_eq!(
+            parse_api_error_reason(body).as_deref(),
+            Some("source_read_refused: positions=2,5 target=unfiled")
+        );
+        for body in [
+            &br#"{"error":"source_read_refused: PRIVATE_SENTINEL"}"#[..],
+            br#"{"error":"source_read_refused: positions=2,x target=unfiled"}"#,
+            br#"{"error":"source_read_refused: positions=0 target=space"}"#,
+            br#"{"error":"source_read_refused: positions=1 target=PRIVATE"}"#,
+        ] {
+            assert_eq!(
+                parse_api_error_reason(body).as_deref(),
+                Some("source_read_refused")
+            );
+        }
+    }
 
     #[test]
     fn a_steep_refusal_reaches_the_agent_with_its_reason() {
