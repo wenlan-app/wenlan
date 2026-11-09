@@ -26,7 +26,7 @@ describe("MemorySearchResult", () => {
     const { rerender } = render(
       <MemorySearchResult result={makeResult({ semantic_unit: "chat_turn" })} query="tea" />,
     );
-    expect(screen.getByTestId("search-result-conversation-text")).toHaveTextContent("Original text");
+    expect(screen.getByTestId("search-result-conversation-text")).toHaveTextContent("Conversation");
     expect(screen.queryByText("preference")).not.toBeInTheDocument();
 
     // A person's own memory still shows its type.

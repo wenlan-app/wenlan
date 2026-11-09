@@ -131,7 +131,7 @@ describe("PageInfo", () => {
     });
     await user.click(screen.getByText(/Page info/i));
     const [turn, own] = screen.getAllByTestId("page-info-source-row");
-    expect(within(turn).getByText("Original text")).toBeInTheDocument();
+    expect(within(turn).getByText("Conversation")).toBeInTheDocument();
     expect(within(turn).queryByText("fact")).toBeNull();
     expect(within(own).getByText("decision")).toBeInTheDocument();
   });

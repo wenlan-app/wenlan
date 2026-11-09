@@ -1304,7 +1304,7 @@ const en = {
   memoryList: {
     label: "Memory list",
     // An imported chat turn is stored as the conversation's original text (UX-ADD-4).
-    conversationText: "Original text",
+    conversationText: "Conversation",
     filterLabel: "Filter memories",
     clearFilter: "Clear filter",
     actions: "Memory actions",
@@ -1946,7 +1946,7 @@ const en = {
   },
   thisSentence: {
     title: "This sentence",
-    who: { you: "Yours", accepted: "Yours, you accepted it", ai: "Written by AI", original: "Original text", unknown: "Not sure who wrote it" },
+    who: { you: "Yours", accepted: "Yours, you accepted it", ai: "Written by AI", original: "Conversation", unknown: "Not sure who wrote it" },
     evidence: { verified: "source checked", unverified: "not confirmed by text matching", unevaluated: "source not checked yet", none: "no source" },
     weak: "Source check: {{reason}}",
     recheck: "Ask AI to recheck",
@@ -4563,7 +4563,7 @@ const zhHans = {
   },
   memoryList: {
     label: "记忆列表",
-    conversationText: "原文",
+    conversationText: "对话",
     filterLabel: "筛选记忆",
     clearFilter: "清除筛选",
     actions: "记忆操作",
@@ -7789,7 +7789,7 @@ const zhHant = {
   },
   memoryList: {
     label: "記憶列表",
-    conversationText: "原文",
+    conversationText: "對話",
     filterLabel: "篩選記憶",
     clearFilter: "清除篩選",
     actions: "記憶操作",

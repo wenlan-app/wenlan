@@ -66,7 +66,7 @@ describe("MemoryListRow reading and operations", () => {
     const { rerender } = render(
       <MemoryListRow memory={makeMemory({ memory_type: "identity", conversation_text: true })} {...callbacks()} />,
     );
-    expect(screen.getByTestId("memory-list-row-conversation-text")).toHaveTextContent("Original text");
+    expect(screen.getByTestId("memory-list-row-conversation-text")).toHaveTextContent("Conversation");
     await user.click(screen.getByRole("button", { name: "Memory actions" }));
     expect(screen.getByRole("menu")).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Confirm memory" })).not.toBeInTheDocument();
