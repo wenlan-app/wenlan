@@ -32927,7 +32927,16 @@ async fn test_migration_54_memory_entities_table() {
         cols.push(row.get::<String>(0).unwrap());
     }
     cols.sort();
-    assert_eq!(cols, vec!["entity_id".to_string(), "memory_id".to_string()]);
+    // UX-GRAPH-8 (m160) adds who wrote each link and when.
+    assert_eq!(
+        cols,
+        vec![
+            "created_at".to_string(),
+            "entity_id".to_string(),
+            "memory_id".to_string(),
+            "writer".to_string(),
+        ]
+    );
 
     let mut rows = conn
         .query("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memory_entities' AND name='idx_memory_entities_entity_memory'", ())
@@ -60040,6 +60049,10 @@ async fn growth_takes_the_closest_page_of_the_topic_and_needs_similarity() {
 #[tokio::test]
 async fn old_hub_links_are_unfiled_once() {
     let (db, _dir) = test_db().await;
+    // Only a shown topic counts as the specific one (UX-GRAPH-8).
+    db.test_seed_entity_shadow_page(TestEntity::new("specific", "specific", "project"))
+        .await
+        .unwrap();
     {
         let conn = db.conn.lock().await;
         conn.execute("PRAGMA foreign_keys = OFF", ()).await.unwrap();

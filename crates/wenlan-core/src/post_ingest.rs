@@ -637,7 +637,13 @@ pub async fn run_post_ingest_enrichment(
                         // Link all batch memories to the extracted entity
                         for (batch_sid, _) in &batch {
                             if batch_sid != source_id {
-                                let _ = db.update_memory_entity_id(batch_sid, &eid).await;
+                                let _ = db
+                                    .update_memory_entity_id_as(
+                                        batch_sid,
+                                        &eid,
+                                        crate::db::topic_filing::writer::KG_EXTRACT,
+                                    )
+                                    .await;
                             }
                         }
                         log::info!(
@@ -865,8 +871,12 @@ pub(crate) async fn auto_link_entity(
         }
         // distance is cosine distance — lower = more similar
         if entity.distance < tuning.entity_link_distance as f32 {
-            db.update_memory_entity_id(source_id, &entity.entity.id)
-                .await?;
+            db.update_memory_entity_id_as(
+                source_id,
+                &entity.entity.id,
+                crate::db::topic_filing::writer::AUTO_LINK,
+            )
+            .await?;
             log::info!(
                 "[post_ingest] auto-linked {} to entity '{}' (distance={:.3})",
                 source_id,
@@ -1555,7 +1565,15 @@ mod tests {
 
         // Flip one memory's entity_id — simulate a prior enrichment pass
         // that already linked it. find_recent_batch must drop it so the
-        // next extraction doesn't re-process it.
+        // next extraction doesn't re-process it. UX-GRAPH-8: only a shown
+        // (active) topic becomes a memory's main topic, so seed its page.
+        db.test_seed_entity_shadow_page(crate::db::TestEntity::new(
+            "entity_alice",
+            "Alice",
+            "person",
+        ))
+        .await
+        .unwrap();
         db.update_memory_entity_id("mem_batch_b", "entity_alice")
             .await
             .unwrap();

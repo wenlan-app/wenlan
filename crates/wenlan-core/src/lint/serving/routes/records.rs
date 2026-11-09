@@ -20,6 +20,7 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Get,"/api/import/state","import_state",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/import/batches/active","import_batches_active",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/import/batches/{batch_id}/status","import_batch_status",NoSelector,UnauthenticatedLocal,Global,SingleId404,NotApplicable,GlobalRead),
+    row!(Get,"/api/trust/scan","trust_scan_report",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,GlobalRead),
     row!(Get,"/api/activity","background_work_counts",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,AggregateOnly),
     row!(Get,"/api/memory/{source_id}/enrichment-status","memory_detail",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/memory/{id}/revisions","memory_revisions",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),

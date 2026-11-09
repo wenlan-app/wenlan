@@ -1,0 +1,23 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* A page that keeps what an AI tool made: its source line, the original as
+   it was, then notes added later. */
+.original-page { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.original-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  color: var(--mem-text-secondary);
+  font: 400 13px/1.5 var(--mem-font-body);
+}
+.original-source .session-source-line { padding: 0; }
+.original-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: var(--mem-r-3);
+  /* The original draws on its own page; most assume a white one. */
+  background: #fff;
+  color-scheme: light;
+}
+.original-notes { margin-top: 8px; }

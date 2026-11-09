@@ -1047,3 +1047,101 @@ async fn ux_who_6_a_memory_opens_to_the_lines_it_was_said_in() {
     .await;
     assert_ne!(status, StatusCode::OK, "the lines are for the person");
 }
+
+#[tokio::test]
+async fn an_untitled_conversation_is_named_by_what_the_person_said_first_for_the_person_only() {
+    let _guard = data_dir_lock().lock().await;
+    let vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+
+    let projects = vault._tmp.path().join(".claude/projects/-untitled");
+    std::fs::create_dir_all(&projects).unwrap();
+    let transcript = projects.join("untitled.jsonl");
+    std::fs::write(
+        &transcript,
+        [
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"},"timestamp":"2026-11-01T10:00:00Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":"Why does this card say untitled?"},"timestamp":"2026-11-01T10:00:01Z"}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Let me look."}]},"timestamp":"2026-11-01T10:00:05Z"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    // No title from the tool, and no ai-title in the transcript.
+    let (status, body) = call(
+        &router,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({
+            "session": "claude-code:untitled",
+            "transcript_path": transcript.to_str().unwrap(),
+        })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let session_id = body["id"].as_str().unwrap().to_string();
+    db.sort_sessions_into_things().await.unwrap();
+
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/sessions/{session_id}"),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let detail = typed::<SessionDetailResponse>(body);
+    assert_eq!(
+        detail.session.title.as_deref(),
+        Some("Why does this card say untitled?")
+    );
+    let thing_id = detail
+        .things
+        .first()
+        .expect("sorted into a thing")
+        .id
+        .clone();
+
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/things/{thing_id}"),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let thing = typed::<ThingDetailResponse>(body);
+    assert_eq!(
+        thing.sessions[0].title.as_deref(),
+        Some("Why does this card say untitled?")
+    );
+
+    // The app reads it with no agent name, as it reads the conversation's
+    // lines; an AI tool never gets the person's words as a title (UX-FIND-1).
+    let (_, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/things/{thing_id}"),
+        None,
+        Caller::Unmarked,
+    )
+    .await;
+    assert!(body
+        .to_string()
+        .contains("Why does this card say untitled?"));
+
+    for uri in [
+        format!("/api/sessions/{session_id}"),
+        format!("/api/things/{thing_id}"),
+    ] {
+        let (status, body) = call(&router, Method::GET, &uri, None, Caller::Reader).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        assert!(
+            !body.to_string().contains("Why does this card"),
+            "{uri} leaked the person's words: {body}"
+        );
+    }
+}

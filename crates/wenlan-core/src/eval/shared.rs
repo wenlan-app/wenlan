@@ -432,7 +432,10 @@ pub async fn run_enrichment_batch_api(
 
         // Link memory to first entity
         if let Some(ref eid) = first_entity_id {
-            if let Err(e) = db.update_memory_entity_id(source_id, eid).await {
+            if let Err(e) = db
+                .update_memory_entity_id_as(source_id, eid, crate::db::topic_filing::writer::EVAL)
+                .await
+            {
                 log::warn!(
                     "[batch_enrich] update_memory_entity_id failed for source={} entity={}: {}",
                     source_id,
@@ -1544,7 +1547,10 @@ pub async fn run_entity_extraction_for_eval_cli(
             }
         }
         if let Some(eid) = first_id {
-            if let Err(e) = db.update_memory_entity_id(memory_id, &eid).await {
+            if let Err(e) = db
+                .update_memory_entity_id_as(memory_id, &eid, crate::db::topic_filing::writer::EVAL)
+                .await
+            {
                 log::warn!(
                     "[enrich-cli-entities] update_memory_entity_id failed for memory={} entity={}: {}",
                     memory_id,

@@ -473,6 +473,22 @@ pub fn person_page_files(path: &Path) -> Result<HashMap<String, PersonPageFile>,
     })
 }
 
+/// Every page Wenlan writes itself (not a note the person put in the folder)
+/// whose `state.json` entry records the SHA-256 of the bytes last written:
+/// page id -> (file, digest). A file holding exactly those bytes is Wenlan's
+/// own write, whatever today's render of the page looks like.
+pub fn wenlan_page_digests(path: &Path) -> Result<HashMap<String, (String, String)>, WenlanError> {
+    KnowledgeProjectionWrite::with_projection_capabilities(path, |capabilities| {
+        let state = read_state_strict(&capabilities.wenlan)?;
+        Ok(state
+            .pages
+            .into_iter()
+            .filter(|(_, entry)| entry.person_frontmatter.is_none())
+            .filter_map(|(id, entry)| Some((id, (entry.file, entry.content_sha256?))))
+            .collect())
+    })
+}
+
 /// Adoptions whose id line is written and whose page may not be recorded
 /// yet (page id -> file).
 pub fn pending_adoptions(path: &Path) -> Result<BTreeMap<String, String>, WenlanError> {

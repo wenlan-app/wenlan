@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.21.2](https://github.com/wenlan-app/wenlan/compare/v0.21.1...v0.21.2) (2026-11-08)
+
+
+### Features
+
+* **atlas:** lay out the big map as named regions ([#1206](https://github.com/wenlan-app/wenlan/issues/1206)) ([39e318a](https://github.com/wenlan-app/wenlan/commit/39e318a68f5843714395b99d8a963794474c7a1e))
+* **things:** group conversations by what they worked on, not titles alone ([#1203](https://github.com/wenlan-app/wenlan/issues/1203)) ([8869cd3](https://github.com/wenlan-app/wenlan/commit/8869cd3f7884954bae3bc2136da105c8ce80d950))
+* **trust:** a nightly scan reports damaged pages and broken sources, and AI passes can no longer break a page (UX-WHO-8) ([#1214](https://github.com/wenlan-app/wenlan/issues/1214)) ([e5be01e](https://github.com/wenlan-app/wenlan/commit/e5be01e8f4dd6f5f12e10b9693c6ccb9d2e252a3))
+
+
+### Bug Fixes
+
+* **app:** word the steep command for the user's own AI tool ([#1204](https://github.com/wenlan-app/wenlan/issues/1204)) ([92e0d82](https://github.com/wenlan-app/wenlan/commit/92e0d82f5732d0a5eab027d7423c27ab64ebbc41))
+* **citations:** per-source verified status, stale on hidden or unversioned sources (UX-WHO-5) ([#1205](https://github.com/wenlan-app/wenlan/issues/1205)) ([533b8a1](https://github.com/wenlan-app/wenlan/commit/533b8a1d1cb5f6ff4f7f59f05b14d4b5de7d3ce3))
+* **delete:** AI deletes archive pages and forget memories restorably; only the person deletes for good (UX-WHO-7) ([#1211](https://github.com/wenlan-app/wenlan/issues/1211)) ([dade7a4](https://github.com/wenlan-app/wenlan/commit/dade7a441ddaa4b2dadc1e0b90c9fac7b88dba00))
+* **pages:** an AI rebuild never overwrites the person's edits; it waits as one card only the person accepts (UX-WHO-2) ([#1213](https://github.com/wenlan-app/wenlan/issues/1213)) ([516cae8](https://github.com/wenlan-app/wenlan/commit/516cae8cb34d88b136baa48479e9bc23c492f85c))
+* **things:** name an untitled conversation by what you said first, never "Untitled" ([#1215](https://github.com/wenlan-app/wenlan/issues/1215)) ([23ba713](https://github.com/wenlan-app/wenlan/commit/23ba713635b7b95910f255549d7e29fa24f02735))
+* **things:** night points land in their Space and keep the line they came from ([#1202](https://github.com/wenlan-app/wenlan/issues/1202)) ([70d6e43](https://github.com/wenlan-app/wenlan/commit/70d6e439d79571de2539a641051a8ae5736c7651))
+* **truth:** a replaced judge's verdicts stop counting, cut-off pages are never supported (UX-WHO-5) ([#1208](https://github.com/wenlan-app/wenlan/issues/1208)) ([621d63f](https://github.com/wenlan-app/wenlan/commit/621d63f233bc193cc295730170e6d57b592d0b02))
+
 ## [0.21.1](https://github.com/wenlan-app/wenlan/compare/v0.21.0...v0.21.1) (2026-11-08)
 
 

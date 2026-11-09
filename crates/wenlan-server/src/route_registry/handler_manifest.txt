@@ -58,6 +58,7 @@ main|get|/api/pages/{id}|wenlan_server::page_routes::handle_get_page
 main|get|/api/pages/{id}/basis/{basis_id}/diff|wenlan_server::page_basis_routes::handle_basis_diff
 main|get|/api/attachments/resolve|wenlan_server::knowledge_routes::handle_resolve_embed
 main|get|/api/pages/{id}/original|wenlan_server::original_routes::handle_get_page_original
+main|post|/api/originals|wenlan_server::original_routes::handle_keep_original
 main|get|/api/pages/{id}/sentences|wenlan_server::sentence_routes::handle_get_page_sentences
 main|get|/api/pages/{id}/links|wenlan_server::page_routes::handle_get_page_links
 main|get|/api/pages/{id}/map|wenlan_server::page_map_routes::handle_get_page_map
@@ -108,6 +109,8 @@ main|put|/api/themes/active|wenlan_server::theme_routes::handle_set_active_theme
 main|post|/api/themes/check|wenlan_server::theme_routes::handle_check_theme
 main|get|/api/themes/{id}|wenlan_server::theme_routes::handle_get_theme
 main|put|/api/themes/{id}|wenlan_server::theme_routes::handle_save_theme
+main|get|/api/trust/scan|wenlan_server::trust_scan_routes::handle_trust_scan
+main|post|/api/pages/{id}/citations/requeue|wenlan_server::trust_scan_routes::handle_requeue_citations
 main|get|/api/suggest-tags|wenlan_server::activity_tag_routes::handle_suggest_tags
 main|get|/api/tags|wenlan_server::activity_tag_routes::handle_list_tags
 main|get|/ws/updates|wenlan_server::websocket::handle_ws_upgrade

@@ -2139,6 +2139,19 @@ impl WenlanClient {
         self.post_json_as_person(&path, &request).await
     }
 
+    /// `GET /api/pages/{id}/original`: where a page that keeps an original
+    /// came from; `None` for any other page.
+    pub async fn get_page_original(
+        &self,
+        page_id: &str,
+    ) -> Result<Option<wenlan_types::originals::PageOriginalResponse>, String> {
+        let path = format!(
+            "/api/pages/{}/original",
+            percent_encode_path_segment(page_id)
+        );
+        self.get_optional_json(&path).await
+    }
+
     /// `GET /api/pages/{id}/sessions`.
     pub async fn get_page_sessions(
         &self,
@@ -5388,6 +5401,7 @@ mod tests {
     fn wenlan_client_exposes_session_methods() {
         let _detail = WenlanClient::get_session_detail;
         let _page = WenlanClient::get_page_sessions;
+        let _original = WenlanClient::get_page_original;
     }
 
     #[test]

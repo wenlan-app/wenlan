@@ -1907,6 +1907,7 @@ pub fn run() {
             search::answer_thing_map_proposal,
             search::move_session_thing,
             search::get_page_sessions,
+            search::get_page_original,
             search::set_page_review_required,
             search::get_page_sentences,
             search::accept_sentence_proposal,

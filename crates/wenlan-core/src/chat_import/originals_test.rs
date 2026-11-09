@@ -247,7 +247,7 @@ async fn an_original_never_takes_over_a_page_with_the_same_title() {
 }
 
 #[tokio::test]
-async fn a_machine_never_rewrites_an_original_but_the_person_may_edit_it() {
+async fn ux_art_3_a_machine_never_rewrites_an_original_but_an_agent_may_add_a_note() {
     let (db, _tmp) = crate::db::tests::test_db().await;
     let db = Arc::new(db);
     let root = tempfile::tempdir().unwrap();
@@ -280,13 +280,26 @@ async fn a_machine_never_rewrites_an_original_but_the_person_may_edit_it() {
         caller_id: None,
         operation_id: None,
     };
-    for writer in [
+    // An agent's rewrite of the kept part is refused, even with a note added.
+    let rewritten = crate::post_write::update_page(
+        &db,
+        &page.id,
+        write(
+            format!("{}\nA note.", page.content.replace("Launch", "Relaunch")),
+            Some(page.version),
+        ),
         "agent_refresh",
-        "distill",
-        "re_distill",
-        "page_growth",
-        "refinery_merge",
-    ] {
+        false,
+        None,
+        None,
+    )
+    .await
+    .expect_err("an agent rewrite");
+    assert!(
+        rewritten.to_string().contains("original_page_is_read_only"),
+        "{rewritten}"
+    );
+    for writer in ["distill", "re_distill", "page_growth", "refinery_merge"] {
         let refused = crate::post_write::update_page(
             &db,
             &page.id,
@@ -310,6 +323,23 @@ async fn a_machine_never_rewrites_an_original_but_the_person_may_edit_it() {
         db.get_page(&page.id).await.unwrap().unwrap().content,
         page.content
     );
+
+    // An agent may add a note after the original, leaving it as it was.
+    let noted = format!("{}\n\nNote: the launch moved to May.\n", page.content);
+    let result = crate::post_write::update_page(
+        &db,
+        &page.id,
+        write(noted.clone(), Some(page.version)),
+        "agent_refresh",
+        false,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(result.wrote);
+    let page = db.get_page(&page.id).await.unwrap().unwrap();
+    assert_eq!(page.content, noted);
 
     let edited = format!("{}\nMy note: this shipped.", page.content);
     let result = crate::post_write::update_page(
@@ -398,4 +428,95 @@ async fn page_original_answers_only_for_an_original_page() {
     assert_eq!(original.artifact_id, "landing");
     assert_eq!(original.file_path, "originals/claude/conv-5/landing.html");
     assert_eq!(page_original(&db, "page_nope").await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn ux_art_2_a_session_original_is_a_page_naming_its_session_and_time() {
+    let (db, _tmp) = crate::db::tests::test_db().await;
+    let root = tempfile::tempdir().unwrap();
+    let session = wenlan_types::sessions::SessionRef::new("claude-code", "s-1").unwrap();
+    let input = || SessionOriginal {
+        session: Some(&session),
+        title: "Release map",
+        content: HTML,
+        format: SessionOriginalFormat::Html,
+        space: wenlan_types::WriteSpaceTarget::Uncategorized,
+        workspace: None,
+        source_memory_ids: Vec::new(),
+    };
+    let (kept, created) = keep_session_original(&db, root.path(), None, input())
+        .await
+        .unwrap();
+    assert!(created);
+    // The file is kept byte for byte under the session's folder.
+    assert!(kept.file_path.starts_with("originals/claude-code/s-1/"));
+    assert!(kept.file_path.ends_with(".html"));
+    assert_eq!(
+        std::fs::read_to_string(root.path().join(&kept.file_path)).unwrap(),
+        HTML
+    );
+    let page = db.get_page(&kept.page_id).await.unwrap().unwrap();
+    assert_eq!(page.title, "Release map");
+    assert_eq!(page.creation_kind, ORIGINAL_CREATION_KIND);
+    assert!(page
+        .content
+        .starts_with("Saved from a Claude Code session, "));
+    // A fence longer than any backtick run in the HTML.
+    assert!(page.content.contains("\n````html\n<!doctype html>"));
+    let original = page_original(&db, &kept.page_id).await.unwrap().unwrap();
+    assert_eq!(original.vendor, "claude-code");
+    assert_eq!(original.conversation_id, "s-1");
+    assert_eq!(original.kind, "text/html");
+    assert!(original.written_at.is_some());
+
+    // The same content again in the same session is the same page.
+    let (again, created) = keep_session_original(&db, root.path(), None, input())
+        .await
+        .unwrap();
+    assert!(!created);
+    assert_eq!(again.page_id, kept.page_id);
+
+    // A changed version is its own page; the first stays as it was.
+    let changed = format!("{HTML}<p>v2</p>\n");
+    let (second, created) = keep_session_original(
+        &db,
+        root.path(),
+        None,
+        SessionOriginal {
+            content: &changed,
+            ..input()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(created);
+    assert_ne!(second.page_id, kept.page_id);
+    assert_ne!(
+        db.get_page(&second.page_id).await.unwrap().unwrap().title,
+        "Release map"
+    );
+    assert_eq!(
+        db.get_page(&kept.page_id).await.unwrap().unwrap().content,
+        page.content
+    );
+
+    // Nothing to keep, or a format it cannot show as it was, is refused.
+    for (content, format) in [("  ", "html"), (HTML, "py")] {
+        let refused = match SessionOriginalFormat::from_name(format) {
+            Some(format) => keep_session_original(
+                &db,
+                root.path(),
+                None,
+                SessionOriginal {
+                    content,
+                    format,
+                    ..input()
+                },
+            )
+            .await
+            .is_err(),
+            None => true,
+        };
+        assert!(refused, "{format}");
+    }
 }

@@ -22,7 +22,7 @@ check() { # name, expected, got
 }
 
 ID='00893aaf-19fa-41d2-8238-13269b9b3ca0'
-LINE="Wenlan session: claude-code:$ID. Pass it as session when you call capture, write_page or update_brief."
+LINE="Wenlan session: claude-code:$ID. Pass it as session when you call capture, write_page, keep_original or update_brief."
 
 envfile="$tmpbase/env"
 out=$(printf '{"session_id":"%s","transcript_path":"/x/y.jsonl","cwd":"/work","hook_event_name":"SessionStart"}' "$ID" |
