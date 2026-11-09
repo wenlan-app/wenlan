@@ -1048,8 +1048,9 @@ async fn ux_graph_7_the_old_memory_pass_hides_copies_and_says_passed_dates_again
             "mem_z",
             "The demo is planned for that day.",
             "personal",
-            // At least a day before the date it is about, whatever the time
-            // of day the test runs (plan_passed).
+            // Written well over a day before the date it is about at any hour:
+            // `day` is midnight three days back, so it can be as late as
+            // now - 3 days.
             day - 2 * 86_400,
         ),
     ] {
