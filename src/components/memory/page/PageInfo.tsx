@@ -338,6 +338,11 @@ export default function PageInfo({
                         {item.kind === "source_update" && item.source?.pending && (
                           <span className="note-revision-summary">{t("pageHistory.notChecked")}</span>
                         )}
+                        {item.person_asked && (
+                          <span className="note-revision-summary">
+                            {t("pageHistory.yourWords", { quote: item.person_asked })}
+                          </span>
+                        )}
                         {summary && <span className="note-revision-summary">{summary}</span>}
                         {(incomingCount > 0 || entry?.citations_summary) && (
                           <span className="note-revision-provenance">

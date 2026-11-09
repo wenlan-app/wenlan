@@ -1825,6 +1825,10 @@ export interface PageChangelogEntry {
   sources_removed?: number | null;
   /** For a version taken from a shared folder: the version edited here at the same time that lost to it. */
   concurrent_with?: number | null;
+  /** The person's own words when they asked the AI tool for this change (`edited_by` is `person_asked`). */
+  person_asked?: string | null;
+  /** The earlier version this one put back. */
+  restored_from?: number | null;
 }
 
 export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update";
@@ -1856,6 +1860,10 @@ export interface PageHistoryItem {
   text?: string | null;
   source?: PageHistorySource | null;
   changed_sentences?: number | null;
+  /** The person's own words when they asked the AI tool for this change. */
+  person_asked?: string | null;
+  /** The earlier version this one put back. */
+  restored_from?: number | null;
 }
 
 export interface ListPageRevisionsResponse {
