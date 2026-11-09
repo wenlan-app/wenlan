@@ -187,7 +187,7 @@ mod tests {
     #[tokio::test]
     async fn a_migration_chain_that_took_a_backup_prunes_older_snapshots() {
         // One migration left: the chain takes exactly one snapshot.
-        let latest = crate::db::SCHEMA_VERSION;
+        let latest = i64::from(crate::db::SCHEMA_VERSION);
         let (db, dir) = super::super::tests::test_db_at(latest - 1).await;
         for n in [100, latest - 7, latest - 3, latest - 1] {
             touch(dir.path(), &format!("pre_migration_{n}_backup.db"));
