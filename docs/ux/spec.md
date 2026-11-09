@@ -344,6 +344,15 @@ and wait for evidence that people need them.
   another shown topic since. Every move of a memory's main topic
   records who moved it, why and when, and can be undone.
   原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：記憶的主題看內容決定，歸錯可以查、可以退回）
+- **UX-GRAPH-9** `shipped` The AI does not make a topic out of something that
+  only looks like code, a pull request number or a sentence (five words or
+  more, unless every word is capitalised the way a name is, as in "The Lord of
+  the Rings"). When the AI adds another name to a topic only because the two
+  read or are spelled alike, that name stays a guess: the next mention of it
+  is checked again instead of being filed under the topic straight away. A
+  name taken off a topic is never put back on it by the AI, not even when two
+  topics are merged. You cannot take a name off a topic yet.
+  原文：「都同意，請根據這去解決根本問題」（2026-11-08，回覆信任檢查清單：記憶的主題看內容決定，歸錯可以查、可以退回）
 
 ## Finding things
 
