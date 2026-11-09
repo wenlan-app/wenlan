@@ -1269,6 +1269,7 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::reconcile_supported_pages` | `pub` | no | **yes** | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::run_leased_page_linked_truth_promotion` | `pub(super)` | no | no | — | `core/db/claim_derivation.rs::derive_leased_page_claims`, `core/db/claim_derivation.rs::load_linked_memory_chunks`, `core/db/claim_derivation.rs::page_text_is_cut_off` |
 | `core/db/entity_alias_sources.rs::add_auto_alias` | `pub(super)` | no | no | — | `core/db/entity_alias_sources.rs::record_auto_alias_on` |
+| `core/db/linked_pages.rs::linked_pages_for_hits` | `pub` | no | **yes** | `server/memory_routes.rs::handle_search_memory_inner` | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
 | `core/db/night_links.rs::night_topics` | `pub` | no | **yes** | `server/things_intake.rs::connect_old_night_points`, `server/things_intake.rs::dream_with` | `core/db/night_links.rs::offerable_topics` |
 | `core/db/page_basis.rs::apply_card_mark` | `private` | no | no | — | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::basis_diff_in_scope` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_basis_diff` | `core/db/page_basis.rs::load_facts` |
@@ -1553,7 +1554,7 @@ carrying the authority of agreement.
 | `server/knowledge_routes.rs::handle_resolve_embed` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/main.rs::run_daemon` | `private` | no | no | `server/main.rs::main` | `server/main/startup.rs::prepare_startup_state` |
 | `server/main/runtime.rs::register_optional_runtime_workers` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/claim_derivation.rs::reconcile_supported_pages`, `server/main/runtime.rs::load_embedding_model_in_background` |
-| `server/memory_routes.rs::handle_search_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_search_memory` | `core/db.rs::search_memory` |
+| `server/memory_routes.rs::handle_search_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_search_memory` | `core/db.rs::search_memory`, `core/db/linked_pages.rs::linked_pages_for_hits` |
 | `server/memory_routes.rs::handle_store_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_store_memory` | `server/memory_routes.rs::plan_capture_entity` |
 | `server/original_routes.rs::handle_keep_original` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/page_basis_routes.rs::handle_basis_diff` | `pub` | no | no | — | `core/db/page_basis.rs::basis_diff_in_scope` |
