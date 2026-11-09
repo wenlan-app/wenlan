@@ -237,16 +237,24 @@ async fn backlog_dry_run() {
     for pair in &report.pairs {
         *by_author.entry(author(pair.hide.author)).or_default() += 1;
     }
+    let mut hideable_by: Map<String, usize> = Map::new();
+    for pair in &hideable {
+        let kind = if pair.exact { "exact" } else { "paraphrase" };
+        *hideable_by
+            .entry(format!("{kind} {}", author(pair.hide.author)))
+            .or_default() += 1;
+    }
     out.push_str(&format!(
         "## Copies (similarity ≥ {BACKLOG_MIN_SIMILARITY}, same Space)\n\n\
-         {} pairs. The later copy was written by: {:?}.\n\
-         May be hidden (an AI's, or an import's exact copy): {} — {} exact, {} paraphrase (the model would decide).\n\
+         {} pairs. The one that would hide was written by: {:?}.\n\
+         May be hidden (an AI's, or an import's exact copy): {} — {} exact, {} paraphrase (the model would decide); by kind and writer: {:?}.\n\
          Never hidden (a person's or unknown writer's): {}.\n\n",
         report.pairs.len(),
         by_author,
         hideable.len(),
         exact,
         hideable.len() - exact,
+        hideable_by,
         report.pairs.len() - hideable.len()
     ));
     for (title, exact) in [("Exact", true), ("Paraphrase", false)] {
