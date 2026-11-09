@@ -88,22 +88,29 @@ pub async fn handle_health(
 
 /// Map the core document-enrichment queue summary to the wire `QueueStatus`.
 /// Pure snapshot→response glue (no business logic): idle when nothing is
-/// pending, paused when a paused row carries a reason, else active.
+/// pending, paused when a retryable paused row carries a reason, else active.
+/// Documents that used up their retries ride along as `failed` on any state.
 fn queue_status_wire(
     core: wenlan_core::db::DocEnrichmentQueueStatus,
 ) -> wenlan_types::responses::QueueStatus {
-    use wenlan_types::responses::QueueStatus;
+    use wenlan_types::responses::{QueueFailed, QueueStatus};
+    let failed = (core.exhausted > 0).then_some(QueueFailed {
+        count: core.exhausted,
+        reason: core.exhausted_reason,
+    });
     if core.pending == 0 {
-        QueueStatus::Idle
+        QueueStatus::Idle { failed }
     } else if let Some(reason) = core.paused_reason {
         QueueStatus::Paused {
             reason,
             pending: core.pending,
             next_retry_at: core.next_retry_at,
+            failed,
         }
     } else {
         QueueStatus::Active {
             pending: core.pending,
+            failed,
         }
     }
 }
@@ -153,17 +160,18 @@ pub async fn handle_status(
             .map(queue_status_wire)
             .unwrap_or_default();
         let compile_queue = match wenlan_core::refinery::compile_queue_depth(db).await {
-            Ok(0) | Err(_) => wenlan_types::responses::QueueStatus::Idle,
+            Ok(0) | Err(_) => wenlan_types::responses::QueueStatus::IDLE,
             Ok(pending) => wenlan_types::responses::QueueStatus::Active {
                 pending: pending as u64,
+                failed: None,
             },
         };
         (files_indexed, queue, compile_queue)
     } else {
         (
             0,
-            wenlan_types::responses::QueueStatus::Idle,
-            wenlan_types::responses::QueueStatus::Idle,
+            wenlan_types::responses::QueueStatus::IDLE,
+            wenlan_types::responses::QueueStatus::IDLE,
         )
     };
 
@@ -1727,7 +1735,7 @@ mod recent_endpoints_tests {
         // With no DB (and thus an empty queue) it defaults cleanly to idle.
         let parsed: wenlan_types::responses::StatusResponse =
             serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(parsed.queue, wenlan_types::responses::QueueStatus::Idle);
+        assert_eq!(parsed.queue, wenlan_types::responses::QueueStatus::IDLE);
     }
 
     #[test]
@@ -1749,6 +1757,38 @@ mod recent_endpoints_tests {
                  on_device_inference) = { let s = state.read().await;"
             ),
             "handle_status must snapshot cloned state out of ServerState before awaiting DB work"
+        );
+    }
+
+    /// One document that used up its retries is one failed item; it does not
+    /// make the queue read as paused (it was `paused` with `pending: 1`).
+    #[test]
+    fn a_failed_document_is_reported_as_failed_not_as_a_paused_queue() {
+        use wenlan_types::responses::{QueueFailed, QueueStatus};
+        let failed = Some(QueueFailed {
+            count: 1,
+            reason: Some("source page write failed".into()),
+        });
+        let only_failed = wenlan_core::db::DocEnrichmentQueueStatus {
+            pending: 0,
+            paused_reason: None,
+            next_retry_at: None,
+            exhausted: 1,
+            exhausted_reason: Some("source page write failed".into()),
+        };
+        assert_eq!(
+            super::queue_status_wire(only_failed.clone()),
+            QueueStatus::Idle {
+                failed: failed.clone()
+            }
+        );
+        let working = wenlan_core::db::DocEnrichmentQueueStatus {
+            pending: 4,
+            ..only_failed
+        };
+        assert_eq!(
+            super::queue_status_wire(working),
+            QueueStatus::Active { pending: 4, failed }
         );
     }
 
@@ -1775,7 +1815,7 @@ mod recent_endpoints_tests {
             serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             parsed.compile_queue,
-            wenlan_types::responses::QueueStatus::Idle
+            wenlan_types::responses::QueueStatus::IDLE
         );
     }
 
@@ -1810,7 +1850,10 @@ mod recent_endpoints_tests {
             serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             parsed.compile_queue,
-            wenlan_types::responses::QueueStatus::Active { pending: 3 }
+            wenlan_types::responses::QueueStatus::Active {
+                pending: 3,
+                failed: None
+            }
         );
     }
 }

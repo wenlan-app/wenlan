@@ -102,6 +102,8 @@ pub mod store;
 pub mod synthesis;
 pub mod tags;
 pub(crate) mod temporal_query;
+#[cfg(test)]
+pub(crate) mod test_log;
 pub mod theme;
 pub mod topic_match;
 pub mod transcript_lines;

@@ -4994,8 +4994,11 @@ impl WenlanMcpServer {
 
         // DELETE /api/pages/{id} archives the page; it never deletes one for
         // an AI tool. The daemon refuses a page holding the person's work.
+        // Through the session client, so the archive's history row names the
+        // AI session that asked for it.
         let path = format!("/api/pages/{}", page_id);
-        let resp: PageRemovalResponse = try_call!(self.client.delete(&path), "delete_page");
+        let client = self.session_client(None).await;
+        let resp: PageRemovalResponse = try_call!(client.delete(&path), "delete_page");
         let text = match (resp.status, resp.restorable) {
             (PageRemovalStatus::Archived, true) => format!(
                 "Page {page_id} archived. Its history is kept, and the person can restore it \
@@ -8878,8 +8881,17 @@ mod tests {
 
         let _ = server.forget_impl("mem_1").await.unwrap();
         let _ = server.delete_page_impl("page_1").await.unwrap();
+        // delete_page registers the AI session, when the environment names
+        // one, so the archive's history row names it. That is not a Space
+        // pre-check, and whether it happens depends on the environment the
+        // test runs in, so it is left out of the comparison.
+        let calls: Vec<(String, String)> = received(&mock)
+            .await
+            .into_iter()
+            .filter(|call| call.0 != "POST" || call.1 != "/api/sessions")
+            .collect();
         assert_eq!(
-            received(&mock).await,
+            calls,
             [
                 ("DELETE".to_string(), "/api/memory/delete/mem_1".to_string()),
                 ("DELETE".to_string(), "/api/pages/page_1".to_string()),

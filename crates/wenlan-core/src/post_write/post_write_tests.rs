@@ -9213,3 +9213,59 @@ async fn edited_acceptance_memory_rejects_stale_or_target_id_and_applies_once() 
         "Human correction."
     );
 }
+
+/// A refused write and a write staged for review each leave one log line
+/// naming the page and the writer; a write that lands says nothing extra.
+#[tokio::test]
+async fn refused_and_staged_writes_are_logged() {
+    let (db, _dir) = test_db().await;
+    let before = ownership_user_edited_page(&db, "page_log_outcome", "mem-log-outcome").await;
+    let logs = crate::test_log::LogCapture::start();
+    let refused = ownership_write(
+        &db,
+        "page_log_outcome",
+        "Tokio runtimes schedule async tasks, written against an old version",
+        &["mem-log-outcome"],
+        "agent_refresh",
+        Some(before.version - 1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(refused.outcome, WriteOutcome::Refused);
+    let gated = ownership_write(
+        &db,
+        "page_log_outcome",
+        "Tokio runtimes schedule async tasks, rewritten without a version",
+        &["mem-log-outcome"],
+        "agent_refresh",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(gated.outcome, WriteOutcome::Gated);
+    let card = gated.revision_card_id.clone().expect("card id");
+    assert_eq!(
+        logs.matching(
+            "INFO",
+            &["[update_page] refused agent_refresh", "page_log_outcome"]
+        )
+        .len(),
+        1,
+        "{:?}",
+        logs.lines()
+    );
+    assert_eq!(
+        logs.matching(
+            "INFO",
+            &[
+                "[update_page] staged agent_refresh",
+                "page_log_outcome",
+                &card
+            ]
+        )
+        .len(),
+        1,
+        "{:?}",
+        logs.lines()
+    );
+}

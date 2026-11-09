@@ -161,3 +161,16 @@ async fn restore_leaves_rows_evicted_for_another_reason() {
         .iter()
         .all(|m| m.as_deref() == Some("evicted")));
 }
+
+#[tokio::test]
+async fn a_forget_is_logged_once_with_who_asked() {
+    let (db, _tmp) = test_db().await;
+    db.upsert_documents(vec![memory_doc()]).await.unwrap();
+    let logs = crate::test_log::LogCapture::start();
+    db.forget_memory(SOURCE_ID, "codex", "forgot")
+        .await
+        .unwrap();
+    db.forget_memory(SOURCE_ID, "codex", "again").await.unwrap();
+    let lines = logs.matching("INFO", &["[forget]", SOURCE_ID, "forgotten by codex"]);
+    assert_eq!(lines.len(), 1, "{:?}", logs.lines());
+}

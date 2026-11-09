@@ -1025,6 +1025,29 @@ fn automatic_phase_allowed(phase: wenlan_core::refinery::Phase) -> bool {
     matches!(phase, wenlan_core::refinery::Phase::ReDistill)
 }
 
+/// The steep phases automatic runs leave out, in canonical order. They run
+/// only when steep is asked for, so the scheduler names them once at start:
+/// otherwise a phase such as recaps or reweave looks like it is broken.
+fn held_out_automatic_phases() -> Vec<wenlan_core::refinery::Phase> {
+    wenlan_core::refinery::Phase::ALL
+        .iter()
+        .copied()
+        .filter(|phase| !automatic_phase_allowed(*phase))
+        .collect()
+}
+
+fn held_out_automatic_phases_line() -> String {
+    let held = held_out_automatic_phases()
+        .iter()
+        .map(|phase| phase.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "[scheduler] automatic steep holds out phases={held} \
+         reason=no durable cursor and per-turn work bound yet; they run only when steep is asked for"
+    )
+}
+
 fn automatic_kind_has_work(kind: wenlan_core::refinery::TriggerKind) -> bool {
     wenlan_core::refinery::Phase::ALL
         .iter()
@@ -1368,6 +1391,7 @@ pub fn spawn_scheduler(
             tracing::info!("[scheduler] shutdown before initial delay completed");
             return;
         }
+        tracing::info!("{}", held_out_automatic_phases_line());
 
         let mut last_backstop = Instant::now();
         let mut idle_fired = false;

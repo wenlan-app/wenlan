@@ -125,13 +125,17 @@ pub struct OneTimeCleanupReport {
     /// (UX-GRAPH-8): moved to another shown topic, or left with none.
     pub archived_primaries: crate::db::topic_filing::RefileReport,
     pub duplicate_recaps_removed: usize,
+    /// Topics whose type was a case or plural variant of a canonical type,
+    /// folded onto it (`concepts` to `concept`).
+    pub entity_types_folded: u64,
     pub errors: Vec<String>,
 }
 
 /// Clean, once per database, what older rules wrote: links from a memory to
 /// a hub topic when the memory also has a more specific one (its main topic
 /// moving to a shown topic before an archived one), and recaps that
-/// cover the same memories as an older recap. Each cleanup records itself in
+/// cover the same memories as an older recap, and topic types that are a
+/// case or plural variant of a canonical type. Each cleanup records itself in
 /// app metadata (which also makes it undoable) and returns zero afterwards.
 ///
 /// Reweave and the recap pass also call these, but only a full foreground
@@ -156,6 +160,10 @@ pub async fn run_one_time_cleanups(db: &MemoryDB) -> OneTimeCleanupReport {
     match crate::synthesis::recaps::dedupe_old_recaps_once(db).await {
         Ok(count) => report.duplicate_recaps_removed = count,
         Err(error) => report.errors.push(format!("duplicate recaps: {error}")),
+    }
+    match db.fold_entity_type_variants_once().await {
+        Ok(count) => report.entity_types_folded = count,
+        Err(error) => report.errors.push(format!("topic types: {error}")),
     }
     report
 }

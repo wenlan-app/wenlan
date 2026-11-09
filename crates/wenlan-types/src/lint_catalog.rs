@@ -48,6 +48,10 @@ pub enum LintMetricCode {
     KgEntitiesConfirmed,
     KgEntitiesScoped,
     KgEntitiesUncategorized,
+    /// Shown topics whose type is outside `entity_type_vocabulary`: written
+    /// before the type gate, and not a plain spelling variant the one-time
+    /// fold could map. Advisory; a person picks the type.
+    KgEntitiesOffVocabularyType,
     KgRelations,
     KgObservations,
     KgMemoryEntityLinks,
