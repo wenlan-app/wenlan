@@ -2506,9 +2506,9 @@ fn source_read_refused_result(reason: &str, source_ids: &[String]) -> CallToolRe
     );
     if target == "unfiled" {
         text.push_str(
-            "This page is in no Space, so it can cite only notes that are in no Space. If \
-             its sources are in one Space, move the page there with move_page and retry; if \
-             they span several Spaces, leave out the ones from other Spaces. ",
+            "This page is in no Space, so it can cite only notes that are in no Space. A \
+             page cannot be moved into a Space yet (move_page only changes its folder), so \
+             leave out those sources and retry, or tell the person which ones were left out. ",
         );
     } else {
         text.push_str(
@@ -11404,7 +11404,7 @@ mod tests {
         assert!(text.contains("[2] mem_b, [3] mem_c"), "{text}");
         assert!(!text.contains("mem_a"), "{text}");
         assert!(
-            text.contains("move_page") && text.contains("in no Space"),
+            text.contains("in no Space") && text.contains("only changes its folder"),
             "{text}"
         );
         assert!(text.contains("nothing was written"), "{text}");
