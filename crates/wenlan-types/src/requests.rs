@@ -63,6 +63,13 @@ pub struct StoreMemoryRequest {
     pub structured_fields: Option<serde_json::Value>,
     #[serde(default)]
     pub retrieval_cue: Option<String>,
+    /// The lines of the conversation this memory comes from, word for word,
+    /// as the AI tool saw them. Kept so opening a sentence can show them when
+    /// the conversation itself can't be read (UX-WHO-6). The daemon keeps at
+    /// most [`crate::conversations::MAX_KEPT_SAID_LINES`] and stamps each
+    /// with the save time; a caller's `at` is ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<Vec<crate::conversations::ConversationLine>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -12,7 +12,7 @@
 //! This only finds lines that say the same words. It does not check that
 //! they back the memory up; the source check does that.
 
-use wenlan_types::conversations::ConversationLine;
+use wenlan_types::conversations::{ConversationLine, MAX_KEPT_SAID_CHARS, MAX_KEPT_SAID_LINES};
 
 /// Lines picked, at most.
 pub const MAX_SAID_LINES: usize = 3;
@@ -91,6 +91,28 @@ pub fn quoted_line(quoted: &str, lines: &[ConversationLine]) -> Option<usize> {
         line.speaker == wenlan_types::conversations::ConversationSpeaker::You
             && squash(&line.text).contains(&key)
     })
+}
+
+/// The lines an AI tool sent with a memory it saved
+/// (`StoreMemoryRequest::said`), as Wenlan keeps them: blank lines dropped,
+/// each line trimmed and cut at [`MAX_KEPT_SAID_CHARS`], only the last
+/// [`MAX_KEPT_SAID_LINES`] (the ones nearest the save), and every line
+/// stamped with `saved_at`, since a caller's own time can't be checked.
+/// Empty when nothing is left.
+pub fn kept_said(lines: &[ConversationLine], saved_at: i64) -> Vec<ConversationLine> {
+    let kept: Vec<ConversationLine> = lines
+        .iter()
+        .filter_map(|line| {
+            let text = line.text.trim();
+            (!text.is_empty()).then(|| ConversationLine {
+                speaker: line.speaker,
+                text: text.chars().take(MAX_KEPT_SAID_CHARS).collect(),
+                at: Some(saved_at),
+            })
+        })
+        .collect();
+    let skip = kept.len().saturating_sub(MAX_KEPT_SAID_LINES);
+    kept.into_iter().skip(skip).collect()
 }
 
 #[cfg(test)]

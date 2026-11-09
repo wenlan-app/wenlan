@@ -237,6 +237,9 @@ pub const DEFERRED_COLUMNS: &[(&str, &str, &[&str])] = &[
             // The line a night's point came from (UX-WHO-6): the transcript
             // may be gone, so nothing can work it out again.
             "said_line",
+            // The conversation lines an AI tool sent with a memory: the chat
+            // may live only in a web app, so nothing can work them out again.
+            "said_excerpt",
         ],
     ),
     // A quick capture's `content` (the tidied text) is also cache: its

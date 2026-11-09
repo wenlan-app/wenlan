@@ -74,6 +74,7 @@ fn capture(session: Option<&str>) -> CaptureParams {
         structured_fields: None,
         retrieval_cue: None,
         session: session.map(str::to_string),
+        said: None,
     }
 }
 

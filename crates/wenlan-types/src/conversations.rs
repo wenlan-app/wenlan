@@ -3,9 +3,17 @@
 //!
 //! A conversation's transcript stays where its AI tool keeps it. The daemon
 //! reads it to find the sentence someone searched for and the lines around
-//! it; nothing here is stored.
+//! it. The only lines Wenlan stores are the few an AI tool sends with a
+//! memory it saves ([`MAX_KEPT_SAID_LINES`]), for chats with no transcript
+//! Wenlan can read.
 
 use serde::{Deserialize, Serialize};
+
+/// Most lines an AI tool can send with one memory (`StoreMemoryRequest::said`).
+/// The lines nearest the save are kept.
+pub const MAX_KEPT_SAID_LINES: usize = 3;
+/// Longest kept line, in characters; a longer one is cut.
+pub const MAX_KEPT_SAID_CHARS: usize = 2_000;
 
 /// Who said a line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,10 +98,20 @@ pub struct SaidLine {
 /// `GET /api/memories/{source_id}/said`: the lines of its conversation a
 /// memory came from (UX-WHO-6). `lines` is empty when the conversation can
 /// be read but no line says the same thing.
+///
+/// `kept` is true when the lines are the copy the AI tool sent with the
+/// memory (`StoreMemoryRequest::said`), because the conversation itself can't
+/// be read: a chat in ChatGPT or Claude on the web, or a transcript that is
+/// gone. Such lines are only what was kept, so they open nothing further.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemorySaidResponse {
-    pub session_id: String,
+    /// The conversation, when Wenlan knows it. A memory saved from a web
+    /// chat has kept lines but no conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub tool: String,
+    #[serde(default)]
+    pub kept: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
