@@ -3323,6 +3323,28 @@ export async function getSessionDetail(sessionId: string): Promise<SessionDetail
   return invoke("get_session_detail", { sessionId });
 }
 
+/** Where a page that keeps an original came from (UX-ART-2). */
+export interface PageOriginal {
+  page_id: string;
+  /** The AI tool: `claude`, `chatgpt`, or a session's tool such as `claude-code`. */
+  vendor: string;
+  conversation_id: string;
+  /** Where the conversation opens in the tool's own app; empty when it has none. */
+  conversation_url: string;
+  artifact_id: string;
+  kind: string;
+  title?: string;
+  file_path: string;
+  /** Unix seconds. */
+  written_at?: number;
+  imported_at: number;
+}
+
+/** Null for a page that does not keep an original. */
+export async function getPageOriginal(pageId: string): Promise<PageOriginal | null> {
+  return (await invoke<PageOriginal | null>("get_page_original", { pageId })) ?? null;
+}
+
 export async function getPageSessions(pageId: string): Promise<PageSessionEntry[]> {
   const response = await invoke<{ sessions?: PageSessionEntry[] }>("get_page_sessions", { pageId });
   return response?.sessions ?? [];

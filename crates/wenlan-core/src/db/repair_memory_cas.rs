@@ -351,8 +351,8 @@ impl MemoryDB {
                         // NULL here made every uncategorized-scope repair pass
                         // validation and then insert nothing
                         // (repair_target_write_unproven).
-                        "INSERT INTO memory_entities(memory_id,entity_id)
-                         SELECT ?1,?2
+                        "INSERT INTO memory_entities(memory_id,entity_id,writer,created_at)
+                         SELECT ?1,?2,'lint_repair',CAST(strftime('%s','now') AS INTEGER)
                           WHERE EXISTS(
                                 SELECT 1 FROM entity_page_map epm
                                  JOIN pages p ON p.id = epm.page_id

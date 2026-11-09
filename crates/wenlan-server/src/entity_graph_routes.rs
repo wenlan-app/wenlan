@@ -246,7 +246,11 @@ pub async fn handle_link_entity(
             .ok_or(ServerError::DbNotInitialized)?
     };
     let updated = db
-        .update_memory_entity_id(&req.source_id, &req.entity_id)
+        .update_memory_entity_id_as(
+            &req.source_id,
+            &req.entity_id,
+            wenlan_core::db::topic_filing::writer::LINK_ENTITY_ROUTE,
+        )
         .await
         .map_err(|e| ServerError::IngestFailed(e.to_string()))?;
     if updated == 0 {

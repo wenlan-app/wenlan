@@ -5761,6 +5761,16 @@ pub async fn move_session_thing(
         .await
 }
 
+/// Where a page that keeps an original came from (UX-ART-2).
+#[tauri::command]
+pub async fn get_page_original(
+    state: tauri::State<'_, State>,
+    page_id: String,
+) -> Result<Option<wenlan_types::originals::PageOriginalResponse>, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_page_original(&page_id).await
+}
+
 #[tauri::command]
 pub async fn get_page_sessions(
     state: tauri::State<'_, State>,

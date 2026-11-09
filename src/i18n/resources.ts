@@ -17,6 +17,7 @@ import {
 } from "../components/memory/activityCopy";
 
 import { enSessionSource, hansSessionSource, hantSessionSource } from "../components/memory/sessions/sessionCopy";
+import { enOriginalPage, hansOriginalPage, hantOriginalPage } from "../components/memory/page/original/originalCopy";
 import { enRepoWiki, hansRepoWiki, hantRepoWiki } from "../components/memory/space-detail/repoWikiCopy";
 import { enSourceAccess, hansSourceAccess, hantSourceAccess } from "../components/memory/sources/sourceAccessCopy";
 import { enSourceContainer, hansSourceContainer, hantSourceContainer } from "../components/memory/sources/sourceContainerCopy";
@@ -3307,6 +3308,7 @@ const en = {
 },
   activityStatus: enActivityStatus,
   sessionSource: enSessionSource,
+  originalPage: enOriginalPage,
   repoWiki: enRepoWiki,
 };
 
@@ -6533,6 +6535,7 @@ const zhHans = {
 },
   activityStatus: hansActivityStatus,
   sessionSource: hansSessionSource,
+  originalPage: hansOriginalPage,
   repoWiki: hansRepoWiki,
 };
 
@@ -9759,6 +9762,7 @@ const zhHant = {
 },
   activityStatus: hantActivityStatus,
   sessionSource: hantSessionSource,
+  originalPage: hantOriginalPage,
   repoWiki: hantRepoWiki,
 };
 

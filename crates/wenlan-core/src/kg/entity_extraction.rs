@@ -267,36 +267,45 @@ pub async fn commit_kg(
         }
     }
 
-    // A hub topic (linked to a large share of all memories) is not linked
-    // when the memory names anything more specific: the hub tells it apart
-    // from nothing, and filing memories under it grew one page from every one
-    // of them. A memory that names only hubs keeps them -- leaving it with no
-    // topic would put it back in the unlinked queue on every steep. The hub's
-    // observations and relations above are kept either way.
+    // UX-GRAPH-8. A hub topic (linked to a large share of all memories) is
+    // never linked by extraction: the hub tells the memory apart from
+    // nothing, and filing memories under it grew one page from every one of
+    // them. A memory that names only hubs gets no topic here and stays
+    // unfiled, so the vector link and reweave (which skip hubs) can still
+    // file it under something specific. The hub's observations and
+    // relations above are kept either way.
     let listed_refs: Vec<&str> = listed.iter().map(String::as_str).collect();
     let hubs = db.hub_entity_ids(&listed_refs).await.unwrap_or_default();
-    let specific: Vec<&str> = listed_refs
+    let ids: Vec<&str> = listed_refs
         .iter()
         .copied()
         .filter(|id| !hubs.contains(*id))
         .collect();
-    let ids = if specific.is_empty() {
-        listed_refs
-    } else {
-        specific
-    };
-    let first_entity_id = ids.first().map(|id| (*id).to_string());
-
-    // Link memory to its first specific entity (1-1 legacy column).
-    if let Some(ref eid) = first_entity_id {
-        let _ = db.update_memory_entity_id(source_id, eid).await;
-    }
 
     // Write the extracted entities into the many-to-many junction table.
+    // An archived topic the extractor named may be linked (#708 resolves
+    // to it on purpose), but is never the main topic.
     if !ids.is_empty() {
-        if let Err(e) = db.link_memory_entities(source_id, &ids).await {
+        if let Err(e) = db
+            .link_memory_entities_as(source_id, &ids, crate::db::topic_filing::writer::KG_EXTRACT)
+            .await
+        {
             log::warn!("[post_ingest] link_memory_entities failed: {e}");
         }
+    }
+
+    // The main topic (1-1 legacy column) is the first shown topic, read
+    // after linking: a link can bring an archived topic back (#708).
+    let first_entity_id = db
+        .active_entity_ids(&ids)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .next();
+    if let Some(ref eid) = first_entity_id {
+        let _ = db
+            .update_memory_entity_id_as(source_id, eid, crate::db::topic_filing::writer::KG_EXTRACT)
+            .await;
     }
 
     Ok(first_entity_id)
@@ -416,7 +425,7 @@ mod tests {
     /// is filed under the first specific topic instead, and is not linked to
     /// the hub at all.
     #[tokio::test]
-    async fn commit_kg_does_not_file_a_memory_under_a_hub_topic() {
+    async fn ux_graph_8_commit_kg_does_not_file_a_memory_under_a_hub_topic() {
         let dir = tempfile::tempdir().expect("tempdir");
         let db = crate::db::MemoryDB::new(dir.path(), Arc::new(crate::events::NoopEmitter))
             .await
@@ -490,8 +499,8 @@ mod tests {
         drop(rows);
         drop(conn);
 
-        // A memory that names only the hub keeps it, so it does not stay
-        // unlinked and get re-extracted on every steep.
+        // UX-GRAPH-8: a memory that names only the hub gets no topic at all,
+        // so it stays unfiled and the vector link can still file it.
         db.upsert_documents(vec![RawDocument {
             source: "memory".to_string(),
             source_id: "m3".to_string(),
@@ -511,9 +520,89 @@ mod tests {
             commit_kg(&db, "m3", &hub_only, "Alice again", None)
                 .await
                 .unwrap(),
-            Some(first.clone())
+            None
         );
-        assert_eq!(db.get_memory_entity_id("m3").await.unwrap(), Some(first));
+        assert_eq!(db.get_memory_entity_id("m3").await.unwrap(), None);
+        let conn = db.test_primary_session().await;
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM memory_entities WHERE memory_id = 'm3'",
+                (),
+            )
+            .await
+            .unwrap();
+        let links = rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap();
+        assert_eq!(links, 0, "the hub is not linked either");
+    }
+
+    /// UX-GRAPH-8: an archived topic the extractor names may be linked, but
+    /// the memory's main topic is the first shown one, and the links name
+    /// their writer.
+    #[tokio::test]
+    async fn ux_graph_8_commit_kg_never_files_under_an_archived_topic() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = crate::db::MemoryDB::new(dir.path(), Arc::new(crate::events::NoopEmitter))
+            .await
+            .expect("MemoryDB::new failed");
+        for id in ["m1", "m2"] {
+            db.upsert_documents(vec![RawDocument {
+                source: "memory".to_string(),
+                source_id: id.to_string(),
+                title: "Test memory".to_string(),
+                content: "Alice joined Acme".to_string(),
+                ..Default::default()
+            }])
+            .await
+            .expect("upsert_documents failed");
+        }
+        let kg = vec![crate::extract::KgExtractionResult {
+            index: 0,
+            entities: vec![
+                crate::extract::ExtractedEntity {
+                    name: "Alice".to_string(),
+                    entity_type: "person".to_string(),
+                },
+                crate::extract::ExtractedEntity {
+                    name: "Acme".to_string(),
+                    entity_type: "organization".to_string(),
+                },
+            ],
+            observations: Vec::new(),
+            relations: Vec::new(),
+        }];
+        let alice = commit_kg(&db, "m1", &kg, "Alice joined Acme", None)
+            .await
+            .unwrap()
+            .expect("m1 gets a topic");
+        assert!(db.archive_entity(&alice).await.unwrap());
+
+        let primary = commit_kg(&db, "m2", &kg, "Alice joined Acme", None)
+            .await
+            .unwrap()
+            .expect("m2 gets the shown topic");
+        assert_ne!(primary, alice, "the archived topic is not the main topic");
+        assert_eq!(db.get_memory_entity_id("m2").await.unwrap(), Some(primary));
+        let conn = db.test_primary_session().await;
+        let mut rows = conn
+            .query(
+                "SELECT entity_id, writer FROM memory_entities WHERE memory_id = 'm2' ORDER BY rowid",
+                (),
+            )
+            .await
+            .unwrap();
+        let mut linked = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            linked.push((row.get::<String>(0).unwrap(), row.get::<String>(1).unwrap()));
+        }
+        assert_eq!(linked.len(), 2, "both named topics are linked: {linked:?}");
+        assert!(
+            linked.iter().any(|(id, _)| id == &alice),
+            "the archived topic is linked, just not the main topic: {linked:?}"
+        );
+        assert!(
+            linked.iter().all(|(_, writer)| writer == "kg_extract"),
+            "{linked:?}"
+        );
     }
 
     #[test]

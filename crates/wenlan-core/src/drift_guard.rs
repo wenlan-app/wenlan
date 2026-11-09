@@ -9710,6 +9710,7 @@ const FLAG_ALLOWLIST: &[&str] = &[
     "WENLAN_UPDATE_CLI_REFERENCE",        // test-only CLI README regeneration opt-in
     "WENLAN_BATCH_LOG",                   // debug logging
     "WENLAN_CHATGPT_ZIP",                 // import path
+    "WENLAN_CHAT_TURNS_DB_DIR",           // test-only ignored scratch-copy check
 ];
 
 /// BASELINE: behavioral flags undocumented when this contract was introduced

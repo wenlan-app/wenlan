@@ -21,7 +21,7 @@ interface SessionSourceSectionProps extends Navigation {
   readonly headingClassName?: string;
 }
 
-function SessionLine({ session, onOpen }: { session: AgentSession; onOpen: () => void }) {
+export function SessionLine({ session, onOpen }: { session: AgentSession; onOpen: () => void }) {
   const { t, i18n } = useTranslation();
   const place = sessionPlaceName(session);
   const text = [
