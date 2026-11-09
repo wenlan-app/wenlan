@@ -212,7 +212,7 @@ export default function MemoryListRow({
         </button>
         {menuOpen && (
           <div ref={menuRef} className="mem-popover-surface memory-list-row-menu" role="menu" aria-label={t("memoryList.actions")} onKeyDown={handleMenuKeyDown}>
-            {/* An imported chat turn is not the person's to confirm (UX-ADD-4). */}
+            {/* UX-ADD-4: an imported chat turn is not the person's to confirm. */}
             {!isConversationText && (
               <button type="button" role="menuitem" aria-label={isConfirmed ? t("memoryList.unconfirmMemory") : t("memoryList.confirmMemory")} onClick={() => { onConfirm(memory.source_id, !isConfirmed); closeMenu(); }}>
                 {isConfirmed ? t("memoryList.unconfirmMemory") : t("memoryList.confirmMemory")}
