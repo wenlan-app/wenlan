@@ -302,12 +302,15 @@ fn manifest_counts_match_the_spec() {
     // back one tidy of a night; the thing's summary only).
     // Then 328 after GET/POST `/api/things/old-pass` and POST `/undo` (the
     // one-time pass over old memories; a time and counts only).
+    // Then 329 after POST `/api/pages/{id}/space` (moves one page into a
+    // Space; its Space and source positions only) and 54 tools with
+    // `set_page_space`.
     assert_eq!(
         HTTP_READERS.len(),
-        328,
+        329,
         "registered (method, path, handler) triples"
     );
-    assert_eq!(MCP_READERS.len(), 53, "#[tool( declarations");
+    assert_eq!(MCP_READERS.len(), 54, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -315,7 +318,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        340,
+        341,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -323,7 +326,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        323,
+        324,
         "main builder entries"
     );
     assert_eq!(
@@ -340,8 +343,9 @@ fn manifest_counts_match_the_spec() {
         .filter(|r| r.page_bearing == PageBearing::Yes)
         .count();
     // +2: the in-chat check (two routes). +1: GET `/api/things/{id}` (the
-    // titles of its conversations' pages). +1: GET `/api/trust/scan`.
-    assert_eq!(bearing, 98, "page-bearing HTTP routes");
+    // titles of its conversations' pages). +1: GET `/api/trust/scan`. +1:
+    // POST `/api/pages/{id}/space` (names the page it moves).
+    assert_eq!(bearing, 99, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -467,6 +471,9 @@ fn marker_shape_allowlist_is_fail_closed() {
         // automatic reader cannot see; the response is title metadata only,
         // and the projection still takes the automatic `page_write_permit`.
         (ReaderMethod::Post, "/api/pages/{id}/restore"),
+        // Moving a page into a Space names that one page; the receipt is its
+        // Space and source positions, never source text or Space names.
+        (ReaderMethod::Post, "/api/pages/{id}/space"),
     ];
 
     for r in HTTP_READERS {
@@ -499,7 +506,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::NamedPage)
             .count(),
-        6 // main and repair each have a distinct page-detail adapter; +1 restore
+        7 // main and repair each have a distinct page-detail adapter; +1 restore, +1 space move
     );
     assert_eq!(
         HTTP_READERS

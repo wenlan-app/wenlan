@@ -408,7 +408,7 @@ pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
         "original" | "chat_import" => VersionAuthor::Original,
         "distill" | "re_distill" | "agent_refresh" | "page_growth" | "refinery_merge"
         | "citation_backfill" | "page_merge" => VersionAuthor::Ai,
-        "link_rename" | "title_rename" | "archive" => VersionAuthor::System,
+        "link_rename" | "title_rename" | "space_move" | "archive" => VersionAuthor::System,
         // `migration_87` (the seed of every page that predates history),
         // `migration_84`, and any writer this code does not know.
         _ => VersionAuthor::Unknown,
