@@ -47,6 +47,24 @@ pub(crate) fn format_supplemental_pages(
     output
 }
 
+/// Render the `Linked pages:` section: the pages the compiled pages link to
+/// (UX-FIND-5). Empty or absent renders nothing.
+pub(crate) fn format_linked_pages(pages: Option<&[wenlan_types::responses::LinkedPage]>) -> String {
+    let Some(pages) = pages.filter(|pages| !pages.is_empty()) else {
+        return String::new();
+    };
+    let mut output = String::from("Linked pages:\n");
+    for page in pages {
+        output.push_str(&format!(
+            "  - {} ({}), linked from {}\n",
+            page.title,
+            page.id,
+            page.linked_from.join(", ")
+        ));
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::format_supplemental_pages;

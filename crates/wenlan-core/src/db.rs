@@ -96,6 +96,7 @@ pub use activity_counts::{
 mod citation_sources;
 pub mod conversations;
 pub mod intake;
+mod linked_pages;
 pub mod night_links;
 pub mod revision_cards;
 mod scoped_entities;
@@ -46492,8 +46493,20 @@ impl MemoryDB {
             .filter(|p| p.kind != "entity")
             .collect();
         let scoped = crate::pages::scope_filter_pages(raw_pages, caller_space, memory_source_ids);
-        let mut tier_ok = Vec::with_capacity(scoped.len());
-        for page in scoped {
+        let tier_ok = self.pages_within_source_tier(scoped, caller_trust).await;
+        crate::pages::select_pages_for_context(&tier_ok, memory_source_ids, cap)
+    }
+
+    /// The pages whose most sensitive source `caller_trust` may read, in the
+    /// order given. The per-page half of [`Self::select_visible_pages`],
+    /// shared with pages that arrive by link rather than by rank.
+    pub(crate) async fn pages_within_source_tier(
+        &self,
+        pages: Vec<Page>,
+        caller_trust: &str,
+    ) -> Vec<Page> {
+        let mut tier_ok = Vec::with_capacity(pages.len());
+        for page in pages {
             // fail-closed: a lookup error → treat as most sensitive (tier 1) → drop
             // unless the caller has full trust.
             let eff_tier = self
@@ -46504,7 +46517,7 @@ impl MemoryDB {
                 tier_ok.push(page);
             }
         }
-        crate::pages::select_pages_for_context(&tier_ok, memory_source_ids, cap)
+        tier_ok
     }
 
     pub async fn get_memory_space(&self, source_id: &str) -> Result<Option<String>, WenlanError> {

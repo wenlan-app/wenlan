@@ -142,6 +142,7 @@ async fn mcp_capture_and_recall_respects_space() {
 
     // Recall with space=alpha: daemon returns only the alpha result.
     let search_response = SearchMemoryResponse {
+        linked_pages: None,
         results: vec![alpha_search_result()],
         took_ms: 5.0,
         supplemental_pages: None,

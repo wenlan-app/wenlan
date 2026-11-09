@@ -33,6 +33,9 @@ fn format_table(response: &SearchMemoryResponse) -> String {
         output.push_str(&super::format_supplemental_pages(
             response.supplemental_pages.as_deref(),
         ));
+        output.push_str(&super::format_linked_pages(
+            response.linked_pages.as_deref(),
+        ));
         return output;
     }
     let mut output = format!(
@@ -64,6 +67,9 @@ fn format_table(response: &SearchMemoryResponse) -> String {
     output.push_str(&super::format_supplemental_pages(
         response.supplemental_pages.as_deref(),
     ));
+    output.push_str(&super::format_linked_pages(
+        response.linked_pages.as_deref(),
+    ));
     output
 }
 
@@ -75,6 +81,7 @@ mod tests {
     #[test]
     fn lists_compiled_pages_when_no_memory_matched() {
         let response = SearchMemoryResponse {
+            linked_pages: None,
             results: Vec::new(),
             took_ms: 3.0,
             supplemental_pages: Some(vec![super::super::tests::page(
@@ -89,8 +96,34 @@ mod tests {
     }
 
     #[test]
+    fn ux_find_5_lists_the_pages_compiled_pages_link_to() {
+        let response = SearchMemoryResponse {
+            results: Vec::new(),
+            took_ms: 3.0,
+            supplemental_pages: Some(vec![super::super::tests::page(
+                "Trip plan",
+                "page-source-1",
+            )]),
+            linked_pages: Some(vec![wenlan_types::responses::LinkedPage {
+                id: "page-tickets".to_string(),
+                title: "Tickets".to_string(),
+                point: "Buy them in March.".to_string(),
+                linked_from: vec!["Trip plan".to_string()],
+                space: None,
+                confirmed: true,
+            }]),
+        };
+        let output = format_table(&response);
+        assert!(
+            output.contains("Linked pages:\n  - Tickets (page-tickets), linked from Trip plan\n"),
+            "{output}"
+        );
+    }
+
+    #[test]
     fn says_so_when_nothing_matched_at_all() {
         let response = SearchMemoryResponse {
+            linked_pages: None,
             results: Vec::new(),
             took_ms: 3.0,
             supplemental_pages: None,
