@@ -993,6 +993,81 @@ export async function listSpaces(): Promise<Space[]> {
   return invoke("list_spaces");
 }
 
+// ── Sharing a Space or one page with people ───────────────────────────
+
+export type SharedKind = "space" | "page";
+
+/** A member of a shared Space or page. `id` only tells members apart. */
+export interface SharedMember {
+  id: string;
+  name: string;
+}
+
+export interface SharedSyncCounts {
+  exported: number;
+  applied: number;
+  conflicts: number;
+  skipped: number;
+}
+
+export interface SharedSyncRun {
+  at: string;
+  counts: SharedSyncCounts;
+  /** Why nothing was read or written: the folder is missing. */
+  paused?: string | null;
+  error?: string | null;
+}
+
+/** How this Wenlan shares a Space (`target` = its name) or a page (`target`
+ *  = its id). */
+export interface SharedStatus {
+  kind: SharedKind;
+  target: string;
+  folder: string;
+  member_id: string;
+  member_name: string;
+  members: SharedMember[];
+  last?: SharedSyncRun | null;
+}
+
+/** What a folder shares, before joining it. */
+export interface SharedFolder {
+  kind: SharedKind;
+  name: string;
+  page_id?: string | null;
+  members: SharedMember[];
+}
+
+export async function listShares(): Promise<SharedStatus[]> {
+  const response = await invoke<{ shares: SharedStatus[] }>("list_shares");
+  return response.shares;
+}
+
+export async function shareSpace(space: string, folder: string): Promise<SharedSyncCounts> {
+  return invoke("share_space", { space, folder });
+}
+
+export async function sharePage(id: string, folder: string): Promise<SharedSyncCounts> {
+  return invoke("share_page", { id, folder });
+}
+
+export async function stopSharingSpace(space: string): Promise<void> {
+  await invoke("stop_sharing_space", { space });
+}
+
+export async function stopSharingPage(id: string): Promise<void> {
+  await invoke("stop_sharing_page", { id });
+}
+
+export async function lookInSharedFolder(folder: string): Promise<SharedFolder | null> {
+  const response = await invoke<{ shared: SharedFolder | null }>("look_in_shared_folder", { folder });
+  return response.shared;
+}
+
+export async function revealSharedFolder(folder: string): Promise<void> {
+  await invoke("reveal_shared_folder", { folder });
+}
+
 /** One active item of a Space Brief: a line of work home lists under "what
  *  you're working on" until things have a record of their own. `added_at` is
  *  in seconds. */
@@ -1748,6 +1823,8 @@ export interface PageChangelogEntry {
   char_delta?: number | null;
   sources_added?: number | null;
   sources_removed?: number | null;
+  /** For a version taken from a shared folder: the version edited here at the same time that lost to it. */
+  concurrent_with?: number | null;
 }
 
 export type PageHistoryKind = "person_edit" | "ai_edit" | "source_update";
@@ -2114,6 +2191,9 @@ export interface Page {
   refresh_blocked_reason?: string | null;
   selection_impacts?: { reason: "selection_removed" | "disconnected" | "unknown"; titles: string[]; unavailable: boolean }[];
   user_edited?: boolean;
+  /** Who wrote the page's last version (`page_history.edited_by`), such as
+   *  `shared_person:<member>` for another member of a shared Space. */
+  last_edited_by?: string | null;
   /** When the person last edited the page, unix seconds; null or missing when
    *  no recent edit is theirs. */
   human_edited_at?: number | null;
@@ -2609,6 +2689,9 @@ export interface PageSentence {
   /** You said 「不對」 about it and it has not changed since. */
   flagged?: boolean;
   proposals?: string[];
+  /** Another member of a shared Space wrote it: `shared_person:<member>` or
+   *  `shared_ai:<member>`. */
+  shared_by?: string;
 }
 
 /** The page's newest AI write, for "AI updated N sentences" and its Undo. */

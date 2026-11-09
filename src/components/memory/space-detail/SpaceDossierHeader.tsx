@@ -14,6 +14,8 @@ type SpaceIdentityActions = {
   readonly onDelete: () => void;
   readonly onKeep: () => void;
   readonly onReviewAll?: () => void;
+  /** Opens the box that shares the Space with people (or lists its members). */
+  readonly onShare?: () => void;
   readonly onSaveIdentity: (value: SpaceIdentityValue) => Promise<void> | void;
 };
 
@@ -29,6 +31,10 @@ type SpaceDossierHeaderProps = {
   readonly space: Space;
   /** Shown before New page, such as the GitHub button. */
   readonly leadingAction?: ReactNode;
+  /** Whether the Space is shared with people: the menu says Members then. */
+  readonly shared?: boolean;
+  /** The line under the description, such as who the Space is shared with. */
+  readonly sharedLine?: ReactNode;
   readonly onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
 };
 
@@ -38,6 +44,8 @@ export function SpaceDossierHeader({
   mutationError,
   space,
   leadingAction,
+  shared = false,
+  sharedLine,
   onRegisterFlush,
 }: SpaceDossierHeaderProps) {
   const { t } = useTranslation();
@@ -168,6 +176,7 @@ export function SpaceDossierHeader({
               onBlur={blur}
               onKeyDown={handleEditorKeyDown}
             />
+            {sharedLine}
           </div>
 
           {!space.suggested && (
@@ -210,6 +219,12 @@ export function SpaceDossierHeader({
                       setMenuOpen(false);
                       actions.onReviewAll?.();
                     }}>{t("home.reviewPageChanges")}</button>
+                  )}
+                  {actions.onShare && (
+                    <button role="menuitem" type="button" onClick={() => {
+                      setMenuOpen(false);
+                      actions.onShare?.();
+                    }}>{t(shared ? "sharing.menuMembers" : "sharing.menuShare")}</button>
                   )}
                   <button
                     className="space-dossier-menu-danger"

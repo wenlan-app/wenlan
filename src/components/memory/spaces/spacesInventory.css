@@ -45,6 +45,33 @@
   flex: none;
 }
 
+.spaces-overview-header .spaces-join-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spaces-join-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* "Add shared…" sits in the header; a narrow window keeps the header on one
+   row, so there it moves to the end of the list. */
+.spaces-join-row {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  color: var(--mem-text-secondary);
+}
+
+@media (max-width: 599px) {
+  .spaces-overview-header .spaces-join-action { display: none; }
+  .spaces-join-row { display: inline-flex; }
+}
+
 .spaces-overview .spaces-confirmed-section {
   padding-top: 0;
 }

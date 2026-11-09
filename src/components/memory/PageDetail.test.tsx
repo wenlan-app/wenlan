@@ -148,6 +148,13 @@ async function selectInspectorTab(user: ReturnType<typeof userEvent.setup>, name
   await user.click(await screen.findByRole("button", { name }));
 }
 
+/** "Update from sources" lives in Info, with the sources it rebuilds from. */
+async function clickUpdateFromSources(user: ReturnType<typeof userEvent.setup>) {
+  const info = screen.getByRole("button", { name: i18n.t("pageInspector.info") });
+  if (info.getAttribute("aria-expanded") !== "true") await user.click(info);
+  await user.click(await screen.findByRole("button", { name: "Update from sources" }));
+}
+
 async function makeNextPageResolvable() {
   const { getPage } = await import("../../lib/tauri");
   const getPageMock = getPage as ReturnType<typeof vi.fn>;
@@ -272,8 +279,7 @@ describe("PageDetail", () => {
       title: "Renamed architecture",
       version: 4,
     });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.click(screen.getByRole("button", { name: "Rename page" }));
     const titleInput = screen.getByRole("textbox", { name: "Page title" });
     await user.clear(titleInput);
     await user.type(titleInput, "Renamed architecture");
@@ -303,8 +309,7 @@ describe("PageDetail", () => {
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
     const currentPage = await getPage("concept_abc");
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...currentPage, title: "Renamed architecture", version: 4 });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.click(screen.getByRole("button", { name: "Rename page" }));
     const titleInput = screen.getByRole("textbox", { name: "Page title" });
     await user.clear(titleInput);
     await user.type(titleInput, "Renamed architecture");
@@ -320,8 +325,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.click(screen.getByRole("button", { name: "Rename page" }));
     const titleInput = screen.getByRole("textbox", { name: "Page title" });
     fireEvent.compositionStart(titleInput);
     fireEvent.change(titleInput, { target: { value: "架構筆記" } });
@@ -344,8 +348,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.click(screen.getByRole("button", { name: "Rename page" }));
     await user.click(screen.getByRole("button", { name: "Cancel rename" }));
 
     expect(renamePage).not.toHaveBeenCalled();
@@ -358,8 +361,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.click(screen.getByRole("button", { name: "Rename page" }));
     await user.clear(screen.getByRole("textbox", { name: "Page title" }));
     await user.type(screen.getByRole("textbox", { name: "Page title" }), "Changed title");
     await user.click(screen.getByRole("button", { name: "Save title" }));
@@ -377,8 +379,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.click(screen.getByRole("button", { name: "Rename page" }));
     await user.clear(screen.getByRole("textbox", { name: "Page title" }));
     await user.type(screen.getByRole("textbox", { name: "Page title" }), "Proposed title");
     await user.click(screen.getByRole("button", { name: "Save title" }));
@@ -398,8 +399,7 @@ describe("PageDetail", () => {
     const { user, rerender } = renderWithQuery(<PageDetail {...defaultProps} />, queryClient);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.click(screen.getByRole("button", { name: "Rename page" }));
     await user.clear(screen.getByRole("textbox", { name: "Page title" }));
     await user.type(screen.getByRole("textbox", { name: "Page title" }), "Old page proposal");
     await user.click(screen.getByRole("button", { name: "Save title" }));
@@ -421,8 +421,7 @@ describe("PageDetail", () => {
     );
     await screen.findByRole("heading", { level: 1, name: "Next page" });
 
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.click(screen.getByRole("button", { name: "Rename page" }));
     await user.clear(screen.getByRole("textbox", { name: "Page title" }));
     await user.type(screen.getByRole("textbox", { name: "Page title" }), "Renamed next page");
     await act(async () => staleReload.resolve({ ...originalPage, version: 99 }));
@@ -521,7 +520,7 @@ describe("PageDetail", () => {
     const trigger = screen.getByRole("button", { name: "Page actions" });
     trigger.focus();
     await user.keyboard("{ArrowDown}");
-    expect(screen.getByRole("menuitemcheckbox", { name: "Summary view" })).toHaveFocus();
+    expect(screen.getByRole("menuitem", { name: "Export…" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu", { name: "Page actions" })).toBeNull();
     expect(trigger).toHaveFocus();
@@ -783,15 +782,20 @@ describe("PageDetail", () => {
     const trigger = screen.getByRole("button", { name: "Page actions" });
     await user.click(trigger);
     const menu = screen.getByRole("menu", { name: "Page actions" });
-    expect(within(menu).getByRole("menuitem", { name: "Update from sources" })).toBeInTheDocument();
+    // Five items at most: rename is the title, the summary switch and
+    // "Update from sources" live in Info.
+    expect(within(menu).queryByRole("menuitem", { name: "Update from sources" })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: "Rename page" })).toBeNull();
+    expect(within(menu).queryByRole("menuitemcheckbox", { name: "Summary view" })).toBeNull();
+    expect(within(menu).getByRole("menuitem", { name: "Share with people…" })).toBeInTheDocument();
     expect(within(menu).queryByRole("menuitem", { name: "Copy as context" })).toBeNull();
     expect(within(menu).getByRole("menuitem", { name: "Delete page" })).toBeInTheDocument();
 
     expect(within(menu).queryByRole("menuitem", { name: "Mind map" })).toBeNull();
     expect(within(menu).queryByRole("menuitem", { name: i18n.t("pageInspector.info") })).toBeNull();
-    expect(within(menu).getByRole("menuitem", { name: "Edit page" })).toBeVisible();
+    expect(within(menu).queryByRole("menuitem", { name: "Edit page" })).toBeNull();
     // The first enabled page action receives focus.
-    expect(within(menu).getByRole("menuitem", { name: "Edit page" })).toHaveFocus();
+    expect(within(menu).getByRole("menuitem", { name: "Export…" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu", { name: "Page actions" })).toBeNull();
     expect(trigger).toHaveFocus();
@@ -910,8 +914,7 @@ describe("PageDetail", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "Revised Page body"));
@@ -963,8 +966,7 @@ describe("PageDetail", () => {
       level: 1,
       name: "libSQL Architecture",
     });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
 
     rerender(
       <QueryClientProvider client={queryClient}>
@@ -994,7 +996,7 @@ describe("PageDetail", () => {
       screen.queryByRole("textbox", { name: "Page editor" }),
     ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Page actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit page" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Edit page" })).toBeVisible();
     expect(
       screen.getByRole("heading", {
         level: 1,
@@ -1017,15 +1019,14 @@ describe("PageDetail", () => {
       level: 1,
       name: "libSQL Architecture",
     });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     expect(await screen.findByText("Checking editor compatibility…")).toBeVisible();
 
     fireEvent.keyDown(document.body, { key: "Escape" });
 
     expect(defaultProps.onBack).not.toHaveBeenCalled();
     await user.click(await screen.findByRole("button", { name: "Page actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit page" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Edit page" })).toBeVisible();
     expect(
       screen.queryByText("Checking editor compatibility…"),
     ).toBeNull();
@@ -1049,8 +1050,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "One serialized Page body"));
@@ -1091,13 +1091,11 @@ describe("PageDetail", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
+    await clickUpdateFromSources(user);
     await waitFor(() => expect(redistillPage).toHaveBeenCalledWith("concept_abc"));
 
     // While the re-distill promise is still unresolved the button is busy.
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    expect(screen.getByRole("menuitem", { name: "Updating from sources" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Updating from sources" })).toBeDisabled();
 
     rerender(
       <QueryClientProvider client={queryClient}>
@@ -1156,8 +1154,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    await user.click(screen.getByRole("button", { name: "Edit page" }));
     const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "Revised Page body"));
@@ -1243,7 +1240,7 @@ describe("PageDetail", () => {
       await screen.findByText("libSQL Architecture");
 
       await user.click(screen.getByRole("button", { name: "Page actions" }));
-      expect(screen.getByRole("menuitem", { name: "Edit page" })).toHaveFocus();
+      expect(screen.getByRole("menuitem", { name: "Export…" })).toHaveFocus();
     } finally {
       rectsSpy.mockRestore();
     }
@@ -1422,8 +1419,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />, queryClient);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
+    await clickUpdateFromSources(user);
 
     expect(redistillPage).toHaveBeenCalledWith("concept_abc");
     expect(await screen.findByText(hint)).toBeTruthy();
@@ -1443,8 +1439,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
+    await clickUpdateFromSources(user);
 
     expect(
       await screen.findByText(
@@ -1503,8 +1498,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByText("Edited Page");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
+    await clickUpdateFromSources(user);
 
     expect(confirmSpy).toHaveBeenCalledWith(
       i18n.t("pageDetail.redistillEditedConfirm"),
@@ -1525,8 +1519,7 @@ describe("PageDetail", () => {
     const { user, rerender } = renderWithQuery(<PageDetail {...defaultProps} />, queryClient);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
+    await clickUpdateFromSources(user);
     expect(await screen.findByText(hint)).toBeTruthy();
 
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

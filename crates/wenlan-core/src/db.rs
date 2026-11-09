@@ -35,6 +35,7 @@ mod community_grouping_state;
 mod count;
 mod derived_artifact_sweep;
 mod edges_rebuild;
+pub mod entity_alias_sources;
 mod entity_page_adapter;
 mod eval_lifecycle_integrity;
 mod eval_paired_guard;
@@ -182,6 +183,8 @@ pub(crate) mod code_basis_test;
 mod deferred_embedding_test;
 #[cfg(test)]
 mod edges_rebuild_test;
+#[cfg(test)]
+mod entity_alias_sources_test;
 #[cfg(test)]
 mod entity_clean_readers_test;
 #[cfg(test)]
@@ -1594,6 +1597,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// in-chat reminder).
 /// Migration 160 adds `memory_entities.writer` / `created_at` and
 /// `memory_topic_changes` (db/topic_filing.rs).
+/// Migration 161 adds `entity_alias_sources` (db/entity_alias_sources.rs).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1601,7 +1605,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 160;
+pub const SCHEMA_VERSION: u32 = 161;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10901,6 +10905,15 @@ impl MemoryDB {
             if version < 160 {
                 self.migrate_160_topic_filing(version).await?;
             }
+
+            // Migration 161: where each topic alias came from. See
+            // db/entity_alias_sources.rs.
+            if ceiling < 161 {
+                return Ok(());
+            }
+            if version < 161 {
+                self.migrate_161_entity_alias_sources(version).await?;
+            }
         }
 
         // Private M4 builds could already have stamped user_version=95 before
@@ -19198,12 +19211,15 @@ pub struct BackupReceipt {
 /// The `page_history.edited_by` of a page's first version. An authored page
 /// records who made it, so a later edit by the person never makes the AI
 /// tool's sentences theirs: `person_create` for the person in the app (no
-/// agent name), `agent_create` for an AI tool. Other pages, and internal
-/// callers that name no actor, keep `create`.
-fn create_label(creation_kind: &str, actor: &str) -> &'static str {
+/// agent name), `agent_create` for an AI tool. A page another member of a
+/// shared Space wrote keeps that member (`shared_person:<member>`,
+/// `shared_ai:<member>`). Other pages, and internal callers that name no
+/// actor, keep `create`.
+fn create_label<'a>(creation_kind: &str, actor: &'a str) -> &'a str {
     match (creation_kind, actor) {
         ("authored", "unknown") => "person_create",
         ("authored", "") => "create",
+        ("authored", shared) if crate::shared_space::shared_writer(shared).is_some() => shared,
         ("authored", _) => "agent_create",
         _ => "create",
     }
@@ -37358,10 +37374,13 @@ impl MemoryDB {
         // Step 2.5: deterministic MinHash/LSH near-dedup (T16, opt-in).
         if crate::db::entity_minhash_enabled() {
             if let Some(cand_id) = self.minhash_resolve_candidate(name, entity_type).await? {
-                let _ = self
-                    .add_entity_alias(&name_lower, &cand_id, "minhash")
-                    .await;
-                return Ok((cand_id, false));
+                // UX-GRAPH-9: like the vector step, a detached name is never
+                // merged back, and the alias this adds is recorded as auto.
+                if !self.alias_detached(&cand_id, &name_lower).await? {
+                    self.add_auto_alias_logged(&cand_id, &name_lower, entity_type)
+                        .await;
+                    return Ok((cand_id, false));
+                }
             }
         }
 
@@ -37376,9 +37395,15 @@ impl MemoryDB {
             .into_iter()
             .next()
         {
-            if result.distance < 0.1 && crate::retrieval::dedup::has_high_entropy(name) {
-                let _ = self
-                    .add_entity_alias(&name_lower, &result.entity.id, "auto")
+            // UX-GRAPH-9: a name a person detached from this topic is never
+            // merged back into it; it falls through to a topic of its own.
+            if result.distance < 0.1
+                && crate::retrieval::dedup::has_high_entropy(name)
+                && !self.alias_detached(&result.entity.id, &name_lower).await?
+            {
+                // Recorded as auto, so the next mention is checked again
+                // instead of resolving here as an exact alias.
+                self.add_auto_alias_logged(&result.entity.id, &name_lower, entity_type)
                     .await;
                 return Ok((result.entity.id, false));
             }
@@ -37612,11 +37637,19 @@ impl MemoryDB {
                 // undo itself on the next import. What happens next is the
                 // caller's business: below the establish threshold the entity
                 // just accumulates links and stays archived.
-                "SELECT epm.entity_id FROM entity_page_map epm
-                 JOIN pages p ON p.id = epm.page_id
-                 WHERE p.kind = 'entity'
-                   AND EXISTS (SELECT 1 FROM json_each(p.aliases) WHERE value = ?1)
-                 ORDER BY p.created_at, epm.entity_id LIMIT 1",
+                //
+                // UX-GRAPH-9: an alias a vector merge added is not an exact
+                // match, so it is skipped here and the similarity check runs
+                // again for the mention.
+                &format!(
+                    "SELECT epm.entity_id FROM entity_page_map epm
+                     JOIN pages p ON p.id = epm.page_id
+                     WHERE p.kind = 'entity'
+                       AND EXISTS (SELECT 1 FROM json_each(p.aliases) WHERE value = ?1)
+                       AND NOT {auto}
+                     ORDER BY p.created_at, epm.entity_id LIMIT 1",
+                    auto = entity_alias_sources::auto_alias_sql("?1")
+                ),
                 libsql::params![name.trim().to_lowercase()],
             )
             .await
@@ -37656,8 +37689,17 @@ impl MemoryDB {
         entity_id: &str,
         _source: &str,
     ) -> Result<(), WenlanError> {
-        let now_iso = chrono::Utc::now().to_rfc3339();
         let conn = self.conn.lock().await;
+        Self::add_alias_on(&conn, alias, entity_id).await
+    }
+
+    /// [`Self::add_entity_alias`] for callers already holding the connection.
+    async fn add_alias_on(
+        conn: &libsql::Connection,
+        alias: &str,
+        entity_id: &str,
+    ) -> Result<(), WenlanError> {
+        let now_iso = chrono::Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE pages SET
                 aliases = (SELECT json_group_array(value) FROM (
@@ -37712,7 +37754,10 @@ impl MemoryDB {
             return Err(WenlanError::NotFound("entity not found".to_string()));
         }
         let aliases = parse_pages_aliases(aliases_json);
+        // UX-GRAPH-9: a person declaring the alias makes it exact, even when
+        // a vector merge added it first or the person detached it before.
         if aliases.contains(&alias_lower) {
+            Self::clear_alias_source_on(&conn, entity_id, &alias_lower).await?;
             return Ok(aliases);
         }
 
@@ -37775,10 +37820,11 @@ impl MemoryDB {
                 last_modified = ?2
              WHERE kind = 'entity'
                AND id = (SELECT page_id FROM entity_page_map WHERE entity_id = ?3)",
-            libsql::params![alias_lower, now_iso, entity_id.to_string()],
+            libsql::params![alias_lower.clone(), now_iso, entity_id.to_string()],
         )
         .await
         .map_err(|e| WenlanError::VectorDb(format!("add_entity_alias_in_scope insert: {e}")))?;
+        Self::clear_alias_source_on(&conn, entity_id, &alias_lower).await?;
 
         let Some((_, _, aliases_json, _)) =
             Self::read_entity_page(&conn, entity_id, "add_entity_alias_in_scope reread").await?
@@ -38451,7 +38497,19 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("merge_entities_preview edges: {e}")))?;
 
-        let aliases_added = aliases_gained(canonical_aliases_json, loser_aliases_json, &loser_name);
+        // UX-GRAPH-9: the same names the merge leaves out, so the preview
+        // reports what the merge will add.
+        let canonical_detached = Self::detached_aliases_on(&conn, canonical_id).await?;
+        let (loser_aliases_json, loser_name_lower) = entity_alias_sources::without_detached(
+            loser_aliases_json,
+            loser_name.to_lowercase(),
+            &canonical_detached,
+        );
+        let aliases_added = aliases_gained(
+            canonical_aliases_json,
+            loser_aliases_json,
+            &loser_name_lower,
+        );
 
         Ok(MergePreview {
             canonical_id: canonical_id.to_string(),
@@ -39037,6 +39095,21 @@ impl MemoryDB {
                 // 2c sub-step 3 item 5: entity_type is now the pre-computed
                 // `final_entity_type` (item 4's `entities` subquery bridge
                 // retired with the rest of the entities writes in this item).
+                //
+                // UX-GRAPH-9: a name a person detached from the canonical is
+                // left out, whether it was the loser's alias or its own name,
+                // so a merge never re-attaches it.
+                let canonical_detached =
+                    Self::detached_aliases_on(&conn, canonical_id).await?;
+                let (loser_aliases_json, loser_name_lower) =
+                    entity_alias_sources::without_detached(
+                        loser_aliases_json,
+                        alias_name
+                            .as_deref()
+                            .map(|n| n.to_lowercase())
+                            .unwrap_or_default(),
+                        &canonical_detached,
+                    );
                 conn.execute(
                     "UPDATE pages SET
                     entity_type = ?5,
@@ -39054,10 +39127,7 @@ impl MemoryDB {
                     libsql::params![
                         canonical_id.to_string(),
                         loser_aliases_json.clone(),
-                        alias_name
-                            .as_deref()
-                            .map(|n| n.to_lowercase())
-                            .unwrap_or_default(),
+                        loser_name_lower.clone(),
                         now_iso.clone(),
                         final_entity_type.clone(),
                     ],
@@ -39066,6 +39136,21 @@ impl MemoryDB {
                 .map_err(|e| {
                     WenlanError::VectorDb(format!("merge_entities canonical shadow: {e}"))
                 })?;
+
+                // UX-GRAPH-9: the loser's auto aliases stay auto on the
+                // canonical; its own name, merged on purpose, is exact.
+                let canonical_aliases_before: HashSet<String> =
+                    parse_pages_aliases(canonical_aliases_json.clone())
+                        .into_iter()
+                        .collect();
+                Self::move_alias_sources_on(
+                    &conn,
+                    alias_id,
+                    canonical_id,
+                    &canonical_aliases_before,
+                    &loser_name_lower,
+                )
+                .await?;
 
                 let generation_updates =
                     Self::bump_community_graph_generations(&conn, graph_changes)
@@ -39079,7 +39164,7 @@ impl MemoryDB {
                 let aliases_added = aliases_gained(
                     canonical_aliases_json.clone(),
                     loser_aliases_json,
-                    alias_name.as_deref().unwrap_or(""),
+                    &loser_name_lower,
                 );
 
                 Ok((generation_updates, observations_moved, aliases_added))
@@ -40736,6 +40821,12 @@ impl MemoryDB {
         )
         .await
         .map_err(|e| WenlanError::VectorDb(format!("delete_entity entity_page_map: {e}")))?;
+        conn.execute(
+            "DELETE FROM entity_alias_sources WHERE entity_id = ?1",
+            libsql::params![entity_id],
+        )
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("delete_entity alias sources: {e}")))?;
 
         // The closing `DELETE FROM entities` retired at G6 Stage 3.
 
@@ -40793,13 +40884,19 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT epm.entity_id, p.title, COALESCE(p.entity_type, ''), p.status
-                 FROM entity_page_map epm
-                 JOIN pages p ON p.id = epm.page_id
-                 WHERE p.kind = 'entity'
-                   AND ((p.status = 'active' AND LOWER(p.title) = LOWER(?1))
-                        OR EXISTS (SELECT 1 FROM json_each(p.aliases) WHERE value = ?2))
-                 ORDER BY p.created_at, epm.entity_id",
+                // UX-GRAPH-9: an auto alias is a guess, and this lookup never
+                // guesses.
+                &format!(
+                    "SELECT epm.entity_id, p.title, COALESCE(p.entity_type, ''), p.status
+                     FROM entity_page_map epm
+                     JOIN pages p ON p.id = epm.page_id
+                     WHERE p.kind = 'entity'
+                       AND ((p.status = 'active' AND LOWER(p.title) = LOWER(?1))
+                            OR (EXISTS (SELECT 1 FROM json_each(p.aliases) WHERE value = ?2)
+                                AND NOT {auto}))
+                     ORDER BY p.created_at, epm.entity_id",
+                    auto = entity_alias_sources::auto_alias_sql("?2")
+                ),
                 libsql::params![name.to_string(), name.to_lowercase()],
             )
             .await
@@ -41913,6 +42010,9 @@ impl MemoryDB {
                 &prepared_entities
             {
                 let mut resolved: Option<String> = None;
+                // UX-GRAPH-9: set when the minhash or vector step below chose
+                // the topic, so the alias it adds is recorded as auto.
+                let mut resolved_by_similarity = false;
 
                 // G6 Stage 2 PR 2c sub-step 3 item 4: page-payload lookup,
                 // same JSON-containment + deterministic tie-break as
@@ -41925,11 +42025,17 @@ impl MemoryDB {
                 // exists to prevent.
                 let mut alias_rows = conn
                     .query(
-                        "SELECT epm.entity_id FROM entity_page_map epm
-                         JOIN pages p ON p.id = epm.page_id
-                         WHERE p.kind = 'entity'
-                           AND EXISTS (SELECT 1 FROM json_each(p.aliases) WHERE value = ?1)
-                         ORDER BY p.created_at, epm.entity_id LIMIT 1",
+                        // UX-GRAPH-9: auto aliases are not exact matches,
+                        // the same rule `resolve_entity_by_alias` follows.
+                        &format!(
+                            "SELECT epm.entity_id FROM entity_page_map epm
+                             JOIN pages p ON p.id = epm.page_id
+                             WHERE p.kind = 'entity'
+                               AND EXISTS (SELECT 1 FROM json_each(p.aliases) WHERE value = ?1)
+                               AND NOT {auto}
+                             ORDER BY p.created_at, epm.entity_id LIMIT 1",
+                            auto = entity_alias_sources::auto_alias_sql("?1")
+                        ),
                         libsql::params![lower.as_str()],
                     )
                     .await
@@ -42012,8 +42118,12 @@ impl MemoryDB {
                                 ))
                             })?
                             .is_some()
+                            // UX-GRAPH-9: a name a person detached from this
+                            // topic is never merged back into it.
+                            && !Self::alias_detached_on(&conn, candidate_id, lower).await?
                         {
                             resolved = Some(candidate_id.clone());
+                            resolved_by_similarity = true;
                         }
                     }
                 }
@@ -42059,7 +42169,17 @@ impl MemoryDB {
                             // user-facing create path keeps apart.
                             if distance < 0.1 && crate::retrieval::dedup::has_high_entropy(name) {
                                 resolved = row.get::<String>(0).ok();
+                                resolved_by_similarity = resolved.is_some();
                             }
+                        }
+                    }
+                    drop(vector_rows);
+                    // A name a person detached from this topic is never
+                    // merged back into it (UX-GRAPH-9).
+                    if let Some(candidate) = resolved.as_deref() {
+                        if Self::alias_detached_on(&conn, candidate, lower).await? {
+                            resolved = None;
+                            resolved_by_similarity = false;
                         }
                     }
                 }
@@ -42110,12 +42230,8 @@ impl MemoryDB {
                 // already present. G6 Stage 2 PR 2c sub-step 3 item 4:
                 // `entity_aliases` stops being written -- page-payload
                 // UNION read-modify-write, same pattern as
-                // `add_entity_alias`. This site needs no
-                // first-registration-wins guard of its own: the alias lookup
-                // at the top of this loop resolves `lower` against every
-                // active entity page before anything else, so if another
-                // entity already owns the alias, `entity_id` IS that owner
-                // and the write is a no-op re-append onto its own page.
+                // `add_entity_alias`, including its first-registration-wins
+                // guard (see the note on the params).
                 conn.execute(
                     "UPDATE pages SET
                         aliases = (SELECT json_group_array(value) FROM (
@@ -42126,13 +42242,27 @@ impl MemoryDB {
                         )),
                         last_modified = ?2
                      WHERE kind = 'entity'
-                       AND id = (SELECT page_id FROM entity_page_map WHERE entity_id = ?3)",
+                       AND id = (SELECT page_id FROM entity_page_map WHERE entity_id = ?3)
+                       AND (LOWER(title) = ?1 OR NOT EXISTS (
+                           SELECT 1 FROM entity_page_map epm2
+                            JOIN pages p2 ON p2.id = epm2.page_id
+                            WHERE p2.kind = 'entity'
+                              AND epm2.entity_id <> ?3
+                              AND EXISTS (SELECT 1 FROM json_each(p2.aliases) WHERE value = ?1)))",
+                    // UX-GRAPH-9: the lookup above skips auto aliases, so
+                    // another topic can still hold this name as one; the
+                    // guard keeps a second topic from claiming it as an
+                    // alias, as `add_entity_alias` does. A topic's own name
+                    // is always its alias.
                     libsql::params![lower.as_str(), now_iso.clone(), entity_id.as_str()],
                 )
                 .await
                 .map_err(|e| {
                     WenlanError::VectorDb(format!("entity enrichment alias shadow: {e}"))
                 })?;
+                if resolved_by_similarity {
+                    Self::record_auto_alias_on(&conn, &entity_id, lower, entity_type).await?;
+                }
 
                 if !listed_ids.contains(&entity_id) {
                     listed_ids.push(entity_id.clone());
@@ -61491,6 +61621,69 @@ impl MemoryDB {
             Some(row) => Ok(row.get::<String>(0).unwrap_or_else(|_| "[]".to_string())),
             None => Ok("[]".to_string()),
         }
+    }
+
+    /// Records who wrote a page's `version` in its changelog when the write
+    /// itself kept none (a page created here from another member's shared
+    /// version), so the page's "last edited by" names them. Only while the
+    /// page is still at that version; returns whether it was recorded.
+    pub async fn record_page_writer(
+        &self,
+        page_id: &str,
+        version: i64,
+        edited_by: &str,
+    ) -> Result<bool, WenlanError> {
+        let existing = self.get_page_changelog(page_id).await?;
+        let entry = serde_json::json!({
+            "version": version,
+            "at": chrono::Utc::now().timestamp(),
+            "edited_by": edited_by,
+        });
+        let changelog = append_changelog_entry(&existing, entry, 20)?;
+        let conn = self.conn.lock().await;
+        let affected = conn
+            .execute(
+                "UPDATE pages SET changelog = ?1 WHERE id = ?2 AND version = ?3",
+                libsql::params![changelog, page_id, version],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("record_page_writer: {e}")))?;
+        Ok(affected > 0)
+    }
+
+    /// Marks the changelog entry of `version` as having replaced
+    /// `lost_version`: an edit made here at the same time as a shared
+    /// version, which lost to it and stays in the page's history. The app
+    /// tells the person once (`concurrent_with` on the revisions route).
+    /// False when the page moved on or has no entry for `version`.
+    pub async fn mark_concurrent_edit(
+        &self,
+        page_id: &str,
+        version: i64,
+        lost_version: i64,
+    ) -> Result<bool, WenlanError> {
+        let existing = self.get_page_changelog(page_id).await?;
+        let mut entries: Vec<serde_json::Value> =
+            serde_json::from_str(&existing).unwrap_or_default();
+        let Some(entry) = entries
+            .iter_mut()
+            .rev()
+            .find(|entry| entry.get("version").and_then(|v| v.as_i64()) == Some(version))
+        else {
+            return Ok(false);
+        };
+        entry["concurrent_with"] = serde_json::json!(lost_version);
+        let changelog = serde_json::to_string(&entries)
+            .map_err(|e| WenlanError::VectorDb(format!("mark_concurrent_edit: {e}")))?;
+        let conn = self.conn.lock().await;
+        let affected = conn
+            .execute(
+                "UPDATE pages SET changelog = ?1 WHERE id = ?2 AND version = ?3",
+                libsql::params![changelog, page_id, version],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("mark_concurrent_edit: {e}")))?;
+        Ok(affected > 0)
     }
 
     /// Update a memory's content in-place for topic-key upsert.

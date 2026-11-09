@@ -2754,6 +2754,8 @@ html[data-theme="light"] {
 
 /* Reading column: capped measure + roomier type via ContentRenderer vars.
    Type and width scale together — the measure (chars/line) stays constant. */
+.page-detail-prose--editable { cursor: text; }
+
 .page-detail-prose {
   /* Fallback matches --reading-measure for browsers without custom properties. */
   max-width: 730px;

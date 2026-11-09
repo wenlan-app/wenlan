@@ -68,6 +68,9 @@ pub const TABLE_CLASSES: &[(&str, TableClass)] = {
         // steps each memory has had, so a restore does not run them again
         // over memories whose results its files already hold.
         ("enrichment_steps", File),
+        // Where each topic alias came from, and the aliases a person
+        // detached (UX-GRAPH-9). A vector merge cannot work that out again.
+        ("entity_alias_sources", File),
         ("edges", File),
         ("provenance_roots", File),
         ("provenance_root_minhash_bands", File),

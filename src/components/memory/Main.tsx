@@ -1651,6 +1651,9 @@ export default function Main({
               labels={spacesOverviewLabels}
               onCreateIntentHandled={() => replaceView({ kind: "spaces" })}
               onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
+              onSharedJoined={(kind, target) => navigateTo(kind === "space"
+                ? { kind: "space", spaceId: null, spaceName: target }
+                : { kind: "page", pageId: target })}
               onSpaceDeleted={handleSpaceDeleted}
               onSpaceRenamed={handleSpaceRenamed}
             />
@@ -1670,6 +1673,7 @@ export default function Main({
               onSpaceLoaded={handleSpaceLoaded}
               onSpaceRenamed={handleSpaceRenamed}
               onRegisterFlush={registerSpaceIdentityFlush}
+              onOpenSettings={() => navigateTo({ kind: "settings", section: "general" })}
             />
           ) : view.kind === "memory" ? (
             <MemoryDetail
@@ -1807,6 +1811,7 @@ export default function Main({
               onPageClick={(id) => navigateTo({ kind: "page", pageId: id })}
               onEntityClick={handleEntityClick}
               onSavePendingChange={reportPageSaving}
+              onOpenSettings={() => navigateTo({ kind: "settings", section: "general" })}
               pageTour={gettingStarted.visible || exampleWiki}
             />
             </WikiWorkspace>

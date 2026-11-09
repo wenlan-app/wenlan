@@ -38571,21 +38571,22 @@ async fn ambient_entity_commit_preserves_minhash_resolution() {
             "ambient resolution must link the canonical MinHash entity"
         );
 
-        // G6 Stage 2 PR 2c sub-step 3 item 4: `entity_aliases` stops being
-        // written, and `pages.aliases` carries no per-alias provenance
-        // field (see `add_entity_alias`'s doc comment) -- so the
-        // MinHash-vs-auto `source` distinction this test used to check is
-        // no longer expressible. Assert the behavior that matters instead:
-        // the near-duplicate name resolves to the canonical entity via the
-        // page-payload alias array.
-        let resolved = db
-            .resolve_entity_by_alias("vorpalblade jabberwock ino")
-            .await
-            .unwrap();
+        // UX-GRAPH-9: the alias the minhash step added is recorded as auto,
+        // like a vector merge's, so the next mention is checked again
+        // instead of resolving as an exact alias.
         assert_eq!(
-            resolved.as_deref(),
-            Some(canonical.id.as_str()),
-            "the MinHash-resolved near-duplicate must resolve via the page payload"
+            db.entity_alias_source(&canonical.id, "vorpalblade jabberwock ino")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("auto"),
+            "the MinHash-resolved near-duplicate is recorded as an auto alias"
+        );
+        assert_eq!(
+            db.resolve_entity_by_alias("vorpalblade jabberwock ino")
+                .await
+                .unwrap(),
+            None
         );
     })
     .await;

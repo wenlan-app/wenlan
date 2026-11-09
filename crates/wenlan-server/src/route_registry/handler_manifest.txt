@@ -95,6 +95,7 @@ main|get|/api/zotero/documents|wenlan_server::source_routes::zotero_sync::handle
 main|get|/api/zotero/pdf|wenlan_server::source_routes::zotero_sync::handle_get_pdf
 main|get|/api/spaces|wenlan_server::spaces_routes::handle_list_spaces
 main|get|/api/spaces/default|wenlan_server::spaces_routes::handle_get_default_space
+main|get|/api/spaces/{name}/shared|wenlan_server::spaces_routes::handle_shared_status
 main|get|/api/spaces/{name}/wiki/github|wenlan_server::repo_wiki_routes::handle_github_status
 main|get|/api/spaces/{name}/wiki/repo|wenlan_server::repo_wiki_routes::handle_get_binding
 main|get|/api/spaces/{name}/wiki/suggest|wenlan_server::repo_wiki_routes::handle_suggest
@@ -235,6 +236,7 @@ main|post|/api/spaces/reorder|wenlan_server::spaces_routes::handle_reorder_space
 main|post|/api/spaces/{from}/move-to/{to}|wenlan_server::spaces_routes::handle_move_space
 main|post|/api/spaces/{name}/confirm|wenlan_server::spaces_routes::handle_confirm_space
 main|post|/api/spaces/{name}/pin|wenlan_server::spaces_routes::handle_pin_space
+main|post|/api/spaces/{name}/shared/sync|wenlan_server::spaces_routes::handle_shared_sync
 main|post|/api/spaces/{name}/star|wenlan_server::spaces_routes::handle_toggle_space_starred
 main|post|/api/spaces/{name}/wiki/docs|wenlan_server::repo_wiki_routes::handle_docs
 main|post|/api/spaces/{name}/wiki/github|wenlan_server::repo_wiki_routes::handle_github_setup
@@ -331,3 +333,9 @@ main|get|/api/pages/{id}/export-versions|wenlan_server::page_export_routes::vers
 main|get|/api/pages/{id}/export-bundles/{bundle_id}|wenlan_server::page_export_routes::bundle
 main|post|/api/research/runs/{id}/read-source|wenlan_server::research_routes::read_source
 main|get|/api/zotero/sources/{id}/disconnect-preview|wenlan_server::source_routes::zotero_sync::handle_disconnect_preview
+main|delete|/api/spaces/{name}/shared|wenlan_server::spaces_routes::handle_shared_leave
+main|post|/api/pages/{id}/shared/sync|wenlan_server::spaces_routes::handle_page_shared_sync
+main|get|/api/pages/{id}/shared|wenlan_server::spaces_routes::handle_page_shared_status
+main|delete|/api/pages/{id}/shared|wenlan_server::spaces_routes::handle_page_shared_leave
+main|get|/api/shared|wenlan_server::spaces_routes::handle_shared_list
+main|post|/api/shared/folder|wenlan_server::spaces_routes::handle_shared_folder

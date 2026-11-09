@@ -803,6 +803,29 @@ impl WenlanClient {
         Ok(url.into())
     }
 
+    /// `POST /api/spaces/{space}/shared/sync`: one sync pass of `space`'s
+    /// pages with its shared folder.
+    pub async fn shared_sync(
+        &self,
+        space: &str,
+        req: &wenlan_types::shared_space::SharedSyncRequest,
+    ) -> Result<wenlan_types::shared_space::SharedSyncCounts> {
+        let mut url = reqwest::Url::parse(&self.base_url).context("parsing the daemon URL")?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("the daemon URL cannot take a path"))?
+            .pop_if_empty()
+            .extend(["api", "spaces", space, "shared", "sync"]);
+        let url: String = url.into();
+        let resp = self
+            .send(
+                self.http.post(&url).json(req),
+                &format!("POST {url} failed"),
+            )
+            .await?;
+        let resp = ensure_daemon_success(resp, &url).await?;
+        resp.json().await.context("parsing shared sync response")
+    }
+
     /// `GET /api/spaces/{space}/wiki/repo`: the repository `space` is bound
     /// to, if any.
     pub async fn repo_wiki_binding(

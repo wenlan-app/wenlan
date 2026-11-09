@@ -92,6 +92,7 @@ pub mod router;
 pub mod said_lines;
 pub mod schema;
 pub mod sentences;
+pub mod shared_space;
 pub mod sources;
 pub mod space_context;
 pub mod steep;

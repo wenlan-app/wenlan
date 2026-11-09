@@ -31,6 +31,10 @@
 //!   author of the sentence they touched.
 //! - Imported text from another tool is [`SentenceAuthor::Original`]: never
 //!   the person's, and never rewritten by a machine.
+//! - A sentence another member of a shared Space wrote (a `shared_person:` or
+//!   `shared_ai:` version) is Person or Ai as that member's version says, and
+//!   is marked `shared`: protected from this Wenlan's AI either way, until
+//!   the person here changes it and it becomes theirs.
 
 use std::collections::{HashMap, HashSet};
 
@@ -378,6 +382,14 @@ pub enum VersionAuthor {
 /// `legacy_authored` when that can no longer be told (see
 /// `sentences::birth_kind`).
 pub fn version_author(edited_by: &str, creation_kind: &str) -> VersionAuthor {
+    // A version another member of a shared Space wrote: that member, or
+    // their AI tool (`shared_person:<member>`, `shared_ai:<member>`).
+    if let Some((kind, _member)) = crate::shared_space::shared_writer(edited_by) {
+        return match kind {
+            crate::shared_space::version::AuthorKind::Person => VersionAuthor::Person,
+            crate::shared_space::version::AuthorKind::Ai => VersionAuthor::Ai,
+        };
+    }
     match edited_by {
         // A person in the app or the vault, a card or proposal the person
         // accepted, a version the person restored, a draft the person
@@ -457,6 +469,12 @@ pub fn memory_author(writer: MemoryWriter<'_>) -> SentenceAuthor {
     }
 }
 
+/// [`is_protected`] for one derived row: a sentence another member of a
+/// shared Space wrote is protected too, their AI tool's included.
+pub fn row_is_protected(row: &SentenceAuthorship, guarded: bool) -> bool {
+    row.shared || is_protected(row.author, guarded)
+}
+
 /// One page version as the derivation reads it, oldest first.
 #[derive(Debug, Clone, Copy)]
 pub struct VersionText<'a> {
@@ -472,6 +490,8 @@ struct Attribution {
     since: i64,
     confidence: AuthorshipConfidence,
     accepted: bool,
+    /// Written by another member of a shared Space.
+    shared: bool,
 }
 
 /// Word overlap at or above which a replaced sentence counts as an edit of the
@@ -591,6 +611,8 @@ pub fn derive_authorship(
         } else {
             version_author(version.edited_by, creation_kind)
         };
+        let shared = writer != VersionAuthor::Unknown
+            && crate::shared_space::shared_writer(version.edited_by).is_some();
         let units = sentence_units(version.content);
         let old_norms: Vec<&str> = previous.iter().map(|(u, _)| u.norm.as_str()).collect();
         let new_norms: Vec<&str> = units.iter().map(|u| u.norm.as_str()).collect();
@@ -624,6 +646,7 @@ pub fn derive_authorship(
                 .map(|o| previous[o].1);
             next[n] = Some(attribute(
                 writer,
+                shared,
                 version.version,
                 edited,
                 replaced.map(|o| previous[o].1),
@@ -637,6 +660,7 @@ pub fn derive_authorship(
                 since: version.version,
                 confidence: AuthorshipConfidence::Uncertain,
                 accepted: false,
+                shared: false,
             });
             if restored_here.is_some_and(|hashes| hashes.contains(&unit.hash)) {
                 if let Some(before) = last_seen.get(&unit.norm) {
@@ -650,6 +674,7 @@ pub fn derive_authorship(
                     since: version.version,
                     confidence: AuthorshipConfidence::Certain,
                     accepted: true,
+                    shared: false,
                 };
             }
             current.push((unit, attribution));
@@ -672,15 +697,18 @@ pub fn derive_authorship(
             confidence: a.confidence,
             origin: a.origin,
             accepted: a.accepted,
+            shared: a.shared,
         })
         .collect()
 }
 
 /// The attribution of a unit `writer` added or changed at `version`. `edited`
 /// is the attribution of the sentence it is a touch-up of, `replaced` the one
-/// of whatever stood in its place.
+/// of whatever stood in its place. `shared` says the writer is another member
+/// of a shared Space.
 fn attribute(
     writer: VersionAuthor,
+    shared: bool,
     version: i64,
     edited: Option<Attribution>,
     replaced: Option<Attribution>,
@@ -691,6 +719,7 @@ fn attribute(
         since: version,
         confidence,
         accepted: false,
+        shared,
     };
     match writer {
         VersionAuthor::System => match replaced {
@@ -709,6 +738,7 @@ fn attribute(
                 since: version,
                 confidence: AuthorshipConfidence::Certain,
                 accepted: false,
+                shared,
             },
             None => fresh(SentenceAuthor::Person, AuthorshipConfidence::Certain),
         },

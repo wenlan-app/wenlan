@@ -574,6 +574,15 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // PageDetail (a page a person navigated to) calls this — see
   // app/src/search.rs::get_page_explicit_browse.
   get_page_explicit_browse: (a) => getPageVia(a, EXPLICIT_BROWSE_HEADERS),
+  // --- sharing with people (mirrors search.rs) ---
+  list_shares: () => get("/api/shared"),
+  share_space: (a) => post(`/api/spaces/${enc(String(a.space))}/shared/sync`, { folder: String(a.folder) }),
+  share_page: (a) => post(`/api/pages/${enc(String(a.id))}/shared/sync`, { folder: String(a.folder) }),
+  stop_sharing_space: (a) => del(`/api/spaces/${enc(String(a.space))}/shared`),
+  stop_sharing_page: (a) => del(`/api/pages/${enc(String(a.id))}/shared`),
+  look_in_shared_folder: (a) => post("/api/shared/folder", { folder: String(a.folder) }),
+  // The browser has no Finder; the folder path is shown in the box instead.
+  reveal_shared_folder: async () => undefined,
   rename_page: (a): Promise<RenamePageResponse> =>
     post(`/api/pages/${enc(String(a.id))}/rename`, {
       title: String(a.title),

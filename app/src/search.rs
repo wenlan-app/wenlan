@@ -3686,6 +3686,142 @@ pub async fn list_agent_activity(
 
 // ── Spaces ────────────────────────────────────────────────────────────
 
+// ── Sharing a Space or a page with people ────────────────────────────
+
+/// Everything this Wenlan shares with people, with member names and the
+/// last sync pass of each.
+#[tauri::command]
+pub async fn list_shares(
+    state: tauri::State<'_, State>,
+) -> Result<shared_space::SharedListResponse, String> {
+    let client = daemon_client(&state).await;
+    client.get_json("/api/shared").await
+}
+
+/// Shares a Space through `folder` (or syncs it now when it is shared).
+/// The name the others see is the profile's display name.
+#[tauri::command]
+pub async fn share_space(
+    state: tauri::State<'_, State>,
+    space: String,
+    folder: String,
+) -> Result<shared_space::SharedSyncCounts, String> {
+    let client = daemon_client(&state).await;
+    let request = shared_space::SharedSyncRequest {
+        folder,
+        member_name: None,
+    };
+    client
+        .post_json(
+            &format!(
+                "/api/spaces/{}/shared/sync",
+                percent_encode_path_segment(&space)
+            ),
+            &request,
+        )
+        .await
+}
+
+/// Shares one page through `folder`, or joins the page a folder shares.
+#[tauri::command]
+pub async fn share_page(
+    state: tauri::State<'_, State>,
+    id: String,
+    folder: String,
+) -> Result<shared_space::SharedSyncCounts, String> {
+    let client = daemon_client(&state).await;
+    let request = shared_space::SharedSyncRequest {
+        folder,
+        member_name: None,
+    };
+    client
+        .post_json(
+            &format!(
+                "/api/pages/{}/shared/sync",
+                percent_encode_path_segment(&id)
+            ),
+            &request,
+        )
+        .await
+}
+
+/// Stops sharing a Space from here; pages and the folder stay.
+#[tauri::command]
+pub async fn stop_sharing_space(
+    state: tauri::State<'_, State>,
+    space: String,
+) -> Result<responses::SuccessResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .delete_path(&format!(
+            "/api/spaces/{}/shared",
+            percent_encode_path_segment(&space)
+        ))
+        .await
+}
+
+/// Stops sharing one page from here; the page and the folder stay.
+#[tauri::command]
+pub async fn stop_sharing_page(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<responses::SuccessResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .delete_path(&format!(
+            "/api/pages/{}/shared",
+            percent_encode_path_segment(&id)
+        ))
+        .await
+}
+
+/// What a folder shares, before joining it.
+#[tauri::command]
+pub async fn look_in_shared_folder(
+    state: tauri::State<'_, State>,
+    folder: String,
+) -> Result<shared_space::SharedFolderResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json(
+            "/api/shared/folder",
+            &shared_space::SharedFolderRequest { folder },
+        )
+        .await
+}
+
+/// Shows a shared folder in Finder (Explorer, the file manager), so the
+/// person can share it from there.
+#[tauri::command]
+pub async fn reveal_shared_folder(folder: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&folder);
+    if !path.is_absolute() || !path.is_dir() {
+        return Err(format!("{folder} is not a folder"));
+    }
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg("-R").arg(&path);
+        command
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer");
+        command.arg(format!("/select,{}", path.display()));
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(path.parent().unwrap_or(&path));
+        command
+    };
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not show {folder}: {error}"))
+}
+
 #[tauri::command]
 pub async fn list_spaces(state: tauri::State<'_, State>) -> Result<Vec<Space>, String> {
     let client = daemon_client(&state).await;

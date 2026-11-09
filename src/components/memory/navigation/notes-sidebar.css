@@ -411,3 +411,5 @@
     flex-basis: 40px;
   }
 }
+.notes-page-shared { color: var(--mem-text-tertiary); display: inline-flex; flex: none; margin-left: auto; padding-left: 6px; }
+.notes-page-shared-icon { height: 13px; width: 13px; }
