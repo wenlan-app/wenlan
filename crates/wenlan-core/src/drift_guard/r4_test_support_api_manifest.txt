@@ -464,6 +464,8 @@ crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::seed_corrupt_grap
 crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::seed_valid_scoped_graph|TestDbSession::execute_batch|1
 crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::seed_valid_scoped_graph|TestDbSession::execute_batch|2
 crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::seed_valid_scoped_graph|test_primary_session|1
+crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::ux_graph_9_auto_aliases_on_a_topic_of_another_type_are_advised|TestDbSession::execute|1
+crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::ux_graph_9_auto_aliases_on_a_topic_of_another_type_are_advised|test_primary_session|1
 crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::seed_valid_scoped_graph|test_primary_session|2
 crates/wenlan-core/src/lint/memories_integration_test.rs|crate::lint::memories::integration_tests::fact_liveness_differentiates_rows_from_real_vector_index_visibility|TestDbRow::get|1
 crates/wenlan-core/src/lint/memories_integration_test.rs|crate::lint::memories::integration_tests::fact_liveness_differentiates_rows_from_real_vector_index_visibility|TestDbRows::next|1
