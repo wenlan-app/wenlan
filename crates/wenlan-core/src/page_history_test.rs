@@ -223,3 +223,131 @@ async fn the_first_version_is_listed_as_the_pages_birth_with_its_text() {
     assert_eq!(history[0].edited_by.as_deref(), Some("person_create"));
     assert_eq!(history[0].text, None, "no text without asking");
 }
+
+fn save(version: i64, at: i64, by: &str) -> PageHistoryItem {
+    PageHistoryItem {
+        kind: kind_of_edit(by),
+        at,
+        version: Some(version),
+        edited_by: Some(by.to_string()),
+        agent: None,
+        delta_summary: None,
+        text: None,
+        source: None,
+        changed_sentences: None,
+        first_version: None,
+    }
+}
+
+fn row(version: i64, content: &str) -> PageHistoryEntry {
+    PageHistoryEntry {
+        version,
+        title: None,
+        content: content.to_string(),
+        source_memory_ids: Vec::new(),
+        edited_by: "manual_edit".to_string(),
+        created_at: 0,
+    }
+}
+
+fn listed(items: &[PageHistoryItem]) -> Vec<(Option<i64>, Option<i64>)> {
+    items.iter().map(|i| (i.first_version, i.version)).collect()
+}
+
+#[test]
+fn ux_hist_3_saves_within_ten_minutes_are_one_change_and_every_version_is_kept() {
+    let rows = [
+        row(1, "One."),
+        row(2, "One. Two."),
+        row(3, "One. Two. Three."),
+        row(4, "One. Two. Three. Four."),
+    ];
+    let items = vec![
+        save(1, 0, "create"),
+        save(2, 100, "manual_edit"),
+        save(3, 200, "manual_edit"),
+        save(4, 100 + SAVE_RUN_SECS, "manual_edit"),
+    ];
+    let folded = fold_save_runs(items, &rows, &HashSet::new());
+    // Versions 2–4 are one change listed under its last version; the birth
+    // stays its own entry.
+    assert_eq!(listed(&folded), vec![(None, Some(1)), (Some(2), Some(4))]);
+    // Counted against the version before the run, not the last save.
+    assert_eq!(folded[1].changed_sentences, Some(3));
+}
+
+#[test]
+fn ux_hist_3_a_run_ends_after_ten_minutes_or_at_another_writer() {
+    let items = vec![
+        save(2, 0, "manual_edit"),
+        save(3, SAVE_RUN_SECS + 1, "manual_edit"),
+        save(4, SAVE_RUN_SECS + 2, "agent_refresh"),
+        save(5, SAVE_RUN_SECS + 3, "manual_edit"),
+        save(6, SAVE_RUN_SECS + 4, "fs_edit"),
+        save(7, SAVE_RUN_SECS + 5, "agent_refresh"),
+        save(8, SAVE_RUN_SECS + 6, "agent_refresh"),
+    ];
+    let folded = fold_save_runs(items, &[], &HashSet::new());
+    // AI writes are never folded, and a save after an AI write starts over.
+    assert_eq!(
+        listed(&folded),
+        vec![
+            (None, Some(2)),
+            (None, Some(3)),
+            (None, Some(4)),
+            (None, Some(5)),
+            (None, Some(6)),
+            (None, Some(7)),
+            (None, Some(8)),
+        ]
+    );
+}
+
+#[test]
+fn ux_hist_3_a_missing_version_or_a_kept_version_breaks_the_run() {
+    // Version 3 is not in the changelog: 2 and 4 are not consecutive.
+    let gap = fold_save_runs(
+        vec![save(2, 0, "manual_edit"), save(4, 10, "manual_edit")],
+        &[],
+        &HashSet::new(),
+    );
+    assert_eq!(listed(&gap), vec![(None, Some(2)), (None, Some(4))]);
+
+    // Version 3 is the one a shared folder's version names: it stays listed.
+    let keep: HashSet<i64> = [3].into();
+    let kept = fold_save_runs(
+        vec![
+            save(2, 0, "manual_edit"),
+            save(3, 10, "manual_edit"),
+            save(4, 20, "manual_edit"),
+            save(5, 30, "manual_edit"),
+        ],
+        &[],
+        &keep,
+    );
+    assert_eq!(
+        listed(&kept),
+        vec![(None, Some(2)), (None, Some(3)), (Some(4), Some(5))]
+    );
+    // Texts that are no longer kept give no count rather than a wrong one.
+    assert_eq!(kept[2].changed_sentences, None);
+}
+
+#[tokio::test]
+async fn ux_hist_3_the_history_route_lists_a_burst_of_saves_once() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "One.").await;
+    edit(&db, "a", "One. Two.", "manual_edit").await;
+    edit(&db, "a", "One. Two. Three.", "manual_edit").await;
+    edit(&db, "a", "One. Two. Three. Four.", "manual_edit").await;
+    let history = build_page_history(&db, "a", &changelog(&db, "a").await, &HashSet::new(), false)
+        .await
+        .unwrap();
+    let edits: Vec<_> = history
+        .iter()
+        .map(|h| (h.first_version, h.version))
+        .collect();
+    assert_eq!(edits, vec![(Some(2), Some(4)), (None, Some(1))]);
+    // Nothing is deleted: every version can still be read by its number.
+    assert_eq!(db.list_page_history("a", 100).await.unwrap().len(), 4);
+}

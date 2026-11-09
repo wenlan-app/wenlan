@@ -422,6 +422,10 @@ and wait for evidence that people need them.
   原文：一頁一本歷史，三種變動在同一個列表。選擇卡「你改的、AI 改的、来源变了」（2026-10-31 17:34）
 - **UX-HIST-2** `shipped` Every entry opens to show what changed.
   原文：每筆都能打開看改了什麼。
+- **UX-HIST-3** `shipped` Your saves within one 10-minute stretch are listed
+  as one change, because the editor saves at every pause. Every version is
+  still kept under its own number; only the list is shorter.
+  原文：把短時間內連續的存檔合成一個版本？「都可以」（2026-11-09 20:46）
 
 ## Working in the background
 

@@ -153,12 +153,17 @@ export default function PageInfo({
     : historyDesc.slice(0, REVISIONS_SHOWN);
   const versionToOpen = openVersion == null
     ? undefined
-    : historyDesc.find((item) => item.kind !== "source_update" && item.version === openVersion);
+    : historyDesc.find((item) => item.kind !== "source_update" && item.version != null
+      && (item.first_version ?? item.version) <= openVersion && openVersion <= item.version);
   useEffect(() => {
     if (!versionToOpen) return;
     setOpenHistoryItem(versionToOpen);
     onOpenedVersion?.();
   }, [versionToOpen, onOpenedVersion]);
+  // Saves folded into one change count once, as the list shows them.
+  const revisionCount = history && history.length > 0
+    ? historyDesc.filter((item) => item.kind !== "source_update").length
+    : revisions.length;
   const entryByVersion = new Map(revisions.map((entry) => [entry.version, entry]));
   const seenInboundIds = new Set<string>();
   const uniqueInbound = inbound.filter((link) => {
@@ -226,7 +231,7 @@ export default function PageInfo({
         <span>{t("pageInfo.label")}</span>
         <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
           {t("pageInfo.backlinks", { count: uniqueInbound.length })} ·{" "}
-          {t("pageInfo.revisions", { count: revisions.length })} ·{" "}
+          {t("pageInfo.revisions", { count: revisionCount })} ·{" "}
           {(basis && basis.length > 0) || (codeBasis && codeBasis.length > 0)
             ? basisCountLabel(t, sourceCount, basis?.length ?? 0, codeBasis?.length ?? 0)
             : t("pageInfo.sources", { count: sourceCount })}
