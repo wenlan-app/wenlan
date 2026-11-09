@@ -59,7 +59,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 53 tools. The table below calls
+The local stdio surface is locked at exactly 54 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -73,7 +73,8 @@ queue.
 | `read_entity` | Read a topic's identity, observations and current relations |
 | `list_pages` | List wiki pages (id, title, summary, Space, status, last modified, creation kind, source count, review lock) to browse what exists. |
 | `read_page` | Read one wiki page in full, including its version and review lock, together with the source memories it cites, the notes it relies on (`basis`), the code it relies on (`code_basis`), plain links that changed (`linked_changed`), and, with `map: true`, its mind map as a small text tree with a link that opens it in Wenlan. |
-| `write_page` | Create or update a wiki page; sources are optional. Pass `expected_version` from `read_page` on a refresh; a stale version is refused, and a locked page or an unversioned refresh of an edited page goes through a revision card. Pass `basis` (`{page_id, version}` per note read) when the page was written from other notes; the reply lists the page's bases. Pass `code_basis` (`{repo_root, path, line_start, line_end}`) for lines of code the page relies on; Wenlan reads the file when you write and tells you when the lines change. |
+| `write_page` | Create or update a wiki page; sources are optional. Pass `expected_version` from `read_page` on a refresh; a stale version is refused, and a locked page or an unversioned refresh of an edited page goes through a revision card. Pass `basis` (`{page_id, version}` per note read) when the page was written from other notes; the reply lists the page's bases. Pass `code_basis` (`{repo_root, path, line_start, line_end}`) for lines of code the page relies on; Wenlan reads the file when you write and tells you when the lines change. When the person explicitly asked for a change to their own sentences, set `person_asked` to their exact words (with `expected_version`, local stdio only): the change lands, and history lists it as asked by them. |
+| `restore_page_version` | Put an earlier version of a page back, as a new version, when the user asks. Pass the `version`, `expected_version` from `read_page`, and `person_asked` (their exact words) when it changes the person's own sentences. Local stdio only. |
 | `page_basis` | Mark, diff, confirm or remove what one page relies on another page for. `mark` and `confirm` take the basis note's `version` and are refused if it moved on. Changes are local stdio only. |
 | `page_code_basis` | Confirm or remove a line span of code a page relies on. `confirm` re-reads the file and re-anchors the row as `ok` after you have looked at the change. Pass the row's `repo_root`, `path`, `line_start` and `line_end` as `read_page` shows them. Local stdio only. |
 | `steep` | Steep on demand: `list` the notes waiting because their sources changed or were removed, `claim` one (its surviving sources numbered, a token, and a plan), then `commit` the rewrite citing `[n]`, say `still_accurate`, or `release` it. A commit is refused with nothing written when the note or its sources moved since the claim; a note the user wrote becomes a revision card. Claim and commit are local stdio only. |

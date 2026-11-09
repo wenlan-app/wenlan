@@ -568,6 +568,12 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "note_proposal_unchanged"
             | "note_proposal_too_large"
             | "note_change_needs_proposal"
+            | "restore_version_conflict"
+            | "restore_version_unknown"
+            | "restore_version_current"
+            | "restore_page_archived"
+            | "restore_needs_person_asked"
+            | "person_asked_invalid"
     );
     if !safe {
         return None;

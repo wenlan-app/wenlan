@@ -53,6 +53,8 @@ pub enum PageWrite<'a> {
     /// An agent's `agent_refresh` of a Page it names (`agent`, from the
     /// `x-agent-name` header), under a source-revision fence. Identical to
     /// `Update` for `agent_refresh` except the changelog entry records `agent`.
+    /// When `basis.person_asked` carries the person's words, the write is
+    /// recorded as `person_asked` instead (UX-WHO-2).
     AgentUpdate {
         page_id: &'a str,
         req: UpdatePageRequest,
@@ -213,11 +215,18 @@ pub async fn page_write_with_citation_snapshot(
             citations,
         } => {
             basis.citation_snapshots = snapshots.to_vec();
+            // UX-WHO-2: the person's words recorded with the write make it a
+            // person-asked write rather than the agent's own refresh.
+            let edited_by = if basis.person_asked.is_some() {
+                super::page_update::PERSON_ASKED
+            } else {
+                "agent_refresh"
+            };
             update_page_impl(
                 db,
                 page_id,
                 req,
-                "agent_refresh",
+                edited_by,
                 false,
                 Some(expected_source_revision),
                 knowledge_path,

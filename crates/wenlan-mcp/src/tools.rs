@@ -157,9 +157,9 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// then by the length of `check_reply`'s, then by the length of
 /// `thing_map`'s, then by the four folder and link tool descriptions, then by
 /// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s,
-/// then by `keep_original`'s.
+/// then by `keep_original`'s, then by `restore_page_version`'s (347).
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 20_366;
+const DESCRIPTION_BUDGET_CHARS: usize = 20_713;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1114,6 +1114,11 @@ pub struct WritePageParams {
     #[serde(default)]
     pub expected_version: Option<i64>,
     #[schemars(
+        description = "Refresh only, local stdio only, with expected_version. Set it only when the person in this conversation explicitly asked for this specific change to their own sentences: quote their words exactly (at most 500 characters). Never infer it, paraphrase it, or set it on your own judgment. The change then lands on their sentences and history lists it as asked by them, with their words; a review-locked page still stages a card."
+    )]
+    #[serde(default)]
+    pub person_asked: Option<String>,
+    #[schemars(
         description = "Your AI session as tool:id, e.g. claude-code:<session id>; links what you write back to this conversation."
     )]
     #[serde(default)]
@@ -1409,6 +1414,49 @@ pub struct RenamePageParams {
     )]
     pub expected_version: i64,
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RestorePageVersionParams {
+    #[schemars(description = "Opaque page id (e.g. 'page_abc').")]
+    pub page_id: String,
+    #[schemars(description = "The earlier version to put back, as get_page_revisions lists it.")]
+    pub version: i64,
+    #[schemars(
+        description = "Current page.version from read_page. When the page has moved on, nothing changes; read it again and retry."
+    )]
+    pub expected_version: i64,
+    #[schemars(
+        description = "Set it only when the person in this conversation explicitly asked to put this version back and doing so changes their own sentences: quote their words exactly (at most 500 characters). Never infer it."
+    )]
+    #[serde(default)]
+    pub person_asked: Option<String>,
+    #[schemars(
+        description = "Your AI session as tool:id, e.g. claude-code:<session id>; links the write back to this conversation."
+    )]
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
+/// Mirrors `wenlan_core::post_write::PERSON_ASKED_MAX_CHARS`; the daemon
+/// enforces it too.
+const PERSON_ASKED_MAX_CHARS: usize = 500;
+
+/// Why a `person_asked` quote is refused before it reaches the daemon, or
+/// `None` when it is a usable quote: their own words, not blank, at most
+/// `PERSON_ASKED_MAX_CHARS` characters (the daemon checks the same).
+fn person_asked_problem(quote: &str) -> Option<&'static str> {
+    if quote.trim().is_empty() {
+        Some("person_asked must quote the person's own words; it was blank. Nothing was written.")
+    } else if quote.trim().chars().count() > PERSON_ASKED_MAX_CHARS {
+        Some("person_asked is longer than 500 characters; quote only the person's request. Nothing was written.")
+    } else {
+        None
+    }
+}
+
+/// The line a held-back write_page reply ends with on a local connection:
+/// how to retry when the person really did ask for the change.
+const PERSON_ASKED_RETRY_HINT: &str = "If the person explicitly asked you in this conversation for this exact change to their sentences, read_page again and retry write_page with that expected_version and person_asked set to their exact words. Never set it on your own judgment.";
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -4158,6 +4206,27 @@ impl WenlanMcpServer {
                     .to_string(),
             )]));
         }
+        // The person's own request may only be relayed from a local
+        // conversation, onto a page the caller read at a known version.
+        if let Some(quote) = params.person_asked.as_deref() {
+            let problem = if self.transport == TransportMode::Http {
+                Some(
+                    "person_asked is not available over remote connections. Nothing was written; \
+                     the person can accept the change in the Wenlan app.",
+                )
+            } else if params.page_id.is_none() {
+                Some("person_asked only applies when refreshing an existing page (page_id). Nothing was written.")
+            } else if params.expected_version.is_none() {
+                Some("person_asked needs expected_version: read_page first and pass its page.version. Nothing was written.")
+            } else {
+                person_asked_problem(quote)
+            };
+            if let Some(problem) = problem {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(
+                    problem.to_string(),
+                )]));
+            }
+        }
         match params.page_id {
             Some(page_id) => {
                 if self.remote_write_blocked() {
@@ -4182,7 +4251,9 @@ impl WenlanMcpServer {
                 let sent_version = params.expected_version.is_some();
                 let params_expected = params.expected_version;
                 let sent_basis = !params.basis.is_empty();
+                let sent_person_asked = params.person_asked.is_some();
                 let req = wenlan_types::requests::RefreshPageRequest {
+                    person_asked: params.person_asked,
                     organize_space: params
                         .organize_run_id
                         .as_ref()
@@ -4252,7 +4323,13 @@ impl WenlanMcpServer {
                 // in place; the daemon stages a revision card. Surface that so the
                 // caller does not believe the prose was rewritten.
                 let change = refresh_saved_page_change(&resp);
-                let msg = format_update_page_response(&page_id, resp);
+                let held_back = !resp.gated
+                    && (!resp.edits_not_applied.is_empty() || !resp.sentence_proposals.is_empty());
+                let mut msg = format_update_page_response(&page_id, resp);
+                if held_back && !sent_person_asked && self.transport == TransportMode::Stdio {
+                    msg.push('\n');
+                    msg.push_str(PERSON_ASKED_RETRY_HINT);
+                }
                 let msg = self.with_steep_line(&client, None, msg).await;
                 let msg = self
                     .with_saved_in_line(
@@ -4892,6 +4969,63 @@ impl WenlanMcpServer {
             }
         }
         Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+    }
+
+    pub async fn restore_page_version_impl(
+        &self,
+        params: RestorePageVersionParams,
+    ) -> Result<CallToolResult, McpError> {
+        if self.transport == TransportMode::Http {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Restoring a page version is not available over remote connections. Use local MCP on the machine running Wenlan."
+                    .to_string(),
+            )]));
+        }
+        if params.version < 1 || params.expected_version < 1 {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "version and expected_version must be at least 1.".to_string(),
+            )]));
+        }
+        if let Some(problem) = params
+            .person_asked
+            .as_deref()
+            .and_then(person_asked_problem)
+        {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                problem.to_string(),
+            )]));
+        }
+        let client = self.session_client(params.session.as_deref()).await;
+        let page_id = params.page_id;
+        let version = params.version;
+        let req = wenlan_types::requests::RestorePageVersionRequest {
+            version,
+            expected_version: params.expected_version,
+            person_asked: params.person_asked,
+        };
+        let path = format!("/api/pages/{}/restore-version", url_encode_simple(&page_id));
+        let resp: wenlan_types::responses::RestorePageVersionResponse =
+            match client.post(&path, &req).await {
+                Ok(resp) => resp,
+                Err(WenlanError::Api {
+                    reason: Some(reason),
+                    ..
+                }) if restore_version_refusal(&reason, &page_id, version).is_some() => {
+                    let text =
+                        restore_version_refusal(&reason, &page_id, version).unwrap_or_default();
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(text)]));
+                }
+                Err(e) => return Ok(tool_error(e, "restore_page_version")),
+            };
+        let restored_from = resp.restored_from;
+        let text = format_update_page_response(&page_id, resp.write);
+        let text = match text.strip_prefix("Refreshed page ") {
+            Some(rest) => format!("Restored version {restored_from} of page {rest}"),
+            None => text,
+        };
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+            "{text}\nrestored_from: {restored_from} (put back as a new version; history lists it as restored)"
+        ))]))
     }
 
     pub async fn theme_impl(&self, params: ThemeParams) -> Result<CallToolResult, McpError> {
@@ -5704,6 +5838,34 @@ fn refresh_saved_page_change(
     }
 }
 
+/// What the agent is told for each typed restore-version refusal. The
+/// client passes only the bare code, so every sentence here is fixed.
+fn restore_version_refusal(reason: &str, page_id: &str, version: i64) -> Option<String> {
+    use wenlan_types::responses::RestorePageVersionErrorCode as Code;
+    let code = reason
+        .split_once(':')
+        .map_or(reason, |(code, _)| code)
+        .trim();
+    let text = if code == Code::RestoreVersionConflict.as_str() {
+        format!("Not restored: page {page_id} changed since you read it. Read it again with read_page and pass its page.version as expected_version.")
+    } else if code == Code::RestoreVersionUnknown.as_str() {
+        format!("Not restored: page {page_id} has no version {version}. get_page_revisions lists its versions.")
+    } else if code == Code::RestoreVersionCurrent.as_str() {
+        format!(
+            "Nothing to restore: version {version} is already page {page_id}'s current version."
+        )
+    } else if code == Code::RestorePageArchived.as_str() {
+        format!("Not restored: page {page_id} is archived. The person can bring it back from the archive in the Wenlan app first.")
+    } else if code == Code::RestoreNeedsPersonAsked.as_str() {
+        format!("Not restored: putting version {version} back would change the person's own sentences. Do it only when the person explicitly asked you to in this conversation: retry with person_asked set to their exact words. Never set it on your own judgment.")
+    } else if code == Code::PersonAskedInvalid.as_str() {
+        "Not restored: person_asked must quote the person's own words, not blank and at most 500 characters.".to_string()
+    } else {
+        return None;
+    };
+    Some(text)
+}
+
 fn format_update_page_response(
     page_id: &str,
     resp: wenlan_types::responses::PageWriteResponse,
@@ -6473,6 +6635,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Put an earlier version of a page back, only when the user explicitly asks. Pass page_id, the version (get_page_revisions lists them) and expected_version from read_page. That version's text and sources return as a new version, so nothing is lost. If this changes the person's own sentences, set person_asked to their exact words. Local stdio only.",
+        annotations(
+            title = "Restore page version",
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn restore_page_version(
+        &self,
+        Parameters(params): Parameters<RestorePageVersionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.restore_page_version_impl(params).await
+    }
+
+    #[tool(
         description = "Change how the Wenlan app looks: colors, fonts, corners, a background image and a corner sticker. list gives the themes folder; write <id>/theme.json there (see the wenlan-theme skill), run check, fix every problem, then apply. reset restores the default. Local only.",
         annotations(
             title = "Theme",
@@ -7002,6 +7181,7 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "forget",
     "confirm_memory",
     "rename_page",
+    "restore_page_version",
     "delete_page",
     "accept_refinement",
     "reject_refinement",
@@ -10473,6 +10653,7 @@ mod tests {
     async fn test_write_page_refresh_blocked_on_http_transport() {
         let server = make_server(TransportMode::Http, "agent", None);
         let params = WritePageParams {
+            person_asked: None,
             citation_targets: vec![],
             organize_run_id: None,
             page_id: Some("page_x".into()),
@@ -10502,6 +10683,7 @@ mod tests {
     async fn test_write_page_refresh_allowed_on_stdio_transport() {
         let server = make_server(TransportMode::Stdio, "agent", None);
         let params = WritePageParams {
+            person_asked: None,
             citation_targets: vec![],
             organize_run_id: None,
             page_id: Some("page_x".into()),
@@ -10610,6 +10792,7 @@ mod tests {
         );
         let result = server
             .write_page_impl(WritePageParams {
+                person_asked: None,
                 citation_targets: vec![],
                 organize_run_id: None,
                 page_id: Some("page_x".into()),
@@ -10662,6 +10845,7 @@ mod tests {
         );
         let result = server
             .write_page_impl(WritePageParams {
+                person_asked: None,
                 citation_targets: vec![],
                 organize_run_id: None,
                 page_id: Some("page_x".into()),
@@ -11236,6 +11420,7 @@ mod tests {
 
     fn write_params(page_id: Option<&str>) -> WritePageParams {
         WritePageParams {
+            person_asked: None,
             citation_targets: vec![],
             organize_run_id: None,
             page_id: page_id.map(String::from),
@@ -12407,6 +12592,281 @@ mod tests {
             },
         );
         assert!(text.contains("sentence_proposals: 2"), "{text}");
+    }
+
+    // ===== UX-WHO-2: person_asked and restore_page_version =====
+
+    fn refresh_params(
+        person_asked: Option<&str>,
+        expected_version: Option<i64>,
+    ) -> WritePageParams {
+        WritePageParams {
+            person_asked: person_asked.map(String::from),
+            citation_targets: vec![],
+            organize_run_id: None,
+            page_id: Some("page_x".into()),
+            title: None,
+            content: "body".into(),
+            source_memory_ids: Vec::new(),
+            summary: None,
+            entity_id: None,
+            space: None,
+            expected_version,
+            session: None,
+            basis: Vec::new(),
+            minor: None,
+            code_basis: Vec::new(),
+        }
+    }
+
+    fn held_back_body() -> serde_json::Value {
+        serde_json::json!({
+            "ok": true,
+            "write_outcome": "wrote",
+            "sentence_proposals": ["sp_1"],
+            "edits_not_applied": [
+                {"sentence_hash": "h1", "before": "I prefer the current-thread runtime.",
+                 "after": "I prefer the multi-thread runtime.", "proposal_id": "sp_1"}
+            ]
+        })
+    }
+
+    /// A write held back from the person's sentences tells a local AI tool
+    /// how to retry when the person really asked for the change, and never
+    /// to set person_asked on its own judgment.
+    #[tokio::test]
+    async fn ux_who_2_a_held_back_write_page_reply_mentions_retrying_with_person_asked() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/pages/page_x"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(held_back_body()))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let result = stdio_server(mock.uri())
+            .write_page_impl(refresh_params(None, Some(3)))
+            .await
+            .unwrap();
+        let text = text_of(&result);
+        assert!(text.contains("edits_not_applied: 1"), "{text}");
+        assert!(
+            text.contains("retry write_page with that expected_version and person_asked set to their exact words"),
+            "{text}"
+        );
+        assert!(text.contains("Never set it on your own judgment"), "{text}");
+    }
+
+    /// A clean write, or one the person asked for, carries no retry hint.
+    #[tokio::test]
+    async fn ux_who_2_no_person_asked_hint_when_nothing_was_held_back() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/pages/page_x"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true, "write_outcome": "wrote"
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let text = text_of(
+            &stdio_server(mock.uri())
+                .write_page_impl(refresh_params(None, Some(3)))
+                .await
+                .unwrap(),
+        );
+        assert!(!text.contains("person_asked"), "{text}");
+    }
+
+    /// person_asked rides to the daemon only from a local refresh that names
+    /// the version read; otherwise nothing is sent.
+    #[tokio::test]
+    async fn ux_who_2_person_asked_reaches_the_daemon_only_from_a_local_versioned_refresh() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let quote = "請把我那句改成 multi-thread runtime";
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/pages/page_x"))
+            .and(body_partial_json(serde_json::json!({
+                "person_asked": quote,
+                "expected_version": 3
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true, "write_outcome": "wrote"
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let result = stdio_server(mock.uri())
+            .write_page_impl(refresh_params(Some(quote), Some(3)))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false), "{result:?}");
+
+        // Refused before any request: over a remote connection, without the
+        // version read, blank, too long, or on a create.
+        let silent = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&silent)
+            .await;
+        let remote = WenlanMcpServer::new(
+            WenlanClient::new(silent.uri()),
+            TransportMode::Http,
+            "web-ai".into(),
+            None,
+        )
+        .with_tool_profile(ToolProfile::WebWrite);
+        let local = stdio_server(silent.uri());
+        let mut create = refresh_params(Some(quote), Some(3));
+        create.page_id = None;
+        create.title = Some("New".into());
+        let long = "字".repeat(501);
+        for (server, params, says) in [
+            (
+                &remote,
+                refresh_params(Some(quote), Some(3)),
+                "not available over remote connections",
+            ),
+            (
+                &local,
+                refresh_params(Some(quote), None),
+                "needs expected_version",
+            ),
+            (&local, refresh_params(Some("  "), Some(3)), "blank"),
+            (
+                &local,
+                refresh_params(Some(&long), Some(3)),
+                "longer than 500",
+            ),
+            (&local, create, "only applies when refreshing"),
+        ] {
+            let result = server.write_page_impl(params).await.unwrap();
+            assert_eq!(result.is_error, Some(true), "{result:?}");
+            let text = text_of(&result);
+            assert!(text.contains(says), "{says}: {text}");
+            assert!(text.contains("Nothing was written"), "{text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_page_version_posts_the_version_and_says_what_came_back() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages/page_x/restore-version"))
+            .and(body_json(
+                serde_json::json!({"version": 2, "expected_version": 5}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "restored_from": 2,
+                "write": {"ok": true, "write_outcome": "wrote"}
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let result = stdio_server(mock.uri())
+            .restore_page_version_impl(RestorePageVersionParams {
+                page_id: "page_x".into(),
+                version: 2,
+                expected_version: 5,
+                person_asked: None,
+                session: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false), "{result:?}");
+        let text = text_of(&result);
+        assert!(
+            text.starts_with("Restored version 2 of page page_x"),
+            "{text}"
+        );
+        assert!(text.contains("restored_from: 2"), "{text}");
+    }
+
+    /// Each typed refusal reaches the agent as a fixed sentence it can act
+    /// on; the one about the person's sentences names person_asked.
+    #[tokio::test]
+    async fn restore_page_version_refusals_tell_the_agent_what_to_do() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        for (status, code, says) in [
+            (
+                409,
+                "restore_needs_person_asked",
+                "retry with person_asked set to their exact words",
+            ),
+            (
+                409,
+                "restore_version_conflict",
+                "Read it again with read_page",
+            ),
+            (404, "restore_version_unknown", "has no version 2"),
+            (
+                422,
+                "restore_version_current",
+                "already page page_x's current version",
+            ),
+            (422, "restore_page_archived", "is archived"),
+            (422, "person_asked_invalid", "not blank and at most 500"),
+        ] {
+            let mock = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/api/pages/page_x/restore-version"))
+                .respond_with(
+                    ResponseTemplate::new(status).set_body_json(serde_json::json!({
+                        "code": code,
+                        "error": format!("{code}: daemon text"),
+                        "current_version": 5
+                    })),
+                )
+                .expect(1)
+                .mount(&mock)
+                .await;
+            let result = stdio_server(mock.uri())
+                .restore_page_version_impl(RestorePageVersionParams {
+                    page_id: "page_x".into(),
+                    version: 2,
+                    expected_version: 5,
+                    person_asked: None,
+                    session: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(true), "{code}");
+            let text = text_of(&result);
+            assert!(text.contains(says), "{code}: {text}");
+            assert!(!text.contains("daemon text"), "{code}: {text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_page_version_is_local_only() {
+        let server = make_server(TransportMode::Http, "agent", None);
+        let result = server
+            .restore_page_version_impl(RestorePageVersionParams {
+                page_id: "page_x".into(),
+                version: 2,
+                expected_version: 5,
+                person_asked: None,
+                session: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        assert!(text_of(&result).contains("not available over remote connections"));
+        assert!(server.local_only_refusal("restore_page_version").is_some());
     }
 
     /// UX-CHAT-7 item 4: the AI wanted to change the person's sentences, so the
@@ -14380,6 +14840,7 @@ mod tests {
             ("read_research_dispute", (true, false, false)),
             ("recall", (false, false, false)),
             ("rename_page", (false, true, false)),
+            ("restore_page_version", (false, true, false)),
             ("reject_refinement", (false, true, false)),
             ("save_source", (false, true, false)),
             ("steep", (false, false, false)),
@@ -14795,6 +15256,7 @@ mod tests {
             "read_research_dispute",
             "recall",
             "rename_page",
+            "restore_page_version",
             "reject_refinement",
             "save_source",
             "steep",

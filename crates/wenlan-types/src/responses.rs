@@ -1087,6 +1087,50 @@ pub struct PageWriteResponse {
     pub edits_not_applied: Vec<EditNotApplied>,
 }
 
+/// Result of `POST /api/pages/{id}/restore-version`: the earlier version put
+/// back as a new version, through the same write an agent's refresh takes.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RestorePageVersionResponse {
+    /// The version whose text and sources were put back.
+    pub restored_from: i64,
+    /// The write itself. A locked page stages a revision card (`gated`).
+    pub write: PageWriteResponse,
+}
+
+/// Why `POST /api/pages/{id}/restore-version` refused, sent as `code` in the
+/// error body next to `error` (`"<code>: <English text>"`) and
+/// `current_version`. Clients switch on the code, never on the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RestorePageVersionErrorCode {
+    /// The page moved past `expected_version` (409). Read it again first.
+    RestoreVersionConflict,
+    /// The page has no such version in its history (404).
+    RestoreVersionUnknown,
+    /// That version is already the page's current one (422).
+    RestoreVersionCurrent,
+    /// The page is archived; restore it first (422).
+    RestorePageArchived,
+    /// Putting that version back would change or remove the person's
+    /// sentences, which needs their explicit request in `person_asked` (409).
+    RestoreNeedsPersonAsked,
+    /// `person_asked` is blank or too long (422).
+    PersonAskedInvalid,
+}
+
+impl RestorePageVersionErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RestoreVersionConflict => "restore_version_conflict",
+            Self::RestoreVersionUnknown => "restore_version_unknown",
+            Self::RestoreVersionCurrent => "restore_version_current",
+            Self::RestorePageArchived => "restore_page_archived",
+            Self::RestoreNeedsPersonAsked => "restore_needs_person_asked",
+            Self::PersonAskedInvalid => "person_asked_invalid",
+        }
+    }
+}
+
 /// One change a machine write wanted to make to a sentence it may not change.
 /// The sentence stays on the page as `before`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1404,6 +1448,13 @@ pub struct PageChangelogEntry {
     /// the same time that lost to it, kept in the page's history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub concurrent_with: Option<i64>,
+    /// UX-WHO-2: the person's own words when they explicitly asked the AI
+    /// tool (`agent`) for this change (`edited_by` is `person_asked`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_asked: Option<String>,
+    /// The earlier version this one put back ("restored version N").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored_from: Option<i64>,
 }
 
 /// Response envelope for `/api/pages/{id}/revisions`.
@@ -1478,6 +1529,13 @@ pub struct PageHistoryItem {
     /// page's history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed_sentences: Option<u32>,
+    /// For an edit the person explicitly asked an AI tool for: their words
+    /// ("changed by <agent> at your request: \"<quote>\"", UX-WHO-2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_asked: Option<String>,
+    /// For an edit that put an earlier version back: that version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored_from: Option<i64>,
 }
 
 // ===== Sources =====

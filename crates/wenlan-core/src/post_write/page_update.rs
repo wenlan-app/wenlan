@@ -57,6 +57,12 @@ impl<'a> Writer<'a> {
         match edited_by {
             "manual_edit" | "fs_edit" => Writer::Human(edited_by),
             "agent_refresh" => Writer::Agent(edited_by),
+            // An AI tool's write the person explicitly asked for in the
+            // conversation, carrying their words. It is still an agent write
+            // for every guard (version check, damage guard, the original's
+            // read-only body, the lock); only the sentence gate lets it change
+            // the person's sentences, because the person authorized it.
+            PERSON_ASKED => Writer::Agent(edited_by),
             "distill" => Writer::Pipeline(PipelineStage::Distill),
             "re_distill" => Writer::Pipeline(PipelineStage::ReDistill),
             "page_growth" => Writer::Pipeline(PipelineStage::PageGrowth),
@@ -129,6 +135,35 @@ impl<'a> Writer<'a> {
             )
         )
     }
+}
+
+/// The `edited_by` literal of an AI tool's write the person explicitly asked
+/// for (UX-WHO-2). History shows it as changed by the agent at the person's
+/// request, with their words; the sentences it changed count as the person's.
+pub const PERSON_ASKED: &str = "person_asked";
+
+/// The longest quote of the person's request a `person_asked` write carries.
+pub const PERSON_ASKED_MAX_CHARS: usize = 500;
+
+/// Checks the person's quoted request on a `person_asked` write: it must be
+/// their words (non-blank, at most [`PERSON_ASKED_MAX_CHARS`] characters) and
+/// the write must name the version the tool read. Returns the trimmed quote.
+pub fn validate_person_asked(quote: &str, expected_version: Option<i64>) -> Result<String, String> {
+    let trimmed = quote.trim();
+    if trimmed.is_empty() {
+        return Err("person_asked must quote the person's own words; it cannot be blank".into());
+    }
+    if trimmed.chars().count() > PERSON_ASKED_MAX_CHARS {
+        return Err(format!(
+            "person_asked must be at most {PERSON_ASKED_MAX_CHARS} characters"
+        ));
+    }
+    if expected_version.is_none() {
+        return Err(
+            "person_asked needs expected_version: read the page first and pass its version".into(),
+        );
+    }
+    Ok(trimmed.to_string())
 }
 
 /// How many recent versions are read to find the lines a person wrote.
@@ -1094,6 +1129,30 @@ async fn update_page_db_impl(
             "a Space guard rides only an agent's write or a human save".into(),
         ));
     }
+    // UX-WHO-2: a person-asked write is an agent's version-checked write
+    // carrying the person's words, and only that write carries them.
+    let person_asked_write = edited_by == PERSON_ASKED;
+    match basis.person_asked.as_deref() {
+        Some(quote) => {
+            if !person_asked_write {
+                return Err(WenlanError::Validation(format!(
+                    "person_asked rides only a write recorded as {PERSON_ASKED}"
+                )));
+            }
+            validate_person_asked(quote, req.expected_version).map_err(WenlanError::Validation)?;
+        }
+        None if person_asked_write => {
+            return Err(WenlanError::Validation(
+                "a person_asked write must quote the person's words".into(),
+            ));
+        }
+        None => {}
+    }
+    if basis.restored_from.is_some() && !matches!(edited_by, "agent_refresh" | PERSON_ASKED) {
+        return Err(WenlanError::Validation(
+            "restored_from rides only an agent's version-checked write".into(),
+        ));
+    }
     // Preserve mode derives provenance from the Page generation inside the
     // CAS. It is intentionally human-only: a machine writer must declare the
     // source set its output was computed from.
@@ -1335,7 +1394,10 @@ async fn update_page_db_impl(
             // whole-page card: every sentence is protected, so each change is
             // a sentence proposal (when its facts changed) and nothing lands.
             // A forced rebuild and a rename's link rewrite keep the card.
+            // A person-asked write to a locked page still waits as a
+            // whole-page card: the Lock holds even when the person asked.
             let lock_proposes = basis.citation_snapshots.is_empty()
+                && !person_asked_write
                 && basis.research_write.is_none()
                 && writer.is_machine()
                 && current.review_required
@@ -1466,6 +1528,14 @@ async fn update_page_db_impl(
                     )
                     .await;
                 }
+                // A card is the person's to accept, so a person-asked write
+                // that waits as one is staged as the agent's ordinary write:
+                // accepting it is the person's own decision.
+                let card_edited_by = if person_asked_write {
+                    "agent_refresh"
+                } else {
+                    edited_by
+                };
                 let result = match page_fence {
                     Some(fence) => match stage_page_revision_card_at_fence(
                         db,
@@ -1473,7 +1543,7 @@ async fn update_page_db_impl(
                         &card_content,
                         effective_sources,
                         fence,
-                        edited_by,
+                        card_edited_by,
                         retry.as_ref(),
                         &staged_marks,
                     )
@@ -1499,7 +1569,7 @@ async fn update_page_db_impl(
                             &card_content,
                             effective_sources,
                             staged_source_revision,
-                            edited_by,
+                            card_edited_by,
                             agent,
                             retry.as_ref(),
                             &staged_marks,
@@ -1547,7 +1617,13 @@ async fn update_page_db_impl(
             // rebuild wiping the person's prose. It applies on every page;
             // there is no "AI may edit directly" setting. A link rewrite
             // after a rename changes link targets only and keeps authors.
+            //
+            // UX-WHO-2: the one exception is a write the person explicitly
+            // asked for in the conversation, carrying their words. It lands
+            // as sent, and the sentences it changed or added are the
+            // person's (see `authorship::VersionAuthor::PersonAsked`).
             let (gate, keeps_person_text) = if writer.is_machine()
+                && !person_asked_write
                 && !matches!(writer, Writer::Pipeline(PipelineStage::LinkRename))
             {
                 crate::sentences::sentence_gate(db, &current, &req.content).await?
@@ -1852,6 +1928,12 @@ async fn update_page_db_impl(
             }
             if basis.minor {
                 entry["minor"] = serde_json::Value::Bool(true);
+            }
+            if let Some(quote) = basis.person_asked.as_deref() {
+                entry["person_asked"] = serde_json::Value::String(quote.trim().to_string());
+            }
+            if let Some(version) = basis.restored_from {
+                entry["restored_from"] = serde_json::Value::from(version);
             }
             if let Some((_, ref stats_summary)) = citations {
                 entry["citations_summary"] = serde_json::Value::String(stats_summary.clone());

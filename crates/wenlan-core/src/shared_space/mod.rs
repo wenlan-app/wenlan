@@ -1535,6 +1535,9 @@ async fn local_author(db: &MemoryDB, page: &Page, member: &str) -> Result<Author
         crate::authorship::VersionAuthor::Ai | crate::authorship::VersionAuthor::Original => {
             AuthorKind::Ai
         }
+        // A change the person asked their AI tool for is the person's to
+        // share: its sentences are theirs (UX-WHO-2).
+        crate::authorship::VersionAuthor::PersonAsked => AuthorKind::Person,
         _ => AuthorKind::Person,
     };
     let agent = match kind {
