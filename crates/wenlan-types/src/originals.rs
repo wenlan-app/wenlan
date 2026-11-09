@@ -29,6 +29,21 @@ pub struct PageOriginalResponse {
     pub written_at: Option<i64>,
     /// When Wenlan kept it (unix seconds).
     pub imported_at: i64,
+    /// The newest version, when a later one replaced this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub newer: Option<OriginalVersion>,
+    /// The versions this one replaced, newest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub older: Vec<OriginalVersion>,
+}
+
+/// One version of a kept original.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OriginalVersion {
+    pub page_id: String,
+    pub title: String,
+    /// When Wenlan kept it (unix seconds).
+    pub kept_at: i64,
 }
 
 /// `POST /api/originals`: keep something an AI tool made in this session (an
@@ -47,6 +62,10 @@ pub struct KeepOriginalRequest {
     /// the night's tidy and later sessions read the structure, not the HTML.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structure: Option<String>,
+    /// The older version this one replaces: its page id, or its title as it
+    /// was kept. The older page stays as it was and points to this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces: Option<String>,
 }
 
 /// The page that keeps it.
