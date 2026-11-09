@@ -1346,6 +1346,37 @@ pub enum WriteCitations {
     },
 }
 
+/// The refusal for a write naming sources the target scope cannot read, or
+/// `None` when every source was read. It names each unreadable source only by
+/// its 1-based position in the caller's own `source_ids` and says whether the
+/// target is unfiled, so the caller can tell which ids to fix without learning
+/// anything about a memory outside its scope: a memory in another Space reads
+/// exactly like one that is gone.
+pub(crate) fn source_read_refusal<T>(
+    resolved: &[Option<T>],
+    scope: &crate::read_scope::ReadScope,
+) -> Option<String> {
+    let positions: Vec<String> = resolved
+        .iter()
+        .enumerate()
+        .filter(|(_, source)| source.is_none())
+        .map(|(index, _)| (index + 1).to_string())
+        .collect();
+    if positions.is_empty() {
+        return None;
+    }
+    let target = match scope {
+        crate::read_scope::ReadScope::Uncategorized => "unfiled",
+        crate::read_scope::ReadScope::Space(_) => "space",
+        crate::read_scope::ReadScope::Global => "global",
+    };
+    Some(format!(
+        "source_read_refused: positions={} target={target}; source unavailable, ambiguous, \
+         or incomplete in the target Space; reread exact sources and check scope",
+        positions.join(",")
+    ))
+}
+
 /// Check the `[n]` markers in a page an AI tool is writing, where `[n]` is
 /// the n-th id in `source_ids`. A page with no sources, or no markers, is
 /// left as written. The same check the automatic run and steep on demand
@@ -1367,8 +1398,8 @@ pub async fn check_write_citations(
         }));
     }
     let resolved = db.citation_sources(source_ids, scope).await?;
-    if resolved.iter().any(Option::is_none) {
-        return Err(WenlanError::Validation("source_read_refused: source unavailable, ambiguous, or incomplete in the target Space; reread exact sources and check scope".into()));
+    if let Some(refusal) = source_read_refusal(&resolved, scope) {
+        return Err(WenlanError::Validation(refusal));
     }
     if !RE_MARKERS.is_match(&normalize_markers(content)) {
         return Ok(Ok(WriteCitations::Uncited {
@@ -1461,6 +1492,26 @@ fn check_numbered_citations(
 
 #[cfg(test)]
 mod tests {
+    /// A refusal names the unreadable sources by position and the kind of
+    /// target, and nothing about what the memory holds or where it lives.
+    #[test]
+    fn a_source_read_refusal_names_positions_and_target_only() {
+        use crate::read_scope::ReadScope;
+        let resolved = [Some(()), None, Some(()), None];
+        let unfiled = source_read_refusal(&resolved, &ReadScope::Uncategorized).unwrap();
+        assert!(
+            unfiled.starts_with("source_read_refused: positions=2,4 target=unfiled;"),
+            "{unfiled}"
+        );
+        let space = source_read_refusal(&resolved, &ReadScope::Space("secret".into())).unwrap();
+        assert!(space.contains("target=space;"), "{space}");
+        assert!(!space.contains("secret"), "{space}");
+        assert_eq!(
+            source_read_refusal(&[Some(()), Some(())], &ReadScope::Global),
+            None
+        );
+    }
+
     use super::*;
 
     fn manual_reference_fixture() -> (&'static str, Vec<PageCitation>) {
@@ -3993,9 +4044,17 @@ mod tests {
             &crate::read_scope::ReadScope::Space("elsewhere".into()),
         )
         .await;
+        let Err(WenlanError::Validation(message)) = elsewhere else {
+            panic!("a memory outside the Space reads as gone");
+        };
+        // Both sources are named by position only, never by content.
         assert!(
-            elsewhere.is_err(),
-            "a memory outside the Space reads as gone"
+            message.starts_with("source_read_refused: positions=1,2 target=space;"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("7878") && !message.contains("elsewhere"),
+            "{message}"
         );
     }
 }
