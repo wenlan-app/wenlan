@@ -819,6 +819,14 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `PUT` | `/api/spaces/{name}` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `POST` | `/api/spaces/{name}/confirm` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/spaces/{name}/pin` | main | no | not_applicable | `none` | — | no prose fields |
+| `POST` | `/api/spaces/{name}/shared/sync` | main | no | not_applicable | `none` | — | receipt only: counts of page versions written to and taken from the shared folder; page files go to the folder, not the response |
+| `GET` | `/api/spaces/{name}/shared` | main | no | not_applicable | `none` | — | status only: the shared folder, the member names and the last sync pass (when, counts, why it is paused); no page text |
+| `DELETE` | `/api/spaces/{name}/shared` | main | no | not_applicable | `none` | — | receipt only: stops sharing the Space from here; {ok: true} |
+| `POST` | `/api/pages/{id}/shared/sync` | main | no | not_applicable | `none` | — | receipt only: counts of page versions of one page written to and taken from its shared folder; page files go to the folder, not the response |
+| `GET` | `/api/pages/{id}/shared` | main | no | not_applicable | `none` | — | status only: one page's shared folder, member names and last sync pass; no page text |
+| `DELETE` | `/api/pages/{id}/shared` | main | no | not_applicable | `none` | — | receipt only: stops sharing one page from here; {ok: true} |
+| `GET` | `/api/shared` | main | no | not_applicable | `none` | — | status only: every shared Space name or page id with its folder, member names and last sync pass; no page text |
+| `POST` | `/api/shared/folder` | main | no | not_applicable | `none` | — | status only: what a folder's space.json says it shares (a Space name or a page title and id) and member names; no page text |
 | `POST` | `/api/spaces/{name}/star` | main | yes | automatic | `none` | `handle_toggle_space_starred` | opaque response type — fail-closed |
 | `POST` | `/api/spaces/{name}/wiki/docs` | main | no | not_applicable | `none` | — | receipt only: the doc fix just recorded or declined (repository file text, not page text) and the open count |
 | `POST` | `/api/spaces/{name}/wiki/github` | main | no | not_applicable | `none` | — | setup receipt only: which GitHub settings the repository has (booleans), the workflow state and the last run's links; a token is never returned |
@@ -1140,6 +1148,8 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::evaluate_support_on` | `private` | no | no | — | — |
 | `core/db/claim_derivation.rs::load_linked_memory_chunks` | `private` | no | no | — | — |
 | `core/db/claim_derivation.rs::page_text_is_cut_off` | `private` | no | no | — | — |
+| `core/db/entity_alias_sources.rs::detach_entity_alias` | `pub` | no | no | — | — |
+| `core/db/entity_alias_sources.rs::record_auto_alias_on` | `pub(super)` | no | no | — | — |
 | `core/db/export_reads.rs::export_page_rows` | `pub(crate)` | no | no | — | — |
 | `core/db/kg_quality_diagnostics.rs::list_contradiction_observation_counts` | `pub(crate)` | no | no | — | — |
 | `core/db/kg_quality_duplicate_candidates.rs::duplicate_name_groups_for_merge_candidates` | `pub(crate)` | no | no | — | — |
@@ -1270,6 +1280,7 @@ carrying the authority of agreement.
 | `core/db/claim_derivation.rs::finalize_page_support` | `pub` | no | no | — | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::reconcile_supported_pages` | `pub` | no | **yes** | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/claim_derivation.rs::evaluate_support_on` |
 | `core/db/claim_derivation.rs::run_leased_page_linked_truth_promotion` | `pub(super)` | no | no | — | `core/db/claim_derivation.rs::derive_leased_page_claims`, `core/db/claim_derivation.rs::load_linked_memory_chunks`, `core/db/claim_derivation.rs::page_text_is_cut_off` |
+| `core/db/entity_alias_sources.rs::add_auto_alias` | `pub(super)` | no | no | — | `core/db/entity_alias_sources.rs::record_auto_alias_on` |
 | `core/db/night_links.rs::night_topics` | `pub` | no | **yes** | `server/things_intake.rs::connect_old_night_points`, `server/things_intake.rs::dream_with` | `core/db/night_links.rs::offerable_topics` |
 | `core/db/page_basis.rs::apply_card_mark` | `private` | no | no | — | `core/db/page_basis.rs::load_facts` |
 | `core/db/page_basis.rs::basis_diff_in_scope` | `pub` | no | **yes** | `server/page_basis_routes.rs::handle_basis_diff` | `core/db/page_basis.rs::load_facts` |
@@ -1320,6 +1331,8 @@ carrying the authority of agreement.
 | `core/repair.rs::projection_page_row_from_snapshot` | `private` | no | no | — | `core/repair.rs::projection_page_receipt_sql` |
 | `core/repair_plan/deterministic.rs::resolve_current` | `pub(crate)` | yes | no | — | `core/repair_plan/deterministic.rs::resolve_duplicate_page_titles`, `core/repair_plan/deterministic.rs::resolve_orphan_links`, `core/repair_plan/deterministic.rs::resolve_source_pages` |
 | `core/repair_plan/deterministic.rs::target_still_actionable` | `pub(super)` | no | no | — | `core/repair_plan/deterministic.rs::renamed_page_title_still_actionable`, `core/repair_plan/deterministic.rs::resolve_orphan_links`, `core/repair_plan/deterministic.rs::resolve_source_pages` |
+| `core/shared_space/mod.rs::free_title` | `private` | no | no | — | `core/db.rs::list_pages_by_space` |
+| `core/shared_space/mod.rs::pass` | `private` | no | no | — | `core/db.rs::list_pages_by_space` |
 | `core/steep.rs::steep_work` | `private` | no | no | — | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep.rs::waiting_page_ids` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep_automatic.rs::rewrite_one_code_page` | `pub` | no | no | — | `core/db/steep.rs::list_steep_code_pages` |
@@ -1421,6 +1434,7 @@ carrying the authority of agreement.
 | `core/db/citation_provenance.rs::set_source_lifecycle` | `pub` | no | **yes** | `server/source_lifecycle_routes.rs::write` | `core/db/citation_provenance.rs::capture_kind_on` |
 | `core/db/claim_derivation.rs::publish_and_finish_promotion` | `private` | no | no | — | `core/db/claim_derivation.rs::evaluate_page_support`, `core/db/claim_derivation.rs::finalize_page_support` |
 | `core/db/claim_derivation.rs::run_page_linked_truth_promotion_turn` | `pub` | no | **yes** | `server/main/runtime.rs::register_optional_runtime_workers` | `core/db/claim_derivation.rs::run_leased_page_linked_truth_promotion` |
+| `core/db/entity_alias_sources.rs::add_auto_alias_logged` | `pub(super)` | no | no | — | `core/db/entity_alias_sources.rs::add_auto_alias` |
 | `core/db/okf_concepts.rs::refresh_okf_concept_linkers` | `pub` | no | **yes** | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `core/db.rs::get_page` |
 | `core/db/page_basis.rs::apply_basis_write_on_conn` | `pub(super)` | no | no | — | `core/db/page_basis.rs::apply_card_mark`, `core/db/page_basis.rs::confirm_page_basis_on_conn`, `core/db/page_basis.rs::confirm_snapshot_entry_on_conn`, `core/db/page_basis.rs::mark_page_basis_on_conn` |
 | `core/db/page_basis.rs::basis_diff` | `pub` | no | no | — | `core/db/page_basis.rs::basis_diff_in_scope` |
@@ -1521,6 +1535,13 @@ carrying the authority of agreement.
 | `core/sentences.rs::load_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sentences.rs::recheck_sentence` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_recheck_sentence` | `core/db/sentence_history.rs::set_page_citations_at_page_version` |
 | `core/sentences.rs::source_states` | `private` | no | no | — | `core/db/citation_sources.rs::citation_page_source` |
+| `core/shared_space/mod.rs::apply_create` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
+| `core/shared_space/mod.rs::apply_version` | `private` | no | no | — | `core/shared_space/mod.rs::free_title` |
+| `core/shared_space/mod.rs::reload` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/shared_space/mod.rs::stop_page_shares_in` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/shared_space/mod.rs::sync_missing` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/shared_space/mod.rs::sync_shared_spaces` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/shared_space/mod.rs::pass` |
+| `core/shared_space/mod.rs::sync_space` | `pub` | no | **yes** | `server/spaces_routes.rs::shared_sync` | `core/db.rs::get_page`, `core/shared_space/mod.rs::pass` |
 | `core/sources/page_watcher.rs::archive_deleted_pages` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::bring_back_archived_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/sources/page_watcher.rs::create_adopted_page` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1704,6 +1725,7 @@ carrying the authority of agreement.
 | `core/sentences.rs::reject_sentence_proposal` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_reject_sentence_proposal` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::revert_ai_write` | `pub` | no | **yes** | `server/sentence_routes.rs::handle_revert_sentences` | `core/sentences.rs::load_page` |
 | `core/sentences.rs::unit_citations` | `private` | no | no | — | `core/sentences.rs::source_states` |
+| `core/shared_space/mod.rs::sync_page` | `private` | no | no | — | `core/shared_space/mod.rs::apply_version`, `core/shared_space/mod.rs::reload` |
 | `core/sources/page_watcher.rs::adopt_note` | `private` | no | no | — | `core/sources/page_watcher.rs::create_adopted_page` |
 | `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::archive_deleted_pages`, `core/sources/page_watcher.rs::finish_pending_adoptions`, `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep_new.rs::claim_new` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
@@ -1749,7 +1771,7 @@ carrying the authority of agreement.
 | `server/routes.rs::handle_context` | `pub` | no | no | — | `server/brief_routes.rs::handle_read_brief` |
 | `server/routes.rs::handle_search` | `pub` | no | no | — | `server/routes.rs::handle_search_inner` |
 | `server/scheduler.rs::fire_steep_phase` | `private` | no | no | `server/scheduler.rs::fire_steep_phase_safe` | `core/refinery/mod.rs::run_periodic_steep_phase_with_api` |
-| `server/scheduler.rs::spawn_scheduler` | `pub` | no | **yes** | `server/main.rs::run_daemon` | `core/trust_scan.rs::run_and_store`, `server/scheduler.rs::fire_maintenance_stage_safe` |
+| `server/scheduler.rs::spawn_scheduler` | `pub` | no | **yes** | `server/main.rs::run_daemon` | `core/shared_space/mod.rs::sync_shared_spaces`, `core/trust_scan.rs::run_and_store`, `server/scheduler.rs::fire_maintenance_stage_safe` |
 | `server/scheduler/ambient.rs::run_ambient_job` | `pub(super)` | no | no | `server/scheduler/ambient.rs::run_ambient_job_safe` | `core/post_ingest.rs::run_page_growth_slice` |
 | `server/sentence_routes.rs::handle_accept_sentence_proposal` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
 | `server/sentence_routes.rs::handle_flag_sentence` | `pub` | no | no | — | `server/sentence_routes.rs::require_visible_page` |
@@ -1761,6 +1783,7 @@ carrying the authority of agreement.
 | `server/source_lifecycle_routes.rs::write` | `private` | yes | no | — | `core/db/citation_provenance.rs::set_source_lifecycle` |
 | `server/source_routes.rs::sync_directory_source` | `pub(crate)` | no | no | `server/scheduler.rs::sync_directory_sources_in_scope`, `server/source_routes.rs::handle_sync_source` | `core/db.rs::rebind_source_id_with_source_page` |
 | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `pub(super)` | no | no | `server/source_routes/okf_sync.rs::sync_okf_source` | `core/db.rs::rebind_source_id_with_source_page`, `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |
+| `server/spaces_routes.rs::shared_sync` | `private` | yes | no | — | `core/shared_space/mod.rs::sync_space` |
 | `server/steep_new_routes.rs::handle_steep_new_claim` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
 | `server/steep_new_routes.rs::handle_steep_new_links` | `pub` | no | no | — | `core/steep_new.rs::links_new` |
 | `server/steep_new_routes.rs::handle_steep_new_organize` | `pub` | no | no | — | `core/steep_new.rs::organize_new` |

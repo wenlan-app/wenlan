@@ -128,6 +128,11 @@ import { useBasisActions } from "./page/useBasisActions";
 import { useCodeBasisActions } from "./page/useCodeBasisActions";
 import { basisCountLabel } from "./page/format";
 import PageExportDialog from "./page/PageExportDialog";
+import { SummaryViewSwitch } from "./page/SummaryViewSwitch";
+import { ShareDialog } from "./sharing/ShareDialog";
+import { SharedWithLine } from "./sharing/SharedWithLine";
+import { ConcurrentEditLine, markConcurrentEditSeen, unseenConcurrentEdit } from "./sharing/ConcurrentEditLine";
+import { pageShare, sharedWriter, spaceShare, useShares } from "./sharing/sharing";
 
 interface PageDetailProps {
   pageId: string;
@@ -159,6 +164,8 @@ interface PageDetailProps {
   showAttachedPageNotice?: boolean;
   /** Someone still getting started: the first page Wenlan writes shows its tips. */
   pageTour?: boolean;
+  /** Opens Settings › General, where the name others see is changed. */
+  onOpenSettings?: () => void;
 }
 
 /** How often an open page checks for edits made outside Wenlan. */
@@ -308,6 +315,7 @@ export default function PageDetail({
   onRegisterFlush,
   showAttachedPageNotice = false,
   pageTour = false,
+  onOpenSettings,
 }: PageDetailProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -424,6 +432,12 @@ export default function PageDetail({
   };
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [pageExportOpen, setPageExportOpen] = useState(false);
+  const [sharingOpen, setSharingOpen] = useState(false);
+  // "See mine" on the concurrent-edit line: the version Info opens.
+  const [openLostVersion, setOpenLostVersion] = useState<number | null>(null);
+  const clearOpenLostVersion = useCallback(() => setOpenLostVersion(null), []);
+  const [, setConcurrentSeen] = useState(0);
+  const shares = useShares();
   const [actionMenuPlacement, setActionMenuPlacement] = useState<{ top: number; right: number } | null>(null);
   const [redistillNotice, setRedistillNotice] = useState<{
     kind: "success" | "warning" | "error";
@@ -568,6 +582,16 @@ export default function PageDetail({
     staleTime: 30_000,
     retry: false,
   });
+  // A version taken from a shared folder lands without this view writing
+  // it: catch the history up so who changed it, and any concurrent edit it
+  // replaced, show with it.
+  const canonicalVersion = canonicalPage?.version;
+  const revisionsVersion = pageRevisions?.current_version;
+  useEffect(() => {
+    if (canonicalVersion != null && revisionsVersion != null && revisionsVersion < canonicalVersion) {
+      void refetchRevisions();
+    }
+  }, [canonicalVersion, revisionsVersion, refetchRevisions]);
 
   const outboundTargetByLabel = useMemo(() => {
     const map = new Map<string, { id: string; title?: string | null }>();
@@ -2097,6 +2121,17 @@ export default function PageDetail({
   // A note can be rebuilt from its memories or from notes it still relies on.
   const canUpdateFromSources = sourceCount > 0
     || basisRefs.some((entry) => entry.state !== "deleted" && entry.state !== "unavailable");
+  const ownPageShare = pageShare(shares.data, page.id);
+  const spaceOfPageShare = page.space ? spaceShare(shares.data, page.space) : undefined;
+  const pageSharedLine = spaceOfPageShare ?? ownPageShare;
+  const concurrentEdit = pageSharedLine
+    ? unseenConcurrentEdit(page.id, page.version, pageRevisions?.entries)
+    : undefined;
+  const concurrentWriter = concurrentEdit ? sharedWriter(concurrentEdit.edited_by, shares.data, t) : null;
+  const closeConcurrentEdit = () => {
+    if (concurrentEdit) markConcurrentEditSeen(page.id, concurrentEdit.version);
+    setConcurrentSeen((count) => count + 1);
+  };
   const startConfirmEdit = (basis: BasisRef) => {
     confirmIntentRef.current = { pageId: page.id, basis };
     if (!editing) void beginEditing();
@@ -2539,6 +2574,9 @@ export default function PageDetail({
                 </button>
                 {moveOpen && <MovePageDialog page={page} onClose={() => setMoveOpen(false)} />}
                 {pageExportOpen && <PageExportDialog pageId={page.id} onClose={() => setPageExportOpen(false)} />}
+                {sharingOpen && (spaceOfPageShare
+                  ? <ShareDialog kind="space" target={spaceOfPageShare.target} title={spaceOfPageShare.target} onClose={() => setSharingOpen(false)} onOpenSettings={onOpenSettings} />
+                  : <ShareDialog kind="page" target={page.id} title={page.title} onClose={() => setSharingOpen(false)} onOpenSettings={onOpenSettings} />)}
                 {actionMenuOpen ? (
                   <div
                     aria-label={t("pageDetail.actions")}
@@ -2559,53 +2597,14 @@ export default function PageDetail({
                     tabIndex={-1}
                   >
                     <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
-                    {page.status === "active" && !editing && !showCanvas ? (
-                      <button type="button" role="menuitem" disabled={storedActionPending || renaming || renameMutation.isPending} onClick={() => { setActionMenuOpen(false); void beginEditing(); }}>
-                        {t("pageDetail.editPage")}
-                      </button>
-                    ) : null}
-                    {!showCanvas && canRenamePage && (!editing || hideOuterTitleWhileEditing) ? (
-                      <button
-                        disabled={renaming || (editing ? titleRenameDisabled : renameDisabled)}
-                        onClick={() => {
-                          closeActionMenu();
-                          if (editing) void renameFromTitle(); else startRename();
-                        }}
-                        role="menuitem"
-                        type="button"
-                      >
-                        {t("pageDetail.renamePage")}
-                      </button>
-                    ) : null}
-                    {pageHasTwoLengths && !showCanvas ? (
-                      <button
-                        type="button"
-                        role="menuitemcheckbox"
-                        aria-checked={pageLength === "short"}
-                        onClick={() => { closeActionMenu(); choosePageLength(pageLength === "short" ? "full" : "short"); }}
-                      >
-                        {t("pageLayers.summaryView")}
-                        <span aria-hidden="true" className="page-detail-menu-check">{pageLength === "short" ? "✓" : ""}</span>
-                      </button>
-                    ) : null}
                     <button type="button" role="menuitem" disabled={storedActionBlocked || editDirty || saveState.phase !== "idle"} onClick={() => { closeActionMenu(); setPageExportOpen(true); }}>{t("pageExport.menuAction")}</button>
-                    {/* Re-distill rebuilds a page from its sources; a page
-                        with none has nothing to rebuild from. */}
-                    {page.status === "active" && canUpdateFromSources ? <button
-                        className="page-detail-mobile-menu-item"
-                        disabled={storedActionBlocked || redistillMutation.isPending}
-                        aria-busy={redistillMutation.isPending}
-                        onClick={() => {
-                          setActionMenuOpen(false);
-                          void requestStoredPageAction("redistill");
-                        }}
-                        role="menuitem"
-                        type="button"
-                      >
-                        {redistillMutation.isPending
-                          ? t("pageDetail.redistillingPage")
-                          : t("pageDetail.redistillPage")}
-                    </button> : null}
+                    {/* A page of a shared Space is shared with it: the item opens
+                        that Space's members rather than sharing the page alone. */}
+                    {page.status === "active" && !exampleWiki ? (
+                      <button type="button" role="menuitem" disabled={storedActionBlocked} onClick={() => { closeActionMenu(); setSharingOpen(true); }}>
+                        {t(spaceOfPageShare || ownPageShare ? "sharing.menuMembers" : "sharing.menuShare")}
+                      </button>
+                    ) : null}
                     {canArchivePage(page) && (
                       <button
                         className="page-detail-mobile-menu-item"
@@ -2633,21 +2632,49 @@ export default function PageDetail({
               </div>
   );
 
+  // A page opens ready to edit. When it is only shown (opened from Review,
+  // or after the editor closed), this pencil, or a click in the text, edits it.
+  const readModeEditable = page.status === "active" && !editing && !showCanvas && !exampleWiki;
+  const readModeEditDisabled = storedActionPending || renaming || renameMutation.isPending;
+  const readModeEdit = readModeEditable ? (
+    <button
+      aria-label={t("pageDetail.editPage")}
+      className="mem-icon-action page-detail-edit-action"
+      disabled={readModeEditDisabled}
+      onClick={() => void beginEditing()}
+      title={t("pageDetail.editPage")}
+      type="button"
+    >
+      <PencilSimple aria-hidden="true" size={16} />
+    </button>
+  ) : null;
+  const editFromReading = (event: React.MouseEvent) => {
+    if (!readModeEditable || readModeEditDisabled) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("a, button, input, textarea, select, summary, label, [role='button'], [data-reference-link]")) return;
+    // Selecting text to copy is not a request to edit.
+    if (globalThis.getSelection?.()?.toString()) return;
+    void beginEditing();
+  };
+  // While the editor shows the title as its first line, the outer title (the
+  // rename control) is hidden, so this pencil renames the page instead.
+  const titleRenameAction = hideOuterTitleWhileEditing && canRenamePage ? (
+    <button
+      aria-label={t("pageDetail.renamePage")}
+      className="mem-icon-action page-detail-title-action"
+      disabled={titleRenameDisabled || renaming}
+      onClick={() => void renameFromTitle()}
+      title={t("pageDetail.renamePage")}
+      type="button"
+    >
+      <PencilSimple aria-hidden="true" size={16} />
+    </button>
+  ) : null;
   const documentTools = (
     <div className="page-document-tools">
+      {!documentToolsHost && readModeEdit}
       {!documentToolsHost && inspectorToggle}
-      {!documentToolsHost && hideOuterTitleWhileEditing && canRenamePage && (
-        <button
-          aria-label={t("pageDetail.renamePage")}
-          className="mem-icon-action page-detail-title-action"
-          disabled={titleRenameDisabled || renaming}
-          onClick={() => void renameFromTitle()}
-          title={t("pageDetail.renamePage")}
-          type="button"
-        >
-          <PencilSimple aria-hidden="true" size={16} />
-        </button>
-      )}
+      {!documentToolsHost && titleRenameAction}
       <WorkspaceBackButton
           aria-label={t("main.back")}
           className="mem-icon-action"
@@ -2663,7 +2690,7 @@ export default function PageDetail({
 
   return (
     <div className={`page-detail document-context-host${inspectorOpen ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && inspectorOpen ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
-      {documentToolsHost && createPortal(<>{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
+      {documentToolsHost && createPortal(<>{titleRenameAction}{readModeEdit}{actionsMenu}{inspectorToggle}</>, documentToolsHost)}
       {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
         {page.status === "archived" && <div className="wiki-archive-notice" role="status">
@@ -2745,6 +2772,20 @@ export default function PageDetail({
           </div>
         )}
 
+
+        {pageSharedLine && <div className="page-detail-shared-line">
+          {concurrentEdit && concurrentWriter
+            ? <ConcurrentEditLine
+                name={concurrentWriter}
+                onSeeMine={() => {
+                  setOpenLostVersion(concurrentEdit.concurrent_with ?? null);
+                  closeConcurrentEdit();
+                  void requestPageInfo();
+                }}
+                onDismiss={closeConcurrentEdit}
+              />
+            : <SharedWithLine share={pageSharedLine} onOpen={() => setSharingOpen(true)} />}
+        </div>}
 
         {/* An archived page is read only, so its review items wait until it is restored. */}
         {onOpenReview && page.status !== "archived" && <NoteReviewNotice key={pageId} page={page}
@@ -3184,7 +3225,7 @@ export default function PageDetail({
         ) : (
           <div>
             <ReferenceNavigationProvider onOpenPage={onPageClick} onOpenMemory={openSourceMemory}>
-            <div className="page-detail-prose" data-testid="page-document-reading" onClickCapture={handleContentClick}>
+            <div className={`page-detail-prose${readModeEditable ? " page-detail-prose--editable" : ""}`} data-testid="page-document-reading" onClickCapture={handleContentClick} onClick={editFromReading}>
             <EmbedPageContext.Provider value={page.id}>
               {page.creation_kind === "original" ? (
                 <OriginalPageView
@@ -3260,6 +3301,10 @@ export default function PageDetail({
           {!pdfPreviewOpen && (showCanvas ? <PageCanvas key={pageId} pageId={pageId} pageTitle={page.title} labelOverrides={labelOverrides}
             onMemoryClick={onMemoryClick} onPageClick={onPageClick} onEntityClick={onEntityClick} />
             : <DetailInfoContent className="note-inspector-info">
+          {pageHasTwoLengths && <SummaryViewSwitch
+            on={pageLength === "short"}
+            onChange={(on) => choosePageLength(on ? "short" : "full")}
+          />}
           <InfoAction
             label={t("pageDetail.markPageReviewed")}
             description={reviewSupported ? t("infoActions.reviewPageHint") : reviewUnavailableReason}
@@ -3399,6 +3444,20 @@ export default function PageDetail({
               onUnmarkBasis={basisEditable ? unmarkBasis : undefined}
               codeBasis={codeBasisRefs}
               onUnmarkCodeBasis={unmarkCodeBasis}
+              shares={shares.data}
+              openVersion={openLostVersion}
+              onOpenedVersion={clearOpenLostVersion}
+              sourcesAction={page.status === "active" && canUpdateFromSources ? <button
+                className="note-info-sources-action"
+                disabled={storedActionBlocked || redistillMutation.isPending}
+                aria-busy={redistillMutation.isPending}
+                onClick={() => { void requestStoredPageAction("redistill"); }}
+                type="button"
+              >
+                {redistillMutation.isPending
+                  ? t("pageDetail.redistillingPage")
+                  : t("pageDetail.redistillPage")}
+              </button> : undefined}
             />
             <PageSessionSources
               pageId={pageId}

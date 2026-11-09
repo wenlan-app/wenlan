@@ -226,3 +226,4 @@
     flex-basis: auto;
   }
 }
+.settings-view .settings-profile-hint { color: var(--mem-text-secondary); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }

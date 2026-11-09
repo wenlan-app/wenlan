@@ -47,6 +47,8 @@ export type SpacesOverviewProps = {
   readonly onCreateIntentHandled?: () => void;
   readonly onSpaceDeleted?: (spaceId: string) => void;
   readonly onSpaceRenamed?: (space: Pick<Space, "id" | "name">) => void;
+  /** After joining a Space or page someone shared: the Space's name or the page's id. */
+  readonly onSharedJoined?: (kind: "space" | "page", target: string) => void;
 };
 
 export type SpaceEditorValue = {

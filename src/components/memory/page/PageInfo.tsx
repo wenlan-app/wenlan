@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { PageIcon } from "../assets/PageIcon";
 import { useTranslation } from "react-i18next";
 import type {
@@ -11,6 +11,7 @@ import type {
   PageHistoryItem,
   PageLinkInbound,
   PageSourceWithMemory,
+  SharedStatus,
 } from "../../../lib/tauri";
 import type { CitationState } from "../../../lib/pageCitations";
 import { basisCountLabel, prettyAgent, relativeMs, revisionSummary } from "./format";
@@ -47,6 +48,13 @@ interface PageInfoProps {
   /** The lines of code this note relies on, and a way to stop relying on one. */
   codeBasis?: readonly CodeBasisRef[];
   onUnmarkCodeBasis?: (row: CodeBasisRef) => void;
+  /** "Update from sources", shown with the sources it rebuilds the page from. */
+  sourcesAction?: ReactNode;
+  /** Names the member behind each change taken from a shared folder. */
+  shares?: readonly SharedStatus[];
+  /** Opens this version's change once it is in the history ("See mine"). */
+  openVersion?: number | null;
+  onOpenedVersion?: () => void;
 }
 
 // Content chips already carry per-claim provenance; inside this panel the
@@ -121,6 +129,10 @@ export default function PageInfo({
   onUnmarkBasis,
   codeBasis,
   onUnmarkCodeBasis,
+  sourcesAction,
+  shares,
+  openVersion = null,
+  onOpenedVersion,
 }: PageInfoProps) {
   const { t, i18n } = useTranslation();
   // English keeps the legacy abbreviated relatives ("1d ago"); Chinese gets
@@ -139,6 +151,14 @@ export default function PageInfo({
   const visibleHistory = showAllRevisions
     ? historyDesc
     : historyDesc.slice(0, REVISIONS_SHOWN);
+  const versionToOpen = openVersion == null
+    ? undefined
+    : historyDesc.find((item) => item.kind !== "source_update" && item.version === openVersion);
+  useEffect(() => {
+    if (!versionToOpen) return;
+    setOpenHistoryItem(versionToOpen);
+    onOpenedVersion?.();
+  }, [versionToOpen, onOpenedVersion]);
   const entryByVersion = new Map(revisions.map((entry) => [entry.version, entry]));
   const seenInboundIds = new Set<string>();
   const uniqueInbound = inbound.filter((link) => {
@@ -293,7 +313,7 @@ export default function PageInfo({
                     : entryByVersion.get(item.version);
                   const incomingCount = entry?.incoming_source_ids?.length ?? 0;
                   const summary = entry ? revisionSummary(t, entry, i18n.language) : null;
-                  const label = historyItemLabel(t, item);
+                  const label = historyItemLabel(t, item, shares);
                   return (
                     <li
                       key={`${item.kind}-${item.version ?? ""}-${item.source?.page_id ?? ""}-${item.source?.version ?? ""}-${item.at}`}
@@ -472,6 +492,15 @@ export default function PageInfo({
                 {t("pageInfo.showAllSources", { count: rows.length })}
               </button>
             )}
+            {sourcesAction}
+          </div>
+        )}
+        {rows.length === 0 && sourcesAction && (
+          <div>
+            <h4 className={embedded ? "note-info-section-heading" : "mb-1"} style={embedded ? undefined : groupHeading}>
+              {t("pageInfo.sources")}
+            </h4>
+            {sourcesAction}
           </div>
         )}
         {onMarkBasis && onUnmarkBasis && currentPageId && (
@@ -503,6 +532,7 @@ export default function PageInfo({
         <HistoryChangeDialog
           pageId={currentPageId}
           item={openHistoryItem}
+          shares={shares}
           onClose={() => setOpenHistoryItem(null)}
         />
       )}

@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CaretRight, Folder, FolderPlus, MagnifyingGlass, Plus, Stack } from "@phosphor-icons/react";
 import { PageIcon } from "../assets/PageIcon";
+import { PeopleIcon } from "../sharing/SharedWithLine";
+import { others, pageShare, spaceShare, useShares } from "../sharing/sharing";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -53,6 +55,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const exampleWiki = useExampleWikiActive();
   const id = useId();
   const queryClient = useQueryClient();
+  const shares = useShares();
   const [localFilter, setLocalFilter] = useState("");
   const filter = controlledFilter ?? localFilter;
   const setFilter = onFilterChange ?? setLocalFilter;
@@ -246,7 +249,15 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const renderPage = (page: Page) => {
     const draft = page.status === "draft";
     const title = draft && !page.title.trim() ? t("pages.overview.untitledDraft") : page.title;
-    return <li key={page.id} data-folder-path={pageFolderPath(page) ?? ""} data-page-id={page.id} data-page-status={page.status}><button type="button" className="notes-page-button notes-inventory-page" aria-label={t("pages.overview.openPage", { title })} aria-current={currentPageId === page.id ? "page" : undefined} data-active={currentPageId === page.id ? "true" : undefined} title={title} disabled={draft ? !onOpenDraft : !onOpenPage} onClick={() => draft ? onOpenDraft?.(page.id, pageSpaceContext(page) ?? null) : onOpenPage?.(page)}><PageIcon size={16}/><span className="notes-page-title">{title}</span></button></li>;
+    return <li key={page.id} data-folder-path={pageFolderPath(page) ?? ""} data-page-id={page.id} data-page-status={page.status}><button type="button" className="notes-page-button notes-inventory-page" aria-label={t("pages.overview.openPage", { title })} aria-current={currentPageId === page.id ? "page" : undefined} data-active={currentPageId === page.id ? "true" : undefined} title={title} disabled={draft ? !onOpenDraft : !onOpenPage} onClick={() => draft ? onOpenDraft?.(page.id, pageSpaceContext(page) ?? null) : onOpenPage?.(page)}><PageIcon size={16}/><span className="notes-page-title">{title}</span>{sharedMark(page)}</button></li>;
+  };
+  // A small people mark on a page shared with people, alone or with its Space.
+  const sharedMark = (page: Page) => {
+    const share = pageShare(shares.data, page.id) ?? (page.space ? spaceShare(shares.data, page.space) : undefined);
+    if (!share) return null;
+    const names = others(share).map((member) => member.name).join(", ");
+    const label = names ? t("sharing.sharedMarker", { names }) : t("sharing.withAlone");
+    return <span className="notes-page-shared" role="img" aria-label={label} title={label}><PeopleIcon className="notes-page-shared-icon" /></span>;
   };
   const renderFolder = (folder: KnowledgeFolder, depth: number): React.ReactNode => {
     const children = (folders.data?.folders ?? []).filter(item => item.path !== folder.path && item.parent_path === folder.path);

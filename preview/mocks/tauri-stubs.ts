@@ -126,7 +126,11 @@ export function getCurrentWebviewWindow() {
 }
 
 // @tauri-apps/plugin-dialog
-export async function open(_opts?: unknown): Promise<null> {
+export async function open(_opts?: unknown): Promise<string | null> {
+  // A browser check can name the folder the dialog would return (a real
+  // folder on the machine running the isolated daemon).
+  const chosen = (globalThis as { __WENLAN_PREVIEW_DIALOG_PATH?: unknown }).__WENLAN_PREVIEW_DIALOG_PATH;
+  if (typeof chosen === "string" && chosen) return chosen;
   console.warn("[preview] native file dialog unavailable in browser");
   return null;
 }

@@ -22,8 +22,8 @@ async function openFixturePage(page: Page, title = "Fixture architecture"): Prom
 }
 
 async function chooseRename(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Page actions" }).click();
-  await page.getByRole("menuitem", { name: "Rename page" }).click();
+  // The title itself is the rename control; the page menu has no rename item.
+  await page.getByRole("button", { name: "Rename page" }).click();
 }
 
 test("existing linked mentions show the new target title while stored text and aliases stay intact", async ({ page }, testInfo) => {
@@ -78,8 +78,7 @@ test("renames an active page while preserving its identity and body after revisi
   await page.getByRole("textbox", { name: "Page title" }).press("Enter");
   await expect(page.getByRole("button", { name: "Renaming…" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Cancel rename" })).toBeDisabled();
-  await page.getByRole("button", { name: "Page actions" }).click();
-  await expect(page.getByRole("menuitem", { name: "Edit page" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Edit page" })).toBeDisabled();
   await page.getByRole("button", { name: "Page actions" }).click();
 
   await expect(page.getByRole("heading", { level: 1, name: "Renamed architecture" })).toBeVisible();
@@ -111,8 +110,7 @@ test("cancels a page rename without changing the title", async ({ page }) => {
   await page.getByRole("textbox", { name: "Page title" }).fill("Discard this title");
   await page.getByRole("textbox", { name: "Page title" }).press("Escape");
   await expect(page.getByRole("heading", { level: 1, name: "Fixture architecture" })).toBeVisible();
-  await page.getByRole("button", { name: "Page actions" }).click();
-  await expect(page.getByRole("menuitem", { name: "Rename page" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Rename page" })).toBeVisible();
 });
 
 test("keeps a failed page rename retryable with its title and page intact", async ({ page }) => {

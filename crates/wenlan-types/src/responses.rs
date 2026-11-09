@@ -1378,6 +1378,10 @@ pub struct PageChangelogEntry {
     /// None without it, or when that version's text was not kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// For a version taken from a shared folder: the version edited here at
+    /// the same time that lost to it, kept in the page's history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrent_with: Option<i64>,
 }
 
 /// Response envelope for `/api/pages/{id}/revisions`.

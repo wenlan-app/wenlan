@@ -177,7 +177,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::agents::AgentsCmd,
     },
-    /// Manage Spaces, the separate wikis Wenlan keeps (list, add, default, move, show).
+    /// Manage Spaces, the separate wikis Wenlan keeps (list, add, default, move, show, share-sync).
     Spaces {
         #[command(subcommand)]
         cmd: commands::space::SpaceCmd,

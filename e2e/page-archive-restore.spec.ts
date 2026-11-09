@@ -55,7 +55,7 @@ test("archive keeps the tab read only; Archived pages restores, through a title 
   await expect(page.locator('[data-note-tab-group="primary"] [role="tab"]', { hasText: "History semantics" })).toHaveCount(1);
   expect(await stored(page, "page-history")).toMatchObject({ status: "archived", version: 2 });
   await page.getByRole("button", { name: "Page actions" }).click();
-  await expect(page.getByRole("menuitem", { name: "Edit page" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit page" })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "Archive page" })).toHaveCount(0);
   await page.keyboard.press("Escape");
 

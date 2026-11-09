@@ -53,7 +53,7 @@ pub struct OriginalRecord {
     /// When the AI last wrote it in the chat (unix seconds), when known.
     pub written_at: Option<i64>,
     pub imported_at: i64,
-    /// The page of the older version this one replaces (migration 161).
+    /// The page of the older version this one replaces (migration 162).
     pub replaces: Option<String>,
 }
 
@@ -193,13 +193,13 @@ impl MemoryDB {
         Ok(out)
     }
 
-    /// Migration 161: `originals.replaces`, the page of the older version a
+    /// Migration 162: `originals.replaces`, the page of the older version a
     /// kept original replaces. Idempotent.
-    pub(super) async fn migrate_161_original_versions(
+    pub(super) async fn migrate_162_original_versions(
         &self,
         prior_version: i64,
     ) -> Result<(), WenlanError> {
-        self.backup_before_migration(161, prior_version).await?;
+        self.backup_before_migration(162, prior_version).await?;
         let conn = self.conn.lock().await;
         let has_column = {
             let mut rows = conn
@@ -208,26 +208,26 @@ impl MemoryDB {
                     (),
                 )
                 .await
-                .map_err(db_error("m161 columns"))?;
+                .map_err(db_error("m162 columns"))?;
             rows.next()
                 .await
-                .map_err(db_error("m161 column row"))?
+                .map_err(db_error("m162 column row"))?
                 .is_some()
         };
         if !has_column {
             conn.execute("ALTER TABLE originals ADD COLUMN replaces TEXT", ())
                 .await
-                .map_err(db_error("m161 add column"))?;
+                .map_err(db_error("m162 add column"))?;
         }
         conn.execute(
             "CREATE INDEX IF NOT EXISTS originals_replaces ON originals(replaces)",
             (),
         )
         .await
-        .map_err(db_error("m161 index"))?;
-        conn.execute("PRAGMA user_version = 161", ())
+        .map_err(db_error("m162 index"))?;
+        conn.execute("PRAGMA user_version = 162", ())
             .await
-            .map_err(db_error("m161 bump"))?;
+            .map_err(db_error("m162 bump"))?;
         Ok(())
     }
 

@@ -222,7 +222,7 @@ pub(crate) async fn sentence_gate(
     let owned: HashSet<usize> = rows
         .iter()
         .enumerate()
-        .filter(|(_, row)| authorship::is_protected(row.author, guard))
+        .filter(|(_, row)| authorship::row_is_protected(row, guard))
         .map(|(idx, _)| idx)
         .collect();
     // The lock protects every sentence, the AI's own included.
@@ -597,7 +597,7 @@ async fn propose_as(
     let protected = page.review_required
         || rows
             .get(idx)
-            .is_some_and(|row| authorship::is_protected(row.author, guarded(&page)));
+            .is_some_and(|row| authorship::row_is_protected(row, guarded(&page)));
     if protected {
         let citations = unit_citations(db, &page, &units).await?;
         let weak = weak_reasons(&citations[idx], false);
@@ -938,6 +938,16 @@ pub async fn page_sentences(
         page.citations.iter().map(|c| (c.occurrence, c)).collect();
     let markers = occurrence_units(&page.content, &units);
     let guard = guarded(&page);
+    // Who wrote each version, to name another member of a shared Space.
+    let writers: HashMap<i64, String> = if rows.iter().any(|row| row.shared) {
+        db.list_page_history(&page.id, HISTORY_LIMIT)
+            .await?
+            .into_iter()
+            .map(|entry| (entry.version, entry.edited_by))
+            .collect()
+    } else {
+        HashMap::new()
+    };
     let sentences = units
         .iter()
         .zip(&rows)
@@ -967,7 +977,7 @@ pub async fn page_sentences(
                 since_version: row.since_version,
                 confidence: row.confidence,
                 accepted: row.accepted,
-                protected: authorship::is_protected(row.author, guard),
+                protected: authorship::row_is_protected(row, guard),
                 evidence: evidence_of(&citations),
                 weak: weak_reasons(&citations, needs_citation(row, unit, guard)),
                 citations,
@@ -977,6 +987,10 @@ pub async fn page_sentences(
                     .filter(|p| p.sentence_hash == unit.hash)
                     .map(|p| p.id.clone())
                     .collect(),
+                shared_by: row
+                    .shared
+                    .then(|| writers.get(&row.since_version).cloned())
+                    .flatten(),
             }
         })
         .collect();
