@@ -97,6 +97,14 @@ async fn ux_graph_7_the_backlog_report_counts_without_changing_anything() {
         now - 500,
     )
     .await;
+    for (id, agent, space, at) in [
+        ("mem_e", "claude-code", "notes", now - 4_000),
+        ("mem_f", "claude-code", "notes", now - 3_000),
+        ("mem_g", "obsidian", "daily", now - 4_000),
+        ("mem_h", "obsidian", "daily", now - 3_000),
+    ] {
+        remember(&db, id, "# Session learnings", Some(agent), space, at).await;
+    }
     {
         let conn = db.conn.lock().await;
         // mem_a was written before its day: a plan whose day has passed.
@@ -126,7 +134,7 @@ async fn ux_graph_7_the_backlog_report_counts_without_changing_anything() {
     }
 
     let report = db.backlog_report(now).await.unwrap();
-    assert_eq!(report.memories, 4);
+    assert_eq!(report.memories, 8);
     // Never across Spaces: mem_d is in another Space.
     assert!(
         report
@@ -153,6 +161,23 @@ async fn ux_graph_7_the_backlog_report_counts_without_changing_anything() {
         ["mem_a"]
     );
     assert_eq!(report.passed[0].author, SentenceAuthor::Ai);
+    // Two notes that share only a heading are not copies: the newer stays,
+    // and the older is offered to hide only when an AI wrote it.
+    let heading = |hide: &str| {
+        report
+            .pairs
+            .iter()
+            .find(|p| p.hide.id == hide)
+            .cloned()
+            .expect("the headings pair")
+    };
+    let ai = heading("mem_e");
+    assert!(!ai.exact);
+    assert_eq!(ai.keep.id, "mem_f");
+    assert!(report.hideable().any(|p| p.hide.id == "mem_e"));
+    let imported = heading("mem_g");
+    assert_eq!(imported.keep.id, "mem_h");
+    assert!(report.hideable().all(|p| p.hide.id != "mem_g"));
     assert_eq!(
         report.contradictions,
         [
@@ -215,7 +240,7 @@ async fn backlog_dry_run() {
     out.push_str(&format!(
         "## Copies (similarity ≥ {BACKLOG_MIN_SIMILARITY}, same Space)\n\n\
          {} pairs. The later copy was written by: {:?}.\n\
-         May be hidden (the later copy is an AI's or an import's): {} — {} exact, {} paraphrase (the model would decide).\n\
+         May be hidden (an AI's, or an import's exact copy): {} — {} exact, {} paraphrase (the model would decide).\n\
          Never hidden (a person's or unknown writer's): {}.\n\n",
         report.pairs.len(),
         by_author,

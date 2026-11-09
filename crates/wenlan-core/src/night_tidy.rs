@@ -33,12 +33,15 @@ pub fn date_passed(event_date: i64, now: i64) -> bool {
     event_date + 86_400 <= now
 }
 
-/// A memory is a plan whose day has passed when, as it was written, its day
-/// had not begun yet, and now that day is over. "Merged on 11/6" written on
+/// A memory is a plan whose day has passed when it was written a whole day
+/// before its day, and now that day is over. "Merged on 11/6" written on
 /// 11/7 says what happened, not what was planned: it is not one (the
-/// 11-08 dry run on the owner's copy found most passed dates were such facts).
+/// 11-08 dry run on the owner's copy found most passed dates were such
+/// facts). The whole day mirrors [`date_passed`]: `event_date` is a UTC
+/// midnight, so a fact written early that day in a timezone ahead of UTC
+/// lands before it (one such fact on the owner's copy, 11-09).
 pub fn plan_passed(event_date: i64, created_at: i64, now: i64) -> bool {
-    created_at < event_date && date_passed(event_date, now)
+    created_at + 86_400 <= event_date && date_passed(event_date, now)
 }
 
 /// A memory offered to the night, as the prompt shows it.

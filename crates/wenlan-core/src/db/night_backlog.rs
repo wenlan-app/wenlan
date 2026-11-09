@@ -6,8 +6,9 @@
 //! `undo_backlog` takes all of it back.
 //!
 //! Four kinds of old work:
-//! - near-identical memories in one Space (the later copy would hide behind
-//!   the earlier; a person's or unknown writer's memory is never hidden);
+//! - near-identical memories in one Space (an exact copy hides behind the
+//!   earlier, an older paraphrase behind the newer; a person's or unknown
+//!   writer's memory is never hidden);
 //! - memories about a date that has passed (only an AI's are rewritten);
 //! - contradiction checks still queued from code that no longer runs;
 //! - night points written before nights marked them as Wenlan's own.
@@ -46,13 +47,17 @@ pub struct BacklogMemory {
     pub author: SentenceAuthor,
 }
 
-/// Two memories that say the same: `hide` is the later copy.
+/// Two memories that say the same. For an exact copy `hide` is the later;
+/// for a paraphrase it is the earlier, since the newer says it as it stands
+/// now (the 11-09 dry run found later handoffs fuller, such as "updated
+/// 11-06" over the 11-05 one).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BacklogPair {
     pub keep: BacklogMemory,
     pub hide: BacklogMemory,
     pub similarity: f32,
-    /// The texts are the same once case, spaces and punctuation are set aside.
+    /// The texts are the same once case, spaces and punctuation are set
+    /// aside, and say more than a heading.
     pub exact: bool,
 }
 
@@ -82,10 +87,11 @@ pub struct BacklogReport {
 }
 
 impl BacklogReport {
-    /// The pairs the pass may act on: the later copy is not a person's or an
-    /// unknown writer's, and an imported original goes only when it is the
-    /// same text again (an import made twice). Notes that only look alike,
-    /// such as one daily template on different days, stay (11-08 dry run).
+    /// The pairs the pass may act on: the one to hide is not a person's or
+    /// an unknown writer's, and an imported original goes only when it is
+    /// the same text again (an import made twice). Notes that only look
+    /// alike, such as one daily template on different days, stay (11-08 dry
+    /// run).
     pub fn hideable(&self) -> impl Iterator<Item = &BacklogPair> {
         self.pairs.iter().filter(|pair| {
             may_hide(pair.hide.author) && (pair.exact || pair.hide.author == SentenceAuthor::Ai)
@@ -106,6 +112,13 @@ fn unit(vector: Vec<f32>) -> Vec<f32> {
 /// Only what an AI wrote or an import copied in may be hidden.
 pub fn may_hide(author: SentenceAuthor) -> bool {
     matches!(author, SentenceAuthor::Ai | SentenceAuthor::Original)
+}
+
+/// Only a heading line, such as a daily note's title: two different notes
+/// can share it, so the same heading is not a copy (11-09 dry run).
+fn heading_only(text: &str) -> bool {
+    let text = text.trim();
+    text.starts_with('#') && !text.contains('\n')
 }
 
 /// Text with case, spacing and punctuation set aside, for telling exact
@@ -219,15 +232,22 @@ impl MemoryDB {
                     if similarity < BACKLOG_MIN_SIMILARITY {
                         continue;
                     }
-                    // The earlier stays; ties go to the smaller id, so the
-                    // report is the same each run.
-                    let (keep, hide) = if (a.created_at, &a.id) <= (b.created_at, &b.id) {
+                    // Ties go to the smaller id, so the report is the same
+                    // each run.
+                    let (earlier, later) = if (a.created_at, &a.id) <= (b.created_at, &b.id) {
                         (a, b)
                     } else {
                         (b, a)
                     };
+                    let exact =
+                        normalized(&a.text) == normalized(&b.text) && !heading_only(&a.text);
+                    let (keep, hide) = if exact {
+                        (earlier, later)
+                    } else {
+                        (later, earlier)
+                    };
                     report.pairs.push(BacklogPair {
-                        exact: normalized(&keep.text) == normalized(&hide.text),
+                        exact,
                         keep: keep.clone(),
                         hide: hide.clone(),
                         similarity,
@@ -297,8 +317,8 @@ impl MemoryDB {
     }
 }
 
-/// What the owner OK'd the pass to do, from the report: the later copies to
-/// hide behind the earlier, and the memories about a passed date each with
+/// What the owner OK'd the pass to do, from the report: the copies to hide
+/// behind the one that stays, and the memories about a passed date each with
 /// the memory the caller already wrote to stand for it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BacklogPlan {
@@ -312,7 +332,7 @@ pub struct BacklogPlan {
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BacklogPass {
     pub at: i64,
-    /// Merges (a copy hidden behind its earlier one) and updates, the same
+    /// Merges (a copy hidden behind the one that stays) and updates, the same
     /// record a night keeps.
     pub changes: Vec<NightChange>,
     /// Contradiction checks set to expired.

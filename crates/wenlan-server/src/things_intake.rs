@@ -971,13 +971,24 @@ pub async fn run_old_memory_pass(
             continue;
         };
         for change in changes {
-            // Only "these two say the same" is taken, and only as hiding the
-            // later copy: an old memory is never rewritten here.
-            if let night_tidy::TidyChange::Merge { items: [a, b], .. } = change {
-                if a / 2 == b / 2 {
-                    let pair = batch[a / 2];
-                    plan.hide.push((pair.keep.id.clone(), pair.hide.id.clone()));
+            // "These two say the same" or "the newer says the older no
+            // longer holds" is taken, and only as hiding the older behind
+            // the newer (`keep` comes first in each group): an old memory is
+            // never rewritten here.
+            let same_pair = match change {
+                night_tidy::TidyChange::Merge { items: [a, b], .. } if a / 2 == b / 2 => {
+                    Some(a / 2)
                 }
+                night_tidy::TidyChange::Replace { keep, drop }
+                    if keep % 2 == 0 && drop == keep + 1 =>
+                {
+                    Some(keep / 2)
+                }
+                _ => None,
+            };
+            if let Some(i) = same_pair {
+                let pair = batch[i];
+                plan.hide.push((pair.keep.id.clone(), pair.hide.id.clone()));
             }
         }
     }

@@ -132,6 +132,10 @@ fn only_a_plan_written_before_its_day_counts_as_passed() {
         "planned the day before"
     );
     assert!(
+        !plan_passed(day, day - 3_600, later),
+        "written that day where the clock is ahead of UTC"
+    );
+    assert!(
         !plan_passed(day, day + 3_600, later),
         "written that day: it says what happened"
     );
