@@ -41,6 +41,8 @@ pub struct QueryRecallOutput {
     pub results: Vec<QueryHit>,
     pub supplemental_pages: Vec<QueryHit>,
     /// Pages the supplemental pages link to, each cut to its first paragraph.
+    /// Left out when there are none, so older readers see the same shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_pages: Vec<QueryLinkedPage>,
 }
 
