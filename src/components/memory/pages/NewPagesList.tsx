@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useTranslation } from "react-i18next";
 import { CheckCircle } from "@phosphor-icons/react";
-import type { Page } from "../../../lib/tauri";
+import type { Page, SharedStatus } from "../../../lib/tauri";
+import { PeopleIcon } from "../sharing/SharedWithLine";
+import { others, pageShare, spaceShare } from "../sharing/sharing";
 import { PageIcon } from "../assets/PageIcon";
 import { askablePages } from "../../onboarding/useGettingStartedState";
 import { addedWhen } from "./WorkingOn";
@@ -82,12 +84,15 @@ export function NewPagesList({
   onSelectPage,
   onBrowseAll,
   justWritten,
+  shares,
 }: {
   readonly pages: readonly Page[];
   readonly onSelectPage: (pageId: string) => void;
   readonly onBrowseAll?: () => void;
   /** Pages the current run wrote. */
   readonly justWritten?: ReadonlySet<string>;
+  /** What this Wenlan shares; a shared page gets a small people mark. */
+  readonly shares?: readonly SharedStatus[];
 }) {
   const { t, i18n } = useTranslation();
   const rows = recentPages(pages);
@@ -106,6 +111,8 @@ export function NewPagesList({
         {rows.map(({ page, byAi, at }) => {
           const fresh = justWritten?.has(page.id) === true;
           const preview = pagePreview(page);
+          const share = pageShare(shares, page.id) ?? (page.space ? spaceShare(shares, page.space) : undefined);
+          const sharedWith = share ? others(share).map((member) => member.name).join(", ") : "";
           return (
             <li key={page.id}>
               <button
@@ -127,6 +134,7 @@ export function NewPagesList({
                 {fresh ? <span className="wiki-new-pages-meta">{t("pages.overview.justWritten")}</span>
                   : (
                     <span className="wiki-new-pages-by">
+                      {share ? <span className="wiki-new-pages-shared" role="img" aria-label={sharedWith ? t("sharing.sharedMarker", { names: sharedWith }) : t("sharing.withAlone")} title={sharedWith ? t("sharing.sharedMarker", { names: sharedWith }) : t("sharing.withAlone")}><PeopleIcon className="wiki-new-pages-shared-icon" /></span> : null}
                       {byAi ? <>{t("pages.overview.aiWrote")}<span className="wiki-new-pages-dot" aria-hidden="true"> · </span></> : null}
                       {at > 0 ? addedWhen(i18n.language, at) : null}
                     </span>

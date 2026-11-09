@@ -481,6 +481,21 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/spaces/{name}/wiki/repo", "/api/spaces/{name}/wiki/suggest",
     "/api/spaces/{name}/wiki/publish", "/api/spaces/{name}/wiki/run",
     "/api/spaces/{name}/wiki/docs",
+    // One sync pass of a Space with its shared folder: it writes that
+    // Space's pages into the folder and takes other members' versions, and
+    // returns counts only.
+    "/api/spaces/{name}/shared/sync",
+    // How a Space is shared and its last sync pass: the folder, the member
+    // names, when, counts and why it is paused; DELETE stops sharing it
+    // from here. No page text.
+    "/api/spaces/{name}/shared",
+    // The same for one page shared alone; the sync pass takes or writes
+    // that page only and returns counts.
+    "/api/pages/{id}/shared/sync", "/api/pages/{id}/shared",
+    // Everything shared from here (folders, member names, last passes) and
+    // what a folder shares before joining it (a name and member names).
+    // No page text.
+    "/api/shared", "/api/shared/folder",
     // Setting up a daily update on GitHub: which settings the repository
     // has, as booleans, and the last run's links. A token goes to GitHub
     // and is never returned.

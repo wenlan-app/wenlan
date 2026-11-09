@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useId, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { IndexedFileInfo, Page } from "../../../lib/tauri";
+import type { IndexedFileInfo, Page, SharedStatus } from "../../../lib/tauri";
 import type { AssetLens } from "../../../lib/assetLens";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
 import "../assets/assetCards.css";
@@ -21,9 +21,11 @@ type Props = {
   onSelectPage: (id: string) => void;
   onOpenSource?: (file: IndexedFileInfo) => void;
   onRegisterPreviewFlush?: (flush: (() => Promise<boolean>) | null) => void;
+  /** Everything shared, so a row can say who else changed the page. */
+  shares?: readonly SharedStatus[];
 };
 
-export function SpaceProjectContent({ copy, spaceId, spaceName, pages, pagesPending, pagesError, onRetryPages, onSelectPage, onOpenSource, onRegisterPreviewFlush }: Props) {
+export function SpaceProjectContent({ copy, spaceId, spaceName, pages, pagesPending, pagesError, onRetryPages, onSelectPage, onOpenSource, onRegisterPreviewFlush, shares }: Props) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<"notes" | "sources">("notes");
   const [lenses, setLenses] = useState<Readonly<Record<string, AssetLens>>>({});
@@ -60,7 +62,7 @@ export function SpaceProjectContent({ copy, spaceId, spaceName, pages, pagesPend
       <AssetLensToggle value={lens} onChange={setLens} />
     </div>
     <div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-${tab}`}>
-      {tab === "sources" ? <SpaceSources key={`${spaceId}:${spaceName}`} spaceId={spaceId} spaceName={spaceName} lens={lens} onOpenSource={onOpenSource} onRegisterPreviewFlush={registerComposedPreviewFlush} /> : pagesPending ? <p role="status" className="space-dossier-empty">{copy.loading}</p> : pagesError ? <div role="alert"><p className="space-dossier-empty">{copy.relatedLoadError}</p><button type="button" className="page-editor-action" onClick={onRetryPages}>{t("sourceAccess.retry")}</button></div> : <SpaceDossierContent copy={copy} pages={pages} lens={lens} navigation={{ onSelectPage }} />}
+      {tab === "sources" ? <SpaceSources key={`${spaceId}:${spaceName}`} spaceId={spaceId} spaceName={spaceName} lens={lens} onOpenSource={onOpenSource} onRegisterPreviewFlush={registerComposedPreviewFlush} /> : pagesPending ? <p role="status" className="space-dossier-empty">{copy.loading}</p> : pagesError ? <div role="alert"><p className="space-dossier-empty">{copy.relatedLoadError}</p><button type="button" className="page-editor-action" onClick={onRetryPages}>{t("sourceAccess.retry")}</button></div> : <SpaceDossierContent copy={copy} pages={pages} lens={lens} navigation={{ onSelectPage }} shares={shares} />}
     </div>
   </>;
 }

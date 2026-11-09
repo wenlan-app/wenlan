@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { TFunction } from "i18next";
-import type { PageChangelogEntry, PageHistoryItem } from "../../../lib/tauri";
+import type { PageChangelogEntry, PageHistoryItem, SharedStatus } from "../../../lib/tauri";
+import { sharedWriter } from "../sharing/sharing";
 import { revisionWriterLabel } from "./format";
 
 // The writers the daemon records for a person (app editor, vault file edit).
 const PERSON_WRITERS = new Set(["manual_edit", "fs_edit", "human"]);
 
-/** Who or what made one change, in the person's words. */
-export function historyItemLabel(t: TFunction, item: PageHistoryItem): string {
+/** Who or what made one change, in the person's words. A change taken
+ * from a shared folder names the member who made it. */
+export function historyItemLabel(
+  t: TFunction,
+  item: PageHistoryItem,
+  shares?: readonly SharedStatus[],
+): string {
   if (item.kind === "source_update") {
     return t("pageHistory.sourceUpdate", { title: item.source?.title || t("pageHistory.untitledSource") });
   }
-  return revisionWriterLabel(t, item.edited_by ?? "", item.agent);
+  return sharedWriter(item.edited_by, shares, t) ?? revisionWriterLabel(t, item.edited_by ?? "", item.agent);
 }
 
 /**

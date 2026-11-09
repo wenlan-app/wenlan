@@ -205,8 +205,8 @@ describe("PageDetail with note bases", () => {
     const { user, onOpenReview } = renderPage();
 
     await screen.findByText("Pricing summary");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
+    await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
+    await user.click(await screen.findByRole("button", { name: "Update from sources" }));
 
     expect(await screen.findByText("Preview ready to review")).toBeInTheDocument();
     expect(onOpenReview).toHaveBeenCalledWith("revision:note_a");
@@ -218,8 +218,8 @@ describe("PageDetail with note bases", () => {
     const { user, onOpenReview } = renderPage();
 
     await screen.findByText("Pricing summary");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
+    await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
+    await user.click(await screen.findByRole("button", { name: "Update from sources" }));
 
     expect(await screen.findByText("Page already up to date.")).toBeInTheDocument();
     expect(onOpenReview).not.toHaveBeenCalled();
@@ -230,8 +230,8 @@ describe("PageDetail with note bases", () => {
     const { user } = renderPage({ source_memory_ids: [], basis: [{ ...pendingBasis, state: "ok" }] });
 
     await screen.findByText("Pricing summary");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    expect(screen.getByRole("menuitem", { name: "Update from sources" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
+    expect(await screen.findByRole("button", { name: "Update from sources" })).toBeEnabled();
   });
 
   it("hides updating from sources when every source note is gone and there are no memories", async () => {
@@ -242,9 +242,9 @@ describe("PageDetail with note bases", () => {
     });
 
     await screen.findByText("Pricing summary");
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit page" })).toBeVisible();
-    expect(screen.queryByRole("menuitem", { name: "Update from sources" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: i18n.t("pageInspector.info") }));
+    await screen.findByRole("dialog", { name: i18n.t("pageInspector.label") });
+    expect(screen.queryByRole("button", { name: "Update from sources" })).toBeNull();
   });
 
   it("reads has_basis as a plain source update in the dateline, and keeps other blocks as blocked", async () => {
