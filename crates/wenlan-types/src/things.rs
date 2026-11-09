@@ -112,6 +112,27 @@ pub struct ThingDetailResponse {
     /// out.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub unread: usize,
+    /// What its nights tidied that can still be taken back, one change at a
+    /// time, from the memory that stands now (UX-GRAPH-7). Older daemons
+    /// leave it out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tidied: Vec<ThingTidy>,
+}
+
+/// One tidy on a thing's page: the memory that stands now, and what it took
+/// the place of, hidden and kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingTidy {
+    pub kind: NightTidyKind,
+    pub memory_id: String,
+    pub replaced: Vec<ThingReplaced>,
+}
+
+/// A memory a tidy hid, with its text, so the page can say what was there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThingReplaced {
+    pub source_id: String,
+    pub text: String,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -196,6 +217,36 @@ pub struct ThingLastNight {
     pub written: Vec<String>,
     /// The links it made that still stand.
     pub linked: Vec<NightLinkMade>,
+    /// The memories it tidied (UX-GRAPH-7): merged, replaced or brought up
+    /// to date. Empty from older daemons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tidied: Vec<NightTidied>,
+}
+
+/// How a night tidied memories an AI wrote (UX-GRAPH-7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NightTidyKind {
+    /// Two that said the same became one.
+    Merge,
+    /// A newer one took the place of one it says no longer holds.
+    Replace,
+    /// One whose planned date passed was brought up to date.
+    Update,
+}
+
+/// One tidy a night made: what is hidden now, and what stands for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NightTidied {
+    pub kind: NightTidyKind,
+    /// The memory that stands now, as its `source_id`.
+    pub memory_id: String,
+    /// The memories it took the place of, hidden and kept.
+    pub replaced: Vec<String>,
+    /// What those said, in the same order, so Replay can show the words that
+    /// went (one entry per `replaced` still hidden). Empty from older daemons.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub said: Vec<String>,
 }
 
 /// `POST /api/things/nights/undo`: the person takes back the whole night on
@@ -236,6 +287,31 @@ pub struct NightLinksBackfill {
     pub linked: usize,
     /// Things whose model call failed; start it again for those.
     pub failed: usize,
+}
+
+/// The one-time pass over old memories (UX-GRAPH-7), while it stands:
+/// `GET`/`POST /api/things/old-pass`, and what `POST .../undo` took back.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OldMemoryPass {
+    /// When it ran, Unix seconds.
+    pub at: i64,
+    /// Later copies hidden behind an earlier one.
+    pub merged: usize,
+    /// Memories about a passed date said again in the past tense.
+    pub updated: usize,
+    /// Contradiction checks still waiting from code that no longer runs, set
+    /// to expired.
+    pub expired: usize,
+    /// Old night points taken off the review list.
+    pub confirmed: usize,
+    /// Old night points filed where their thing is.
+    pub filed: usize,
+}
+
+/// `GET /api/things/old-pass`: the pass, when one stands.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OldMemoryPassResponse {
+    pub pass: Option<OldMemoryPass>,
 }
 
 /// `POST /api/things/points/connect/undo`: the links taken back.

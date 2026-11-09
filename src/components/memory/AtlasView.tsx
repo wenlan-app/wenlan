@@ -38,7 +38,7 @@ import AtlasInspector from "./AtlasInspector";
 import AtlasSelect from "./AtlasSelect";
 import AtlasTooltip from "./AtlasTooltip";
 import { entityTypeHidden, filterGraphEntityTypes } from "../../lib/graph/typeFilter";
-import { getKnowledgeGraph, listThingNightPoints, undoNights } from "../../lib/tauri";
+import { getKnowledgeGraph, getOldMemoryPass, listThingNightPoints, undoNights, undoOldMemoryPass } from "../../lib/tauri";
 import { SteepMoon } from "./things/ThingSteeped";
 import {
   growMs,
@@ -48,9 +48,11 @@ import {
   ranOvernight,
   replayStops,
   REPLAY_TIMING,
+  tidyMs,
   todayStartSeconds,
   type ReplayStop,
 } from "../../lib/graph/lastNight";
+import { GHOST_STROKE, ghostAt, ghostPhase, ghostRests, ghostsMoving, saidLine, swellOf, type ReplayGhost } from "../../lib/graph/tidyGhosts";
 import type { Entity, KnowledgeGraph, ThingNightPoints } from "../../lib/tauri";
 import {
   buildKnowledgeGraphModel,
@@ -379,13 +381,31 @@ function prefersReducedMotion(): boolean {
 const playedReplays = new Set<number>();
 
 /** What Replay is doing: the stops it plays, its timers, the things whose
- *  points it shows, and the view to go back to (UX-GRAPH-6). */
+ *  points it shows, and the view to go back to (UX-GRAPH-6); the tidies it
+ *  is showing and their paint loop (UX-GRAPH-7). */
 interface ReplayRun {
   readonly stops: readonly ReplayStop[];
   readonly timers: number[];
   readonly things: ReadonlySet<string>;
   readonly overview: AtlasViewpoint;
+  ghosts: readonly ReplayGhost[];
+  frame: number;
 }
+
+/** How long the map's line tells of the pass over old memories. */
+const OLD_PASS_SHOWN_SECS = 2 * 86_400;
+
+/** A ghost's size when what it slides into is not drawn, px. */
+/** How wide a map label runs, in the map's label font; 0 without a canvas (jsdom). */
+let labelMeasurer: CanvasRenderingContext2D | null | undefined;
+const measureLabel = (text: string): number => {
+  if (labelMeasurer === undefined) {
+    labelMeasurer = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+    if (labelMeasurer) labelMeasurer.font = NODE_LABEL_FONT;
+  }
+  return labelMeasurer ? labelMeasurer.measureText(text).width : text.length * 7;
+};
+const GHOST_FALLBACK_RADIUS = 5;
 
 export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack }: AtlasViewProps) {
   const { t } = useTranslation();
@@ -651,7 +671,33 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       void queryClient.invalidateQueries({ queryKey: ["knowledge-graph"] });
     },
   });
-  const nightShown = (nightCount.written > 0 || nightCount.connected > 0) && !undoNight.isPending && !undoNight.isSuccess;
+  const nightShown = Object.values(nightCount).some((count) => count > 0) && !undoNight.isPending && !undoNight.isSuccess;
+  // The one-time pass over old memories (UX-GRAPH-7): for two days after it
+  // ran, the line says what it merged and updated and offers to take it all
+  // back, when no night has a line of its own. An older daemon has none.
+  const { data: oldPass = null } = useQuery({
+    queryKey: ["old-memory-pass"],
+    queryFn: async () => {
+      try {
+        return (await getOldMemoryPass()) ?? null;
+      } catch {
+        return null;
+      }
+    },
+    refetchInterval: 120_000,
+  });
+  const undoOldPass = useMutation({
+    mutationFn: undoOldMemoryPass,
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["old-memory-pass"] });
+      void queryClient.invalidateQueries({ queryKey: ["thing-night-points"] });
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-graph"] });
+    },
+  });
+  const oldPassShown = oldPass !== null
+    && oldPass.merged + oldPass.updated > 0
+    && Date.now() / 1000 - oldPass.at < OLD_PASS_SHOWN_SECS
+    && !undoOldPass.isPending && !undoOldPass.isSuccess;
   // A fresh read after Undo says what is left; the line follows it again.
   const resetUndo = undoNight.reset;
   const undoDone = undoNight.isSuccess;
@@ -943,6 +989,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       timers: [],
       things: new Set(stops.map((stop) => stop.thing)),
       overview: captureAtlasViewpoint(renderer, drawn),
+      ghosts: [],
+      frame: 0,
     };
     replayRef.current = run;
     overviewRef.current = run.overview;
@@ -957,6 +1005,8 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         duration: 0,
         padding: 40,
       });
+      // What the night tidied rests beside what stands now, still, until Done.
+      run.ghosts = stops.flatMap((stop) => stop.tidies.map((tidy) => ({ tidy, thing: stop.thing, startAt: 0, still: true })));
       setReplaying("marked");
       renderer.refresh();
       return;
@@ -980,6 +1030,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       });
       at += beat.camera;
       if (stop.grow.length > 0) at += growMs(stop.grow.length) + beat.holdGrown;
+      // UX-GRAPH-7: what survivors grew is there; what the night hid comes
+      // in beside it and is taken in, one tidy after another.
+      if (stop.tidies.length > 0) {
+        after(at, () => {
+          const now = performance.now();
+          const gap = growStagger(stop.tidies.length);
+          playGhosts(run, stop.tidies.map((tidy, index) => ({ tidy, thing: stop.thing, startAt: now + index * gap, still: false })));
+        });
+        at += tidyMs(stop.tidies.length) + beat.holdTidied;
+      }
       if (stop.fly.length > 0) {
         after(at, () => {
           const view = sigmaRef.current;
@@ -995,6 +1055,20 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     after(at, () => endReplayRef.current("return"));
   };
   startReplayRef.current = startReplay;
+  /** Shows these tidies, painting every frame while one moves; when they
+   *  are all in, nothing of them is left. */
+  const playGhosts = (run: ReplayRun, ghosts: readonly ReplayGhost[]) => {
+    cancelAnimationFrame(run.frame);
+    run.ghosts = ghosts;
+    const tick = () => {
+      if (replayRef.current !== run) return;
+      const moving = ghostsMoving(run.ghosts, performance.now());
+      if (!moving) run.ghosts = [];
+      sigmaRef.current?.refresh();
+      if (moving) run.frame = requestAnimationFrame(tick);
+    };
+    run.frame = requestAnimationFrame(tick);
+  };
   /** Replay ends: Skip, Esc and its own end take the camera back; touching
    *  the map leaves it where the person put it. Everything lands, and what
    *  the map shows goes back to its usual rules. */
@@ -1002,6 +1076,9 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     const run = replayRef.current;
     if (!run) return;
     for (const timer of run.timers) window.clearTimeout(timer);
+    // Ghosts go and survivors land at full size, wherever a tidy had got to.
+    cancelAnimationFrame(run.frame);
+    run.ghosts = [];
     growRef.current([], 0, 0);
     const renderer = sigmaRef.current;
     const drawn = graphRef.current;
@@ -1319,6 +1396,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     // A rebuild while Replay plays (a fresh read landing) ends it where it is.
     if (replayRef.current) {
       for (const timer of replayRef.current.timers) window.clearTimeout(timer);
+      cancelAnimationFrame(replayRef.current.frame);
       replayRef.current = null;
       selectedRef.current = null;
       setSelectedThing(null);
@@ -2036,7 +2114,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         if (attrs.night === true && lodRef.current.phase !== "overview" && !display.hidden) display.forceLabel = true;
         const floor = lodRef.current.phase === "overview" && attrs.landmark ? minimumGraphRadius * 2 : minimumGraphRadius;
         const cap = nodeSizeCapPx(attrs, node === hoverStateRef.current.hovered);
-        const size = Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel);
+        const ghosts = replayRef.current?.ghosts;
+        // While Replay shows what a tidy took away, what stands for it reads
+        // as short as the old words beside it, one line each (Qi-Xuan
+        // 11-08: easy to compare at a glance); its full words come back
+        // when Replay ends.
+        if (ghosts && attrs.label && ghosts.some((ghost) => ghost.tidy.survivor === node && ghost.tidy.said.length > 0)) {
+          display.label = saidLine(String(attrs.label), measureLabel);
+          display.forceLabel = true;
+        }
+        const size = Math.min(Math.max(display.size, floor), cap * graphUnitsPerPixel) * (ghosts && ghosts.length > 0 ? swellOf(ghosts, node, performance.now()) : 1);
         if (growth && growth.targets.has(node)) return { ...display, size: size * Math.max(0.15, growth.progress.get(node) ?? 0) };
         return { ...display, size };
       },
@@ -2065,6 +2152,77 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       (window as unknown as Record<string, unknown>).__ATLAS_SIGMA = renderer;
     }
 
+    // Replay's tidies (UX-GRAPH-7): each ghost a hollow ring in the colour
+    // of what stands now, placed from where that is on screen now, so a
+    // camera move carries them along. Drawn over everything, then gone.
+    const drawGhosts = () => {
+      const run = replayRef.current;
+      if (!run || run.ghosts.length === 0) return;
+      const ctx = overlay.getContext("2d");
+      if (!ctx) return; // jsdom
+      const now = performance.now();
+      ctx.save();
+      ctx.lineWidth = GHOST_STROKE;
+      for (const ghost of run.ghosts) {
+        const phase = ghostPhase(ghost, now - ghost.startAt);
+        if (phase.alpha <= 0) continue;
+        const thing = renderer.getNodeDisplayData(ghost.thing);
+        const centre = thing ? renderer.framedGraphToViewport(thing) : null;
+        const shown = ghost.tidy.survivor ? renderer.getNodeDisplayData(ghost.tidy.survivor) : undefined;
+        const standing = shown && !shown.hidden ? shown : null;
+        // Filtered off the map: no motion, as the line does not count it.
+        // A replace whose kept memory is not drawn is pushed off the thing.
+        if (!standing && (ghost.tidy.kind !== "replace" || !centre)) continue;
+        const at = standing ? renderer.framedGraphToViewport(standing) : centre!;
+        const radius = standing ? renderer.scaleSize(standing.size) / swellOf([ghost], ghost.tidy.survivor!, now) : GHOST_FALLBACK_RADIUS;
+        // An update's old version spreads out in the bridge colour, so it
+        // never reads as a replace's ghost.
+        ctx.strokeStyle = ghost.tidy.kind === "update" ? paletteRef.current.bridge : standing?.color ?? paletteRef.current.memory;
+        ctx.globalAlpha = phase.alpha;
+        ghostRests(standing ? at : null, centre, radius, ghost.tidy.ghosts).forEach((rest, index) => {
+          const spot = ghostAt(rest, at, phase.slide);
+          const ring = radius * phase.scale;
+          ctx.beginPath();
+          ctx.arc(spot.x, spot.y, ring, 0, Math.PI * 2);
+          ctx.stroke();
+          // The words that went, faint and struck through, moving with
+          // their ghost: on its outer side, or above the dot for an update
+          // so they never sit on the words that stand now.
+          const said = ghost.tidy.said[index];
+          if (!said || phase.words <= 0) return;
+          ctx.font = NODE_LABEL_FONT;
+          const text = saidLine(said, (t) => ctx.measureText(t).width);
+          const width = ctx.measureText(text).width;
+          const update = ghost.tidy.kind === "update";
+          const left = !update && spot.x < at.x;
+          const x = update ? spot.x + radius + 4 : left ? spot.x - ring - 6 - width : spot.x + ring + 6;
+          const y = update ? spot.y - radius - 12 : spot.y;
+          ctx.save();
+          ctx.globalAlpha = phase.words;
+          ctx.textBaseline = "middle";
+          ctx.textAlign = "left";
+          // A halo in the map's ground keeps them readable over anything
+          // drawn underneath; the strike stays light so the words lead.
+          ctx.strokeStyle = paletteRef.current.surface;
+          ctx.lineWidth = 4;
+          ctx.lineJoin = "round";
+          ctx.strokeText(text, x, y);
+          // A touch quieter than the words that stand now beside them.
+          ctx.globalAlpha = phase.words * 0.7;
+          ctx.fillStyle = paletteRef.current.label;
+          ctx.fillText(text, x, y);
+          ctx.globalAlpha = phase.words * 0.45;
+          ctx.strokeStyle = paletteRef.current.label;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, y + 0.5);
+          ctx.lineTo(x + width, y + 0.5);
+          ctx.stroke();
+          ctx.restore();
+        });
+      }
+      ctx.restore();
+    };
     const drawOverlay = (scene: CartographyScene) => {
       const ctx = overlay.getContext("2d");
       if (!ctx) return; // jsdom
@@ -2127,7 +2285,16 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         const display = renderer.getNodeDisplayData(thing);
         return display ? renderer.framedGraphToViewport(display) : null;
       };
-      const marks = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current, centreAt);
+      const nightMarksNow = nightMarks(graph, drawnAt, hoverStateRef.current, { width, height }, sentencesFor, selectedRef.current, undefined, showWorkingRef.current, centreAt);
+      // While Replay shows what a tidy took away, what stands for it reads
+      // as short as the old words beside it, one line each (Qi-Xuan 11-08:
+      // easy to compare at a glance); its whole sentence comes back after.
+      const tidyGhosts = replayRef.current?.ghosts ?? [];
+      const shortened = new Set(tidyGhosts.filter((ghost) => ghost.tidy.said.length > 0 && ghost.tidy.survivor).map((ghost) => ghost.tidy.survivor!));
+      const marks = shortened.size === 0 ? nightMarksNow : {
+        ...nightMarksNow,
+        sentences: nightMarksNow.sentences.map((sentence) => (shortened.has(sentence.id) ? { ...sentence, text: saidLine(sentence.text, measureLabel), dim: false } : sentence)),
+      };
       // Sentences keep off the other bodies on screen, not only the labels;
       // with a thing picked, only off what is lit: the dimmed rest is
       // background a sentence may cross.
@@ -2166,6 +2333,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     });
     renderer.on("afterRender", () => {
       drawOverlay(currentScene());
+      drawGhosts();
     });
     // The opening frame follows the hierarchy's meaningful components. A
     // later rebuild restores its saved viewpoint below; only a fresh graph
@@ -2661,15 +2829,25 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
     ...((laidRegionCount ?? regionCount) > 0 ? [t("atlas.countRegions", { count: laidRegionCount ?? regionCount })] : []),
   ].join(" · ");
   const dropdownOpen = searchFocused && query.trim().length > 0;
-  // "Last night: 8 points written, 5 connected"; a part that is zero is left out.
+  // "Last night: 8 points written, 5 connected, 2 merged"; a part that is zero is left out.
   const nightOvernight = ranOvernight(tonight.map((thing) => thing.last_night?.at ?? 0));
   const nightSentence = t("atlas.night.sentence", {
     when: t(nightOvernight ? "atlas.night.lastNight" : "atlas.night.today"),
     what: [
       ...(nightCount.written > 0 ? [t("atlas.night.written", { count: nightCount.written })] : []),
       ...(nightCount.connected > 0 ? [t("atlas.night.connected", { count: nightCount.connected })] : []),
+      ...(nightCount.merged > 0 ? [t("atlas.night.merged", { count: nightCount.merged })] : []),
+      ...(nightCount.replaced > 0 ? [t("atlas.night.replaced", { count: nightCount.replaced })] : []),
+      ...(nightCount.updated > 0 ? [t("atlas.night.updated", { count: nightCount.updated })] : []),
     ].join(t("atlas.night.joiner")),
   });
+  const oldPassSentence = oldPass ? t("atlas.night.sentence", {
+    when: t("atlas.night.oldPass"),
+    what: [
+      ...(oldPass.merged > 0 ? [t("atlas.night.merged", { count: oldPass.merged })] : []),
+      ...(oldPass.updated > 0 ? [t("atlas.night.updated", { count: oldPass.updated })] : []),
+    ].join(t("atlas.night.joiner")),
+  }) : "";
 
   return (
     <div className="atlas-canvas-shell">
@@ -2876,6 +3054,18 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
         </p>
       ) : undoNight.isError ? (
         <p className="atlas-night-line" role="alert">{t("atlas.night.undoFailed")}</p>
+      ) : oldPassShown && !selectedThing ? (
+        // What the one-time pass over old memories did, like a night's line
+        // and in its place (UX-GRAPH-7); it has no Replay.
+        <p className="atlas-night-line" data-testid="atlas-old-pass-line" title={oldPassSentence}>
+          <SteepMoon />
+          <span className="atlas-night-line-full">{oldPassSentence}</span>
+          <span className="atlas-night-line-short">{t("atlas.night.oldPassShort")}</span>
+          <span aria-hidden="true">·</span>
+          <button type="button" disabled={undoOldPass.isPending} onClick={() => undoOldPass.mutate()}>{t("atlas.night.undo")}</button>
+        </p>
+      ) : undoOldPass.isError ? (
+        <p className="atlas-night-line" role="alert">{t("atlas.night.oldPassUndoFailed")}</p>
       ) : null}
 
       {selectedThing && replaying === "idle" ? (

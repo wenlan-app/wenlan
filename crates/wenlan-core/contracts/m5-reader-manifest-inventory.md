@@ -721,9 +721,13 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/things/{id}/merge` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/{id}/keep-apart` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/{id}/dream/undo` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
+| `POST` | `/api/things/{id}/tidy/{memory_id}/undo` | main | no | not_applicable | `none` | — | ThingSummary: thing title, Brief status line and Space names, no page prose |
 | `POST` | `/api/things/nights/undo` | main | no | not_applicable | `none` | — | NightsUndo: two counts only, no page prose |
 | `POST` | `/api/things/points/connect` | main | no | not_applicable | `none` | — | NightLinksBackfill: counts only, no page prose |
 | `POST` | `/api/things/points/connect/undo` | main | no | not_applicable | `none` | — | NightLinksBackfillUndo: a count only, no page prose |
+| `GET` | `/api/things/old-pass` | main | no | not_applicable | `none` | — | OldMemoryPassResponse: a time and counts only, no page prose |
+| `POST` | `/api/things/old-pass` | main | no | not_applicable | `none` | — | OldMemoryPass: a time and counts only, no page prose |
+| `POST` | `/api/things/old-pass/undo` | main | no | not_applicable | `none` | — | OldMemoryPassResponse: a time and counts only, no page prose |
 | `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
 | `POST` | `/api/pages/{id}/rename` | main | yes | automatic | `none` | `handle_rename_page` | title metadata — core page_write_permit before mutation |

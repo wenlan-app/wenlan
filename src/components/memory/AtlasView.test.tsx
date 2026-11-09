@@ -12,6 +12,8 @@ vi.mock("../../lib/tauri", async () => {
     getKnowledgeGraph: vi.fn(),
     listThingNightPoints: vi.fn(),
     undoNights: vi.fn(),
+    getOldMemoryPass: vi.fn(),
+    undoOldMemoryPass: vi.fn(),
     listCommunities: vi.fn(),
     listCommunityMembers: vi.fn(),
   };
@@ -150,7 +152,7 @@ vi.mock("sigma", () => {
   return { default: SigmaMock };
 });
 
-import { getKnowledgeGraph, listCommunities, listCommunityMembers, listThingNightPoints, undoNights } from "../../lib/tauri";
+import { getKnowledgeGraph, getOldMemoryPass, listCommunities, listCommunityMembers, listThingNightPoints, undoNights, undoOldMemoryPass } from "../../lib/tauri";
 import type {
   Entity,
   EntityDetail,
@@ -440,6 +442,7 @@ describe("AtlasView", () => {
     window.localStorage.removeItem("atlas.exp.layout");
     vi.clearAllMocks();
     vi.mocked(listThingNightPoints).mockReset();
+    vi.mocked(getOldMemoryPass).mockReset();
     capturedSigmaInstances.length = 0;
     rendererLifecycle.length = 0;
     mockDimensions = { width: 400, height: 600 };
@@ -917,6 +920,32 @@ describe("AtlasView", () => {
       expect(vi.mocked(undoNights).mock.calls[0]![0]).toBe(Math.floor(midnight.getTime() / 1000));
       // Gone at once after Undo.
       await waitFor(() => expect(screen.queryByTestId("atlas-night-line")).not.toBeInTheDocument());
+    });
+
+    it("tells of the pass over old memories in the night's place, and Undo takes it all back (UX-GRAPH-7)", async () => {
+      mockConnectedPair();
+      vi.mocked(listThingNightPoints).mockResolvedValue([]);
+      const pass = { at: Math.floor(Date.now() / 1000) - 3_600, merged: 12, updated: 3, expired: 582, confirmed: 137, filed: 73 };
+      vi.mocked(getOldMemoryPass).mockResolvedValue(pass);
+      renderWithQuery(<AtlasView />);
+      const line = await screen.findByTestId("atlas-old-pass-line");
+      expect(line.querySelector(".atlas-night-line-full")).toHaveTextContent("Tidied old memories: 12 merged, 3 updated");
+      expect(within(line).queryByRole("button", { name: "Replay last night" })).not.toBeInTheDocument();
+      vi.mocked(undoOldMemoryPass).mockResolvedValue(pass);
+      vi.mocked(getOldMemoryPass).mockResolvedValue(null);
+      fireEvent.click(within(line).getByRole("button", { name: "Undo" }));
+      await waitFor(() => expect(undoOldMemoryPass).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(screen.queryByTestId("atlas-old-pass-line")).not.toBeInTheDocument());
+    });
+
+    it("says nothing of a pass over old memories that ran days ago", async () => {
+      mockConnectedPair();
+      vi.mocked(listThingNightPoints).mockResolvedValue([]);
+      vi.mocked(getOldMemoryPass).mockResolvedValue({ at: Math.floor(Date.now() / 1000) - 3 * 86_400, merged: 12, updated: 3, expired: 0, confirmed: 0, filed: 0 });
+      renderWithQuery(<AtlasView />);
+      await waitFor(() => expect(getOldMemoryPass).toHaveBeenCalled());
+      await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
+      expect(screen.queryByTestId("atlas-old-pass-line")).not.toBeInTheDocument();
     });
 
     it("has no line when the newest night was not today", async () => {

@@ -298,9 +298,13 @@ fn manifest_counts_match_the_spec() {
     // (a receipt), and 324 after POST `/api/originals` (keeps a session's HTML
     // as its own page; returns its id and title only) and 53 tools with
     // `keep_original`.
+    // Then 325 after POST `/api/things/{id}/tidy/{memory_id}/undo` (takes
+    // back one tidy of a night; the thing's summary only).
+    // Then 328 after GET/POST `/api/things/old-pass` and POST `/undo` (the
+    // one-time pass over old memories; a time and counts only).
     assert_eq!(
         HTTP_READERS.len(),
-        324,
+        328,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 53, "#[tool( declarations");
@@ -311,7 +315,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        336,
+        340,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -319,7 +323,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        319,
+        323,
         "main builder entries"
     );
     assert_eq!(
@@ -502,7 +506,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        316 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original and the 8 sharing routes, all with no page markers.
+        320 // Existing 273 plus 22 research workflow routes, 7 custom-theme routes, a memory's conversation lines, the nights undo, the memory restore, the two trust scan routes, keeping a session original, the 8 sharing routes, one tidy's undo and the three old-pass routes, all with no page markers.
     );
 }
 

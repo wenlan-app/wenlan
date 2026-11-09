@@ -727,8 +727,16 @@ async fn handle_store_memory_inner(
     // local first-party write and grants FULL trust, so blanking the claim
     // before that resolution would turn a spoof attempt into a trust upgrade.
     // Identity keeps judging the raw claim; the row keeps no false origin.
+    //
+    // The row keeps the tool that saved it: the body's value when one was
+    // sent, else the `x-agent-name` header. A night may only tidy what a
+    // tool wrote (`authorship::memory_author`), and on the owner's data 738
+    // memories saved through the header alone had no writer at all.
+    let claimed_source_agent = req
+        .source_agent
+        .or_else(|| (resolved_agent != "unknown").then(|| resolved_agent.clone()));
     let (persisted_source_agent, rejected_origin_claim) =
-        wenlan_core::origin::normalize_wire_source_agent(req.source_agent);
+        wenlan_core::origin::normalize_wire_source_agent(claimed_source_agent);
     if let Some(claimed) = rejected_origin_claim {
         tracing::warn!(
             "[origin-guard] /api/memory/store request claimed reserved source_agent \
@@ -2906,7 +2914,7 @@ mod store_scheduler_handoff_tests {
         wenlan_core::config::save_config(&wenlan_core::config::Config::default()).unwrap();
 
         let response = handle_store_memory(
-            State(state),
+            State(state.clone()),
             HeaderMap::new(),
             crate::space_header::SpaceHeader(None),
             Json(StoreMemoryRequest {
@@ -2933,6 +2941,38 @@ mod store_scheduler_handoff_tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.source_agent.as_deref(), Some("claude-code"));
+
+        // A tool that names itself only in the header (MCP does) is kept
+        // too, so a night can tell an AI's memory from one nothing names.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-agent-name", "codex".parse().unwrap());
+        let response = handle_store_memory(
+            State(state),
+            headers,
+            crate::space_header::SpaceHeader(None),
+            Json(StoreMemoryRequest {
+                content: "Bob owns the release checklist for the desktop app.".to_string(),
+                memory_type: None,
+                space: (None).into(),
+                source_agent: None,
+                title: None,
+                confidence: None,
+                supersedes: None,
+                entity: None,
+                entity_type: None,
+                entity_id: None,
+                structured_fields: None,
+                retrieval_cue: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let stored = db
+            .get_memory_detail(&response.0.source_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.source_agent.as_deref(), Some("codex"));
     }
 
     #[tokio::test]

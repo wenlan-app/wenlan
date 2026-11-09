@@ -61,6 +61,9 @@ const projectSourceText = new Map([
   ["/preview/sources/讀書會資料/每週摘錄.md", "# 每週摘錄\n\n## 本週問題\n哪一段內容改變了我們原先的想法？\n\n## 討論後記\n保留不同觀點，並連回各自引用的段落。"],
 ]);
 import { liveInvoke } from "./live-invoke";
+
+/** The preview's pass over old memories was taken back. */
+let oldPassUndone = false;
 import { COMMUNITY_READ_SCHEMA_VERSION, type ThingNightPoints } from "../../src/lib/tauri";
 import { invokeRemoteFixture } from "./remote-access";
 
@@ -209,6 +212,18 @@ export async function invoke(
         open_points: ["mem_home_d"],
         // `&unread=1`: a conversation a night could not read.
         unread: new URLSearchParams(window.location.search).get("unread") === "1" ? 1 : undefined,
+        // `&tidy=1`: a night merged two memories an AI wrote into the second
+        // point; opening it says what it took the place of (UX-GRAPH-7).
+        tidied: new URLSearchParams(window.location.search).get("tidy") === "1"
+          ? [{
+              kind: "merge",
+              memory_id: "mem_home_b",
+              replaced: [
+                { source_id: "mem_home_b1", text: "Keep a single Home button" },
+                { source_id: "mem_home_b2", text: "The sidebar has one way back to Home" },
+              ],
+            }]
+          : undefined,
       };
     }
   }
@@ -249,6 +264,21 @@ export async function invoke(
           "tm-site": { at: HOME_NIGHT, written: ["tm-n-site-3", "tm-n-site-4", "tm-n-site-5"], linked: [{ memory_id: "tm-n-site-2", entity_id: "tm-e15" }, { memory_id: "tm-n-site-4", entity_id: "tm-e15" }] },
           "tm-rel": { at: HOME_NIGHT, written: ["tm-n-rel-2", "tm-n-rel-3"], linked: [{ memory_id: "tm-n-rel-2", entity_id: "tm-e16" }] },
         };
+        // `&tidy=1`: the same night also merged, replaced and updated some of
+        // what an AI wrote, all in the first stop so Replay shows the three
+        // together (UX-GRAPH-7).
+        if (new URLSearchParams(window.location.search).get("tidy") === "1") {
+          nights["tm-site"] = {
+            at: HOME_NIGHT,
+            linked: nights["tm-site"]?.linked ?? [],
+            written: ["tm-n-site-3"],
+            tidied: [
+              { kind: "merge", memory_id: "tm-n-site-4", replaced: ["tm-n-site-4a", "tm-n-site-4b"], said: ["Positions are saved per viewer", "A dragged point stays where it was put"] },
+              { kind: "replace", memory_id: "tm-n-site-2", replaced: ["tm-n-site-2a"], said: ["夜裡寫下的點隨機排在事情周圍"] },
+              { kind: "update", memory_id: "tm-n-site-5", replaced: ["tm-n-site-5a"], said: ["下週會讓框隨新點往外長"] },
+            ],
+          };
+        }
         return THING_MAP_POINTS.map((thing) => (nights[thing.thing_id] ? { ...thing, last_night: nights[thing.thing_id] } : thing));
       }
       if (!quiet) return THING_MAP_POINTS;
@@ -258,6 +288,17 @@ export async function invoke(
         quiet: true,
         points: i === 0 ? thing.points.filter((point) => linked.has(point.memory_id)) : thing.points,
       }));
+    }
+    // `&oldpass=1`: the one-time pass over old memories ran this morning
+    // (UX-GRAPH-7); Undo takes it away for the rest of the page's life.
+    if (cmd === "get_old_memory_pass") {
+      return new URLSearchParams(window.location.search).get("oldpass") === "1" && !oldPassUndone
+        ? { at: Math.floor(Date.now() / 1000) - 3_600, merged: 12, updated: 3, expired: 582, confirmed: 137, filed: 73 }
+        : null;
+    }
+    if (cmd === "undo_old_memory_pass") {
+      oldPassUndone = true;
+      return null;
     }
     // No regions yet: an honest empty read, not an error.
     if (cmd === "list_communities") return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, scope: { kind: "space", name: args?.space ?? null }, communities: [], next_cursor: null };

@@ -2114,6 +2114,34 @@ impl WenlanClient {
         self.post_empty_as_person(&path).await
     }
 
+    /// `POST /api/things/{id}/tidy/{memory_id}/undo`: the person takes back
+    /// one tidy a night made (UX-GRAPH-7).
+    pub async fn undo_thing_tidy(
+        &self,
+        id: &str,
+        memory_id: &str,
+    ) -> Result<wenlan_types::ThingSummary, String> {
+        let path = format!(
+            "/api/things/{}/tidy/{}/undo",
+            percent_encode_path_segment(id),
+            percent_encode_path_segment(memory_id)
+        );
+        self.post_empty(&path).await
+    }
+
+    /// `GET /api/things/old-pass`: the one-time pass over old memories, while
+    /// it stands (UX-GRAPH-7).
+    pub async fn get_old_memory_pass(&self) -> Result<wenlan_types::OldMemoryPassResponse, String> {
+        self.get_json("/api/things/old-pass").await
+    }
+
+    /// `POST /api/things/old-pass/undo`: the person takes the whole pass back.
+    pub async fn undo_old_memory_pass(
+        &self,
+    ) -> Result<wenlan_types::OldMemoryPassResponse, String> {
+        self.post_empty("/api/things/old-pass/undo").await
+    }
+
     /// `POST /api/things/nights/undo`: the person takes back the whole night
     /// on the big map, every thing whose newest night ran at or after `since`
     /// (UX-GRAPH-5).
