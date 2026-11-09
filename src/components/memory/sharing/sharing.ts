@@ -32,9 +32,14 @@ export function others(share: SharedStatus): SharedMember[] {
 
 type Cloud = "googleDrive" | "icloud" | "dropbox" | "oneDrive";
 
+// Google Drive for desktop on Windows is its own drive (G: by default):
+// `G:\My Drive`, or the Drive's name in the person's language. iCloud for
+// Windows keeps iCloud Drive in `C:\Users\<name>\iCloudDrive`.
 const CLOUD_ROOTS: readonly { cloud: Cloud; match: RegExp }[] = [
   { cloud: "googleDrive", match: /[\\/](?:Library[\\/]CloudStorage[\\/]GoogleDrive-[^\\/]+(?:[\\/](?:My Drive|我的雲端硬碟|我的云端硬盘|Shared drives|共用雲端硬碟|共享云端硬盘))?|Google Drive(?:[\\/](?:My Drive|我的雲端硬碟|我的云端硬盘))?)(?=[\\/]|$)/ },
+  { cloud: "googleDrive", match: /^[A-Za-z]:[\\/](?:My Drive|我的雲端硬碟|我的云端硬盘|Shared drives|共用雲端硬碟|共享云端硬盘)(?=[\\/]|$)/ },
   { cloud: "icloud", match: /[\\/]Library[\\/]Mobile Documents[\\/]com~apple~CloudDocs(?=[\\/]|$)/ },
+  { cloud: "icloud", match: /[\\/]iCloudDrive(?=[\\/]|$)/ },
   { cloud: "dropbox", match: /[\\/](?:Library[\\/]CloudStorage[\\/])?Dropbox(?:[ -][^\\/]*)?(?=[\\/]|$)/ },
   { cloud: "oneDrive", match: /[\\/](?:Library[\\/]CloudStorage[\\/])?OneDrive(?:[ -][^\\/]*)?(?=[\\/]|$)/ },
 ];
