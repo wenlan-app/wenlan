@@ -3190,6 +3190,15 @@ impl WenlanMcpServer {
                 pages_json
             ));
         }
+        if let Some(linked) = resp.linked_pages.as_ref().filter(|p| !p.is_empty()) {
+            let linked_json = serde_json::to_string_pretty(linked)
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            output.push_str(&format!(
+                "\n\nLinked pages (the compiled pages above link to these; `point` is each \
+                 page's first paragraph, read_page reads the rest):\n{}",
+                linked_json
+            ));
+        }
         let output = self
             .with_steep_line(&client, req.space.as_deref(), output)
             .await;

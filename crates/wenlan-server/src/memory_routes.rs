@@ -1474,11 +1474,56 @@ async fn handle_search_memory_inner(
         None => None,
     };
 
+    // UX-FIND-5: the pages those hits link to come along, each cut to its
+    // point, so no AI tool has to think of following the links itself. They
+    // pass the same tier gate and grant filter as the hits.
+    let linked_pages = match supplemental_pages.as_deref() {
+        Some(hits) if req.query != "recent context" => {
+            let hits: Vec<(String, String)> = hits
+                .iter()
+                .map(|row| (row.source_id.clone(), row.title.clone()))
+                .collect();
+            let trust_level = caller_trust_level(&db, &headers).await;
+            let linked = db
+                .linked_pages_for_hits(
+                    &hits,
+                    &scope,
+                    &trust_level,
+                    wenlan_core::pages::LINKED_PAGE_CAP,
+                )
+                .await;
+            let kept =
+                wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, linked, |page| {
+                    page.id.as_str()
+                })
+                .await
+                .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
+            (!kept.is_empty()).then_some(kept)
+        }
+        _ => None,
+    };
+
     Ok(Json(SearchMemoryResponse {
+        linked_pages,
         results,
         took_ms,
         supplemental_pages,
     }))
+}
+
+/// The caller's trust level from its `x-agent-name` header, "unknown" when it
+/// names no registered agent (fail closed, as the page gate expects).
+async fn caller_trust_level(db: &wenlan_core::db::MemoryDB, headers: &HeaderMap) -> String {
+    let agent_name = extract_agent_name(headers, None);
+    if agent_name == "unknown" {
+        return "unknown".to_string();
+    }
+    db.get_agent(&agent_name)
+        .await
+        .ok()
+        .flatten()
+        .map(|a| a.trust_level)
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// POST /api/memory/confirm/{source_id}
@@ -4837,6 +4882,70 @@ mod search_quick_path_page_tests {
                 .map(|p| p.source_id.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn ux_find_5_recall_carries_the_pages_a_hit_links_to() {
+        let (state, _tmp, page_work_id, _page_cross_id) = build_state_with_pages().await;
+        let db = state.read().await.db.clone().unwrap();
+        let linked_id = seed_confirmed_distilled_page(
+            &db,
+            "Quillon ticket plan",
+            "Buy the quillon tickets in March.\n\nMore detail below.",
+            "m_quillon",
+            "fact",
+            "work",
+        )
+        .await;
+        // Enough pages that say "zorblax" to fill every hit slot, all linking
+        // to the ticket plan, so the plan arrives by link and not by rank
+        // whatever the embedder.
+        let mut zorblax_pages = vec![page_work_id.clone()];
+        for n in 0..3 {
+            zorblax_pages.push(
+                seed_confirmed_distilled_page(
+                    &db,
+                    &format!("Zorblax note {n}"),
+                    "zorblax zorblax workmarker body",
+                    &format!("m_zorblax_{n}"),
+                    "decision",
+                    "work",
+                )
+                .await,
+            );
+        }
+        for page in &zorblax_pages {
+            db.replace_page_links(
+                page,
+                &[wenlan_core::synthesis::wikilinks::Wikilink {
+                    target_page_id: Some(linked_id.clone()),
+                    label: "Quillon ticket plan".to_string(),
+                }],
+            )
+            .await
+            .unwrap();
+        }
+        let app = crate::router::build_router(state.clone());
+
+        let resp = search(app, Some("trusted-agent")).await;
+        let hits = resp.supplemental_pages.expect("the hit pages surface");
+        assert!(
+            !hits.iter().any(|p| p.source_id == linked_id),
+            "the linked page must not be a hit here: {:?}",
+            hits.iter().map(|p| &p.title).collect::<Vec<_>>()
+        );
+        let linked = resp
+            .linked_pages
+            .expect("the page the hits link to comes along");
+        assert_eq!(linked.len(), 1, "{linked:?}");
+        assert_eq!(linked[0].id, linked_id);
+        assert_eq!(linked[0].point, "Buy the quillon tickets in March.");
+        let hit_titles: Vec<String> = hits.iter().map(|p| p.title.clone()).collect();
+        assert_eq!(linked[0].linked_from, hit_titles);
+
+        let app = crate::router::build_router(state);
+        let unknown = search(app, None).await;
+        assert!(unknown.linked_pages.is_none(), "{:?}", unknown.linked_pages);
     }
 
     #[tokio::test]
