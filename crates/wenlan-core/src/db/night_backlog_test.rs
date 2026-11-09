@@ -67,7 +67,7 @@ async fn ux_graph_7_the_backlog_report_counts_without_changing_anything() {
         "The site stays free for now.",
         Some("claude-code"),
         "wenlan",
-        now - 9_000,
+        now - 3 * 86_400,
     )
     .await;
     remember(
@@ -99,9 +99,11 @@ async fn ux_graph_7_the_backlog_report_counts_without_changing_anything() {
     .await;
     {
         let conn = db.conn.lock().await;
+        // mem_a was written before its day: a plan whose day has passed.
+        // mem_b was written after the same day: it says what happened.
         conn.execute(
-            "UPDATE memories SET event_date = ?1 WHERE source_id = 'mem_a'",
-            libsql::params![now - 86_400],
+            "UPDATE memories SET event_date = ?1 WHERE source_id IN ('mem_a', 'mem_b')",
+            libsql::params![now - 2 * 86_400],
         )
         .await
         .unwrap();

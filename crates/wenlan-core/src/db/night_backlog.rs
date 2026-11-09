@@ -18,7 +18,7 @@ use super::{not_hidden_by_superseder, not_self_archived, MemoryDB, UNFILED_SPACE
 use crate::authorship::{memory_author, MemoryWriter};
 use crate::read_scope::ReadScope;
 use crate::WenlanError;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use wenlan_types::authorship::SentenceAuthor;
 use wenlan_types::NightTidyKind;
 
@@ -33,8 +33,6 @@ fn db_err(context: &str) -> impl Fn(libsql::Error) -> WenlanError + '_ {
 /// How alike two memories must be to count as the same, by embedding. The
 /// 11-08 measurement on the owner's copy used this value (416 pairs).
 pub const BACKLOG_MIN_SIMILARITY: f32 = 0.92;
-/// Neighbours looked at for each memory.
-const BACKLOG_NEIGHBOURS: i64 = 6;
 
 /// One memory as the report shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,10 +83,24 @@ pub struct BacklogReport {
 
 impl BacklogReport {
     /// The pairs the pass may act on: the later copy is not a person's or an
-    /// unknown writer's.
+    /// unknown writer's, and an imported original goes only when it is the
+    /// same text again (an import made twice). Notes that only look alike,
+    /// such as one daily template on different days, stay (11-08 dry run).
     pub fn hideable(&self) -> impl Iterator<Item = &BacklogPair> {
-        self.pairs.iter().filter(|pair| may_hide(pair.hide.author))
+        self.pairs.iter().filter(|pair| {
+            may_hide(pair.hide.author) && (pair.exact || pair.hide.author == SentenceAuthor::Ai)
+        })
     }
+}
+
+/// `vector` scaled to length one, so a dot product is the cosine; empty
+/// when it has no length.
+fn unit(vector: Vec<f32>) -> Vec<f32> {
+    let length = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if length <= f32::EPSILON {
+        return Vec::new();
+    }
+    vector.into_iter().map(|x| x / length).collect()
 }
 
 /// Only what an AI wrote or an import copied in may be hidden.
@@ -147,8 +159,7 @@ fn row_memory(row: &libsql::Row) -> Option<BacklogMemory> {
 
 impl MemoryDB {
     /// What the one-time pass over old memories would do at `now`. Reads
-    /// only. Slow on a large store (one nearest-neighbour lookup per
-    /// memory); meant for a dry run, not a request.
+    /// only.
     pub async fn backlog_report(&self, now: i64) -> Result<BacklogReport, WenlanError> {
         let conn = self.conn.lock().await;
         let mut report = BacklogReport::default();
@@ -156,7 +167,7 @@ impl MemoryDB {
         let mut rows = conn
             .query(
                 &format!(
-                    "SELECT {}, m.embedding IS NOT NULL FROM memories m WHERE {}",
+                    "SELECT {}, m.embedding FROM memories m WHERE {}",
                     columns("m"),
                     live("m")
                 ),
@@ -164,85 +175,64 @@ impl MemoryDB {
             )
             .await
             .map_err(db_err("backlog memories"))?;
-        let mut all: HashMap<String, BacklogMemory> = HashMap::new();
-        let mut embedded = Vec::new();
+        let mut all: Vec<(BacklogMemory, Vec<f32>)> = Vec::new();
         while let Some(row) = rows.next().await.map_err(db_err("backlog memory row"))? {
             let Some(memory) = row_memory(&row) else {
                 continue;
             };
             if memory
                 .event_date
-                .is_some_and(|at| crate::night_tidy::date_passed(at, now))
+                .is_some_and(|at| crate::night_tidy::plan_passed(at, memory.created_at, now))
             {
                 report.passed.push(memory.clone());
             }
-            if row.get::<i64>(8).unwrap_or(0) != 0 {
-                embedded.push(memory.id.clone());
-            }
-            all.insert(memory.id.clone(), memory);
+            let vector = unit(
+                row.get::<Vec<u8>>(8)
+                    .unwrap_or_default()
+                    .chunks_exact(4)
+                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect(),
+            );
+            all.push((memory, vector));
         }
         drop(rows);
         report.memories = all.len();
 
-        let mut seen: HashSet<(String, String)> = HashSet::new();
-        for id in &embedded {
-            let mut rows = conn
-                .query(
-                    "SELECT vector_extract(embedding) FROM memories
-                      WHERE source = 'memory' AND source_id = ?1 AND chunk_index = 0",
-                    libsql::params![id.as_str()],
-                )
-                .await
-                .map_err(db_err("backlog embedding"))?;
-            let vector = match rows.next().await.map_err(db_err("backlog embedding row"))? {
-                Some(row) => row.get::<String>(0).ok(),
-                None => None,
-            };
-            drop(rows);
-            let Some(vector) = vector else { continue };
-            let mut rows = conn
-                .query(
-                    "SELECT m.source_id, 1.0 - vector_distance_cos(m.embedding, vector32(?1))
-                       FROM vector_top_k('memories_vec_idx', vector32(?1), ?2) AS vt
-                       JOIN memories m ON m.rowid = vt.id
-                      WHERE m.source = 'memory' AND m.chunk_index = 0 AND m.source_id <> ?3",
-                    libsql::params![vector.as_str(), BACKLOG_NEIGHBOURS, id.as_str()],
-                )
-                .await
-                .map_err(db_err("backlog neighbours"))?;
-            while let Some(row) = rows.next().await.map_err(db_err("backlog neighbour row"))? {
-                let other = row.get::<String>(0).unwrap_or_default();
-                let similarity = row.get::<f64>(1).unwrap_or(0.0) as f32;
-                if similarity < BACKLOG_MIN_SIMILARITY {
-                    continue;
+        // Every two memories in the same Space, compared in memory: one
+        // pass over a few thousand is seconds, where a nearest-neighbour
+        // lookup per memory took hours on the owner's copy (11-08 dry run).
+        let mut by_space: HashMap<Option<&str>, Vec<usize>> = HashMap::new();
+        for (i, (memory, vector)) in all.iter().enumerate() {
+            if !vector.is_empty() {
+                by_space.entry(memory.space.as_deref()).or_default().push(i);
+            }
+        }
+        for members in by_space.values() {
+            for (n, &i) in members.iter().enumerate() {
+                for &j in &members[n + 1..] {
+                    let (a, va) = &all[i];
+                    let (b, vb) = &all[j];
+                    if va.len() != vb.len() {
+                        continue;
+                    }
+                    let similarity: f32 = va.iter().zip(vb).map(|(x, y)| x * y).sum();
+                    if similarity < BACKLOG_MIN_SIMILARITY {
+                        continue;
+                    }
+                    // The earlier stays; ties go to the smaller id, so the
+                    // report is the same each run.
+                    let (keep, hide) = if (a.created_at, &a.id) <= (b.created_at, &b.id) {
+                        (a, b)
+                    } else {
+                        (b, a)
+                    };
+                    report.pairs.push(BacklogPair {
+                        exact: normalized(&keep.text) == normalized(&hide.text),
+                        keep: keep.clone(),
+                        hide: hide.clone(),
+                        similarity,
+                    });
                 }
-                let (Some(a), Some(b)) = (all.get(id), all.get(&other)) else {
-                    continue;
-                };
-                if a.space != b.space {
-                    continue;
-                }
-                let key = if a.id < b.id {
-                    (a.id.clone(), b.id.clone())
-                } else {
-                    (b.id.clone(), a.id.clone())
-                };
-                if !seen.insert(key) {
-                    continue;
-                }
-                // The earlier stays; ties go to the smaller id, so the
-                // report is the same each run.
-                let (keep, hide) = if (a.created_at, &a.id) <= (b.created_at, &b.id) {
-                    (a, b)
-                } else {
-                    (b, a)
-                };
-                report.pairs.push(BacklogPair {
-                    exact: normalized(&keep.text) == normalized(&hide.text),
-                    keep: keep.clone(),
-                    hide: hide.clone(),
-                    similarity,
-                });
             }
         }
         report.pairs.sort_by(|a, b| {

@@ -14,7 +14,7 @@ use super::night_links::NightChange;
 use super::thing_map::DreamMapChanges;
 use super::{not_hidden_by_superseder, not_self_archived, MemoryDB};
 use crate::authorship::{memory_author, MemoryWriter};
-use crate::night_tidy::{date_passed, TidyItem, MAX_NEIGHBOURS, MAX_TOUCHED, MIN_SIMILARITY};
+use crate::night_tidy::{plan_passed, TidyItem, MAX_NEIGHBOURS, MAX_TOUCHED, MIN_SIMILARITY};
 use crate::read_scope::ReadScope;
 use crate::WenlanError;
 use std::collections::HashMap;
@@ -243,7 +243,9 @@ impl MemoryDB {
                     }
                 }
             }
-            let passed = item.event_date.is_some_and(|at| date_passed(at, now));
+            let passed = item
+                .event_date
+                .is_some_and(|at| plan_passed(at, item.created_at, now));
             if neighbours.is_empty() && !passed {
                 continue;
             }

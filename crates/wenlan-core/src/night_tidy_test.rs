@@ -122,3 +122,18 @@ fn a_date_has_passed_only_once_its_whole_day_is_over() {
     assert!(!date_passed(day, day + 86_399));
     assert!(date_passed(day, day + 86_400));
 }
+
+#[test]
+fn only_a_plan_written_before_its_day_counts_as_passed() {
+    let day = 1_762_560_000; // 2025-11-08 00:00 UTC
+    let later = day + 2 * 86_400;
+    assert!(
+        plan_passed(day, day - 86_400, later),
+        "planned the day before"
+    );
+    assert!(
+        !plan_passed(day, day + 3_600, later),
+        "written that day: it says what happened"
+    );
+    assert!(!plan_passed(day, day - 86_400, day + 3_600), "day not over");
+}
