@@ -186,8 +186,10 @@ mod tests {
     /// older ones, keeps the newest three, and leaves other files alone.
     #[tokio::test]
     async fn a_migration_chain_that_took_a_backup_prunes_older_snapshots() {
-        let (db, dir) = super::super::tests::test_db_at(157).await;
-        for n in [100, 150, 155, 157] {
+        // One migration left: the chain takes exactly one snapshot.
+        let latest = crate::db::SCHEMA_VERSION;
+        let (db, dir) = super::super::tests::test_db_at(latest - 1).await;
+        for n in [100, latest - 7, latest - 3, latest - 1] {
             touch(dir.path(), &format!("pre_migration_{n}_backup.db"));
         }
         touch(
@@ -203,11 +205,10 @@ mod tests {
             .collect();
         assert_eq!(
             backups,
-            vec![
-                "pre_migration_155_backup.db",
-                "pre_migration_157_backup.db",
-                "pre_migration_158_backup.db",
-            ]
+            [latest - 3, latest - 1, latest]
+                .iter()
+                .map(|n| format!("pre_migration_{n}_backup.db"))
+                .collect::<Vec<_>>()
         );
         assert!(dir
             .path()
@@ -237,13 +238,16 @@ mod tests {
             .collect();
         assert!(!backups.contains(&"pre_migration_140_backup.db".to_string()));
         assert!(backups.contains(&"pre_migration_152_backup.db".to_string()));
-        assert!(backups.contains(&"pre_migration_158_backup.db".to_string()));
+        assert!(backups.contains(&format!(
+            "pre_migration_{}_backup.db",
+            crate::db::SCHEMA_VERSION
+        )));
     }
 
     /// An upgrade from 150 that stopped partway (its snapshots 151..156 on
     /// disk, `user_version` left at 155) and is retried on the next start
     /// keeps 151, the only state from before the whole upgrade, although the
-    /// retried chain itself only reaches 156..158.
+    /// retried chain itself only reaches 156 onwards.
     #[tokio::test]
     async fn a_retried_upgrade_keeps_the_snapshot_from_before_it() {
         let (db, dir) = super::super::tests::test_db_at(150).await;
@@ -268,7 +272,7 @@ mod tests {
             .into_iter()
             .filter(|name| name.starts_with("pre_migration_"))
             .collect();
-        let expected: Vec<String> = (151..=158)
+        let expected: Vec<String> = (151..=crate::db::SCHEMA_VERSION)
             .map(|n| format!("pre_migration_{n}_backup.db"))
             .collect();
         assert_eq!(backups, expected, "every snapshot of the upgrade stays");

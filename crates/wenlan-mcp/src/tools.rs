@@ -8772,6 +8772,9 @@ mod tests {
             received(&mock).await,
             [
                 ("DELETE".to_string(), "/api/memory/delete/mem_1".to_string()),
+                // delete_page registers the AI session so the archive's history
+                // row names it; that is not a Space pre-check.
+                ("POST".to_string(), "/api/sessions".to_string()),
                 ("DELETE".to_string(), "/api/pages/page_1".to_string()),
             ],
             "the standard profile must behave exactly as before"
