@@ -1514,6 +1514,11 @@ pub struct PageHistoryItem {
     /// page's history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed_sentences: Option<u32>,
+    /// For the person's saves listed as one change (UX-HIST-3): the first
+    /// version of the run. `version` is its last; every version in between is
+    /// still stored. None for an entry that is a single version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_version: Option<i64>,
 }
 
 // ===== Sources =====

@@ -1856,6 +1856,8 @@ export interface PageHistoryItem {
   text?: string | null;
   source?: PageHistorySource | null;
   changed_sentences?: number | null;
+  /** Your saves listed as one change (UX-HIST-3): the run's first version; `version` is its last. */
+  first_version?: number | null;
 }
 
 export interface ListPageRevisionsResponse {

@@ -19,7 +19,7 @@ import { sourceLocatorLabel } from "../sources/sourcePresentation";
 import PageInfoCode from "./PageInfoCode";
 import PageInfoNotes from "./PageInfoNotes";
 import { HistoryChangeDialog } from "./HistoryChangeDialog";
-import { historyItemLabel, historyRows } from "./historyItems";
+import { entryForItem, historyItemLabel, historyRows } from "./historyItems";
 import "./NoteInfo.css";
 
 interface PageInfoProps {
@@ -153,12 +153,17 @@ export default function PageInfo({
     : historyDesc.slice(0, REVISIONS_SHOWN);
   const versionToOpen = openVersion == null
     ? undefined
-    : historyDesc.find((item) => item.kind !== "source_update" && item.version === openVersion);
+    : historyDesc.find((item) => item.kind !== "source_update" && item.version != null
+      && (item.first_version ?? item.version) <= openVersion && openVersion <= item.version);
   useEffect(() => {
     if (!versionToOpen) return;
     setOpenHistoryItem(versionToOpen);
     onOpenedVersion?.();
   }, [versionToOpen, onOpenedVersion]);
+  // Saves folded into one change count once, as the list shows them.
+  const revisionCount = history && history.length > 0
+    ? historyDesc.filter((item) => item.kind !== "source_update").length
+    : revisions.length;
   const entryByVersion = new Map(revisions.map((entry) => [entry.version, entry]));
   const seenInboundIds = new Set<string>();
   const uniqueInbound = inbound.filter((link) => {
@@ -226,7 +231,7 @@ export default function PageInfo({
         <span>{t("pageInfo.label")}</span>
         <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
           {t("pageInfo.backlinks", { count: uniqueInbound.length })} ·{" "}
-          {t("pageInfo.revisions", { count: revisions.length })} ·{" "}
+          {t("pageInfo.revisions", { count: revisionCount })} ·{" "}
           {(basis && basis.length > 0) || (codeBasis && codeBasis.length > 0)
             ? basisCountLabel(t, sourceCount, basis?.length ?? 0, codeBasis?.length ?? 0)
             : t("pageInfo.sources", { count: sourceCount })}
@@ -308,9 +313,7 @@ export default function PageInfo({
               )}
               <ol className="note-revision-list" aria-label={t("pageInfo.revisions")}>
                 {visibleHistory.map((item) => {
-                  const entry = item.kind === "source_update" || item.version == null
-                    ? undefined
-                    : entryByVersion.get(item.version);
+                  const entry = entryForItem(item, entryByVersion);
                   const incomingCount = entry?.incoming_source_ids?.length ?? 0;
                   const summary = entry ? revisionSummary(t, entry, i18n.language) : null;
                   const label = historyItemLabel(t, item, shares);
@@ -328,7 +331,11 @@ export default function PageInfo({
                       >
                         <span className="note-revision-meta">
                           {item.kind !== "source_update" && item.version != null && (
-                            <span className="note-revision-version">v{item.version}</span>
+                            <span className="note-revision-version">
+                              {item.first_version != null && item.first_version < item.version
+                                ? `v${item.first_version}–v${item.version}`
+                                : `v${item.version}`}
+                            </span>
                           )}
                           <span>{label}</span>
                           <span className="note-revision-time">
