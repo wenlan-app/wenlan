@@ -286,6 +286,8 @@ export async function invoke(
       return LINKS;
     case "get_page_sentences":
       return { page_id: args?.pageId, version: 1, ai_edits: "propose", sentences: [], proposals: [] };
+    case "get_page_original":
+      return null;
     case "get_page_sessions":
       return { sessions: PAGE_SESSIONS[args?.pageId as string] ?? [] };
     case "get_session_detail":
