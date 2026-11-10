@@ -410,7 +410,9 @@ and wait for evidence that people need them.
   原文：AI 不改寫它；後來事實變了，只加註記。
 - **UX-ART-4** `shipped` When the AI draws a plan, a flow or an architecture,
   or a diagram you keep building on, it keeps it in Wenlan without being asked.
-  Throwaway sketches are not kept. A text drawing (ASCII) counts.
+  Throwaway sketches are not kept. A text drawing (ASCII) counts. A
+  conversation that kept a diagram always goes into a thing, so the diagram
+  shows under it.
   原文：有用的图自己存：画出计划、流程、架构，或你接着用的图，AI 自己存；随手小草图不存。eli5 的 ASCII 图也算。（2026-11-08 22:26）
 
 ## Adding to Wenlan
