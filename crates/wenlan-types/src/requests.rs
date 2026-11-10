@@ -629,6 +629,23 @@ pub struct SetKnowledgePathRequest {
     pub path: String,
 }
 
+/// `POST /api/linked-vaults`: link an Obsidian vault into the Wiki;
+/// `DELETE`: stop linking it (its pages stay).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LinkVaultRequest {
+    /// The vault's folder, absolute.
+    pub path: String,
+}
+
+/// `POST /api/linked-vaults/ai-edits`: the person's answer to "may the AI
+/// change this vault's notes directly?".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkedVaultAiEditsRequest {
+    /// The linked vault's folder, as `GET /api/linked-vaults` lists it.
+    pub path: String,
+    pub allow: bool,
+}
+
 // ===== Ingest =====
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1073,6 +1090,18 @@ pub struct RestorePageRequest {
     pub expected_version: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+/// Move one ordinary page into another Space, or into no Space. The page's
+/// sources and body are not rewritten.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetPageSpaceRequest {
+    /// The registered Space to move the page into. `None` or an empty string
+    /// moves it into no Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    pub expected_version: i64,
 }
 
 // ===== Concept Export =====

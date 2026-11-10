@@ -14,8 +14,8 @@ function windowWidth() {
 }
 
 /**
- * Fold the labelled rail to icons while the rail, the docked list, Info and a
- * readable note do not fit side by side. The saved preference is untouched, so
+ * Fold the labelled rail to icons while the rail, Info and a readable note do
+ * not fit side by side. The wiki list lives in the labelled rail. The saved preference is untouched, so
  * the labels return as soon as the space does.
  */
 export function useAutoCompactSidebar(preferences: SidebarPreferences, enabled: boolean) {
@@ -47,12 +47,13 @@ export function useAutoCompactSidebar(preferences: SidebarPreferences, enabled: 
     setKeptExpanded((current) => current === situation ? current : null);
   }, [situation]);
   const labelsWidth = expandedSidebarWidth(preferences);
-  // The wiki list docks only while the area beside the rail is wide enough,
-  // so its share depends on the rail, not on this decision's own outcome.
+  // With labels, the wiki list is a section of the sidebar itself, so it
+  // takes no room beside the note.
+  const fits = labelsWidth + info + READING_LANE_MIN_WIDTH <= width;
+  // Folding moves the list out of the sidebar. Where it would then dock as a
+  // column beside the note, it takes more than the folded labels gave back.
   const listDocked = (railWidth: number) => list > 0 && width - railWidth > WIKI_LIST_STACK_MAX_WIDTH;
-  const fits = labelsWidth + (listDocked(labelsWidth) ? list : 0) + info + READING_LANE_MIN_WIDTH <= width;
-  // Folding must not pull a stacked list back in beside the note.
-  const foldDocksList = !listDocked(labelsWidth) && listDocked(ICONS_SIDEBAR_WIDTH);
+  const foldDocksList = listDocked(ICONS_SIDEBAR_WIDTH);
   const compact = enabled && preferences.visible && preferences.mode === "labels" && !fits && !foldDocksList && keptExpanded !== situation;
   const [settled, setSettled] = useState(compact);
   useEffect(() => {

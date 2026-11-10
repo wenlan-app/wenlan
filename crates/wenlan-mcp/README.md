@@ -59,7 +59,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 53 tools. The table below calls
+The local stdio surface is locked at exactly 54 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -68,6 +68,7 @@ queue.
 | `list_folders` | Inspect physical wiki folders within the caller's scope |
 | `create_folder` | Create a navigation folder; local stdio only and unavailable to scoped connections |
 | `move_page` | Move an active page with an expected-path guard, preserving identity and content; local stdio only |
+| `set_page_space` | Move one written page into a Space, or into no Space, with a version guard; names the sources it can no longer read; local stdio only |
 | `get_page_links` | Check incoming links and resolved outgoing target IDs |
 | `list_entities` | Find existing topics by name, alias, Space and lifecycle status |
 | `read_entity` | Read a topic's identity, observations and current relations |

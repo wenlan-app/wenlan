@@ -120,6 +120,10 @@ pub struct Config {
     /// `knowledge_path` and clears this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_knowledge_path: Option<PathBuf>,
+    /// Obsidian vaults linked into the Wiki: each note is also a page, kept
+    /// in a folder of the pages folder (see `linked_vault`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linked_vaults: Vec<crate::linked_vault::LinkedVault>,
     /// Why the last pages folder move stopped, for the app to say. Cleared by
     /// the next move that succeeds.
     #[serde(default, skip_serializing_if = "Option::is_none")]

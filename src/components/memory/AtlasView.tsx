@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { TopicIcon } from "./entities/TopicIcon";
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
 import { TabEmptyMark } from "../onboarding/TabIntro";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -362,6 +363,9 @@ interface AtlasViewProps {
   // Main.tsx's Graph view passes navigateBack; renders a back button as the
   // first toolbar item (a floating one would sit on the search box).
   onBack?: () => void;
+  /** Opens the list of every topic. The left side has no Topics entry
+   *  (UX-FIND-4): the map is where topics live, so their list starts here. */
+  onOpenTopics?: () => void;
 }
 
 // jsdom has no matchMedia; treat its absence as "no preference" rather than
@@ -407,7 +411,7 @@ const measureLabel = (text: string): number => {
 };
 const GHOST_FALLBACK_RADIUS = 5;
 
-export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack }: AtlasViewProps) {
+export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, focusThingId, replay: replayPress, onBack, onOpenTopics }: AtlasViewProps) {
   const { t } = useTranslation();
   const effectiveFocusId = focusPageId ? pageNodeId(focusPageId) : focusEntityId;
   const palette = useGraphPalette();
@@ -2806,6 +2810,13 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       <div data-testid="atlas-view" style={statusStyle}>
         <TabEmptyMark tab="graph" />
         <span className="entity-empty">{t("constellationMap.empty")}</span>
+        {/* The topic list still opens from here, even before the map has anything to draw. */}
+        {onOpenTopics && (
+          <button type="button" className="collection-control atlas-topics-link" onClick={onOpenTopics}>
+            <TopicIcon size={16} aria-hidden="true" />
+            <span>{t("atlas.allTopics")}</span>
+          </button>
+        )}
       </div>
     );
   }
@@ -2928,6 +2939,12 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, foc
       </div>
 
       <div className="atlas-display-anchor">
+        {onOpenTopics && (
+          <button type="button" className="collection-control atlas-display-trigger atlas-topics-link" aria-label={t("atlas.allTopics")} title={t("atlas.allTopics")} onClick={onOpenTopics}>
+            <TopicIcon size={16} aria-hidden="true" />
+            <span>{t("atlas.allTopics")}</span>
+          </button>
+        )}
         <button
           ref={displayTriggerRef}
           type="button"

@@ -61,6 +61,21 @@ describe("MemoryListRow reading and operations", () => {
     }
   });
 
+  it("UX-ADD-4 labels an imported chat turn as a chat transcript and offers no confirm action", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <MemoryListRow memory={makeMemory({ memory_type: "identity", conversation_text: true })} {...callbacks()} />,
+    );
+    expect(screen.getByTestId("memory-list-row-conversation-text")).toHaveTextContent("Conversation");
+    await user.click(screen.getByRole("button", { name: "Memory actions" }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Confirm memory" })).not.toBeInTheDocument();
+
+    rerender(<MemoryListRow memory={makeMemory({ memory_type: "identity" })} {...callbacks()} />);
+    expect(screen.queryByTestId("memory-list-row-conversation-text")).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Confirm memory" })).toBeInTheDocument();
+  });
+
   it("does not add placeholder metadata when no space is present", () => {
     const { container } = render(<MemoryListRow memory={makeMemory({ domain: null })} {...callbacks()} />);
     expect(container.querySelector(".memory-list-row-context")).toBeNull();

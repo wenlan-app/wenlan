@@ -45,7 +45,11 @@ export default function MemoryCard({
   const [pendingRevision, setPendingRevision] = useState<PendingRevision | null>(null);
   const [showChangelog, setShowChangelog] = useState(false);
 
-  const facetType = memory.memory_type ?? "fact";
+  // An imported chat turn is the conversation's original text. Its stored
+  // type is a machine guess about that text, so the flag wins: it is shown as
+  // a chat transcript, styled and tiered as a plain row (UX-ADD-4).
+  const isConversationText = memory.conversation_text === true;
+  const facetType = isConversationText ? "fact" : (memory.memory_type ?? "fact");
   const { t, i18n } = useTranslation();
   // English keeps the compact "3h ago"; Chinese gets its own relative time.
   const relativeLocale = i18n.language?.startsWith("zh") ? i18n.language : undefined;
@@ -83,7 +87,7 @@ export default function MemoryCard({
   // Maturity tier: raw → structured → distilled
   const hasStructuredFields = memory.structured_fields != null && memory.structured_fields !== "{}";
   const hasEntityLink = memory.entity_id != null;
-  const hasClassification = memory.memory_type != null && memory.memory_type !== "fact";
+  const hasClassification = !isConversationText && memory.memory_type != null && memory.memory_type !== "fact";
   const isDistilled = memory.supersedes != null && memory.supersede_mode !== "archive";
 
   type MaturityTier = "raw" | "structured" | "distilled";
@@ -263,7 +267,7 @@ export default function MemoryCard({
       >
         {/* Confirm dot */}
         <div className="flex items-start gap-3">
-          {variant === "full" && (
+          {variant === "full" && !isConversationText && (
             <button
               data-testid="confirm-dot"
               onClick={() => onConfirm(memory.source_id, !isConfirmed)}
@@ -383,7 +387,7 @@ export default function MemoryCard({
                   </span>
                 ) : (
                   <span className={`memory-facet-pill ${FACET_COLORS[facetType]}`}>
-                    {facetType}
+                    {isConversationText ? t("memoryList.conversationText") : facetType}
                   </span>
                 )}
                 {/* Archive-superseded: kept visible but muted, so say why. No

@@ -21,6 +21,7 @@ static ONLINE_BACKUP_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::con
 
 mod brief;
 mod chat_check;
+pub mod chat_turns;
 pub use brief::LegacyBriefItem;
 mod claim_derivation;
 pub use claim_derivation::{
@@ -70,10 +71,12 @@ pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
 mod page_restore;
+mod page_space_move;
 mod removal;
 pub use removal::{ForgetOutcome, PageRemovalAudit};
 pub(crate) mod rebuild_writes;
 pub use page_restore::{restore_refusal_message, RestorePageError};
+pub use page_space_move::{set_page_space_refusal_message, SetPageSpaceError};
 mod page_summary_backfill;
 mod presence_review;
 mod quick_capture_repair;
@@ -238,6 +241,8 @@ mod page_link_rename_test;
 mod page_rename_test;
 #[cfg(test)]
 mod page_restore_test;
+#[cfg(test)]
+mod page_space_move_test;
 #[cfg(test)]
 mod presence_review_test;
 #[cfg(test)]
@@ -29133,6 +29138,11 @@ impl MemoryDB {
                     filter_values.push(libsql::Value::Text(t.to_string()));
                 }
             }
+            if !types.is_empty() {
+                // A search for a type finds the person's memories of that
+                // type, never a chat turn carrying it (UX-ADD-4).
+                filter_conditions.push(chat_turns::not_chat_turn("c"));
+            }
         }
         push_read_scope_filter_folded(scope, "c.space", &mut filter_conditions, &mut filter_values);
         if let Some(sa) = source_agent {
@@ -34509,12 +34519,14 @@ impl MemoryDB {
                     MAX(url) as url, COUNT(*) as chunk_count,
                     MAX(last_modified) as last_modified, MAX(summary) as summary,
                     MAX(memory_type), MAX(space), MAX(source_agent),
-                    MAX(CAST(confidence AS REAL)), MAX(confirmed), MAX(pinned)
+                    MAX(CAST(confidence AS REAL)), MAX(confirmed), MAX(pinned),
+                    MAX(CASE WHEN semantic_unit = '{chat_turn}' THEN 1 ELSE 0 END)
              FROM memories
              WHERE {}
              GROUP BY source, source_id
              ORDER BY MAX(last_modified) DESC",
-            conditions.join(" AND ")
+            conditions.join(" AND "),
+            chat_turn = chat_turns::CHAT_TURN_UNIT,
         );
         let conn = self.conn.lock().await;
         let mut rows = conn
@@ -34553,6 +34565,7 @@ impl MemoryDB {
                 // This reader is a raw file inventory with no superseder test at
                 // all, so it has no archive state to report.
                 is_archived: false,
+                conversation_text: row.get::<i64>(13).unwrap_or(0) != 0,
             });
         }
         drop(rows);
@@ -36612,7 +36625,10 @@ impl MemoryDB {
                 MAX(version) as version,
                 MAX(changelog) as changelog,
                 {is_archived} AS is_archived,
-                MAX(session_id) as session_id"
+                MAX(session_id) as session_id,
+                MAX(CASE WHEN semantic_unit = '{chat_turn}' THEN 1 ELSE 0 END)
+                    AS conversation_text",
+            chat_turn = chat_turns::CHAT_TURN_UNIT,
         )
     }
 
@@ -36653,6 +36669,7 @@ impl MemoryDB {
             pending_revision: false,
             merged_from: None,
             session_id: row.get::<Option<String>>(26).unwrap_or(None),
+            conversation_text: row.get::<i64>(27).unwrap_or(0) != 0,
         }
     }
 
@@ -36701,6 +36718,8 @@ impl MemoryDB {
         if let Some(mt) = memory_type {
             params.push(mt.into());
             sql.push_str(&format!(" AND memory_type = ?{}", params.len()));
+            // A chat turn's stored type is not the person's (UX-ADD-4).
+            sql.push_str(&format!(" AND {}", chat_turns::not_chat_turn("")));
         }
         if let Some(c) = confirmed {
             params.push(if c { 1i64.into() } else { 0i64.into() });
@@ -37145,6 +37164,8 @@ impl MemoryDB {
             conditions.push(format!("memory_type = ?{}", idx));
             params.push(mt.to_string().into());
             idx += 1;
+            // A chat turn's stored type is not the person's (UX-ADD-4).
+            conditions.push(chat_turns::not_chat_turn(""));
         }
         match scope {
             ReadScope::Global => {}
@@ -37180,6 +37201,8 @@ impl MemoryDB {
                 // "same set" claim that used to sit here.
                 conditions.push("(confirmed = 0 OR confirmed IS NULL)".to_string());
                 conditions.push(not_self_archived("memories"));
+                // Imported chat turns are not captures to review (UX-ADD-4).
+                conditions.push(chat_turns::not_chat_turn(""));
                 conditions.push("(is_recap IS NULL OR is_recap != 1)".to_string());
             }
         }
@@ -37210,13 +37233,17 @@ impl MemoryDB {
                     MAX(CAST(confidence AS REAL)), MAX(confirmed), MAX(pinned),
                     MAX(created_at) as created_at,
                     COALESCE(MAX(authored_content), MAX(content)) as content,
-                    {is_archived} AS is_archived
+                    {is_archived} AS is_archived,
+                    MAX(CASE WHEN semantic_unit = '{chat_turn}' THEN 1 ELSE 0 END)
+                        AS conversation_text
              FROM memories
              {}
              GROUP BY source_id
              ORDER BY MAX(last_modified) DESC
              LIMIT ?{}",
-            where_clause, limit_param
+            where_clause,
+            limit_param,
+            chat_turn = chat_turns::CHAT_TURN_UNIT,
         );
 
         let mut rows = conn
@@ -37256,6 +37283,7 @@ impl MemoryDB {
                     .unwrap_or(None)
                     .unwrap_or_default(),
                 is_archived: row.get::<i64>(15).unwrap_or(0) != 0,
+                conversation_text: row.get::<i64>(16).unwrap_or(0) != 0,
             });
         }
 
@@ -46734,6 +46762,11 @@ impl MemoryDB {
             )));
         }
         let conn = self.conn.lock().await;
+        if stability == "confirmed" {
+            // An imported chat turn is conversation text, not a memory the
+            // person stated: there is nothing of theirs to confirm (UX-ADD-4).
+            chat_turns::refuse_chat_turn_on_connection(&conn, source_id).await?;
+        }
         let confirmed_int: i64 = if stability == "confirmed" { 1 } else { 0 };
         let rows_affected = if stability == "confirmed" {
             conn.execute(
@@ -46789,6 +46822,8 @@ impl MemoryDB {
         // that argues for it and updates the inventory doc in the same commit.
         let hidden_by_superseder =
             superseder_not_exists(scope, "c", "superseder.source = 'memory'");
+        // An imported chat turn is not a memory waiting for review (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("c");
         let sql = format!(
             "SELECT c.source_id, c.title, c.content, c.summary, c.memory_type, c.space,
                     c.source_agent, c.confidence, c.confirmed, c.stability,
@@ -46806,6 +46841,7 @@ impl MemoryDB {
              WHERE c.source = 'memory'
                AND c.stability = 'new'
                AND COALESCE(c.is_recap, 0) = 0
+               AND {not_chat_turn}
                AND {hidden_by_superseder}
                {}
              ORDER BY
@@ -46872,6 +46908,9 @@ impl MemoryDB {
                 pending_revision: false,
                 merged_from: None,
                 session_id: None,
+                // The nurture predicate leaves imported chat turns out
+                // (UX-ADD-4), so no row here is conversation text.
+                conversation_text: false,
             });
         }
         Ok(results)
@@ -48917,15 +48956,19 @@ impl MemoryDB {
         space: Option<&str>,
         limit: usize,
     ) -> Result<Vec<(String, Option<String>, String)>, WenlanError> {
+        // An imported chat turn's stored type is not the person's, so it is
+        // never a same-type memory (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("");
         let conn = self.conn.lock().await;
         let (sql, params): (String, Vec<libsql::Value>) = if let Some(d) = space {
             (
-                "SELECT source_id, structured_fields, content FROM memories
+                format!(
+                    "SELECT source_id, structured_fields, content FROM memories
                  WHERE source = 'memory' AND memory_type = ?1 AND space = ?2
                  AND source_id != ?3 AND is_recap = 0
-                 AND chunk_index = 0
+                 AND chunk_index = 0 AND {not_chat_turn}
                  ORDER BY last_modified DESC LIMIT ?4"
-                    .to_string(),
+                ),
                 vec![
                     libsql::Value::Text(memory_type.to_string()),
                     libsql::Value::Text(d.to_string()),
@@ -48935,13 +48978,14 @@ impl MemoryDB {
             )
         } else {
             (
-                "SELECT source_id, structured_fields, content FROM memories
+                format!(
+                    "SELECT source_id, structured_fields, content FROM memories
                  WHERE source = 'memory' AND memory_type = ?1
                  AND (space IS NULL OR space = '00000000-0000-4000-8000-000000000001')
                  AND source_id != ?2 AND is_recap = 0
-                 AND chunk_index = 0
+                 AND chunk_index = 0 AND {not_chat_turn}
                  ORDER BY last_modified DESC LIMIT ?3"
-                    .to_string(),
+                ),
                 vec![
                     libsql::Value::Text(memory_type.to_string()),
                     libsql::Value::Text(exclude_source_id.to_string()),
@@ -50563,17 +50607,21 @@ impl MemoryDB {
         since_epoch: i64,
         limit: usize,
     ) -> Result<Vec<(String, String, Option<String>, i64)>, WenlanError> {
+        // A chat turn typed `decision` is conversation text, not a decision
+        // the person made (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("");
         let conn = self.conn.lock().await;
         let mut rows = conn.query(
-            "SELECT source_id, content, space, COALESCE(created_at, last_modified) FROM memories
+            &format!("SELECT source_id, content, space, COALESCE(created_at, last_modified) FROM memories
              WHERE source = 'memory'
                AND memory_type = 'decision'
                AND is_recap = 0
                AND source_id NOT LIKE 'merged_%'
                AND chunk_index = 0
+               AND {not_chat_turn}
                AND COALESCE(created_at, last_modified) > ?1
              ORDER BY COALESCE(created_at, last_modified) DESC
-             LIMIT ?2",
+             LIMIT ?2"),
             libsql::params![since_epoch, limit as i64],
         ).await.map_err(|e| WenlanError::VectorDb(format!("get_recent_decisions: {}", e)))?;
 
@@ -51137,6 +51185,9 @@ impl MemoryDB {
         } else {
             "?2 IS NULL"
         };
+        // An imported chat turn is conversation text, never typed as the
+        // person's fact, preference, identity or decision (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("m");
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
@@ -51157,6 +51208,7 @@ impl MemoryDB {
                    ON es.source_id=m.source_id AND es.step_name='classify'
                  WHERE m.source='memory' AND m.chunk_index=0
                    AND {only}
+                   AND {not_chat_turn}
                    AND COALESCE(m.pending_revision, 0)=0
                    AND NOT EXISTS (
                        SELECT 1 FROM memories superseder
@@ -52683,12 +52735,16 @@ impl MemoryDB {
             ),
         };
         let live = not_self_archived("memories");
+        // An imported chat turn is the conversation's original, not a memory
+        // waiting for the person to confirm as theirs (UX-ADD-4).
+        let not_chat_turn = chat_turns::not_chat_turn("");
         let sql = format!(
             "SELECT source_id, title, summary, content, \
                         created_at, last_modified \
                  FROM memories \
                  WHERE source = 'memory' AND chunk_index = 0 \
                    AND {live} \
+                   AND {not_chat_turn} \
                    AND (confirmed = 0 OR confirmed IS NULL) \
                    AND (is_recap IS NULL OR is_recap != 1) \
                    {scope_sql} \
@@ -63021,14 +63077,20 @@ impl MemoryDB {
                 span.2 = span.2.max(created_ts);
             }
 
+            // A turn is the conversation's original text, not a conclusion
+            // the person holds (UX-ADD-4): flag it so no lane types it and no
+            // surface labels it as the person's memory.
+            let semantic_unit =
+                chat_turns::is_imported_chat_turn(source_id, session_id.is_some(), content)
+                    .then_some(chat_turns::CHAT_TURN_UNIT);
             if let Err(e) = conn.execute(
                 // `origin_class` pinned for the same reason as the single-row
                 // `store_raw_import_memory` above: a chat export is `generated`.
                 // `url` is where the conversation opens in the vendor's app
                 // ("open in the original AI tool"); the vendor and its
                 // conversation id are in `source_id` and the session row.
-                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding, session_id, url)
-                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10), ?11, ?12)",
+                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding, session_id, url, semantic_unit)
+                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10), ?11, ?12, ?13)",
                 libsql::params![
                     memory_id,
                     content.clone(),
@@ -63043,6 +63105,7 @@ impl MemoryDB {
                     session_id,
                     crate::chat_import::Vendor::from_source_id(source_id)
                         .map(|(vendor, id)| vendor.conversation_url(id)),
+                    semantic_unit,
                 ],
             ).await {
                 let _ = conn.execute("ROLLBACK", ()).await;

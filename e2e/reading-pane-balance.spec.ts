@@ -104,8 +104,10 @@ for (const cfg of [
     await expect(shell).toHaveAttribute("data-sidebar-layout", cfg.mode);
     await page.getByRole("button", { name: t.pageInspector.info, exact: true }).click();
     await expect(pane).toBeVisible();
-    // Labels fold to icons while the rail, list, Info and a 600px note do not fit.
-    const folds = cfg.mode === "labels" && cfg.width < 240 + 248 + 320 + 600;
+    // Labels fold to icons while the rail, Info and a 600px note do not fit.
+    // With labels, the list is part of the rail, not a column beside the note.
+    const folds = cfg.mode === "labels" && cfg.width < 240 + 320 + 600;
+    if (cfg.mode === "labels") await expect(page.locator(".notes-workspace-sidebar .wiki-sidebar-directory")).toBeVisible();
     await expect(shell).toHaveAttribute("data-sidebar-layout", folds ? "icons" : cfg.mode);
     await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);
     expect((await pane.boundingBox())!.width).toBe(320);
@@ -135,7 +137,8 @@ for (const cfg of [
     await expect(page.locator(".memory-document-editor .cm-content")).toBeVisible();
     for (const kind of ["memory", "topic"] as const) {
       if (kind === "topic") {
-        await page.getByRole("navigation", { name: "Primary navigation", exact: true }).getByRole("button", { name: t.sidebar.entities, exact: true }).click();
+        // Topics open from the graph (UX-FIND-4).
+        await openPrimaryDestination(page, t.sidebar.entities);
         await page.getByRole("button", { name: "Ada Lovelace", exact: true }).click();
         await expect(page.locator(".entity-detail-dossier")).toBeVisible();
       }

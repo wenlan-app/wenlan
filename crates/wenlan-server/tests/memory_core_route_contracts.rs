@@ -536,3 +536,101 @@ async fn memory_core_routes_preserve_typed_contracts() {
         assert_eq!(error.error, "Database not initialized");
     }
 }
+
+/// UX-ADD-4: an imported chat turn is conversation text, so the confirm and
+/// stability routes refuse to confirm it with a 409 that says so.
+#[tokio::test]
+async fn ux_add_4_confirm_routes_refuse_an_imported_chat_turn() {
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.store_raw_import_memories_batch(&[(
+        "import_claude_route1".to_string(),
+        "User: I like hiking\n\nAssistant: Great.".to_string(),
+        Some("Hiking".to_string()),
+        None,
+        0,
+    )])
+    .await
+    .unwrap();
+
+    let (status, refused): (StatusCode, ErrorEnvelope) = request_typed(
+        &router,
+        Method::POST,
+        "/api/memory/confirm/import_claude_route1",
+        Some(r#"{"confirmed":true}"#),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        refused.error.starts_with("chat_turn_not_a_memory")
+            && refused.error.contains("not a memory the person stated"),
+        "{}",
+        refused.error
+    );
+
+    let (status, refused): (StatusCode, ErrorEnvelope) = request_typed(
+        &router,
+        Method::PUT,
+        "/api/memory/import_claude_route1/stability",
+        Some(r#"{"stability":"confirmed"}"#),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(refused.error.starts_with("chat_turn_not_a_memory"));
+}
+
+/// UX-ADD-4: the memory list the app's main list and inventory read says
+/// which rows are imported chat turns, so they show the chat label and no
+/// confirm control instead of the stored type.
+#[tokio::test]
+async fn ux_add_4_memory_list_route_says_which_rows_are_chat_turns() {
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.store_raw_import_memories_batch(&[
+        (
+            "import_claude_route1".to_string(),
+            "User: I like hiking\n\nAssistant: Great.".to_string(),
+            Some("Hiking".to_string()),
+            None,
+            0,
+        ),
+        (
+            "import_claude_route2".to_string(),
+            "Summary of a conversation about trains".to_string(),
+            Some("Trains".to_string()),
+            None,
+            0,
+        ),
+    ])
+    .await
+    .unwrap();
+
+    let (status, listed): (StatusCode, ListMemoriesResponse) = request_typed(
+        &router,
+        Method::POST,
+        "/api/memory/list",
+        Some(r#"{"limit":50}"#),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let flag = |source_id: &str| {
+        listed
+            .memories
+            .iter()
+            .find(|memory| memory.source_id == source_id)
+            .map(|memory| memory.conversation_text)
+    };
+    assert_eq!(
+        flag("import_claude_route1"),
+        Some(true),
+        "{:?}",
+        listed.memories
+    );
+    assert_eq!(
+        flag("import_claude_route2"),
+        Some(false),
+        "{:?}",
+        listed.memories
+    );
+}

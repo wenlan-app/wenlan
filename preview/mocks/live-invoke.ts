@@ -1155,6 +1155,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_knowledge_path: () => get("/api/knowledge/path").then((r) => r.path),
   get_knowledge_path_info: () => get("/api/knowledge/path"),
   set_knowledge_path: (a) => post("/api/knowledge/path", { path: a?.path }),
+  link_obsidian_vault: (a) => post("/api/linked-vaults", { path: a?.path }),
+  list_linked_vaults: () => get("/api/linked-vaults"),
+  set_linked_vault_ai_edits: (a) => post("/api/linked-vaults/ai-edits", { path: a?.path, allow: a?.allow }, AS_PERSON),
   // The browser preview cannot restart the daemon: the move waits for a restart by hand.
   restart_daemon_to_move_pages: async (): Promise<never> => {
     throw "daemon-restart:isolated";

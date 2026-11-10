@@ -26,6 +26,9 @@ interface SearchResultsProps {
   /** What you're working on, matched by title or where it stands. */
   thingResults: ThingSummary[];
   conceptResults: Page[];
+  /** Archived pages whose title has every search word. The folder tree
+   *  leaves them out, so search is where you find one to read or restore. */
+  archivedResults?: Page[];
   /** Sentences from AI conversations (UX-FIND-1). */
   conversationHits: ConversationHit[];
   /**
@@ -73,6 +76,7 @@ export function SearchResults({
   query,
   thingResults,
   conceptResults,
+  archivedResults = [],
   conversationHits,
   conversationsLoading = false,
   sourceResults,
@@ -100,7 +104,7 @@ export function SearchResults({
     />;
   }
   const saidCount = conversationHits.length + sourceResults.length;
-  const hasResults = thingResults.length + conceptResults.length + saidCount + entityResults.length > 0;
+  const hasResults = thingResults.length + conceptResults.length + archivedResults.length + saidCount + entityResults.length > 0;
   // After a big import, keyword search already finds every passage while
   // search by meaning catches up in the background. One quiet line above the
   // results says so, where it is seen without scrolling.
@@ -133,6 +137,12 @@ export function SearchResults({
       {conceptResults.length > 0 && <section className="search-results-group" aria-label={t("main.search.pages")}>
         <p className="search-results-heading">{t("main.search.pages")}</p>
         {conceptResults.map((page) => (
+          <PageSearchResult key={page.id} page={page} query={query} onClick={() => onOpenPage(page.id)} />
+        ))}
+      </section>}
+      {archivedResults.length > 0 && <section className="search-results-group" aria-label={t("pages.archive.title")}>
+        <p className="search-results-heading">{t("pages.archive.title")}</p>
+        {archivedResults.map((page) => (
           <PageSearchResult key={page.id} page={page} query={query} onClick={() => onOpenPage(page.id)} />
         ))}
       </section>}

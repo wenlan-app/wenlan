@@ -191,6 +191,9 @@ export default function PageInfo({
     web: t("pageInfo.sourceKind.web"),
   };
   const sourceKindLabel = (mem: MemoryItem): string => {
+    // An imported chat turn is the conversation's original text, never the
+    // person's fact or decision, whatever type it carries (UX-ADD-4).
+    if (mem.conversation_text) return t("memoryList.conversationText");
     const key = mem.memory_type?.toLowerCase() ?? "";
     if (!key) return sourceKindLabels.memory;
     return KNOWN_SOURCE_KINDS.has(key) ? sourceKindLabels[key] : mem.memory_type!;

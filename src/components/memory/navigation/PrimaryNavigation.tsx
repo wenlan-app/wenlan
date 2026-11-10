@@ -22,6 +22,9 @@ type PrimaryNavigationProps = {
   readonly onNavigateHome?: () => void;
   readonly onNavigatePages?: () => void;
   readonly onNavigateSpaces: (create: boolean) => void;
+  /** With labels, the Wiki is a section at the end of the list: the shell
+   *  renders its heading and every page into this host (see Main). */
+  readonly onWikiSectionHost?: (host: HTMLDivElement | null) => void;
 };
 
 type NavButtonProps = {
@@ -65,6 +68,7 @@ export function PrimaryNavigation({
   onNavigateHome,
   onNavigatePages,
   onNavigateSpaces,
+  onWikiSectionHost,
 }: PrimaryNavigationProps) {
   const options = {
     home: { icon: homeIcon, onClick: onNavigateHome },
@@ -75,13 +79,19 @@ export function PrimaryNavigation({
   };
   // Every destination sits on the left: there are few enough that a More
   // menu only hid them (UX-FIND-4).
-  const destinations = NAVIGATION_DESTINATION_ORDER.map((key) => ({ key, label: labels[key], ...options[key] }));
+  // One left column: with labels, the Wiki and its pages close the list
+  // instead of opening a second column beside it.
+  const wikiSection = !compact && !!onWikiSectionHost;
+  const destinations = NAVIGATION_DESTINATION_ORDER
+    .filter((key) => !(wikiSection && key === "pages"))
+    .map((key) => ({ key, label: labels[key], ...options[key] }));
 
   return (
     <nav aria-label={labels.navigation} className={`notes-rail-nav${compact ? " notes-rail-nav--icons" : " notes-rail-nav--labels"}`}>
       {destinations.map((destination) => (
         <NavButton active={active === destination.key} compact={compact} icon={destination.icon} key={destination.key} label={destination.label} onClick={destination.onClick} />
       ))}
+      {wikiSection && <div className="notes-wiki-section" ref={onWikiSectionHost} />}
     </nav>
   );
 }

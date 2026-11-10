@@ -2,29 +2,37 @@
 import { expect, type Page } from "@playwright/test";
 
 /**
- * Home holds what is in motion and has no directory; every page lives in the
- * Wiki. A journey that browses pages from Home goes to the Wiki first.
+ * With a labelled sidebar, every page is listed in it, below the
+ * destinations, on any screen. Otherwise Home has no directory, and a journey
+ * that browses pages from Home goes to the Wiki first.
  */
 export async function leaveHomeForWiki(page: Page) {
   const workspace = page.locator(".wiki-workspace");
   await expect(workspace.first()).toBeAttached();
+  const sidebarWiki = page.locator('.wiki-sidebar-directory .notes-wiki-heading');
+  if (await sidebarWiki.isVisible()) {
+    // Every page is listed in the sidebar; the journey still browses from the Wiki.
+    if (await sidebarWiki.getAttribute("aria-current") !== "page") await sidebarWiki.click();
+    return;
+  }
   if (await page.locator('.wiki-workspace[data-directory-hidden="true"]').count() === 0) return;
   const wiki = page.locator('.notes-rail-nav [aria-label="Wiki"]');
   // A narrow window, or a hidden sidebar, keeps the rail closed until asked.
   await expect(wiki).toBeAttached();
   if (!(await wiki.isVisible())) await page.locator("[data-sidebar-toggle]").click();
   await wiki.click();
+  await expect(page.locator(".wiki-workspace-directory")).toBeAttached();
+  if (await page.locator(".wiki-sidebar-directory").count()) return;
   await expect(page.locator('.wiki-workspace[data-directory-hidden="true"]')).toHaveCount(0);
 }
 
-/** Switch the optional pages panel to folders, including narrow screens. */
+/** Show the folder tree, including on narrow screens. */
 export async function showWikiFolders(page: Page) {
   await leaveHomeForWiki(page);
   const directory = page.locator(".wiki-workspace-directory");
   await expect(directory).toBeAttached();
   if (!(await directory.isVisible())) await page.locator(".wiki-workspace-folders-toggle").click();
   await expect(directory).toBeVisible();
-  await directory.getByRole("combobox").selectOption("folders");
   await expect(directory.locator(".notes-list-panel")).toBeVisible();
   return directory;
 }

@@ -453,6 +453,12 @@ async fn create_adopted_page(
             },
         )
         .await?;
+        // A note of a linked vault the person has not opened to the AI is
+        // locked from its first moment as a page, so no AI change lands
+        // before they say yes.
+        if crate::linked_vault::new_page_needs_lock(knowledge_path, relative) {
+            db.set_page_review_required(page_id, true).await?;
+        }
     }
     let page = db
         .get_page(page_id)
