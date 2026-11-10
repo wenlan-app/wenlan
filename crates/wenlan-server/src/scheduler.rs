@@ -694,14 +694,23 @@ impl AmbientBudgetProvider {
         }
     }
 
+    #[cfg(test)]
     fn with_shared_calls(
         inner: Arc<dyn wenlan_core::llm_provider::LlmProvider>,
         calls: Arc<std::sync::atomic::AtomicUsize>,
     ) -> Self {
+        Self::with_shared_calls_limit(inner, calls, 1)
+    }
+
+    fn with_shared_calls_limit(
+        inner: Arc<dyn wenlan_core::llm_provider::LlmProvider>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        max_calls: usize,
+    ) -> Self {
         Self {
             inner,
             calls,
-            max_calls: 1,
+            max_calls,
         }
     }
 
@@ -778,13 +787,61 @@ impl wenlan_core::llm_provider::LlmProvider for AmbientBudgetProvider {
 fn with_shared_automatic_budget(
     provider: Option<&Arc<dyn wenlan_core::llm_provider::LlmProvider>>,
     calls: Arc<std::sync::atomic::AtomicUsize>,
+    max_calls: usize,
 ) -> Option<Arc<dyn wenlan_core::llm_provider::LlmProvider>> {
     provider.map(|provider| {
-        Arc::new(AmbientBudgetProvider::with_shared_calls(
+        Arc::new(AmbientBudgetProvider::with_shared_calls_limit(
             provider.clone(),
             calls,
+            max_calls,
         )) as Arc<dyn wenlan_core::llm_provider::LlmProvider>
     })
+}
+
+/// The page writer background work may use: the `synthesis_source` pin, in
+/// Automatic only. On demand has none, so nothing here writes pages, arms a
+/// window for a late writer, or calls the person's AI tool.
+fn automatic_synthesis_pin(
+    background_ai_enabled: bool,
+    pin: Option<&str>,
+) -> Option<wenlan_core::refinery::SynthesisSource> {
+    background_ai_enabled
+        .then(|| wenlan_core::refinery::SynthesisSource::parse(pin))
+        .flatten()
+}
+
+/// Model calls one automatic phase turn may make. An Emergence turn writes
+/// one new page through steep's new-page path: one call groups the waiting
+/// items, one writes the page. Every other phase keeps the single call.
+fn automatic_phase_call_budget(phase: wenlan_core::refinery::Phase) -> usize {
+    match phase {
+        wenlan_core::refinery::Phase::Emergence => 2,
+        _ => 1,
+    }
+}
+
+/// New pages a paid page writer may write in one armed window (an import or
+/// a late-writer window) or one automatic steep round. It matches the
+/// first-import batch of 8. On-device writing is free and is not capped.
+const PAID_PAGE_WRITER_CAP: usize = 8;
+
+/// Whether the page writer bills per call: the Anthropic and external API
+/// routes. The on-device model costs nothing.
+fn page_writer_is_paid(pin: Option<wenlan_core::refinery::SynthesisSource>) -> bool {
+    matches!(
+        pin,
+        Some(
+            wenlan_core::refinery::SynthesisSource::Anthropic
+                | wenlan_core::refinery::SynthesisSource::External
+        )
+    )
+}
+
+fn paid_page_cap_reached(
+    pin: Option<wenlan_core::refinery::SynthesisSource>,
+    pages_written: usize,
+) -> bool {
+    page_writer_is_paid(pin) && pages_written >= PAID_PAGE_WRITER_CAP
 }
 
 fn derived_receipt_sweep_due(last: Option<Instant>, now: Instant) -> bool {
@@ -966,6 +1023,8 @@ struct AutomaticPhaseOutcome {
     retryable: bool,
     paused: bool,
     panicked: bool,
+    /// New pages Emergence wrote this turn.
+    pages_created: usize,
 }
 
 impl From<&wenlan_core::refinery::SteepPhaseSliceReport> for AutomaticPhaseOutcome {
@@ -977,6 +1036,7 @@ impl From<&wenlan_core::refinery::SteepPhaseSliceReport> for AutomaticPhaseOutco
             retryable: report.retryable,
             paused: report.paused,
             panicked: false,
+            pages_created: report.result.distilled as usize,
         }
     }
 }
@@ -1020,9 +1080,21 @@ struct AutomaticSteepBatch {
 
 /// Automatic work is deliberately narrower than the foreground steep API.
 /// A phase earns this allowlist only after its scheduler entry point has a
-/// durable cursor and a source-proven per-turn work bound.
+/// durable cursor and a source-proven per-turn work bound:
+/// - Detect: no model; at most `detect_max_candidates_per_tick` candidates a
+///   turn, and the memberships it declined are kept in app metadata.
+/// - Emergence: one new page a turn through steep's new-page path
+///   (`steep_new::write_one_new_page`, at most two model calls); a written
+///   page's items are cited and leave the list, and items that did not
+///   become a page are kept in app metadata until they change.
+/// - ReDistill: one page a turn through the stale-page cursor.
 fn automatic_phase_allowed(phase: wenlan_core::refinery::Phase) -> bool {
-    matches!(phase, wenlan_core::refinery::Phase::ReDistill)
+    matches!(
+        phase,
+        wenlan_core::refinery::Phase::Detect
+            | wenlan_core::refinery::Phase::Emergence
+            | wenlan_core::refinery::Phase::ReDistill
+    )
 }
 
 /// The steep phases automatic runs leave out, in canonical order. They run
@@ -1408,6 +1480,9 @@ pub fn spawn_scheduler(
         let mut maintenance_pending = false;
         let mut maintenance_stage_ran_since_steep = false;
         let mut steep_batch: Option<AutomaticSteepBatch> = None;
+        // New pages the current automatic steep round has written (the
+        // paid-route page cap reads it).
+        let mut automatic_pages_written = 0usize;
         let mut maintenance_round: Option<AutomaticMaintenanceRound> = None;
         let mut on_demand_maintenance_round: Option<AutomaticMaintenanceRound> = None;
         // One-time cleanups of data written under older rules; a failed pass
@@ -1416,6 +1491,7 @@ pub fn spawn_scheduler(
         let mut ambient_turn_owed = false;
         let mut last_deferred_resource_reason = None;
         let mut document_prep_claim_log = DocumentPrepClaimLog::default();
+        let mut page_writer_arrival = PageWriterArrival::default();
 
         // Load persisted daily timestamp from DB (survives restarts)
         let last_daily_epoch = load_last_daily(&shared).await;
@@ -1529,13 +1605,10 @@ pub fn spawn_scheduler(
                     )
                 })
                 .flatten();
-            let synthesis_pin = background_ai_enabled
-                .then(|| {
-                    wenlan_core::refinery::SynthesisSource::parse(
-                        runtime_config.synthesis_source.as_deref(),
-                    )
-                })
-                .flatten();
+            let synthesis_pin = automatic_synthesis_pin(
+                background_ai_enabled,
+                runtime_config.synthesis_source.as_deref(),
+            );
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
             }
@@ -1733,6 +1806,47 @@ pub fn spawn_scheduler(
             // same existing ambient slices, but ignores foreground-idle and
             // CPU threshold/cooldown gates while retaining memory, thermal,
             // provider-consent, startup-reservation, and shutdown guards.
+            // A page writer that arrives after the material (a pin set later,
+            // an on-device model that finished loading) arms the same import
+            // window for material no page cites yet, so it gets written
+            // without the person asking again. Only Automatic has a pin here.
+            let page_writer_usable = synthesis_pin.is_some()
+                && wenlan_core::refinery::resolve_synthesis(
+                    synthesis_pin,
+                    synthesis_llm.as_ref(),
+                    api_llm.as_ref(),
+                    external_llm.as_ref(),
+                    llm.as_ref(),
+                )
+                .llm
+                .is_some();
+            if page_writer_arrival.observe(synthesis_pin, page_writer_usable)
+                && !write_signal.import_priority_active()
+            {
+                match wenlan_core::steep_new::new_material_count(
+                    &db,
+                    &wenlan_core::read_scope::ReadScope::Global,
+                )
+                .await
+                {
+                    Ok(waiting) if waiting > 0 => {
+                        match write_signal.persist_and_request_import(&db, None).await {
+                            Ok(()) => tracing::info!(
+                                "[scheduler] page writer ready route={} waiting={waiting}; armed the import window",
+                                synthesis_pin.map_or("none", |pin| pin.as_str()),
+                            ),
+                            Err(error) => tracing::warn!(
+                                "[scheduler] failed to arm the import window for a late page writer: {error}"
+                            ),
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::warn!(
+                        "[scheduler] could not count material waiting for a page: {error}"
+                    ),
+                }
+            }
+
             let mut import_work_ran = false;
             if let Some(import_snapshot) = write_signal.import_priority_snapshot() {
                 let import_generation = import_snapshot.generation;
@@ -1833,21 +1947,34 @@ pub fn spawn_scheduler(
                                     } else if let Some(phase) = current.synthesis_phase {
                                         let shared_calls =
                                             Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                                        let phase_kind = match phase {
+                                            ImportSynthesisPhase::Detect => {
+                                                wenlan_core::refinery::Phase::Detect
+                                            }
+                                            ImportSynthesisPhase::Emergence => {
+                                                wenlan_core::refinery::Phase::Emergence
+                                            }
+                                        };
+                                        let call_budget = automatic_phase_call_budget(phase_kind);
                                         let budgeted_llm = with_shared_automatic_budget(
                                             llm.as_ref(),
                                             shared_calls.clone(),
+                                            call_budget,
                                         );
                                         let budgeted_api_llm = with_shared_automatic_budget(
                                             api_llm.as_ref(),
                                             shared_calls.clone(),
+                                            call_budget,
                                         );
                                         let budgeted_synthesis_llm = with_shared_automatic_budget(
                                             synthesis_llm.as_ref(),
                                             shared_calls.clone(),
+                                            call_budget,
                                         );
                                         let budgeted_external_llm = with_shared_automatic_budget(
                                             external_llm.as_ref(),
                                             shared_calls,
+                                            call_budget,
                                         );
                                         let synthesis_available =
                                             wenlan_core::refinery::resolve_synthesis(
@@ -1876,22 +2003,25 @@ pub fn spawn_scheduler(
                                                 "[scheduler] import priority deferred reason=pinned_synthesis_provider_loading"
                                             );
                                             }
+                                        } else if phase == ImportSynthesisPhase::Emergence
+                                            && paid_page_cap_reached(
+                                                synthesis_pin,
+                                                current.pages_written,
+                                            )
+                                        {
+                                            write_signal.import_priority_finish_synthesis(
+                                                processing_generation,
+                                            );
+                                            tracing::info!(
+                                                "[scheduler] import priority page cap reached pages={} route={}; the rest waits for automatic background work",
+                                                current.pages_written,
+                                                synthesis_pin.map_or("none", |pin| pin.as_str()),
+                                            );
                                         } else {
                                             tracing::info!(
-                                                "[scheduler] import priority phase={} started",
-                                                match phase {
-                                                    ImportSynthesisPhase::Detect => "detect",
-                                                    ImportSynthesisPhase::Emergence => "emergence",
-                                                }
+                                                "[scheduler] import priority phase={phase_kind} started pass={}",
+                                                current.synthesis_retries.saturating_add(1),
                                             );
-                                            let phase_kind = match phase {
-                                                ImportSynthesisPhase::Detect => {
-                                                    wenlan_core::refinery::Phase::Detect
-                                                }
-                                                ImportSynthesisPhase::Emergence => {
-                                                    wenlan_core::refinery::Phase::Emergence
-                                                }
-                                            };
                                             let outcome = fire_steep_phase_safe(
                                                 &db,
                                                 budgeted_llm.as_ref(),
@@ -1910,17 +2040,35 @@ pub fn spawn_scheduler(
                                             write_signal.import_priority_note_phase(
                                                 processing_generation,
                                                 phase,
+                                                ImportSynthesisOutcome {
+                                                    progressed: outcome.progressed,
+                                                    more: outcome.more,
+                                                    pages_created: outcome.pages_created,
+                                                },
                                             );
                                             import_work_ran = true;
                                             tracing::info!(
-                                            "[scheduler] import priority phase={} done selected={} progressed={} more={} retryable={} panicked={}",
+                                            "[scheduler] import priority phase={} done selected={} progressed={} more={} pages_created={} retryable={} panicked={}",
                                             phase_kind,
                                             outcome.selected,
                                             outcome.progressed,
                                             outcome.more,
+                                            outcome.pages_created,
                                             outcome.retryable,
                                             outcome.panicked,
                                         );
+                                            if let Some(after) =
+                                                write_signal.import_priority_snapshot()
+                                            {
+                                                if after.synthesis_retries
+                                                    > current.synthesis_retries
+                                                {
+                                                    tracing::info!(
+                                                        "[scheduler] import priority wrote no page this pass; preparing and linking again before the next detect retry={}",
+                                                        after.synthesis_retries
+                                                    );
+                                                }
+                                            }
                                         }
                                     } else if current.ambient_slices
                                         < IMPORT_PRIORITY_MAX_AMBIENT_SLICES
@@ -2018,13 +2166,14 @@ pub fn spawn_scheduler(
 
             if let Some(trigger) = selected_automatic {
                 let shared_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-                let budgeted_llm = with_shared_automatic_budget(llm.as_ref(), shared_calls.clone());
+                let budgeted_llm =
+                    with_shared_automatic_budget(llm.as_ref(), shared_calls.clone(), 1);
                 let budgeted_api_llm =
-                    with_shared_automatic_budget(api_llm.as_ref(), shared_calls.clone());
+                    with_shared_automatic_budget(api_llm.as_ref(), shared_calls.clone(), 1);
                 let budgeted_synthesis_llm =
-                    with_shared_automatic_budget(synthesis_llm.as_ref(), shared_calls.clone());
+                    with_shared_automatic_budget(synthesis_llm.as_ref(), shared_calls.clone(), 1);
                 let budgeted_external_llm =
-                    with_shared_automatic_budget(external_llm.as_ref(), shared_calls.clone());
+                    with_shared_automatic_budget(external_llm.as_ref(), shared_calls.clone(), 1);
                 let maintenance_llm = resolve_maintenance_provider(
                     synthesis_pin,
                     budgeted_synthesis_llm.as_ref(),
@@ -2097,6 +2246,7 @@ pub fn spawn_scheduler(
                                 .expect("maintenance handled in the previous match arm");
                             let cursor = load_automatic_phase_cursor(&db, kind).await;
                             steep_batch = Some(AutomaticSteepBatch::new(trigger.clone(), cursor));
+                            automatic_pages_written = 0;
                         }
                         let (kind, phase) = {
                             let batch = steep_batch
@@ -2129,21 +2279,56 @@ pub fn spawn_scheduler(
                         if !wenlan_core::config::load_config().background_ai_enabled() {
                             continue;
                         }
-                        let outcome = fire_steep_phase_safe(
-                            &db,
-                            budgeted_llm.as_ref(),
-                            budgeted_api_llm.as_ref(),
-                            budgeted_synthesis_llm.as_ref(),
-                            budgeted_external_llm.as_ref(),
-                            &prompts,
-                            &refinery_cfg,
-                            &confidence_cfg,
-                            &distillation_cfg,
-                            kind,
-                            phase,
-                            label,
-                        )
-                        .await;
+                        let outcome = if phase == wenlan_core::refinery::Phase::Emergence
+                            && paid_page_cap_reached(synthesis_pin, automatic_pages_written)
+                        {
+                            // Not progressed: the batch drops Emergence for
+                            // this round and the rest waits for the next one.
+                            tracing::info!(
+                                "[scheduler] {label} page cap reached pages={automatic_pages_written} route={}; the rest waits for the next automatic round",
+                                synthesis_pin.map_or("none", |pin| pin.as_str()),
+                            );
+                            AutomaticPhaseOutcome::default()
+                        } else {
+                            let call_budget = automatic_phase_call_budget(phase);
+                            let phase_llm = with_shared_automatic_budget(
+                                llm.as_ref(),
+                                shared_calls.clone(),
+                                call_budget,
+                            );
+                            let phase_api_llm = with_shared_automatic_budget(
+                                api_llm.as_ref(),
+                                shared_calls.clone(),
+                                call_budget,
+                            );
+                            let phase_synthesis_llm = with_shared_automatic_budget(
+                                synthesis_llm.as_ref(),
+                                shared_calls.clone(),
+                                call_budget,
+                            );
+                            let phase_external_llm = with_shared_automatic_budget(
+                                external_llm.as_ref(),
+                                shared_calls.clone(),
+                                call_budget,
+                            );
+                            fire_steep_phase_safe(
+                                &db,
+                                phase_llm.as_ref(),
+                                phase_api_llm.as_ref(),
+                                phase_synthesis_llm.as_ref(),
+                                phase_external_llm.as_ref(),
+                                &prompts,
+                                &refinery_cfg,
+                                &confidence_cfg,
+                                &distillation_cfg,
+                                kind,
+                                phase,
+                                label,
+                            )
+                            .await
+                        };
+                        automatic_pages_written =
+                            automatic_pages_written.saturating_add(outcome.pages_created);
                         let (disposition, cursor) = {
                             let batch = steep_batch
                                 .as_mut()

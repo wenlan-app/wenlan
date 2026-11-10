@@ -40,6 +40,15 @@ pub(super) enum ImportSynthesisPhase {
     Emergence,
 }
 
+/// What one synthesis turn of the lane did. Emergence writes at most one
+/// page per turn, so the lane keeps it going while material remains.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct ImportSynthesisOutcome {
+    pub(super) progressed: bool,
+    pub(super) more: bool,
+    pub(super) pages_created: usize,
+}
+
 /// Result of one model-free document preparation attempt in the import lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DocumentPrepOutcome {
@@ -72,6 +81,10 @@ pub(super) struct ImportPrioritySnapshot {
     document_prep_retry_at: Option<i64>,
     prefer_document_prep: bool,
     inference_round_idle: bool,
+    /// Pages Emergence wrote in this window (the paid-route cap reads it).
+    pub(super) pages_written: usize,
+    /// Detect/Emergence passes started again after a pass that wrote no page.
+    pub(super) synthesis_retries: u8,
 }
 
 impl ImportPrioritySnapshot {
@@ -119,6 +132,11 @@ pub(super) struct ImportPriority {
     document_prep_retries: Vec<i64>,
     prefer_document_prep: bool,
     inference_round_idle: bool,
+    /// A document was prepared or an inference job found work since this
+    /// pass began. A pass that wrote no page is tried again only then.
+    pass_had_work: bool,
+    pages_written: usize,
+    synthesis_retries: u8,
 }
 
 impl ImportPriority {
@@ -153,6 +171,9 @@ impl ImportPriority {
         self.document_prep_retries.clear();
         self.prefer_document_prep = true;
         self.inference_round_idle = false;
+        self.pass_had_work = false;
+        self.pages_written = 0;
+        self.synthesis_retries = 0;
     }
 
     pub(super) fn prepare_request(&mut self, now: Instant) -> ImportPriorityRequest {
@@ -191,6 +212,8 @@ impl ImportPriority {
             document_prep_retry_at: self.document_prep_retries.iter().copied().min(),
             prefer_document_prep: self.prefer_document_prep,
             inference_round_idle: self.inference_round_idle,
+            pages_written: self.pages_written,
+            synthesis_retries: self.synthesis_retries,
         })
     }
 
@@ -218,6 +241,7 @@ impl ImportPriority {
             .min(IMPORT_PRIORITY_MAX_AMBIENT_SLICES);
         self.round_attempts = self.round_attempts.saturating_add(1);
         self.round_had_work |= selected;
+        self.pass_had_work |= selected;
         self.next_job = (self.next_job + 1) % IMPORT_PRIORITY_JOBS.len();
         if self.round_attempts == IMPORT_PRIORITY_JOBS.len() as u8 {
             if !self.round_had_work {
@@ -265,6 +289,7 @@ impl ImportPriority {
             DocumentPrepOutcome::Prepared
             | DocumentPrepOutcome::RetryableFailure { .. }
             | DocumentPrepOutcome::Exhausted => {
+                self.pass_had_work |= outcome == DocumentPrepOutcome::Prepared;
                 self.ambient_slices = self
                     .ambient_slices
                     .saturating_add(1)
@@ -294,20 +319,53 @@ impl ImportPriority {
         true
     }
 
+    /// Record one synthesis turn. Detect is followed by Emergence, which runs
+    /// one new page per turn while material remains. When an Emergence pass ends:
+    /// it finishes the lane once it has written a page; a pass that wrote
+    /// nothing but whose prep/inference did work (the material was still
+    /// being linked, or the slice budget ran out first) starts again with a
+    /// fresh slice budget, so Detect runs after that round; a pass with no
+    /// work at all finishes the lane. The window bounds every pass.
     pub(super) fn note_synthesis_phase(
         &mut self,
         generation: u64,
         phase: ImportSynthesisPhase,
+        outcome: ImportSynthesisOutcome,
     ) -> bool {
         if self.generation != generation {
             return false;
         }
-        self.synthesis_phase = match phase {
-            ImportSynthesisPhase::Detect => Some(ImportSynthesisPhase::Emergence),
-            ImportSynthesisPhase::Emergence => None,
-        };
-        self.synthesis_finished = phase == ImportSynthesisPhase::Emergence;
         self.prefer_document_prep = true;
+        if phase == ImportSynthesisPhase::Detect {
+            self.synthesis_phase = Some(ImportSynthesisPhase::Emergence);
+            return true;
+        }
+        self.pages_written = self.pages_written.saturating_add(outcome.pages_created);
+        if outcome.progressed && outcome.more {
+            self.synthesis_phase = Some(ImportSynthesisPhase::Emergence);
+            return true;
+        }
+        self.synthesis_phase = None;
+        if self.pages_written == 0 && self.pass_had_work {
+            self.pass_had_work = false;
+            self.synthesis_retries = self.synthesis_retries.saturating_add(1);
+            self.ambient_slices = 0;
+            self.round_attempts = 0;
+            self.round_had_work = false;
+            self.inference_round_idle = false;
+        } else {
+            self.synthesis_finished = true;
+        }
+        true
+    }
+
+    /// End the window's page writing early (the paid-route page cap).
+    pub(super) fn finish_synthesis(&mut self, generation: u64) -> bool {
+        if self.generation != generation {
+            return false;
+        }
+        self.synthesis_phase = None;
+        self.synthesis_finished = true;
         true
     }
 
@@ -448,11 +506,19 @@ impl WriteSignal {
         &self,
         generation: u64,
         phase: ImportSynthesisPhase,
+        outcome: ImportSynthesisOutcome,
     ) -> bool {
         self.import_priority
             .lock()
             .expect("import priority mutex poisoned")
-            .note_synthesis_phase(generation, phase)
+            .note_synthesis_phase(generation, phase, outcome)
+    }
+
+    pub(super) fn import_priority_finish_synthesis(&self, generation: u64) -> bool {
+        self.import_priority
+            .lock()
+            .expect("import priority mutex poisoned")
+            .finish_synthesis(generation)
     }
 
     pub(super) fn import_priority_should_finish(&self, now: Instant) -> bool {
@@ -498,6 +564,32 @@ impl WriteSignal {
 
     pub(super) fn import_wake(&self) -> std::sync::Arc<Notify> {
         self.import_wake.clone()
+    }
+}
+
+/// Watches the page writer (the `synthesis_source` pin and its provider) from
+/// poll to poll, to notice when it first becomes usable: a pin is set, the
+/// pinned on-device model finishes loading, or a key arrives. The first poll
+/// only records what it sees, so a daemon start with a ready writer does not
+/// count as an arrival.
+#[derive(Debug, Default)]
+pub(super) struct PageWriterArrival {
+    last: Option<(Option<wenlan_core::refinery::SynthesisSource>, bool)>,
+}
+
+impl PageWriterArrival {
+    /// True when the writer is usable now and was not usable (or was another
+    /// source) on the previous poll.
+    pub(super) fn observe(
+        &mut self,
+        pin: Option<wenlan_core::refinery::SynthesisSource>,
+        usable: bool,
+    ) -> bool {
+        let previous = self.last.replace((pin, usable));
+        usable
+            && previous.is_some_and(|(previous_pin, previous_usable)| {
+                !previous_usable || previous_pin != pin
+            })
     }
 }
 
@@ -768,16 +860,174 @@ mod tests {
             Some(ImportSynthesisPhase::Detect)
         );
         assert!(!priority.should_finish(now));
-        priority.note_synthesis_phase(old, ImportSynthesisPhase::Detect);
-        priority.note_synthesis_phase(old, ImportSynthesisPhase::Emergence);
+        priority.note_synthesis_phase(
+            old,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        priority.note_synthesis_phase(old, ImportSynthesisPhase::Emergence, wrote_one_page());
         assert!(priority.should_finish(now));
         let fresh = priority.prepare_request(now).generation;
         assert_ne!(old, fresh);
-        assert!(!priority.note_synthesis_phase(old, ImportSynthesisPhase::Emergence));
+        assert!(!priority.note_synthesis_phase(
+            old,
+            ImportSynthesisPhase::Emergence,
+            wrote_one_page()
+        ));
         assert!(!priority.note_ambient(old, true));
         assert!(!priority.clear_if_generation(old));
         assert!(!priority.should_finish(now));
         assert_eq!(priority.snapshot().unwrap().ambient_slices, 0);
+    }
+
+    fn wrote_one_page() -> ImportSynthesisOutcome {
+        ImportSynthesisOutcome {
+            progressed: true,
+            more: false,
+            pages_created: 1,
+        }
+    }
+
+    fn wrote_nothing() -> ImportSynthesisOutcome {
+        ImportSynthesisOutcome {
+            progressed: false,
+            more: false,
+            pages_created: 0,
+        }
+    }
+
+    /// Drive one empty inference round so the lane starts Detect.
+    fn empty_round(priority: &mut ImportPriority, generation: u64) {
+        for _ in 0..IMPORT_PRIORITY_JOBS.len() {
+            priority.note_ambient(generation, false);
+        }
+    }
+
+    #[test]
+    fn a_pass_that_wrote_no_page_runs_detect_again_after_the_prep_round() {
+        let now = Instant::now();
+        let epoch = chrono::Utc::now().timestamp();
+        let mut priority = ImportPriority::default();
+        let generation = priority.prepare_request(now).generation;
+        // The measured failure: prep spends the whole slice budget, so Detect
+        // starts before anything is linked and finds nothing.
+        for _ in 0..IMPORT_PRIORITY_MAX_AMBIENT_SLICES {
+            priority.note_document_slice(generation, DocumentPrepOutcome::Prepared, epoch);
+        }
+        assert_eq!(
+            priority.snapshot().unwrap().synthesis_phase,
+            Some(ImportSynthesisPhase::Detect)
+        );
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        priority.note_synthesis_phase(generation, ImportSynthesisPhase::Emergence, wrote_nothing());
+
+        // The lane does not end: prep and inference get a fresh budget first.
+        assert!(!priority.should_finish(now));
+        let after = priority.snapshot().unwrap();
+        assert_eq!(after.synthesis_phase, None);
+        assert_eq!(after.synthesis_retries, 1);
+        assert_eq!(after.ambient_slices, 0);
+        assert!(
+            after.document_prep_open(),
+            "the rest of the files are prepared"
+        );
+
+        // Prep drains, inference finds work, then a quiet round: Detect again.
+        priority.note_document_slice(generation, DocumentPrepOutcome::Idle, epoch);
+        priority.note_ambient(generation, true);
+        for _ in 1..IMPORT_PRIORITY_JOBS.len() {
+            priority.note_ambient(generation, false);
+        }
+        assert_eq!(priority.snapshot().unwrap().synthesis_phase, None);
+        empty_round(&mut priority, generation);
+        assert_eq!(
+            priority.snapshot().unwrap().synthesis_phase,
+            Some(ImportSynthesisPhase::Detect)
+        );
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        // Emergence writes one page per turn while material remains.
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Emergence,
+            ImportSynthesisOutcome {
+                progressed: true,
+                more: true,
+                pages_created: 1,
+            },
+        );
+        assert_eq!(
+            priority.snapshot().unwrap().synthesis_phase,
+            Some(ImportSynthesisPhase::Emergence)
+        );
+        assert!(!priority.should_finish(now));
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Emergence,
+            wrote_one_page(),
+        );
+        assert_eq!(priority.snapshot().unwrap().pages_written, 2);
+        assert!(priority.should_finish(now), "pages were written: done");
+    }
+
+    #[test]
+    fn a_pass_with_no_work_and_no_page_finishes_the_lane() {
+        let now = Instant::now();
+        let epoch = chrono::Utc::now().timestamp();
+        let mut priority = ImportPriority::default();
+        let generation = priority.prepare_request(now).generation;
+        priority.note_document_slice(generation, DocumentPrepOutcome::Idle, epoch);
+        empty_round(&mut priority, generation);
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        priority.note_synthesis_phase(generation, ImportSynthesisPhase::Emergence, wrote_nothing());
+        assert!(priority.should_finish(now));
+        assert_eq!(priority.snapshot().unwrap().synthesis_retries, 0);
+    }
+
+    #[test]
+    fn the_page_cap_finishes_synthesis_for_this_generation_only() {
+        let now = Instant::now();
+        let mut priority = ImportPriority::default();
+        let old = priority.prepare_request(now).generation;
+        let fresh = priority.prepare_request(now).generation;
+        assert!(!priority.finish_synthesis(old));
+        assert!(!priority.should_finish(now));
+        assert!(priority.finish_synthesis(fresh));
+        assert!(priority.should_finish(now));
+    }
+
+    #[test]
+    fn a_late_page_writer_arms_once_when_it_becomes_usable() {
+        use wenlan_core::refinery::SynthesisSource;
+        let mut arrival = PageWriterArrival::default();
+        // Daemon start with a ready writer only records it.
+        assert!(!arrival.observe(Some(SynthesisSource::Anthropic), true));
+        assert!(!arrival.observe(Some(SynthesisSource::Anthropic), true));
+
+        // The pinned on-device model is still loading, then finishes.
+        let mut arrival = PageWriterArrival::default();
+        assert!(!arrival.observe(Some(SynthesisSource::OnDevice), false));
+        assert!(!arrival.observe(Some(SynthesisSource::OnDevice), false));
+        assert!(arrival.observe(Some(SynthesisSource::OnDevice), true));
+        assert!(!arrival.observe(Some(SynthesisSource::OnDevice), true));
+
+        // No pin at import time, a pin set later.
+        let mut arrival = PageWriterArrival::default();
+        assert!(!arrival.observe(None, false));
+        assert!(arrival.observe(Some(SynthesisSource::External), true));
+        // Switching to another ready source counts as a new writer.
+        assert!(arrival.observe(Some(SynthesisSource::OnDevice), true));
     }
 
     #[test]

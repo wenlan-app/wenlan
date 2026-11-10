@@ -732,6 +732,79 @@ pub async fn run_periodic_steep_phase_with_api(
         };
     }
 
+    // Emergence: automatic callers write new pages one note per turn through
+    // steep's own new-page path ([`crate::steep_new::write_one_new_page`]),
+    // the path an on-demand caller's AI tool drives. Its claim floor counts
+    // folder documents, which the clustering seed floor above leaves out, so
+    // a folder import gets pages. The explicit full cycle keeps distillation.
+    if phase == Phase::Emergence && trigger.runs_phase(phase) {
+        let routing_config = crate::config::load_config();
+        let synthesis_pin = SynthesisSource::parse(routing_config.synthesis_source.as_deref());
+        let writer = resolve_synthesis(synthesis_pin, synthesis_llm, api_llm, external_llm, llm)
+            .llm
+            .filter(|provider| provider.is_available());
+        let started = std::time::Instant::now();
+        let Some(writer) = writer else {
+            return Ok(SteepPhaseSliceReport {
+                result: SteepResult {
+                    memories_decayed: 0,
+                    recaps_generated: 0,
+                    distilled: 0,
+                    pending_remaining: 0,
+                    phases: Vec::new(),
+                },
+                selected: false,
+                progressed: false,
+                more: false,
+                retryable: false,
+                paused: synthesis_pin.is_some(),
+            });
+        };
+        let turn = crate::steep_new::write_one_new_page(db, writer, prompts, knowledge_path).await;
+        db.assert_autocommit_or_recover("refinery phase 'emergence' (automatic new page)")
+            .await;
+        let (turn, error) = match turn {
+            Ok(turn) => (turn, None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        let created = usize::from(matches!(
+            turn,
+            Some(crate::steep_new::NewPageTurn {
+                outcome: crate::steep_new::NewPageOutcome::Written { .. },
+                ..
+            })
+        ));
+        if created > 0 {
+            match db.resolve_orphan_page_links().await {
+                Ok(n) if n > 0 => log::info!("[emergence] resolved {n} orphan wikilink labels"),
+                Ok(_) => {}
+                Err(e) => log::warn!("[emergence] orphan link resolve failed: {e}"),
+            }
+        }
+        let (nudge, headline) = classify_emergence(created);
+        return Ok(SteepPhaseSliceReport {
+            result: SteepResult {
+                memories_decayed: 0,
+                recaps_generated: 0,
+                distilled: created as u32,
+                pending_remaining: 0,
+                phases: vec![PhaseResult {
+                    name: phase.as_str().to_string(),
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    items_processed: created,
+                    error: error.clone(),
+                    nudge,
+                    headline,
+                }],
+            },
+            selected: turn.is_some(),
+            progressed: turn.is_some(),
+            more: turn.as_ref().is_some_and(|turn| turn.more),
+            retryable: error.is_some(),
+            paused: false,
+        });
+    }
+
     let result = run_periodic_steep_with_api_scope(
         db,
         llm,

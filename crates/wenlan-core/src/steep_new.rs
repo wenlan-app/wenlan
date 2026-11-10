@@ -2079,6 +2079,10 @@ mod tests {
     }
 }
 
+#[path = "steep_new_automatic.rs"]
+mod automatic;
+pub use automatic::{write_one_new_page, NewPageOutcome, NewPageTurn};
+
 #[cfg(test)]
 #[path = "steep_new_test.rs"]
 mod steep_new_test;

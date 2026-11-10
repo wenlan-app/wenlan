@@ -178,12 +178,16 @@ fn automatic_batch_runs_one_eligible_phase_per_turn_and_completes_only_after_las
 }
 
 #[test]
-fn automatic_batch_contains_only_bounded_redistill() {
+fn automatic_batch_contains_only_bounded_page_phases() {
     for trigger in [AutomaticTrigger::Idle, AutomaticTrigger::Backstop] {
         let batch = AutomaticSteepBatch::new(trigger, None);
         assert_eq!(
             batch.remaining_phases(),
-            vec![wenlan_core::refinery::Phase::ReDistill]
+            vec![
+                wenlan_core::refinery::Phase::Detect,
+                wenlan_core::refinery::Phase::Emergence,
+                wenlan_core::refinery::Phase::ReDistill,
+            ]
         );
     }
 
@@ -198,17 +202,30 @@ fn automatic_cursor_never_leaves_safe_allowlist() {
         AutomaticTrigger::Idle,
         Some(wenlan_core::refinery::Phase::ReDistill),
     );
+    for phase in [
+        wenlan_core::refinery::Phase::ReDistill,
+        wenlan_core::refinery::Phase::Detect,
+    ] {
+        assert_eq!(
+            batch.complete_phase(phase, AutomaticPhaseOutcome::default()),
+            AutomaticBatchDisposition::Pending
+        );
+    }
     assert_eq!(
         batch.complete_phase(
-            wenlan_core::refinery::Phase::ReDistill,
+            wenlan_core::refinery::Phase::Emergence,
             AutomaticPhaseOutcome::default(),
         ),
         AutomaticBatchDisposition::Complete
     );
+    // After the last phase the cursor wraps to the next allowlisted phase.
     assert_eq!(
-        batch.cursor_after_attempt(wenlan_core::refinery::Phase::ReDistill),
+        batch.cursor_after_attempt(wenlan_core::refinery::Phase::Emergence),
         wenlan_core::refinery::Phase::ReDistill
     );
+    assert!(automatic_phase_allowed(
+        batch.cursor_after_attempt(wenlan_core::refinery::Phase::ReDistill)
+    ));
 }
 
 #[test]
@@ -235,8 +252,8 @@ fn successful_more_phase_rotates_to_tail() {
     );
     assert_eq!(
         batch.next_phase(),
-        Some(wenlan_core::refinery::Phase::ReDistill),
-        "the sole bounded phase waits for the next admitted thermal turn"
+        Some(wenlan_core::refinery::Phase::Detect),
+        "a phase with more work yields to the other bounded phases"
     );
     assert_eq!(
         batch.remaining_phases().last(),
@@ -398,7 +415,7 @@ async fn automatic_phase_cursor_persists_after_retryable_attempt() {
 
     assert_eq!(
         load_automatic_phase_cursor(&db, wenlan_core::refinery::TriggerKind::Idle).await,
-        Some(wenlan_core::refinery::Phase::ReDistill)
+        Some(wenlan_core::refinery::Phase::Detect)
     );
 }
 
@@ -4775,7 +4792,16 @@ fn the_start_line_names_the_phases_automatic_steep_leaves_out() {
     ] {
         assert!(held.contains(&phase), "{phase} is held out: {held:?}");
     }
-    assert!(!held.contains(&wenlan_core::refinery::Phase::ReDistill));
+    for phase in [
+        wenlan_core::refinery::Phase::Detect,
+        wenlan_core::refinery::Phase::Emergence,
+        wenlan_core::refinery::Phase::ReDistill,
+    ] {
+        assert!(
+            !held.contains(&phase),
+            "{phase} runs automatically: {held:?}"
+        );
+    }
     let line = held_out_automatic_phases_line();
     assert!(
         line.contains("recaps") && line.contains("reweave"),
@@ -4783,4 +4809,199 @@ fn the_start_line_names_the_phases_automatic_steep_leaves_out() {
     );
     assert!(!line.contains("re-distill"), "{line}");
     assert!(line.contains("reason="), "{line}");
+}
+
+#[test]
+fn automatic_writes_new_pages_one_page_per_turn() {
+    // Detect and Emergence, the phases that write new pages, run in
+    // Automatic; the rest of the foreground-only phases stay out.
+    for phase in wenlan_core::refinery::Phase::ALL.iter().copied() {
+        let expected = matches!(
+            phase,
+            wenlan_core::refinery::Phase::Detect
+                | wenlan_core::refinery::Phase::Emergence
+                | wenlan_core::refinery::Phase::ReDistill
+        );
+        assert_eq!(automatic_phase_allowed(phase), expected, "{phase}");
+    }
+    // One new page is a grouping call and a writing call; nothing else gets more
+    // than the single call.
+    assert_eq!(
+        automatic_phase_call_budget(wenlan_core::refinery::Phase::Emergence),
+        2
+    );
+    for phase in [
+        wenlan_core::refinery::Phase::Detect,
+        wenlan_core::refinery::Phase::ReDistill,
+        wenlan_core::refinery::Phase::Recaps,
+    ] {
+        assert_eq!(automatic_phase_call_budget(phase), 1, "{phase}");
+    }
+    // An Emergence turn that wrote a cluster and has more goes to the back of
+    // the round, so the round keeps writing one page per admitted turn.
+    let mut batch = AutomaticSteepBatch::new(
+        AutomaticTrigger::Idle,
+        Some(wenlan_core::refinery::Phase::Emergence),
+    );
+    assert_eq!(
+        batch.complete_phase(
+            wenlan_core::refinery::Phase::Emergence,
+            AutomaticPhaseOutcome {
+                selected: true,
+                progressed: true,
+                more: true,
+                pages_created: 1,
+                ..AutomaticPhaseOutcome::default()
+            },
+        ),
+        AutomaticBatchDisposition::Pending
+    );
+    assert_eq!(
+        batch.remaining_phases().last(),
+        Some(&wenlan_core::refinery::Phase::Emergence)
+    );
+}
+
+#[tokio::test]
+async fn automatic_budget_lets_an_emergence_turn_make_two_calls_and_no_third() {
+    let inner: Arc<dyn wenlan_core::llm_provider::LlmProvider> = Arc::new(BudgetProbeProvider);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let provider = with_shared_automatic_budget(
+        Some(&inner),
+        calls.clone(),
+        automatic_phase_call_budget(wenlan_core::refinery::Phase::Emergence),
+    )
+    .expect("provider present");
+    let request = || wenlan_core::llm_provider::LlmRequest {
+        system_prompt: None,
+        user_prompt: "x".into(),
+        max_tokens: 8,
+        temperature: 0.0,
+        label: None,
+        timeout_secs: None,
+    };
+    assert!(provider.generate(request()).await.is_ok());
+    assert!(provider.generate(request()).await.is_ok());
+    assert!(matches!(
+        provider.generate(request()).await,
+        Err(wenlan_core::llm_provider::LlmError::NotAvailable)
+    ));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+struct BudgetProbeProvider;
+
+impl wenlan_core::llm_provider::LlmProvider for BudgetProbeProvider {
+    fn generate<'life0, 'async_trait>(
+        &'life0 self,
+        _request: wenlan_core::llm_provider::LlmRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<String, wenlan_core::llm_provider::LlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async { Ok("ok".to_string()) })
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "budget-probe"
+    }
+
+    fn backend(&self) -> wenlan_core::llm_provider::LlmBackend {
+        wenlan_core::llm_provider::LlmBackend::Api
+    }
+}
+
+#[test]
+fn paid_page_writer_stops_at_eight_pages_and_on_device_is_not_capped() {
+    use wenlan_core::refinery::SynthesisSource;
+    for paid in [SynthesisSource::Anthropic, SynthesisSource::External] {
+        assert!(page_writer_is_paid(Some(paid)));
+        assert!(!paid_page_cap_reached(Some(paid), 7));
+        assert!(paid_page_cap_reached(Some(paid), 8));
+        assert!(paid_page_cap_reached(Some(paid), 9));
+    }
+    assert!(!page_writer_is_paid(Some(SynthesisSource::OnDevice)));
+    assert!(!paid_page_cap_reached(Some(SynthesisSource::OnDevice), 8));
+    assert!(!paid_page_cap_reached(Some(SynthesisSource::OnDevice), 500));
+    assert!(!paid_page_cap_reached(None, 500));
+    assert_eq!(PAID_PAGE_WRITER_CAP, 8);
+}
+
+#[test]
+fn on_demand_has_no_page_writer_and_never_arms_a_late_writer_window() {
+    for raw in [Some("anthropic"), Some("external"), Some("on_device"), None] {
+        assert_eq!(automatic_synthesis_pin(false, raw), None, "{raw:?}");
+    }
+    assert_eq!(
+        automatic_synthesis_pin(true, Some("on_device")),
+        Some(wenlan_core::refinery::SynthesisSource::OnDevice)
+    );
+    // On demand: the loop sees no pin and so never a usable writer.
+    let mut arrival = PageWriterArrival::default();
+    for _ in 0..3 {
+        assert!(!arrival.observe(automatic_synthesis_pin(false, Some("anthropic")), false));
+    }
+}
+
+#[test]
+fn ux_quiet_1_import_page_writing_skips_idle_and_cpu_but_not_heat_or_memory() {
+    let busy_cpu_person_typing = ResourceStatus {
+        admitted: false,
+        snapshot: Some(ResourceSnapshot {
+            cpu_usage_percent: 95.0,
+            available_memory_bytes: 12 * GIB,
+            total_memory_bytes: 16 * GIB,
+        }),
+        block_reason: Some(ResourceBlockReason::CpuBusy),
+    };
+    let typing = HostActivitySnapshot::Observed {
+        thermal_state: 0,
+        idle_for: Duration::from_secs(1),
+    };
+    // Self-started heavy work (the automatic round) waits for the person.
+    assert_eq!(
+        host_activity_block_reason(typing),
+        Some(ResourceBlockReason::ForegroundActive)
+    );
+    assert!(!background_heavy_resource_admitted(
+        apply_host_activity(busy_cpu_person_typing, typing),
+        false,
+        true,
+    ));
+    // The import lane, which runs its Detect/Emergence there, does not.
+    assert_eq!(
+        import_priority_block_reason(busy_cpu_person_typing, typing, false, true),
+        None
+    );
+    let warm = HostActivitySnapshot::Observed {
+        thermal_state: 1,
+        idle_for: Duration::from_secs(1),
+    };
+    assert_eq!(
+        import_priority_block_reason(busy_cpu_person_typing, warm, false, true),
+        Some(ResourceBlockReason::ThermalPressure)
+    );
+    let short_of_memory = ResourceStatus {
+        snapshot: Some(ResourceSnapshot {
+            cpu_usage_percent: 95.0,
+            available_memory_bytes: GIB,
+            total_memory_bytes: 16 * GIB,
+        }),
+        ..busy_cpu_person_typing
+    };
+    assert_eq!(
+        import_priority_block_reason(short_of_memory, typing, false, true),
+        Some(ResourceBlockReason::MemoryPressure)
+    );
 }
