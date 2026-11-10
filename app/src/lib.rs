@@ -1681,6 +1681,8 @@ pub fn run() {
             search::distill_review,
             search::redistill_page,
             search::list_new_material,
+            search::list_set_aside_material,
+            search::release_set_aside_material,
             search::get_api_key,
             search::set_api_key,
             search::get_chunks,

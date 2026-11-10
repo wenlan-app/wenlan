@@ -1203,6 +1203,27 @@ impl WenlanClient {
         self.get_json("/api/steep/new?limit=200").await
     }
 
+    /// Groups Automatic tried to write a page from and set aside
+    /// (`GET /api/steep/new/set-aside`), newest first, across every Space.
+    pub async fn steep_set_aside_list(
+        &self,
+    ) -> Result<wenlan_types::SteepSetAsideListResponse, String> {
+        self.get_json("/api/steep/new/set-aside").await
+    }
+
+    /// Give set-aside items back so Automatic may try them again
+    /// (`POST /api/steep/new/set-aside/release`).
+    pub async fn steep_set_aside_release(
+        &self,
+        item_ids: Vec<String>,
+    ) -> Result<wenlan_types::SteepSetAsideReleaseResponse, String> {
+        self.post_json(
+            "/api/steep/new/set-aside/release",
+            &wenlan_types::SteepSetAsideReleaseRequest { item_ids },
+        )
+        .await
+    }
+
     pub async fn redistill_page(&self, page_id: &str) -> Result<PageRedistillResponse, String> {
         let path = format!("/api/distill/{}", percent_encode_path_segment(page_id));
         self.post_json(&path, &PageRedistillRequest {}).await

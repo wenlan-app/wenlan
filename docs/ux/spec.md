@@ -122,6 +122,14 @@ and wait for evidence that people need them.
   steeped name is written out whole: only the window's width cuts it, and a
   card title takes two lines before it is cut.
   原文：選擇卡「只放对话来的事」（2026-11-06 04:08，問：首页「正在做」还要不要放 Space Brief 里的条目）；「我以為 brief 一直沒有和正在做的事給討論好邊界」（2026-11-06 04:09）；「可以啊，總之這三點都要修掉，還有左上的 icon 都卡在一起」（2026-11-06 03:47，回覆：首頁「正在做」被 AI 的工作紀錄填滿、帶 PR 號和 commit、標題和「今天沉澱」被截斷）
+- **UX-HOME-7** `shipped` Under the steeped line, a second quiet line names
+  what Automatic tried to write as a page and set aside: "Not written yet:"
+  and at most two names, then "and more", never a count. Its button hands the
+  connected AI tool, by that tool's own name, its write-pages command for
+  exactly those items; with no AI tool connected it is "Try again", which
+  lets Automatic try them again. The line is gone when nothing is set aside.
+  While "What you're working on" is on, it sits above that section.
+  原文：首頁「還沒寫成頁：…」一行與「交給 {工具}」／「再試一次」按鈕的設計稿，Qi-Xuan 同意（2026-11-10），原話：「yes」（2026-11-10 19:55Z，回覆草圖）。
 
 ## Sorting conversations into things
 

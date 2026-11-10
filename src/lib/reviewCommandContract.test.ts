@@ -35,6 +35,8 @@ const INVOKE_LITERAL = /invoke[A-Za-z]*(?:<[^>]*>)?\(\s*"([a-z0-9_]+)"/g;
  * Adding to it is a deliberate act, and reviewable as one.
  */
 const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
+  // The fixture sets nothing aside, so home never offers "Try again".
+  "release_set_aside_material",
   // Sharing needs a real cloud folder and a second Wenlan; the fixture lists
   // no shares and must not pretend a folder was shared or joined.
   "share_space",

@@ -2070,6 +2070,31 @@ pub async fn list_new_material(
     client.steep_new_list().await
 }
 
+/// Home's "not written yet" line: groups Automatic set aside.
+#[tauri::command]
+pub async fn list_set_aside_material(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::SteepSetAsideListResponse, String> {
+    let client = {
+        let s = state.read().await;
+        s.client.clone()
+    };
+    client.steep_set_aside_list().await
+}
+
+/// Home's "Try again": give set-aside items back to Automatic.
+#[tauri::command]
+pub async fn release_set_aside_material(
+    state: tauri::State<'_, State>,
+    item_ids: Vec<String>,
+) -> Result<wenlan_types::SteepSetAsideReleaseResponse, String> {
+    let client = {
+        let s = state.read().await;
+        s.client.clone()
+    };
+    client.steep_set_aside_release(item_ids).await
+}
+
 #[tauri::command]
 pub async fn redistill_page(
     state: tauri::State<'_, State>,

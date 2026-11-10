@@ -2,6 +2,7 @@
 import { ReferencePreview, referenceExcerpt } from "../links/ReferencePreview";
 import type { ReferencePreviewRequest } from "../links/referenceTypes";
 import type { Page } from "../../../lib/tauri";
+import { readablePageContent } from "./original/originalContent";
 
 export interface PageLinkPreviewRequest {
   pageId: string;
@@ -37,6 +38,6 @@ export default function PageLinkPreview({ request, onDismiss, onOpen, onPointerE
   );
 }
 
-export function pageLinkPreviewExcerpt(page: Pick<Page, "summary" | "content">): string {
-  return referenceExcerpt(page.summary || page.content);
+export function pageLinkPreviewExcerpt(page: Pick<Page, "summary" | "content" | "creation_kind">): string {
+  return referenceExcerpt(page.summary || readablePageContent(page));
 }

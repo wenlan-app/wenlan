@@ -3096,6 +3096,42 @@ export async function listNewMaterial(): Promise<NewMaterialList> {
   return invoke("list_new_material");
 }
 
+/** One item of a group Automatic set aside. Mirrors `wenlan_types::SteepSetAsideItem`. */
+export interface SetAsideItem {
+  /** The id a claim's `item_ids` take. */
+  item_id: string;
+  title: string;
+  kind: "capture" | "note" | "chat" | "file" | string;
+  space?: string | null;
+}
+
+/** A group of waiting material Automatic tried to write a page from and set
+ *  aside. Mirrors `wenlan_types::SteepSetAsideGroup`. */
+export interface SetAsideGroup {
+  /** The topic the writer named, or the item's title for a single item. */
+  name: string;
+  reason: "sources_did_not_match" | "too_short" | "other" | string;
+  items: SetAsideItem[];
+  /** Unix seconds. */
+  set_aside_at: number;
+}
+
+export interface SetAsideList {
+  groups: SetAsideGroup[];
+}
+
+/** What Automatic set aside instead of writing (`GET /api/steep/new/set-aside`),
+ *  newest first. */
+export async function listSetAsideMaterial(): Promise<SetAsideList> {
+  return invoke("list_set_aside_material");
+}
+
+/** Give set-aside items back so Automatic tries them again
+ *  (`POST /api/steep/new/set-aside/release`). */
+export async function releaseSetAsideMaterial(itemIds: string[]): Promise<{ released: number }> {
+  return invoke("release_set_aside_material", { itemIds });
+}
+
 // ── Profiles & Agent Connections ─────────────────────────────────────
 
 export interface Profile {

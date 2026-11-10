@@ -13,6 +13,7 @@ import { useReferencePopoverPosition } from "./useReferencePopoverPosition";
 import { useReferencePreviewKeyboard } from "./useReferencePreviewKeyboard";
 import { relativeMs } from "../page/format";
 import { citationFilePath } from "./openCitationTarget";
+import { readablePageContent } from "../page/original/originalContent";
 
 export interface ReferencePreviewProps {
   request: ReferencePreviewRequest | null;
@@ -159,7 +160,7 @@ export function ReferencePreview({
   const title = page?.title ?? memory?.title ?? (memoryCitationGone ? t("citation.missingTitle") : citation ? citationTitle : anchorLabel);
   const citationLocation = citation?.source_kind === "external_file" ? citationFilePath(citation.locator) : citation?.locator;
   const query = pageId ? pageQuery : memoryId ? memoryQuery : null;
-  const content = page?.summary || (page ? page.content : memory?.summary || memory?.content) || "";
+  const content = page?.summary || (page ? readablePageContent(page) : memory?.summary || memory?.content) || "";
   const excerpt = content ? referenceExcerpt(content) : "";
   const citationMissing = !!citation && citation.source_kind !== "authored" && !citation.historical && !memory && !citationTarget?.sourcesLoading;
   const loading = !!query?.isPending || !!(citationTarget?.sourcesLoading && !memory);
