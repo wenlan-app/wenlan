@@ -195,7 +195,7 @@ export function PagesOverview({
         {example || thingsOn ? null : <HomeNightLines onReplayNight={onReplayNight} />}
         {example ? null : thingsOn
           ? <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
-          : <HomeSpaces onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}
+          : <HomeSpaces pages={pages} onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}
         {newPages}
         {/* With no AI tool connected there is nothing to be working on yet:
             the pages lead, and one line says what connecting adds. Only

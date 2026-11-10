@@ -232,7 +232,7 @@ describe("PagesOverview reading workspace", () => {
       expect(screen.getByTestId("home-steeped")).toHaveTextContent("Home redesign");
       fireEvent.click(screen.getByRole("button", { name: "Replay" }));
       expect(onReplayNight).toHaveBeenCalled();
-      expect(screen.getByRole("heading", { level: 2, name: "Spaces" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 2, name: "Recent Spaces" })).toBeInTheDocument();
       // The first Space leads, set large; the rest follow in columns.
       const cards = [...section.querySelectorAll(".home-space-card")];
       expect(cards[0]).toHaveClass("home-space-lead");
@@ -240,6 +240,25 @@ describe("PagesOverview reading workspace", () => {
       expect(screen.queryByTestId("wiki-working-on")).toBeNull();
       fireEvent.click(cards[1]);
       expect(onSelectSpace).toHaveBeenCalledWith("wenlan-site");
+    });
+    it("UX-HOME-1 leads with the Space used last, then starred Spaces, then the rest, each used-last first", async () => {
+      vi.mocked(listSpaces).mockResolvedValueOnce([
+        space("s1", "wenlan", { sort_order: 0, starred: true }),
+        space("s2", "travel", { sort_order: 1 }),
+        space("s3", "house", { sort_order: 2 }),
+        space("s4", "reading", { sort_order: 3, starred: true }),
+      ]);
+      vi.mocked(listPagesExplicitBrowse).mockResolvedValue([
+        page({ id: "a", title: "Release plan", space: "wenlan", last_modified: "2026-07-01T00:00:00Z" }),
+        page({ id: "b", title: "Kyoto days", space: "travel", last_modified: "2026-07-09T00:00:00Z" }),
+        page({ id: "c", title: "Quotes", space: "house", last_modified: "2026-07-05T00:00:00Z" }),
+        page({ id: "d", title: "Book list", space: "reading", last_modified: "2026-07-03T00:00:00Z" }),
+      ]);
+      renderOverview();
+      await waitFor(() => {
+        const cards = [...screen.getByTestId("home-spaces").querySelectorAll(".home-space-card")];
+        expect(cards.map((card) => card.querySelector(".home-space-title")?.textContent)).toEqual(["travel", "reading", "wenlan", "house"]);
+      });
     });
   });
 
