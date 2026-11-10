@@ -1092,6 +1092,18 @@ pub struct RestorePageRequest {
     pub title: Option<String>,
 }
 
+/// Move one ordinary page into another Space, or into no Space. The page's
+/// sources and body are not rewritten.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetPageSpaceRequest {
+    /// The registered Space to move the page into. `None` or an empty string
+    /// moves it into no Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    pub expected_version: i64,
+}
+
 // ===== Concept Export =====
 
 /// Request body for `POST /api/pages/export` (bulk export all pages to an Obsidian vault).

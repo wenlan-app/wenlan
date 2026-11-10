@@ -568,6 +568,11 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "note_proposal_unchanged"
             | "note_proposal_too_large"
             | "note_change_needs_proposal"
+            | "page_space_version_conflict"
+            | "page_space_title_taken"
+            | "page_space_not_movable"
+            | "page_space_unknown"
+            | "page_space_needs_global_scope"
     );
     if !safe {
         return None;

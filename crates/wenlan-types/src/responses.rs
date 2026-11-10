@@ -731,6 +731,57 @@ impl RestorePageErrorCode {
     }
 }
 
+/// Result of `POST /api/pages/{id}/space`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SetPageSpaceResponse {
+    pub page_id: String,
+    /// The page's Space now; `None` when it is in no Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    /// The page's version now. Unchanged when the page was already there.
+    pub version: i64,
+    /// 1-based positions into the page's `source_memory_ids` of the sources
+    /// its new Space cannot read. Positions only: a source in another Space
+    /// reads exactly like one that is gone.
+    #[serde(default)]
+    pub unreadable_source_positions: Vec<u32>,
+    pub projection_status: PageProjectionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_error: Option<String>,
+}
+
+/// Why `POST /api/pages/{id}/space` refused, sent as `code` in the error body
+/// next to `error` (`"<code>: <English text>"`) and `current_version`.
+/// Clients switch on the code, never on the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetPageSpaceErrorCode {
+    /// The page moved past `expected_version` (409). Reload it first.
+    PageSpaceVersionConflict,
+    /// An active page in the target Space already has this title (409).
+    PageSpaceTitleTaken,
+    /// Only active ordinary notes (not drafts, source, overview or entity
+    /// pages) move between Spaces (422).
+    PageSpaceNotMovable,
+    /// The target is not a registered Space (422).
+    PageSpaceUnknown,
+    /// The caller is locked to one Space; moving a page between Spaces needs
+    /// an unlocked caller (403).
+    PageSpaceNeedsGlobalScope,
+}
+
+impl SetPageSpaceErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PageSpaceVersionConflict => "page_space_version_conflict",
+            Self::PageSpaceTitleTaken => "page_space_title_taken",
+            Self::PageSpaceNotMovable => "page_space_not_movable",
+            Self::PageSpaceUnknown => "page_space_unknown",
+            Self::PageSpaceNeedsGlobalScope => "page_space_needs_global_scope",
+        }
+    }
+}
+
 /// `POST /api/memory/entities` (legacy list) and `POST /api/memory/entities/query`.
 /// `total` is the number of entities matching the filter before `limit`/`offset`;
 /// the legacy route sets it to `entities.len()`.

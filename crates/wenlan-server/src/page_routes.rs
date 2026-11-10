@@ -58,6 +58,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/pages/{id}/archive", post(handle_archive_page))
         .route("/api/pages/{id}/restore", post(handle_restore_page))
         .route("/api/pages/{id}/rename", post(handle_rename_page))
+        .route("/api/pages/{id}/space", post(handle_set_page_space))
         .route("/api/pages/{id}/revisions", get(handle_get_page_revisions))
         .route("/api/pages/{id}/review", post(handle_review_page))
         .route(
@@ -533,9 +534,9 @@ pub async fn handle_set_page_review_required(
     }))
 }
 
-/// Serializes page archive and restore. Each holds it from its database
-/// transition through its projection, so neither moves or writes a file
-/// against a state the other has already changed. Both are rare, deliberate
+/// Serializes page archive, restore and Space move. Each holds it from its
+/// database transition through its projection, so none moves or writes a file
+/// against a state another has already changed. All are rare, deliberate
 /// actions, so one lock for all pages costs nothing.
 static PAGE_LIFECYCLE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -777,6 +778,107 @@ fn restore_error(error: wenlan_core::db::RestorePageError) -> ServerError {
             }),
         },
         wenlan_core::db::RestorePageError::Failed(error) => ServerError::from(error),
+    }
+}
+
+/// POST /api/pages/{id}/space
+///
+/// Move one active ordinary note into another registered Space, or into no
+/// Space (`space` omitted or empty). Only a caller not locked to a Space may
+/// do this. The database row moves first, in one transaction with its history
+/// entry and basis refresh; the projected Markdown file is then rewritten from
+/// that durable row so its `space:` line follows, and a projection failure is
+/// reported as `projection_status: pending` rather than undoing the move.
+/// `unreadable_source_positions` names, by position only, the page's sources
+/// its new Space cannot read. Refusals carry a typed `code`
+/// ([`wenlan_types::responses::SetPageSpaceErrorCode`]).
+pub async fn handle_set_page_space(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    view: crate::truth_guard::TruthView,
+    Path(id): Path<String>,
+    Json(req): Json<wenlan_types::requests::SetPageSpaceRequest>,
+) -> Result<Json<wenlan_types::responses::SetPageSpaceResponse>, ServerError> {
+    let (db, page_root) = {
+        let state = state.read().await;
+        (
+            state.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            state
+                .lint_config
+                .page_root()
+                .map(std::path::Path::to_path_buf),
+        )
+    };
+    // Held through the projection below; see `PAGE_LIFECYCLE`.
+    let _lifecycle = PAGE_LIFECYCLE.lock().await;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    // The move names one page, so it passes the same named-page truth filter
+    // as `GET /api/pages/{id}`: a page this caller may not see is not there.
+    if wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, vec![id.clone()], |id| {
+        id.as_str()
+    })
+    .await?
+    .is_empty()
+    {
+        return Err(ServerError::NotFound("page not found".into()));
+    }
+    let mut response = db
+        .set_page_space(&id, req.space.as_deref(), req.expected_version, &scope)
+        .await
+        .map_err(set_page_space_error)?;
+    if let Some(root) = page_root {
+        // Use the current durable row rather than request text.
+        let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
+        match db.get_page_scoped(&id, &scope).await {
+            Ok(Some(page)) if page.status == "active" && page.version == response.version => {
+                match projection.write_page_gated(&db, &page).await {
+                    Ok(Some(_)) => response.projection_status = PageProjectionStatus::Synced,
+                    Ok(None) => response.projection_status = PageProjectionStatus::Hidden,
+                    Err(error) => {
+                        response.projection_status = PageProjectionStatus::Pending;
+                        response.projection_error = Some(error.to_string());
+                    }
+                }
+            }
+            _ => {
+                response.projection_status = PageProjectionStatus::Pending;
+                response.projection_error =
+                    Some("moved page changed before projection; reload its current version".into());
+            }
+        }
+    }
+    Ok(Json(response))
+}
+
+fn set_page_space_error(error: wenlan_core::db::SetPageSpaceError) -> ServerError {
+    use wenlan_types::responses::SetPageSpaceErrorCode as Code;
+    match error {
+        wenlan_core::db::SetPageSpaceError::Refused {
+            code,
+            current_version,
+        } => ServerError::Structured {
+            status: match code {
+                Code::PageSpaceVersionConflict | Code::PageSpaceTitleTaken => {
+                    axum::http::StatusCode::CONFLICT
+                }
+                Code::PageSpaceNotMovable | Code::PageSpaceUnknown => {
+                    axum::http::StatusCode::UNPROCESSABLE_ENTITY
+                }
+                Code::PageSpaceNeedsGlobalScope => axum::http::StatusCode::FORBIDDEN,
+            },
+            // `error` leads with the code so a client that keeps only the
+            // part before `:` (the MCP server) still switches on it.
+            body: serde_json::json!({
+                "code": code,
+                "error": format!(
+                    "{}: {}",
+                    code.as_str(),
+                    wenlan_core::db::set_page_space_refusal_message(code)
+                ),
+                "current_version": current_version,
+            }),
+        },
+        wenlan_core::db::SetPageSpaceError::Failed(error) => ServerError::from(error),
     }
 }
 

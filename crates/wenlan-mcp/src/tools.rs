@@ -157,9 +157,9 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// then by the length of `check_reply`'s, then by the length of
 /// `thing_map`'s, then by the four folder and link tool descriptions, then by
 /// `list_entities` and `read_entity`, then the exact-source read description, then by `theme`'s,
-/// then by `keep_original`'s.
+/// then by `keep_original`'s, then by `set_page_space`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 20_366;
+const DESCRIPTION_BUDGET_CHARS: usize = 20_594;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1631,6 +1631,21 @@ pub struct MovePageParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetPageSpaceParams {
+    #[schemars(description = "Opaque page id from list_pages or read_page.")]
+    pub page_id: String,
+    #[schemars(
+        description = "Name of the Space to move the page into. Omit it, or pass an empty string, to put the page in no Space."
+    )]
+    #[serde(default)]
+    pub space: Option<String>,
+    #[schemars(
+        description = "The page's current version from read_page; the move is refused if the page changed since."
+    )]
+    pub expected_version: i64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetPageLinksParams {
     #[schemars(description = "Opaque page id from list_pages, recall, or read_page.")]
     pub page_id: String,
@@ -2540,9 +2555,10 @@ fn source_read_refused_result(reason: &str, source_ids: &[String]) -> CallToolRe
     );
     if target == "unfiled" {
         text.push_str(
-            "This page is in no Space, so it can cite only notes that are in no Space. A \
-             page cannot be moved into a Space yet (move_page only changes its folder), so \
-             leave out those sources and retry, or tell the person which ones were left out. ",
+            "This page is in no Space, so it can cite only notes that are in no Space. If \
+             those sources all share one Space, move the page there with set_page_space and \
+             retry; otherwise leave out the ones it cannot read and retry, or tell the person \
+             which ones were left out. ",
         );
     } else {
         text.push_str(
@@ -5494,6 +5510,116 @@ impl WenlanMcpServer {
         Ok(CallToolResult::structured(value))
     }
 
+    /// Move one page into a Space, or out of every Space. The daemon answers
+    /// with positions into the page's own source list for the sources the
+    /// page cannot read where it now lives; the ids named back come from the
+    /// page as this caller reads it, never from another Space.
+    pub async fn set_page_space_impl(
+        &self,
+        params: SetPageSpaceParams,
+    ) -> Result<CallToolResult, McpError> {
+        if self.transport == TransportMode::Http {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "This tool is not available over remote connections. Use local stdio MCP on the machine running Wenlan.",
+            )]));
+        }
+        if !is_opaque_page_id(&params.page_id) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Invalid page id. Use the page's opaque identifier, not a URL or file path.",
+            )]));
+        }
+        if params.expected_version < 1 {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "expected_version must be the page's current version from read_page.",
+            )]));
+        }
+        let space = params
+            .space
+            .map(|space| space.trim().to_string())
+            .filter(|space| !space.is_empty());
+        let request = wenlan_types::requests::SetPageSpaceRequest {
+            space,
+            expected_version: params.expected_version,
+        };
+        let path = format!("/api/pages/{}/space", params.page_id);
+        let moved: wenlan_types::responses::SetPageSpaceResponse = match self
+            .client
+            .post(&path, &request)
+            .await
+        {
+            Ok(moved) => moved,
+            Err(WenlanError::Api { status, reason }) if status != 404 => {
+                use wenlan_types::responses::SetPageSpaceErrorCode as Code;
+                let message = match reason.as_deref() {
+                        Some(code) if code == Code::PageSpaceVersionConflict.as_str() => {
+                            "Space move refused, nothing changed: the page changed since it was read. Read it again with read_page and retry with its current version."
+                        }
+                        Some(code) if code == Code::PageSpaceTitleTaken.as_str() => {
+                            "Space move refused, nothing changed: that Space already has a page with this title. Rename one of them first, or pick another Space."
+                        }
+                        Some(code) if code == Code::PageSpaceNotMovable.as_str() => {
+                            "Space move refused, nothing changed: only an active written page (not an entity, overview, source or draft page) can move between Spaces."
+                        }
+                        Some(code) if code == Code::PageSpaceUnknown.as_str() => {
+                            "Space move refused, nothing changed: there is no Space by that name. Use a Space name the person already has, or omit space for no Space."
+                        }
+                        Some(code) if code == Code::PageSpaceNeedsGlobalScope.as_str() => {
+                            "Space move refused, nothing changed: this connection is limited to one Space, and moving a page between Spaces needs the whole library. Ask the person to do it in the app or from an unlocked session."
+                        }
+                        _ => {
+                            return Ok(tool_error(
+                                WenlanError::Api { status, reason },
+                                "set_page_space",
+                            ))
+                        }
+                    };
+                return Ok(CallToolResult::error(vec![ContentBlock::text(message)]));
+            }
+            Err(error) => return Ok(tool_error(error, "set_page_space")),
+        };
+        let place = match moved.space.as_deref() {
+            Some(space) => format!("Space \"{space}\""),
+            None => "no Space".to_string(),
+        };
+        let mut text = format!(
+            "Moved page {} to {place} (version {}). Its text and sources did not change.",
+            moved.page_id, moved.version
+        );
+        if !moved.unreadable_source_positions.is_empty() {
+            // Name the ids from the page's own list when the page is still at
+            // the version just written; otherwise give positions only.
+            let ids = self
+                .client
+                .get::<wenlan_types::responses::PageReadResponse>(&format!(
+                    "/api/pages/{}",
+                    moved.page_id
+                ))
+                .await
+                .ok()
+                .filter(|read| read.page.page.version == moved.version)
+                .map(|read| read.page.page.source_memory_ids)
+                .unwrap_or_default();
+            let named: Vec<String> = moved
+                .unreadable_source_positions
+                .iter()
+                .map(|&n| match ids.get((n as usize).wrapping_sub(1)) {
+                    Some(id) => format!("[{n}] {id}"),
+                    None => format!("[{n}]"),
+                })
+                .collect();
+            text.push_str(&format!(
+                " These sources cannot be read where the page now lives: {}. Leave them out of source_memory_ids on the next write_page.",
+                named.join(", ")
+            ));
+        }
+        if moved.projection_status != wenlan_types::responses::PageProjectionStatus::Synced {
+            text.push_str(
+                " The page's Markdown file has not caught up yet; the move itself is saved.",
+            );
+        }
+        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+    }
+
     pub async fn get_page_links_impl(&self, page_id: &str) -> Result<CallToolResult, McpError> {
         if !is_opaque_page_id(page_id) {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
@@ -6653,6 +6779,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Move one page into a Space, or into no Space (omit space), so it can cite that Space's notes. Pass expected_version from read_page. Text and sources stay; the reply names sources to drop on the next write_page. Local stdio only.",
+        annotations(
+            title = "Move page to a Space",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn set_page_space(
+        &self,
+        Parameters(params): Parameters<SetPageSpaceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.set_page_space_impl(params).await
+    }
+
+    #[tool(
         description = "Get the pages linked from this page and the pages linking to it. Page links are read only; folder organization does not change Spaces, entities, or page content.",
         annotations(
             title = "Get page links",
@@ -7050,6 +7193,7 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "propose_note_change",
     "create_folder",
     "move_page",
+    "set_page_space",
     "theme",
 ];
 
@@ -11457,11 +11601,115 @@ mod tests {
         assert!(text.contains("[2] mem_b, [3] mem_c"), "{text}");
         assert!(!text.contains("mem_a"), "{text}");
         assert!(
-            text.contains("in no Space") && text.contains("only changes its folder"),
+            text.contains("in no Space")
+                && text.contains("share one Space")
+                && text.contains("set_page_space")
+                && text.contains("leave out the ones it cannot read"),
             "{text}"
         );
         assert!(text.contains("nothing was written"), "{text}");
         assert!(!text.contains("PRIVATE_SENTINEL"), "{text}");
+    }
+
+    /// set_page_space posts the typed request, names the page's own sources it
+    /// can no longer read by their `[n]` position, and says to leave them out
+    /// on the next write_page. A refusal code becomes a fixed sentence.
+    #[tokio::test]
+    async fn set_page_space_names_unreadable_sources_and_explains_refusals() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let _pin = pin_space(None).await;
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages/page_x/space"))
+            .and(body_json(
+                serde_json::json!({"space":"work","expected_version":3}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "page_id": "page_x",
+                "space": "work",
+                "version": 4,
+                "unreadable_source_positions": [2],
+                "projection_status": "synced"
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_x"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"page": page_wire_json("page_x", 4, false)})),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = stdio_server(mock.uri());
+        let result = server
+            .set_page_space_impl(SetPageSpaceParams {
+                page_id: "page_x".into(),
+                space: Some(" work ".into()),
+                expected_version: 3,
+            })
+            .await
+            .unwrap();
+        assert_ne!(result.is_error, Some(true));
+        let text = text_of(&result);
+        assert!(text.contains("Space \"work\" (version 4)"), "{text}");
+        assert!(text.contains("[2] mem_b"), "{text}");
+        assert!(!text.contains("mem_a"), "{text}");
+        assert!(text.contains("next write_page"), "{text}");
+
+        let refused = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages/page_x/space"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "code": "page_space_version_conflict",
+                "error": "page_space_version_conflict: PRIVATE_SENTINEL",
+                "current_version": 5
+            })))
+            .mount(&refused)
+            .await;
+        let result = stdio_server(refused.uri())
+            .set_page_space_impl(SetPageSpaceParams {
+                page_id: "page_x".into(),
+                space: None,
+                expected_version: 3,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let text = text_of(&result);
+        assert!(
+            text.contains("changed since it was read") && text.contains("read_page"),
+            "{text}"
+        );
+        assert!(!text.contains("PRIVATE_SENTINEL"), "{text}");
+
+        let http = WenlanMcpServer::new(
+            WenlanClient::new(refused.uri()),
+            TransportMode::Http,
+            "agent".into(),
+            None,
+        );
+        let result = http
+            .set_page_space_impl(SetPageSpaceParams {
+                page_id: "page_x".into(),
+                space: Some("work".into()),
+                expected_version: 3,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let result = server
+            .set_page_space_impl(SetPageSpaceParams {
+                page_id: "../etc/passwd".into(),
+                space: Some("work".into()),
+                expected_version: 3,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
     }
 
     /// A 409 while the page is still at the version the agent read came from a
@@ -14472,6 +14720,7 @@ mod tests {
             ("rename_page", (false, true, false)),
             ("reject_refinement", (false, true, false)),
             ("save_source", (false, true, false)),
+            ("set_page_space", (false, false, false)),
             ("steep", (false, false, false)),
             ("thing_map", (false, false, false)),
             ("update_brief", (false, false, false)),
@@ -14887,6 +15136,7 @@ mod tests {
             "rename_page",
             "reject_refinement",
             "save_source",
+            "set_page_space",
             "steep",
             "thing_map",
             "theme",

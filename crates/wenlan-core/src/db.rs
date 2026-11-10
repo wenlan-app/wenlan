@@ -71,10 +71,12 @@ pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
 mod page_restore;
+mod page_space_move;
 mod removal;
 pub use removal::{ForgetOutcome, PageRemovalAudit};
 pub(crate) mod rebuild_writes;
 pub use page_restore::{restore_refusal_message, RestorePageError};
+pub use page_space_move::{set_page_space_refusal_message, SetPageSpaceError};
 mod page_summary_backfill;
 mod presence_review;
 mod quick_capture_repair;
@@ -239,6 +241,8 @@ mod page_link_rename_test;
 mod page_rename_test;
 #[cfg(test)]
 mod page_restore_test;
+#[cfg(test)]
+mod page_space_move_test;
 #[cfg(test)]
 mod presence_review_test;
 #[cfg(test)]
