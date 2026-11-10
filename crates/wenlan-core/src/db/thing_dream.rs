@@ -621,6 +621,10 @@ impl MemoryDB {
                 if !standing {
                     continue;
                 }
+                // In id order, like the night's line: the model may name
+                // them in any order.
+                let mut old = old;
+                old.sort();
                 let mut replaced = Vec::new();
                 for id in old {
                     let mut rows = conn

@@ -631,9 +631,11 @@ async fn ux_graph_7_a_night_merges_what_says_the_same_and_undo_takes_it_back() {
         {"text": "The repository stays private for now.", "settled": true, "from": "C0"}
     ]}"#,
         r#"{"changes": [
-        {"do": "merge", "memories": ["M0", "M1"], "text": "The repository stays private."}
+        {"do": "merge", "memories": ["M1", "M0"], "text": "The repository stays private."}
     ]}"#,
     ]);
+    // The model names them in reverse: the page and the night's line both
+    // still list them in one order.
     let keep = Keep(&db, Default::default());
     let due = db
         .things_to_dream(chrono::Utc::now().timestamp(), 10)
