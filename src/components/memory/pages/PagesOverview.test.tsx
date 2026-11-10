@@ -66,6 +66,7 @@ function renderOverview({
   inventoryScope = "all" as WikiInventoryScope,
   checklist = false,
   onConnectTool = undefined as (() => void) | undefined,
+  onReplayNight = vi.fn(),
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
 } = {}) {
   const overview = (
@@ -78,6 +79,7 @@ function renderOverview({
         onSelectDraft={onSelectDraft}
         onSelectPage={onSelectPage}
         onSelectSpace={onSelectSpace}
+        onReplayNight={onReplayNight}
         onConnectTool={onConnectTool ?? (checklist ? vi.fn() : undefined)}
         onSeeExample={checklist ? vi.fn() : undefined}
       />
@@ -89,6 +91,7 @@ function renderOverview({
     onSelectDraft,
     onSelectPage,
     onSelectSpace,
+    onReplayNight,
     ...render(overview),
   };
 }
@@ -219,13 +222,21 @@ describe("PagesOverview reading workspace", () => {
       vi.mocked(listThings).mockResolvedValueOnce([
         { id: "t1", title: "Home redesign", title_by: "ai", status_line: null, spaces: [], last_activity_at: now, quiet: false, dreamed_at: now - 60 } as ThingSummary,
       ]);
-      const { container, onSelectSpace } = renderOverview();
+      const { container, onSelectSpace, onReplayNight } = renderOverview();
       const section = await screen.findByTestId("home-spaces");
-      expect(container.querySelector(".wiki-overview .home-columns")?.firstElementChild).toBe(section);
+      // The night's line opens home, above the Spaces: it spans all of them.
+      const night = await screen.findByTestId("home-night");
+      const columns = container.querySelector(".wiki-overview .home-columns");
+      expect(columns?.firstElementChild).toBe(night);
+      expect(night.nextElementSibling).toBe(section);
+      expect(screen.getByTestId("home-steeped")).toHaveTextContent("Home redesign");
+      fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+      expect(onReplayNight).toHaveBeenCalled();
       expect(screen.getByRole("heading", { level: 2, name: "Spaces" })).toBeInTheDocument();
+      // The first Space leads, set large; the rest follow in columns.
       const cards = [...section.querySelectorAll(".home-space-card")];
-      expect(cards.map((card) => card.querySelector(".wiki-working-on-title")?.textContent)).toEqual(["wenlan", "wenlan-site"]);
-      expect(await screen.findByTestId("home-steeped")).toHaveTextContent("Home redesign");
+      expect(cards[0]).toHaveClass("home-space-lead");
+      expect(cards.map((card) => card.querySelector(".home-space-title")?.textContent)).toEqual(["wenlan", "wenlan-site"]);
       expect(screen.queryByTestId("wiki-working-on")).toBeNull();
       fireEvent.click(cards[1]);
       expect(onSelectSpace).toHaveBeenCalledWith("wenlan-site");

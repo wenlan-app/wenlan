@@ -661,6 +661,7 @@ const en = {
       steepedSeparator: ", ",
       steepedMore: "and more",
       steepedReplay: "Replay last night",
+      steepedReplayShort: "Replay",
       spacesTitle: "Spaces",
       spacesAll: "All Spaces",
       workingOnHide: "Don't show {{title}}",
@@ -1463,6 +1464,10 @@ const en = {
         label: "Sources",
         hint: "Connected files and imports",
       },
+      experiments: {
+        label: "Experiments",
+        hint: "Features still being tried",
+      },
     },
     language: {
       label: "Language",
@@ -1481,7 +1486,7 @@ const en = {
     },
     general: {
       appSection: "App",
-      experimentsSection: "Experiments",
+      experimentsIntro: "Features we are still trying out. They can change or go away. Turning one off never deletes anything.",
       experimentThingsTitle: "What you're working on",
       experimentBadge: "Beta",
       experimentThingsDescription: "Show the work Wenlan sorts out of your AI chats on Home. Wenlan keeps sorting it in the background either way.",
@@ -3951,6 +3956,7 @@ const zhHans = {
       steepedSeparator: "、",
       steepedMore: "等",
       steepedReplay: "重看昨晚的沉淀",
+      steepedReplayShort: "重看",
       spacesTitle: "空间",
       spacesAll: "全部空间",
       workingOnHide: "不用显示「{{title}}」",
@@ -4741,6 +4747,10 @@ const zhHans = {
         label: "来源",
         hint: "已连接文件和导入",
       },
+      experiments: {
+        label: "实验功能",
+        hint: "还在试的功能",
+      },
     },
     language: {
       label: "语言",
@@ -4759,7 +4769,7 @@ const zhHans = {
     },
     general: {
       appSection: "应用",
-      experimentsSection: "实验功能",
+      experimentsIntro: "还在试的功能，可能会改，也可能拿掉。关掉不会删除任何内容。",
       experimentThingsTitle: "正在做的事",
       experimentBadge: "Beta",
       experimentThingsDescription: "在首页显示文澜从你和 AI 的对话里整理出的事。不管开不开，后台都会照常整理。",
@@ -7196,6 +7206,7 @@ const zhHant = {
       steepedSeparator: "、",
       steepedMore: "等",
       steepedReplay: "重看昨晚的沉澱",
+      steepedReplayShort: "重看",
       spacesTitle: "空間",
       spacesAll: "全部空間",
       workingOnHide: "不用顯示「{{title}}」",
@@ -7986,6 +7997,10 @@ const zhHant = {
         label: "來源",
         hint: "已連接檔案和匯入",
       },
+      experiments: {
+        label: "實驗功能",
+        hint: "還在試的功能",
+      },
     },
     language: {
       label: "語言",
@@ -8004,7 +8019,7 @@ const zhHant = {
     },
     general: {
       appSection: "應用程式",
-      experimentsSection: "實驗功能",
+      experimentsIntro: "還在試的功能，可能會改，也可能拿掉。關掉不會刪除任何內容。",
       experimentThingsTitle: "正在做的事",
       experimentBadge: "Beta",
       experimentThingsDescription: "在首頁顯示文瀾從你和 AI 的對話裡整理出的事。不管開不開，後台都會照常整理。",

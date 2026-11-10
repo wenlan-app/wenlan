@@ -18,6 +18,7 @@ import { pagesWrittenSince, useWritePages, WritePagesLine } from "../askAi/Write
 import { NewPagesList, recentPages } from "./NewPagesList";
 import { WorkingOn } from "./WorkingOn";
 import { HomeSpaces } from "./HomeSpaces";
+import { HomeNightLines } from "./HomeNightLines";
 import { useExperiment } from "../../../lib/experiments";
 import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { useQuery } from "@tanstack/react-query";
@@ -187,10 +188,14 @@ export function PagesOverview({
       {/* What you're working on leads (UX-HOME-1); the pages edited last sit
           under it as one row of cards that scrolls sideways, so neither pushes
           the other down. */}
-      <div className="home-columns">
+      <div className={`home-columns${thingsOn ? "" : " home-columns--spaces"}`}>
+        {/* What last night steeped spans every Space and the Wiki, so it
+            opens home on its own line. "What you're working on" carries its
+            own line, so this one shows only while that is off. */}
+        {example || thingsOn ? null : <HomeNightLines onReplayNight={onReplayNight} />}
         {example ? null : thingsOn
           ? <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
-          : <HomeSpaces onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} onReplayNight={onReplayNight} />}
+          : <HomeSpaces onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}
         {newPages}
         {/* With no AI tool connected there is nothing to be working on yet:
             the pages lead, and one line says what connecting adds. Only

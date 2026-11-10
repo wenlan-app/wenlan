@@ -227,3 +227,10 @@
   }
 }
 .settings-view .settings-profile-hint { color: var(--mem-text-secondary); font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
+
+.settings-view-intro {
+  max-width: 640px;
+  margin: -12px 0 0;
+  color: var(--mem-text-secondary);
+  font: 14px/1.6 var(--mem-font-body);
+}
