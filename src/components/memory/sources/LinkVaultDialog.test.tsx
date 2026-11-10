@@ -26,9 +26,9 @@ beforeEach(() => {
 });
 
 describe("LinkVaultDialog", () => {
-  it("links the picked vault into the Wiki and says the AI won't change it", async () => {
+  it("links the picked vault into the Wiki and says the AI asks before it tidies the vault", async () => {
     const { onClose } = renderDialog();
-    expect(screen.getByText("The AI won't change your vault.")).toBeInTheDocument();
+    expect(screen.getByText("The AI asks you once before it tidies the vault.")).toBeInTheDocument();
     const link = screen.getByRole("button", { name: "Link" });
     expect(link).toBeDisabled();
     fireEvent.click(await screen.findByRole("button", { name: "second-brain" }));
