@@ -50,7 +50,7 @@ function performMutation(kind: MutationKind): void {
     case "delete":
       fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Work") }));
       fireEvent.click(screen.getByRole("menuitem", { name: labels.delete }));
-      fireEvent.click(screen.getByRole("button", { name: labels.confirmDelete }));
+      fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: labels.delete }));
       return;
     case "rename":
       fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Work") }));
@@ -59,8 +59,7 @@ function performMutation(kind: MutationKind): void {
       fireEvent.keyDown(screen.getByLabelText(labels.nameLabel), { key: "Enter" });
       return;
     case "reorder":
-      fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Personal") }));
-      fireEvent.click(screen.getByRole("menuitem", { name: labels.moveUp }));
+      fireEvent.keyDown(screen.getByRole("button", { name: labels.dragSpace("Personal") }), { key: "ArrowUp" });
       return;
     case "star":
       fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Work") }));

@@ -70,12 +70,6 @@
 
 .spaces-editor-actions,
 .spaces-row-decisions,
-.spaces-delete-confirmation {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .spaces-primary-action,
 .spaces-quiet-action,
 .spaces-suggestion-action,
@@ -276,12 +270,6 @@
 
 .spaces-danger {
   color: var(--mem-status-warning-text);
-}
-
-.spaces-delete-confirmation {
-  grid-column: 1 / -1;
-  justify-content: flex-end;
-  padding: 8px 0 12px;
 }
 
 .spaces-error,

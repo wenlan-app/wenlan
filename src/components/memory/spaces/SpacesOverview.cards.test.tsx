@@ -112,19 +112,39 @@ describe("SpacesOverview cards lens", () => {
     fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Work") }));
     fireEvent.click(screen.getByRole("menuitem", { name: labels.delete }));
     expect(api.deleteSpace).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: labels.confirmDelete }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: labels.delete }));
 
     await waitFor(() => expect(api.deleteSpace).toHaveBeenCalledWith("Work"));
   });
 
-  it("moves a card down through the menu reorder command", async () => {
+  it("moves a card by dragging it onto another card", async () => {
     renderOverview({}, undefined, { lens: "cards" });
-    await screen.findByTestId("space-card-work");
+    const workCard = await screen.findByTestId("space-card-work");
+    const personalCard = screen.getByTestId("space-card-personal");
+    const cardRect = (left: number) => ({ x: left, y: 0, top: 0, left, right: left + 200, bottom: 140, width: 200, height: 140, toJSON: () => ({}) }) as DOMRect;
+    vi.spyOn(workCard.parentElement!, "getBoundingClientRect").mockReturnValue(cardRect(0));
+    vi.spyOn(personalCard.parentElement!, "getBoundingClientRect").mockReturnValue(cardRect(210));
 
-    fireEvent.click(screen.getByRole("button", { name: labels.actionsFor("Work") }));
-    fireEvent.click(screen.getByRole("menuitem", { name: labels.moveDown }));
+    fireEvent.pointerDown(within(workCard).getByRole("button", { name: "Open Work" }), { pointerId: 7, pointerType: "mouse", button: 0, isPrimary: true, clientX: 100, clientY: 70 });
+    fireEvent.pointerMove(window, { pointerId: 7, clientX: 200, clientY: 70 });
+    fireEvent.pointerUp(window, { pointerId: 7, clientX: 300, clientY: 70 });
 
     await waitFor(() => expect(api.reorderSpace).toHaveBeenCalledWith("Work", 1));
+  });
+
+  it("keeps a short press on a card as a plain open", async () => {
+    const onSelectSpace = vi.fn();
+    renderOverview({ onSelectSpace }, undefined, { lens: "cards" });
+    const workCard = await screen.findByTestId("space-card-work");
+    const open = within(workCard).getByRole("button", { name: "Open Work" });
+
+    fireEvent.pointerDown(open, { pointerId: 8, pointerType: "mouse", button: 0, isPrimary: true, clientX: 100, clientY: 70 });
+    fireEvent.pointerMove(window, { pointerId: 8, clientX: 102, clientY: 71 });
+    fireEvent.pointerUp(window, { pointerId: 8, clientX: 102, clientY: 71 });
+    fireEvent.click(open);
+
+    expect(onSelectSpace).toHaveBeenCalledWith("Work");
+    expect(api.reorderSpace).not.toHaveBeenCalled();
   });
 
   it("toggling to Rows persists the preference and restores the labelled list", async () => {
