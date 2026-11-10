@@ -1,9 +1,12 @@
+import { useState } from "react";
 import type { Space } from "../../../lib/tauri";
+import { ConfirmDialog } from "../../ConfirmDialog";
 import { TabEmptyMark } from "../../onboarding/TabIntro";
 import type { AssetLens } from "../../../lib/assetLens";
 import { findReorderTarget } from "./spaceHelpers";
 import { SpaceCard } from "./SpaceCard";
 import { SpaceRow } from "./SpaceRow";
+import { useSpaceCardDrag } from "./useSpaceCardDrag";
 import { useSpaceReorderDrag } from "./useSpaceReorderDrag";
 import type { SpacesOverviewLabels, SpaceEditorValue } from "./spacesTypes";
 
@@ -30,6 +33,8 @@ export function ConfirmedSpaces(props: ConfirmedSpacesProps) {
     props.spaces.map(({ id, name, description, sort_order, starred }) => [id, name, description, sort_order, starred]),
   ]);
   const drag = useSpaceReorderDrag(props.spaces, props.pendingIds.length > 0, identity, props.onReorder);
+  const cardDrag = useSpaceCardDrag(props.spaces, props.pendingIds.length > 0, identity, props.onReorder);
+  const [askingDelete, setAskingDelete] = useState<Space | null>(null);
 
   const requestMove = (space: Space, direction: "up" | "down") => {
     const target = findReorderTarget(props.spaces, space.id, direction);
@@ -43,24 +48,21 @@ export function ConfirmedSpaces(props: ConfirmedSpacesProps) {
       ) : props.spaces.length === 0 ? (
         props.filter.trim() ? null : <p className="spaces-empty"><TabEmptyMark tab="spaces" />{props.labels.noConfirmed}</p>
       ) : props.lens === "cards" ? (
-        <div className="asset-cards" data-testid="spaces-cards">
+        <div className={`asset-cards${cardDrag.dragging ? " is-reordering" : ""}`} data-testid="spaces-cards">
           {props.spaces.map((space) => (
-            <SpaceCard
-              key={space.id}
-              space={space}
-              spaces={props.allSpaces}
-              labels={props.labels}
-              pageCount={props.pageCounts.get(space.name.toLocaleLowerCase()) ?? 0}
-              pending={props.pendingIds.includes(space.id)}
-              canMoveUp={props.pendingIds.length === 0 && findReorderTarget(props.spaces, space.id, "up") !== null}
-              canMoveDown={props.pendingIds.length === 0 && findReorderTarget(props.spaces, space.id, "down") !== null}
-              onSelect={props.onSelect}
-              onStar={props.onStar}
-              onRename={props.onRename}
-              onMoveUp={(source) => requestMove(source, "up")}
-              onMoveDown={(source) => requestMove(source, "down")}
-              onDelete={props.onDelete}
-            />
+            <div key={space.id} {...cardDrag.cardProps(space)} onClickCapture={cardDrag.onClickCapture}>
+              <SpaceCard
+                space={space}
+                spaces={props.allSpaces}
+                labels={props.labels}
+                pageCount={props.pageCounts.get(space.name.toLocaleLowerCase()) ?? 0}
+                pending={props.pendingIds.includes(space.id)}
+                onSelect={props.onSelect}
+                onStar={props.onStar}
+                onRename={props.onRename}
+                onDelete={setAskingDelete}
+              />
+            </div>
           ))}
         </div>
       ) : (
@@ -83,7 +85,7 @@ export function ConfirmedSpaces(props: ConfirmedSpacesProps) {
                   onRename={props.onRename}
                   onMoveUp={(source) => requestMove(source, "up")}
                   onMoveDown={(source) => requestMove(source, "down")}
-                  onDelete={props.onDelete}
+                  onDelete={setAskingDelete}
                   onDragStart={(event) => drag.begin(event, space)}
                   dragDisabled={props.pendingIds.length > 0 || (!canMoveUp && !canMoveDown)}
                   dragActive={drag.dragActive}
@@ -93,6 +95,18 @@ export function ConfirmedSpaces(props: ConfirmedSpacesProps) {
           })}
         </div>
       )}
+      {askingDelete ? (
+        <ConfirmDialog
+          message={props.labels.deleteQuestion(askingDelete.name)}
+          confirmLabel={props.labels.delete}
+          cancelLabel={props.labels.cancel}
+          onAnswer={(confirmed) => {
+            const space = askingDelete;
+            setAskingDelete(null);
+            if (confirmed) props.onDelete(space);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

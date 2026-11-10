@@ -20,6 +20,7 @@ type SpaceRowProps = {
   readonly onRename: (space: Space, value: SpaceEditorValue) => Promise<boolean>;
   readonly onMoveUp: (space: Space) => void;
   readonly onMoveDown: (space: Space) => void;
+  /** Asks whether to delete; the list owns the question. */
   readonly onDelete: (space: Space) => void;
   readonly onDragStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly dragDisabled?: boolean;
@@ -30,7 +31,6 @@ export function SpaceRow(props: SpaceRowProps) {
   const { t } = useTranslation();
   const rowContentId = useId();
   const [renaming, setRenaming] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const description = props.space.description?.trim();
 
   if (renaming) {
@@ -101,25 +101,11 @@ export function SpaceRow(props: SpaceRowProps) {
           space={props.space}
           labels={props.labels}
           pending={props.pending}
-          canMoveUp={props.canMoveUp}
-          canMoveDown={props.canMoveDown}
           onStar={props.onStar}
           onRename={() => setRenaming(true)}
-          onMoveUp={props.onMoveUp}
-          onMoveDown={props.onMoveDown}
-          onDelete={() => setConfirmingDelete(true)}
+          onDelete={props.onDelete}
         />
       </div>
-      {confirmingDelete ? (
-        <div className="spaces-delete-confirmation">
-          <button className="spaces-danger" disabled={props.pending} onClick={() => { props.onDelete(props.space); setConfirmingDelete(false); }}>
-            {props.labels.confirmDelete}
-          </button>
-          <button className="spaces-quiet-action" disabled={props.pending} onClick={() => setConfirmingDelete(false)}>
-            {props.labels.cancel}
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }
