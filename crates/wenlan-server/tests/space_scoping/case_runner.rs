@@ -413,8 +413,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // The nightly trust scan report adds one Global reader. Moving a page
     // into a Space adds one PageWorkspace-scoped single-id route.
     // Restoring an earlier page version adds one PageWorkspace-scoped
-    // single-id route.
-    assert_eq!(rows.len(), 135);
+    // single-id route. The list of note groups Automatic set aside adds one
+    // more scoped reader.
+    assert_eq!(rows.len(), 136);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -425,7 +426,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        108
+        109
     );
     assert_eq!(
         rows.iter()
