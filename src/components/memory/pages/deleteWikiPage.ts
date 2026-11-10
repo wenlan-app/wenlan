@@ -3,7 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { deletePage, discardPageDraft, getPage, type Page } from "../../../lib/tauri";
 
 /**
- * Delete a page from a list row (folder tree or Recently used). A published
+ * Delete a page from a list row (the folder tree). A published
  * page goes through delete_page; a draft is discarded at its latest version,
  * since delete_page rejects drafts.
  */

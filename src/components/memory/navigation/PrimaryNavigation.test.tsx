@@ -87,7 +87,7 @@ describe("PrimaryNavigation", () => {
     const section = container.querySelector(".notes-rail-nav > .notes-wiki-section");
     expect(section).not.toBeNull();
     expect(section?.previousElementSibling?.getAttribute("aria-label")).toBe("Spaces");
-    expect(hosts.at(-1)).toBe(section);
+    expect(hosts[hosts.length - 1]).toBe(section);
     // Folded to icons there is no room: Wiki is a destination again.
     rerender(navigation(true));
     expect(railLabels()).toEqual(["Home", "Wiki", "Spaces"]);

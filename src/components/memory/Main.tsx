@@ -43,7 +43,8 @@ import { showExampleWikiReadOnly } from "../../lib/exampleWiki/invoke";
 import { setStartIntent } from "../onboarding/startIntent";
 import { readRememberedDirectoryHidden, rememberDirectoryHidden } from "../../lib/wikiLayoutMemory";
 import AtlasView from "./AtlasView";
-import { SearchResults, matchingThings } from "./SearchResults";
+import { SearchResults, matchesAllWords, matchingThings } from "./SearchResults";
+import { ARCHIVED_PAGES_QUERY_KEY, EXPLICIT_BROWSE_QUERY_POLICY, isKnowledgePage, listAllArchivedPagesExplicitBrowse } from "./pages/listAllPages";
 import { THINGS_QUERY_KEY } from "./pages/WorkingOn";
 import MemoryDetail from "./MemoryDetail";
 import PageDetail from "./PageDetail";
@@ -59,7 +60,7 @@ import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
-import { WIKI_DIRECTORY_ID, WikiDirectory } from "./pages/WikiDirectory";
+import { WIKI_DIRECTORY_ID, WikiDirectory, type WikiInventoryMode } from "./pages/WikiDirectory";
 import { Stack } from "@phosphor-icons/react";
 import { useLibraryInventory } from "./pages/useLibraryInventory";
 import { SecondaryNoteGroup, type SecondaryNoteGroupHandle } from "./pages/SecondaryNoteGroup";
@@ -79,7 +80,6 @@ import PairingApprovalDialog from "./PairingApprovalDialog";
 import RemoteAccessNotifier from "./RemoteAccessNotifier";
 import { searchResultTarget } from "../../lib/searchResultTarget";
 import { forgetRecentPage, readRecentPageHistory, recordRecentPageVisit } from "../../lib/recentPages";
-import { readWikiInventoryMode, writeWikiInventoryMode, type WikiInventoryMode } from "../../lib/wikiNotesPreferences";
 import { deleteRecentSpace, readRecentSpaceHistory, recordRecentSpaceVisit, renameRecentSpace } from "../../lib/recentSpaces";
 import { createSpaceDetailCopy, createSpacesOverviewLabels } from "./navigation/copy";
 import { activeNavigationForView, type View } from "./navigation/viewState";
@@ -308,8 +308,7 @@ export default function Main({
   const noteTabsRef = useRef(noteTabs);
   const primaryDraftIdentityByTab = useRef(new Map<string, string>());
   const [wikiCreationFolderPath, setWikiCreationFolderPath] = useState<string | null>(null);
-  const [wikiInventoryMode, setWikiInventoryMode] = useState<WikiInventoryMode>(readWikiInventoryMode);
-  const [recentPageRevision, setRecentPageRevision] = useState(0);
+  const [wikiInventoryMode, setWikiInventoryMode] = useState<WikiInventoryMode>("folders");
   const [wikiDirectoryOpenRequest, setWikiDirectoryOpenRequest] = useState(0);
   const [wikiDirectoryCloseRequest, setWikiDirectoryCloseRequest] = useState(0);
   // The one Wiki directory renders into the left sidebar, or into the Wiki
@@ -1005,6 +1004,17 @@ export default function Main({
     enabled: debouncedQuery.trim().length > 0,
   });
   const thingResults = matchingThings(allThings, debouncedQuery);
+  // Archived pages are out of the folder tree (as in Obsidian), so search is
+  // where you find one: matched by title, opened read only with Restore.
+  const { data: archivedPages = [] } = useQuery({
+    queryKey: ARCHIVED_PAGES_QUERY_KEY,
+    queryFn: listAllArchivedPagesExplicitBrowse,
+    ...EXPLICIT_BROWSE_QUERY_POLICY,
+    enabled: debouncedQuery.trim().length > 0,
+  });
+  const archivedResults = archivedPages
+    .filter(page => isKnowledgePage(page) && matchesAllWords(page.title, debouncedQuery))
+    .slice(0, 3);
 
   const searchLoading = !!displayedSearchQuery.trim() && (
     displayedSearchQuery !== debouncedQuery || memorySearchLoading || entitySearchLoading || conceptSearchLoading
@@ -1143,14 +1153,12 @@ export default function Main({
   const handlePageLoaded = useCallback((page: Pick<Page, "id" | "status" | "title">) => {
     if (page.status === "active") deletedPageIdsRef.current.delete(page.id);
     recordRecentPageVisit(page);
-    setRecentPageRevision(revision => revision + 1);
     const next = noteTabsRef.current.map(tab => noteId(tab.view) === page.id ? { ...tab, title: page.title } : tab);
     if (next.some((tab, index) => tab.title !== noteTabsRef.current[index].title)) updateNoteTabs(next);
   }, []);
   const handlePageDeleted = useCallback((pageId: string) => {
     deletedPageIdsRef.current.add(pageId);
     forgetRecentPage(pageId);
-    setRecentPageRevision(revision => revision + 1);
     const isPage = (candidate: View) => candidate.kind === "page" && candidate.pageId === pageId;
     updateNoteTabs(noteTabsRef.current.filter(tab => !isPage(tab.view)));
     updateHistory(viewHistoryRef.current.filter(candidate => !isPage(candidate)), viewForwardRef.current.filter(candidate => !isPage(candidate)));
@@ -1170,7 +1178,7 @@ export default function Main({
   // A list row asks to archive a page. When an editor has the page open, that
   // editor archives it (it saves first and holds the action lock), and the
   // list must not. Archive never runs the delete bookkeeping above: the page
-  // keeps its tabs, its back history and its place in Recently used.
+  // keeps its tabs, its back history and its place in recently opened.
   const archiveOpenPage = async (pageId: string): Promise<boolean> => {
     const busy = () => { toast(t("pages.archive.busy")); return true; };
     if (movingNoteRef.current) return busy();
@@ -1187,7 +1195,6 @@ export default function Main({
   // Restored from Archived pages: it exists again for back and forward.
   const handlePageRestored = useCallback((pageId: string) => {
     deletedPageIdsRef.current.delete(pageId);
-    setRecentPageRevision(revision => revision + 1);
   }, []);
   // A note deleted from the Wiki directory (published page or draft) may have a
   // tab here. Drop it, and when it was on screen show its neighbour or the Wiki
@@ -1461,8 +1468,6 @@ export default function Main({
       heading={wikiHeading}
       inventoryMode={wikiInventoryMode}
       onInventoryModeChange={setWikiInventoryMode}
-      recentRevision={recentPageRevision}
-      onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
       inventoryScope={wikiInventoryScope}
       onCreationFolderPathChange={setWikiCreationFolderPath}
       currentPageId={view.kind === "page" ? view.pageId : view.kind === "page-draft" ? view.draftId ?? null : null}
@@ -1659,8 +1664,6 @@ export default function Main({
               directoryInSidebar={directoryInSidebar}
               onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
-              recentRevision={recentPageRevision}
-              onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
               inventoryScope={wikiInventoryScope}
               onCreationFolderPathChange={setWikiCreationFolderPath}
               browsing
@@ -1683,7 +1686,6 @@ export default function Main({
                 onBrowseAll={() => {
                   // The home lists only the newest pages; every page is in the
                   // Wiki, by folder.
-                  writeWikiInventoryMode("folders");
                   setWikiInventoryMode("folders");
                   navigatePages();
                 }}
@@ -1785,8 +1787,6 @@ export default function Main({
               directoryInSidebar={directoryInSidebar}
               onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
-              recentRevision={recentPageRevision}
-              onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
               inventoryScope={wikiInventoryScope}
               onCreationFolderPathChange={setWikiCreationFolderPath}
               currentPageId={view.draftId ?? null}
@@ -1845,8 +1845,6 @@ export default function Main({
               directoryInSidebar={directoryInSidebar}
               onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
-              recentRevision={recentPageRevision}
-              onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
               inventoryScope={wikiInventoryScope}
               onCreationFolderPathChange={setWikiCreationFolderPath}
               currentPageId={view.pageId}
@@ -2025,6 +2023,7 @@ export default function Main({
           query={displayedSearchQuery}
           thingResults={thingResults}
           conceptResults={conceptResults}
+          archivedResults={archivedResults}
           conversationHits={conversationHits}
           conversationsLoading={conversationSearchLoading}
           sourceResults={sourceResults}

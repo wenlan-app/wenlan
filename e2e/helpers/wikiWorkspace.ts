@@ -26,14 +26,13 @@ export async function leaveHomeForWiki(page: Page) {
   await expect(page.locator('.wiki-workspace[data-directory-hidden="true"]')).toHaveCount(0);
 }
 
-/** Switch the optional pages panel to folders, including narrow screens. */
+/** Show the folder tree, including on narrow screens. */
 export async function showWikiFolders(page: Page) {
   await leaveHomeForWiki(page);
   const directory = page.locator(".wiki-workspace-directory");
   await expect(directory).toBeAttached();
   if (!(await directory.isVisible())) await page.locator(".wiki-workspace-folders-toggle").click();
   await expect(directory).toBeVisible();
-  await directory.getByRole("combobox").selectOption("folders");
   await expect(directory.locator(".notes-list-panel")).toBeVisible();
   return directory;
 }

@@ -3,8 +3,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import { Folder } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import type { Page } from "../../../lib/tauri";
-import { readWikiInventoryMode, type WikiInventoryMode } from "../../../lib/wikiNotesPreferences";
-import { WIKI_DIRECTORY_ID, WikiDirectory } from "./WikiDirectory";
+import { WIKI_DIRECTORY_ID, WikiDirectory, type WikiInventoryMode } from "./WikiDirectory";
 import type { WikiInventoryScope } from "./pageInventory";
 import { NoteGroupFrame } from "./NoteGroupFrame";
 import { useReportWorkspaceDemand, WIKI_LIST_DOCKED_WIDTH } from "../navigation/workspaceDemand";
@@ -26,8 +25,6 @@ export interface WikiWorkspaceProps {
   /** Increment to reveal the directory drawer (narrow windows), even if its mode is unchanged. */
   readonly directoryOpenRequest?: number;
   readonly onInventoryModeChange?: (mode: WikiInventoryMode) => void;
-  readonly recentRevision?: number;
-  readonly onOpenRecentPage?: (id: string) => void;
   readonly browsing?: boolean;
   readonly fullBleed?: boolean;
   /** A library with no notes and no drafts, or one whose getting-started
@@ -74,8 +71,6 @@ export function WikiWorkspace({
   currentFolderPath,
   inventoryMode: controlledInventoryMode,
   onInventoryModeChange,
-  recentRevision = 0,
-  onOpenRecentPage,
   browsing = false,
   fullBleed = false,
   directoryHidden = false,
@@ -98,7 +93,7 @@ export function WikiWorkspace({
   const { t } = useTranslation();
   const [folderOpen, setFolderOpen] = useState(false);
   // Uncontrolled, the workspace still owns the mode: its column hides by it.
-  const [localInventoryMode, setLocalInventoryMode] = useState<WikiInventoryMode>(readWikiInventoryMode);
+  const [localInventoryMode, setLocalInventoryMode] = useState<WikiInventoryMode>("folders");
   const inventoryMode = controlledInventoryMode ?? localInventoryMode;
   const changeInventoryMode = useCallback((mode: WikiInventoryMode) => {
     setLocalInventoryMode(mode);
@@ -169,8 +164,6 @@ export function WikiWorkspace({
             currentFolderPath={currentFolderPath}
             inventoryMode={inventoryMode}
             onInventoryModeChange={changeInventoryMode}
-            recentRevision={recentRevision}
-            onOpenRecentPage={onOpenRecentPage}
             browsing={browsing}
             filter={filter}
             onFilterChange={onFilterChange}

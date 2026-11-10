@@ -58,9 +58,7 @@ for(const locale of ["en","zh-Hant"] as const)for(const theme of ["light","dark"
  await expect(right.locator(".wiki-table, .asset-card, .wiki-folder-lenses")).toHaveCount(0);
  await expect(page.locator(".note-tab-create")).toBeVisible();
  if(!(await tree.isVisible()))await page.locator(".wiki-workspace-folders-toggle").click();
- const inventoryMode=tree.getByRole("combobox");
- await inventoryMode.selectOption("folders");
- await expect(inventoryMode).toHaveValue("folders");
+ await expect(tree.getByRole("combobox")).toHaveCount(0);
  await tree.getByRole("button",{name:"Research",exact:true}).click();
  await expect(tree.getByTitle("Memory provenance",{exact:true})).toBeVisible();
  await expect(tree.getByTitle("Local-first architecture",{exact:true})).toHaveCount(0);

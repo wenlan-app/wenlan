@@ -438,13 +438,8 @@
   padding: 0;
 }
 .notes-wiki-section .notes-wiki-heading { flex: 1 1 auto; min-width: 0; }
-.notes-wiki-section .wiki-workspace-mode { flex: 0 0 auto; min-height: 32px; }
-.notes-wiki-section .wiki-workspace-mode > .wiki-workspace-mode-sizer,
-.notes-wiki-section .wiki-workspace-mode select { padding: 0 20px 0 6px; font-size: 12px; }
-.notes-wiki-section .wiki-workspace-mode select { height: 28px; color: var(--mem-text-tertiary); }
-.notes-wiki-section .wiki-workspace-mode > svg { right: 6px; top: 16px; color: var(--mem-text-tertiary); }
+.notes-wiki-section .wiki-workspace-back { flex: 0 0 auto; min-height: 28px; padding: 0 6px; color: var(--mem-text-tertiary); font-size: 12px; font-weight: 400; }
 .notes-wiki-section .wiki-workspace-new-folder { flex-basis: 28px; width: 28px; height: 28px; color: var(--mem-text-tertiary); }
-.notes-wiki-section .wiki-workspace-mode-row > .wiki-workspace-new-page { margin-left: 0; }
 .notes-wiki-section .wiki-sidebar-directory > .notes-list-panel { padding-inline: 4px 0; margin-top: 2px; }
 /* One icon column: top-level pages line up with top-level folders,
    whose caret sits in the gutter to the left of the icon. */

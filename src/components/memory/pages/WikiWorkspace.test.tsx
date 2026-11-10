@@ -2,15 +2,14 @@
 import { fireEvent, render as renderInto, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement, ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { useEffect, useState } from "react";
-import { RECENT_PAGES_STORAGE_KEY } from "../../../lib/recentPages";
 import { WikiWorkspace } from "./WikiWorkspace";
 import { WikiDirectory } from "./WikiDirectory";
 import { useWikiFolderCreation } from "./WikiFolderCreationContext";
 
-// Recently used reads the archived set to hide archived pages, so every
-// render needs a query client. Each render gets its own.
+// Panels read through react-query, so every render needs a query client.
+// Each render gets its own.
 function render(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderInto(ui, { wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
@@ -26,12 +25,10 @@ vi.mock("./PageInventoryPanel", () => ({
 vi.mock("./ArchivedNotesPanel", () => ({ ArchivedNotesPanel: ({ onOpenPage }: { onOpenPage: (page: { id: string }) => void }) => <div data-testid="archived-notes"><button type="button" onClick={() => onOpenPage({ id: "archived-one" })}>Open archived note</button></div> }));
 
 describe("WikiWorkspace", () => {
-  // Most cases start from a person who picked Recently used; the default is tested on its own.
-  beforeEach(() => localStorage.setItem("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode: "recent", customOrder: [], chosen: true })));
-  it.each(["recent", "archived"] as const)("archive browse request opens the narrow drawer from %s, reopens it and closes on selection", async initialMode => {
+  it("archive browse request opens the narrow drawer, reopens it and closes on selection", async () => {
     const onOpenPage = vi.fn();
     function BrowseArchive() {
-      const [mode, setMode] = useState<"recent" | "archived">(initialMode);
+      const [mode, setMode] = useState<"folders" | "archived">("folders");
       const [request, setRequest] = useState(0);
       return <WikiWorkspace directoryHidden inventoryMode={mode} directoryOpenRequest={request}
         onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={onOpenPage}>
@@ -50,7 +47,7 @@ describe("WikiWorkspace", () => {
       // This is the existing container-query CSS selector that reveals the narrow drawer.
       expect(drawer).toHaveClass("is-folder-open");
       expect(container.querySelector(".wiki-workspace")).not.toHaveAttribute("data-directory-hidden");
-      expect(screen.getByRole("combobox")).toHaveValue("archived");
+      expect(screen.getByTestId("archived-notes")).toBeInTheDocument();
       expect(screen.getByTestId("retained-editor")).toBe(editor);
       expect(editor).toHaveValue("unsaved text");
       fireEvent.click(screen.getByRole("button", { name: "Open archived note" }));
@@ -68,72 +65,33 @@ describe("WikiWorkspace", () => {
     rerender(<WikiWorkspace {...props} directoryOpenRequest={8}><textarea /></WikiWorkspace>);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(toggle);
-    rerender(<WikiWorkspace {...props} directoryOpenRequest={8} recentRevision={1}><textarea /></WikiWorkspace>);
+    rerender(<WikiWorkspace {...props} directoryOpenRequest={8} currentPageId="other"><textarea /></WikiWorkspace>);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("opens on Folders for a person who never picked a list", () => {
-    localStorage.removeItem("wenlan:wiki-inventory:v1");
+  it("shows the folder tree with no browse-mode menu (UX-FIND-4)", () => {
     render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
-    expect(screen.getByRole("combobox")).toHaveValue("folders");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Folders" })).toBeInTheDocument();
     expect(screen.getByTestId("wiki-directory")).toBeInTheDocument();
-  });
-
-  it("keeps a chosen Recently used and switches modes without remounting the active editor", () => {
-    const { getByTestId } = render(
-      <WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}>
-        <textarea data-testid="active-editor" defaultValue="unsaved text" />
-      </WikiWorkspace>,
-    );
-    const editor = getByTestId("active-editor");
-    const mode = screen.getByRole("combobox");
-
-    expect(mode).toHaveValue("recent");
-    expect(screen.queryByTestId("wiki-directory")).not.toBeInTheDocument();
-    fireEvent.change(mode, { target: { value: "folders" } });
-    expect(screen.getByTestId("wiki-directory")).toBeInTheDocument();
-    expect(getByTestId("active-editor")).toBe(editor);
-    fireEvent.change(mode, { target: { value: "custom" } });
-    expect(screen.queryByTestId("wiki-directory")).not.toBeInTheDocument();
-    expect(getByTestId("active-editor")).toBe(editor);
-    fireEvent.change(mode, { target: { value: "recent" } });
-    expect(screen.queryByTestId("wiki-directory")).not.toBeInTheDocument();
-    expect(getByTestId("active-editor")).toBe(editor);
   });
 
   it("offers New page at the top of the list, as Obsidian's file explorer does, but not among archived pages", () => {
     const onCreatePage = vi.fn();
-    render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={onCreatePage} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
-    const mode = screen.getByRole("combobox");
+    const props = { onBrowse: vi.fn(), onCreatePage, onOpenDraft: vi.fn(), onOpenPage: vi.fn() };
+    const { rerender } = render(<WikiWorkspace {...props}><textarea /></WikiWorkspace>);
     fireEvent.click(screen.getByRole("button", { name: "New page" }));
     expect(onCreatePage).toHaveBeenLastCalledWith(undefined);
-    fireEvent.change(mode, { target: { value: "folders" } });
-    expect(screen.getByRole("button", { name: "New page" })).toBeInTheDocument();
-    fireEvent.change(mode, { target: { value: "archived" } });
+    rerender(<WikiWorkspace {...props} inventoryMode="archived"><textarea /></WikiWorkspace>);
     expect(screen.queryByRole("button", { name: "New page" })).not.toBeInTheDocument();
   });
 
-  it("shows the Folders page count as a number beside the title, and only in folders mode", () => {
+  it("shows the page count as a number beside the Folders title", () => {
     render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
-    const mode = screen.getByRole("combobox");
-    expect(screen.queryByText("145 pages")).not.toBeInTheDocument();
-    fireEvent.change(mode, { target: { value: "folders" } });
     const count = screen.getByTitle("145 pages");
     expect(count).toHaveTextContent("145");
-    expect(count.previousElementSibling).toBe(mode.closest("label"));
+    expect(count.previousElementSibling).toBe(screen.getByRole("heading", { name: "Folders" }));
     expect(screen.getByText("145 pages")).toHaveClass("sr-only");
-    fireEvent.change(mode, { target: { value: "recent" } });
-    expect(screen.queryByTitle("145 pages")).not.toBeInTheDocument();
-  });
-
-  it("restores the chosen custom mode after remount without entering the folder tree", () => {
-    const props = { onBrowse: vi.fn(), onCreatePage: vi.fn(), onOpenDraft: vi.fn(), onOpenPage: vi.fn() };
-    const first = render(<WikiWorkspace {...props}><textarea /></WikiWorkspace>);
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "custom" } });
-    first.unmount();
-    render(<WikiWorkspace {...props}><textarea /></WikiWorkspace>);
-    expect(screen.getByRole("combobox")).toHaveValue("custom");
-    expect(screen.queryByTestId("wiki-directory")).not.toBeInTheDocument();
   });
 
   it("registers one stable reading root and a shared right-toolbar host", () => {
@@ -148,7 +106,7 @@ describe("WikiWorkspace", () => {
     expect(reading).toContainElement(tools);
   });
 
-  it("opens the mobile pages panel and registered folder form only in folders mode", async () => {
+  it("opens the mobile pages panel and the registered folder form", async () => {
     const openForm = vi.fn();
     function RequestFolder() {
       const folderCreation = useWikiFolderCreation();
@@ -166,9 +124,6 @@ describe("WikiWorkspace", () => {
       </WikiDirectory>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Request folder" }));
-    expect(openForm).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "folders" } });
     fireEvent.click(screen.getByRole("button", { name: "Request folder" }));
     // The directory asks its host to show it (the narrow drawer opens).
     await waitFor(() => expect(onRevealRequest).toHaveBeenCalledOnce());
@@ -193,7 +148,7 @@ describe("WikiWorkspace", () => {
     await waitFor(() => expect(onCreationFolderPathChange).toHaveBeenLastCalledWith("Work/Research"));
   });
 
-  it("reports no folder creation path while recent pages are selected", async () => {
+  it("reports no folder creation path while archived pages are shown", async () => {
     const onCreationFolderPathChange = vi.fn();
     function ReportPath() {
       const folderCreation = useWikiFolderCreation();
@@ -203,67 +158,12 @@ describe("WikiWorkspace", () => {
       return null;
     }
     render(
-      <WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()} onCreationFolderPathChange={onCreationFolderPathChange}>
+      <WikiDirectory inventoryMode="archived" onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()} onCreationFolderPathChange={onCreationFolderPathChange}>
         <ReportPath />
-      </WikiWorkspace>,
+      </WikiDirectory>,
     );
 
     await waitFor(() => expect(onCreationFolderPathChange).toHaveBeenLastCalledWith(null));
-  });
-
-  it("renders the persisted recent history in visit order and marks the active page", () => {
-    localStorage.setItem(RECENT_PAGES_STORAGE_KEY, JSON.stringify({
-      version: 1,
-      entries: [
-        { id: "newer", title: "Newer page", visitedAt: Date.now() },
-        { id: "older", title: "Older page", visitedAt: Date.now() - 10 },
-      ],
-    }));
-    const onOpenRecentPage = vi.fn();
-    render(
-      <WikiWorkspace currentPageId="older" onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()} onOpenRecentPage={onOpenRecentPage}>
-        <textarea data-testid="active-editor" />
-      </WikiWorkspace>,
-    );
-
-    const newer = screen.getByRole("button", { name: "Newer page" });
-    const older = screen.getByRole("button", { name: "Older page" });
-    expect(newer.compareDocumentPosition(older) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(older).toHaveAttribute("aria-current", "page");
-    fireEvent.click(newer);
-    expect(onOpenRecentPage).toHaveBeenCalledWith("newer");
-  });
-
-  it("closes the pages drawer after opening a recent page", () => {
-    localStorage.setItem(RECENT_PAGES_STORAGE_KEY, JSON.stringify({
-      version: 1,
-      entries: [{ id: "recent-page", title: "Recent page", visitedAt: Date.now() }],
-    }));
-    const onOpenRecentPage = vi.fn();
-    render(
-      <WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()} onOpenRecentPage={onOpenRecentPage}>
-        <textarea data-testid="active-editor" />
-      </WikiWorkspace>,
-    );
-    const notesToggle = screen.getByRole("button", { name: "Pages" });
-
-    fireEvent.click(notesToggle);
-    expect(notesToggle).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(screen.getByRole("button", { name: "Recent page" }));
-    expect(onOpenRecentPage).toHaveBeenCalledWith("recent-page");
-    expect(notesToggle).toHaveAttribute("aria-expanded", "false");
-  });
-
-  it("shows the empty recent-notes state without inventing entries", () => {
-    localStorage.removeItem(RECENT_PAGES_STORAGE_KEY);
-    const { container } = render(
-      <WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}>
-        <textarea data-testid="active-editor" />
-      </WikiWorkspace>,
-    );
-
-    expect(container.querySelector(".wiki-recent-notes-empty")).toBeInTheDocument();
-    expect(container.querySelector(".wiki-recent-notes-list")).not.toBeInTheDocument();
   });
 
   it("marks the workspace only while the directory is hidden so CSS can drop it", () => {
@@ -282,15 +182,27 @@ describe("WikiWorkspace", () => {
     expect(workspace).not.toHaveAttribute("data-directory-hidden");
   });
   it("shows the archive directory in an otherwise empty workspace without replacing the editor", () => {
-    const { container } = render(<WikiWorkspace directoryHidden onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea data-testid="kept-editor" defaultValue="unsaved" /></WikiWorkspace>);
+    const props = { directoryHidden: true, onBrowse: vi.fn(), onCreatePage: vi.fn(), onOpenDraft: vi.fn(), onOpenPage: vi.fn() };
+    const { container, rerender } = render(<WikiWorkspace {...props}><textarea data-testid="kept-editor" defaultValue="unsaved" /></WikiWorkspace>);
     const editor = screen.getByTestId("kept-editor");
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "archived" } });
+    expect(container.querySelector(".wiki-workspace")).toHaveAttribute("data-directory-hidden", "true");
+    rerender(<WikiWorkspace {...props} inventoryMode="archived"><textarea data-testid="kept-editor" defaultValue="unsaved" /></WikiWorkspace>);
     expect(screen.getByTestId("archived-notes")).toBeInTheDocument();
     expect(container.querySelector(".wiki-workspace")).not.toHaveAttribute("data-directory-hidden");
     expect(screen.getByTestId("kept-editor")).toBe(editor);
     expect(editor).toHaveValue("unsaved");
-    // A browse mode for this session only: the app never reopens in it.
-    expect(JSON.parse(localStorage.getItem("wenlan:wiki-inventory:v1")!).mode).toBe("recent");
+  });
+
+  it("goes back from Archived pages to the folder tree", () => {
+    function Archive() {
+      const [mode, setMode] = useState<"folders" | "archived">("archived");
+      return <WikiWorkspace inventoryMode={mode} onInventoryModeChange={setMode} onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>;
+    }
+    render(<Archive />);
+    expect(screen.getByTestId("archived-notes")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to folders" }));
+    expect(screen.queryByTestId("archived-notes")).not.toBeInTheDocument();
+    expect(screen.getByTestId("wiki-directory")).toBeInTheDocument();
   });
 
 });

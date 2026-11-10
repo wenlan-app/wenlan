@@ -1,33 +1,34 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CaretDown, FolderPlus, NotePencil } from "@phosphor-icons/react";
+import { CaretLeft, FolderPlus, NotePencil } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import type { Page } from "../../../lib/tauri";
-import { readWikiInventoryMode, writeWikiInventoryMode, type WikiInventoryMode } from "../../../lib/wikiNotesPreferences";
 import { ArchivedNotesPanel } from "./ArchivedNotesPanel";
 import { PageInventoryPanel } from "./PageInventoryPanel";
-import { RecentNotesPanel } from "./RecentNotesPanel";
 import { WikiFolderCreationContext } from "./WikiFolderCreationContext";
 import type { WikiInventoryScope } from "./pageInventory";
 
 /** The id of the one directory the shell renders (see Main). */
 export const WIKI_DIRECTORY_ID = "wiki-directory";
 
+/** The directory shows the folder tree. Archived pages is a short detour,
+ *  opened from the home, never a mode you pick (Qi-Xuan 2026-11-09 19:14 PT:
+ *  no browse-mode menu; archived pages stay out of the tree, as in Obsidian). */
+export type WikiInventoryMode = "folders" | "archived";
+
 export interface WikiDirectoryProps {
   readonly id?: string;
   /** Where the directory sits: its own column in the Wiki workspace, or a
    *  section of the app's one left sidebar, below the destinations. */
   readonly placement?: "workspace" | "sidebar";
-  /** Leads the mode row in the sidebar: the Wiki destination itself. */
+  /** Leads the header row in the sidebar: the Wiki destination itself. */
   readonly heading?: ReactNode;
   readonly inventoryScope?: WikiInventoryScope;
   readonly currentPageId?: string | null;
   readonly currentFolderPath?: string | null;
   readonly inventoryMode?: WikiInventoryMode;
   readonly onInventoryModeChange?: (mode: WikiInventoryMode) => void;
-  readonly recentRevision?: number;
-  readonly onOpenRecentPage?: (id: string) => void;
   readonly browsing?: boolean;
   readonly filter?: string;
   readonly onFilterChange?: (filter: string) => void;
@@ -47,7 +48,7 @@ export interface WikiDirectoryProps {
   readonly children?: ReactNode;
 }
 
-/** Every page of the Wiki: by folder, recent, hand-ordered or archived. */
+/** Every page of the Wiki, by folder; or, for a moment, the archived pages. */
 export function WikiDirectory({
   id,
   placement = "workspace",
@@ -57,8 +58,6 @@ export function WikiDirectory({
   currentFolderPath,
   inventoryMode: controlledInventoryMode,
   onInventoryModeChange,
-  recentRevision = 0,
-  onOpenRecentPage,
   browsing = false,
   filter,
   onFilterChange,
@@ -75,7 +74,7 @@ export function WikiDirectory({
   children,
 }: WikiDirectoryProps) {
   const { t } = useTranslation();
-  const [localInventoryMode, setLocalInventoryMode] = useState<WikiInventoryMode>(readWikiInventoryMode);
+  const [localInventoryMode, setLocalInventoryMode] = useState<WikiInventoryMode>("folders");
   const inventoryMode = controlledInventoryMode ?? localInventoryMode;
   const [creationFolderPath, reportCreationFolderPath] = useState<string | null>(null);
   const exampleWiki = useExampleWikiActive();
@@ -110,9 +109,7 @@ export function WikiDirectory({
     registerCreateFolderForm,
     requestCreateFolder,
   }), [creationFolderPath, inventoryMode, canCreateFolder, reportCanCreateFolder, registerCreateFolderForm, requestCreateFolder]);
-  const isManualOrder = inventoryMode === "custom";
   const changeInventoryMode = (mode: WikiInventoryMode) => {
-    writeWikiInventoryMode(mode);
     setLocalInventoryMode(mode);
     onInventoryModeChange?.(mode);
   };
@@ -127,24 +124,14 @@ export function WikiDirectory({
     <aside id={id} className={`wiki-workspace-directory${inSidebar ? " wiki-sidebar-directory" : ""}`}>
       <div className="wiki-workspace-mode-row">
         {heading}
-        <label className="wiki-workspace-mode">
-          <span>{t("pages.recent.modeLabel")}</span>
-          {/* Sizes the selector to the chosen mode's name so the note count can sit right after it. */}
-          <span className="wiki-workspace-mode-sizer" aria-hidden="true">{t(inventoryMode === "recent" ? "pages.recent.title" : inventoryMode === "custom" ? "pages.recent.custom" : inventoryMode === "archived" ? "pages.archive.title" : "pages.folders.title")}</span>
-          <select
-            aria-label={t("pages.recent.modeLabel")}
-            title={isManualOrder ? t("pages.recent.customHint") : undefined}
-            value={inventoryMode}
-            onChange={event => changeInventoryMode(event.target.value as WikiInventoryMode)}
-          >
-            <option value="recent">{t("pages.recent.title")}</option>
-            <option value="custom">{t("pages.recent.custom")}</option>
-            <option value="folders">{t("pages.folders.title")}</option>
-            <option value="archived">{t("pages.archive.title")}</option>
-          </select>
-          <CaretDown aria-hidden="true" size={inSidebar ? 12 : 16} />
-        </label>
-        {/* The sidebar is narrow: the mode row keeps only what you act on. */}
+        {inventoryMode === "archived" && (
+          <button type="button" className="wiki-workspace-mode wiki-workspace-back" onClick={() => changeInventoryMode("folders")}>
+            <CaretLeft aria-hidden="true" size={inSidebar ? 12 : 16} />
+            <span>{t("pages.archive.back")}</span>
+          </button>
+        )}
+        {!heading && inventoryMode === "folders" && <h2 className="wiki-workspace-mode wiki-workspace-title">{t("pages.folders.title")}</h2>}
+        {/* The sidebar is narrow: its header keeps only what you act on. */}
         {!inSidebar && inventoryMode === "folders" && noteCount !== null && (
           <span className="wiki-workspace-note-count" title={t("pages.folders.noteCount", { count: noteCount })}>
             <span aria-hidden="true">{noteCount}</span>
@@ -179,16 +166,6 @@ export function WikiDirectory({
       </div>
       {inventoryMode === "archived" ? (
         <ArchivedNotesPanel currentPageId={currentPageId} onOpenPage={closeForNavigation(onOpenPage)} onRestored={onRestorePage} />
-      ) : inventoryMode !== "folders" ? (
-        <RecentNotesPanel
-          mode={inventoryMode}
-          currentPageId={currentPageId}
-          revision={recentRevision}
-          onOpenPage={onOpenRecentPage ? closeForNavigation(onOpenRecentPage) : undefined}
-          onDeletePage={onDeletePage}
-          onArchiveOpenPage={onArchiveOpenPage}
-          onBrowseFolders={() => changeInventoryMode("folders")}
-        />
       ) : (
         <PageInventoryPanel
           inventoryScope={inventoryScope}
