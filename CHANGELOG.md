@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.21.4](https://github.com/wenlan-app/wenlan/compare/v0.21.3...v0.21.4) (2026-11-10)
+
+
+### Features
+
+* **app:** one left column for the Wiki: folder tree in the sidebar, one New button, Topics from the graph ([#1240](https://github.com/wenlan-app/wenlan/issues/1240)) ([565fb25](https://github.com/wenlan-app/wenlan/commit/565fb25d4d1642f735b769f01e092d7ed8da3c5f))
+* **obsidian:** link a vault into the Wiki as pages you edit (UX-ADD-3) ([#1238](https://github.com/wenlan-app/wenlan/issues/1238)) ([c64b3e8](https://github.com/wenlan-app/wenlan/commit/c64b3e85e744e33bd3fbd843db1bbae03e76b3fa))
+* **originals:** a new version of a kept diagram links to the one it replaces ([#1224](https://github.com/wenlan-app/wenlan/issues/1224)) ([4ae2b22](https://github.com/wenlan-app/wenlan/commit/4ae2b22364d914d6237540f612d58bbdba399b24))
+* **pages:** list a burst of your saves as one change in a page's history (UX-HIST-3) ([#1232](https://github.com/wenlan-app/wenlan/issues/1232)) ([284abb2](https://github.com/wenlan-app/wenlan/commit/284abb29d38f6ab7198b3dd1faf8521b9f17e91e))
+* **pages:** move a page into another Space ([#1235](https://github.com/wenlan-app/wenlan/issues/1235)) ([35fa12e](https://github.com/wenlan-app/wenlan/commit/35fa12e4e45b6e56a108a55fef7652709dc2f77f))
+* **recall:** bring along the pages a page hit links to ([#1226](https://github.com/wenlan-app/wenlan/issues/1226)) ([0281283](https://github.com/wenlan-app/wenlan/commit/0281283ff63fef336e21a55a40c6d48957550650))
+* **said:** keep the conversation lines an AI tool sends with a memory, for chats Wenlan can't read (UX-WHO-6) ([#1234](https://github.com/wenlan-app/wenlan/issues/1234)) ([70da320](https://github.com/wenlan-app/wenlan/commit/70da3208a49ef713f20da6167e1671af0a40e783))
+* **things:** each night merges, replaces and updates what an AI wrote, each undoable (UX-GRAPH-7) ([#1212](https://github.com/wenlan-app/wenlan/issues/1212)) ([a7dc8c5](https://github.com/wenlan-app/wenlan/commit/a7dc8c5013c66477c53ac1b644630457c228d83f))
+
+
+### Bug Fixes
+
+* **app:** put memory and topic ⋯ menus in the toolbar like pages ([#1231](https://github.com/wenlan-app/wenlan/issues/1231)) ([cedca5b](https://github.com/wenlan-app/wenlan/commit/cedca5bc31982aaccf615b512034a208326b70da))
+* **mcp:** don't suggest move_page for an unfiled page's Space ([#1230](https://github.com/wenlan-app/wenlan/issues/1230)) ([4d48e2e](https://github.com/wenlan-app/wenlan/commit/4d48e2e91b21d9d7d56f8a5968ab1b131b396608))
+* **mcp:** stop telling agents move_page can file an unfiled page into a Space ([4d48e2e](https://github.com/wenlan-app/wenlan/commit/4d48e2e91b21d9d7d56f8a5968ab1b131b396608))
+* **memory:** flag imported chat turns as conversation text, not memories ([#1219](https://github.com/wenlan-app/wenlan/issues/1219)) ([85da4ba](https://github.com/wenlan-app/wenlan/commit/85da4ba526ccf46ae2c9007b61913886ceea8807))
+* **originals:** reading an old diagram over MCP names the newer version ([#1229](https://github.com/wenlan-app/wenlan/issues/1229)) ([393b6bb](https://github.com/wenlan-app/wenlan/commit/393b6bb8456e92782290d5b2b1e1bda8486714dc))
+* **pages:** say which sources a refused page write could not read ([#1227](https://github.com/wenlan-app/wenlan/issues/1227)) ([9353107](https://github.com/wenlan-app/wenlan/commit/9353107948212223983cca7b57092339d417bf15))
+* **shared-space:** fixes from a real Mac + Windows test through Google Drive ([#1241](https://github.com/wenlan-app/wenlan/issues/1241)) ([be77dc7](https://github.com/wenlan-app/wenlan/commit/be77dc768fa573f93aea835d066134bc97dc22fc))
+* **things:** a page lists a night's merged memories in one order (UX-GRAPH-7) ([#1239](https://github.com/wenlan-app/wenlan/issues/1239)) ([96251b4](https://github.com/wenlan-app/wenlan/commit/96251b41e8569f2f0cddc5deb12cdca1afe63f4f))
+* **trust:** log removals and refusals, prune old migration backups, report failed documents ([#1225](https://github.com/wenlan-app/wenlan/issues/1225)) ([a08c331](https://github.com/wenlan-app/wenlan/commit/a08c33189be1fa6bf72aeaf844a9b01eb4349b04))
+
 ## [0.21.3](https://github.com/wenlan-app/wenlan/compare/v0.21.2...v0.21.3) (2026-11-09)
 
 
