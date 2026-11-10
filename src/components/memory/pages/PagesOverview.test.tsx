@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setExperiment } from "../../../lib/experiments";
 import {
   distillReview,
   listAgents,
@@ -8,6 +9,10 @@ import {
   listRefinements,
   listRegisteredSources,
   listWorkingOn,
+  listSpaces,
+  listThings,
+  type Space,
+  type ThingSummary,
   type DistillReviewResponse,
   type Page,
 } from "../../../lib/tauri";
@@ -27,6 +32,9 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   listRegisteredSources: vi.fn().mockResolvedValue([]),
   getTruthStatus: vi.fn().mockResolvedValue(null),
   listWorkingOn: vi.fn().mockResolvedValue([]),
+  listSpaces: vi.fn().mockResolvedValue([]),
+  listThings: vi.fn().mockResolvedValue([]),
+  setUiLanguage: vi.fn().mockResolvedValue(undefined),
 }));
 
 function page(overrides: Partial<Page> = {}): Page {
@@ -58,6 +66,7 @@ function renderOverview({
   inventoryScope = "all" as WikiInventoryScope,
   checklist = false,
   onConnectTool = undefined as (() => void) | undefined,
+  onReplayNight = vi.fn(),
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
 } = {}) {
   const overview = (
@@ -70,6 +79,7 @@ function renderOverview({
         onSelectDraft={onSelectDraft}
         onSelectPage={onSelectPage}
         onSelectSpace={onSelectSpace}
+        onReplayNight={onReplayNight}
         onConnectTool={onConnectTool ?? (checklist ? vi.fn() : undefined)}
         onSeeExample={checklist ? vi.fn() : undefined}
       />
@@ -81,11 +91,13 @@ function renderOverview({
     onSelectDraft,
     onSelectPage,
     onSelectSpace,
+    onReplayNight,
     ...render(overview),
   };
 }
 
 describe("PagesOverview reading workspace", () => {
+  afterEach(() => setExperiment("things", false));
   beforeEach(() => {
     vi.mocked(listPagesExplicitBrowse).mockReset();
     vi.mocked(listRefinements).mockReset();
@@ -194,8 +206,67 @@ describe("PagesOverview reading workspace", () => {
     expect(onBrowseAll).toHaveBeenCalled();
   });
 
+  describe("with what you're working on off", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const space = (id: string, name: string, extra: Partial<Space> = {}): Space => ({
+      id, name, description: null, suggested: false, starred: false, sort_order: 0,
+      memory_count: 0, entity_count: 0, created_at: now, updated_at: now, ...extra,
+    });
+
+    it("UX-HOME-1 leads with your Spaces, starred first, and names last night's steeping without cards for things", async () => {
+      vi.mocked(listSpaces).mockResolvedValueOnce([
+        space("s1", "wenlan-site", { sort_order: 0, description: "Launch site" }),
+        space("s2", "wenlan", { sort_order: 1, starred: true }),
+        space("s3", "maybe", { suggested: true }),
+      ]);
+      vi.mocked(listThings).mockResolvedValueOnce([
+        { id: "t1", title: "Home redesign", title_by: "ai", status_line: null, spaces: [], last_activity_at: now, quiet: false, dreamed_at: now - 60 } as ThingSummary,
+      ]);
+      const { container, onSelectSpace, onReplayNight } = renderOverview();
+      const section = await screen.findByTestId("home-spaces");
+      // The night's line opens home, above the Spaces: it spans all of them.
+      const night = await screen.findByTestId("home-night");
+      const columns = container.querySelector(".wiki-overview .home-columns");
+      expect(columns?.firstElementChild).toBe(night);
+      expect(night.nextElementSibling).toBe(section);
+      expect(screen.getByTestId("home-steeped")).toHaveTextContent("Home redesign");
+      fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+      expect(onReplayNight).toHaveBeenCalled();
+      expect(screen.getByRole("heading", { level: 2, name: "Recent Spaces" })).toBeInTheDocument();
+      // The first Space leads, set large; the rest follow in columns.
+      const cards = [...section.querySelectorAll(".home-space-card")];
+      expect(cards[0]).toHaveClass("home-space-lead");
+      expect(cards.map((card) => card.querySelector(".home-space-title")?.textContent)).toEqual(["wenlan", "wenlan-site"]);
+      expect(screen.queryByTestId("wiki-working-on")).toBeNull();
+      fireEvent.click(cards[1]);
+      expect(onSelectSpace).toHaveBeenCalledWith("wenlan-site");
+    });
+    it("UX-HOME-1 leads with the Space used last, then starred Spaces, then the rest, each used-last first", async () => {
+      vi.mocked(listSpaces).mockResolvedValueOnce([
+        space("s1", "wenlan", { sort_order: 0, starred: true }),
+        space("s2", "travel", { sort_order: 1 }),
+        space("s3", "house", { sort_order: 2 }),
+        space("s4", "reading", { sort_order: 3, starred: true }),
+      ]);
+      vi.mocked(listPagesExplicitBrowse).mockResolvedValue([
+        page({ id: "a", title: "Release plan", space: "wenlan", last_modified: "2026-07-01T00:00:00Z" }),
+        page({ id: "b", title: "Kyoto days", space: "travel", last_modified: "2026-07-09T00:00:00Z" }),
+        page({ id: "c", title: "Quotes", space: "house", last_modified: "2026-07-05T00:00:00Z" }),
+        page({ id: "d", title: "Book list", space: "reading", last_modified: "2026-07-03T00:00:00Z" }),
+      ]);
+      renderOverview();
+      await waitFor(() => {
+        const cards = [...screen.getByTestId("home-spaces").querySelectorAll(".home-space-card")];
+        expect(cards.map((card) => card.querySelector(".home-space-title")?.textContent)).toEqual(["travel", "reading", "wenlan", "house"]);
+      });
+    });
+  });
+
   describe("what you're working on", () => {
     const now = Math.floor(Date.now() / 1000);
+    // An experiment (UX-HOME-1): these cards show only while it is on.
+    beforeEach(() => setExperiment("things", true));
+    afterEach(() => setExperiment("things", false));
 
     it("UX-HOME-1 leads the home with one card per active Brief item, opening its Space", async () => {
       vi.mocked(listWorkingOn).mockResolvedValueOnce([
@@ -289,7 +360,15 @@ describe("PagesOverview reading workspace", () => {
       expect(screen.queryByTestId("getting-started")).not.toBeInTheDocument();
     });
 
+    it("leaves out the connect line while what you're working on is off", async () => {
+      renderOverview({ onConnectTool: vi.fn() });
+      await waitFor(() => expect(listAgents).toHaveBeenCalled());
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(screen.queryByText("Connect an AI tool, and what you work on with it shows up here.")).toBeNull();
+    });
+
     it("says what connecting an AI tool adds while none is connected", async () => {
+      setExperiment("things", true);
       const onConnectTool = vi.fn();
       renderOverview({ onConnectTool });
       fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
@@ -298,6 +377,7 @@ describe("PagesOverview reading workspace", () => {
     });
 
     it("drops the connect line once a tool is connected", async () => {
+      setExperiment("things", true);
       vi.mocked(listAgents).mockResolvedValue([{ id: "agent-claude-code", name: "claude-code", display_name: null, agent_type: "", description: null, enabled: true, trust_level: "full", last_seen_at: 1_790_000_000, memory_count: 0, created_at: 1_790_000_000, updated_at: 1_790_000_000 } as never]);
       renderOverview({ onConnectTool: vi.fn() });
       await waitFor(() => expect(listAgents).toHaveBeenCalled());
