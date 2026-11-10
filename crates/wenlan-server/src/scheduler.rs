@@ -1541,6 +1541,36 @@ pub fn spawn_scheduler(
             }
             let filesystem_resource_status =
                 filesystem_resource_probe.sample(Instant::now(), resource_policy);
+            // --- 0a. Linked Obsidian vaults: copy note changes both ways ---
+            //
+            // Each linked vault has a folder in the pages folder holding a
+            // copy of every note; the page watcher below makes those copies
+            // pages. Runs first, so an Obsidian edit reaches its page in the
+            // same poll. Plain file reads and writes, no model.
+            if !runtime_config.linked_vaults.is_empty() {
+                let config = runtime_config.clone();
+                match tokio::task::spawn_blocking(move || {
+                    wenlan_core::linked_vault::bridge_all(&config)
+                })
+                .await
+                {
+                    Ok(results) => {
+                        for (link, result) in results {
+                            match result {
+                                Ok(stats) if stats != Default::default() => tracing::info!(
+                                    "[scheduler] linked vault {}: {stats:?}",
+                                    link.folder
+                                ),
+                                Ok(_) => {}
+                                Err(e) => {
+                                    tracing::warn!("[scheduler] linked vault {}: {e}", link.folder)
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!("[scheduler] linked vaults: {e}"),
+                }
+            }
             // --- 0. Filesystem page watcher: md → DB ---
             //
             // md is canonical. When the user edits a page in Obsidian / VS

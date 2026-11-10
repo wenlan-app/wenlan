@@ -141,6 +141,19 @@ export const enSourceAccess = {
   "vaultDetected": "Obsidian vault detected",
   "logseqDetected": "Logseq graph detected",
   "connect": "Connect folder",
+  "linkTitle": "Link an Obsidian vault",
+  "linkFound": "Vaults on this computer",
+  "linkOther": "Choose another folder…",
+  "linkLine1": "Every note in the vault shows up in the Wiki as a page you can edit.",
+  "linkLine2": "Edit in Wenlan and it saves to the note's .md file; edit in Obsidian and Wenlan follows.",
+  "linkLine3": "Only what you write in Wenlan is added to the vault. The AI doesn't change it, and Wenlan keeps none of its own files there.",
+  "linkCancel": "Cancel",
+  "linkSubmit": "Link",
+  "linkDone": "Linked {{name}}",
+  "linkDoneBody": "Its notes appear in the Wiki over the next few minutes.",
+  "linkIsSource": "This vault is already connected as a source.",
+  "linkTaken": "This vault is already linked.",
+  "linkOverlaps": "This vault holds Wenlan's pages folder, or sits inside it.",
   "folderPickFailed": "Could not read the selected folder."
 };
 
@@ -286,6 +299,19 @@ export const hantSourceAccess = {
   "vaultDetected": "已偵測到 Obsidian 庫",
   "logseqDetected": "已偵測到 Logseq 圖譜",
   "connect": "連接資料夾",
+  "linkTitle": "接上 Obsidian 庫",
+  "linkFound": "在你電腦上找到的庫",
+  "linkOther": "選其他資料夾…",
+  "linkLine1": "庫裡每篇筆記都會出現在 Wiki，變成可以直接改的頁面。",
+  "linkLine2": "在文瀾改，會存回那篇 .md；在 Obsidian 改，文瀾也跟著更新。",
+  "linkLine3": "庫裡只會多出你自己在文瀾寫的東西。AI 不會改它，文瀾也不會放自己的記錄檔進去。",
+  "linkCancel": "取消",
+  "linkSubmit": "接上",
+  "linkDone": "已接上 {{name}}",
+  "linkDoneBody": "筆記會在幾分鐘內陸續出現在 Wiki。",
+  "linkIsSource": "這個庫已經當成來源接上了。",
+  "linkTaken": "這個庫已經接上了。",
+  "linkOverlaps": "這個庫裡有文瀾的頁面資料夾，或它就在頁面資料夾裡。",
   "folderPickFailed": "無法讀取所選資料夾。"
 };
 
@@ -431,5 +457,18 @@ export const hansSourceAccess = {
   "vaultDetected": "已检测到 Obsidian 库",
   "logseqDetected": "已检测到 Logseq 图谱",
   "connect": "连接文件夹",
+  "linkTitle": "接上 Obsidian 库",
+  "linkFound": "在你电脑上找到的库",
+  "linkOther": "选其他文件夹…",
+  "linkLine1": "库里每篇笔记都会出现在 Wiki，变成可以直接改的页面。",
+  "linkLine2": "在文澜改，会存回那篇 .md；在 Obsidian 改，文澜也跟着更新。",
+  "linkLine3": "库里只会多出你自己在文澜写的东西。AI 不会改它，文澜也不会放自己的记录文件进去。",
+  "linkCancel": "取消",
+  "linkSubmit": "接上",
+  "linkDone": "已接上 {{name}}",
+  "linkDoneBody": "笔记会在几分钟内陆续出现在 Wiki。",
+  "linkIsSource": "这个库已经作为来源接上了。",
+  "linkTaken": "这个库已经接上了。",
+  "linkOverlaps": "这个库里有文澜的页面文件夹，或它就在页面文件夹里。",
   "folderPickFailed": "无法读取所选文件夹。"
 };

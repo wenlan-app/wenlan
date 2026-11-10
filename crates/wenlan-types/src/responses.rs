@@ -1342,6 +1342,24 @@ pub struct KnowledgePathResponse {
     pub move_error: Option<String>,
 }
 
+/// One Obsidian vault linked into the Wiki.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct LinkedVaultEntry {
+    /// The vault's folder on this computer.
+    pub path: String,
+    /// The Wiki folder its notes are in.
+    pub folder: String,
+}
+
+/// `GET`/`POST`/`DELETE /api/linked-vaults` response: every linked vault,
+/// and after a link, how many notes its first pass brought in.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LinkedVaultsResponse {
+    pub vaults: Vec<LinkedVaultEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes_added: Option<u64>,
+}
+
 /// `GET /api/attachments/resolve?name=` response: the file an `![[name]]`
 /// embed shows, found in the pages folder the way Obsidian finds it.
 #[derive(Debug, Clone, Serialize, Deserialize)]

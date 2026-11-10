@@ -4095,6 +4095,17 @@ export async function setKnowledgePath(path: string): Promise<KnowledgePathInfo>
   return invoke("set_knowledge_path", { path });
 }
 
+export interface LinkedVaults {
+  vaults: { path: string; folder: string }[];
+  /** After a link: how many notes its first copy brought into the Wiki. */
+  notes_added?: number;
+}
+
+/** Link an Obsidian vault into the Wiki as a folder of pages you edit directly. */
+export async function linkObsidianVault(path: string): Promise<LinkedVaults> {
+  return invoke("link_obsidian_vault", { path });
+}
+
 /** Restart the daemon so it moves the pages folder. Rejects with a typed restart error. */
 export async function restartDaemonToMovePages(): Promise<string> {
   return invoke("restart_daemon_to_move_pages");

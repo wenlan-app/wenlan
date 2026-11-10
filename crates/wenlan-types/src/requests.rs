@@ -622,6 +622,14 @@ pub struct SetKnowledgePathRequest {
     pub path: String,
 }
 
+/// `POST /api/linked-vaults`: link an Obsidian vault into the Wiki;
+/// `DELETE`: stop linking it (its pages stay).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LinkVaultRequest {
+    /// The vault's folder, absolute.
+    pub path: String,
+}
+
 // ===== Ingest =====
 
 #[derive(Debug, Serialize, Deserialize)]

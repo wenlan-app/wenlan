@@ -6,6 +6,7 @@ use crate::route_registry::{get, post, TrackedRouter};
 use crate::state::SharedState;
 use axum::response::Json;
 use wenlan_types::responses::{KnowledgeCountResponse, KnowledgePathResponse};
+use wenlan_types::responses::{LinkedVaultEntry, LinkedVaultsResponse};
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
@@ -17,6 +18,12 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route(
             "/api/knowledge/folders",
             get(handle_list_knowledge_folders).post(handle_create_knowledge_folder),
+        )
+        .route(
+            "/api/linked-vaults",
+            get(handle_list_linked_vaults)
+                .post(handle_link_vault)
+                .delete(handle_unlink_vault),
         )
         .route("/api/attachments", post(handle_attach_file))
         .route("/api/attachments/resolve", get(handle_resolve_embed))
@@ -107,6 +114,19 @@ pub async fn handle_resolve_embed(
                 .live_page_filenames(&[id])
                 .remove(id)
         });
+        // A note of a linked vault finds its pictures in the vault, the way
+        // Obsidian does: only notes are copied into the pages folder.
+        if let Some(file) = page_file.as_deref() {
+            for link in wenlan_core::config::load_config().linked_vaults {
+                if let Some(inner) = file.strip_prefix(&format!("{}/", link.folder)) {
+                    return wenlan_core::page_markdown::resolve_embed(
+                        &link.path,
+                        Some(inner),
+                        &query.name,
+                    );
+                }
+            }
+        }
         wenlan_core::page_markdown::resolve_embed(&root, page_file.as_deref(), &query.name)
     })
     .await
@@ -159,6 +179,104 @@ pub async fn handle_set_knowledge_path(
             cfg.pending_knowledge_path = Some(target);
             cfg.pages_folder_move_error = None;
             Ok(knowledge_path_response(cfg))
+        })
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))??;
+    Ok(Json(response))
+}
+
+fn linked_vaults_response(
+    cfg: &wenlan_core::config::Config,
+    notes_added: Option<u64>,
+) -> LinkedVaultsResponse {
+    LinkedVaultsResponse {
+        vaults: cfg
+            .linked_vaults
+            .iter()
+            .map(|link| LinkedVaultEntry {
+                path: link.path.to_string_lossy().into_owned(),
+                folder: link.folder.clone(),
+            })
+            .collect(),
+        notes_added,
+    }
+}
+
+/// GET /api/linked-vaults
+pub async fn handle_list_linked_vaults() -> Result<Json<LinkedVaultsResponse>, ServerError> {
+    Ok(Json(linked_vaults_response(
+        &wenlan_core::config::load_config(),
+        None,
+    )))
+}
+
+/// POST /api/linked-vaults
+///
+/// Links an Obsidian vault into the Wiki: its notes get a folder of the
+/// pages folder, and each becomes a page the person edits directly. Nothing
+/// is added to the vault. The first copy runs now; the page watcher makes
+/// the pages on its next pass.
+pub async fn handle_link_vault(
+    Json(req): Json<wenlan_types::requests::LinkVaultRequest>,
+) -> Result<Json<LinkedVaultsResponse>, ServerError> {
+    let vault = std::path::PathBuf::from(req.path.trim());
+    let response = tokio::task::spawn_blocking(move || {
+        let link = wenlan_core::config::update_config(|cfg| {
+            let pages = cfg.knowledge_path_or_default();
+            std::fs::create_dir_all(&pages)?;
+            // A vault already read as a source would be in Wenlan twice.
+            if cfg.sources.iter().any(|source| {
+                std::fs::canonicalize(&source.path).ok() == std::fs::canonicalize(&vault).ok()
+            }) {
+                return Err(wenlan_core::error::WenlanError::Validation(
+                    "linked_vault_is_a_source".into(),
+                ));
+            }
+            let folder =
+                wenlan_core::linked_vault::folder_name_for(&vault, &pages, &cfg.linked_vaults);
+            wenlan_core::linked_vault::check_link(&vault, &pages, &folder, &cfg.linked_vaults)?;
+            let link = wenlan_core::linked_vault::LinkedVault {
+                path: vault.clone(),
+                folder,
+            };
+            cfg.linked_vaults.push(link.clone());
+            Ok(link)
+        })?;
+        let cfg = wenlan_core::config::load_config();
+        let stats = wenlan_core::linked_vault::bridge_pass(
+            &link,
+            &cfg.knowledge_path_or_default(),
+            &wenlan_core::linked_vault::state_dir(),
+        )?;
+        Ok::<_, wenlan_core::error::WenlanError>(linked_vaults_response(
+            &cfg,
+            Some(stats.to_wiki as u64),
+        ))
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))??;
+    Ok(Json(response))
+}
+
+/// DELETE /api/linked-vaults
+///
+/// Stops linking a vault. Its pages stay in Wenlan and the vault is not
+/// touched; they are no longer kept the same.
+pub async fn handle_unlink_vault(
+    Json(req): Json<wenlan_types::requests::LinkVaultRequest>,
+) -> Result<Json<LinkedVaultsResponse>, ServerError> {
+    let vault = std::path::PathBuf::from(req.path.trim());
+    let response = tokio::task::spawn_blocking(move || {
+        wenlan_core::config::update_config(|cfg| {
+            let before = cfg.linked_vaults.len();
+            cfg.linked_vaults.retain(|link| link.path != vault);
+            if cfg.linked_vaults.len() == before {
+                return Err(wenlan_core::error::WenlanError::NotFound(
+                    "linked_vault_not_found".into(),
+                ));
+            }
+            Ok(linked_vaults_response(cfg, None))
         })
     })
     .await

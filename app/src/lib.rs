@@ -1978,6 +1978,7 @@ pub fn run() {
             search::get_knowledge_path,
             search::get_knowledge_path_info,
             search::set_knowledge_path,
+            search::link_obsidian_vault,
             search::get_note_ai_changes,
             search::set_note_ai_changes,
             search::list_note_proposals,

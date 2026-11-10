@@ -410,7 +410,7 @@ and wait for evidence that people need them.
 - **UX-ADD-2** `planned` Files, folders, chat exports and links can all be
   dropped in without first asking what kind they are.
   原文：檔案、資料夾、對話匯出、連結拖進去都收，不先問你是哪一類。
-- **UX-ADD-3** `planned` An Obsidian folder that has never used Wenlan works
+- **UX-ADD-3** `shipped` An Obsidian folder that has never used Wenlan works
   when connected, without installing a plugin.
   原文：接上一個沒用過文瀾的 Obsidian 資料夾，不裝外掛就能用。
 

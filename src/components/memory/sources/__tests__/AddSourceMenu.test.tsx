@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   detectVault: vi.fn(),
   listZoteroCollections: vi.fn(),
   listSpaces: vi.fn(),
+  detectObsidianVaults: vi.fn(),
+  linkObsidianVault: vi.fn(),
 }));
 
 vi.mock("../../../../lib/tauri", () => ({
@@ -24,6 +26,8 @@ vi.mock("../../../../lib/tauri", () => ({
   syncRegisteredSource: mocks.syncRegisteredSource,
   listZoteroCollections: mocks.listZoteroCollections,
   listSpaces: mocks.listSpaces,
+  detectObsidianVaults: mocks.detectObsidianVaults,
+  linkObsidianVault: mocks.linkObsidianVault,
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.openDialog }));
 vi.mock("sonner", () => ({ toast: vi.fn() }));
@@ -40,6 +44,8 @@ describe("AddSourceMenu", () => {
     mocks.detectVault.mockResolvedValue({ isVault: false, sourceType: "directory", unreadable: false });
     mocks.addSource.mockResolvedValue({ id: "connected", path: "/Users/me/research", source_type: "directory" });
     mocks.syncRegisteredSource.mockResolvedValue({ files_found: 1, ingested: 1, skipped: 0, errors: 0 });
+    mocks.detectObsidianVaults.mockResolvedValue([]);
+    mocks.linkObsidianVault.mockResolvedValue({ vaults: [{ path: "/Users/me/vault", folder: "vault" }], notes_added: 2 });
   });
 
   it("shows file, folder and web excerpt entry points on a current daemon", async () => {
@@ -134,18 +140,19 @@ describe("AddSourceMenu", () => {
     expect(mocks.syncRegisteredSource).toHaveBeenCalledWith("connected");
   });
 
-  it("lists past AI chats first, then Obsidian, and connects a vault with its own source type", async () => {
-    mocks.openDialog.mockResolvedValue("/Users/me/vault");
-    mocks.detectVault.mockResolvedValue({ isVault: true, sourceType: "obsidian", unreadable: false });
+  it("lists past AI chats first, then Obsidian, and links a vault into the Wiki instead of reading it as a source (UX-ADD-3)", async () => {
+    mocks.detectObsidianVaults.mockResolvedValue([{ name: "vault", path: "/Users/me/vault" }]);
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     const vault = await screen.findByText("Obsidian vault");
     const options = screen.getAllByRole("button").filter((button) => button.classList.contains("source-add-option"));
     expect(options[0]).toHaveTextContent("Past AI chats");
     expect(options[1]).toBe(vault.closest("button"));
     fireEvent.click(vault);
-    fireEvent.click(await screen.findByText("Keep in sync"));
-    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", true));
-    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Obsidian vault", directory: true, multiple: false });
+    expect(await screen.findByRole("dialog", { name: "Link an Obsidian vault" })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "vault" }));
+    fireEvent.click(screen.getByRole("button", { name: "Link" }));
+    await waitFor(() => expect(mocks.linkObsidianVault).toHaveBeenCalledWith("/Users/me/vault"));
+    expect(mocks.addSource).not.toHaveBeenCalled();
   });
 
   it("does not register a source when the native folder picker is cancelled", async () => {
@@ -159,36 +166,26 @@ describe("AddSourceMenu", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it("does not label a normal folder as an Obsidian vault", async () => {
-    mocks.openDialog.mockResolvedValue("/Users/me/research");
-    render(wrap(<AddSourceMenu onClose={() => {}} />));
-    fireEvent.click(await screen.findByText("Obsidian vault"));
-    // Shown in the dialog, next to the choice that failed.
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Could not add the source");
-    expect(alert).toHaveTextContent("Choose the root folder of an Obsidian vault.");
-    expect(mocks.addSource).not.toHaveBeenCalled();
-  });
-
-  it("detects Obsidian even when selected from the ordinary folder entry", async () => {
+  it("a vault picked from the ordinary folder entry is linked, with that vault already chosen", async () => {
     mocks.openDialog.mockResolvedValue("/Users/me/vault");
     mocks.detectVault.mockResolvedValue({ isVault: true, sourceType: "obsidian", unreadable: false });
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     fireEvent.click(await screen.findByText("Folder"));
-    fireEvent.click(await screen.findByText("Keep in sync"));
-    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", true));
+    expect(await screen.findByRole("dialog", { name: "Link an Obsidian vault" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Link" }));
+    await waitFor(() => expect(mocks.linkObsidianVault).toHaveBeenCalledWith("/Users/me/vault"));
+    expect(mocks.addSource).not.toHaveBeenCalled();
   });
 
-  it("imports a vault once: registers it without following changes and still reads it now", async () => {
-    mocks.openDialog.mockResolvedValue("/Users/me/vault");
-    mocks.detectVault.mockResolvedValue({ isVault: true, sourceType: "obsidian", unreadable: false });
-    mocks.addSource.mockResolvedValue({ id: "obsidian-vault", path: "/Users/me/vault", source_type: "obsidian", status: "Paused" });
+  it("imports a folder once: registers it without following changes and still reads it now", async () => {
+    mocks.openDialog.mockResolvedValue("/Users/me/research");
+    mocks.addSource.mockResolvedValue({ id: "research", path: "/Users/me/research", source_type: "directory", status: "Paused" });
     const close = vi.fn();
     render(wrap(<AddSourceMenu onClose={close} />));
-    fireEvent.click(await screen.findByText("Obsidian vault"));
+    fireEvent.click(await screen.findByText("Folder"));
     fireEvent.click(await screen.findByText("Import once"));
-    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", false));
-    await waitFor(() => expect(mocks.syncRegisteredSource).toHaveBeenCalledWith("obsidian-vault"));
+    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("directory", "/Users/me/research", false));
+    await waitFor(() => expect(mocks.syncRegisteredSource).toHaveBeenCalledWith("research"));
     expect(close).toHaveBeenCalledTimes(1);
   });
 
