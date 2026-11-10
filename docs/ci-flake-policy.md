@@ -3,6 +3,24 @@
 Use this response policy when a required CI check fails intermittently. A red
 job is not automatically a flake, and a green rerun is not automatically a fix.
 
+## Automatic retry in CI
+
+A flaky test must not drop a green PR from the merge queue. In CI only, every
+Rust test (nextest `ci` profile, `.config/nextest.toml`, selected by
+`NEXTEST_PROFILE=ci` in `ci.yml`) and every Playwright test (`retries` in both
+Playwright configs) that fails runs once more:
+
+- Passes on the retry: the run stays green and the test is reported as flaky.
+  nextest prints `FLAKY`, and `scripts/ci_test_plan.py` turns each one into a
+  "Flaky test (passed on retry)" warning annotation and a job-summary line.
+  Playwright lists it as flaky in its summary annotation.
+- Fails both tries: the run fails, exactly as before.
+
+The retry hides nothing: a flaky report is a defect and gets the steps below
+(two matching reports require an owner and a fix). Local runs do not retry.
+Network setup steps (sccache, cargo-nextest, Playwright browsers, vcpkg
+sqlite3) also retry with a time limit; that is not a test retry.
+
 1. **Name the exact failure from the full job log.** Record the job, command,
    test, assertion or timeout, runner OS, and run URL. Check-run annotations such
    as "exit code 1" are not enough. First separate test failures from setup,

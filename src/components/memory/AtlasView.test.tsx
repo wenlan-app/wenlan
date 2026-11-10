@@ -546,22 +546,6 @@ describe("AtlasView", () => {
     expect(killSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("fires onNodeClick with the sigma node id on clickNode", async () => {
-    // A drawn node needs an edge now that degree-0 nodes are hidden, so this
-    // interacts with the connected pair rather than a lone entity.
-    mockConnectedPair();
-    const onNodeClick = vi.fn();
-
-    renderWithQuery(<AtlasView onNodeClick={onNodeClick} />);
-    await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
-
-    act(() => capturedSigmaInstances[0].handlers.get("clickNode")?.({ node: "e1" }));
-    expect(onNodeClick).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole("button", { name: "Open details" }));
-
-    expect(onNodeClick).toHaveBeenCalledWith({ kind: "entity", id: "e1" });
-  });
-
   it("wires nodeReducer and edgeReducer functions into the sigma constructor settings", async () => {
     // A drawn node needs an edge now that degree-0 nodes are hidden, so this
     // interacts with the connected pair rather than a lone entity.

@@ -173,15 +173,4 @@ mod tests {
         assert!(!chunks.is_empty());
         assert_eq!(chunks[0].chunk_type, "text");
     }
-
-    #[test]
-    fn test_non_screen_stays_text() {
-        let engine = ChunkingEngine::new();
-        let metadata = HashMap::new();
-
-        let chunks = engine.chunk("Plain text content", "Test", "file.txt", &metadata);
-
-        assert!(!chunks.is_empty());
-        assert_eq!(chunks[0].chunk_type, "text");
-    }
 }

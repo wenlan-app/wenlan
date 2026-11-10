@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "./PageDetail";
@@ -79,6 +79,15 @@ function renderWithQuery(ui: React.ReactElement, client = new QueryClient({ defa
 beforeAll(() => {
   installCodeMirrorDomPolyfills();
 });
+
+// Each test mounts PageDetail with a real CodeMirror editor and then walks a
+// save, a review or a rebuild through it. On a quiet runner the longer ones
+// take about half of the 5 s test limit, and a busy one pushed "reopens the
+// saved fresh result after rebuilding" past it six times in two weeks with
+// nothing wrong. These are deadlines, not delays: each step returns as soon as
+// its condition holds.
+configure({ asyncUtilTimeout: 4_000 });
+vi.setConfig({ testTimeout: 15_000 });
 
 describe("PageDetail stored actions in seamless editing", () => {
  let current = { ...LINKED_PAGE, user_edited: false };

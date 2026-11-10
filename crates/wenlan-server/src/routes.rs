@@ -3508,13 +3508,18 @@ mod test_llm_bearer_tests {
 
     #[tokio::test]
     async fn test_llm_reports_unreachable_server_as_502() {
-        // Bind then drop: the port is free, so the connect is refused.
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        drop(listener);
+        // Bound but never listening: the connect is refused, and the port stays
+        // taken until the test ends, so no mock another test starts can land on
+        // it. A listener bound and dropped frees the port for exactly that.
+        let held =
+            socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+        held.bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
+            .unwrap();
+        let addr = held.local_addr().unwrap().as_socket().unwrap();
         let (status, body) = probe_response(addr, serde_json::json!({})).await;
         assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
         assert!(body.contains("Request failed"), "{body}");
+        drop(held);
     }
 
     #[tokio::test]
