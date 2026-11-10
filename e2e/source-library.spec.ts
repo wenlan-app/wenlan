@@ -140,8 +140,11 @@ test("empty sources retains its library shell and offers clear localized add cho
   await expect(menu.getByRole("button", { name: /連結和文字/ })).toBeVisible();
   await capture(page, "sources-after-add-light.png");
   await menu.getByRole("button", { name: /Obsidian vault|Obsidian 庫/ }).click();
+  const linkVault = page.getByRole("dialog", { name: "接上 Obsidian 庫", exact: true });
+  await expect(linkVault).toBeVisible();
+  await linkVault.getByRole("button", { name: "選其他資料夾…", exact: true }).click();
   await expect.poll(() => state.nativeDialogCalls.length).toBe(1);
-  await expect(menu).toBeVisible();
+  await expect(linkVault).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(state.errors.pageErrors).toEqual([]); expect(state.errors.consoleErrors).toEqual([]);

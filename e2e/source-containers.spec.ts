@@ -181,8 +181,11 @@ for (const cfg of [
     await expect(addMenu.locator(".source-add-option").filter({ hasText: t.sourceAccess.obsidian })).toHaveCount(1);
     await capture("add-source-menu.png");
     await addMenu.getByRole("button", { name: new RegExp(t.sourceAccess.obsidian) }).click();
-    expect(calls.filter(c => c.command === "plugin:dialog|open").at(-1)?.args.options).toMatchObject({ directory: true, multiple: false });
-    await expect(addMenu).toBeVisible();
+    const linkVault = page.getByRole("dialog", { name: t.sourceAccess.linkTitle, exact: true });
+    await expect(linkVault).toBeVisible();
+    await linkVault.getByRole("button", { name: t.sourceAccess.linkOther, exact: true }).click();
+    await expect.poll(() => calls.filter(c => c.command === "plugin:dialog|open").at(-1)?.args.options).toMatchObject({ directory: true, multiple: false });
+    await expect(linkVault).toBeVisible();
     await page.keyboard.press("Escape");
     expect(errors.pageErrors).toEqual([]);
     expect(errors.consoleErrors).toEqual([]);
