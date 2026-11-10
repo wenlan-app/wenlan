@@ -661,6 +661,9 @@ const en = {
       steepedSeparator: ", ",
       steepedMore: "and more",
       steepedReplay: "Replay last night",
+      steepedReplayShort: "Replay",
+      spacesTitle: "Recent Spaces",
+      spacesAll: "All Spaces",
       workingOnHide: "Don't show {{title}}",
       workingOnHideHint: "Don't show",
       workingOnStillOpen: "Still open:",
@@ -1465,6 +1468,10 @@ const en = {
         label: "Sources",
         hint: "Connected files and imports",
       },
+      experiments: {
+        label: "Experiments",
+        hint: "Features still being tried",
+      },
     },
     language: {
       label: "Language",
@@ -1483,6 +1490,10 @@ const en = {
     },
     general: {
       appSection: "App",
+      experimentsIntro: "Features we are still trying out. They can change or go away. Turning one off never deletes anything.",
+      experimentThingsTitle: "What you're working on",
+      experimentBadge: "Beta",
+      experimentThingsDescription: "Show the work Wenlan sorts out of your AI chats on Home. Wenlan keeps sorting it in the background either way.",
       runAtLoginTitle: "Run Wenlan in background at login",
       runAtLoginDescription:
         "Keeps the Wenlan service and tray icon running after you close the window, and starts them at login. To stop the service right now, use 'Quit and stop background service' in the tray menu.",
@@ -3949,6 +3960,9 @@ const zhHans = {
       steepedSeparator: "、",
       steepedMore: "等",
       steepedReplay: "重看昨晚的沉淀",
+      steepedReplayShort: "重看",
+      spacesTitle: "最近空间",
+      spacesAll: "全部空间",
       workingOnHide: "不用显示「{{title}}」",
       workingOnHideHint: "不用显示",
       workingOnStillOpen: "还没定：",
@@ -4741,6 +4755,10 @@ const zhHans = {
         label: "来源",
         hint: "已连接文件和导入",
       },
+      experiments: {
+        label: "实验功能",
+        hint: "还在试的功能",
+      },
     },
     language: {
       label: "语言",
@@ -4759,6 +4777,10 @@ const zhHans = {
     },
     general: {
       appSection: "应用",
+      experimentsIntro: "还在试的功能，可能会改，也可能拿掉。关掉不会删除任何内容。",
+      experimentThingsTitle: "正在做的事",
+      experimentBadge: "Beta",
+      experimentThingsDescription: "在首页显示文澜从你和 AI 的对话里整理出的事。不管开不开，后台都会照常整理。",
       runAtLoginTitle: "登录时在后台运行文澜",
       runAtLoginDescription:
         "关闭窗口后，仍保持文澜服务与托盘图标运行，并在登录时启动。若要立即停止服务，请使用托盘菜单中的「Quit and stop background service」。",
@@ -7192,6 +7214,9 @@ const zhHant = {
       steepedSeparator: "、",
       steepedMore: "等",
       steepedReplay: "重看昨晚的沉澱",
+      steepedReplayShort: "重看",
+      spacesTitle: "最近空間",
+      spacesAll: "全部空間",
       workingOnHide: "不用顯示「{{title}}」",
       workingOnHideHint: "不用顯示",
       workingOnStillOpen: "還沒定：",
@@ -7984,6 +8009,10 @@ const zhHant = {
         label: "來源",
         hint: "已連接檔案和匯入",
       },
+      experiments: {
+        label: "實驗功能",
+        hint: "還在試的功能",
+      },
     },
     language: {
       label: "語言",
@@ -8002,6 +8031,10 @@ const zhHant = {
     },
     general: {
       appSection: "應用程式",
+      experimentsIntro: "還在試的功能，可能會改，也可能拿掉。關掉不會刪除任何內容。",
+      experimentThingsTitle: "正在做的事",
+      experimentBadge: "Beta",
+      experimentThingsDescription: "在首頁顯示文瀾從你和 AI 的對話裡整理出的事。不管開不開，後台都會照常整理。",
       runAtLoginTitle: "登入時在背景執行文瀾",
       runAtLoginDescription:
         "關閉視窗後，仍保持文瀾服務與選單列圖示執行，並在登入時啟動。若要立即停止服務，請使用選單列中的「Quit and stop background service」。",

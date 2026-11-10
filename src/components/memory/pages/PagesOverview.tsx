@@ -17,6 +17,9 @@ import { NoteSuggestionsSummary } from "../sources/VaultNotes";
 import { pagesWrittenSince, useWritePages, WritePagesLine } from "../askAi/WritePages";
 import { NewPagesList, recentPages } from "./NewPagesList";
 import { WorkingOn } from "./WorkingOn";
+import { HomeSpaces } from "./HomeSpaces";
+import { HomeNightLines } from "./HomeNightLines";
+import { useExperiment } from "../../../lib/experiments";
 import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { useQuery } from "@tanstack/react-query";
 import { ARCHIVED_PAGES_QUERY_KEY, EXPLICIT_BROWSE_QUERY_POLICY, isKnowledgePage, listAllArchivedPagesExplicitBrowse } from "./listAllPages";
@@ -32,6 +35,8 @@ interface PagesOverviewProps {
   readonly onSelectDraft: (draftId: string, space: string | null) => void;
   readonly onSelectPage: (pageId: string) => void;
   readonly onSelectSpace: (spaceName: string) => void;
+  /** Opens the list of every Space. */
+  readonly onBrowseSpaces?: () => void;
   /** Opens one thing from 「正在做的事」 (UX-HOME-1). */
   readonly onOpenThing?: (thingId: string) => void;
   /** Opens the big map and plays last night there (UX-GRAPH-6). */
@@ -54,6 +59,7 @@ export function PagesOverview({
   onCreatePage,
   onSelectPage,
   onSelectSpace,
+  onBrowseSpaces,
   onOpenThing,
   onReplayNight,
   onConnectTool,
@@ -87,6 +93,8 @@ export function PagesOverview({
     setAdding(false);
   };
   const writePages = useWritePages(pages);
+  // "What you're working on" is an experiment: off, home leads with Spaces.
+  const [thingsOn] = useExperiment("things");
   const shares = useShares();
   // "Use Search to find a page" is advice the workspace cannot honour until
   // the daemon answers; the sidebar says it is starting, so this stays quiet.
@@ -180,12 +188,19 @@ export function PagesOverview({
       {/* What you're working on leads (UX-HOME-1); the pages edited last sit
           under it as one row of cards that scrolls sideways, so neither pushes
           the other down. */}
-      <div className="home-columns">
-        {example ? null : <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />}
+      <div className={`home-columns${thingsOn ? "" : " home-columns--spaces"}`}>
+        {/* What last night steeped spans every Space and the Wiki, so it
+            opens home on its own line. "What you're working on" carries its
+            own line, so this one shows only while that is off. */}
+        {example || thingsOn ? null : <HomeNightLines onReplayNight={onReplayNight} />}
+        {example ? null : thingsOn
+          ? <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
+          : <HomeSpaces pages={pages} onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}
         {newPages}
         {/* With no AI tool connected there is nothing to be working on yet:
-            the pages lead, and one line says what connecting adds. */}
-        {!example && !onboarding && onConnectTool && writePages.loaded && writePages.tools.length === 0 ? (
+            the pages lead, and one line says what connecting adds. Only
+            while "what you're working on" is on: it is what the line names. */}
+        {thingsOn && !example && !onboarding && onConnectTool && writePages.loaded && writePages.tools.length === 0 ? (
           <p className="home-connect-line">
             <span>{t("pages.overview.workingOnConnect")}</span>
             <button type="button" onClick={onConnectTool}>{t("pages.overview.workingOnConnectAction")}</button>

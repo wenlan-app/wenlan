@@ -71,6 +71,8 @@ for (const cfg of [
       throw new Error(`Unexpected command: ${command}`);
     });
     await page.addInitScript(() => {
+      // "What you're working on" is an experiment (UX-HOME-1), off by default.
+      localStorage.setItem("wenlan-experiment-things", "on");
       const bridge = (window as any).__TAURI_INTERNALS__, original = bridge.invoke;
       bridge.invoke = (command: string, args: unknown) => ["list_things", "get_thing", "hide_thing"].includes(command)
         ? (window as any).__thingsInvoke(command, args) : original(command, args);

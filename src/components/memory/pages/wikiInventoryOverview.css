@@ -180,3 +180,39 @@
 .wiki-working-on-steeped-replay .steep-moon { align-self:center;color:var(--mem-accent-page); }
 .wiki-working-on-steeped-replay:hover .wiki-working-on-steeped-label { color:var(--mem-text-secondary);text-decoration:underline;text-underline-offset:3px; }
 .wiki-working-on-steeped-replay:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:var(--mem-r-4); }
+/* Home with "What you're working on" off (UX-HOME-1). The night's line
+   opens the page; it spans every Space and the Wiki, so it sits above both. */
+.home-night { display:flex;flex-direction:column;gap:4px;min-width:0;margin-bottom:-36px; }
+.home-night-line { display:flex;align-items:baseline;gap:6px;min-width:0;margin:0;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body); }
+.home-night-line .steep-moon { flex:none;align-self:center;color:var(--mem-accent-page); }
+.home-night-label { flex:none;white-space:nowrap; }
+.home-night-names { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mem-text-secondary); }
+.home-night-action { flex:none;margin-left:8px;padding:0;border:0;background:none;color:var(--mem-accent-page);font:600 13px/1.5 var(--mem-font-body);cursor:pointer; }
+.home-night-action:hover { text-decoration:underline;text-underline-offset:3px; }
+.home-night-action:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px;border-radius:var(--mem-r-4); }
+/* Spaces: the first leads in the page-title serif, the rest in three quiet columns. */
+.home-spaces { container:home-spaces / inline-size;min-width:0; }
+.home-spaces-header h2 { margin:0;color:var(--mem-text);font-size:14px;letter-spacing:0; }
+.home-spaces ul { list-style:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px 40px;padding:0;margin:0; }
+.home-spaces li { display:flex;min-width:0; }
+@container home-spaces (max-width: 720px) { .home-spaces ul { grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 28px; } }
+@container home-spaces (max-width: 440px) { .home-spaces ul { grid-template-columns:minmax(0,1fr); } }
+.home-space-card { display:flex;flex-direction:column;gap:3px;width:calc(100% + 24px);min-width:0;margin:-10px -12px;padding:10px 12px;border:0;border-radius:var(--mem-r-12);background:none;color:var(--mem-text);text-align:left;cursor:pointer;transition:background-color .15s ease; }
+.home-space-card:hover { background:var(--mem-hover); }
+.home-space-card:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.home-space-title { overflow-wrap:anywhere;font:600 14.5px/1.4 var(--mem-font-body); }
+.home-space-text { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mem-text-tertiary);font:400 13.5px/1.55 var(--mem-font-body); }
+.home-space-lead { gap:10px;margin:4px -12px 30px; }
+.home-space-lead .home-space-title { max-width:720px;font:500 34px/1.18 var(--mem-font-heading);letter-spacing:-.01em; }
+.home-space-lead .home-space-text { max-width:760px;color:var(--mem-text-secondary);font-size:17px;line-height:1.5; }
+@container home-spaces (max-width: 720px) {
+  .home-space-lead .home-space-title { font-size:28px; }
+  .home-space-lead .home-space-text { font-size:16px; }
+}
+/* Recently edited under Spaces: outlined cards, the title in two lines at
+   most and the summary in one, so a row reads at a glance. */
+.home-columns--spaces .wiki-new-pages-row { padding:16px 18px 14px;gap:6px;background:none;border:1px solid color-mix(in srgb,var(--mem-text) 9%,transparent); }
+.home-columns--spaces .wiki-new-pages-row:hover { background:var(--mem-hover); }
+.home-columns--spaces .wiki-new-pages-title { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden; }
+.home-columns--spaces .wiki-new-pages-preview { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.home-columns--spaces .wiki-new-pages-by, .home-columns--spaces .wiki-new-pages-meta { padding-top:6px; }

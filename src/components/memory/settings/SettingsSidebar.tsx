@@ -18,7 +18,8 @@ export type SettingsSection =
   | "intelligence"
   | "diagnostics"
   | "general"
-  | "appearance";
+  | "appearance"
+  | "experiments";
 
 type SettingsGroupLabelKey =
   | "settings.groups.general.label"
@@ -26,7 +27,8 @@ type SettingsGroupLabelKey =
   | "settings.groups.intelligence.label"
   | "settings.groups.diagnostics.label"
   | "settings.groups.agents.label"
-  | "settings.groups.sources.label";
+  | "settings.groups.sources.label"
+  | "settings.groups.experiments.label";
 
 type SettingsGroupHintKey =
   | "settings.groups.general.hint"
@@ -34,7 +36,8 @@ type SettingsGroupHintKey =
   | "settings.groups.intelligence.hint"
   | "settings.groups.diagnostics.hint"
   | "settings.groups.agents.hint"
-  | "settings.groups.sources.hint";
+  | "settings.groups.sources.hint"
+  | "settings.groups.experiments.hint";
 
 export interface SettingsGroup {
   id: SettingsSection;
@@ -121,6 +124,18 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         <ellipse cx="12" cy="5" rx="9" ry="3" />
         <path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5" />
         <path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3" />
+      </svg>
+    ),
+  },
+  {
+    id: "experiments",
+    labelKey: "settings.groups.experiments.label",
+    hintKey: "settings.groups.experiments.hint",
+    icon: (
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 3h6" />
+        <path d="M10 3v6.5L4.8 18.3A1.8 1.8 0 006.4 21h11.2a1.8 1.8 0 001.6-2.7L14 9.5V3" />
+        <path d="M7.5 14.5h9" />
       </svg>
     ),
   },
