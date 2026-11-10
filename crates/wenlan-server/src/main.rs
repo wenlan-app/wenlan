@@ -771,6 +771,11 @@ async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow:
         tracing::error!("panic: {panic}");
     }));
     tracing::info!("wenlan-server v{}", wenlan_core::version());
+    // A shared Space's folder holds files a cloud folder may not have
+    // downloaded yet; reading one must download it, not fail.
+    if let Err(error) = wenlan_server::cloud_files::allow_downloading_cloud_files() {
+        tracing::warn!("cloud files that are not downloaded yet cannot be read: {error}");
+    }
 
     #[cfg(debug_assertions)]
     wait_at_startup_signal_test_barrier().await?;

@@ -6,7 +6,7 @@ import { i18n } from "../../../i18n";
 import type { PageChangelogEntry, SharedStatus } from "../../../lib/tauri";
 import { historyItemLabel } from "../page/historyItems";
 import { ConcurrentEditLine, markConcurrentEditSeen, unseenConcurrentEdit } from "./ConcurrentEditLine";
-import { revealFolderLabel } from "./sharing";
+import { cloudName, revealFolderLabel, shortFolder } from "./sharing";
 
 const t = i18n.t.bind(i18n);
 
@@ -31,6 +31,29 @@ describe("revealFolderLabel", () => {
     expect(revealFolderLabel(t, "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe("Show in File Explorer");
     expect(revealFolderLabel(t, "Mozilla/5.0 (X11; Linux x86_64)")).toBe("Open folder");
     expect(revealFolderLabel(t, "")).toBe("Open folder");
+  });
+});
+
+describe("cloudName", () => {
+  it("knows the cloud folders of macOS and Windows", () => {
+    expect(cloudName("/Users/me/Library/CloudStorage/GoogleDrive-me@example.com/My Drive/Wedding", t)).toBe("Google Drive");
+    expect(cloudName("G:\\My Drive\\Wedding", t)).toBe("Google Drive");
+    expect(cloudName("H:\\我的雲端硬碟\\婚禮", t)).toBe("Google Drive");
+    expect(cloudName("G:\\Shared drives\\Team\\Wedding", t)).toBe("Google Drive");
+    expect(cloudName("/Users/me/Library/Mobile Documents/com~apple~CloudDocs/Wedding", t)).toBe("iCloud Drive");
+    expect(cloudName("C:\\Users\\me\\iCloudDrive\\Wedding", t)).toBe("iCloud Drive");
+    expect(cloudName("C:\\Users\\me\\OneDrive\\Wedding", t)).toBe("OneDrive");
+    expect(cloudName("C:\\Users\\me\\Dropbox\\Wedding", t)).toBe("Dropbox");
+  });
+
+  it("does not take an ordinary folder for a cloud one", () => {
+    expect(cloudName("C:\\Users\\me\\Documents\\Wedding", t)).toBeNull();
+    expect(cloudName("D:\\Backup\\My Drive\\Wedding", t)).toBeNull();
+    expect(cloudName("/Users/me/Documents/Wedding", t)).toBeNull();
+  });
+
+  it("shows a Windows Google Drive folder by the cloud's name", () => {
+    expect(shortFolder("G:\\My Drive\\Wenlan\\Wedding", t)).toBe("Google Drive › Wenlan › Wedding");
   });
 });
 
