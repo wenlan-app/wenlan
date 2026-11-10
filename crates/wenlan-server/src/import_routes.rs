@@ -627,7 +627,11 @@ mod chat_export_route_tests {
             0,
             "chat-export rows must be embedded at write time"
         );
-        assert!(db.get_classification_candidate(3).await.unwrap().is_some());
+        // The turn is the conversation's original, never typed as the
+        // person's memory, so classification never picks it up (UX-ADD-4).
+        let detail = db.get_memory_detail(source_id).await.unwrap().unwrap();
+        assert!(detail.conversation_text);
+        assert!(db.get_classification_candidate(3).await.unwrap().is_none());
         assert!(
             tokio::time::timeout(
                 std::time::Duration::from_millis(100),

@@ -445,6 +445,8 @@ crates/wenlan-core/src/lint/identity_test.rs|crate::lint::identity::tests::tag_e
 crates/wenlan-core/src/lint/identity_test.rs|crate::lint::identity::tests::tag_evidence_identity_survives_earlier_row_deletion|TestDbSession::execute_batch|1
 crates/wenlan-core/src/lint/identity_test.rs|crate::lint::identity::tests::tag_evidence_identity_survives_earlier_row_deletion|test_primary_session|1
 crates/wenlan-core/src/lint/identity_test.rs|crate::lint::identity::tests::tag_evidence_identity_survives_earlier_row_deletion|test_primary_session|2
+crates/wenlan-core/src/lint/identity_test.rs|crate::lint::identity::tests::ux_add_4_imported_chat_turns_are_counted_and_scoped|TestDbSession::execute|1
+crates/wenlan-core/src/lint/identity_test.rs|crate::lint::identity::tests::ux_add_4_imported_chat_turns_are_counted_and_scoped|test_primary_session|1
 crates/wenlan-core/src/lint/kg_config_test.rs|crate::lint::kg::config_tests::insert_memory|TestDbSession::execute|1
 crates/wenlan-core/src/lint/kg_config_test.rs|crate::lint::kg::config_tests::insert_memory|test_primary_session|1
 crates/wenlan-core/src/lint/kg_test.rs|crate::lint::kg::tests::full_population_is_validated_while_opaque_evidence_is_capped|TestDbSession::execute|1

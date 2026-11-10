@@ -1150,6 +1150,7 @@ carrying the authority of agreement.
 | `core/db.rs::search_entities_by_name` | `pub` | no | no | — | — |
 | `core/db.rs::search_memory_with_cue` | `private` | no | no | — | — |
 | `core/db.rs::top_memory_entity_hubs` | `pub` | no | no | — | — |
+| `core/db/chat_turns.rs::chat_turn_report` | `pub` | no | no | — | — |
 | `core/db/citation_provenance.rs::page_on` | `private` | no | no | — | — |
 | `core/db/citation_sources.rs::read_page_on` | `private` | no | no | — | — |
 | `core/db/claim_derivation.rs::derive_leased_page_claims` | `pub(super)` | no | no | — | — |

@@ -2223,9 +2223,7 @@ pub async fn list_memories_cmd(
     let resp: responses::ListMemoriesResponse =
         client.post_json("/api/memory/list", &daemon_req).await?;
 
-    // The daemon returns IndexedFileInfo; the UI expects MemoryItem. Most
-    // fields overlap; extras like entity_id and quality aren't surfaced by
-    // the list endpoint and aren't needed for the list view.
+    // The daemon returns IndexedFileInfo; the UI expects MemoryItem.
     // Keep the client-side filter as a defensive fallback for older daemons.
     let items: Vec<MemoryItem> = resp
         .memories
@@ -2234,39 +2232,82 @@ pub async fn list_memories_cmd(
             Some(want) => info.confirmed == Some(want),
             None => true,
         })
-        .map(|info| MemoryItem {
-            source_id: info.source_id.clone(),
-            title: info.title,
-            content: info.content,
-            summary: info.summary,
-            memory_type: info.memory_type,
-            space: info.space,
-            source_agent: info.source_agent,
-            confidence: info.confidence,
-            confirmed: info.confirmed.unwrap_or(false),
-            stability: info.stability,
-            pinned: info.pinned,
-            supersedes: None,
-            last_modified: info.last_modified,
-            chunk_count: info.chunk_count,
-            entity_id: None,
-            quality: None,
-            is_archived: info.is_archived,
-            is_recap: info.source_id.starts_with("recap_"),
-            enrichment_status: String::from("raw"),
-            supersede_mode: String::from("hide"),
-            structured_fields: None,
-            retrieval_cue: None,
-            source_text: None,
-            access_count: 0,
-            version: 1,
-            changelog: None,
-            pending_revision: false,
-            merged_from: None,
-            session_id: None,
-        })
+        .map(memory_item_from_list_info)
         .collect();
     Ok(items)
+}
+
+/// One daemon list row as the UI's `MemoryItem`. Most fields overlap; extras
+/// like entity_id and quality aren't surfaced by the list endpoint and aren't
+/// needed for the list view.
+fn memory_item_from_list_info(info: wenlan_types::memory::IndexedFileInfo) -> MemoryItem {
+    MemoryItem {
+        source_id: info.source_id.clone(),
+        title: info.title,
+        content: info.content,
+        summary: info.summary,
+        memory_type: info.memory_type,
+        space: info.space,
+        source_agent: info.source_agent,
+        confidence: info.confidence,
+        confirmed: info.confirmed.unwrap_or(false),
+        stability: info.stability,
+        pinned: info.pinned,
+        supersedes: None,
+        last_modified: info.last_modified,
+        chunk_count: info.chunk_count,
+        entity_id: None,
+        quality: None,
+        is_archived: info.is_archived,
+        is_recap: info.source_id.starts_with("recap_"),
+        enrichment_status: String::from("raw"),
+        supersede_mode: String::from("hide"),
+        structured_fields: None,
+        retrieval_cue: None,
+        source_text: None,
+        access_count: 0,
+        version: 1,
+        changelog: None,
+        pending_revision: false,
+        merged_from: None,
+        session_id: None,
+        // Carries the imported-chat-turn flag so the list shows the chat
+        // label and no confirm control (UX-ADD-4).
+        conversation_text: info.conversation_text,
+    }
+}
+
+#[cfg(test)]
+mod list_memory_item_tests {
+    use super::*;
+
+    #[test]
+    fn ux_add_4_list_rows_keep_the_conversation_text_flag() {
+        let info = |conversation_text: bool| wenlan_types::memory::IndexedFileInfo {
+            source_lifecycle: Default::default(),
+            source_id: "import_claude_c1".into(),
+            title: "Tea".into(),
+            source: "memory".into(),
+            url: None,
+            chunk_count: 1,
+            last_modified: 1,
+            summary: None,
+            processing: false,
+            memory_type: Some("preference".into()),
+            space: None,
+            source_agent: None,
+            confidence: None,
+            confirmed: Some(false),
+            stability: None,
+            pinned: false,
+            created_at: 1,
+            content: "User: I prefer tea".into(),
+            is_archived: false,
+            conversation_text,
+        };
+        assert!(memory_item_from_list_info(info(true)).conversation_text);
+        assert!(!memory_item_from_list_info(info(false)).conversation_text);
+    }
 }
 
 #[tauri::command]

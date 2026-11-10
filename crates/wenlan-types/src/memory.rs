@@ -138,6 +138,12 @@ pub struct MemoryItem {
     /// The agent session (`ses_...`) that wrote this memory, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// True when this row is an imported chat turn: the conversation's
+    /// original text, not a fact, preference, identity or decision the person
+    /// holds. Surfaces label it as conversation text and never offer to type
+    /// or confirm it (UX-ADD-4).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub conversation_text: bool,
 }
 
 fn default_version() -> i64 {
@@ -243,6 +249,12 @@ pub struct IndexedFileInfo {
     /// (e.g. `list_indexed_files`, a raw file inventory with no superseder test).
     #[serde(default)]
     pub is_archived: bool,
+    /// True for an imported chat turn: the conversation's original text, not
+    /// a fact, preference, identity or decision the person holds. Same
+    /// meaning as `MemoryItem::conversation_text` (UX-ADD-4). `false` from
+    /// older daemons.
+    #[serde(default)]
+    pub conversation_text: bool,
 }
 
 /// Home dashboard statistics.
@@ -500,6 +512,7 @@ mod indexed_file_info_created_at_test {
             created_at,
             content: String::new(),
             is_archived: false,
+            conversation_text: false,
         }
     }
 

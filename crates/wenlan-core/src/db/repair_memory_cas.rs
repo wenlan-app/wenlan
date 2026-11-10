@@ -120,6 +120,9 @@ impl MemoryDB {
             .await
             .map_err(|error| WenlanError::VectorDb(format!("repair begin: {error}")))?;
         let result = async {
+            // A flagged chat turn has no type of the person's to repair to
+            // (UX-ADD-4).
+            super::chat_turns::refuse_chat_turn_on_connection(&conn, source_id).await?;
             crate::repair::validate_target_space_on_connection(&conn, source_id, expected_space)
                 .await?;
             if let Some(review_binding) = review_binding {
