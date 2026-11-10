@@ -191,8 +191,9 @@ export function PagesOverview({
       <div className={`home-columns${thingsOn ? "" : " home-columns--spaces"}`}>
         {/* What last night steeped spans every Space and the Wiki, so it
             opens home on its own line. "What you're working on" carries its
-            own line, so this one shows only while that is off. */}
-        {example || thingsOn ? null : <HomeNightLines onReplayNight={onReplayNight} />}
+            own steeped line, so while it is on only the "not written yet"
+            line shows here, above it (UX-HOME-7). */}
+        {example ? null : <HomeNightLines onReplayNight={onReplayNight} steeped={!thingsOn} />}
         {example ? null : thingsOn
           ? <WorkingOn onSelectSpace={onSelectSpace} onOpenThing={onOpenThing} onReplayNight={onReplayNight} />
           : <HomeSpaces pages={pages} onSelectSpace={onSelectSpace} onBrowseSpaces={onBrowseSpaces} />}

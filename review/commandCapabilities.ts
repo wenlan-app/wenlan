@@ -133,6 +133,8 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "get_page_original",
     // Fixtures have no things: the list is empty and no id resolves.
     "list_things",
+    // Home's "not written yet" line: the fixture sets nothing aside.
+    "list_set_aside_material",
     "list_thing_night_points",
     "get_thing",
     "get_thing_map",

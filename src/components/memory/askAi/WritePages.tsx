@@ -221,6 +221,11 @@ export function recentTool(agents: readonly AgentConnection[]): { family: string
   return connectedTools(agents)[0] ?? null;
 }
 
+/** The tool family the user picked for writing pages, if any. */
+export function pickedWritePagesTool(): string | null {
+  return readJson<string>(TOOL_KEY);
+}
+
 /** Every connected AI tool, one per family, most recently used first. */
 export function connectedTools(agents: readonly AgentConnection[]): { family: string; name: string }[] {
   const seen = new Set<string>();

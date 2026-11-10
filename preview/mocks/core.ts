@@ -113,6 +113,17 @@ const HOME_PAGES = [
   homePage("page-home-overview", "Wenlan Project Overview", "Local-first personal memory layer: daemon, desktop shell, and knowledge graph.", 8),
 ];
 
+// What Automatic tried to write as pages and set aside, for `&setaside=1`.
+// The book's title is the one a reader of that language would have saved.
+const homeSetAside = (zh: boolean) => [
+  { name: "Driftwood", reason: "too_short", set_aside_at: HOME_NOW - 7_200, items: [{ item_id: "itm_drift_1", title: "Driftwood", kind: "note", space: "reading" }] },
+  { name: zh ? "設計的心理學" : "The Design of Everyday Things", reason: "sources_did_not_match", set_aside_at: HOME_NOW - 9_000, items: [
+    { item_id: "itm_dott_1", title: zh ? "設計的心理學 筆記" : "The Design of Everyday Things notes", kind: "note", space: "reading" },
+    { item_id: "itm_dott_2", title: "Norman on affordances", kind: "chat", space: "reading" },
+  ] },
+  { name: "Kyoto in March", reason: "other", set_aside_at: HOME_NOW - 12_000, items: [{ item_id: "itm_kyoto_1", title: "Kyoto in March", kind: "file", space: "travel" }] },
+];
+
 const HOME_THINGS = [
   { id: "thg_home_1", title: "Home page: what you're working on and its layout", title_by: "ai" as const, status_line: "Cards now show only your own work; checking the layout before it ships.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 600, quiet: false, dreamed_at: HOME_NIGHT },
   { id: "thg_home_2", title: "Live self-testing of the new map", title_by: "ai" as const, status_line: "Night points now join their topics; next is replaying a night.", spaces: ["wenlan"], last_activity_at: HOME_NOW - 3_600, quiet: false, dreamed_at: HOME_NIGHT },
@@ -181,7 +192,19 @@ export async function invoke(
   // (UX-HOME-1, UX-HOME-6). One title is long enough to need two lines, and
   // one thing was steeped overnight under a long name.
   if (new URLSearchParams(window.location.search).get("mode") === "home") {
-    if (cmd === "list_things") return HOME_THINGS;
+    const homeParams = new URLSearchParams(window.location.search);
+    // `&steeped=0`: a night that steeped nothing.
+    if (cmd === "list_things") return homeParams.get("steeped") === "0" ? HOME_THINGS.map(({ dreamed_at: _night, ...thing }) => thing) : HOME_THINGS;
+    // `&setaside=1`: groups Automatic set aside unwritten (UX-HOME-7).
+    if (cmd === "list_set_aside_material") return homeParams.get("setaside") === "1" ? { groups: homeSetAside((homeParams.get("lang") ?? "").startsWith("zh")) } : { groups: [] };
+    if (cmd === "release_set_aside_material") return { released: 0 };
+    // `&tool=claude-code` names the connected AI tool; `&tool=none` has none.
+    const tool = homeParams.get("tool");
+    if (cmd === "list_agents" && tool) {
+      if (tool === "none") return [];
+      const at = Math.floor(Date.now() / 1000);
+      return [{ id: `preview-${tool}`, name: tool, display_name: null, agent_type: "mcp", description: null, enabled: true, trust_level: "full", last_seen_at: at - 180, memory_count: 14, created_at: at - 86_400, updated_at: at - 180 }];
+    }
     if (cmd === "list_pages_explicit_browse") return args?.status === "active" && !args?.offset ? HOME_PAGES : [];
     if (cmd === "get_thing") {
       const thing = HOME_THINGS.find((item) => item.id === args?.id) ?? HOME_THINGS[0];

@@ -185,6 +185,8 @@
 .home-night { display:flex;flex-direction:column;gap:4px;min-width:0;margin-bottom:-36px; }
 .home-night-line { display:flex;align-items:baseline;gap:6px;min-width:0;margin:0;color:var(--mem-text-tertiary);font:13px/1.5 var(--mem-font-body); }
 .home-night-line .steep-moon { flex:none;align-self:center;color:var(--mem-accent-page); }
+/* A line under the steeped one starts where its words do, past the moon. */
+.home-night-line + .home-night-line { padding-left:18px; }
 .home-night-label { flex:none;white-space:nowrap; }
 .home-night-names { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mem-text-secondary); }
 .home-night-action { flex:none;margin-left:8px;padding:0;border:0;background:none;color:var(--mem-accent-page);font:600 13px/1.5 var(--mem-font-body);cursor:pointer; }

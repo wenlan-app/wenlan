@@ -440,6 +440,8 @@ export class TauriMockRuntime {
       case "distill_review": return structuredClone(this.distillReview);
       // The fixture library has no material waiting for pages.
       case "list_new_material": return { items: [], total: 0 };
+      // Nor anything Automatic set aside.
+      case "list_set_aside_material": return { groups: [] };
       case "list_pending_revisions": return structuredClone(this.fixture.pendingRevisions ?? []);
       case "list_refinements": return { proposals: structuredClone(this.refinements) };
       case "accept_refinement": return this.resolveRefinement(args, true);

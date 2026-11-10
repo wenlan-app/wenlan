@@ -11,6 +11,7 @@ import {
   listWorkingOn,
   listSpaces,
   listThings,
+  listSetAsideMaterial,
   type Space,
   type ThingSummary,
   type DistillReviewResponse,
@@ -34,6 +35,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   listWorkingOn: vi.fn().mockResolvedValue([]),
   listSpaces: vi.fn().mockResolvedValue([]),
   listThings: vi.fn().mockResolvedValue([]),
+  listSetAsideMaterial: vi.fn().mockResolvedValue({ groups: [] }),
   setUiLanguage: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -290,6 +292,23 @@ describe("PagesOverview reading workspace", () => {
 
       fireEvent.click(cards[1]);
       expect(onSelectSpace).toHaveBeenCalledWith("wenlan-site");
+    });
+
+    it("UX-HOME-7 keeps the not-written-yet line above it, leaving the steeped line to its own header", async () => {
+      vi.mocked(listWorkingOn).mockResolvedValueOnce([
+        { space: "wenlan", id: "b1", text: "Storage: files become the source of truth", added_at: now },
+      ]);
+      vi.mocked(listSetAsideMaterial).mockResolvedValueOnce({
+        groups: [{ name: "Driftwood", reason: "too_short", items: [{ item_id: "itm_1", title: "Driftwood", kind: "note" }], set_aside_at: now }],
+      });
+      const { container } = renderOverview();
+      const unwritten = await screen.findByTestId("home-unwritten");
+      const night = screen.getByTestId("home-night");
+      const section = await screen.findByTestId("wiki-working-on");
+      expect(container.querySelector(".wiki-overview .home-columns")?.firstElementChild).toBe(night);
+      expect(night.nextElementSibling).toBe(section);
+      expect(unwritten).toHaveTextContent("Driftwood");
+      expect(screen.queryByTestId("home-steeped")).toBeNull();
     });
 
     it("UX-HOME-1 shows nothing when no Space has active work", async () => {

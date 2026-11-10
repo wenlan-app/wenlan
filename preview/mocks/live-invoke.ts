@@ -1372,6 +1372,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   // Review-only pass: POST /api/distill with an empty body never creates pages.
   distill_review: () => post("/api/distill", {}),
   list_new_material: () => get("/api/steep/new?limit=200"),
+  list_set_aside_material: () => get("/api/steep/new/set-aside"),
+  release_set_aside_material: (a) => post("/api/steep/new/set-aside/release", { item_ids: a?.itemIds ?? [] }),
   accept_pending_revision: (a) =>
     http("POST", `/api/memory/revision/${enc(a.sourceId)}/accept`, a.edit, AS_PERSON),
   dismiss_pending_revision: (a) => post(`/api/memory/revision/${enc(a.sourceId)}/dismiss`),
