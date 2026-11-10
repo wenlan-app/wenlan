@@ -666,6 +666,20 @@ export default function ReviewDialog({
   // A notice flash explains an outcome the human did not choose (a card the
   // daemon discarded), so it stays up longer and carries no checkmark.
   const [flashNotice, setFlashNotice] = useState(false);
+  // One pending "hide the flash" timer, cleared on unmount so it never fires
+  // into a torn-down component (in tests: after the DOM environment is gone).
+  const flashTimerRef = useRef<number | null>(null);
+  const clearFlashAfter = useCallback((ms: number, notice = false) => {
+    if (flashTimerRef.current != null) window.clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(() => {
+      flashTimerRef.current = null;
+      setFlash(null);
+      if (notice) setFlashNotice(false);
+    }, ms);
+  }, []);
+  useEffect(() => () => {
+    if (flashTimerRef.current != null) window.clearTimeout(flashTimerRef.current);
+  }, []);
   // The sentence shown when a resolve fails, not just a flag. Some refusals
   // are permanent and say so — a revision card staged before source-revision
   // fencing is discarded and its page re-queued, so "Try again" would be an
@@ -725,7 +739,7 @@ export default function ReviewDialog({
     try {
       await clipboardWrite(steepCommand);
       setFlash(t("review.commandCopied"));
-      window.setTimeout(() => setFlash(null), 1200);
+      clearFlashAfter(1200);
     } catch {
       setResolveError(t("review.actionError"));
     }
@@ -969,7 +983,7 @@ export default function ReviewDialog({
     if (outdated) {
       setFlashNotice(true);
       setFlash(t(discardedNotice));
-      window.setTimeout(() => { setFlash(null); setFlashNotice(false); }, 2400);
+      clearFlashAfter(2400, true);
       if (next) onOpenChange(reviewItemId(next));
       else setShowDone(true);
       return;
@@ -993,7 +1007,7 @@ export default function ReviewDialog({
                   : "review.dismissed",
           ),
     );
-    window.setTimeout(() => setFlash(null), 450);
+    clearFlashAfter(450);
     if (next) onOpenChange(reviewItemId(next));
     else setShowDone(true);
   };
@@ -1380,7 +1394,7 @@ export default function ReviewDialog({
                     const remaining = items.filter((entry) => reviewItemId(entry) !== reviewItemId(item));
                     const next = remaining[Math.min(index, remaining.length - 1)] ?? null;
                     setFlash(t("review.resolved"));
-                    window.setTimeout(() => setFlash(null), 650);
+                    clearFlashAfter(650);
                     if (next) onOpenChange(reviewItemId(next));
                     else setShowDone(true);
                     for (const key of ["refinement-proposals", "pending-revisions", "pages", "space-pages", "recent-concepts", "memories", "memoryStats", "memory-detail", "page", "page-links", "page-revisions", "page-sources", "entities", "entity-detail", "entityDetail", "space-entities", "constellation-entities", "knowledge-graph", "distill-review"]) {
