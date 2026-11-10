@@ -444,9 +444,9 @@ async fn a_person_asked_change_lands_when_an_untouched_sentence_cites_an_unreada
         put(id, text, "work").await;
     }
     let sources: Vec<&str> = facts.iter().map(|(id, _)| *id).collect();
-    let id =
-        common::create_page_fixture(&db, "Notes", "Draft.", Some("work"), &sources, "distilled")
-            .await;
+    let draft = format!("{}\n\n{}", facts[0].1, facts[1].1);
+    let id = common::create_page_fixture(&db, "Notes", &draft, Some("work"), &sources, "distilled")
+        .await;
     let cited = "Status: draft.\n\n\
         Tokio runs async tasks on a work-stealing runtime scheduler [1].\n\n\
         Interview notes say people forget the tags they invent [2].";
