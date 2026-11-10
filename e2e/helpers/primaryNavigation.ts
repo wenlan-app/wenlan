@@ -3,9 +3,20 @@ import { expect, type Page } from "@playwright/test";
 import { openWikiNote } from "./wikiWorkspace";
 import { resources } from "../../src/i18n/resources";
 
-/** Follow the same rail-or-More path a user takes after customizing navigation. */
+const TOPIC_LIST_ROUTES = Object.values(resources).map(({ translation: t }) => ({
+  topics: t.sidebar.entities, graph: t.sidebar.graph, allTopics: t.atlas.allTopics,
+}));
+
+/** Follow the same rail-or-More path a user takes after customizing navigation.
+ *  Topics have no rail entry (UX-FIND-4): their list opens from the graph. */
 export async function openPrimaryDestination(page: Page, name: string, moreLabel = "More") {
-  await expect(page.getByRole("main")).toBeVisible();
+  const topicRoute = TOPIC_LIST_ROUTES.find(route => route.topics === name);
+  if (topicRoute) {
+    await openPrimaryDestination(page, topicRoute.graph, moreLabel);
+    await page.getByRole("button", { name: topicRoute.allTopics, exact: true }).click();
+    return;
+  }
+  await expect(page.getByRole("main").first()).toBeVisible();
   const navigation = page.getByRole("navigation", {
     name: /^(Primary navigation|主要導覽|主要导航|主导航)$/,
   });

@@ -72,8 +72,11 @@ test("Wiki -> Spaces -> Space -> Page -> back and Space -> global Topics -> Topi
   await expect(page.getByRole("heading", { level: 1, name: "Ada Lovelace" })).toBeVisible();
   await page.keyboard.press("Escape");
 
-  // Topic history first returns to global Topics, then to the previous Space.
+  // Topic history returns to global Topics, then the graph it opens from,
+  // then the previous Space.
   await expect(page.getByRole("heading", { level: 1, name: "Topics", exact: true })).toBeVisible();
+  await page.getByRole("group", { name: "History navigation" }).getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.getByTestId("atlas-view")).toBeVisible();
   await page.getByRole("group", { name: "History navigation" }).getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Wenlan" })).toBeVisible();
   await expect(primaryNavigation.locator('[aria-current="page"]')).toHaveCount(1);

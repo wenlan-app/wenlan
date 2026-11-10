@@ -28,6 +28,7 @@ struct Inventory {
     decisions: u64,
     pinned: u64,
     stable: u64,
+    chat_turns: u64,
     tags: u64,
     activities: u64,
     captures: u64,
@@ -57,6 +58,7 @@ impl IdentitySnapshot {
                     metric(LintMetricCode::DecisionMemories, self.inventory.decisions),
                     metric(LintMetricCode::PinnedMemories, self.inventory.pinned),
                     metric(LintMetricCode::StableMemories, self.inventory.stable),
+                    metric(LintMetricCode::ImportedChatTurns, self.inventory.chat_turns),
                 ],
             ),
             assessment(
@@ -234,9 +236,22 @@ async fn inventory(context: &LintContext<'_, '_>, scope: &ScopeFilter) -> Result
         profiles: scalar(context, "SELECT COUNT(*) FROM profiles").await?,
         agents: scalar(context, "SELECT COUNT(*) FROM agent_connections").await?,
         spaces: scalar(context, "SELECT COUNT(*) FROM spaces").await?,
-        decisions: memory_count(context, scope, "memory_type='decision'").await?,
+        // An imported chat turn's stored type and stability are not the
+        // person's (UX-ADD-4): it is counted under chat_turns instead.
+        decisions: memory_count(
+            context,
+            scope,
+            "memory_type='decision' AND COALESCE(m.semantic_unit,'') <> 'chat_turn'",
+        )
+        .await?,
         pinned: memory_count(context, scope, "pinned=1").await?,
-        stable: memory_count(context, scope, "stability IN ('learned','confirmed')").await?,
+        stable: memory_count(
+            context,
+            scope,
+            "stability IN ('learned','confirmed') AND COALESCE(m.semantic_unit,'') <> 'chat_turn'",
+        )
+        .await?,
+        chat_turns: chat_turn_count(context, scope).await?,
         tags: scalar(context, "SELECT COUNT(*) FROM document_tags").await?,
         activities: scalar(context, "SELECT COUNT(*) FROM activities").await?,
         captures: scalar(context, "SELECT COUNT(*) FROM capture_refs").await?,
@@ -259,6 +274,21 @@ async fn memory_count(
     scalar_params(
         context,
         &format!("SELECT COUNT(*) FROM memories m WHERE source='memory' AND chunk_index=0 AND {predicate}{suffix}"),
+        params,
+    )
+    .await
+}
+
+/// Every imported chat turn row in scope, not only conversation heads: the
+/// count matches what the one-time flag pass reports.
+async fn chat_turn_count(context: &LintContext<'_, '_>, scope: &ScopeFilter) -> Result<u64, ()> {
+    let (suffix, params) = memory_scope(scope);
+    scalar_params(
+        context,
+        &format!(
+            "SELECT COUNT(*) FROM memories m WHERE NOT ({}){suffix}",
+            crate::db::chat_turns::not_chat_turn("m")
+        ),
         params,
     )
     .await

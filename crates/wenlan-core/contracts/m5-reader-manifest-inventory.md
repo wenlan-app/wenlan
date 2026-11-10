@@ -601,6 +601,10 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/attachments/resolve` | main | no | not_applicable | `none` | — | path receipt only: the media file one embed names, no prose; a named page is checked visible under the truth view first |
 | `GET` | `/api/knowledge/path` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/knowledge/path` | main | no | not_applicable | `none` | — | asks to move the pages folder; returns folder paths only |
+| `GET` | `/api/linked-vaults` | main | no | not_applicable | `none` | — | linked vault folders only |
+| `POST` | `/api/linked-vaults` | main | no | not_applicable | `none` | — | links a vault; returns vault folders and a count only |
+| `DELETE` | `/api/linked-vaults` | main | no | not_applicable | `none` | — | unlinks a vault; returns vault folders only |
+| `POST` | `/api/linked-vaults/ai-edits` | main | no | not_applicable | `none` | — | locks or unlocks a vault's pages; returns vault folders only |
 | `GET` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
 | `POST` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint_submission` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
 | `POST` | `/api/llm/test` | main | no | not_applicable | `none` | — | no prose fields |
@@ -1146,6 +1150,7 @@ carrying the authority of agreement.
 | `core/db.rs::search_entities_by_name` | `pub` | no | no | — | — |
 | `core/db.rs::search_memory_with_cue` | `private` | no | no | — | — |
 | `core/db.rs::top_memory_entity_hubs` | `pub` | no | no | — | — |
+| `core/db/chat_turns.rs::chat_turn_report` | `pub` | no | no | — | — |
 | `core/db/citation_provenance.rs::page_on` | `private` | no | no | — | — |
 | `core/db/citation_sources.rs::read_page_on` | `private` | no | no | — | — |
 | `core/db/claim_derivation.rs::derive_leased_page_claims` | `pub(super)` | no | no | — | — |

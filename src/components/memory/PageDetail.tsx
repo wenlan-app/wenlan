@@ -145,7 +145,7 @@ interface PageDetailProps {
   onEditorReady?: () => void;
   onBack: () => void;
   onDeleted?: (pageId: string) => void;
-  /** Lets a list row (folder tree, Recently used) archive this page through
+  /** Lets a list row (the folder tree) archive this page through
    *  its own editor owner: the same flush, confirmation and action lock.
    *  The registered function resolves false when the page is busy. */
   onRegisterArchive?: (pageId: string, archive: (() => Promise<boolean>) | null) => void;

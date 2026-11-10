@@ -141,6 +141,9 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "get_page_revisions": return { page_id: optionalString(args, "pageId") ?? "", current_version: 1, user_edited: false, entries: [] };
     // Settings export: a fixture writes no folder, so it reports an empty bundle.
     case "export_pages_as_okf": return { exported: 0, skipped: 0, failed: 0 };
+    // No Obsidian vaults on a fixture computer and none linked yet.
+    case "detect_obsidian_vaults": return [];
+    case "list_linked_vaults": return { vaults: [] };
     default: throw new UnknownTauriCommandError(command);
   }
 }

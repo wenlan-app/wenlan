@@ -88,6 +88,11 @@ struct KnowledgeState {
     /// Dropped with `archived_from`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     archived_versions: BTreeMap<String, i64>,
+    /// The person's own frontmatter of an archived note they put in the
+    /// folder (page id -> frontmatter), so a restore writes the note back as
+    /// theirs and not as a page Wenlan wrote. Dropped with `archived_from`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    archived_person_frontmatter: BTreeMap<String, String>,
     /// When the page watcher first found a page's file gone (page id -> unix
     /// seconds) with no other file carrying its id. The page is archived only
     /// once the file has stayed gone for a while, so a save that replaces the
@@ -112,6 +117,7 @@ impl Default for KnowledgeState {
             index_regeneration_pending: false,
             archived_from: BTreeMap::new(),
             archived_versions: BTreeMap::new(),
+            archived_person_frontmatter: BTreeMap::new(),
             missing_since: BTreeMap::new(),
             pending_adoptions: BTreeMap::new(),
         }
@@ -264,6 +270,7 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
             "index_regeneration_pending",
             "archived_from",
             "archived_versions",
+            "archived_person_frontmatter",
             "missing_since",
             "pending_adoptions",
         ]
@@ -667,12 +674,16 @@ impl KnowledgeWriter {
         let file_path = self.path.join(&filename);
         let (target_directory, target_name) = folders::page_parent(&capabilities.root, &filename)?;
 
-        // A note the person put in the folder keeps its own frontmatter.
-        let person_frontmatter = state
-            .pages
-            .get(&page.id)
-            .and_then(|entry| entry.person_frontmatter.as_deref())
-            .map(|frontmatter| person_frontmatter_titled(frontmatter, &page.title));
+        // A note the person put in the folder keeps its own frontmatter,
+        // also when it comes back from the archive.
+        let person_frontmatter = match state.pages.get(&page.id) {
+            Some(entry) => entry.person_frontmatter.as_deref(),
+            None => state
+                .archived_person_frontmatter
+                .get(&page.id)
+                .map(String::as_str),
+        }
+        .map(|frontmatter| person_frontmatter_titled(frontmatter, &page.title));
         let content = match &person_frontmatter {
             Some(frontmatter) => render_person_markdown(page, frontmatter),
             None => render_markdown(page),
@@ -770,6 +781,7 @@ impl KnowledgeWriter {
         }
         state.archived_from.remove(&page.id);
         state.archived_versions.remove(&page.id);
+        state.archived_person_frontmatter.remove(&page.id);
         self.save_state_cap(&capabilities.wenlan, &state)?;
         // Also retries a copy an earlier write could not archive, whichever
         // page that write was for.
@@ -1241,7 +1253,11 @@ impl KnowledgeWriter {
             // stops mattering.
             let had_archived_place = state.archived_from.remove(page_id).is_some();
             let had_archived_version = state.archived_versions.remove(page_id).is_some();
-            if (had_archived_place || had_archived_version) && !state.pages.contains_key(page_id) {
+            let had_archived_frontmatter =
+                state.archived_person_frontmatter.remove(page_id).is_some();
+            if (had_archived_place || had_archived_version || had_archived_frontmatter)
+                && !state.pages.contains_key(page_id)
+            {
                 self.save_state_cap(&capabilities.wenlan, &state)?;
             }
 
@@ -1853,6 +1869,11 @@ impl KnowledgeWriter {
                     // an entry with no file. Nothing on disk to evict.
                     if let Some(entry) = state.pages.remove(page_id) {
                         if archived.is_some() {
+                            if let Some(frontmatter) = entry.person_frontmatter {
+                                state
+                                    .archived_person_frontmatter
+                                    .insert(page_id.clone(), frontmatter);
+                            }
                             state.archived_from.insert(page_id.clone(), entry.file);
                         }
                         state_dirty = true;
@@ -1913,7 +1934,18 @@ impl KnowledgeWriter {
                 if moved == files.len() {
                     // Only forget the page once its files are actually gone.
                     // A retained entry is what makes the next pass retry.
-                    let recorded = state.pages.remove(page_id).map(|entry| entry.file);
+                    let removed = state.pages.remove(page_id);
+                    if archived.is_some() {
+                        if let Some(frontmatter) = removed
+                            .as_ref()
+                            .and_then(|entry| entry.person_frontmatter.clone())
+                        {
+                            state
+                                .archived_person_frontmatter
+                                .insert(page_id.clone(), frontmatter);
+                        }
+                    }
+                    let recorded = removed.map(|entry| entry.file);
                     if archived.is_some() {
                         // Where the page's own file was, over a recorded path
                         // that may now hold something else.
@@ -9466,6 +9498,57 @@ mod tests {
         let state = writer.load_state();
         assert!(state.archived_from.is_empty());
         assert_eq!(state.pages[&page.id].file, "Projects/rust-ownership.md");
+    }
+
+    /// A note the person put in the folder, archived and restored, comes
+    /// back with their own frontmatter, not as a page Wenlan wrote. A linked
+    /// vault copies the restored file back into the vault, so Wenlan's
+    /// fields would otherwise end up in the person's note.
+    #[test]
+    fn a_restored_note_of_the_person_keeps_their_frontmatter() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        let guard = writer.begin_test_write();
+        let live = writer.write_page(&guard, &page).unwrap();
+        let theirs = format!("origin_id: {}\ntags: [book]", page.id);
+        let mut state = writer.load_state();
+        state.pages.get_mut(&page.id).unwrap().person_frontmatter = Some(theirs.clone());
+        writer.save_state(&state).unwrap();
+        let note = render_person_markdown(&page, &theirs);
+        std::fs::write(&live, &note).unwrap();
+        let mut state = writer.load_state();
+        state.pages.get_mut(&page.id).unwrap().content_sha256 =
+            Some(projection_digest(note.as_bytes()));
+        writer.save_state(&state).unwrap();
+
+        writer
+            .archive_pages(&guard, &[(page.id.clone(), page.version + 1)])
+            .unwrap();
+        assert!(!std::path::Path::new(&live).exists());
+        assert_eq!(
+            writer
+                .load_state()
+                .archived_person_frontmatter
+                .get(&page.id),
+            Some(&theirs)
+        );
+
+        let mut restored = page.clone();
+        restored.version += 2;
+        let path = writer.write_page_for_test(&restored).unwrap();
+        let projected = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            projected.starts_with(&format!("---\n{theirs}\n---\n")),
+            "{projected}"
+        );
+        assert!(!projected.contains("origin_version"), "{projected}");
+        let state = writer.load_state();
+        assert!(state.archived_person_frontmatter.is_empty());
+        assert_eq!(
+            state.pages[&page.id].person_frontmatter.as_deref(),
+            Some(theirs.as_str())
+        );
     }
 
     /// Round 4 review of #1064: a database put back to an older snapshot has

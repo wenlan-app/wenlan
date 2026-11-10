@@ -126,7 +126,9 @@ test("renders the Planet Space mark across light, dark, mobile, focus, and physi
 
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
-  await navigation.getByRole("button", { name: "Wiki", exact: true }).focus();
+  // The Wiki heads its page tree at the end of the list (UX-FIND-4), so Tab
+  // walks Home, Spaces, Graph.
+  await navigation.getByRole("button", { name: "Home", exact: true }).focus();
   await page.keyboard.press("Tab");
   await expect(spacesButton(page)).toBeFocused();
   await page.keyboard.press("Tab");
