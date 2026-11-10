@@ -449,7 +449,7 @@ describe("Main published PageDetail navigation guards", () => {
 
     await user.click(screen.getByRole("button", { name: i18n.t("main.back") }));
     fireEvent.keyDown(window, { key: "Escape" });
-    await user.click(screen.getByRole("button", { name: "Close Untitled page" }));
+    await user.click(screen.getByRole("button", { name: "Close New page" }));
     expect(flushHarness.flush).toHaveBeenCalledOnce();
     await act(async () => settle(true));
 
