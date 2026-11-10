@@ -413,3 +413,36 @@
 }
 .notes-page-shared { color: var(--mem-text-tertiary); display: inline-flex; flex: none; margin-left: auto; padding-left: 6px; }
 .notes-page-shared-icon { height: 13px; width: 13px; }
+
+/* One left column: with labels, the Wiki closes the destinations and every
+   page follows it here, instead of a second column beside the sidebar. */
+.notes-rail-nav:has(> .notes-wiki-section) { flex: 1 1 auto; min-height: 0; }
+.notes-wiki-section {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  margin-top: 6px;
+}
+.memory-shell .notes-rail-nav .notes-wiki-section .wiki-sidebar-directory.wiki-workspace-directory {
+  flex: 1 1 auto;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.notes-wiki-section .wiki-workspace-mode-row {
+  min-height: 0;
+  gap: 0;
+  padding: 0;
+}
+.notes-wiki-section .notes-wiki-heading { flex: 1 1 auto; min-width: 0; }
+.notes-wiki-section .wiki-workspace-mode { flex: 0 0 auto; min-height: 32px; }
+.notes-wiki-section .wiki-workspace-mode > .wiki-workspace-mode-sizer,
+.notes-wiki-section .wiki-workspace-mode select { padding: 0 20px 0 6px; font-size: 12px; }
+.notes-wiki-section .wiki-workspace-mode select { height: 28px; color: var(--mem-text-tertiary); }
+.notes-wiki-section .wiki-workspace-mode > svg { right: 6px; top: 16px; color: var(--mem-text-tertiary); }
+.notes-wiki-section .wiki-workspace-new-folder { flex-basis: 28px; width: 28px; height: 28px; color: var(--mem-text-tertiary); }
+.notes-wiki-section .wiki-workspace-mode-row > .wiki-workspace-new-page { margin-left: 0; }
+.notes-wiki-section .wiki-sidebar-directory > .notes-list-panel { padding-inline: 4px 0; margin-top: 2px; }

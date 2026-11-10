@@ -58,5 +58,5 @@ test('wiki reader stays readable with navigation and Info open',async({page},inf
   expect(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth)).toBeLessThanOrEqual(1);
   await page.screenshot({path:info.outputPath(`wiki-info-${width}.png`)});
  }
- await page.setViewportSize({width:1024,height:960});await page.locator('.wiki-workspace-folders-toggle').click();await expect(page.locator('.wiki-workspace-directory')).toBeVisible();await expect(page.locator('.page-info-drawer:visible')).toBeVisible();await page.screenshot({path:info.outputPath('wiki-info-1024-directory-open.png')});
+ await page.setViewportSize({width:1024,height:960});const toggle=page.locator('.wiki-workspace-folders-toggle');if(await toggle.isVisible())await toggle.click();await expect(page.locator('.wiki-workspace-directory')).toBeVisible();await expect(page.locator('.page-info-drawer:visible')).toBeVisible();await page.screenshot({path:info.outputPath('wiki-info-1024-directory-open.png')});
 });

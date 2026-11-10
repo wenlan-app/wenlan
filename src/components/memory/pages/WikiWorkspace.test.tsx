@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useEffect, useState } from "react";
 import { RECENT_PAGES_STORAGE_KEY } from "../../../lib/recentPages";
 import { WikiWorkspace } from "./WikiWorkspace";
+import { WikiDirectory } from "./WikiDirectory";
 import { useWikiFolderCreation } from "./WikiFolderCreationContext";
 
 // Recently used reads the archived set to hide archived pages, so every
@@ -158,17 +159,19 @@ describe("WikiWorkspace", () => {
       }, [folderCreation?.reportCanCreateFolder, folderCreation?.registerCreateFolderForm]);
       return <button type="button" onClick={() => folderCreation?.requestCreateFolder()}>Request folder</button>;
     }
+    const onRevealRequest = vi.fn();
     render(
-      <WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}>
+      <WikiDirectory onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()} onRevealRequest={onRevealRequest}>
         <RequestFolder />
-      </WikiWorkspace>,
+      </WikiDirectory>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Request folder" }));
     expect(openForm).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "folders" } });
     fireEvent.click(screen.getByRole("button", { name: "Request folder" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Pages" })).toHaveAttribute("aria-expanded", "true"));
+    // The directory asks its host to show it (the narrow drawer opens).
+    await waitFor(() => expect(onRevealRequest).toHaveBeenCalledOnce());
     expect(openForm).toHaveBeenCalledOnce();
   });
 
@@ -182,9 +185,9 @@ describe("WikiWorkspace", () => {
       return null;
     }
     render(
-      <WikiWorkspace inventoryMode="folders" onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()} onCreationFolderPathChange={onCreationFolderPathChange}>
+      <WikiDirectory inventoryMode="folders" onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()} onCreationFolderPathChange={onCreationFolderPathChange}>
         <ReportPath />
-      </WikiWorkspace>,
+      </WikiDirectory>,
     );
 
     await waitFor(() => expect(onCreationFolderPathChange).toHaveBeenLastCalledWith("Work/Research"));

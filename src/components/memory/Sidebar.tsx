@@ -37,6 +37,8 @@ interface SidebarProps {
   readonly onRequestClose?: () => void;
   readonly open?: boolean;
   readonly presentation?: "desktop" | "overlay";
+  /** Where the shell renders the Wiki and its pages, below the destinations. */
+  readonly onWikiSectionHost?: (host: HTMLDivElement | null) => void;
 }
 
 function closeAfterNavigation<Arguments extends readonly unknown[]>(
@@ -80,6 +82,7 @@ export default function Sidebar({
   onRequestClose,
   open = !hidden,
   presentation = "desktop",
+  onWikiSectionHost,
 }: SidebarProps) {
   const { t } = useTranslation();
   const asideRef = useRef<HTMLElement>(null);
@@ -167,6 +170,7 @@ export default function Sidebar({
             onNavigateHome={closeAfterNavigation(onNavigateHome, closeOverlay)}
             onNavigatePages={closeAfterNavigation(onNavigatePages, closeOverlay)}
             onNavigateSpaces={closeAfterNavigation(onNavigateSpaces, closeOverlay)}
+            onWikiSectionHost={overlay ? undefined : onWikiSectionHost}
           />
         </div>
         <div className={`notes-rail-utilities${compact ? " notes-rail-utilities--icons" : ""}`}>

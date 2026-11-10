@@ -21,7 +21,10 @@ for (const stored of [
     const nav = page.locator(".notes-rail-nav");
     const railNames = () => nav.locator(".notes-primary-link, .notes-rail-button").evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label")));
     const all = ["Home", "Wiki", "Spaces", "Graph", "Topics"];
-    await expect.poll(railNames).toEqual(all);
+    // With labels there is one left column: the Wiki closes the list and its
+    // pages follow it, instead of a second column beside the sidebar.
+    await expect.poll(railNames).toEqual(["Home", "Spaces", "Graph", "Topics", "Wiki"]);
+    await expect(nav.locator(".wiki-sidebar-directory")).toBeVisible();
     await expect(nav.getByRole("button", { name: "More", exact: true })).toHaveCount(0);
 
     await nav.getByRole("button", { name: "Topics", exact: true }).click();

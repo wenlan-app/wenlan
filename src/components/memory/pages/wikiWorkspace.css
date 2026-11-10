@@ -379,3 +379,7 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
 .note-owner-notice > button:hover { background:var(--mem-hover); }
 .note-owner-notice > button:focus-visible { outline:2px solid var(--mem-accent-page); }
 .note-owner-notice-dismiss { display:flex; align-items:center; justify-content:center; width:32px; }
+
+/* The shell renders the one directory into this slot while it is a column of
+   the workspace; the slot itself takes no box, so the column keeps its rules. */
+.wiki-workspace-directory-slot { display: contents; }

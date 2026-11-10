@@ -59,6 +59,8 @@ import { ThingDetail } from "./things/ThingDetail";
 import { SpacesOverview } from "./spaces";
 import { PagesOverview, WikiStart } from "./pages/PagesOverview";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
+import { WIKI_DIRECTORY_ID, WikiDirectory } from "./pages/WikiDirectory";
+import { Stack } from "@phosphor-icons/react";
 import { useLibraryInventory } from "./pages/useLibraryInventory";
 import { SecondaryNoteGroup, type SecondaryNoteGroupHandle } from "./pages/SecondaryNoteGroup";
 import { NoteTabs } from "./pages/NoteTabs";
@@ -309,6 +311,11 @@ export default function Main({
   const [wikiInventoryMode, setWikiInventoryMode] = useState<WikiInventoryMode>(readWikiInventoryMode);
   const [recentPageRevision, setRecentPageRevision] = useState(0);
   const [wikiDirectoryOpenRequest, setWikiDirectoryOpenRequest] = useState(0);
+  const [wikiDirectoryCloseRequest, setWikiDirectoryCloseRequest] = useState(0);
+  // The one Wiki directory renders into the left sidebar, or into the Wiki
+  // workspace's own column when the sidebar has no room for it.
+  const [sidebarWikiHost, setSidebarWikiHost] = useState<HTMLDivElement | null>(null);
+  const [workspaceDirectoryHost, setWorkspaceDirectoryHost] = useState<HTMLDivElement | null>(null);
   const updateNoteTabs = (next: NoteTab[]) => { noteTabsRef.current = next; setNoteTabs(next); };
   const findPrimaryNoteTab = (next: NoteView) => noteTabsRef.current.find(tab =>
     matchesNote(tab, next)
@@ -1053,6 +1060,8 @@ export default function Main({
       ? "zero"
       : effectiveSidebar.mode;
   const headerSidebarBackdropClass = `is-sidebar-backdrop-${sidebarLayout}`;
+  // With labels, the sidebar is the one navigation column and holds every page.
+  const directoryInSidebar = sidebarLayout === "labels" && view.kind !== "settings";
   const spacesOverviewLabels = createSpacesOverviewLabels(t);
   const spaceDetailCopy = createSpaceDetailCopy(t);
   const { data: spaces } = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
@@ -1424,6 +1433,55 @@ export default function Main({
           </div>
   );
 
+  // The Wiki as the last section of the sidebar: its heading is the Wiki
+  // destination, and every page follows it in the same column.
+  const wikiDirectoryTarget = directoryInSidebar
+    ? sidebarWikiHost
+    : isWikiWorkspaceView ? workspaceDirectoryHost : null;
+  const wikiHeading = directoryInSidebar ? (
+    <button
+      type="button"
+      className="notes-primary-link notes-wiki-heading"
+      aria-label={t("sidebar.pages")}
+      aria-current={activeNavigation === "pages" ? "page" : undefined}
+      data-active={view.kind === "pages" ? "true" : undefined}
+      onClick={navigateNotes}
+    >
+      <span aria-hidden="true" className="notes-navigation-glyph">
+        <Stack aria-hidden="true" data-navigation-icon="wiki-stack" focusable="false" size={16} style={{ color: "currentColor" }} weight="regular" />
+      </span>
+      <span>{t("sidebar.pages")}</span>
+    </button>
+  ) : undefined;
+  const wikiDirectory = (
+    <WikiDirectory
+      key={`${exampleWiki ? "example" : "own"}-${directoryInSidebar ? "sidebar" : "workspace"}`}
+      id={WIKI_DIRECTORY_ID}
+      placement={directoryInSidebar ? "sidebar" : "workspace"}
+      heading={wikiHeading}
+      inventoryMode={wikiInventoryMode}
+      onInventoryModeChange={setWikiInventoryMode}
+      recentRevision={recentPageRevision}
+      onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
+      inventoryScope={wikiInventoryScope}
+      onCreationFolderPathChange={setWikiCreationFolderPath}
+      currentPageId={view.kind === "page" ? view.pageId : view.kind === "page-draft" ? view.draftId ?? null : null}
+      currentFolderPath={view.kind === "page-draft" ? view.folderPath : undefined}
+      browsing={view.kind === "pages" || view.kind === "home"}
+      filter={pageInventoryFilter}
+      onFilterChange={setPageInventoryFilter}
+      onBrowse={(scope) => navigateTo({ kind: "pages", inventoryScope: scope })}
+      onCreatePage={(folderPath) => navigateTo({ kind: "page-draft", space: null, folderPath, inventoryScope: retainWikiScope ? view.inventoryScope : undefined })}
+      onOpenDraft={openWikiDraft}
+      onOpenPage={openWikiPage}
+      onDeletePage={handleDirectoryNoteDeleted}
+      onArchiveOpenPage={archiveOpenPage}
+      onRestorePage={handlePageRestored}
+      onNavigate={() => setWikiDirectoryCloseRequest(request => request + 1)}
+      onRevealRequest={() => setWikiDirectoryOpenRequest(request => request + 1)}
+    />
+  );
+
   return (
     <ReferenceNavigationProvider
       onOpenPage={(pageId) => navigateTo({ kind: "page", pageId })}
@@ -1545,6 +1603,7 @@ export default function Main({
             onRequestClose={responsiveSidebar.close}
             open={sidebarOpen}
             presentation={responsiveSidebar.presentation}
+            onWikiSectionHost={directoryInSidebar ? setSidebarWikiHost : undefined}
           />
         )}
 
@@ -1595,6 +1654,10 @@ export default function Main({
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
               directoryOpenRequest={wikiDirectoryOpenRequest}
+              directoryCloseRequest={wikiDirectoryCloseRequest}
+              externalDirectory
+              directoryInSidebar={directoryInSidebar}
+              onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
               recentRevision={recentPageRevision}
               onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
@@ -1717,6 +1780,10 @@ export default function Main({
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
               directoryOpenRequest={wikiDirectoryOpenRequest}
+              directoryCloseRequest={wikiDirectoryCloseRequest}
+              externalDirectory
+              directoryInSidebar={directoryInSidebar}
+              onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
               recentRevision={recentPageRevision}
               onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
@@ -1773,6 +1840,10 @@ export default function Main({
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
               directoryOpenRequest={wikiDirectoryOpenRequest}
+              directoryCloseRequest={wikiDirectoryCloseRequest}
+              externalDirectory
+              directoryInSidebar={directoryInSidebar}
+              onDirectoryHost={setWorkspaceDirectoryHost}
               onInventoryModeChange={setWikiInventoryMode}
               recentRevision={recentPageRevision}
               onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
@@ -1921,6 +1992,7 @@ export default function Main({
           else void secondaryGroupRef.current?.open(next);
         }} onMove={moveToPrimary} allocateDraftSession={() => ++nextDraftSessionRef.current} />
       <div className="workspace-pane-host" ref={setWorkspacePaneHostRef} />
+      {wikiDirectoryTarget && createPortal(wikiDirectory, wikiDirectoryTarget)}
 
       <AboutWenlanDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
       {/* The approval dialog opens over whatever screen is showing; it never navigates. */}

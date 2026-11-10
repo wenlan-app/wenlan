@@ -69,4 +69,28 @@ describe("PrimaryNavigation", () => {
     render(<PrimaryNavigation active={null} labels={labels} onNavigateHome={vi.fn()} onNavigatePages={vi.fn()} onNavigateSpaces={vi.fn()} />);
     expect(railLabels()).toEqual(["Home", "Wiki", "Spaces"]);
   });
+
+  it("UX-FIND-4: with labels, the Wiki section closes the one column instead of a second column", () => {
+    const hosts: (HTMLDivElement | null)[] = [];
+    const navigation = (compact: boolean) => <PrimaryNavigation
+      active={null}
+      compact={compact}
+      labels={labels}
+      onNavigateHome={vi.fn()}
+      onNavigatePages={vi.fn()}
+      onNavigateSpaces={vi.fn()}
+      onWikiSectionHost={(host) => hosts.push(host)}
+    />;
+    const { container, rerender } = render(navigation(false));
+    // The shell renders the Wiki heading and every page into the section.
+    expect(railLabels()).toEqual(["Home", "Spaces"]);
+    const section = container.querySelector(".notes-rail-nav > .notes-wiki-section");
+    expect(section).not.toBeNull();
+    expect(section?.previousElementSibling?.getAttribute("aria-label")).toBe("Spaces");
+    expect(hosts.at(-1)).toBe(section);
+    // Folded to icons there is no room: Wiki is a destination again.
+    rerender(navigation(true));
+    expect(railLabels()).toEqual(["Home", "Wiki", "Spaces"]);
+    expect(container.querySelector(".notes-wiki-section")).toBeNull();
+  });
 });

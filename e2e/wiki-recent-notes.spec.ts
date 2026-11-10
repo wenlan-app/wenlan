@@ -67,6 +67,10 @@ test("recent panel and Search align in either rail mode",async({page})=>{
   const search=page.locator(".notes-sidebar-search button");
   const mode=page.locator(".wiki-workspace-mode select");
   const a=await search.boundingBox(),b=await mode.boundingBox();
-  expect(a).not.toBeNull();expect(b).not.toBeNull();expect(Math.abs(a!.y+a!.height/2-b!.y-b!.height/2)).toBeLessThanOrEqual(1);
+  expect(a).not.toBeNull();expect(b).not.toBeNull();
+  // With labels, the panel is the Wiki section of the sidebar, below Search;
+  // as a column beside the icon rail, its selector lines up with Search.
+  if(width===240){expect(await page.locator(".notes-workspace-sidebar .wiki-workspace-mode select").count()).toBe(1);expect(b!.y).toBeGreaterThan(a!.y+a!.height);}
+  else expect(Math.abs(a!.y+a!.height/2-b!.y-b!.height/2)).toBeLessThanOrEqual(1);
  }
 });
