@@ -968,6 +968,37 @@ fn write_state(path: &Path, state: &BridgeState) -> Result<(), WenlanError> {
     Ok(())
 }
 
+/// Whether the page file at `relative` (in the pages folder) is a note of a
+/// linked vault whose person has not let the AI change it.
+pub fn note_needs_lock(vaults: &[LinkedVault], relative: &str) -> bool {
+    let relative = relative.replace('\\', "/");
+    let Some((folder, _)) = relative.split_once('/') else {
+        return false;
+    };
+    vaults
+        .iter()
+        .any(|link| link.folder == folder && !link.ai_may_edit())
+}
+
+/// [`note_needs_lock`] against the saved config, for a page file just made a
+/// page in `pages`. Only the configured pages folder holds linked vaults, so
+/// any other folder (an isolated test's) never locks.
+pub fn new_page_needs_lock(pages: &Path, relative: &str) -> bool {
+    let config = crate::config::load_config();
+    if config.linked_vaults.is_empty() {
+        return false;
+    }
+    let configured = config.knowledge_path_or_default();
+    let same = match (
+        std::fs::canonicalize(&configured),
+        std::fs::canonicalize(pages),
+    ) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => configured == pages,
+    };
+    same && note_needs_lock(&config.linked_vaults, relative)
+}
+
 /// The pages of a linked vault's notes, as the last pass recorded them.
 pub fn page_ids(link: &LinkedVault, state_dir: &Path) -> Result<Vec<String>, WenlanError> {
     let state = read_state(&state_file(state_dir, &link.path))?;

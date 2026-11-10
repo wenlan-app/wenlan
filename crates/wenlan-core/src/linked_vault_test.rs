@@ -415,3 +415,26 @@ fn no_answer_about_ai_changes_counts_as_no() {
         "an old config keeps reading the same"
     );
 }
+
+#[test]
+fn a_note_page_is_locked_until_the_person_lets_the_ai_in() {
+    let mut s = setup();
+    let vaults = |s: &Setup| vec![s.link.clone()];
+    assert!(note_needs_lock(&vaults(&s), "second-brain/收件匣.md"));
+    assert!(note_needs_lock(
+        &vaults(&s),
+        "second-brain/讀書筆記/深度工作.md"
+    ));
+    assert!(
+        !note_needs_lock(&vaults(&s), "other/收件匣.md"),
+        "a page outside the vault's folder"
+    );
+    assert!(
+        !note_needs_lock(&vaults(&s), "second-brain.md"),
+        "a page beside the folder"
+    );
+    s.link.ai_edits = Some(false);
+    assert!(note_needs_lock(&vaults(&s), "second-brain/收件匣.md"));
+    s.link.ai_edits = Some(true);
+    assert!(!note_needs_lock(&vaults(&s), "second-brain/收件匣.md"));
+}
