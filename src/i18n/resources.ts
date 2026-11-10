@@ -313,6 +313,16 @@ const en = {
       checkConnection: "Check connection",
       intro: "A personal Wiki you and your AI tools build together. Your files and chats become pages they can recall.",
       start: "Get started",
+      writer: {
+        question: "Who writes your pages? Pick once and leave it.",
+        tool: {
+          title: "{{tool}} (found on this computer)",
+          hintNextSession: "Next time you use {{tool}}, it turns what you add into pages.",
+          hint: "Ask {{tool}} to turn what you add into pages whenever you like.",
+        },
+        local: { title: "Download a local model", hint: "Runs on this computer when idle. Downloads only once you pick a model." },
+        none: { title: "Not now", hint: "Your material is kept. It gets organized once you connect an AI tool." },
+      },
       welcome: {
         lead: "Your wiki lives on your computer. Where do you want to start?",
         foot: "You can add more material any time.",
@@ -604,7 +614,7 @@ const en = {
       heading: "New page",
       back: "Back",
       titleLabel: "Title",
-      titlePlaceholder: "Untitled page",
+      titlePlaceholder: "Give this page a title",
       contentLabel: "Content",
       contentPlaceholder: "Start writing…",
       spaceLabel: "Space",
@@ -696,7 +706,7 @@ const en = {
       reviewStatusUnconfirmed: "Needs review",
       unconfirmed: "Needs review",
       draft: "Draft",
-      untitledDraft: "Untitled page",
+      untitledDraft: "New page",
       cleanupSuggested: "Cleanup suggested",
       previewCandidate: "Preview candidate: {{title}}",
       columns: {
@@ -2740,6 +2750,8 @@ const en = {
     writePages: {
       lead: "New material: {{list}}. No page yet.",
       leadMore: "{{list}} aren't in any page yet.",
+      leadNextSession: "{{list}} saved. {{tool}} turns them into pages the next time you use it.",
+      askNow: "Organize now",
       kinds: {
         note_one: "{{count, number}} note",
         note_other: "{{count, number}} notes",
@@ -3633,6 +3645,16 @@ const zhHans = {
       checkConnection: "检查连接",
       intro: "你和 AI 工具一起搭建的个人 Wiki。文件和对话会变成它们记得住的笔记。",
       start: "开始使用",
+      writer: {
+        question: "谁来帮你整理成笔记？选一次，之后不用再管。",
+        tool: {
+          title: "{{tool}}（在这台电脑上找到了）",
+          hintNextSession: "放进来就好，下次你用 {{tool}} 时，它会顺手整理成笔记。",
+          hint: "放进来就好，想整理时在 {{tool}} 里说一声。",
+        },
+        local: { title: "下载本地模型", hint: "电脑闲着时文澜会整理成笔记，资料不离开电脑。选好模型才下载。" },
+        none: { title: "先不用", hint: "先存着，接上 AI 工具后就会整理。" },
+      },
       welcome: {
         lead: "你的 wiki 存在你自己的电脑上。想从哪里开始？",
         foot: "之后随时可以再加资料。",
@@ -3908,7 +3930,7 @@ const zhHans = {
       heading: "新笔记",
       back: "返回",
       titleLabel: "标题",
-      titlePlaceholder: "未命名笔记",
+      titlePlaceholder: "给这篇笔记一个标题",
       contentLabel: "内容",
       contentPlaceholder: "开始写作…",
       spaceLabel: "空间",
@@ -4000,7 +4022,7 @@ const zhHans = {
       reviewStatusUnconfirmed: "待审核",
       unconfirmed: "待审核",
       draft: "草稿",
-      untitledDraft: "未命名笔记",
+      untitledDraft: "新笔记",
       cleanupSuggested: "建议清理",
       previewCandidate: "预览候选笔记：{{title}}",
       columns: {
@@ -6007,6 +6029,8 @@ const zhHans = {
     writePages: {
       lead: "新资料：{{list}}，尚未整理。",
       leadMore: "还有 {{list}}尚未整理。",
+      leadNextSession: "{{list}}已存好，下次用 {{tool}} 时整理。",
+      askNow: "现在整理",
       kinds: {
         note_one: "{{count, number}} 篇笔记",
         note_other: "{{count, number}} 篇笔记",
@@ -6892,6 +6916,16 @@ const zhHant = {
       checkConnection: "檢查連線",
       intro: "你和 AI 工具一起搭建的個人 Wiki。文字、檔案和對話會變成它們記得住的筆記。",
       start: "開始使用",
+      writer: {
+        question: "誰來幫你整理成筆記？選一次，之後不用再管。",
+        tool: {
+          title: "{{tool}}（在這台電腦上找到了）",
+          hintNextSession: "放進來就好，下次你用 {{tool}} 時，它會順手整理成筆記。",
+          hint: "放進來就好，想整理時在 {{tool}} 裡說一聲。",
+        },
+        local: { title: "下載本地模型", hint: "電腦閒著時文瀾會整理成筆記，資料不離開電腦。選好模型才下載。" },
+        none: { title: "先不用", hint: "先存著，接上 AI 工具後就會整理。" },
+      },
       welcome: {
         lead: "你的 wiki 存在你自己的電腦上。想從哪裡開始？",
         foot: "之後隨時可以再加資料。",
@@ -7167,7 +7201,7 @@ const zhHant = {
       heading: "新增筆記",
       back: "返回",
       titleLabel: "標題",
-      titlePlaceholder: "未命名筆記",
+      titlePlaceholder: "給這篇筆記一個標題",
       contentLabel: "內容",
       contentPlaceholder: "開始寫作…",
       spaceLabel: "空間",
@@ -7259,7 +7293,7 @@ const zhHant = {
       reviewStatusUnconfirmed: "待審核",
       unconfirmed: "待審核",
       draft: "草稿",
-      untitledDraft: "未命名筆記",
+      untitledDraft: "新筆記",
       cleanupSuggested: "建議清理",
       previewCandidate: "預覽候選筆記：{{title}}",
       columns: {
@@ -9266,6 +9300,8 @@ const zhHant = {
     writePages: {
       lead: "新資料：{{list}}，尚未整理。",
       leadMore: "還有 {{list}}尚未整理。",
+      leadNextSession: "{{list}}已存好，下次用 {{tool}} 時整理。",
+      askNow: "現在整理",
       kinds: {
         note_one: "{{count, number}} 篇筆記",
         note_other: "{{count, number}} 篇筆記",

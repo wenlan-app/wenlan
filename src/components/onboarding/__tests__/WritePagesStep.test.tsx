@@ -52,9 +52,17 @@ describe("WritePagesStep", () => {
   it("names what is waiting and hands it to the tool in one press", () => {
     const ready = state({ kind: "ready", list: { items: [], total: 16 } });
     renderStep({ state: ready });
-    expect(screen.getByTestId("row")).toHaveTextContent("New material: 12 notes and 4 files.");
-    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    expect(screen.getByTestId("row")).toHaveTextContent("12 notes and 4 files saved. Claude Code turns them into pages the next time you use it.");
+    fireEvent.click(screen.getByRole("button", { name: "Organize now" }));
     expect(ready.start).toHaveBeenCalled();
+  });
+
+  it("for a tool without the next-conversation writer, keeps asking it to write the pages", () => {
+    const codex = { family: "codex", name: "Codex" };
+    const ready = state({ kind: "ready", list: { items: [], total: 16 } }, { tool: codex, tools: [codex], toolName: "Codex" });
+    renderStep({ state: ready });
+    expect(screen.getByTestId("row")).toHaveTextContent("New material: 12 notes and 4 files.");
+    expect(screen.getByRole("button", { name: "Have Codex write pages" })).toBeInTheDocument();
   });
 
   it("copies the command for a tool no link can open, and says where it goes", () => {
@@ -101,8 +109,8 @@ describe("WritePagesStep", () => {
     expect(screen.getByRole("button", { name: "Page a" })).toBeInTheDocument();
     // Copies of brought-in files are not pages to open from here.
     expect(screen.queryByRole("button", { name: "Page mine" })).toBeNull();
-    expect(screen.getByTestId("row")).toHaveTextContent("12 notes and 4 files aren't in any page yet.");
-    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    expect(screen.getByTestId("row")).toHaveTextContent("12 notes and 4 files saved. Claude Code turns them into pages the next time you use it.");
+    fireEvent.click(screen.getByRole("button", { name: "Organize now" }));
     expect(ready.start).toHaveBeenCalled();
   });
 
@@ -113,8 +121,8 @@ describe("WritePagesStep", () => {
       { waitingTotal: 9943, waiting: "9,943 notes", run: { startedAt: Date.parse("2026-10-22T10:00:00Z"), tool: "Claude Code" } },
     );
     renderStep({ state: done, pages: written, done: true, onSelectPage: vi.fn() });
-    expect(screen.getByTestId("getting-started-pages-more")).toHaveTextContent("9,943 notes aren't in any page yet.");
-    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    expect(screen.getByTestId("getting-started-pages-more")).toHaveTextContent("9,943 notes saved. Claude Code turns them into pages the next time you use it.");
+    fireEvent.click(screen.getByRole("button", { name: "Organize now" }));
     expect(done.start).toHaveBeenCalled();
   });
 
@@ -135,14 +143,14 @@ describe("WritePagesStep", () => {
   it("once done, offers even a little material still waiting", () => {
     const ready = state({ kind: "hidden" }, { waitingTotal: 2, waiting: "2 notes" });
     renderStep({ state: ready, pages: [page("a")], done: true });
-    expect(screen.getByTestId("getting-started-pages-more")).toHaveTextContent("2 notes aren't in any page yet.");
+    expect(screen.getByTestId("getting-started-pages-more")).toHaveTextContent("2 notes saved. Claude Code turns them into pages the next time you use it.");
   });
 
   it("says the last run stopped before writing pages, over the same button", () => {
     const ready = state({ kind: "ready", list: { items: [], total: 16 } }, { stopped: true });
     renderStep({ state: ready });
     expect(screen.getByTestId("getting-started-pages-stopped")).toHaveTextContent("The last run stopped before writing pages.");
-    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    fireEvent.click(screen.getByRole("button", { name: "Organize now" }));
     expect(ready.start).toHaveBeenCalled();
   });
 

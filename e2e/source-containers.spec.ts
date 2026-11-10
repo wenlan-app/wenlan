@@ -178,14 +178,12 @@ for (const cfg of [
     await container.locator(".source-collection-breadcrumbs").getByRole("button", { name: t.sourceContainer.root, exact: true }).click();
     await page.getByRole("button", { name: t.sourceLibrary.add, exact: true }).click();
     const addMenu = page.getByRole("dialog", { name: t.sourceAccess.addTitle, exact: true });
-    await expect(addMenu.locator(".source-add-option").filter({ hasText: t.sourceAccess.obsidian })).toHaveCount(1);
+    // Four ways in; an Obsidian vault or Logseq graph comes in as a folder.
+    await expect(addMenu.locator(".source-add-option")).toHaveCount(4);
+    await expect(addMenu.locator(".source-add-option").filter({ hasText: t.sourceAccess.folder })).toContainText("Obsidian");
     await capture("add-source-menu.png");
-    await addMenu.getByRole("button", { name: new RegExp(t.sourceAccess.obsidian) }).click();
-    const linkVault = page.getByRole("dialog", { name: t.sourceAccess.linkTitle, exact: true });
-    await expect(linkVault).toBeVisible();
-    await linkVault.getByRole("button", { name: t.sourceAccess.linkOther, exact: true }).click();
+    await addMenu.getByRole("button", { name: new RegExp(`^${t.sourceAccess.folder}`) }).click();
     await expect.poll(() => calls.filter(c => c.command === "plugin:dialog|open").at(-1)?.args.options).toMatchObject({ directory: true, multiple: false });
-    await expect(linkVault).toBeVisible();
     await page.keyboard.press("Escape");
     expect(errors.pageErrors).toEqual([]);
     expect(errors.consoleErrors).toEqual([]);

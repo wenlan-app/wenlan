@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowsClockwise, Books, ChatsCircle, ClipboardText, DownloadSimple, FileZip } from "@phosphor-icons/react";
+import { Books, ChatsCircle } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -47,10 +47,6 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   const [showLinkVault, setShowLinkVault] = useState(false);
   const [linkPath, setLinkPath] = useState<string | undefined>(undefined);
   const [showChats, setShowChats] = useState(start === "chats");
-  // Quick or full: asked first wherever the quick way exists.
-  const [fullChats, setFullChats] = useState(onQuickChats === undefined);
-  // A picked folder waits here while the user chooses sync or import-once.
-  const [picked, setPicked] = useState<PickedFolder | null>(null);
   // A failure to add a source is shown here in the dialog, next to the choice
   // that failed, rather than as a toast that disappears.
   const [failure, setFailure] = useState<string | null>(null);
@@ -98,7 +94,9 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
       if (kind !== "folder" && detection.unreadable) throw new Error(t("sourceAccess.folderPickFailed"));
       if (kind === "obsidian" && !detection.isVault) throw new Error(t("sourceAccess.notVault"));
       if (kind === "logseq" && !detection.isLogseqGraph) throw new Error(t("sourceAccess.notLogseqGraph"));
-      const sourceType: SourceTypeStr = kind === "logseq" ? "logseq" : detection.sourceType;
+      // One folder entry for every kind: a Logseq graph is recognised from
+      // the folder the same way an Obsidian vault is.
+      const sourceType: SourceTypeStr = kind === "logseq" || (detection.isLogseqGraph && detection.sourceType !== "obsidian") ? "logseq" : detection.sourceType;
       return { kind, sourceType, path };
     },
     onSuccess: (folder) => {
@@ -108,7 +106,8 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
         setShowLinkVault(true);
         return;
       }
-      setPicked(folder);
+      // Kept in sync without asking: a folder you add is one you keep using.
+      register.mutate({ folder, followChanges: true });
     },
     onError: fail,
   });
@@ -147,33 +146,13 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   }, [start, connect]);
 
   const busy = upload.isPending || connect.isPending || register.isPending;
-  if (picked) return <SourceDialog key="follow" title={t("sourceAccess.followTitle")} onClose={onClose}>
-    <p className="source-follow-path">{picked.path}</p>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => register.mutate({ folder: picked, followChanges: true })}>
-      <ArrowsClockwise aria-hidden="true" size={20} weight="regular" data-resource-icon="sync" /><span className="source-add-option-copy"><strong>{t("sourceAccess.followSync")}</strong><span>{t("sourceAccess.followSyncHint")}</span></span>
-    </button>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => register.mutate({ folder: picked, followChanges: false })}>
-      <DownloadSimple aria-hidden="true" size={20} weight="regular" data-resource-icon="import-once" /><span className="source-add-option-copy"><strong>{t("sourceAccess.followOnce")}</strong><span>{t("sourceAccess.followOnceHint")}</span></span>
-    </button>
-    {register.isPending && <p role="status">{t("sourceAccess.connecting")}</p>}
-    {failure && <div role="alert" className="source-dialog-error">{t("sourceAccess.addFailed")}<p>{failure}</p></div>}
-  </SourceDialog>;
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
   if (showZotero) return <ZoteroSourceDialog onClose={onClose} />;
   if (showLinkVault) return <LinkVaultDialog onClose={onClose} initialPath={linkPath} />;
   // Past AI chats use the same import as Settings, so a new user can bring
-  // earlier decisions in from the home without hunting for it.
-  // The two ways are offered side by side: one is done in a minute and
-  // brings what the AI remembers; the other brings every chat but waits for
-  // an email.
-  if (showChats && !fullChats && onQuickChats) return <SourceDialog title={t("sourceAccess.chatHistory")} lead={t("sourceAccess.chatHistoryLead")} onClose={onClose}>
-    <button type="button" className="source-add-option" data-testid="source-chats-quick" onClick={() => { onClose(); onQuickChats(); }}>
-      <ClipboardText aria-hidden="true" size={20} weight="regular" data-resource-icon="quick" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatQuick")}</strong><span>{t("sourceAccess.chatQuickHint")}</span></span>
-    </button>
-    <button type="button" className="source-add-option" data-testid="source-chats-full" onClick={() => setFullChats(true)}>
-      <FileZip aria-hidden="true" size={20} weight="regular" data-resource-icon="zip" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatFull")}</strong><span>{t("sourceAccess.chatFullHint")}</span></span>
-    </button>
-  </SourceDialog>;
+  // earlier decisions in from the home without hunting for it. The full
+  // history is the one way in; where the quick paste exists it is a link
+  // under it, not a question asked first.
   if (showChats) return <SourceDialog title={t("sourceAccess.chatHistory")} onClose={onClose}>
     {/* The export arrives by email, sometimes much later, so the dialog says
         so up front instead of leaving the user waiting at the drop zone. */}
@@ -204,17 +183,19 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
       </li>
     </ol>
     <ImportFlow onLeave={onClose} />
+    {onQuickChats && <p className="source-add-more">
+      <button type="button" className="source-add-more-link" data-testid="source-chats-quick" onClick={() => { onClose(); onQuickChats(); }}>
+        {t("sourceAccess.chatQuickLink")}
+      </button>
+    </p>}
   </SourceDialog>;
   return <SourceDialog title={title ?? t("sourceAccess.addTitle")} lead={t("sourceAccess.addLead")} onClose={onClose}>
     {!ready && <div role="status"><p>{t("sourceAccess.upgrade")}</p><button className="page-editor-action" type="button" onClick={() => openFile("https://wenlan.app")}>{t("sourceAccess.update")}</button></div>}
-    {/* Past AI chats first: everyone who uses an AI tool has them. Then an
-        Obsidian vault, a folder, files; a link with its text, a Zotero
-        library, Logseq last. */}
+    {/* Four ways in, by what the person has: past AI chats, a folder (an
+        Obsidian vault or Logseq graph is recognised from it), files, and a
+        Zotero library. Saving a link is the small link under them. */}
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
       <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>
-    </button>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowLinkVault(true)}>
-      <SourceTypeIcon kind="obsidian" /><span className="source-add-option-copy"><strong>{t("sourceAccess.obsidian")}</strong><span>{t("sourceAccess.obsidianHint")}</span></span>
     </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("folder")}>
       <SourceTypeIcon kind="folder" /><span className="source-add-option-copy"><strong>{t("sourceAccess.folder")}</strong><span>{t("sourceAccess.folderHint")}</span></span>
@@ -222,15 +203,14 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
     <button type="button" className="source-add-option" disabled={busy} onClick={() => upload.mutate()}>
       <SourceTypeIcon kind="file" /><span className="source-add-option-copy"><strong>{t(upload.isPending ? "sourceAccess.adding" : "sourceAccess.files")}</strong><span>{t("sourceAccess.filesHint")}</span></span>
     </button>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowWeb(true)}>
-      <SourceTypeIcon kind="webpage" /><span className="source-add-option-copy"><strong>{t("sourceAccess.web")}</strong><span>{t("sourceAccess.webHint")}</span></span>
-    </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowZotero(true)}>
       <Books aria-hidden="true" size={20} weight="regular" data-resource-icon="zotero" /><span className="source-add-option-copy"><strong>{t("sourceAccess.zotero")}</strong><span>{t("sourceAccess.zoteroHint")}</span></span>
     </button>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("logseq")}>
-      <SourceTypeIcon kind="logseq" /><span className="source-add-option-copy"><strong>{t("sourceAccess.logseq")}</strong><span>{t("sourceAccess.logseqHint")}</span></span>
-    </button>
+    <p className="source-add-more">
+      <button type="button" className="source-add-more-link" data-testid="source-add-link" disabled={busy} onClick={() => setShowWeb(true)}>
+        {t("sourceAccess.orSaveLink")}
+      </button>
+    </p>
     {connect.isPending && <p role="status">{t("sourceAccess.connecting")}</p>}
     {failure && <div role="alert" className="source-dialog-error">{t("sourceAccess.addFailed")}<p>{failure}</p></div>}
   </SourceDialog>;

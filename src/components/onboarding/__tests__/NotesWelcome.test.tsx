@@ -1,12 +1,34 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import { NotesWelcome } from "../NotesWelcome";
 import { exampleWikiActive, setExampleWikiActive } from "../../../lib/exampleWiki/mode";
 
-vi.mock("../../../lib/tauri", () => ({ clipboardWrite: vi.fn() }));
+const tauri = vi.hoisted(() => ({
+  detectMcpClients: vi.fn(),
+  writeMcpConfig: vi.fn(),
+  installClientPlugin: vi.fn(),
+  installClientSkills: vi.fn(),
+}));
+vi.mock("../../../lib/tauri", () => ({ clipboardWrite: vi.fn(), ...tauri }));
+
+function renderQ(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const result = render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return { ...result, rerender: (next: React.ReactElement) => result.rerender(<QueryClientProvider client={client}>{next}</QueryClientProvider>) };
+}
+
+const yes = { kind: "yes" } as const;
+const no = { kind: "no" } as const;
+function client(type: string, configured = false) {
+  return {
+    name: type, client_type: type, config_path: null, detected: yes,
+    already_configured: configured ? yes : no, has_raw_entry: no, has_raw_duplicate: no, has_plugin: configured ? yes : no,
+  };
+}
 
 function deferred() {
   let resolve!: () => void;
@@ -30,26 +52,85 @@ describe("NotesWelcome", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    sessionStorage.clear();
+    tauri.detectMcpClients.mockResolvedValue([]);
   });
 
-  it("offers four ways in as rows, and nothing else to fill in", () => {
-    render(<NotesWelcome onComplete={vi.fn()} />);
+  it("asks once who writes the pages, then offers four ways in as rows, and nothing else to fill in", () => {
+    renderQ(<NotesWelcome onComplete={vi.fn()} />);
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(i18n.t("setup.welcomeTitle"));
+    expect(screen.getByRole("radiogroup", { name: i18n.t("setup.notesFirst.writer.question") })).toBeInTheDocument();
     expect(screen.getByText(i18n.t("setup.notesFirst.welcome.lead"))).toBeInTheDocument();
-    expect(screen.getAllByRole("button").map((button) => button.dataset.testid)).toEqual([
+    expect(screen.getAllByRole("button").filter((button) => button.getAttribute("role") !== "radio").map((button) => button.dataset.testid)).toEqual([
       "notes-welcome-folder", "notes-welcome-chats", "notes-welcome-empty", "notes-welcome-example",
     ]);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(invoke).not.toHaveBeenCalled();
   });
 
+  it("with no AI tool found, defaults to keeping material without downloading anything", async () => {
+    renderQ(<NotesWelcome onComplete={vi.fn()} />);
+    await waitFor(() => expect(tauri.detectMcpClients).toHaveBeenCalled());
+    expect(screen.queryByTestId("notes-welcome-writer-tool")).toBeNull();
+    expect(screen.getByTestId("notes-welcome-writer-none")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("notes-welcome-writer-local")).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("defaults to Claude Code when it is on this computer, says it writes pages next time, and connects it on start", async () => {
+    tauri.detectMcpClients.mockResolvedValue([client("codex_cli"), client("claude_code")]);
+    const onComplete = vi.fn();
+    renderQ(<NotesWelcome onComplete={onComplete} />);
+    const tool = await screen.findByTestId("notes-welcome-writer-tool");
+    expect(tool).toHaveAttribute("aria-checked", "true");
+    expect(tool).toHaveTextContent("Claude Code (found on this computer)");
+    expect(tool).toHaveTextContent("Next time you use Claude Code, it turns what you add into pages.");
+    fireEvent.click(startButton());
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(tauri.installClientPlugin).toHaveBeenCalledWith("claude_code");
+    expect(JSON.parse(localStorage.getItem("askAi:writePages:tool") ?? "null")).toBe("claude-code");
+  });
+
+  it("does not set up a tool that is already connected", async () => {
+    tauri.detectMcpClients.mockResolvedValue([client("claude_code", true)]);
+    const onComplete = vi.fn();
+    renderQ(<NotesWelcome onComplete={onComplete} />);
+    await screen.findByTestId("notes-welcome-writer-tool");
+    fireEvent.click(startButton());
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(tauri.installClientPlugin).not.toHaveBeenCalled();
+  });
+
+  it("a tool that fails to connect still opens the app", async () => {
+    tauri.detectMcpClients.mockResolvedValue([client("claude_code")]);
+    tauri.installClientPlugin.mockRejectedValue(new Error("read-only"));
+    const onComplete = vi.fn();
+    renderQ(<NotesWelcome onComplete={onComplete} />);
+    await screen.findByTestId("notes-welcome-writer-tool");
+    fireEvent.click(startButton());
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("the local model downloads nothing here: it only asks home to open the model choice once", async () => {
+    tauri.detectMcpClients.mockResolvedValue([client("claude_code")]);
+    const onComplete = vi.fn();
+    renderQ(<NotesWelcome onComplete={onComplete} />);
+    await screen.findByTestId("notes-welcome-writer-tool");
+    fireEvent.click(screen.getByTestId("notes-welcome-writer-local"));
+    expect(screen.getByTestId("notes-welcome-writer-local")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(startButton());
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(tauri.installClientPlugin).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("onboarding:writerLocal")).toBe("1");
+  });
+
   it("completes with no destination and stores no start path", async () => {
     const onComplete = vi.fn();
-    render(<NotesWelcome onComplete={onComplete} />);
+    renderQ(<NotesWelcome onComplete={onComplete} />);
     fireEvent.click(startButton());
     await waitFor(() => expect(startButton()).toBeEnabled());
     expect(onComplete).toHaveBeenCalledExactlyOnceWith();
@@ -60,7 +141,7 @@ describe("NotesWelcome", () => {
   it("awaits completion and keeps the action disabled while it is pending", async () => {
     const completion = deferred();
     const onComplete = vi.fn(() => completion.promise);
-    render(<NotesWelcome onComplete={onComplete} />);
+    renderQ(<NotesWelcome onComplete={onComplete} />);
 
     fireEvent.click(startButton());
     expect(onComplete).toHaveBeenCalledTimes(1);
@@ -81,7 +162,7 @@ describe("NotesWelcome", () => {
   it("guards clicks delivered in the same batch before pending state renders", async () => {
     const completion = deferred();
     const onComplete = vi.fn(() => completion.promise);
-    render(<NotesWelcome onComplete={onComplete} />);
+    renderQ(<NotesWelcome onComplete={onComplete} />);
     const button = startButton();
 
     act(() => {
@@ -100,7 +181,7 @@ describe("NotesWelcome", () => {
     const onComplete = vi.fn()
       .mockImplementationOnce(() => first.promise)
       .mockImplementationOnce(() => retry.promise);
-    render(<NotesWelcome onComplete={onComplete} />);
+    renderQ(<NotesWelcome onComplete={onComplete} />);
 
     fireEvent.click(startButton());
     await act(async () => first.reject(new Error("could not save completion")));
@@ -121,7 +202,7 @@ describe("NotesWelcome", () => {
     const onComplete = vi.fn()
       .mockImplementationOnce(() => { throw new Error("could not save completion"); })
       .mockImplementationOnce(() => undefined);
-    render(<NotesWelcome onComplete={onComplete} />);
+    renderQ(<NotesWelcome onComplete={onComplete} />);
 
     fireEvent.click(startButton());
     expect(screen.getByRole("alert")).toBeInTheDocument();
@@ -145,7 +226,7 @@ describe("NotesWelcome ways in", () => {
   ] as const)("the %s row opens the app and leaves what to do there", async (row, intent) => {
     const { takeStartIntent } = await import("../startIntent");
     const onComplete = vi.fn();
-    render(<NotesWelcome onComplete={onComplete} />);
+    renderQ(<NotesWelcome onComplete={onComplete} />);
     fireEvent.click(screen.getByTestId(`notes-welcome-${row}`));
     await waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
     expect(takeStartIntent()).toBe(intent);
@@ -156,7 +237,7 @@ describe("NotesWelcome ways in", () => {
   it("the example row opens the app inside the example wiki, with nothing to do there", async () => {
     const { takeStartIntent } = await import("../startIntent");
     const onComplete = vi.fn();
-    render(<NotesWelcome onComplete={onComplete} />);
+    renderQ(<NotesWelcome onComplete={onComplete} />);
     fireEvent.click(screen.getByTestId("notes-welcome-example"));
     await waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
     expect(exampleWikiActive()).toBe(true);
@@ -165,7 +246,7 @@ describe("NotesWelcome ways in", () => {
 
   it("leaves the example off when the app could not be opened", async () => {
     const onComplete = vi.fn().mockRejectedValueOnce(new Error("setup failed"));
-    render(<NotesWelcome onComplete={onComplete} />);
+    renderQ(<NotesWelcome onComplete={onComplete} />);
     fireEvent.click(screen.getByTestId("notes-welcome-example"));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(exampleWikiActive()).toBe(false);
