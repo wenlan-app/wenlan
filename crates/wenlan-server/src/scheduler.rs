@@ -820,11 +820,6 @@ fn automatic_phase_call_budget(phase: wenlan_core::refinery::Phase) -> usize {
     }
 }
 
-/// New pages a paid page writer may write in one armed window (an import or
-/// a late-writer window) or one automatic steep round. It matches the
-/// first-import batch of 8. On-device writing is free and is not capped.
-const PAID_PAGE_WRITER_CAP: usize = 8;
-
 /// Whether the page writer bills per call: the Anthropic and external API
 /// routes. The on-device model costs nothing.
 fn page_writer_is_paid(pin: Option<wenlan_core::refinery::SynthesisSource>) -> bool {
@@ -837,11 +832,61 @@ fn page_writer_is_paid(pin: Option<wenlan_core::refinery::SynthesisSource>) -> b
     )
 }
 
-fn paid_page_cap_reached(
+/// Whether a writer on `pin` that wrote `pages_today` new pages today must
+/// stop: only a paid writer, at `PAID_NEW_PAGES_PER_DAY` (8, the existing
+/// first-import batch; our own choice, not a benchmark).
+fn paid_daily_cap_applies(
     pin: Option<wenlan_core::refinery::SynthesisSource>,
-    pages_written: usize,
+    pages_today: usize,
 ) -> bool {
-    page_writer_is_paid(pin) && pages_written >= PAID_PAGE_WRITER_CAP
+    page_writer_is_paid(pin) && pages_today >= wenlan_core::steep_new::PAID_NEW_PAGES_PER_DAY
+}
+
+/// The persisted daily cap on a paid writer's new pages, across every
+/// automatic round and import window. Logged once per local day; the rest
+/// waits for the next day. Fails closed when the count cannot be read.
+async fn paid_daily_cap_reached(
+    db: &wenlan_core::db::MemoryDB,
+    pin: Option<wenlan_core::refinery::SynthesisSource>,
+    logged_day: &mut Option<String>,
+) -> bool {
+    if !page_writer_is_paid(pin) {
+        return false;
+    }
+    let day = wenlan_core::steep_new::local_day();
+    let pages_today = match wenlan_core::steep_new::paid_new_pages_on(db, &day).await {
+        Ok(pages) => pages,
+        Err(error) => {
+            tracing::warn!("[scheduler] paid page count unreadable, holding page writing: {error}");
+            return true;
+        }
+    };
+    if !paid_daily_cap_applies(pin, pages_today) {
+        return false;
+    }
+    if logged_day.as_deref() != Some(day.as_str()) {
+        tracing::info!(
+            "[scheduler] paid page writer reached today's cap pages={pages_today} day={day} route={}; the rest waits for the next day",
+            pin.map_or("none", |pin| pin.as_str()),
+        );
+        *logged_day = Some(day);
+    }
+    true
+}
+
+/// Count new pages a paid writer just wrote toward today's cap.
+async fn note_paid_pages(
+    db: &wenlan_core::db::MemoryDB,
+    pin: Option<wenlan_core::refinery::SynthesisSource>,
+    pages: usize,
+) {
+    if pages == 0 || !page_writer_is_paid(pin) {
+        return;
+    }
+    let day = wenlan_core::steep_new::local_day();
+    if let Err(error) = wenlan_core::steep_new::note_paid_new_pages(db, &day, pages).await {
+        tracing::warn!("[scheduler] failed to count paid pages for {day}: {error}");
+    }
 }
 
 fn derived_receipt_sweep_due(last: Option<Instant>, now: Instant) -> bool {
@@ -1480,9 +1525,8 @@ pub fn spawn_scheduler(
         let mut maintenance_pending = false;
         let mut maintenance_stage_ran_since_steep = false;
         let mut steep_batch: Option<AutomaticSteepBatch> = None;
-        // New pages the current automatic steep round has written (the
-        // paid-route page cap reads it).
-        let mut automatic_pages_written = 0usize;
+        // The local day the paid page cap was last logged, so it logs once.
+        let mut paid_cap_logged_day: Option<String> = None;
         let mut maintenance_round: Option<AutomaticMaintenanceRound> = None;
         let mut on_demand_maintenance_round: Option<AutomaticMaintenanceRound> = None;
         // One-time cleanups of data written under older rules; a failed pass
@@ -2004,18 +2048,15 @@ pub fn spawn_scheduler(
                                             );
                                             }
                                         } else if phase == ImportSynthesisPhase::Emergence
-                                            && paid_page_cap_reached(
+                                            && paid_daily_cap_reached(
+                                                &db,
                                                 synthesis_pin,
-                                                current.pages_written,
+                                                &mut paid_cap_logged_day,
                                             )
+                                            .await
                                         {
                                             write_signal.import_priority_finish_synthesis(
                                                 processing_generation,
-                                            );
-                                            tracing::info!(
-                                                "[scheduler] import priority page cap reached pages={} route={}; the rest waits for automatic background work",
-                                                current.pages_written,
-                                                synthesis_pin.map_or("none", |pin| pin.as_str()),
                                             );
                                         } else {
                                             tracing::info!(
@@ -2046,6 +2087,12 @@ pub fn spawn_scheduler(
                                                     pages_created: outcome.pages_created,
                                                 },
                                             );
+                                            note_paid_pages(
+                                                &db,
+                                                synthesis_pin,
+                                                outcome.pages_created,
+                                            )
+                                            .await;
                                             import_work_ran = true;
                                             tracing::info!(
                                             "[scheduler] import priority phase={} done selected={} progressed={} more={} pages_created={} retryable={} panicked={}",
@@ -2246,7 +2293,6 @@ pub fn spawn_scheduler(
                                 .expect("maintenance handled in the previous match arm");
                             let cursor = load_automatic_phase_cursor(&db, kind).await;
                             steep_batch = Some(AutomaticSteepBatch::new(trigger.clone(), cursor));
-                            automatic_pages_written = 0;
                         }
                         let (kind, phase) = {
                             let batch = steep_batch
@@ -2280,14 +2326,11 @@ pub fn spawn_scheduler(
                             continue;
                         }
                         let outcome = if phase == wenlan_core::refinery::Phase::Emergence
-                            && paid_page_cap_reached(synthesis_pin, automatic_pages_written)
+                            && paid_daily_cap_reached(&db, synthesis_pin, &mut paid_cap_logged_day)
+                                .await
                         {
                             // Not progressed: the batch drops Emergence for
-                            // this round and the rest waits for the next one.
-                            tracing::info!(
-                                "[scheduler] {label} page cap reached pages={automatic_pages_written} route={}; the rest waits for the next automatic round",
-                                synthesis_pin.map_or("none", |pin| pin.as_str()),
-                            );
+                            // this round; the rest waits for the next day.
                             AutomaticPhaseOutcome::default()
                         } else {
                             let call_budget = automatic_phase_call_budget(phase);
@@ -2327,8 +2370,7 @@ pub fn spawn_scheduler(
                             )
                             .await
                         };
-                        automatic_pages_written =
-                            automatic_pages_written.saturating_add(outcome.pages_created);
+                        note_paid_pages(&db, synthesis_pin, outcome.pages_created).await;
                         let (disposition, cursor) = {
                             let batch = steep_batch
                                 .as_mut()

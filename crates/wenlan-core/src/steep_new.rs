@@ -2081,7 +2081,10 @@ mod tests {
 
 #[path = "steep_new_automatic.rs"]
 mod automatic;
-pub use automatic::{write_one_new_page, NewPageOutcome, NewPageTurn};
+pub use automatic::{
+    local_day, note_paid_new_pages, paid_new_pages_on, write_one_new_page, NewPageOutcome,
+    NewPageTurn, PAID_NEW_PAGES_PER_DAY,
+};
 
 #[cfg(test)]
 #[path = "steep_new_test.rs"]

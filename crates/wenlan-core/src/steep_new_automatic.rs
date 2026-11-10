@@ -55,6 +55,54 @@ TOPIC: <a short page title for the group, in the items' language; reuse an exist
 ITEMS: <the ids of the group's items, separated by commas>\n\
 If no items belong together, answer with the one item that has the most to say.";
 
+/// New pages a paid page writer (the Anthropic or external API route) may
+/// write per local calendar day, across every automatic round and import
+/// window. 8 matches the existing first-import batch; it is our own choice,
+/// not a benchmark. The on-device writer is free and not capped.
+pub const PAID_NEW_PAGES_PER_DAY: usize = 8;
+
+/// app metadata holding `{"day": "YYYY-MM-DD", "pages": n}` for the paid
+/// cap, so a restart does not reset the day's count.
+const PAID_NEW_PAGES_KEY: &str = "steep_new_automatic_paid_pages_v1";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PaidPagesDay {
+    day: String,
+    pages: usize,
+}
+
+/// Today as the local calendar day, the key of the paid cap.
+pub fn local_day() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
+
+/// New pages a paid writer wrote on `day`; 0 on any other day.
+pub async fn paid_new_pages_on(db: &MemoryDB, day: &str) -> Result<usize, WenlanError> {
+    Ok(db
+        .get_app_metadata(PAID_NEW_PAGES_KEY)
+        .await?
+        .and_then(|raw| serde_json::from_str::<PaidPagesDay>(&raw).ok())
+        .filter(|stored| stored.day == day)
+        .map_or(0, |stored| stored.pages))
+}
+
+/// Count `pages` more paid pages on `day` and return the day's total. A new
+/// day starts again from zero.
+pub async fn note_paid_new_pages(
+    db: &MemoryDB,
+    day: &str,
+    pages: usize,
+) -> Result<usize, WenlanError> {
+    let total = paid_new_pages_on(db, day).await?.saturating_add(pages);
+    let raw = serde_json::to_string(&PaidPagesDay {
+        day: day.to_string(),
+        pages: total,
+    })
+    .map_err(WenlanError::from)?;
+    db.set_app_metadata(PAID_NEW_PAGES_KEY, &raw).await?;
+    Ok(total)
+}
+
 /// What one automatic new-page turn did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewPageOutcome {

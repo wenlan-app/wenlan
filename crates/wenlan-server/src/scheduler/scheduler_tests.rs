@@ -4923,19 +4923,22 @@ impl wenlan_core::llm_provider::LlmProvider for BudgetProbeProvider {
 }
 
 #[test]
-fn paid_page_writer_stops_at_eight_pages_and_on_device_is_not_capped() {
+fn paid_page_writer_stops_at_eight_pages_a_day_and_on_device_is_not_capped() {
     use wenlan_core::refinery::SynthesisSource;
     for paid in [SynthesisSource::Anthropic, SynthesisSource::External] {
         assert!(page_writer_is_paid(Some(paid)));
-        assert!(!paid_page_cap_reached(Some(paid), 7));
-        assert!(paid_page_cap_reached(Some(paid), 8));
-        assert!(paid_page_cap_reached(Some(paid), 9));
+        assert!(!paid_daily_cap_applies(Some(paid), 7));
+        assert!(paid_daily_cap_applies(Some(paid), 8));
+        assert!(paid_daily_cap_applies(Some(paid), 9));
     }
     assert!(!page_writer_is_paid(Some(SynthesisSource::OnDevice)));
-    assert!(!paid_page_cap_reached(Some(SynthesisSource::OnDevice), 8));
-    assert!(!paid_page_cap_reached(Some(SynthesisSource::OnDevice), 500));
-    assert!(!paid_page_cap_reached(None, 500));
-    assert_eq!(PAID_PAGE_WRITER_CAP, 8);
+    assert!(!paid_daily_cap_applies(Some(SynthesisSource::OnDevice), 8));
+    assert!(!paid_daily_cap_applies(
+        Some(SynthesisSource::OnDevice),
+        500
+    ));
+    assert!(!paid_daily_cap_applies(None, 500));
+    assert_eq!(wenlan_core::steep_new::PAID_NEW_PAGES_PER_DAY, 8);
 }
 
 #[test]

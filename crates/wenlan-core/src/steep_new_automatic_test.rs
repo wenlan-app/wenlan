@@ -209,3 +209,23 @@ fn the_group_reply_is_read_by_short_or_full_id() {
     assert!(super::parse_group("ITEMS: pg_a", &offered).is_none());
     assert!(super::parse_group("TOPIC: Bread\nITEMS: nothing", &offered).is_none());
 }
+
+#[tokio::test]
+async fn the_paid_page_count_persists_for_the_day_and_starts_again_the_next_day() {
+    use super::{note_paid_new_pages, paid_new_pages_on, PAID_NEW_PAGES_PER_DAY};
+    let (db, _dir) = test_db().await;
+    assert_eq!(paid_new_pages_on(&db, "2026-11-10").await.unwrap(), 0);
+    assert_eq!(note_paid_new_pages(&db, "2026-11-10", 5).await.unwrap(), 5);
+    // Nothing is held in memory: a restarted daemon reads the same count
+    // back from the database.
+    assert_eq!(note_paid_new_pages(&db, "2026-11-10", 3).await.unwrap(), 8);
+    assert_eq!(
+        paid_new_pages_on(&db, "2026-11-10").await.unwrap(),
+        PAID_NEW_PAGES_PER_DAY
+    );
+    // The next local day starts from zero.
+    assert_eq!(paid_new_pages_on(&db, "2026-11-11").await.unwrap(), 0);
+    assert_eq!(note_paid_new_pages(&db, "2026-11-11", 1).await.unwrap(), 1);
+    assert_eq!(paid_new_pages_on(&db, "2026-11-10").await.unwrap(), 0);
+    assert_eq!(PAID_NEW_PAGES_PER_DAY, 8);
+}

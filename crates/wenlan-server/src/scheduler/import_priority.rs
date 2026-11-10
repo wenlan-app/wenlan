@@ -81,8 +81,6 @@ pub(super) struct ImportPrioritySnapshot {
     document_prep_retry_at: Option<i64>,
     prefer_document_prep: bool,
     inference_round_idle: bool,
-    /// Pages Emergence wrote in this window (the paid-route cap reads it).
-    pub(super) pages_written: usize,
     /// Detect/Emergence passes started again after a pass that wrote no page.
     pub(super) synthesis_retries: u8,
 }
@@ -212,7 +210,6 @@ impl ImportPriority {
             document_prep_retry_at: self.document_prep_retries.iter().copied().min(),
             prefer_document_prep: self.prefer_document_prep,
             inference_round_idle: self.inference_round_idle,
-            pages_written: self.pages_written,
             synthesis_retries: self.synthesis_retries,
         })
     }
@@ -359,7 +356,7 @@ impl ImportPriority {
         true
     }
 
-    /// End the window's page writing early (the paid-route page cap).
+    /// End the window's page writing early (the paid writer's daily cap).
     pub(super) fn finish_synthesis(&mut self, generation: u64) -> bool {
         if self.generation != generation {
             return false;
@@ -973,7 +970,7 @@ mod tests {
             ImportSynthesisPhase::Emergence,
             wrote_one_page(),
         );
-        assert_eq!(priority.snapshot().unwrap().pages_written, 2);
+        assert_eq!(priority.pages_written, 2);
         assert!(priority.should_finish(now), "pages were written: done");
     }
 
