@@ -621,8 +621,8 @@ impl MemoryDB {
                 if !standing {
                     continue;
                 }
-                // In id order, as the night's replay lists them, whatever
-                // order the model named them in.
+                // In id order, like the night's line: the model may name
+                // them in any order.
                 let mut old = old;
                 old.sort();
                 let mut replaced = Vec::new();
