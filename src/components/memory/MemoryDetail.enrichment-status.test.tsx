@@ -145,6 +145,30 @@ describe("MemoryDetail Info and history", () => {
     expect(screen.queryByText(/enrichment/i)).toBeNull();
   });
 
+  it("UX-ADD-4 shows an imported chat turn as a chat transcript over its stored type, with no type to pick and nothing to confirm", async () => {
+    // The flag keeps the row's stored type; the detail must not show it.
+    vi.mocked(tauri.getMemoryDetail).mockResolvedValue({
+      ...memory,
+      source_id: "import_claude_c1",
+      content: "User: hi\nAssistant: hello",
+      memory_type: "preference",
+      conversation_text: true,
+    });
+    render(
+      <MemoryDetail
+        sourceId="import_claude_c1"
+        onBack={vi.fn()}
+        onNavigateEntity={vi.fn()}
+        onNavigateMemory={vi.fn()}
+      />,
+      { wrapper },
+    );
+    const info = await openMemoryInfo();
+    expect(within(info).getByTestId("memory-detail-conversation-text")).toHaveTextContent("Conversation");
+    expect(within(info).queryByText("Preference")).toBeNull();
+    expect(within(info).queryByRole("button", { name: /confirm content/i })).toBeNull();
+  });
+
   it("keeps a navigable shell while memory detail is loading", () => {
     vi.mocked(tauri.getMemoryDetail).mockReturnValue(
       new Promise<tauri.MemoryItem | null>(() => {}),

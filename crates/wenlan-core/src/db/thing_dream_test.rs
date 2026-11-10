@@ -807,7 +807,7 @@ async fn ux_chat_5_a_nights_point_lands_in_its_space_and_keeps_its_line() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(anchor.session_id, c0);
+    assert_eq!(anchor.session_id.as_deref(), Some(c0.as_ref()));
     assert_eq!(anchor.line.as_deref(), Some("ok keep it to one page"));
 }
 

@@ -1042,6 +1042,22 @@ async fn handle_store_memory_inner(
             tracing::warn!("[session] failed to stamp {source_id} with {session}: {error}");
         }
     }
+    // The conversation lines the AI tool sent, so opening the sentence can
+    // show them when the conversation itself can't be read (UX-WHO-6).
+    // Redacted like the memory itself. Best effort, like the stamp above.
+    if let Some(said) = req.said.as_deref() {
+        let saved_at = chrono::Utc::now().timestamp();
+        let kept: Vec<_> = wenlan_core::said_lines::kept_said(said, saved_at)
+            .into_iter()
+            .map(|mut line| {
+                line.text = wenlan_core::privacy::redact_pii(&line.text);
+                line
+            })
+            .collect();
+        if let Err(error) = origin_db.keep_memory_said(&source_id, &kept).await {
+            tracing::warn!("[said] failed to keep conversation lines for {source_id}: {error}");
+        }
+    }
     let persisted_space_source = if persisted_space.is_some() {
         resolved_write_space.source
     } else {
@@ -1551,7 +1567,8 @@ pub async fn handle_confirm_memory(
     let updated = db
         .set_stability(&source_id, stability)
         .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?;
+        // A refused chat turn is a 409 Conflict, not a daemon fault.
+        .map_err(ServerError::from)?;
     if !updated {
         return Err(ServerError::NotFound(format!("memory {}", source_id)));
     }
@@ -1608,6 +1625,11 @@ pub async fn handle_delete_memory(
     let is_person = caller_is_person(&headers);
     crate::note_routes::refuse_change_to_note(is_person, &source_id)?;
     if query.permanent && !is_person {
+        tracing::warn!(
+            source_id = %source_id,
+            agent = %extract_agent_name(&headers, None),
+            "refused permanent delete of a memory: only the person may"
+        );
         return Err(ServerError::Structured {
             status: axum::http::StatusCode::FORBIDDEN,
             body: serde_json::json!({
@@ -1662,6 +1684,7 @@ pub async fn handle_delete_memory(
     db.delete_by_source_id("memory", &source_id)
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
+    tracing::info!(source_id = %source_id, agent = %agent, "deleted a memory permanently");
     let ids = vec![source_id.clone()];
     if let Err(e) = db
         .log_agent_activity(&agent, "forget", &ids, None, &detail)
@@ -2474,7 +2497,7 @@ pub async fn handle_set_stability(
     let updated = db
         .set_stability(&id, &req.stability)
         .await
-        .map_err(|e| ServerError::Internal(e.to_string()))?;
+        .map_err(ServerError::from)?;
     if !updated {
         return Err(ServerError::NotFound(format!("memory {}", id)));
     }
@@ -2728,6 +2751,7 @@ mod store_scheduler_handoff_tests {
                 entity_id: None,
                 structured_fields: None,
                 retrieval_cue: None,
+                said: None,
             };
             let task_state = state.clone();
             let store_task = tokio::spawn(async move {
@@ -2801,6 +2825,7 @@ mod store_scheduler_handoff_tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
 
         // This case exercises an opted-in user whose provider is not ready.
@@ -2914,6 +2939,7 @@ mod store_scheduler_handoff_tests {
                     entity_id: None,
                     structured_fields: None,
                     retrieval_cue: None,
+                    said: None,
                 }),
             )
             .await
@@ -2975,6 +3001,7 @@ mod store_scheduler_handoff_tests {
                 entity_id: None,
                 structured_fields: None,
                 retrieval_cue: None,
+                said: None,
             }),
         )
         .await
@@ -3008,6 +3035,7 @@ mod store_scheduler_handoff_tests {
                 entity_id: None,
                 structured_fields: None,
                 retrieval_cue: None,
+                said: None,
             }),
         )
         .await
@@ -3061,6 +3089,7 @@ mod store_scheduler_handoff_tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
 
         wenlan_core::config::save_config_with_background_ai(
@@ -3166,6 +3195,7 @@ mod store_scheduler_handoff_tests {
                     entity_id: entity_id.map(str::to_string),
                     structured_fields: None,
                     retrieval_cue: None,
+                    said: None,
                 }),
             )
         };
@@ -3313,6 +3343,7 @@ mod store_scheduler_handoff_tests {
                     entity_id: entity_id.map(str::to_string),
                     structured_fields: None,
                     retrieval_cue: None,
+                    said: None,
                 }),
             )
         };
@@ -3400,6 +3431,7 @@ mod store_scheduler_handoff_tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
 
         let profile = handle_store_memory(
@@ -3573,6 +3605,7 @@ mod novelty_store_tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         }
     }
 
@@ -3761,6 +3794,7 @@ mod content_length_gate_tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         }
     }
 

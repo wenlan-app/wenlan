@@ -77,10 +77,10 @@ describe("Sidebar workspace", () => {
     expect(onNavigatePages).toHaveBeenCalledTimes(1);
   });
 
-  it("UX-FIND-4: puts Graph and Topics on the left, with no More, Memories or Sources", () => {
+  it("UX-FIND-4: puts Graph on the left, with no More, Topics, Memories or Sources", () => {
     renderSidebar({ onNavigateEntities: vi.fn() });
-    for (const name of ["Wiki", "Spaces", "Graph", "Topics"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
-    for (const name of ["More", "Memories", "Sources", "Home"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    for (const name of ["Wiki", "Spaces", "Graph"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    for (const name of ["More", "Topics", "Memories", "Sources", "Home"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
   });
 
   it("keeps page and memory inventory out of global navigation", () => {

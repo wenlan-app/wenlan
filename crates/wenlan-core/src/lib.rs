@@ -51,6 +51,7 @@ pub mod importer;
 pub mod ingest;
 pub mod kg;
 pub mod kg_quality;
+pub mod linked_vault;
 pub mod lint;
 pub mod llm_provider;
 pub mod maintenance;
@@ -102,6 +103,8 @@ pub mod store;
 pub mod synthesis;
 pub mod tags;
 pub(crate) mod temporal_query;
+#[cfg(test)]
+pub(crate) mod test_log;
 pub mod theme;
 pub mod topic_match;
 pub mod transcript_lines;

@@ -37,6 +37,12 @@ async function geometry(group: Locator) {
   });
 }
 async function assertGeometry(group: Locator) {
+  // After a viewport resize the header lays itself out again on the next
+  // frames; read it once that has happened, not mid-relayout.
+  await expect.poll(async () => {
+    const g = await geometry(group);
+    return !g.toolbarOverlap && g.visibleAtAdd && g.visibleAtToggle && !g.documentOverflow;
+  }).toBe(true);
   const g = await geometry(group);
   expect(g.gap).toBeGreaterThanOrEqual(0);
   expect(g.gap).toBeLessThanOrEqual(5);

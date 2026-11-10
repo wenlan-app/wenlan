@@ -132,6 +132,53 @@ async fn importer_unknown_confirmation_and_provenance_agent_are_valid() {
 }
 
 #[tokio::test]
+async fn ux_add_4_imported_chat_turns_are_counted_and_scoped() {
+    let (db, _temp) = test_db().await;
+    seed_spaces(&db).await;
+    for (id, space, unit) in [
+        ("turn-a", "alpha", Some("chat_turn")),
+        ("turn-b", "beta", Some("chat_turn")),
+        ("note-a", "alpha", None),
+    ] {
+        db.test_primary_session()
+            .await
+            .execute(
+                "INSERT INTO memories
+                     (id,content,source,source_id,title,chunk_index,last_modified,chunk_type,
+                      confirmed,pinned,pending_revision,stability,supersede_mode,space,
+                      semantic_unit,memory_type)
+                 VALUES (?1,'User: hi','memory',?1,'t',0,1,'text',0,0,0,'confirmed','hide',?2,?3,
+                         'decision')",
+                libsql::params![id, space, unit],
+            )
+            .await
+            .unwrap();
+    }
+    let all = run_lint(&db, None).await;
+    assert_eq!(
+        metric(check(&all, MEMORY), LintMetricCode::ImportedChatTurns),
+        2
+    );
+    let alpha = run_lint(&db, Some("alpha")).await;
+    assert_eq!(
+        metric(check(&alpha, MEMORY), LintMetricCode::ImportedChatTurns),
+        1
+    );
+    // A turn's stored type and stability are not the person's: of the three
+    // rows typed decision and marked confirmed, only the note is counted.
+    assert_eq!(
+        metric(check(&all, MEMORY), LintMetricCode::DecisionMemories),
+        1
+    );
+    assert_eq!(
+        metric(check(&all, MEMORY), LintMetricCode::StableMemories),
+        1
+    );
+    // A flagged turn is reported, not a finding against the memory state.
+    assert_eq!(check(&all, MEMORY).outcome(), LintOutcome::Pass);
+}
+
+#[tokio::test]
 async fn cross_owner_and_out_of_window_session_rows_are_findings() {
     let (db, _temp) = test_db().await;
     db.test_primary_session()

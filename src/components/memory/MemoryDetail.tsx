@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
-import { useState, useRef, useEffect, useId, useCallback } from "react";
+import { useState, useRef, useEffect, useId, useCallback, useContext } from "react";
+import { createPortal } from "react-dom";
+import { WorkspaceDocumentToolsHostContext } from "./navigation/WorkspacePaneHost";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -137,6 +139,7 @@ export default function MemoryDetail({
 }: MemoryDetailProps) {
   const { t, i18n } = useTranslation();
   const exampleWiki = useExampleWikiActive();
+  const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
   const queryClient = useQueryClient();
   const [contentBusy, setContentBusy] = useState(false);
   const [revisionPending, setRevisionPending] = useState(false);
@@ -429,6 +432,10 @@ export default function MemoryDetail({
   const facetType = isMemoryType(memory.memory_type) ? memory.memory_type : "fact";
   const facetLabel = t(`importView.typeLabels.${facetType}`);
   const isConfirmed = memory.confirmed;
+  // An imported chat turn is the conversation's original text. It is not the
+  // person's fact or decision, so it has no type to pick and nothing to
+  // confirm as theirs (UX-ADD-4).
+  const isConversationText = memory.conversation_text === true;
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const formatTimeAgo = (ts: number) => formatRelativeEntityTime(ts, locale) ?? "";
   const formatAbsoluteTime = (ts: number) => new Date(ts * 1000).toLocaleString(locale);
@@ -453,23 +460,10 @@ export default function MemoryDetail({
   const navigateEntity = (id: string) => onNavigateEntity(id);
   const navigatePage = onNavigatePage ? (id: string) => onNavigatePage(id) : undefined;
 
-  return (
-    <main className={`memory-detail-dossier memory-detail-content-first document-context-host${infoOpen ? " document-context-open" : ""}`} aria-label={t("memoryDetail.dossierLabel")}>
-      <DetailReadingFrame variant="compact" className="memory-document-frame">
-      <header className="memory-detail-header">
-        <WorkspaceBackButton
-          type="button"
-          onClick={onBack}
-          className="memory-detail-back"
-          aria-label={t("memoryDetail.backToMemories")}
-          title={t("memoryDetail.backToMemories")}
-        >
-          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
-        </WorkspaceBackButton>
-        {fetchedMemory !== null && <div className="memory-detail-actions">
-          <InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} />
-
-          {!exampleWiki && <div
+  // Inside the workspace the reader's tools live in the shared document
+  // toolbar, in the same order as a page's: its menu, then Info.
+  const actionsMenu = exampleWiki ? null : (
+    <div
             className="page-detail-actions-anchor"
             ref={actionsRef}
           >
@@ -533,7 +527,26 @@ export default function MemoryDetail({
                 </button>
               </div>
             )}
-          </div>}
+          </div>
+  );
+
+  return (
+    <main className={`memory-detail-dossier memory-detail-content-first document-context-host${infoOpen ? " document-context-open" : ""}`} aria-label={t("memoryDetail.dossierLabel")}>
+      {fetchedMemory !== null && documentToolsHost && createPortal(<>{actionsMenu}<InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} /></>, documentToolsHost)}
+      <DetailReadingFrame variant="compact" className={`memory-document-frame${documentToolsHost ? " memory-document-frame--tools-hosted" : ""}`}>
+      <header className="memory-detail-header">
+        <WorkspaceBackButton
+          type="button"
+          onClick={onBack}
+          className="memory-detail-back"
+          aria-label={t("memoryDetail.backToMemories")}
+          title={t("memoryDetail.backToMemories")}
+        >
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
+        </WorkspaceBackButton>
+        {fetchedMemory !== null && !documentToolsHost && <div className="memory-detail-actions">
+          <InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} />
+          {actionsMenu}
         </div>}
       </header>
 
@@ -589,7 +602,7 @@ export default function MemoryDetail({
 
       <PageInfoDrawer docked inspector focusOnOpen={false} returnFocusRef={infoToggleRef} open={infoOpen && fetchedMemory !== null} onClose={() => setInfoOpen(false)} title={t("knowledgeContext.memoryPanel")} closeLabel={t("common.close")}>
         <DetailInfoContent className="memory-detail-context-content">
-          <InfoAction
+          {!isConversationText && <InfoAction
             label={t(isConfirmed ? "infoActions.contentConfirmed" : "infoActions.confirmContent")}
             description={t(contentBusy ? "infoActions.saveMemoryFirst" : isConfirmed ? "infoActions.contentConfirmedHint" : "infoActions.confirmContentHint")}
             showDescription={!isConfirmed}
@@ -598,7 +611,7 @@ export default function MemoryDetail({
             disabled={isConfirmed || contentBusy || revisionPending || deleteMutation.isPending}
             error={confirmMutation.isError && confirmMutation.variables?.id === sourceId ? t("infoActions.saveError") : undefined}
             onClick={() => { void (contentFlushRef.current?.() ?? Promise.resolve(true)).then(saved => { if (saved) confirmMutation.mutate({ id: sourceId, confirmed: true }); }); }}
-          />
+          />}
 
           <section className="memory-detail-information">
             <h3 className="memory-detail-subsection">{t("detailInfo.details")}</h3>
@@ -606,6 +619,9 @@ export default function MemoryDetail({
               <div className="memory-detail-info-row">
                 <dt className="memory-detail-info-label">{t("memoryList.type")}</dt>
                 <dd className="memory-detail-info-value">
+                  {isConversationText ? (
+                    <span data-testid="memory-detail-conversation-text">{t("memoryList.conversationText")}</span>
+                  ) : (
                   <div className="relative" ref={dropdownRef}>
                     <button
                       onClick={() => setReclassifyOpen(!reclassifyOpen)}
@@ -636,6 +652,7 @@ export default function MemoryDetail({
                       </div>
                     )}
                   </div>
+                  )}
                 </dd>
               </div>
               <div className="memory-detail-info-row">

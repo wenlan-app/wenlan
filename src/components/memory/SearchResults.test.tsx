@@ -48,6 +48,7 @@ const result = { id: "m1", content: "delta grid checklist" } as SearchResult;
 type Groups = {
   thingResults?: ThingSummary[];
   conceptResults?: Page[];
+  archivedResults?: Page[];
   conversationHits?: ConversationHit[];
   sourceResults?: SearchResult[];
   entityResults?: EntitySearchResult[];
@@ -64,6 +65,7 @@ function renderResults(data: ActivityResponse, sourceResults: SearchResult[] = [
         query={query}
         thingResults={groups.thingResults ?? []}
         conceptResults={groups.conceptResults ?? []}
+        archivedResults={groups.archivedResults}
         conversationHits={groups.conversationHits ?? []}
         sourceResults={groups.sourceResults ?? sourceResults}
         entityResults={groups.entityResults ?? []}
@@ -157,6 +159,16 @@ describe("UX-FIND-1 one search box", () => {
     const said = screen.getByRole("region", { name: "Said in conversations" });
     expect(within(said).getByRole("button")).toHaveTextContent("Decided: stay near Gion.");
     expect(within(said).getByRole("button")).toHaveTextContent("You");
+  });
+
+  it("finds archived pages, which the folder tree leaves out, right after pages", async () => {
+    renderResults(activity(), [], {
+      conceptResults: [{ id: "p1", title: "Gion notes", summary: null, content: "Gion notes body", domain: null } as unknown as Page],
+      archivedResults: [{ id: "p2", title: "Gion 2024", summary: null, content: "Old trip", domain: null, status: "archived" } as unknown as Page],
+    }, "gion");
+    const headings = (await screen.findAllByRole("region")).map((group) => group.getAttribute("aria-label"));
+    expect(headings).toEqual(["Pages", "Archived pages"]);
+    expect(within(screen.getByRole("region", { name: "Archived pages" })).getByRole("button")).toHaveTextContent("Gion 2024");
   });
 
   it("matches things by every word of their title or status line", () => {

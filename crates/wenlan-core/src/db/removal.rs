@@ -111,7 +111,15 @@ impl MemoryDB {
             Ok(ForgetOutcome::Forgotten)
         }
         .await;
-        Self::finish_removal_transaction(&conn, result, "forget_memory").await
+        let outcome = Self::finish_removal_transaction(&conn, result, "forget_memory").await;
+        match &outcome {
+            Ok(ForgetOutcome::Forgotten) => {
+                log::info!("[forget] memory {source_id} forgotten by {agent}");
+            }
+            Ok(_) => {}
+            Err(error) => log::warn!("[forget] memory {source_id} by {agent} failed: {error}"),
+        }
+        outcome
     }
 
     /// Put back memory `source_id` after [`Self::forget_memory`]: each row

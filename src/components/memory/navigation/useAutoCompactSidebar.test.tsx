@@ -15,17 +15,29 @@ function setWindowWidth(width: number) {
 afterEach(() => setWindowWidth(initialWidth));
 
 describe("useAutoCompactSidebar", () => {
-  it("folds labels only while the list, Info and a readable note do not fit", () => {
-    setWindowWidth(1280);
+  it("folds labels only while the rail, Info and a readable note do not fit", () => {
+    setWindowWidth(1100);
     const { result } = renderHook(() => useAutoCompactSidebar(labels, true));
-    act(() => result.current.demand.report("list", "list", 248));
     expect(result.current.compact).toBe(false);
     act(() => result.current.demand.report("info", "info", 320));
     expect(result.current.compact).toBe(true);
-    act(() => setWindowWidth(1440));
+    act(() => setWindowWidth(1200));
     expect(result.current.compact).toBe(false);
-    act(() => setWindowWidth(1280));
+    act(() => setWindowWidth(1100));
     act(() => result.current.demand.report("info", "info", 0));
+    expect(result.current.compact).toBe(false);
+  });
+
+  it("counts the wiki list as part of the labelled rail, not beside the note", () => {
+    setWindowWidth(1280);
+    const { result } = renderHook(() => useAutoCompactSidebar(labels, true));
+    act(() => {
+      result.current.demand.report("list", "list", 248);
+      result.current.demand.report("info", "info", 320);
+    });
+    expect(result.current.compact).toBe(false);
+    // Folding would move the list out as a column wider than the labels it saved.
+    act(() => setWindowWidth(1100));
     expect(result.current.compact).toBe(false);
   });
 
@@ -53,10 +65,9 @@ describe("useAutoCompactSidebar", () => {
   });
 
   it("keeps a manual expand until Info or the window changes", () => {
-    setWindowWidth(1280);
+    setWindowWidth(1100);
     const { result } = renderHook(() => useAutoCompactSidebar(labels, true));
     act(() => {
-      result.current.demand.report("list", "list", 248);
       result.current.demand.report("info", "info", 320);
     });
     expect(result.current.compact).toBe(true);
@@ -67,7 +78,7 @@ describe("useAutoCompactSidebar", () => {
     act(() => result.current.demand.report("info", "info", 320));
     expect(result.current.compact).toBe(true);
     act(() => result.current.keepExpanded());
-    act(() => setWindowWidth(1281));
+    act(() => setWindowWidth(1101));
     expect(result.current.compact).toBe(true);
   });
 });

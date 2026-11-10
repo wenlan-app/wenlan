@@ -197,6 +197,7 @@ fn sample_memory(source_id: &str) -> MemoryItem {
         pending_revision: false,
         merged_from: None,
         session_id: None,
+        conversation_text: false,
     }
 }
 
@@ -241,6 +242,7 @@ async fn t1_remember_roundtrip() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl failed");
@@ -395,6 +397,7 @@ async fn t2_remember_surfaces_warnings_when_present() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl failed");
@@ -460,6 +463,7 @@ async fn t3_structured_fields_schema_is_object() {
             structured_fields: Some(structured_fields),
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl failed");
@@ -595,6 +599,7 @@ async fn t5_memory_type_hint_preserved_without_forcing_domain() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl failed");
@@ -776,6 +781,7 @@ async fn t10_remember_request_does_not_contain_user_id() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl failed");
@@ -833,6 +839,7 @@ async fn t11_extraction_method_none_not_in_text() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl failed");
@@ -874,6 +881,7 @@ async fn t12_forward_compat_response_missing_extraction_method() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl failed against pre-D9 response");
@@ -935,6 +943,7 @@ async fn explicit_identity_wins_over_handshake_for_header_and_source() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl failed");
@@ -1043,6 +1052,7 @@ async fn handshake_identity_replaces_implicit_default_for_header_and_source() {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         })
         .await
         .expect("capture_impl failed");
@@ -1626,6 +1636,7 @@ async fn t_list_pending_uses_post_with_confirmed_false() {
             created_at: 1_000_000,
             content: String::new(),
             is_archived: false,
+            conversation_text: false,
         }],
     };
 

@@ -48,15 +48,18 @@ pub(super) async fn entity_partitions(
         &format!(
             "SELECT COUNT(*), SUM(CASE WHEN e.confirmed=1 THEN 1 ELSE 0 END),
                     SUM(CASE WHEN e.space IS NOT NULL AND e.space != '{unfiled}' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN e.space IS NULL OR e.space = '{unfiled}' THEN 1 ELSE 0 END)
+                    SUM(CASE WHEN e.space IS NULL OR e.space = '{unfiled}' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN e.entity_type NOT IN
+                                  (SELECT canonical FROM entity_type_vocabulary)
+                             THEN 1 ELSE 0 END)
                FROM (SELECT epm.entity_id AS id, p.entity_confirmed AS confirmed,
-                            p.space AS space
+                            p.space AS space, p.entity_type AS entity_type
                        FROM entity_page_map epm JOIN pages p ON p.id = epm.page_id
                       WHERE p.kind='entity' AND p.status='active') e{clause}",
             unfiled = crate::db::UNFILED_SPACE_ID
         ),
         params,
-        4,
+        5,
     )
     .await?;
     Ok(vec![
@@ -64,6 +67,7 @@ pub(super) async fn entity_partitions(
         metric(LintMetricCode::KgEntitiesConfirmed, values[1]),
         metric(LintMetricCode::KgEntitiesScoped, values[2]),
         metric(LintMetricCode::KgEntitiesUncategorized, values[3]),
+        metric(LintMetricCode::KgEntitiesOffVocabularyType, values[4]),
     ])
 }
 

@@ -987,7 +987,8 @@ async fn ux_who_6_a_memory_opens_to_the_lines_it_was_said_in() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let said = typed::<wenlan_types::conversations::MemorySaidResponse>(body);
-    assert_eq!(said.session_id, session_id);
+    assert_eq!(said.session_id.as_deref(), Some(session_id.as_str()));
+    assert!(!said.kept, "the conversation's own lines, not a copy");
     assert_eq!(said.title.as_deref(), Some("Release 0.21"));
     let indexes: Vec<usize> = said.lines.iter().map(|l| l.index).collect();
     assert_eq!(indexes, vec![2], "{said:?}");
@@ -1041,6 +1042,140 @@ async fn ux_who_6_a_memory_opens_to_the_lines_it_was_said_in() {
         &router,
         Method::GET,
         &format!("/api/memories/{decided}/said"),
+        None,
+        Caller::Agent("codex"),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "the lines are for the person");
+}
+
+/// A chat in ChatGPT or Claude on the web has no transcript Wenlan can read,
+/// so the AI tool sends the lines with the memory it saves, and opening the
+/// sentence shows those (UX-WHO-6).
+#[tokio::test]
+async fn ux_who_6_a_web_chat_memory_shows_the_lines_its_ai_tool_kept() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("other", None, false).await.unwrap();
+
+    let store = |body: Value, session: Option<&'static str>| {
+        let router = router.clone();
+        async move {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri("/api/memory/store")
+                .header("content-type", "application/json")
+                .header("x-agent-name", "chatgpt");
+            if let Some(session) = session {
+                request = request.header("x-wenlan-session", session);
+            }
+            let response = router
+                .oneshot(request.body(Body::from(body.to_string())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            serde_json::from_slice::<Value>(&bytes).unwrap()["source_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    let long = "長".repeat(wenlan_types::conversations::MAX_KEPT_SAID_CHARS + 50);
+    let before = chrono::Utc::now().timestamp();
+    let web = store(
+        json!({
+            "content": "決定一次發 0.21，等 Zotero 的 PR 進來。",
+            "memory_type": "decision",
+            "said": [
+                { "speaker": "you", "text": "too early to keep" },
+                { "speaker": "ai", "text": "Pieces are safer, one release is simpler.", "at": 1 },
+                { "speaker": "you", "text": "   " },
+                { "speaker": "you", "text": "  那就一次發 0.21，等 Zotero 那幾個 PR 進來。  " },
+                { "speaker": "ai", "text": long },
+            ],
+        }),
+        None,
+    )
+    .await;
+
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/memories/{web}/said"),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let said = typed::<wenlan_types::conversations::MemorySaidResponse>(body);
+    assert!(said.kept, "{said:?}");
+    assert_eq!(said.session_id, None);
+    assert_eq!(said.tool, "chatgpt");
+    let texts: Vec<&str> = said.lines.iter().map(|l| l.line.text.as_str()).collect();
+    // Blank lines dropped, each trimmed, only the three nearest the save.
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert_eq!(texts[0], "Pieces are safer, one release is simpler.");
+    assert_eq!(texts[1], "那就一次發 0.21，等 Zotero 那幾個 PR 進來。");
+    assert_eq!(
+        said.lines[1].line.speaker,
+        wenlan_types::conversations::ConversationSpeaker::You
+    );
+    // Stamped with the save time, never the caller's own.
+    for line in &said.lines {
+        assert!(line.line.at.is_some_and(|at| at >= before), "{line:?}");
+        assert!(line.before.is_none() && line.after.is_none());
+    }
+
+    // A conversation Wenlan can't read (named, no transcript) also falls
+    // back to the kept lines.
+    let unreadable = store(
+        json!({
+            "content": "The office plant needs water on Fridays.",
+            "said": [{ "speaker": "you", "text": "water the plant on Fridays" }],
+        }),
+        Some("chatgpt:web-chat-1"),
+    )
+    .await;
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("/api/memories/{unreadable}/said"),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let said = typed::<wenlan_types::conversations::MemorySaidResponse>(body);
+    assert!(said.kept);
+    assert_eq!(said.lines.len(), 1);
+    assert_eq!(said.lines[0].line.text, "water the plant on Fridays");
+
+    // Kept lines are the person's like any conversation: not for an AI
+    // tool, not outside the memory's Space; nothing kept is still a 404.
+    let nothing = store(json!({ "content": "Saved with no lines at all." }), None).await;
+    for (uri, caller, expected) in [
+        (
+            format!("/api/memories/{web}/said"),
+            Caller::InSpace("other"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            format!("/api/memories/{nothing}/said"),
+            Caller::Person,
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (status, body) = call(&router, Method::GET, &uri, None, caller).await;
+        assert_eq!(status, expected, "{uri}: {body}");
+    }
+    let (status, _) = call(
+        &router,
+        Method::GET,
+        &format!("/api/memories/{web}/said"),
         None,
         Caller::Agent("codex"),
     )

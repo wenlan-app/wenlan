@@ -43,3 +43,36 @@ export function historyRows(
       delta_summary: entry.delta_summary ?? null,
     }));
 }
+
+/**
+ * The changelog entry a history row summarizes. A run of saves listed as one
+ * change (UX-HIST-3) adds up the run's entries, so its summary covers every
+ * save in it, not only the last one.
+ */
+export function entryForItem(
+  item: PageHistoryItem,
+  entryByVersion: ReadonlyMap<number, PageChangelogEntry>,
+): PageChangelogEntry | undefined {
+  if (item.kind === "source_update" || item.version == null) return undefined;
+  const last = entryByVersion.get(item.version);
+  const first = item.first_version;
+  if (!last || first == null || first >= item.version) return last;
+  const run: PageChangelogEntry[] = [];
+  for (let version = first; version <= item.version; version += 1) {
+    const entry = entryByVersion.get(version);
+    if (entry) run.push(entry);
+  }
+  const sum = (pick: (entry: PageChangelogEntry) => number | null | undefined) =>
+    run.some((entry) => pick(entry) != null)
+      ? run.reduce((total, entry) => total + (pick(entry) ?? 0), 0)
+      : null;
+  const incoming = [...new Set(run.flatMap((entry) => entry.incoming_source_ids ?? []))];
+  return {
+    ...last,
+    delta_summary: null,
+    char_delta: sum((entry) => entry.char_delta),
+    sources_added: sum((entry) => entry.sources_added),
+    sources_removed: sum((entry) => entry.sources_removed),
+    incoming_source_ids: incoming.length > 0 ? incoming : null,
+  };
+}

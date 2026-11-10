@@ -848,6 +848,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(false),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            migration_backups_this_chain: std::sync::atomic::AtomicUsize::new(0),
             steep_leases: crate::steep::SteepLeases::default(),
         })
     }

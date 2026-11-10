@@ -77,65 +77,28 @@
   padding: 0 10px 8px 8px;
 }
 
+/* The directory's title ("Folders"), or the way back from Archived pages. */
 .wiki-workspace-mode {
-  position: relative;
-  display: grid;
+  display: flex;
   align-items: center;
+  gap: 6px;
   flex: 0 1 auto;
   min-width: 0;
-  min-height: 40px;
+  min-height: 32px;
   box-sizing: border-box;
-  padding: 0;
-}
-
-.wiki-workspace-mode > span {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-}
-
-.wiki-workspace-mode > .wiki-workspace-mode-sizer {
-  position: static;
-  grid-area: 1 / 1;
-  width: auto;
-  height: 0;
-  padding: 0 30px 0 8px;
-  overflow: hidden;
-  clip: auto;
-  visibility: hidden;
-  font: 14px var(--mem-font-body);
-  white-space: nowrap;
-}
-
-.wiki-workspace-mode select {
-  display: block;
-  grid-area: 1 / 1;
-  /* The sizer sets the width; a select would otherwise size to its widest option. */
-  width: 0;
-  min-width: 100%;
-  text-overflow: ellipsis;
-  height: 32px;
-  appearance: none;
-  padding: 0 30px 0 8px;
+  margin: 0;
+  padding: 0 8px;
   border: 0;
   border-radius: var(--mem-r-7);
   background: transparent;
   color: var(--mem-text-secondary);
-  font: 14px var(--mem-font-body);
-  cursor: pointer;
+  font: 500 14px var(--mem-font-body);
+  white-space: nowrap;
 }
 
-.wiki-workspace-mode > svg {
-  position: absolute;
-  right: 8px;
-  top: 20px;
-  transform: translateY(-50%);
-  pointer-events: none;
-  color: var(--mem-text-secondary);
-}
+button.wiki-workspace-mode { cursor: pointer; }
+button.wiki-workspace-mode:hover { background: var(--mem-hover); color: var(--mem-text); }
+button.wiki-workspace-mode:focus-visible { outline: 2px solid var(--mem-text-secondary); outline-offset: -2px; }
 
 .wiki-workspace-note-count {
   flex: 0 0 auto;
@@ -159,8 +122,11 @@
   cursor: pointer;
 }
 
-/* New page and New folder sit together at the end of the row. */
-.wiki-workspace-new-page + .wiki-workspace-new-folder { margin-left: 0; }
+/* The one New button sits at the end of the row; its menu drops below it. */
+.wiki-workspace-new-menu { position: relative; display: flex; margin-left: auto; }
+.wiki-workspace-new-menu > .wiki-workspace-new { margin-left: 0; }
+.wiki-workspace-new-popover { position: absolute; top: calc(100% + 4px); right: 0; left: auto; }
+.wiki-workspace-new-popover > [role="menuitem"] { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 
 .wiki-workspace-new-folder:hover:not(:disabled) { background: var(--mem-hover); color: var(--mem-text); }
 .wiki-workspace-new-folder:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 1px; }
@@ -169,20 +135,7 @@
 @media (pointer: coarse) {
   .wiki-workspace-mode-row { min-height: 52px; }
   .wiki-workspace-mode { min-height: 44px; }
-  .wiki-workspace-mode select { height: 44px; }
-  .wiki-workspace-mode > svg { top: 22px; }
   .wiki-workspace-new-folder { flex-basis: 44px; width: 44px; height: 44px; }
-}
-
-.wiki-workspace-mode select:hover,
-.wiki-workspace-mode select:focus-visible {
-  background: var(--mem-hover);
-  color: var(--mem-text);
-}
-
-.wiki-workspace-mode select:focus-visible {
-  outline: 2px solid var(--mem-text-secondary);
-  outline-offset: -2px;
 }
 
 /* Extend the directory boundary through the shared titlebar. The container
@@ -302,7 +255,6 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
   }
 
   .wiki-workspace-mode-row { padding: 0 0 8px; }
-  .wiki-workspace-mode > svg { right: 8px; }
 
   .wiki-workspace-body.is-folder-open .wiki-workspace-directory {
     display: flex;
@@ -330,9 +282,6 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
 
 /* Page inspectors stay within the reading workspace, below global navigation. */
 .wiki-workspace-reading { position:relative;isolation:isolate;display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0;overflow:hidden;background:var(--workspace-document-background, var(--mem-bg)); }
-
-/* Align the panel selector with the Search target in the compact rail. */
-.memory-shell[data-sidebar-layout="icons"] .wiki-workspace-mode select { height: 44px; }
 
 /* The shared inventory opens notes in the focused document group. */
 .wiki-workspace-reading { flex-direction: row; }
@@ -379,3 +328,7 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
 .note-owner-notice > button:hover { background:var(--mem-hover); }
 .note-owner-notice > button:focus-visible { outline:2px solid var(--mem-accent-page); }
 .note-owner-notice-dismiss { display:flex; align-items:center; justify-content:center; width:32px; }
+
+/* The shell renders the one directory into this slot while it is a column of
+   the workspace; the slot itself takes no box, so the column keeps its rules. */
+.wiki-workspace-directory-slot { display: contents; }

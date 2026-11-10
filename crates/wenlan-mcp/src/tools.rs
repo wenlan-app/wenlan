@@ -512,6 +512,40 @@ pub struct CaptureParams {
     )]
     #[serde(default)]
     pub session: Option<String>,
+    #[schemars(
+        description = "The lines of this conversation the memory comes from, copied word for word, not summarized: usually the user's own message, plus your reply if the point is in it. At most 3, nearest last. Wenlan shows them when someone opens the sentence later; pass them always, since Wenlan cannot read a web chat itself."
+    )]
+    #[serde(default)]
+    pub said: Option<Vec<SaidLineParam>>,
+}
+
+/// One line of the conversation a captured memory comes from.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SaidLineParam {
+    #[schemars(description = "Who said it: 'you' for the user, 'ai' for you.")]
+    pub speaker: SaidSpeakerParam,
+    #[schemars(description = "What was said, word for word.")]
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SaidSpeakerParam {
+    You,
+    Ai,
+}
+
+impl From<SaidLineParam> for wenlan_types::conversations::ConversationLine {
+    fn from(line: SaidLineParam) -> Self {
+        Self {
+            speaker: match line.speaker {
+                SaidSpeakerParam::You => wenlan_types::conversations::ConversationSpeaker::You,
+                SaidSpeakerParam::Ai => wenlan_types::conversations::ConversationSpeaker::Ai,
+            },
+            text: line.text,
+            at: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3047,6 +3081,9 @@ impl WenlanMcpServer {
             entity_id: params.entity_id,
             structured_fields: params.structured_fields.map(serde_json::Value::Object),
             retrieval_cue: params.retrieval_cue,
+            said: params
+                .said
+                .map(|lines| lines.into_iter().map(Into::into).collect()),
         };
 
         let resp: StoreMemoryResponse =
@@ -5010,8 +5047,11 @@ impl WenlanMcpServer {
 
         // DELETE /api/pages/{id} archives the page; it never deletes one for
         // an AI tool. The daemon refuses a page holding the person's work.
+        // Through the session client, so the archive's history row names the
+        // AI session that asked for it.
         let path = format!("/api/pages/{}", page_id);
-        let resp: PageRemovalResponse = try_call!(self.client.delete(&path), "delete_page");
+        let client = self.session_client(None).await;
+        let resp: PageRemovalResponse = try_call!(client.delete(&path), "delete_page");
         let text = match (resp.status, resp.restorable) {
             (PageRemovalStatus::Archived, true) => format!(
                 "Page {page_id} archived. Its history is kept, and the person can restore it \
@@ -8913,6 +8953,7 @@ mod tests {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         };
 
         let refused = server
@@ -9022,8 +9063,17 @@ mod tests {
 
         let _ = server.forget_impl("mem_1").await.unwrap();
         let _ = server.delete_page_impl("page_1").await.unwrap();
+        // delete_page registers the AI session, when the environment names
+        // one, so the archive's history row names it. That is not a Space
+        // pre-check, and whether it happens depends on the environment the
+        // test runs in, so it is left out of the comparison.
+        let calls: Vec<(String, String)> = received(&mock)
+            .await
+            .into_iter()
+            .filter(|call| call.0 != "POST" || call.1 != "/api/sessions")
+            .collect();
         assert_eq!(
-            received(&mock).await,
+            calls,
             [
                 ("DELETE".to_string(), "/api/memory/delete/mem_1".to_string()),
                 ("DELETE".to_string(), "/api/pages/page_1".to_string()),
@@ -10071,6 +10121,7 @@ mod tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         let obj = json.as_object().unwrap();
@@ -10277,6 +10328,7 @@ mod tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["entity"], "PostgreSQL");
@@ -10301,6 +10353,7 @@ mod tests {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["content"], "hello");
@@ -12842,6 +12895,7 @@ mod tests {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         };
 
         let mock = MockServer::start().await;
@@ -13178,6 +13232,7 @@ mod tests {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         };
 
         // Replicate capture_impl's request construction
@@ -13196,6 +13251,7 @@ mod tests {
             entity_id: None,
             structured_fields: params.structured_fields.map(serde_json::Value::Object),
             retrieval_cue: params.retrieval_cue,
+            said: None,
         };
 
         let json = serde_json::to_value(&req).unwrap();
@@ -13344,6 +13400,7 @@ mod tests {
                 structured_fields: None,
                 retrieval_cue: None,
                 session: None,
+                said: None,
             };
             assert_eq!(params.memory_type.as_deref(), Some(*t));
         }
@@ -13366,6 +13423,7 @@ mod tests {
             structured_fields: None,
             retrieval_cue: None,
             session: None,
+            said: None,
         };
         assert_eq!(params.memory_type.as_deref(), Some("goal"));
     }
@@ -13406,6 +13464,7 @@ mod tests {
             entity_id: None,
             structured_fields: Some(serde_json::json!({"key":"val"})),
             retrieval_cue: Some("What is the key?".into()),
+            said: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["structured_fields"], serde_json::json!({"key":"val"}));
@@ -13485,6 +13544,37 @@ mod tests {
                 "keep_original description lost {words:?}"
             );
         }
+    }
+
+    /// UX-WHO-6: the conversation lines an AI tool passes to capture reach
+    /// the daemon as conversation lines, so a web chat's sentence can show them.
+    #[test]
+    fn capture_said_lines_become_conversation_lines() {
+        let params: CaptureParams = serde_json::from_value(serde_json::json!({
+            "content": "Decided to ship 0.21 in one go.",
+            "said": [
+                { "speaker": "you", "text": "ship 0.21 in one go" },
+                { "speaker": "ai", "text": "Noted." },
+            ],
+        }))
+        .unwrap();
+        let lines: Vec<wenlan_types::conversations::ConversationLine> =
+            params.said.unwrap().into_iter().map(Into::into).collect();
+        assert_eq!(
+            lines[0].speaker,
+            wenlan_types::conversations::ConversationSpeaker::You
+        );
+        assert_eq!(lines[0].text, "ship 0.21 in one go");
+        assert_eq!(
+            lines[1].speaker,
+            wenlan_types::conversations::ConversationSpeaker::Ai
+        );
+        assert!(lines.iter().all(|l| l.at.is_none()));
+        assert!(serde_json::from_value::<CaptureParams>(serde_json::json!({
+            "content": "x",
+            "said": [{ "speaker": "someone", "text": "y" }],
+        }))
+        .is_err());
     }
 
     #[test]

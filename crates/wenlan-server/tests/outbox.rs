@@ -134,6 +134,7 @@ async fn drain_replays_both_kinds_and_handles_duplicates_and_malformed_files() {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         }),
     };
     envelope_file(&brief, 1);
@@ -263,6 +264,7 @@ async fn drain_moves_a_terminal_4xx_rejection_to_failed_with_a_receipt() {
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
+            said: None,
         }),
     };
     let name = rejected.file_name(1);

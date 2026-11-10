@@ -1123,3 +1123,69 @@ async fn the_profile_name_is_what_the_others_see() {
         "Qi-Xuan Lu"
     );
 }
+
+/// Turns every version `member` wrote into a cloud file that is not
+/// downloaded yet (an iCloud placeholder), so a pass cannot read it.
+fn evict_versions_of(folder: &Path, member: &str) -> usize {
+    let mut evicted = 0;
+    for (path, _) in folder_files(&folder.join(version::MEMBERS_DIR).join(member)) {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if version::version_sha(&name).is_some() {
+            std::fs::rename(&path, path.with_file_name(format!(".{name}.icloud"))).unwrap();
+            evicted += 1;
+        }
+    }
+    evicted
+}
+
+#[tokio::test]
+async fn a_version_this_member_cannot_read_yet_is_never_written_over_the_others_edit() {
+    // Found on two real computers: the Mac's own last version was a Google
+    // Drive file not downloaded yet, and the pass shared the Mac's older
+    // page over the Windows edit as if it had been edited here.
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().join("Wedding (shared)");
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Seating plan", "Table 1: Ana.", SPACE.to_string().into())
+        .await;
+    assert_eq!(a.sync(&folder).await.exported, 1);
+    assert_eq!(b.sync(&folder).await.applied, 1);
+    b.edit(&id, "Table 1: Ana.\nTable 2: Ben.").await;
+    assert_eq!(b.sync(&folder).await.exported, 1);
+    assert_eq!(evict_versions_of(&folder, &a.member_id()), 1);
+    let before = version_count(&folder);
+    let got = a.sync(&folder).await;
+    assert_eq!(got.exported, 0, "{got:?}");
+    assert_eq!(got.applied, 1, "{got:?}");
+    assert_eq!(a.content(&id).await, "Table 1: Ana.\nTable 2: Ben.");
+    assert_eq!(version_count(&folder), before, "nothing new was written");
+    assert_eq!(a.sync(&folder).await.exported, 0);
+}
+
+#[tokio::test]
+async fn an_edit_made_over_a_version_not_readable_yet_waits_for_it() {
+    let folder = tempfile::tempdir().unwrap();
+    let folder = folder.path().join("Wedding (shared)");
+    let a = Member::new("Qi-Xuan").await;
+    let b = Member::new("Ana").await;
+    let id = a
+        .write("Seating plan", "Table 1: Ana.", SPACE.to_string().into())
+        .await;
+    assert_eq!(a.sync(&folder).await.exported, 1);
+    assert_eq!(b.sync(&folder).await.applied, 1);
+    b.edit(&id, "Table 1: Ana.\nTable 2: Ben.").await;
+    assert_eq!(b.sync(&folder).await.exported, 1);
+
+    // A edits while its own last version is not downloaded yet: the pass
+    // waits instead of writing A's edit over a version it cannot see.
+    a.edit(&id, "Table 1: Ana, Cleo.").await;
+    evict_versions_of(&folder, &a.member_id());
+    let before = version_count(&folder);
+    let got = a.sync(&folder).await;
+    assert_eq!((got.exported, got.applied), (0, 0), "{got:?}");
+    assert!(got.skipped > 0, "{got:?}");
+    assert_eq!(version_count(&folder), before);
+    assert_eq!(a.content(&id).await, "Table 1: Ana, Cleo.");
+}

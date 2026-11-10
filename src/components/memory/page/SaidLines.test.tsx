@@ -97,4 +97,20 @@ describe("SaidLines", () => {
     renderIt(sentence({ hash: "h2", citations: [{ occurrence: 1, marker: 1, source_kind: "external_url", locator: "https://example.com", status: "verified" }] }));
     expect(getMemorySaid).toHaveBeenCalledTimes(1);
   });
+  it("UX-WHO-6: a web chat's sentence shows the lines its AI tool kept, which open nothing further", async () => {
+    vi.mocked(getMemorySaid).mockResolvedValue({
+      tool: "chatgpt",
+      kept: true,
+      lines: [
+        { index: 0, line: { speaker: "you", text: "那就一次發 0.21，等 Zotero 那幾個 PR 進來。", at: 1_793_527_260 } },
+      ],
+    });
+    renderIt(sentence());
+    expect(await screen.findByText("那就一次發 0.21，等 Zotero 那幾個 PR 進來。")).toBeTruthy();
+    expect(screen.getByText("You")).toBeTruthy();
+    expect(screen.getByTestId("said-lines").textContent).not.toMatch(/verified|checked/i);
+    // No conversation behind the copy: no button to open it.
+    expect(screen.queryByRole("button", { name: /那就一次發 0\.21/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Whole conversation" })).toBeNull();
+  });
 });

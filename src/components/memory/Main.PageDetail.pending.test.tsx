@@ -321,8 +321,7 @@ describe("Main published PageDetail navigation guards", () => {
     clearPendingPairingCode();
   });
 
-  it.each(["recent", "archived"])("archive browse requests open the directory even when its initial mode is %s", async mode => {
-    localStorage.setItem("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode }));
+  it("archive browse requests open the directory each time", async () => {
     const { user } = renderMain({});
     const workspace = await screen.findByTestId("wiki-workspace");
     expect(workspace).toHaveAttribute("data-directory-request", "0");

@@ -63,6 +63,13 @@ pub struct StoreMemoryRequest {
     pub structured_fields: Option<serde_json::Value>,
     #[serde(default)]
     pub retrieval_cue: Option<String>,
+    /// The lines of the conversation this memory comes from, word for word,
+    /// as the AI tool saw them. Kept so opening a sentence can show them when
+    /// the conversation itself can't be read (UX-WHO-6). The daemon keeps at
+    /// most [`crate::conversations::MAX_KEPT_SAID_LINES`] and stamps each
+    /// with the save time; a caller's `at` is ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<Vec<crate::conversations::ConversationLine>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -620,6 +627,23 @@ pub struct AttachFileRequest {
 pub struct SetKnowledgePathRequest {
     /// Absolute path of an empty or new folder, such as one inside a vault.
     pub path: String,
+}
+
+/// `POST /api/linked-vaults`: link an Obsidian vault into the Wiki;
+/// `DELETE`: stop linking it (its pages stay).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LinkVaultRequest {
+    /// The vault's folder, absolute.
+    pub path: String,
+}
+
+/// `POST /api/linked-vaults/ai-edits`: the person's answer to "may the AI
+/// change this vault's notes directly?".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkedVaultAiEditsRequest {
+    /// The linked vault's folder, as `GET /api/linked-vaults` lists it.
+    pub path: String,
+    pub allow: bool,
 }
 
 // ===== Ingest =====

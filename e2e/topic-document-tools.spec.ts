@@ -46,9 +46,12 @@ for (const copy of copies) for (const width of [1280, 375]) {
     const actions = page.getByRole("button", { name: copy.actions, exact: true });
     await expect(title).toBeVisible();
     await expect(actions).toBeInViewport();
-    const titleBox = (await title.boundingBox())!;
-    const actionBox = (await actions.boundingBox())!;
-    expect(Math.abs(titleBox.y + titleBox.height / 2 - actionBox.y - actionBox.height / 2)).toBeLessThanOrEqual(4);
+    // Like a page, the topic's menu sits in the workspace toolbar before
+    // Info, not beside the title.
+    const toolbar = page.locator(".workspace-document-tools-host");
+    await expect(toolbar.getByRole("button", { name: copy.actions, exact: true })).toHaveCount(1);
+    await expect(page.locator(".entity-detail-dossier .page-detail-actions-menu-trigger")).toHaveCount(0);
+    expect((await actions.boundingBox())!.x).toBeLessThan((await toolbar.locator(".workspace-panel-toggle").boundingBox())!.x);
     await expect(page.locator(".entity-dossier-seal, .entity-dossier-dateline")).toHaveCount(0);
     if (width >= 1100) await expect(page.locator(".entity-topic-context")).toBeVisible();
     else await expect(page.locator(".entity-topic-context")).toHaveCount(0);

@@ -22,6 +22,8 @@ for(const locale of ['en','zh-Hant','zh-Hans'] as const)for(const theme of ['lig
   const navigate=async(name:string)=>{
    const nav=page.getByRole('navigation',{name:t.sidebar.navigation});
    if(!await nav.isVisible())await page.getByRole('button',{name:/^(Show sidebar|顯示側邊欄|显示侧边栏)$/}).click();
+   // Topics have no rail entry: their list opens from the graph.
+   if(name===t.sidebar.entities){await nav.getByRole('button',{name:t.sidebar.graph,exact:true}).click();await page.getByRole('button',{name:t.atlas.allTopics,exact:true}).click();return;}
    await nav.getByRole('button',{name,exact:true}).click();
   };
   await openMemoryFromPage(page,'Fixture architecture',/Fixture architecture$/,{wiki:t.sidebar.pages,more:t.sidebar.more,info:t.pageInspector.info});
@@ -82,7 +84,7 @@ test("Empty Memory and Topic keep the shared Info hierarchy",async({page},info)=
  await expect(pane.getByRole('heading',{name:'Connections',exact:true})).toBeVisible();
  await expect(pane.getByText('No direct connections in the currently visible knowledge.',{exact:true})).toBeVisible();
  await page.screenshot({path:info.outputPath('empty-memory.png'),animations:'disabled'});
- await nav.getByRole('button',{name:'Topics',exact:true}).click();
+ await nav.getByRole('button',{name:'Graph',exact:true}).click();await page.getByRole('button',{name:'All topics',exact:true}).click();
  await page.getByRole('button',{name:'Ada Lovelace',exact:true}).click();
  await expect(pane.getByRole('heading',{name:'Details',exact:true})).toBeVisible();
  await expect(pane.getByText('No connections recorded yet.',{exact:true})).toBeVisible();
