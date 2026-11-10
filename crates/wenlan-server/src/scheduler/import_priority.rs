@@ -21,8 +21,9 @@ pub(super) const IMPORT_PRIORITY_WINDOW: Duration = Duration::from_secs(10 * 60)
 /// beside [`IMPORT_PRIORITY_METADATA_KEY`] so a restart keeps the same cap.
 pub(super) const IMPORT_PRIORITY_CAP_METADATA_KEY: &str = "import_priority_cap_v1";
 /// Hard cap on one import lane, counted from the import. Every Emergence
-/// turn that made progress and reports more material moves the deadline to
-/// at least one [`IMPORT_PRIORITY_WINDOW`] ahead, so the lane keeps writing
+/// turn that made progress and reports more material, and (with a page
+/// writer) every prepared document, moves the deadline to at least one
+/// [`IMPORT_PRIORITY_WINDOW`] ahead, so the lane keeps preparing and writing
 /// until every waiting item has been tried; this cap ends it regardless.
 ///
 /// Why 90 minutes: measured on a Mac with a 67-note folder and on-device
@@ -84,6 +85,16 @@ pub(super) enum DocumentPrepOutcome {
     Exhausted,
 }
 
+/// Whether a document prep slice extends the lane: a document was prepared
+/// (new material) and a page writer is pinned to write it. On demand has no
+/// pin, so its lane keeps its fixed window.
+pub(super) fn prep_extends_import_lane(
+    outcome: DocumentPrepOutcome,
+    synthesis_pin: Option<wenlan_core::refinery::SynthesisSource>,
+) -> bool {
+    outcome == DocumentPrepOutcome::Prepared && synthesis_pin.is_some()
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ImportPrioritySnapshot {
     pub(super) deadline: Instant,
@@ -107,9 +118,11 @@ impl ImportPrioritySnapshot {
     /// either no claim has come back empty yet or a paused document is due to
     /// retry before the deadline.
     ///
-    /// Intentional bound: prep shares the 64-slice budget with inference, so a
-    /// folder with more fresh files than the budget leaves the rest queued for
-    /// the ordinary idle-gated ambient lap after the lane finishes.
+    /// Prep shares the 64-slice budget of one pass with inference. A folder
+    /// with more fresh files than that is not left to the idle-gated ambient
+    /// lap: the Emergence pass that ends while prep is still pending starts a
+    /// new pass with a fresh budget ([`ImportPriority::note_synthesis_phase`]),
+    /// within the lane's deadline and hard cap.
     pub(super) fn document_prep_open(&self) -> bool {
         self.ambient_slices < IMPORT_PRIORITY_MAX_AMBIENT_SLICES
             && (!self.document_prep_drained || self.document_prep_retry_at.is_some())
@@ -248,10 +261,12 @@ impl ImportPriority {
         self.deadline.is_some()
     }
 
-    /// An Emergence turn made progress and reports more material: move the
-    /// deadline to at least one window from now, never past the cap. Returns
-    /// the new deadline epoch when it moved. Writing that has ended (no more
-    /// material, the paid daily cap) or a stale generation never extends.
+    /// The lane is still making material to write: an Emergence turn made
+    /// progress and reports more, or (with a page writer) a document of the
+    /// import was prepared. Move the deadline to at least one window from
+    /// now, never past the cap. Returns the new deadline epoch when it moved.
+    /// Writing that has ended (no more material, the paid daily cap) or a
+    /// stale generation never extends.
     pub(super) fn extend_for_more_material(
         &mut self,
         generation: u64,
@@ -297,6 +312,13 @@ impl ImportPriority {
     fn document_prep_open(&self) -> bool {
         self.snapshot()
             .is_some_and(|snapshot| snapshot.document_prep_open())
+    }
+
+    /// Prep may still produce material, whatever is left of the slice
+    /// budget: no claim has come back empty yet, or a paused document is
+    /// still due to retry inside the window.
+    fn document_prep_pending(&self) -> bool {
+        !self.document_prep_drained || !self.document_prep_retries.is_empty()
     }
 
     pub(super) fn mark_started(&mut self) -> bool {
@@ -397,12 +419,21 @@ impl ImportPriority {
     }
 
     /// Record one synthesis turn. Detect is followed by Emergence, which runs
-    /// one new page per turn while material remains. When an Emergence pass ends:
-    /// it finishes the lane once it has written a page; a pass that wrote
-    /// nothing but whose prep/inference did work (the material was still
-    /// being linked, or the slice budget ran out first) starts again with a
-    /// fresh slice budget, so Detect runs after that round; a pass with no
-    /// work at all finishes the lane. The window bounds every pass.
+    /// one new page per turn while material remains. When an Emergence pass
+    /// ends (no more material it may take now), the pass starts again with a
+    /// fresh slice budget, so prep, inference and Detect run before the next
+    /// Emergence, when either
+    /// - this import's document prep is still pending: no prep claim has come
+    ///   back empty yet (a folder larger than the slice budget, or prep that
+    ///   had not finished before Emergence ran out of prepared material) or a
+    ///   paused document waits to retry. Those documents become material the
+    ///   pass never saw, so the lane does not end before every item has been
+    ///   tried; or
+    /// - the pass wrote nothing but its prep/inference did work (the material
+    ///   was still being linked, or the slice budget ran out first).
+    ///
+    /// Otherwise the lane finishes. The deadline and its hard cap bound every
+    /// pass.
     pub(super) fn note_synthesis_phase(
         &mut self,
         generation: u64,
@@ -423,7 +454,7 @@ impl ImportPriority {
             return true;
         }
         self.synthesis_phase = None;
-        if self.pages_written == 0 && self.pass_had_work {
+        if self.document_prep_pending() || (self.pages_written == 0 && self.pass_had_work) {
             self.pass_had_work = false;
             self.synthesis_retries = self.synthesis_retries.saturating_add(1);
             self.ambient_slices = 0;
@@ -602,8 +633,8 @@ impl WriteSignal {
             .note_synthesis_phase(generation, phase, outcome)
     }
 
-    /// Extend the lane after an Emergence turn that made progress and
-    /// reports more material, and persist the new deadline (and the live
+    /// Extend the lane while it is still making material to write
+    /// ([`ImportPriority::extend_for_more_material`]), and persist the new deadline (and the live
     /// import batches' markers, which the import status reads) under the same
     /// lock as request and completion, so a finished or newer lane is never
     /// overwritten. Returns the new deadline epoch when it moved. A failed
@@ -967,6 +998,11 @@ mod tests {
         let now = Instant::now();
         let mut priority = ImportPriority::default();
         let old = priority.prepare_request(now).generation;
+        priority.note_document_slice(
+            old,
+            DocumentPrepOutcome::Idle,
+            chrono::Utc::now().timestamp(),
+        );
         for _ in 0..IMPORT_PRIORITY_MAX_AMBIENT_SLICES {
             priority.note_ambient(old, true);
         }
@@ -1090,6 +1126,190 @@ mod tests {
         );
         assert_eq!(priority.pages_written, 2);
         assert!(priority.should_finish(now), "pages were written: done");
+    }
+
+    #[test]
+    fn a_folder_larger_than_the_slice_budget_is_written_to_its_last_file() {
+        // The measured failure: a 67-file folder spends the 64-slice budget
+        // on about half its files; Emergence wrote what was there, reported
+        // no more, and the lane ended with the other half still queued.
+        let now = Instant::now();
+        let epoch = chrono::Utc::now().timestamp();
+        let mut priority = ImportPriority::default();
+        let generation = priority.prepare_request(now).generation;
+        for _ in 0..IMPORT_PRIORITY_MAX_AMBIENT_SLICES {
+            priority.note_document_slice(generation, DocumentPrepOutcome::Prepared, epoch);
+        }
+        assert!(!priority.snapshot().unwrap().document_prep_open());
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Emergence,
+            wrote_one_page_with_more(),
+        );
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Emergence,
+            wrote_one_page(),
+        );
+
+        // Pages were written, but prep never came back empty: a new pass
+        // with a fresh budget prepares the rest instead of finishing.
+        assert!(!priority.should_finish(now));
+        let after = priority.snapshot().unwrap();
+        assert_eq!(after.synthesis_phase, None);
+        assert_eq!(after.ambient_slices, 0);
+        assert_eq!(after.synthesis_retries, 1);
+        assert!(after.document_prep_open(), "the rest of the files are next");
+        assert_eq!(
+            plan_import_lane_turn(&after, epoch, None, None, true, false),
+            ImportLaneTurn::DocumentPrep
+        );
+
+        // The rest is prepared, the queue comes back empty, a quiet round:
+        // Detect and Emergence see the new material.
+        for _ in 0..3 {
+            priority.note_document_slice(generation, DocumentPrepOutcome::Prepared, epoch);
+        }
+        priority.note_document_slice(generation, DocumentPrepOutcome::Idle, epoch);
+        empty_round(&mut priority, generation);
+        assert_eq!(
+            priority.snapshot().unwrap().synthesis_phase,
+            Some(ImportSynthesisPhase::Detect)
+        );
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Emergence,
+            wrote_one_page(),
+        );
+        assert_eq!(priority.pages_written, 3);
+        assert!(
+            priority.should_finish(now),
+            "every file prepared and every item tried: done"
+        );
+    }
+
+    #[test]
+    fn emergence_running_out_while_prep_is_unfinished_does_not_end_the_lane() {
+        // Prep and Emergence alternate; Emergence can try every prepared item
+        // before prep has reached the end of the queue.
+        let now = Instant::now();
+        let epoch = chrono::Utc::now().timestamp();
+        let mut priority = ImportPriority::default();
+        let generation = priority.prepare_request(now).generation;
+        priority.note_document_slice(generation, DocumentPrepOutcome::Prepared, epoch);
+        for _ in 0..IMPORT_PRIORITY_MAX_AMBIENT_SLICES {
+            priority.note_ambient(generation, false);
+        }
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Emergence,
+            wrote_one_page(),
+        );
+        assert!(!priority.should_finish(now));
+        assert!(priority.snapshot().unwrap().document_prep_open());
+    }
+
+    #[test]
+    fn a_document_waiting_to_retry_keeps_the_lane_after_emergence() {
+        let now = Instant::now();
+        let epoch = chrono::Utc::now().timestamp();
+        let mut priority = ImportPriority::default();
+        let generation = priority.prepare_request(now).generation;
+        priority.note_document_slice(
+            generation,
+            DocumentPrepOutcome::RetryableFailure {
+                retry_at: Some(epoch + 60),
+            },
+            epoch,
+        );
+        priority.note_document_slice(generation, DocumentPrepOutcome::Idle, epoch);
+        empty_round(&mut priority, generation);
+        // Prep is waiting, so the empty round sits out; once synthesis runs
+        // (here forced by the budget), its end must not close the lane.
+        for _ in 0..IMPORT_PRIORITY_MAX_AMBIENT_SLICES {
+            priority.note_ambient(generation, false);
+        }
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Emergence,
+            wrote_one_page(),
+        );
+        assert!(!priority.should_finish(now));
+
+        // The retry resolves; the next pass that ends finishes the lane.
+        priority.note_document_slice(generation, DocumentPrepOutcome::Prepared, epoch + 60);
+        priority.note_document_slice(generation, DocumentPrepOutcome::Idle, epoch + 60);
+        empty_round(&mut priority, generation);
+        priority.note_synthesis_phase(
+            generation,
+            ImportSynthesisPhase::Detect,
+            ImportSynthesisOutcome::default(),
+        );
+        priority.note_synthesis_phase(generation, ImportSynthesisPhase::Emergence, wrote_nothing());
+        assert!(priority.should_finish(now));
+    }
+
+    #[test]
+    fn prepared_documents_extend_the_lane_only_with_a_page_writer() {
+        use wenlan_core::refinery::SynthesisSource;
+        let pin = Some(SynthesisSource::OnDevice);
+        assert!(prep_extends_import_lane(DocumentPrepOutcome::Prepared, pin));
+        for outcome in [
+            DocumentPrepOutcome::Idle,
+            DocumentPrepOutcome::ClaimFailed,
+            DocumentPrepOutcome::RetryableFailure { retry_at: None },
+            DocumentPrepOutcome::Exhausted,
+        ] {
+            assert!(!prep_extends_import_lane(outcome, pin), "{outcome:?}");
+        }
+        // On demand: no page writer, the lane keeps its fixed window.
+        assert!(!prep_extends_import_lane(
+            DocumentPrepOutcome::Prepared,
+            None
+        ));
+
+        // Prep that keeps going past the first window keeps the lane open,
+        // up to the hard cap from the import.
+        let now = Instant::now();
+        let epoch = ImportPriority::epoch_now();
+        let mut priority = ImportPriority::default();
+        let generation = priority.prepare_request(now).generation;
+        let mut at = Duration::ZERO;
+        while at < IMPORT_PRIORITY_HARD_CAP + IMPORT_PRIORITY_WINDOW {
+            at += Duration::from_secs(5 * 60);
+            if priority.should_finish(now + at) {
+                break;
+            }
+            priority.note_document_slice(
+                generation,
+                DocumentPrepOutcome::Prepared,
+                epoch + at.as_secs() as i64,
+            );
+            priority.extend_for_more_material(generation, now + at, epoch + at.as_secs() as i64);
+        }
+        assert!(at > IMPORT_PRIORITY_WINDOW, "prep extended the lane");
+        assert!(at <= IMPORT_PRIORITY_HARD_CAP + Duration::from_secs(5 * 60));
+        assert!(priority.should_finish(now + IMPORT_PRIORITY_HARD_CAP));
     }
 
     #[test]

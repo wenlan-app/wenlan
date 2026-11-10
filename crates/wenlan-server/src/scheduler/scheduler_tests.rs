@@ -5008,3 +5008,81 @@ fn ux_quiet_1_import_page_writing_skips_idle_and_cpu_but_not_heat_or_memory() {
         Some(ResourceBlockReason::MemoryPressure)
     );
 }
+
+#[test]
+fn material_waiting_after_the_idle_batch_rearms_the_idle_trigger() {
+    // The measured failure: the one Idle batch ran while the folder was still
+    // being prepared; the documents the ambient lap prepared later never
+    // reset the latch, so they waited for the six-hour backstop.
+    let now = Instant::now();
+    let snapshot = HashMap::new();
+    let quiet = now - AUTOMATIC_BATCH_IDLE_THRESHOLD;
+    let recent = now - Duration::from_secs(60);
+    let select = |idle_fired: bool| {
+        select_due_automatic_trigger(
+            now,
+            &snapshot,
+            MaintenanceAdmission::None,
+            quiet,
+            idle_fired,
+            recent,
+            recent,
+        )
+    };
+    let mut idle_fired = true;
+    let mut rearm = IdleRearm::default();
+    rearm.apply(&mut idle_fired, false);
+    assert!(idle_fired, "nothing new: the latch stays");
+    assert_eq!(select(idle_fired), None);
+
+    assert!(ambient_job_brings_material(AmbientJob::Document, true));
+    rearm.note_material_waiting();
+    // A batch under way finishes first; the re-arm waits for it.
+    rearm.apply(&mut idle_fired, true);
+    assert!(idle_fired);
+    rearm.apply(&mut idle_fired, false);
+    assert!(!idle_fired);
+    assert_eq!(select(idle_fired), Some(AutomaticTrigger::Idle));
+    // Once only: the next completed Idle batch latches again.
+    idle_fired = true;
+    rearm.apply(&mut idle_fired, false);
+    assert!(idle_fired);
+}
+
+#[test]
+fn only_a_prepared_document_brings_material_from_the_ambient_lap() {
+    assert!(ambient_job_brings_material(AmbientJob::Document, true));
+    assert!(!ambient_job_brings_material(AmbientJob::Document, false));
+    for job in [
+        AmbientJob::Classification,
+        AmbientJob::StructuredExtract,
+        AmbientJob::Entity,
+        AmbientJob::Title,
+        AmbientJob::PageGrowth,
+    ] {
+        assert!(!ambient_job_brings_material(job, true), "{job:?}");
+    }
+}
+
+#[test]
+fn the_idle_round_still_waits_for_its_quiet_period_after_a_rearm() {
+    let now = Instant::now();
+    let snapshot = HashMap::new();
+    let recent = now - Duration::from_secs(60);
+    let mut idle_fired = true;
+    let mut rearm = IdleRearm::default();
+    rearm.note_material_waiting();
+    rearm.apply(&mut idle_fired, false);
+    assert_eq!(
+        select_due_automatic_trigger(
+            now,
+            &snapshot,
+            MaintenanceAdmission::None,
+            now - Duration::from_secs(5),
+            idle_fired,
+            recent,
+            recent,
+        ),
+        None
+    );
+}

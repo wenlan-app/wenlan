@@ -1480,6 +1480,41 @@ fn select_due_automatic_trigger(
     (maintenance != MaintenanceAdmission::None).then_some(AutomaticTrigger::Maintenance)
 }
 
+/// Material for pages that arrived without a store-route write. The Idle
+/// trigger fires once per quiet period and is re-armed only by
+/// [`WriteSignal::record`], which the store route alone calls; folder
+/// documents prepared by the ambient lap and material an import lane left
+/// behind never reset it, so after the one Idle batch ran (often while the
+/// import was still being prepared, finding everything already tried) the
+/// waiting material got no Emergence turn until the six-hour backstop.
+///
+/// This re-arms the Idle trigger for such material. The Idle round still
+/// waits for its quiet period and the ordinary resource and input-idle
+/// admission (UX-QUIET-1); only its once-per-quiet-period latch is reset. A
+/// batch already under way finishes first, and one more Idle batch follows.
+#[derive(Debug, Default)]
+struct IdleRearm {
+    pending: bool,
+}
+
+impl IdleRearm {
+    fn note_material_waiting(&mut self) {
+        self.pending = true;
+    }
+
+    fn apply(&mut self, idle_fired: &mut bool, batch_running: bool) {
+        if self.pending && !batch_running {
+            *idle_fired = false;
+            self.pending = false;
+        }
+    }
+}
+
+/// An ambient job that may have turned a document into material for pages.
+fn ambient_job_brings_material(job: AmbientJob, selected: bool) -> bool {
+    job == AmbientJob::Document && selected
+}
+
 #[cfg(test)]
 fn idle_due(idle_fired: bool, idle_since: Instant, now: Instant) -> bool {
     !idle_fired && now.duration_since(idle_since) >= AUTOMATIC_BATCH_IDLE_THRESHOLD
@@ -1512,6 +1547,7 @@ pub fn spawn_scheduler(
 
         let mut last_backstop = Instant::now();
         let mut idle_fired = false;
+        let mut idle_rearm = IdleRearm::default();
         let mut last_poll_activity = Instant::now();
         let ambient_started_at = Instant::now();
         let mut last_write_activity = write_signal
@@ -1601,6 +1637,7 @@ pub fn spawn_scheduler(
                 }
             }
             last_poll_activity = Instant::now();
+            idle_rearm.apply(&mut idle_fired, steep_batch.is_some());
 
             // Snapshot shared state — drop the read guard immediately
             let snapshot = {
@@ -1894,6 +1931,7 @@ pub fn spawn_scheduler(
             }
 
             let mut import_work_ran = false;
+            let import_lane_was_open = write_signal.import_priority_snapshot().is_some();
             if let Some(import_snapshot) = write_signal.import_priority_snapshot() {
                 let import_generation = import_snapshot.generation;
                 if write_signal.import_priority_mark_started() {
@@ -1975,6 +2013,28 @@ pub fn spawn_scheduler(
                                             DocumentPrepOutcome::Idle
                                                 | DocumentPrepOutcome::ClaimFailed
                                         );
+                                        // A prepared document is material the
+                                        // page writer has not seen yet: keep
+                                        // the lane open for it, up to its
+                                        // hard cap. On demand has no page
+                                        // writer, so its lane is unchanged.
+                                        if prep_extends_import_lane(report.outcome, synthesis_pin) {
+                                            match write_signal
+                                                .extend_import_priority(
+                                                    &db,
+                                                    processing_generation,
+                                                )
+                                                .await
+                                            {
+                                                Ok(Some(deadline_epoch)) => tracing::info!(
+                                                    "[scheduler] import priority extended deadline_epoch={deadline_epoch} reason=document_prepared"
+                                                ),
+                                                Ok(None) => {}
+                                                Err(error) => tracing::warn!(
+                                                    "[scheduler] failed to persist import priority extension: {error}"
+                                                ),
+                                            }
+                                        }
                                         if import_work_ran {
                                             tracing::info!(
                                             "[scheduler] import priority document_prep done outcome={:?} slice={} panicked={} elapsed_ms={}",
@@ -2197,6 +2257,12 @@ pub fn spawn_scheduler(
                         }
                     }
                 }
+            }
+
+            if import_lane_was_open && write_signal.import_priority_snapshot().is_none() {
+                // The lane ended (its work, deadline or hard cap, the paid cap): what it
+                // did not write waits for the idle-gated rounds.
+                idle_rearm.note_material_waiting();
             }
 
             let selected_automatic = if background_ai_enabled
@@ -2727,6 +2793,9 @@ pub fn spawn_scheduler(
                                 Some(knowledge_path.as_path()),
                             )
                             .await;
+                            if ambient_job_brings_material(report.job, report.selected) {
+                                idle_rearm.note_material_waiting();
+                            }
                             let completion = Instant::now();
                             ambient_schedule.note_job_result(
                                 report.job,
