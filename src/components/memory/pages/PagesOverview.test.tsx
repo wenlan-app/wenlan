@@ -94,6 +94,7 @@ function renderOverview({
 }
 
 describe("PagesOverview reading workspace", () => {
+  afterEach(() => setExperiment("things", false));
   beforeEach(() => {
     vi.mocked(listPagesExplicitBrowse).mockReset();
     vi.mocked(listRefinements).mockReset();
@@ -329,7 +330,15 @@ describe("PagesOverview reading workspace", () => {
       expect(screen.queryByTestId("getting-started")).not.toBeInTheDocument();
     });
 
+    it("leaves out the connect line while what you're working on is off", async () => {
+      renderOverview({ onConnectTool: vi.fn() });
+      await waitFor(() => expect(listAgents).toHaveBeenCalled());
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(screen.queryByText("Connect an AI tool, and what you work on with it shows up here.")).toBeNull();
+    });
+
     it("says what connecting an AI tool adds while none is connected", async () => {
+      setExperiment("things", true);
       const onConnectTool = vi.fn();
       renderOverview({ onConnectTool });
       fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
@@ -338,6 +347,7 @@ describe("PagesOverview reading workspace", () => {
     });
 
     it("drops the connect line once a tool is connected", async () => {
+      setExperiment("things", true);
       vi.mocked(listAgents).mockResolvedValue([{ id: "agent-claude-code", name: "claude-code", display_name: null, agent_type: "", description: null, enabled: true, trust_level: "full", last_seen_at: 1_790_000_000, memory_count: 0, created_at: 1_790_000_000, updated_at: 1_790_000_000 } as never]);
       renderOverview({ onConnectTool: vi.fn() });
       await waitFor(() => expect(listAgents).toHaveBeenCalled());
